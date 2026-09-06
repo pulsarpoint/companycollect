@@ -1,0 +1,2716 @@
+{
+  "domain": "vaisala.com",
+  "base_url": "https://www.vaisala.com/en",
+  "preferred_languages": [
+    "en"
+  ],
+  "built_at": "2026-09-03T23:20:29+00:00",
+  "inventory_urls": 5001,
+  "eligible_urls": 5001,
+  "excluded_urls": 0,
+  "candidates": [
+    {
+      "url": "https://www.vaisala.com/en",
+      "score": 68.0,
+      "reasons": [
+        "homepage",
+        "base locale"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/press-releases/2021-08/most-people-worry-about-indoor-air-quality-amidst-covid-19-pandemic",
+      "score": 68.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/vaisala-company/organization-and-management",
+      "score": 66.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/stock-exchange-releases/2021-05/change-vaisala-management-group",
+      "score": 63.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/press-releases/2019-11/leosphere-vaisala-company-enhances-offshore-offerings-windcube-suitable-buoys",
+      "score": 55.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/press-releases/2020-03/leosphere-vaisala-company-launches-windcube-insights-empowering-windcube-nacelle-customers-accurate-data-and-analytics",
+      "score": 55.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/press-releases/2022-03/vaisala-provides-volkswagen-group-global-infotainment-weather-service-enhance-driver-safety-and-experience-worldwide",
+      "score": 55.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/investors/corporate-governance/board-directors",
+      "score": 48.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/investors/corporate-governance/leadership-team",
+      "score": 48.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/events/events/lp/quality-assurance-and-technical-services-group-qats-annual-symposium",
+      "score": 47.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/events/events/lp/quality-assurance-and-technical-services-group-qats-annual-symposium-2024",
+      "score": 47.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/events/events/lp/quality-assurance-and-technical-services-group-qats-annual-symposium-2025",
+      "score": 47.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/investors/corporate-governance",
+      "score": 46.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/stock-exchange-releases/2022-02/vaisalas-board-directors-resolved-share-based-long-term-incentive-plans",
+      "score": 45.0,
+      "reasons": [
+        "base locale",
+        "people",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/stock-exchange-releases/2025-02/vaisalas-board-directors-resolved-share-based-long-term-incentive-plans",
+      "score": 45.0,
+      "reasons": [
+        "base locale",
+        "people",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/about-vaisala-online-store",
+      "score": 44.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/vaisala-company",
+      "score": 44.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/vaisalas-history-space",
+      "score": 44.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/investors/corporate-governance/corporate-governance-statement",
+      "score": 43.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/press-releases/2020-06/leosphere-vaisala-company-launches-wind-industrys-longest-range-turbine-mounted-lidar-windcuber-nacelle",
+      "score": 43.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/press-releases/2020-08/vaisala-digital-delivers-real-time-comprehensive-weather-data-new-hyundai-motor-company-vehicles",
+      "score": 43.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/press-releases/2021-01/windcube-industrys-most-trusted-and-widely-deployed-wind-lidar-leosphere-vaisala-company-advances-wind-energy-enhancements",
+      "score": 43.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/press-releases/2024-07/vaisala-xweather-delivers-worldwide-real-time-air-quality-data-drivers-bmw-group-cars",
+      "score": 43.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/vaisala-company/organization-and-management/cvs-board-directors",
+      "score": 43.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/vaisala-company/organization-and-management/cvs-leadership-team-members",
+      "score": 43.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/vaisala-company/sustainability/sustainable-business-practices/quality-environment-health-and-safety/vaisala-quality-management-system",
+      "score": 42.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/application-note/answers-four-questions-about-carbon-dioxide-sensor-self-heating",
+      "score": 41.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/expert-article/qa-about-intrinsically-safe-measurement-devices",
+      "score": 41.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/vaisala-company/our-story",
+      "score": 41.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/vaisala-company/values",
+      "score": 41.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/data-management-unit-dmu801",
+      "score": 40.0,
+      "reasons": [
+        "base locale",
+        "people",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/investors/vaisala-investment/risk-management",
+      "score": 38.0,
+      "reasons": [
+        "base locale",
+        "people",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/press-releases/2023-05/anne-jalkala-joins-vaisala-leadership-team",
+      "score": 38.0,
+      "reasons": [
+        "base locale",
+        "people",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/stock-exchange-releases/2026-06/inside-information-vaisala-acquires-ai-weather-company-atmo-inc-lead-transformation-meteorology",
+      "score": 38.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/industries-applications/roads/traffic-management",
+      "score": 37.0,
+      "reasons": [
+        "base locale",
+        "people",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/application-note/integrating-environmental-monitoring-system-data-quality-management-systems",
+      "score": 36.0,
+      "reasons": [
+        "base locale",
+        "people"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/expert-article/boost-wafer-quality-and-yield-through-data-driven-real-time-slurry-management",
+      "score": 36.0,
+      "reasons": [
+        "base locale",
+        "people"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/expert-article/smart-ventilation-people-and-planet",
+      "score": 36.0,
+      "reasons": [
+        "base locale",
+        "people"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/vaisala-company/sustainability",
+      "score": 36.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/events/events/lp/epri-transformer-and-switchyard-user-group-meeting",
+      "score": 35.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/events/events/lp/european-cmp-and-wet-users-group-meeting",
+      "score": 35.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/press-releases/2025-10/vaisala-launches-new-probe-recalibration-and-reuse-service-minimize-downtime-and-maximize-sustainability",
+      "score": 35.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/careers",
+      "score": 34.0,
+      "reasons": [
+        "base locale",
+        "careers"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/industries-applications/food-beverage-and-agriculture/primary-production-and-agriculture/agricultural-water-management",
+      "score": 34.0,
+      "reasons": [
+        "base locale",
+        "people",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/stock-exchange-releases/2019-03/resolutions-vaisala-corporation-annual-general-meeting-and-board-directors",
+      "score": 33.0,
+      "reasons": [
+        "base locale",
+        "people"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/stock-exchange-releases/2020-02/vaisalas-board-directors-resolved-long-term-performance-share-plan",
+      "score": 33.0,
+      "reasons": [
+        "base locale",
+        "people"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/stock-exchange-releases/2020-06/resolutions-vaisala-corporation-annual-general-meeting-and-board-directors",
+      "score": 33.0,
+      "reasons": [
+        "base locale",
+        "people"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/stock-exchange-releases/2020-12/vaisalas-board-directors-resolved-long-term-performance-share-plan",
+      "score": 33.0,
+      "reasons": [
+        "base locale",
+        "people"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/stock-exchange-releases/2021-03/resolutions-vaisala-corporation-annual-general-meeting-and-board-directors",
+      "score": 33.0,
+      "reasons": [
+        "base locale",
+        "people"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/stock-exchange-releases/2022-03/resolutions-vaisala-corporation-annual-general-meeting-and-board-directors",
+      "score": 33.0,
+      "reasons": [
+        "base locale",
+        "people"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/stock-exchange-releases/2023-02/vaisalas-board-directors-resolved-long-term-performance-share-plan",
+      "score": 33.0,
+      "reasons": [
+        "base locale",
+        "people"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/stock-exchange-releases/2023-03/resolutions-vaisala-corporation-annual-general-meeting-and-board-directors",
+      "score": 33.0,
+      "reasons": [
+        "base locale",
+        "people"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/stock-exchange-releases/2024-02/vaisalas-board-directors-resolved-long-term-performance-share-plan",
+      "score": 33.0,
+      "reasons": [
+        "base locale",
+        "people"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/stock-exchange-releases/2024-03/resolutions-vaisala-corporation-annual-general-meeting-and-board-directors",
+      "score": 33.0,
+      "reasons": [
+        "base locale",
+        "people"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/stock-exchange-releases/2024-10/inside-information-changes-vaisala-leadership-team",
+      "score": 33.0,
+      "reasons": [
+        "base locale",
+        "people"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/stock-exchange-releases/2025-03/resolutions-vaisala-corporation-annual-general-meeting-and-board-directors",
+      "score": 33.0,
+      "reasons": [
+        "base locale",
+        "people"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/stock-exchange-releases/2026-02/vaisalas-board-directors-resolved-long-term-performance-share-plan",
+      "score": 33.0,
+      "reasons": [
+        "base locale",
+        "people"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/stock-exchange-releases/2026-03/resolutions-vaisala-corporation-annual-general-meeting-and-board-directors",
+      "score": 33.0,
+      "reasons": [
+        "base locale",
+        "people"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/events/events/lp/ace-2019-air-waste-management-associations-annual-conference",
+      "score": 30.0,
+      "reasons": [
+        "base locale",
+        "people",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/events/events/lp/ceati-asset-management-conference",
+      "score": 30.0,
+      "reasons": [
+        "base locale",
+        "people",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/events/events/lp/tlm-transformer-life-management-conference-2021",
+      "score": 30.0,
+      "reasons": [
+        "base locale",
+        "people",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/events/events/lp/tlm-transformer-life-management-conference-2023",
+      "score": 30.0,
+      "reasons": [
+        "base locale",
+        "people",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/fi/vaisala-company/organization-and-management",
+      "score": 30.0,
+      "reasons": [
+        "other locale 'fi'",
+        "about",
+        "people"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/newsroom",
+      "score": 29.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/expert-article/three-ways-sensors-can-improve-sustainability-data-centers",
+      "score": 26.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/industries-applications",
+      "score": 26.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/investors/financial-information",
+      "score": 26.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/investors/ir-calendar",
+      "score": 26.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/new-mapping-services-partner",
+      "score": 26.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/service-order-form-vaisala-helsinki-service-center",
+      "score": 26.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/services",
+      "score": 26.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/events/events/lp/calling-university-students-join-vaisalas-career-night",
+      "score": 25.0,
+      "reasons": [
+        "base locale",
+        "careers",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/press-releases/2019-03/vaisala-expands-its-product-offering-environmental-chambers-new-hmm170-module",
+      "score": 25.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/press-releases/2019-04/vaisala-fortifies-comprehensive-wind-industry-product-range",
+      "score": 25.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/press-releases/2019-04/vaisala-widens-its-product-offering-demanding-hvac-and-light-industrial-applications",
+      "score": 25.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/press-releases/2019-06/vaisala-expands-weather-radar-offering-include-x-band-radars",
+      "score": 25.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/press-releases/2019-08/vaisala-strengthens-its-digital-offering-acquiring-professional-business-business-weather-services-foreca",
+      "score": 25.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/press-releases/2019-11/vaisala-adds-potential-smart-industries-bringing-new-smart-probes-dew-point-and-moisture-oil-measurement",
+      "score": 25.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/press-releases/2020-05/vaisala-digital-launches-vaisala-wx-horizon-first-its-kind-digital-offering-manage-impact-winter-weather-ground-transportation",
+      "score": 25.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/press-releases/2020-06/vaisala-launches-patented-new-lightning-offering",
+      "score": 25.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/press-releases/2020-11/vaisala-expand-its-premium-indigo-product-range-high-performance-hmp1-probe-humidity-and-temperature-measurements-high-end",
+      "score": 25.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/press-releases/2021-01/vaisala-redefines-cloud-measurement-launch-ceilometer-cl61-offering-most-comprehensive-insights-industry",
+      "score": 25.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/press-releases/2021-06/windcube-scan-dual-lidar-ready-offering-unveiled-streamline-and-amplify-offshore-wind-assessment-campaigns",
+      "score": 25.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/press-releases/2021-09/vaisala-expands-its-modular-indigo-product-family-introduction-streamlined-indigo510-transmitter-industrial-applications",
+      "score": 25.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/press-releases/2021-10/vaisalas-road-weather-service-selected-tomtom-improve-driver-safety",
+      "score": 25.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/press-releases/2023-03/vaisala-brings-portable-measurements-its-indigo-product-family",
+      "score": 25.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/press-releases/2023-04/vaisala-introduces-new-industrial-transmitter-indigo300-part-its-indigo-modular-product-line",
+      "score": 25.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/press-releases/2024-06/new-co2-probe-pump-sampling-expands-vaisalas-modular-handheld-product-family",
+      "score": 25.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/press-releases/2024-06/vaisala-introduces-new-data-offering-aimed-ev-makers-help-eliminate-weather-surprises-range-predictions",
+      "score": 25.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/press-releases/2026-02/vaisala-introduces-new-service-maximal-uptime-and-lifetime-weather-measurement-systems",
+      "score": 25.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/application-note/intrinsically-safe-instruments-help-minimize-risks-hazardous-locations",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/expert-article/smart-monitoring-made-easy-how-modular-solutions-are-transforming-data-center-design",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/investors/corporate-governance/articles-association",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/investors/corporate-governance/auditing-and-auditors-fees",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/investors/corporate-governance/controls",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/investors/corporate-governance/general-meetings",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/investors/corporate-governance/governing-bodies-vaisala",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/investors/corporate-governance/insiders",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/investors/corporate-governance/remuneration",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/partners/vaisala-service-partners",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/press-releases/2022-01/vaisala-reports-194-million-lightning-events-us-2021-increase-24-million-2020",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/press-releases/2022-05/vaisalas-sustainable-business-receives-carnegie-sustainability-award-2022",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/press-releases/2022-06/vaisala-performs-excellently-rated-sustainability-metrics-globally",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/services/calibration-services",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/services/continuous-monitoring-system-services",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/services/field-services",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/services/remote-and-digital-services",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/services/services-for-liquid-measurements",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/services/services-for-weather-applications",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/services/setting-email-alerts-vaisalas-product-document-updates",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/services/vaisala-maintenance-and-optimization-services",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/vaisala-company/sustainability/energy-transition",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/vaisala-company/sustainability/resource-efficiency",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/vaisala-company/sustainability/safety-and-wellbeing",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/vaisala-company/sustainability/sustainable-business-practices",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/vaisala-company/innovation-and-rd",
+      "score": 21.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/share-repurchase-releases/2026-03/vaisala-corporations-conveyance-treasury-shares-accordance-share-based-incentive-plans",
+      "score": 20.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/stock-exchange-releases/2019-03/vaisala-corporations-conveyance-treasury-shares-accordance-share-based-incentive-plans",
+      "score": 20.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/stock-exchange-releases/2019-06/vaisala-corporations-conveyance-treasury-shares-accordance-share-based-incentive-plans",
+      "score": 20.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/stock-exchange-releases/2021-05/vaisala-starts-co-operation-negotiations-project-and-customer-services",
+      "score": 20.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/stock-exchange-releases/2022-03/vaisala-corporations-conveyance-treasury-shares-accordance-share-based-incentive-plans",
+      "score": 20.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/stock-exchange-releases/2023-05/vaisala-starts-repurchasing-own-shares-its-share-based-incentive-plans",
+      "score": 20.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/stock-exchange-releases/2024-05/vaisala-starts-repurchasing-own-shares-its-share-based-incentive-plans",
+      "score": 20.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/stock-exchange-releases/2025-04/vaisala-starts-repurchasing-own-shares-its-incentive-plans",
+      "score": 20.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/stock-exchange-releases/2025-05/vaisala-corporations-conveyance-treasury-shares-accordance-share-based-incentive-plans-and-correction-number-treasury-shares",
+      "score": 20.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/vaisala-company/sustainability/sustainable-business-practices/environmentally-sustainable-business-practices",
+      "score": 20.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/vaisala-company/sustainability/sustainable-business-practices/quality-environment-health-and-safety",
+      "score": 20.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/vaisala-company/sustainability/sustainable-business-practices/socially-sustainable-business-practices",
+      "score": 20.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/vaisala-company/sustainability/sustainable-business-practices/sourcing-and-suppliers",
+      "score": 20.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/careers/students-and-graduates",
+      "score": 17.666666666666664,
+      "reasons": [
+        "base locale",
+        "careers"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/careers/well-being",
+      "score": 17.666666666666664,
+      "reasons": [
+        "base locale",
+        "careers"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/events/events/lp/31st-annual-ispe-boston-product-show",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/events/events/lp/achema-2022-world-forum-and-leading-show-process-industries",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/events/events/lp/achema-2024-world-forum-and-leading-show-process-industries",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/events/events/lp/carotek-process-solutions-summit",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/events/events/lp/ispe-boston-product-show-0",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/events/events/lp/ispe-boston-product-show-1",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/events/events/lp/ispe-boston-products-show-2024",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/events/events/lp/mesures-solutions-expo-lyon-2022",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/events/events/lp/mesures-solutions-expo-lyon-2024",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/events/events/lp/mesures-solutions-expo-lyon-2026",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/events/events/lp/phss-sterile-product-conference-2025",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/events/events/lp/save-bergamo-2024-automation-instrumentation-sensors-industrial-software-solutions-industry-40",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/events/events/lp/seminaire-vaisala-solutions-de-monitoring-en-environnements-controles",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/devices/instruments/cables-cases",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/systems/indoor-monitoring-systems/echo-compatible-products",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/vaisala-company/sustainability/sustainable-business-practices/quality-environment-health-and-safety/health-and-safety-at-vaisala",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/investors/consensus-estimates",
+      "score": 16.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/investors/shares-and-shareholders",
+      "score": 16.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/industries-applications/aviation",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/industries-applications/bio-decontamination",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/industries-applications/biogas",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/industries-applications/ccus-carbon-capture-utilization-storage",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/industries-applications/data-centers",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/industries-applications/evaporation-process-optimization",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/industries-applications/glass-manufacturing",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/industries-applications/greenhouse-gas-measurements-for-climate-action",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/industries-applications/life-science",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/industries-applications/mining-air-quality",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/industries-applications/oil-gas-refining-petrochemicals",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/industries-applications/semiconductor",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/industries-applications/smart-drying",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/industries-applications/starch-sweeteners-and-sugar-substitutes",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/industries-applications/urban-resilience",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/industries-applications/warehouse-measurement-and-monitoring",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/industries-applications/wastewater-and-effluent-monitoring",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/industries-applications/water-electrolysis",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/anp115-analog-input-probe",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/automatic-weather-station-aws810-airport-edition",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/avimet-panel-display-wid525",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/co2-humidity-and-temperature-transmitter-series-xmw85",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/data-loggers",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/dew-point-probe-dmp1",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/dew-point-transmitter-dmt153",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/echo-intelligent-measurement-infrastructure",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/elements-lite",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/gmp80p-portable-carbon-dioxide-probe-pump-sampling",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/helideck-monitoring-software",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/humidity-and-temperature-probe-hmp115",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/indigo-family-replaces-hmt330-dmt340-mmt330-and-ptu300-series-and-hmt330mik",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/iris-focus-aviation",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/mmt143-moisture-and-temperature-transmitter-oil",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/multigas-co2-instrument-mgp241",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/origo-modular-hvac-transmitters-precise-indoor-climate-control",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/origo10-series-transmitters",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/precicapr-radar-precipitation-sensor-rm60",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/tempcast",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/temperature-transmitters-tmt120130",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/ultrasonic-wind-sensor-wm80",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/vaisala-compass",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/vaisala-low-level-windshear-alert-system",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/vaisala-maritime-automatic-weather-station-aws830",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/vaisala-polaristm-digital-divert-control-system-dd53",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/vaisala-polaristm-pr53s-semicon-process-refractometer",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/vaisala-quanterra",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/vaisala-road-weather-demand",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/vaisala-windcube-trainings",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/wind-energy-windcube",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/wind-lidars",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vaisala.com/en/products/windcube-nacelle-wind-assisted-vessels",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    }
+  ]
+}

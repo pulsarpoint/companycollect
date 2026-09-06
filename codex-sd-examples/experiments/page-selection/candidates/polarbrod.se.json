@@ -1,0 +1,2108 @@
+{
+  "domain": "polarbrod.se",
+  "base_url": "https://www.polarbrod.se/",
+  "preferred_languages": [
+    "en"
+  ],
+  "built_at": "2026-09-03T23:19:20+00:00",
+  "inventory_urls": 629,
+  "eligible_urls": 629,
+  "excluded_urls": 0,
+  "candidates": [
+    {
+      "url": "https://www.polarbrod.se/",
+      "score": 60.0,
+      "reasons": [
+        "homepage"
+      ],
+      "title": "Gör världen lite godare",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/om-polarbrod/kontakt/",
+      "score": 38.0,
+      "reasons": [
+        "contact",
+        "title mentions press"
+      ],
+      "title": "Press | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/om-polarbrod/jobba-hos-oss/",
+      "score": 23.0,
+      "reasons": [
+        "careers"
+      ],
+      "title": "Jobba hos oss | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/sida-med-news-list-blocket/",
+      "score": 21.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Sida med news list-blocket | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-produkter/alla-produkter/",
+      "score": 15.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Polarbröd | Alla-produkter",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/om-polarbrod/kontakt/fragor-och-svar/",
+      "score": 10.0,
+      "reasons": [
+        "contact"
+      ],
+      "title": "Frågor och svar | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/om-polarbrod/kontakt/reklamationer/",
+      "score": 10.0,
+      "reasons": [
+        "contact"
+      ],
+      "title": "Konsumentkontakt och reklamation | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/nyheter/25247-2/",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Tina-Marie Qwiberg | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/nyheter/25446-2/",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Artur Granstedt | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/nyheter/25549-2/",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Bygget fortskrider i Älvsbyn | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/nyheter/26034-2/",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "The Breadlab vinner Utstickarpriset 2021 | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/nyheter/32497-2/",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Polarbröd skapar nytt hållbarhetsinitiativ | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/nyheter/32503-2/",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Framtidsreceptet på Europeiska Ungdomsparlamentets session i Stockholm | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/nyheter/33282-2/",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Utan rubrik | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/nyheter/bellas-ide-for-det-nya-polarbageriet/",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Bellas idé för det nya Polarbageriet | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/nyheter/brodet-pa-allas-lappar/",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Brödet på allas läppar | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/nyheter/ellen-macarthur/",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Ellen MacArthur | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/nyheter/nu-presenteras-sveja-framtidens-hallbara-mellanmal/",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Nu presenteras Sveja - framtidens hållbara mellanmål | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/nyheter/polarbrod-ska-utveckla-framtidens-hallbara-mellanmal/",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Polarbröd ska utveckla framtidens hållbara mellanmål | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/nyheter/resultaten-av-framtidsreceptets-forsta-omgang/",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Resultaten av Framtidsreceptets första omgång | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/nyheter/ull-fullkorn-och-resiliens-i-fokus-nar-en-tioaring-ska-firas/",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Ull, fullkorn och resiliens i fokus när en tioåring ska firas | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-produkter/brod-24h/",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Polarbröd | Brod-24h",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-produkter/cafe-deli-brod/",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Polarbröd | Cafe-deli-brod",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-produkter/fastfood-matrattsbrod/",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Polarbröd | Fastfood-matrattsbrod",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-produkter/gene-orginal/",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Gene original | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-produkter/hallakaka-liten/",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Polarpolare Hällakaka Liten | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-produkter/hallakaka/",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Hällakaka | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-produkter/havrekaka-nyckelhal/",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Havrekaka Nyckelhål | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-produkter/korvbrodsvikare/",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Korvbrödsvikare | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-produkter/korvtunnbrod/",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Korvtunnbröd | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-produkter/krav-markt-lillrag-med-linfro/",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Polarpolare Lillråg med linfrö | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-produkter/krav-markta-brod/",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Polarbröd | Krav-markta-brod",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-produkter/norrlands-levajn-vete/",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Norrlands-Leväjn Vete | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-produkter/pitabrod-oval-2/",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Pitabröd oval | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-produkter/pitabrod-rund/",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Pitabröd Rund | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-produkter/polarkaka/",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Polarkaka | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-produkter/polarknacke-orignal/",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Polarknäcke original | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-produkter/polarparlan-fullkorn/",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Polarpärlan Fullkorn | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-produkter/polarparlan-havre/",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Polarpärlan Havre | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-produkter/ragkaka/",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Rågkaka | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-produkter/surdegskaka-vete/",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Surdegskaka Vete | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-produkter/surdegstunnbrod/",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Surdegstunnbröd | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-produkter/tunnbrod/",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Tunnbröd | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-produkter/vara-tunnbrod/",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Polarbröd | Vara-tunnbrod",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-produkter/vetekaka/",
+      "score": 7.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Vetekaka | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/om-polarbrod/jobba-hos-oss/ett-hallbart-arbete/",
+      "score": 6.666666666666666,
+      "reasons": [
+        "careers"
+      ],
+      "title": "Ett hållbart arbete | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/om-polarbrod/jobba-hos-oss/har-finns-polarbrodskoncernen/",
+      "score": 6.666666666666666,
+      "reasons": [
+        "careers"
+      ],
+      "title": "Här finns Polarbrödskoncernen | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/allmanna-tavlingsregler-och-villkor/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Allmänna tävlingsregler och villkor | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/alvsbyn/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "älvsbyn | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/angerratt-polarbutiken/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Ångra köp - Polarbutiken | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/atervinn/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Återvinn | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/butik/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Butik | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/certifikat/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Certifikat | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/din-historik/",
+      "score": 6.0,
+      "reasons": [],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/en-enklare-sommar/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "En enklare sommar | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/ett-samarbete-for-framtiden/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Ett samarbete för framtiden | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/faktura/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Fakturaadresser till Polarbrödskoncernen | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Foodservice | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/framtidens-bageri/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Framtidens bageri | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/framtidsreceptet-ar-ett/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Framtidsreceptet år ett | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/framtidsreceptet/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Sitter du på Framtidsreceptet? | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/friends-skolturne-2025/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Friends skolturné 2025 | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/gothia/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Gothia | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/hallbarhet/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Hållbarhet | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/handla-har/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Här finns vi | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/hej-varlden/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Hej världen! | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/hur-manga-renar/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Hur många renar | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/join-polarbrod/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Join Polarbröd | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/jultavling/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Jultävling! Vinna en mössa eller en handduk | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/jultradition/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Jultradition | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/kopevillkor-for-polarbutiken/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Köpevillkor för Polarbutiken | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/nationalratten/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Nationalrätten | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/om-polarbrod/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Om Polarbröd | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/personuppgiftshantering/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Personuppgiftshantering | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/polarbutiken/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Polarbutiken | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/polarvete-polarrag/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "PolarVete® & PolarRåg® | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/registrera-poang/",
+      "score": 6.0,
+      "reasons": [],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/reklamation-polfarskt/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Reklamation Polfarskt | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/sa-samlar-du-poang/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Så samlar du poäng | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/samarbete-med-cleansea/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Polarbröd samarbetar med CleanSea | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/sidfot/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Sidfot | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/sortiment/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Sortiment | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/tavla-om-en-pizzaugn/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Tävla om en pizzaugn! | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/tavling-skolstart/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Tävling! Vinn en årsförbrukning av utflyktsmackor | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/tavling-sup-brada/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Tävling! Vinn en fin SUP-bräda | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/tavling-vinnarbrod/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Tävling! Hittar du vinnarbrödet? | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/tavlingsformular-vinnarbrod/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Har du hittat ett vinnarbröd? | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/tavlingsvillkor-vinnarbrod/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Fullständiga tävlingsvillkor - Vinnarbrödet | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/tipsrunda/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Tipsrunda | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/vara-fikarullar/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Våra Fikarullar | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/vara-smorgasar/",
+      "score": 6.0,
+      "reasons": [],
+      "title": "Våra smörgåsar | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/fikabrod/fikarulle-choklad/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Fikarulle Choklad | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/fikabrod/fikarulle-morot-kanel/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Fikarulle Morot & Kanel | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/a-la-monsieur-med-iskaffe/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "A la Monsieur med Iskaffe | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/agg-och-ostmacka/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Ägg- och ostmacka | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/appelkarlek-med-blabarssmoothie/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Äppelkärlek med Blåbärssmoothie | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/avokado-och-tomatsmorgas/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Avokado- och tomatsmörgås | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/brie-aprikos-med-blabarssmoothie/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Brie & Aprikos med Blåbärssmoothie | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/brodpudding-med-applen-och-vaniljkram/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Brödpudding med äpplen och vaniljkräm | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/caesarsallad-med-rakor-och-varmrokt-lax-i-wrap/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Caesarsallad med räkor och varmrökt lax i wrap | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/caprese/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Caprese | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/chocobanan-med-iskaffe/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Chocobanan med Iskaffe | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/eggstra-good-morning/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Eggstra Good Morning | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/flammkuchen/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Flammkuchen | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/foodservice-koncept/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Polarbröd |",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/friterat-tunnbrod-med-kikartsrora/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Friterat tunnbröd med kikärtsröra | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/fullkornssmorgas-med-kramig-aggsallad/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Fullkornssmörgås med krämig äggsallad | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/getostpizzor-med-farska-fikon/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Getostpizzor med färska fikon | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/grekisk-sallad-i-pitabrod/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Grekisk sallad i pitabröd | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/grillmacka-med-surkalspesto-tomat-och-fetaost/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Grillmacka med surkålspesto, tomat och fetaost | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/gron-artsoppa-med-pepparrotskram-krutonger-och-agg/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Grön ärtsoppa med pepparrotskräm, krutonger och ägg | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/italienska-gnocchi-pa-brod-och-spenat/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Italienska gnocchi på bröd och spenat | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/klimatberaknade-recept/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Polarbröd |",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/korvwrap-med-mos/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Korvwrap med mos | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/laxlasagne/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Laxlasagne | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/lunch-box-tray/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Lunch box tray | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/makrillmums-med-jordgubbssmoothie/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Makrillmums med Jordgubbssmoothie | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/maltid/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Polarbröd | Maltid",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/mini-polarpizzor/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Mini Polarpizzor | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/minismorgasar-med-topping-av-tomat-gurka-eller-blabar/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Minismörgåsar med topping av tomat, gurka eller blåbär | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/minismorgastarta-sommar/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Minismörgåstårta sommar | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/morotsdrom-med-mangosmoothie/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Morotsdröm med Mangosmoothie | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/new-asian-symphony/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Asian Symphony | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/one-pan-veggie/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "One pan veggie | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/pitabrod-med-morotsbollar-gronsaker-och-aioli/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Pitabröd med morotsbollar, grönsaker och aioli | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/polarsemla/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Polarsemla | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/pulled-pease-pita/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Pulled Pease Pita | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/ragkaka-med-kyckling-och-citron/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Rågkaka med kyckling och citron | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/ragkaka-med-pumpa-och-paprikakram/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Rågkaka med pumpa och paprikakräm | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/ragkaka-med-svampfyllning/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Rågkaka med svampfyllning | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/rakmacka/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Räkmacka | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/rakor-de-lux/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Räkor de lux | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/sharing-tray/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Sharing tray | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/skona-grona-smorgasar/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Sköna gröna smörgåsar | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/sm-mackan/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "SM-mackan | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/smokey-spanish-caesar/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Smokey Spanish Caesar | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/smorgasar-med-gurksallad-och-ost-mozzarella-och-tomat/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Smörgåsar med gurksallad och ost & mozzarella och tomat | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/smorgastarta-havet/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Smörgåstårta Havet | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/smorgastarta-med-mozzarella-och-tomat/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Smörgåstårta med mozzarella och tomat | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/smorgastarta-med-potatis-chevre-och-cornichons/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Smörgåstårta med potatis, chevre och cornichons | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/smorgastarta-med-rokt-renkott-och-fetaost/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Smörgåstårta med rökt renkött och fetaost | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/snacking-tray/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Snacking Tray | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/tacovikare-med-chunky-salsa/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Tacovikare med chunky salsa | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/tillfalle/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Polarbröd | Tillfalle",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/tunnbrodsrulle-med-bonor-potatis-och-notter/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Tunnbrödsrulle med bönor, potatis och nötter | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/tunnbrodsrulle-med-grillad-kyckling-matvete-och-artkram/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Tunnbrödsrulle med grillad kyckling, matvete och ärtkräm | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/tunnbrodsrulle-med-rokt-sik-potatis-och-brynt-smor/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Tunnbrödsrulle med rökt sik, potatis och brynt smör | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/tunnbrodsrulle-med-syrad-morot-frascha-skott-och-hummus/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Tunnbrödsrulle med syrad morot, fräscha skott och hummus | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/typ-av-brod/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Polarbröd | Typ-av-brod",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/ugnsomelett-med-kycklingbacon-brod-och-grona-blad/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Ugnsomelett med kycklingbacon, bröd och gröna blad | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/varm-janssons-knackemacka/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Varm Janssons knäckemacka | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/varmrokt-laxmacka/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Varmrökt laxmacka | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/vegan-color-bliss/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Vegan Color Bliss | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/vegetarisk-burgare-med-lillrag/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Vegetarisk burgare med Lillråg | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/vegetarisk-ekologisk-tunnbrodslasagne/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Vegetarisk ekologisk tunnbrödslasagne | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/veggivore/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Veggivore | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/vetekaka-med-ost-radisor-och-marinerad-zucchini/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Vetekaka med ost, rädisor och marinerad zucchini | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/vikmacka-med-kycklingspett-och-tomatsalsa/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Vikmacka med kycklingspett och tomatsalsa | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/vit-polarpizza-med-lok/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Vit Polarpizza med lök | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice-recept/wrap-med-kryddig-korv-kalsallad-zucchini-och-picklad-rodkal/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Wrap med kryddig korv, kålsallad, zucchini och picklad rödkål | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice/broschyrer/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Broschyrer | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice/koncept/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Koncept | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/foodservice/polfarskt/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Polarmetoden | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/framtidsreceptet/framtidsreceptet-ar-3/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Framtidsreceptet år 3 | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/framtidsreceptet/framtidsreceptet-ar-tva-sveja/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Framtidsreceptet år två - Sveja | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/gothia/fototavling/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Fototävling | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/hallbarhet/miljomassiga-hallbarhetsmal/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Miljömässiga hållbarhetsmål | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/hallbarhet/samarbete-med-berte-qvarn/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Samarbete med Berte Qvarn | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/hallbarhet/valkommen-ut/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Välkommen ut | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/om-polarbrod/bagerimuseet/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Bagerimuseet | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/om-polarbrod/brodsponsring/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Brödsponsring | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/om-polarbrod/foretagsfakta/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Företagsfakta | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/om-polarbrod/sponsring/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Sponsring | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/om-polarbrod/tavlingar/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Tävlingar | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/polarbutiken/05-l-termos-i-rostfritt-stal/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "0,5 L Termos i rostfritt stål | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/polarbutiken/625-dagar-nar-polarbrod-reste-sig-ur-askan-kan-ej-kopas-med-poang/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "625 dagar – när Polarbröd reste sig ur askan | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/polarbutiken/bakstal-och-brodspade-kan-ej-kopas-med-poang/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Bakstål och brödspade | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/polarbutiken/handduk/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Handduk | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/polarbutiken/kasa-i-tra/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Kåsa i trä | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/polarbutiken/matlada-i-rostfritt-stal/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Matlåda i rostfritt stål | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/polarbutiken/mossa-fran-satila/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Mössa från Sätila | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/polarbutiken/mossa-med-uppvikt-kant/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Mössa med uppvikt kant | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/polarbutiken/multiscarf/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Multiscarf 3-pack | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/polarbutiken/polarpolare-orhange-midnattssolshjarta/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Polarpolare Örhänge - Midnattssolshjärta | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/polarbutiken/polarpolare-orhange-polarkaka-midnattssol/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Polarpolare Örhänge - Polarkaka & Midnattssol | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/polarbutiken/polarpolare-orhangen-dubbelhjarta/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Polarpolare Örhängen - Dubbelhjärta | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/polarbutiken/polarpolare-orhangen-polarkaka/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Polarpolare Örhängen - Polarkaka | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/polarbutiken/sittunderlag-i-filt/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Sittunderlag i filt 2-pack | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/polarbutiken/strumpor-i-polarbrods-farger/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Strumpor i Polarbröds färger, 2-pack | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/polarbutiken/t-shirt-barn/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "T-shirt barn | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/polarbutiken/t-shirt-dam/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "T-shirt dam | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/polarbutiken/t-shirt-herr/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "T-shirt herr | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/polarbutiken/tygkasse-i-ekologisk-bomull/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Tygkasse i ekologisk bomull | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/polarbutiken/ullvantar-med-mjukt-foder/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Ullvantar med mjukt foder | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/polarbutiken/utstickare-historien-om-polarbrod-kan-ej-kopas-med-poang/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Utstickare - Historien om Polarbröd | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/recept/abisko-jordgubbsbakelse/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Abisko jordgubbsbakelse | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/recept/abisko-med-agg-och-farskost/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Abisko med ägg och färskost | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/recept/abisko-med-avokado-och-gorgonzola/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Abisko med avokado och gorgonzola | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/recept/abisko-med-renskav/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Abisko med renskav | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.polarbrod.se/recept/abisko-omelett/",
+      "score": 3.0,
+      "reasons": [],
+      "title": "Abisko omelett | Polarbröd",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    }
+  ]
+}

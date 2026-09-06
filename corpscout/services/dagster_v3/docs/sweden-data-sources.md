@@ -283,6 +283,12 @@ at publication year 2020, so pre-2020 periods appear only via late filings.
 
 ## What is missing / what should be done next
 
+The items below are data-quality and completeness work on the sources we
+already ingest. Proposed *new* sources (Skatteverket status flags,
+Kronofogden, SCB establishments/group structure, Bolagsverket events, PRV,
+press releases…) and their recommended order live in
+`sweden-new-data-sources-proposal.md`.
+
 Ordered roughly by value-for-effort:
 
 1. **Translations (planned, not executed)** —

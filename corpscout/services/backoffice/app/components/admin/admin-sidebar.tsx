@@ -10,6 +10,7 @@ import {
   FlagIcon,
   MapPinIcon,
   PlayIcon,
+  SearchIcon,
   Settings2Icon,
   SlidersHorizontalIcon,
   TagsIcon,
@@ -126,6 +127,19 @@ export function AdminSidebar() {
         <SidebarGroup>
           <SidebarGroupLabel>Workspace</SidebarGroupLabel>
           <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                isActive={
+                  pathname === "/admin/common-crawl" ||
+                  pathname.startsWith("/admin/common-crawl/")
+                }
+                tooltip="Common Crawl evidence"
+                render={<Link to="/admin/common-crawl" />}
+              >
+                <SearchIcon />
+                <span>Common Crawl</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
             <SidebarMenuItem>
               <SidebarMenuButton
                 isActive={pathname === "/admin/esef"}

@@ -416,6 +416,41 @@ class LlmPageSelectionTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("https://www.example.se/en/about-us", prompt)
         self.assertIn("Never invent", prompt)
 
+    async def test_uses_a_supplied_prompt_verbatim(self) -> None:
+        candidates = [_candidate("https://www.example.se/en/about-us", score=44.0)]
+        seen: list[str] = []
+
+        async def fake_turn(**kwargs):
+            seen.append(kwargs["prompt"])
+            return StructuredTurnOutcome(
+                value=PageSelectionResponse(
+                    pages=[
+                        PageSelectionDecision(
+                            url="https://www.example.se/en/about-us",
+                            reason="r",
+                            expected_fields=[],
+                        )
+                    ]
+                ),
+                token_usage=None,
+                error=None,
+            )
+
+        with patch("ex3.llm_selection.run_structured_turn", new=fake_turn):
+            picks, status = await select_pages_with_llm(
+                candidates,
+                base_url=BASE_URL,
+                limit=5,
+                timeout_seconds=30,
+                prompt="CUSTOM PROMPT TEXT",
+            )
+
+        self.assertEqual(seen, ["CUSTOM PROMPT TEXT"])
+        self.assertEqual(
+            [pick.url for pick in picks], ["https://www.example.se/en/about-us"]
+        )
+        self.assertTrue(status.succeeded)
+
 
 if __name__ == "__main__":
     unittest.main()

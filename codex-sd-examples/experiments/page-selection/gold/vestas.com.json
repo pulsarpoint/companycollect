@@ -1,0 +1,50 @@
+{
+  "domain": "vestas.com",
+  "base_url": "https://www.vestas.com/en",
+  "must_have": {
+    "home": [
+      "https://www.vestas.com/en"
+    ],
+    "about": [
+      "https://www.vestas.com/en/media/company-news/2012/election-of-group-representatives-for-the-board-of-dire-c2964289",
+      "https://www.vestas.com/en/media/company-news/2015/election-of-group-representatives-for-the-board-of-dire-c2963907",
+      "https://www.vestas.com/en/media/company-news/2019/election-of-group-representatives-for-the-board-of-dire-c2973711",
+      "https://www.vestas.com/en/media/company-news/2024/election-of-group-representatives-for-the-board-of-dire-c3950901",
+      "https://www.vestas.com/en/media/company-news"
+    ],
+    "contact": [
+      "https://www.vestas.com/en/about/our-locations"
+    ],
+    "management": [
+      "https://www.vestas.com/en/media/company-news/2012/election-of-group-representatives-for-the-board-of-dire-c2964289",
+      "https://www.vestas.com/en/media/company-news/2015/election-of-group-representatives-for-the-board-of-dire-c2963907",
+      "https://www.vestas.com/en/media/company-news/2019/election-of-group-representatives-for-the-board-of-dire-c2973711",
+      "https://www.vestas.com/en/media/company-news/2024/election-of-group-representatives-for-the-board-of-dire-c3950901",
+      "https://www.vestas.com/en/investor/the-ir-team"
+    ],
+    "careers": [
+      "https://www.vestas.com/en/careers/early-careers",
+      "https://www.vestas.com/en/media/company-news/2018/vestas-to-create-local-jobs-and-play-leading-part-in-re-c2963296",
+      "https://www.vestas.com/en/careers",
+      "https://www.vestas.com/en/careers/early-careers/student-jobs-and-internships",
+      "https://www.vestas.com/en/careers/job-openings"
+    ],
+    "products_services": [
+      "https://www.vestas.com/en/about/our-locations",
+      "https://www.vestas.com/en/sustainability/sustainability-product-offerings",
+      "https://www.vestas.com/en/about/our-partners",
+      "https://www.vestas.com/en/media/company-news/2017/esb-awards-vestas-four-lifetime-service-contracts-in-ir-c2963565",
+      "https://www.vestas.com/en/about/our-locations/sales-and-service"
+    ],
+    "group_structure": [
+      "https://www.vestas.com/en/media/company-news/2012/election-of-group-representatives-for-the-board-of-dire-c2964289",
+      "https://www.vestas.com/en/media/company-news/2015/election-of-group-representatives-for-the-board-of-dire-c2963907",
+      "https://www.vestas.com/en/media/company-news/2019/election-of-group-representatives-for-the-board-of-dire-c2973711",
+      "https://www.vestas.com/en/media/company-news/2024/election-of-group-representatives-for-the-board-of-dire-c3950901",
+      "https://www.vestas.com/en/media/company-news/2013/vestas-appoints-anders-runevad-as-group-president---ceo-c2964172"
+    ],
+    "legal_identity": []
+  },
+  "junk": [],
+  "notes": "Draft generated from URL slugs and titles; correct by hand."
+}

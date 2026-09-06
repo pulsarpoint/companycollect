@@ -1,0 +1,3177 @@
+{
+  "domain": "vestas.com",
+  "base_url": "https://www.vestas.com/en",
+  "preferred_languages": [
+    "en"
+  ],
+  "built_at": "2026-09-03T23:20:09+00:00",
+  "inventory_urls": 1864,
+  "eligible_urls": 1864,
+  "excluded_urls": 0,
+  "candidates": [
+    {
+      "url": "https://www.vestas.com/en",
+      "score": 68.0,
+      "reasons": [
+        "homepage",
+        "base locale"
+      ],
+      "title": "Global Leader in Sustainable Energy | Vestas",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2012/election-of-group-representatives-for-the-board-of-dire-c2964289",
+      "score": 60.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "Election of group representatives for the Board of Directors of Vestas Wind Systems A/S",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2015/election-of-group-representatives-for-the-board-of-dire-c2963907",
+      "score": 60.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "Election of group representatives for the Board of Directors of Vestas Wind Systems A/S",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2019/election-of-group-representatives-for-the-board-of-dire-c2973711",
+      "score": 60.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "Election of group representatives for the Board of Directors of Vestas Wind Systems A/S",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2024/election-of-group-representatives-for-the-board-of-dire-c3950901",
+      "score": 60.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "Election of Group Representatives for the Board of Directors of Vestas Wind Systems A/S",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news",
+      "score": 56.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": "Company News",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/investor/the-ir-team",
+      "score": 51.0,
+      "reasons": [
+        "base locale",
+        "people",
+        "press"
+      ],
+      "title": "The IR Team",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2021/vestas-underlines-sustainability-leadership-by-outlinin-c3431492",
+      "score": 50.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "Vestas underlines sustainability leadership by outlining pathway to circularity",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/about/our-governance/board-of-directors",
+      "score": 48.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "title mentions people"
+      ],
+      "title": "Board of Directors",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/about/our-governance/our-management",
+      "score": 48.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "title mentions people"
+      ],
+      "title": "Our Management",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2021/vestas-annual-report-2020---continued-leadership-in-a-c-c3283502",
+      "score": 45.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people",
+        "title mentions press"
+      ],
+      "title": "Vestas Annual Report 2020 – Continued leadership in a challenging year",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/about",
+      "score": 44.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/about/this-is-vestas/history",
+      "score": 43.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "title mentions about"
+      ],
+      "title": "Our History",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/about/our-governance",
+      "score": 41.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "Our Governance",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2012/change-in-the-executive-management-of-vestas-c2964335",
+      "score": 40.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "Change in the Executive Management of Vestas",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2012/election-of-members-to-the-board-of-directors-c2964329",
+      "score": 40.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "Election of members to the Board of Directors",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2012/election-of-members-to-the-board-of-directors-of-vestas-c2964333",
+      "score": 40.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "Election of members to the Board of Directors of Vestas Wind Systems A/S",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2014/new-board-member-elected-by-the-employees-to-join-vesta-c2964072",
+      "score": 40.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "New board member elected by the employees to join Vestas’ Board of Directors",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2017/auction-wins-confirm-vestas--leadership-in-italy-c2963555",
+      "score": 40.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "Auction wins confirm Vestas’ leadership in Italy",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2018/change-in-the-board-of-directors-of-vestas-wind-systems-c2963361",
+      "score": 40.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "Change in the Board of Directors of Vestas Wind Systems A/S",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2018/new-106-mw-order-extends-vestas--argentinean-leadership-c2963383",
+      "score": 40.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "New 106 MW order extends Vestas’ Argentinean leadership",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2018/vestas-extends-leadership-in-japan-with-47-mw-order-c2963371",
+      "score": 40.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "Vestas extends leadership in Japan with 47 MW order",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2018/vestas-extends-market-leadership-with-a-225-mw-order-fo-c2963322",
+      "score": 40.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "Vestas extends market leadership with a 225 MW order for four projects in Argentina",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2018/vestas-extends-market-leadership-with-fifth-epc-project-c2963273",
+      "score": 40.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "Vestas extends market leadership with fifth EPC project in Jordan",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2018/vestas-reinforces-its-leadership-in-italy-with-36-mw-au-c2963276",
+      "score": 40.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "Vestas reinforces its leadership in Italy with 36 MW auction win",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2019/vestas---change-in-the-board-of-directors-of-vestas-win-c2963166",
+      "score": 40.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "Vestas - Change in the Board of Directors of Vestas Wind Systems A/S",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2019/vestas---new-member-of-the-executive-management-of-vest-c2963164",
+      "score": 40.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "Vestas - New member of the Executive Management of Vestas Wind Systems A/S",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2019/vestas--board-of-directors-to-nominate-helle-thorning-s-c2963240",
+      "score": 40.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "Vestas' Board of Directors to nominate Helle Thorning-Schmidt as new member of the Board",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2019/vestas-reinforces-its-leadership-in-chile-with-185-mw-o-c2986887",
+      "score": 40.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "Vestas reinforces its leadership in Chile with 185 MW order",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2019/vestas-reinforces-its-leadership-in-greece-with-54-mw-o-c2963147",
+      "score": 40.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "Vestas reinforces its leadership in Greece with 54 MW order",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2019/vestas-strengthens-its-executive-management-with-newly--c2983558",
+      "score": 40.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "Vestas strengthens its Executive Management with newly appointed EVP of People and Culture and appoints new interim EVP of Manufacturing & Global Procurement",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2020/auction-win-reinforces-vestas--leadership-in-italy-c3137376",
+      "score": 40.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "Auction win reinforces Vestas’ leadership in Italy",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2020/change-in-the-board-of-directors-of-vestas-wind-systems-c3102180",
+      "score": 40.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "Change in the Board of Directors of Vestas Wind Systems A/S",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2020/vestas-reinforces-its-market-leadership-by-surpassing-1-c3208036",
+      "score": 40.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "Vestas reinforces its market leadership by surpassing 1 GW of order intake in Russia",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2020/vestas-reinforces-its-market-leadership-in-poland-by-su-c3150802",
+      "score": 40.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "Vestas reinforces its market leadership in Poland by surpassing 1 GW of order intake from auctions",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2020/vestas-strengthens-its-leadership-in-greece-with-43-mw--c3244851",
+      "score": 40.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "Vestas strengthens its leadership in Greece with 43 MW auction win",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2022/change-in-the-board-of-directors-of-vestas-wind-systems-c3525845",
+      "score": 40.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "Change in the Board of Directors of Vestas Wind Systems A/S",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2024/william-fehrman-steps-down-from-the-board-of-directors--c4023966",
+      "score": 40.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "William Fehrman steps down from the Board of Directors of Vestas Wind Systems A/S",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2025/vestas-strengthens-its-market-leadership-in-romania-wit-c4172056",
+      "score": 40.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "Vestas strengthens its market leadership in Romania with new 143 MW order",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/about/our-governance/governance-model",
+      "score": 38.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "Governance Model",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/about/our-governance/governance-principles",
+      "score": 38.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "Governance Principles",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/about/our-locations",
+      "score": 38.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering",
+        "title mentions contact"
+      ],
+      "title": "Contact | Vestas",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/about/this-is-vestas/our-values",
+      "score": 38.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "Our Values",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/sustainability/sustainability-product-offerings",
+      "score": 38.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering"
+      ],
+      "title": "Sustainability Product Offerings | Vestas",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/careers/early-careers",
+      "score": 36.0,
+      "reasons": [
+        "base locale",
+        "careers",
+        "title mentions careers"
+      ],
+      "title": "Early Careers | Vestas",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2012/election-of-company-employee-representatives-for-the-bo-c2964293",
+      "score": 35.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "Election of company employee representatives for the Board of Directors of Vestas Wind Systems A/S",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2015/election-of-company-employee-representatives-for-the-bo-c2963909",
+      "score": 35.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "Election of company employee representatives for the Board of Directors of Vestas Wind Systems A/S",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2018/ceylon-electricity-board-awards-vestas-sri-lanka-s-firs-c2963249",
+      "score": 35.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Ceylon Electricity Board awards Vestas Sri Lanka’s first large scale wind park with 104 MW EPC project",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2018/vestas-to-create-local-jobs-and-play-leading-part-in-re-c2963296",
+      "score": 35.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "careers",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions careers"
+      ],
+      "title": "Vestas to create local jobs and play leading part in restart of South Africa’s wind market",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2019/election-of-company-employee-representatives-for-the-bo-c2971016",
+      "score": 35.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "Election of company employee representatives for the Board of Directors of Vestas Wind Systems A/S",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2019/notification-of-executives-and-closely-associated-trans-c2963153",
+      "score": 35.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Notification of Executives and closely associated transactions with Vestas shares",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2020/notification-of-executives--transactions-with-vestas-sh-c3028003",
+      "score": 35.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Notification of Executives’ transactions with Vestas shares",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2020/notification-of-executives--transactions-with-vestas-sh-c3104291",
+      "score": 35.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Notification of Executives’ transactions with Vestas shares",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2021/notification-of-executives--transaction-with-vestas-sha-c3285781",
+      "score": 35.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Notification of Executives' transaction with Vestas shares",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2021/notification-of-executives--transactions-with-vestas-sh-c3283858",
+      "score": 35.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Notification of Executives’ transactions with Vestas shares",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2021/notification-of-executives--transactions-with-vestas-sh-c3340667",
+      "score": 35.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Notification of Executives’ transactions with Vestas shares",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2022/notification-of-executives--transactions-with-vestas-sh-c3560157",
+      "score": 35.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Notification of Executives’ transactions with Vestas shares",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2023/bert-nordberg--chair-of-the-board-of-vestas-wind-system-c3730161",
+      "score": 35.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Bert Nordberg, Chair of the Board of Vestas Wind Systems A/S, will not stand for re-election",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2023/kerstin-knapp-to-step-down-as-vestas--chief-people---cu-c3825687",
+      "score": 35.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Kerstin Knapp to step down as Vestas’ Chief People & Culture Officer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2023/notification-of-executives--transactions-with-vestas-sh-c3767164",
+      "score": 35.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Notification of Executives’ transactions with Vestas shares",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2023/vestas-appoints-anne-pearce-as-new-chief-people---cultu-c3845697",
+      "score": 35.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas appoints Anne Pearce as new Chief People & Culture Officer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2024/election-of-company-employee-representatives-to-the-boa-c3948210",
+      "score": 35.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "Election of company employee representatives to the Board of Directors of Vestas Wind Systems A/S",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2024/notification-of-executives--transactions-with-vestas-sh-c3971901",
+      "score": 35.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Notification of Executives’ transactions with Vestas shares",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2025/notification-of-executives--transactions-with-vestas-sh-c4146654",
+      "score": 35.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Notification of Executives’ transactions with Vestas shares",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2025/notification-of-executives--transactions-with-vestas-sh-c4147571",
+      "score": 35.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Notification of Executives’ transactions with Vestas shares",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2026/notification-of-executives--transactions-with-vestas-sh-c4345802",
+      "score": 35.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Notification of Executives’ transactions with Vestas shares",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/careers",
+      "score": 34.0,
+      "reasons": [
+        "base locale",
+        "careers"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/about/our-partners",
+      "score": 33.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering"
+      ],
+      "title": "Our Partners",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/careers/early-careers/student-jobs-and-internships",
+      "score": 33.0,
+      "reasons": [
+        "base locale",
+        "careers",
+        "title mentions careers"
+      ],
+      "title": "Student Jobs and Internships",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2017/esb-awards-vestas-four-lifetime-service-contracts-in-ir-c2963565",
+      "score": 32.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "ESB awards Vestas four lifetime service contracts in Ireland",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/careers/job-openings",
+      "score": 31.0,
+      "reasons": [
+        "base locale",
+        "careers"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/press-office",
+      "score": 31.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "title mentions press"
+      ],
+      "title": "Press Office | Vestas",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/about/our-locations/sales-and-service",
+      "score": 30.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering"
+      ],
+      "title": "Sales and Service",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/about/our-partners/Customers",
+      "score": 30.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering"
+      ],
+      "title": "Customers",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2013/vestas-appoints-anders-runevad-as-group-president---ceo-c2964172",
+      "score": 30.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas appoints Anders Runevad as Group President & CEO",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2016/vestas-announces-new-group-senior-vice-president-for-ma-c2963788",
+      "score": 30.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas announces new Group Senior Vice President for Marketing, Communications, and Public Affairs",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2016/vestas-announces-new-group-senior-vice-president-for-pe-c2963739",
+      "score": 30.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas announces new Group Senior Vice President for People & Culture",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2017/vestas-announces-president-and-group-senior-vice-presid-c2963672",
+      "score": 30.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas announces President and Group Senior Vice President for Asia-Pacific Sales Business Unit",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2018/vestas-upgrades-ikea-group-s-global-fleet-of-vestas-tur-c2963328",
+      "score": 30.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas upgrades IKEA Group’s global fleet of Vestas turbines to maximise asset value",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2019/vestas-becomes-the-first-company-to-install-100-gw-of-w-c2963243",
+      "score": 30.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas becomes the first company to install 100 GW of wind turbines",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2020/macquarie-s-green-investment-group-places-80-mw-order-i-c3078337",
+      "score": 30.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Macquarie’s Green Investment Group places 80 MW order in Norway",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2022/vestas-named-most-sustainable-company-in-the-world-c3488428",
+      "score": 30.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas named most sustainable company in the world",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2024/major-shareholder-announcement---change-in-group-struct-c4048708",
+      "score": 30.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Major shareholder announcement - change in group structure of BlackRock, Inc.",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2025/major-shareholder-announcement--change-in-group-structu-c4200451",
+      "score": 30.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Major shareholder announcement – change in group structure of BlackRock, Inc.",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2026/major-shareholder-announcement---the-capital-group-comp-c4348865",
+      "score": 30.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Major shareholder announcement - The Capital Group Companies, Inc.",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/mwow-press-releases/2018/Largest-MW-Project-Company-History",
+      "score": 30.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "MHI Vestas Signs Firm Order for Largest MW Project in Company History",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/mwow-press-releases/2018/mhi-vestas-launches-the-first-10-mw-wind-turbine-in-history",
+      "score": 30.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "MHI Vestas Launches the First 10 MW Wind Turbine in History",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media",
+      "score": 29.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": "Media | Vestas",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/sustainability",
+      "score": 29.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/careers/life-at-vestas/career-directions",
+      "score": 28.0,
+      "reasons": [
+        "base locale",
+        "careers"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/pages/campaigns/careers",
+      "score": 28.0,
+      "reasons": [
+        "base locale",
+        "careers"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/energy-solutions",
+      "score": 26.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": "Energy Solutions",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/investor/reports-and-presentations",
+      "score": 26.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": "Reports and Presentations | Vestas",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/social-media",
+      "score": 26.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": "Social Media",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/sustainability/reports-and-ratings",
+      "score": 26.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": "Reports & Ratings",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/sustainability/supplier-sustainability",
+      "score": 26.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": "Supplier Sustainability",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/sustainability/sustainability-strategy",
+      "score": 26.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": "Sustainability Strategy",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/energy-solutions/energy-solutions",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": "Energy Solutions",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/energy-solutions/service",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": "Service",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/investor/reports-and-presentations/esg-related",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": "ESG Related",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/sustainability/social/csr",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": "Corporate Social Responsibility",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/about/our-locations/production",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering"
+      ],
+      "title": "Production",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/about/our-locations/research",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering"
+      ],
+      "title": "Research",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/about/our-partners/Partnerships",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering"
+      ],
+      "title": "Partnerships",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/about/our-partners/Suppliers",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering"
+      ],
+      "title": "Suppliers",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/about/our-partners/digital-procurement",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering"
+      ],
+      "title": "Digital Procurement | Vestas",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2012/vestas-receives-service-contract-renewals-for-a-total-c-c2964263",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas receives service contract renewals for a total capacity of 533 MW",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2012/vestas-secures-its-largest-service-contract-renewal-for-c2964297",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas secures its largest service contract renewal for 1,897 MW",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2012/vestas-signs-renewal-for-service-contracts-for-192-mw-w-c2964273",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas signs renewal for service contracts for 192 MW with FRI-EL Green Power in Italy",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2013/vestas-and-mitsubishi-heavy-industries-form-a-joint-ven-c2964162",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas and Mitsubishi Heavy Industries form a joint venture dedicated to offshore wind energy",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2013/vestas-receives-a-10-year-service-contract-renewal-for--c2964213",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas receives a 10-year service contract renewal for 120 MW",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2015/vestas-acquires-us-independent-service-provider-upwind--c2963893",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas acquires US independent service provider UpWind Solutions",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2015/vestas-receives-a-10-year-service-contract-extension-fo-c2964020",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas receives a 10-year service contract extension for 429 MW in the USA",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2016/mitsubishi-heavy-industries-ltd--will-not-exercise-the--c2963837",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Mitsubishi Heavy Industries Ltd. will not exercise the option to change the ownership ratio of MHI Vestas Offshore Wind A/S",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2016/upwind-solutions-signs-service-contract-for-1-75-gw-of--c2963821",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "UpWind Solutions signs service contract for 1.75 GW of GE 1.5 MW turbines",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2016/vestas-receives-21-mw-order-and-10-year-service-contrac-c2963706",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas receives 21 MW order and 10-year service contract in Ukraine",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2016/vestas-receives-30-mw-order-and-20-year-service-contrac-c2963710",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas receives 30 MW order and 20-year service contract from citizen-owned wind power plant in northern Germany",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2016/vestas-receives-45-mw-order-and-20-year-service-contrac-c2963772",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas receives 45 MW order and 20-year service contract for repowering project in Germany",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2016/vestas-receives-a-15-year-service-contract-extension-fo-c2963873",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas receives a 15-year service contract extension for 570 MW in the USA",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2016/vestas-renews-632-mw-service-portfolio-with-c2c-power-l-c2963757",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas renews 632 MW Service portfolio with C2C Power LP",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2016/vestas-to-acquire-germany-based-independent-service-pro-c2963871",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas to acquire Germany-based independent service provider Availon",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2016/vestas-wins-53-mw-epc-order-and-20-year-service-contrac-c2963808",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas wins 53 MW EPC order and 20-year service contract in Germany",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2016/vestas-wins-large-scale-customised-service-order-in-chi-c2963846",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas wins large-scale customised service order in China",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2017/tall-tower-solutions-secure-another-order-in-china-c2963540",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Tall tower solutions secure another order in China",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2017/vestas-receives-15-year-service-contract-for-seven-wind-c2963620",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas receives 15-year service contract for seven wind parks in Sweden",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2017/vestas-seals-557-mw-fleet-wide-service-deal-in-australi-c2963604",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas seals 557 MW fleet-wide service deal in Australia with Infigen",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2017/vestas-signs-15-year-renewal-of-150-mw-service-agreemen-c2963619",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas signs 15-year renewal of 150 MW service agreement with EverPower",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2018/copenhagen-infrastructure-partners-places-135-mw-order--c2963424",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Copenhagen Infrastructure Partners places 135 MW order including quarter of a century-long AOM 5000 service agreement",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2018/vestas-and-maersk-supply-service-partner-to-lower-logis-c2963370",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas and Maersk Supply Service partner to lower logistics and installation costs within sustainable energy solutions",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2018/vestas-partners-globally-with-inspectools-to-expand-and-c2963441",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas partners globally with InspecTools to expand and digitalise blade service offerings",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2018/vestas-partners-with-leading-gearbox-manufacturer-zf-c2963357",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas partners with leading gearbox manufacturer ZF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2018/vestas-partners-with-swedish-utility--vattenfall--and-d-c2963384",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas partners with Swedish utility, Vattenfall, and Danish pension fund, PKA, for 353 MW wind energy project in Sweden",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2018/vestas-partners-with-tuuliwatti-oy-on-first-v150-4-2-mw-c2963362",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas partners with TuuliWatti Oy on first V150-4.2 MW order and Cable Stayed Towers",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2018/vestas-renews-long-term-service-agreements-for-602-mw-i-c2963321",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas renews long-term service agreements for 602 MW in the U.S.",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2018/vestas-secures-10-year-renewal-of-1-150-mw-service-port-c2963417",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas secures 10-year renewal of 1,150 MW service portfolio across the U.S. wind belt",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2019/novatus-energy-extends-service-agreements-to-20-years-w-c2963219",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Novatus Energy extends service agreements to 20 years with Vestas for 1,043 MW fleet in the U.S.",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2019/vestas-develops-customised-solutions-featuring-v150-4-2-c2963208",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas develops customised solutions featuring V150-4.2 MW turbines to secure two projects in Finland",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2019/vestas-secures-337-mw-order-in-us-with-20-year-service--c2963137",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas secures 337 MW order in US with 20-year service agreement",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2019/vestas-secures-42-mw-order-with-27-year-service-agreeme-c2971914",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas secures 42 MW order with 27-year service agreement in Sweden",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2019/vestas-secures-service-order-to-upgrade-100-mw-of-datan-c2974950",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas secures service order to upgrade 100 MW of Datang’s fleet of Vestas turbines in China",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2019/vestas-to-strengthen-mercury-s-renewable-portfolio-by-d-c2963224",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas to strengthen Mercury’s renewable portfolio by delivering its first wind asset",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2019/vestas-wins-230-mw-order-in-us-with-20-year-service-agr-c2963144",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas wins 230 MW order in US with 20-year service agreement",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2020/vestas-and-mitsubishi-heavy-industries-close-partnershi-c3254048",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2020/vestas-and-mitsubishi-heavy-industries-strengthen-partn-c3227505",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2020/vestas-invests-in-copenhagen-infrastructure-partners-to-c3257805",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2020/vestas-secures-34-mw-order-with-a-long-term-service-agr-c3259963",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2020/vestas-secures-service-agreement-for-senvion-turbines-i-c3050999",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2020/vestas-secures-service-agreements-for-senvion-turbines--c3128290",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2020/vestas-wins-54-mw-multibrand-service-agreement-in-the-p-c3163552",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2020/vestas-wins-99-mw-order-with-first-20-year-service-cont-c3078056",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2020/vestas-wins-v155-3-3-mw-order-with-long-term-service-co-c3145112",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas wins V155-3.3 MW order with long-term service contract in China",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2021/boralex-and-vestas-sign-full-scope-long-term-service-ag-c3377589",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Boralex and Vestas sign full scope long-term service agreement in France",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2021/vestas-partners-with-vitol-wind-on-a-240-mw-repowering--c3416431",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas partners with Vitol Wind on a 240 MW repowering project in the USA",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2021/vestas-wins-430-mw-multibrand-service-agreement-in-braz-c3479574",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas wins 430 MW multibrand service agreement in Brazil",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2022/vestas-partners-with-a2a-to-build-a-30-mw-wind-park-in--c3537435",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas partners with A2A to build a 30 MW wind park in Sicily",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2022/vestas-partners-with-pan-american-energy-to-build-a-423-c3560877",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas partners with Pan American Energy to build a 423 MW wind park in Brazil",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2022/vestas-partners-with-pec-energia-for-86-mw-wind-park-in-c3594468",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas partners with PEC Energia for 86 MW wind park in Brazil",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2023/orsted-and-vestas-in-industry-first-pioneering-partners-c3782620",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Ørsted and Vestas in industry-first pioneering partnership towards net-zero wind farms",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2023/vestas-and-kk-wind-solutions-strengthen-partnership-wit-c3725600",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas and KK Wind Solutions strengthen partnership with transfer of converters and controls business",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2023/vestas-partners-with-pampa-energia-to-build-a-95-mw-win-c3729557",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas partners with Pampa Energía to build a 95 MW wind park in Argentina",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2023/vestas-sells-656-mw-wind-portfolio-in-italy-to-plt-ener-c3900562",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas sells 656 MW wind portfolio in Italy to PLT Energia",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2023/vestas-wins-first-order-in-italy-with-a-35-year-service-c3795806",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas wins first order in Italy with a 35-year service agreement",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2024/vestas-development-sells-277-mw-wind-portfolio-in-italy-c4086942",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas Development sells 277 MW wind portfolio in Italy",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2024/vestas-introduces-low-emission-steel-offering-for-wind--c3909530",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas introduces low-emission steel offering for wind turbines",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2024/vestas-plans-to-establish-a-second-offshore-factory-in--c3907387",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas plans to establish a second offshore factory in Poland to meet growing demand for offshore wind in Europe",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2026/vestas-sets-out-plans-to-build-nacelle-factory-in-scotl-c4326269",
+      "score": 22.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas sets out plans to build nacelle factory in Scotland, UK",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/about/this-is-vestas",
+      "score": 21.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "This is Vestas",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/about/vestas-ventures",
+      "score": 21.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "Vestas Ventures",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/energy-solutions/service/digital-services",
+      "score": 20.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": "Digital Services",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/energy-solutions/service/vestas-service-track-record",
+      "score": 20.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": "Vestas Service Track Record",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2016/news-release-from-vestas-northern-europe-c2963745",
+      "score": 20.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "News release from Vestas Northern Europe",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2021/vestas-ranked-as-global-leader-in-sustainability-perfor-c3474397",
+      "score": 20.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas ranked as global leader in sustainability performance",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/company-news/2021/vestas-signs-new-eur-2-000-million-sustainability-linke-c3336635",
+      "score": 20.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Vestas signs new EUR 2,000 million sustainability-linked revolving credit facility",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/pages/campaigns/products",
+      "score": 20.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/about/our-partners/Partnerships/CASTRO",
+      "score": 19.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering",
+        "deep path"
+      ],
+      "title": "CASTRO",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/about/our-partners/Partnerships/Our-university-partnerships",
+      "score": 19.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering",
+        "deep path"
+      ],
+      "title": "Our University Partnerships",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/blog/our-people/locky-s-journey-with-vestas",
+      "score": 18.333333333333332,
+      "reasons": [
+        "base locale",
+        "people",
+        "press",
+        "deep path"
+      ],
+      "title": "Locky's Journey With Vestas",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/blog/our-people/meet-magdalena-karpiska",
+      "score": 18.333333333333332,
+      "reasons": [
+        "base locale",
+        "people",
+        "press",
+        "deep path"
+      ],
+      "title": "Meet Magdalena Karpińska",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/blog/our-people/meet-paulina-saja",
+      "score": 18.333333333333332,
+      "reasons": [
+        "base locale",
+        "people",
+        "press",
+        "deep path"
+      ],
+      "title": "Meet Paulina Saja",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/about/this-is-vestas/our-capabilities",
+      "score": 18.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "Our Capabilities",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/careers/life-at-vestas",
+      "score": 17.666666666666664,
+      "reasons": [
+        "base locale",
+        "careers"
+      ],
+      "title": "Your Career at Vestas",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/careers/our-recruitment-process",
+      "score": 17.666666666666664,
+      "reasons": [
+        "base locale",
+        "careers"
+      ],
+      "title": "Our Recruitment Process",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/sustainability/sustainability-product-offerings/blade-circularity",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering"
+      ],
+      "title": "Blade Circularity",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/sustainability/sustainability-product-offerings/low-emission-steel",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering"
+      ],
+      "title": "Low-Emission Steel",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/blog",
+      "score": 16.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": "Vestas Blog",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/images",
+      "score": 16.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": "Images",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/media/videos",
+      "score": 16.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/sustainability/corporate-integrity",
+      "score": 16.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": "Corporate Integrity | Vestas",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/sustainability/environment",
+      "score": 16.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": "Environment | Sustainability at Vestas",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/sustainability/eu-taxonomy",
+      "score": 16.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": "EU Taxonomy",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/sustainability/social",
+      "score": 16.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": "Social | Vestas",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/energy-solutions/development",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": "Development | Vestas",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/energy-solutions/offshore-wind-turbines",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": "Offshore Wind Turbines | Vestas",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/energy-solutions/onshore-wind-turbines",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": "Onshore Wind Turbines | Vestas",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/careers/early-careers/Apprentice-and-traineeships",
+      "score": 14.666666666666666,
+      "reasons": [
+        "base locale",
+        "careers"
+      ],
+      "title": "Apprentice- and Traineeships",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/careers/early-careers/graduate-programme",
+      "score": 14.666666666666666,
+      "reasons": [
+        "base locale",
+        "careers"
+      ],
+      "title": "Vestas Graduate Programme",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/careers/early-careers/project-collaboration",
+      "score": 14.666666666666666,
+      "reasons": [
+        "base locale",
+        "careers"
+      ],
+      "title": "Project Collaboration",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/careers/life-at-vestas/your-development",
+      "score": 14.666666666666666,
+      "reasons": [
+        "base locale",
+        "careers"
+      ],
+      "title": "Your Development",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/archive",
+      "score": 14.0,
+      "reasons": [
+        "base locale"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.vestas.com/en/investor",
+      "score": 14.0,
+      "reasons": [
+        "base locale"
+      ],
+      "title": "Investor | Vestas",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    }
+  ]
+}

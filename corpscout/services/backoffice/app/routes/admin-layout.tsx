@@ -53,11 +53,26 @@ function useTechnologyLabel(pathname: string): string {
   return data?.technology.technology ?? decodeURIComponent(slug);
 }
 
+function useCommonCrawlDomain(pathname: string): string {
+  const data = useRouteLoaderData("routes/admin-common-crawl-domain") as
+    | { domain: string }
+    | undefined;
+  return (
+    data?.domain ??
+    (pathname.startsWith("/admin/common-crawl/")
+      ? pathname.slice("/admin/common-crawl/".length)
+      : "")
+  );
+}
+
 function AdminBreadcrumbs() {
   const { pathname } = useLocation();
   const companyId = seCompanyIdFromPath(pathname);
   const companyLabel = useSeCompanyLabel(companyId);
   const technologyLabel = useTechnologyLabel(pathname);
+  const commonCrawlDomain = useCommonCrawlDomain(pathname);
+  const onCommonCrawlIndexPage = pathname === "/admin/common-crawl";
+  const onCommonCrawlDetailPage = pathname.startsWith("/admin/common-crawl/");
   const onTechnologiesIndexPage = pathname === "/admin/technologies";
   const onTechnologyDetailPage = pathname.startsWith("/admin/technologies/");
   const onGeneralRolesPage = pathname === "/admin/general/roles";
@@ -81,6 +96,36 @@ function AdminBreadcrumbs() {
           <BreadcrumbItem>
             <BreadcrumbPage>ESEF</BreadcrumbPage>
           </BreadcrumbItem>
+        </BreadcrumbList>
+      </Breadcrumb>
+    );
+  }
+
+  if (onCommonCrawlIndexPage || onCommonCrawlDetailPage) {
+    return (
+      <Breadcrumb>
+        <BreadcrumbList>
+          <BreadcrumbItem className="hidden sm:block">
+            <BreadcrumbLink render={<Link to="/admin" />}>Admin</BreadcrumbLink>
+          </BreadcrumbItem>
+          <BreadcrumbSeparator className="hidden sm:block" />
+          <BreadcrumbItem>
+            {onCommonCrawlIndexPage ? (
+              <BreadcrumbPage>Common Crawl</BreadcrumbPage>
+            ) : (
+              <BreadcrumbLink render={<Link to="/admin/common-crawl" />}>
+                Common Crawl
+              </BreadcrumbLink>
+            )}
+          </BreadcrumbItem>
+          {onCommonCrawlDetailPage ? (
+            <>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem>
+                <BreadcrumbPage>{commonCrawlDomain}</BreadcrumbPage>
+              </BreadcrumbItem>
+            </>
+          ) : null}
         </BreadcrumbList>
       </Breadcrumb>
     );

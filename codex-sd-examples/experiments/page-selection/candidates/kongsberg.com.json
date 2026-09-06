@@ -1,0 +1,2942 @@
+{
+  "domain": "kongsberg.com",
+  "base_url": "https://www.kongsberg.com/",
+  "preferred_languages": [
+    "en"
+  ],
+  "built_at": "2026-09-03T23:19:46+00:00",
+  "inventory_urls": 2878,
+  "eligible_urls": 2453,
+  "excluded_urls": 425,
+  "candidates": [
+    {
+      "url": "https://www.kongsberg.com/about-us/management-and-organisation/",
+      "score": 63.0,
+      "reasons": [
+        "about",
+        "people",
+        "title mentions people"
+      ],
+      "title": "Management and organisation - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/",
+      "score": 60.0,
+      "reasons": [
+        "homepage"
+      ],
+      "title": "KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/helix-energy-solutions-group/",
+      "score": 49.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Helix Energy Solutions Group - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/stories/2024/6/leadership-with-an-important-social-mission/",
+      "score": 49.0,
+      "reasons": [
+        "about",
+        "people",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions people"
+      ],
+      "title": "Leadership with an important social mission - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/",
+      "score": 48.0,
+      "reasons": [
+        "about",
+        "contact",
+        "title mentions contact"
+      ],
+      "title": "Contact | Offices, Enquiries and Business Area Contacts - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/contact/",
+      "score": 45.0,
+      "reasons": [
+        "about",
+        "contact",
+        "title mentions contact"
+      ],
+      "title": "Contact information - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/contact/contact-ocean-science/",
+      "score": 42.0,
+      "reasons": [
+        "about",
+        "contact",
+        "deep path",
+        "title mentions contact"
+      ],
+      "title": "Ocean Science contact information - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/australia/leadership-page/",
+      "score": 40.0,
+      "reasons": [
+        "about",
+        "people",
+        "title mentions people"
+      ],
+      "title": "KONGSBERG Australia Leadership Page - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/management-and-organisation/board-of-directors/",
+      "score": 40.0,
+      "reasons": [
+        "about",
+        "people",
+        "title mentions people"
+      ],
+      "title": "Board of Directors - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/usa/leadership-page/",
+      "score": 40.0,
+      "reasons": [
+        "about",
+        "people",
+        "title mentions people"
+      ],
+      "title": "KONGSBERG US Leadership Page - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/management-and-organisation/group-companies/",
+      "score": 38.33333333333333,
+      "reasons": [
+        "about",
+        "people"
+      ],
+      "title": "Group companies - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/sustainability/governance/",
+      "score": 38.0,
+      "reasons": [
+        "about",
+        "press"
+      ],
+      "title": "Governance - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/contact/contact-passive-acoustics/",
+      "score": 37.0,
+      "reasons": [
+        "about",
+        "contact",
+        "deep path"
+      ],
+      "title": "Get in touch with the passive acoustics team - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/careers/vacancies/project-engineer---configuration-management/",
+      "score": 36.666666666666664,
+      "reasons": [
+        "people",
+        "careers",
+        "title mentions people"
+      ],
+      "title": "Project Engineer - Configuration Management - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/",
+      "score": 36.0,
+      "reasons": [
+        "about"
+      ],
+      "title": "This is KONGSBERG - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/support-and-services/ocean-space/training/contact-training/",
+      "score": 36.0,
+      "reasons": [
+        "contact",
+        "offering",
+        "deep path",
+        "title mentions contact"
+      ],
+      "title": "Contact Training - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/investor-relations/corporate-governance2/norwegian-code-of-practice-for-corporate-governance/",
+      "score": 35.0,
+      "reasons": [
+        "about",
+        "press"
+      ],
+      "title": "Norwegian Code of practice for Corporate Governance - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/sustainability/climate-action/environmental-management-system-iso14001/",
+      "score": 35.0,
+      "reasons": [
+        "people",
+        "press",
+        "title mentions people"
+      ],
+      "title": "Environmental Management System - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/news-archive/20202/kongsberg-digital-acquires-danish-maritime-software-company-coach-solutions/",
+      "score": 34.0,
+      "reasons": [
+        "about",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Kongsberg Digital acquires Danish maritime software company COACH Solutions - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/values-vision-and-purpose/",
+      "score": 33.0,
+      "reasons": [
+        "about"
+      ],
+      "title": "Our values, vision and purpose - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/sustainability/caring-for-people/",
+      "score": 33.0,
+      "reasons": [
+        "people",
+        "press"
+      ],
+      "title": "Caring for people - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/",
+      "score": 32.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering"
+      ],
+      "title": "Discovery locations - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/careers/vacancies/kongsberg-i-fredrikstad---team-manager-electronics/",
+      "score": 31.666666666666664,
+      "reasons": [
+        "people",
+        "careers"
+      ],
+      "title": "KONGSBERG i Fredrikstad! - Team Manager Electronics - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/careers/vacancies/senior-prosjektingenior---team-lead/",
+      "score": 31.666666666666664,
+      "reasons": [
+        "people",
+        "careers"
+      ],
+      "title": "Senior Prosjektingeniør - Team Lead - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/careers/vacancies/software-team-lead-supersoniske-missilsystemer/",
+      "score": 31.666666666666664,
+      "reasons": [
+        "people",
+        "careers"
+      ],
+      "title": "Software Team Lead, Supersoniske missilsystemer - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/careers/vacancies/team-manager-/",
+      "score": 31.666666666666664,
+      "reasons": [
+        "people",
+        "careers"
+      ],
+      "title": "Team Manager  - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/careers/vacancies/team-manager-electro-mech-sub-assembly/",
+      "score": 31.666666666666664,
+      "reasons": [
+        "people",
+        "careers"
+      ],
+      "title": "Team Manager Electro Mech Sub-Assembly - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/careers/vacancies/team-manager-software--integration---development-/",
+      "score": 31.666666666666664,
+      "reasons": [
+        "people",
+        "careers"
+      ],
+      "title": "Team Manager Software – Integration - Development  - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/careers/vacancies/vil-du-bli-var-nye-team-manager-mekanikk-og-vare-med-pa-a-utvikle-fremtidens-marinefartoy/",
+      "score": 31.666666666666664,
+      "reasons": [
+        "people",
+        "careers"
+      ],
+      "title": "Vil du bli vår nye Team Manager mekanikk og være med på å utvikle fremtidens marinefartøy? - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/discovery/products/commercial-fisheries/about-simrad-echo-sounder-transducers/",
+      "score": 31.0,
+      "reasons": [
+        "about",
+        "offering",
+        "deep path"
+      ],
+      "title": "About Simrad echo sounder transducers - KONGSBERG Maritime - KONGSBERG - Kongsberg Discovery",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/discovery/products/ocean-science-mapping/ek-mission-planner/",
+      "score": 31.0,
+      "reasons": [
+        "about",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/event/femme-2026/program-overview/",
+      "score": 30.0,
+      "reasons": [
+        "about"
+      ],
+      "title": "FEMME 2026 - Program overview - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/management-and-organisation/discovery/certificates/certificates2/company-certificates/",
+      "score": 29.33333333333333,
+      "reasons": [
+        "about",
+        "people",
+        "deep path"
+      ],
+      "title": "Company certificates - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/electra-service-ltda/",
+      "score": 29.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Electra Service Ltda - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/exportacion-de-servicios-electronicos-selmar-limitada-selmar-export-ltda/",
+      "score": 29.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Exportacion De Servicios Electronicos Selmar Limitada (Selmar Export Ltda) - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/isbak-marine-service-/",
+      "score": 29.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Isbak Marine Service  - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/lc-global-services-llc/",
+      "score": 29.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "LC Global Services, LLC - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/steves-marine-service-inc/",
+      "score": 29.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Steve’s Marine Service Inc. - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/news-archive/20202/kongsberg-and-patria-team-to-provide-turreted-mortar-solutions/",
+      "score": 29.0,
+      "reasons": [
+        "people",
+        "press",
+        "offering",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "KONGSBERG and Patria team to provide turreted mortar solutions - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/old/company/about-us/career/",
+      "score": 27.0,
+      "reasons": [
+        "about",
+        "careers",
+        "deep path"
+      ],
+      "title": "Career - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/careers/",
+      "score": 26.0,
+      "reasons": [
+        "careers"
+      ],
+      "title": "Shape the future with us - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/investor-relations/",
+      "score": 26.0,
+      "reasons": [
+        "press",
+        "title mentions press"
+      ],
+      "title": "Investor relations - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/",
+      "score": 26.0,
+      "reasons": [
+        "press",
+        "title mentions press"
+      ],
+      "title": "Newsroom - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/australia/australia-news-archive/",
+      "score": 25.0,
+      "reasons": [
+        "about",
+        "press"
+      ],
+      "title": "Australia news archive - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/kongsberg-naval-services/",
+      "score": 25.0,
+      "reasons": [
+        "about",
+        "offering"
+      ],
+      "title": "Kongsberg Naval Services - we ensure vessels' continued operational effectiveness - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/suppliers/sustainability-and-esg/",
+      "score": 25.0,
+      "reasons": [
+        "about",
+        "press"
+      ],
+      "title": "Sustainability and ESG - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/usa/usa-news-archive/",
+      "score": 25.0,
+      "reasons": [
+        "about",
+        "press"
+      ],
+      "title": "US Media Releases - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/sustainability/governance/sustainability--esg-strategy/",
+      "score": 25.0,
+      "reasons": [
+        "about",
+        "press"
+      ],
+      "title": "Sustainability & ESG strategy - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/stories/2019/3/our-history/",
+      "score": 24.0,
+      "reasons": [
+        "about",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions about"
+      ],
+      "title": "Our history - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/stories/2021/5/kongsberg-appoints-directors-for-sustainability/",
+      "score": 24.0,
+      "reasons": [
+        "people",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "KONGSBERG appoints directors for sustainability - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/stories/2025/4/collecting-knowledge-about-the-ocean/",
+      "score": 24.0,
+      "reasons": [
+        "about",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions press"
+      ],
+      "title": "Spotlight on Annual Report 2024: Collecting knowledge about the ocean - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/stories/2026/1/our-history/",
+      "score": 24.0,
+      "reasons": [
+        "about",
+        "press",
+        "deep path",
+        "numeric segment",
+        "title mentions about"
+      ],
+      "title": "Our history - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/contact/contact-simrad/buy_simrad_products/fishery-research-products/",
+      "score": 23.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Fishery Research Products - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/contact/contact-simrad/question/sales-or-product-enquiry/",
+      "score": 23.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Sales or product enquiry - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/careers/always-on---careers/",
+      "score": 23.0,
+      "reasons": [
+        "careers"
+      ],
+      "title": "Together, we create a safer future. - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/careers/vacancies/",
+      "score": 23.0,
+      "reasons": [
+        "careers"
+      ],
+      "title": "Unlock your potential with our interesting career opportunities - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/support-and-services/defence-security/naval-systems/naval-systems-training/proteus-submarine-command-team-trainer-sctt/",
+      "score": 23.0,
+      "reasons": [
+        "people",
+        "offering",
+        "deep path"
+      ],
+      "title": "Submarine Command Team Trainer (SCTT) – Naval Training – Naval Systems - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/support-and-services/defence-security/naval-systems/naval-systems-training/proteus-surface-warship-command-team-trainer-ctt/",
+      "score": 23.0,
+      "reasons": [
+        "people",
+        "offering",
+        "deep path"
+      ],
+      "title": "PROTEUS Surface Warship Command Team Trainer  – Naval Training – Naval Systems - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/news-archive/2002/establishes-new-company/",
+      "score": 22.0,
+      "reasons": [
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Establishes new company - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/news-archive/2003/contract-worth-about-mnok-135/",
+      "score": 22.0,
+      "reasons": [
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Contract worth about MNOK 135 - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/news-archive/2003/kongsbergs-taking-part-in-mission-to-mars/",
+      "score": 22.0,
+      "reasons": [
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Kongsberg's taking part in mission to Mars - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/news-archive/2003/very-positive-proposition-about-new-mtbs/",
+      "score": 22.0,
+      "reasons": [
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Very positive proposition about new MTBs - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/news-archive/2004/signs-contract-with-norwegian-defence-logistics-organisation/",
+      "score": 22.0,
+      "reasons": [
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Signs contract with Norwegian Defence Logistics Organisation - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/news-archive/2006/important-contract-with-the-norwegian-defence-logistics-organisation/",
+      "score": 22.0,
+      "reasons": [
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Important contract with the Norwegian Defence Logistics Organisation - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/news-archive/2009/annual-overview/",
+      "score": 22.0,
+      "reasons": [
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Annual overview - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/news-archive/2019/esa-rautalinko-appointed-president-and-ceo-of-the-patria-group/",
+      "score": 22.0,
+      "reasons": [
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Esa Rautalinko appointed President and CEO of the Patria Group - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/news-archive/2019/kongsberg-signs-two-agreements-with-norwegian-defence-logistics-organisation/",
+      "score": 22.0,
+      "reasons": [
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "KONGSBERG signs two agreements with Norwegian Defence Logistics Organisation - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/news-archive/2019/norwegian-defence-logistics-organisation-signs-letter-of-intent--and-cooperation-agreement-with-kongsberg/",
+      "score": 22.0,
+      "reasons": [
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Norwegian Defence Logistics Organisation signs letter of intent- and cooperation agreement with KONGSBERG - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/news-archive/2021/four-high-profile-contracts-secure-kongsberg-digitals-dominant-position-within-maritime-training-in-south-korea/",
+      "score": 22.0,
+      "reasons": [
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Four high-profile contracts secure Kongsberg Digital’s dominant position within maritime training in South Korea - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/news-archive/2021/signs-contract-for-delivery-to-copernicus-mission/",
+      "score": 22.0,
+      "reasons": [
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Signs contract for delivery to Copernicus mission - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/news-archive/2022/avionics-apprentice-dennis-made-history/",
+      "score": 22.0,
+      "reasons": [
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "AVIONICS APPRENTICE DENNIS MADE HISTORY - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/news-archive/2022/protector-rs4-chosen-for-boxer-vehicle-with-new-mission-module/",
+      "score": 22.0,
+      "reasons": [
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "PROTECTOR RS4 CHOSEN FOR BOXER VEHICLE WITH NEW MISSION MODULE - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/news-archive/2024/mission-accomplished-for-the-worlds-first-hugin-endurance/",
+      "score": 22.0,
+      "reasons": [
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Mission accomplished for the world's first HUGIN Endurance - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/news-archive/2024/unique-group/",
+      "score": 22.0,
+      "reasons": [
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Unique Group invests in Kongsberg Discovery to manage surge in customer demand - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/news-archive/2025/kongsberg-and-naval-group-sign-partnership-agreement/",
+      "score": 22.0,
+      "reasons": [
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "KONGSBERG and Naval Group sign Partnership Agreement - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/news-archive/2025/kongsberg-proposes-stock-exchange-listing-of-its-maritime-business-and-consolidation-of-defence--aerospace-and-discovery-into-a-technology--and-defence-company/",
+      "score": 22.0,
+      "reasons": [
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "KONGSBERG proposes stock exchange listing of its maritime business and consolidation of Defence & Aerospace and Discovery into a technology- and defence company - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/news-archive/2026/kongsberg-digital-rebrands-as-falkor-a-kongsberg-company/",
+      "score": 22.0,
+      "reasons": [
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Kongsberg Digital rebrands as Falkor, a KONGSBERG company - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/news-archive/2026/kongsberg-vanguard-lp-awarded-federal-contract-to-design-the-canadian-coast-guards-future-mid-shore-multi-mission-vessels/",
+      "score": 22.0,
+      "reasons": [
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "KONGSBERG Vanguard LP awarded federal contract to design the Canadian Coast Guard’s future Mid-Shore Multi-Mission vessels - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/news-archive/2026/ksat-and-kongsberg-nanoavionics-announce-strategic-partnership-to-strengthen-smallsat-mission-operations/",
+      "score": 22.0,
+      "reasons": [
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "KSAT and Kongsberg NanoAvionics Announce Strategic Partnership to Strengthen Smallsat Mission Operations - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/management-and-organisation/discovery/certificates/certificates2/product-certificates/",
+      "score": 21.333333333333332,
+      "reasons": [
+        "about",
+        "people",
+        "offering",
+        "deep path"
+      ],
+      "title": "Product certificates - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/aberdeen/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "United Kingdom, Aberdeen - Kongsberg Maritime Limited - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/aegean-electronics-sa/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Aegean Electronics SA - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/almar-marine-electronics-d.o.o",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Almar Marine Electronics d.o.o. - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/alphatron-marine-b.v",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Alphatron Marine B.V. - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/arne-bjornvold/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Arne Bjornvold - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/atl-commercial-ltd/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "ATL Commercial Ltd. - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/atlantic-marine-electronics-ame/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Atlantic Marine Electronics (AME) - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/banks-boatworks-llc/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Banks Boatworks LLC - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/barents-elektronikk-as/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Barents Elektronikk AS - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/barry-electronics/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Barry Electronics - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/bayou-marine-electronics-inc/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Bayou Marine Electronics Inc. - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/boudreault-marine-electronics-llc/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Boudreault Marine Electronics, LLC - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/brommeland-elektronikk-as/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Brommeland Elektronikk AS - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/c.a.-richards-and-associates",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "C.A. Richards and Associates - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/c.r.m.-s.r.l.-centro-radioelettronico-maritimo",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "C.R.M. S.R.L. (Centro Radioelettronico Maritimo) - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/canada-halifax-dartmouth/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Canada, Halifax (Dartmouth) - Kongsberg Maritime Ltd - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/canada-st.-johns-mount-pearl---kongsberg-maritime-canada-ltd",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Canada, St. Johns (Mount Pearl) - Kongsberg Maritime Canada Ltd - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/canada-vancouver-port-coquitlam---kongsberg-mesotech/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Canada, Vancouver (Port Coquitlam) - Kongsberg Discovery - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/cat-5-boatworks-llc/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Cat 5 Boatworks LLC - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/channel-coast-marine/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Channel Coast Marine - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/chris-electronics/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Chris Electronics - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/donatini-inc-dba-johnson-hicks-marine-electronics/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Donatini Inc, dba Johnson Hicks Marine Electronics - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/echo81-llc/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Echo81 LLC - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/echomaster-marine-ltd/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Echomaster Marine Ltd. - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/el-experten/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "El-Experten - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/electro-zimbra-lda/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Electro Zimbra LDA - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/elektro-bodo/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Elektro Bodo - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/elmarin/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Elmarin - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/escort-sp.-z.o.o",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Escort Sp. z.o.o. - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/florvaag-elektronikk/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Florvaag Elektronikk - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/gauntt-marine-llc/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Gauntt Marine LLC - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/gcb-automation/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "GCB Automation - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/geosys-ltda/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "GEOSYS LTDA - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/germany-hamburg---kongsberg-maritime--gmbh/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Germany, Hamburg - Kongsberg Maritime  GmbH - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/giscad---geomatica--engenharia-lda/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "GISCAD - Geomatica & Engenharia, LDA - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/godvik/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Norway, Bergen - Kongsberg Maritime AS - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/got-marine/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "GOT Marine - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/he-marine/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "HE Marine - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/hibotech/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Hibotech - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/high-seas-marine-electronics-llc/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "High Seas Marine Electronics LLC - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/hodgkins-enterprises-inc/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Hodgkins Enterprises Inc. - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/hwh-electronics-corp/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/imes-as/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/international-marine-systems-llc/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/j.m.-hansen-maritime",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/kongsberg-ab/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/kongsberg-discovery-as---bergen/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/kongsberg-discovery-as/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/kongsberg-discovery-brasil-ltda/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/kongsberg-discovery-us-llc/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Kongsberg Discovery US, LLC - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/kongsberg-korea/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Korea, Busan (Gijang-gun) - Kongsberg Maritime Korea Ltd. - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/kongsberg-maritime-netherlands--bv/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Kongsberg Netherlands  BV - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/kongsberg-norcontrol-india/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "KONGSBERG NORCONTROL  SURVEILLANCE PL - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/kongsberg-norcontrol-ltd/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "KONGSBERG NORCONTROL LTD - Bristol, UK - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/larsen-elcom/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Larsen Elcom - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/las-palmas/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Kongsberg Discovery Spain S.L., Simrad - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/lucky-susan-co2.-ltd",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Lucky Susan Co. Ltd. - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/lunde-marine/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Lunde Marine - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/lynnwood/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "United States of America, Seattle  (Lynnwood)- Kongsberg Underwater Technology LLC. - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/macartney-as/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "MacArtney AS - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/mackay-communication/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Mackay Communication - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/mackay-communications-canada-inc/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Mackay Communications Canada Inc. - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/malaysia-kuala-lumpur/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Malaysia, Kuala Lumpur - Kongsberg Discovery Malaysia Sdn. Bhd - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/marimex/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Marimex - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/marine-electronics-unlimited/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Marine Electronics Unlimited - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/marine-radio-acoustic-devices-cc/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Marine Radio Acoustic Devices cc - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/marinelektronikk/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Marinelektronikk - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/maritek/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Maritek - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/marlin-marine-electronics-inc/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Marlin Marine Electronics Inc - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/mecom/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Mecom - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/metek-as/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Metek AS - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/midcoast-marine-electronics-inc/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Midcoast Marine Electronics Inc. - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/nautic-center-ab/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Nautic Center AB - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/nautik-elektronikk/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Nautik Elektronikk - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/navy-rorvik-as/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Navy Rørvik AS - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/nippon-kaiyo-co-ltd/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Nippon Kaiyo Co ltd. - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/norway-trondheim-pirsenteret---kongsberg-discovery-as-seatex/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Norway, Trondheim (Pirsenteret) - Kongsberg Discovery AS, Seatex - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/ns-navigation-llc-dba-martek-of-nj/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "NS Navigation LLC, dba Martek of NJ - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/ocean-electronics/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Ocean Electronics - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/offshore-marine-electronics-inc/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Offshore Marine Electronics, Inc. - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/osprey-exports-llc/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Osprey Exports LLC - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/performance-marine-llc/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Performance Marine LLC - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/promar-deniz-malzemeleri-ltd.-sti",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Promar Deniz Malzemeleri Ltd. Sti. - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/radar-alaska/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Radar Alaska - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/radar-marine-technologies/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Radar Marine Technologies - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/radiobudin/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Radiobudin - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/radioservice-spf/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Radioservice Sp/F - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/rc-international-s.r.l",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "RC International S.R.L - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/robinson-marine-electronics-rmecuador-s.a.s",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Robinson Marine Electronics RMEcuador S.A.S - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/robinson-marine-electronics-s.r.l",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Robinson Marine Electronics S.R.L. - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/rope-systems/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Rope Systems - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/seamech-as/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "SeaMech AS - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/shorething-marine-electronics-llc/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Shorething Marine Electronics LLC - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/simberg-ehf/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Simberg Ehf - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/singapore-secom/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Singapore (Toh Guan Road) - Kongsberg Discovery Pte. Ltd. - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/singapore-tuas/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Singapore (Tuas Drive) - Kongsberg Maritime Pte. Ltd. - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/sogne-elektriske/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Søgne elektriske - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/sortland-skipselektronikk/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Sortland Skipselektronikk - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/stellar-marine-systems-llc/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Stellar Marine Systems, LLC dba Shelter Island Marine Electronics - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/strandpromenaden/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Norway, Horten (Strandpromenaden) - Kongsberg Discovery AS - Headquarter - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/tidal-marine-electronics-ltd/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Tidal Marine Electronics, LTD. - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/trinidad--tobago-offshore-innovators-ltd/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Trinidad & Tobago Offshore Innovators Ltd. - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/ulvesund-elektro/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Ulvesund Elektro - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/united-states-of-america-new-orleans-st.-rose---kongsberg-maritime-inc",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "United States of America, New Orleans (St. Rose) - Kongsberg Maritime Inc - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/universal-sonar-mount-equipment-llc/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Universal Sonar Mount Equipment LLC - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/valor-bps-limited/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Valor BPS Limited - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/varya-tech-private-limited/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Varya Tech Private Limited - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/vest-el/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Vest-El - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/vico-as/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Vico AS - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/vigo/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Spain, Vigo - Kongsberg Discovery Spain S.L. (Simrad) - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/villajoyosa/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Spain, Alicante  (Villajoyosa) – Kongsberg Discovery Spain S.L. (Simrad) - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/western-line-projects/",
+      "score": 21.0,
+      "reasons": [
+        "about",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Western Line Projects - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/sustainability/",
+      "score": 21.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Sustainability - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/contact/hotspotbrowser/",
+      "score": 20.0,
+      "reasons": [
+        "about",
+        "contact"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/australia/australia-news-archive/2023/kongsberg-signs-contract-with-tandem-building-group/",
+      "score": 19.0,
+      "reasons": [
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "KONGSBERG signs contract with Tandem Building Group - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/about-us/australia/australia-news-archive/2024/nupress-group-awarded-contract-for-kongsberg-naval-strike-missile-mechanical-components/",
+      "score": 19.0,
+      "reasons": [
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Nupress Group awarded contract for KONGSBERG Naval Strike Missile Mechanical Components - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/stories/2016/8/mission-impossible/",
+      "score": 19.0,
+      "reasons": [
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Mission Impossible - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/stories/2022/6/reaffirms-support-with-student-led-space-organization/",
+      "score": 19.0,
+      "reasons": [
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "REAFFIRMS SUPPORT WITH STUDENT-LED SPACE ORGANIZATION - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/stories/2024/5/kongsberg-400-years---a-tribute-to-history-and-community/",
+      "score": 19.0,
+      "reasons": [
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "Kongsberg 400 years - a tribute to history and community - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.kongsberg.com/news/stories/2025/6/eu-security-and-defence-committee-visits-kongsberg-to-learn-about-maritime-infrastructure-protection-technology/",
+      "score": 19.0,
+      "reasons": [
+        "about",
+        "press",
+        "deep path",
+        "numeric segment"
+      ],
+      "title": "EU Security and Defence Committee visits KONGSBERG to learn about maritime infrastructure protection technology - KONGSBERG - an international technology group",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    }
+  ]
+}

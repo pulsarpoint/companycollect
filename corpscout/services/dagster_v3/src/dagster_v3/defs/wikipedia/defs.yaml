@@ -1,0 +1,2 @@
+type: dagster_v3.defs.wikipedia.wikipedia_articles_component.WikipediaArticlesComponent
+attributes: {}

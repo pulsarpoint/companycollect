@@ -1,0 +1,48 @@
+{
+  "domain": "tobii.com",
+  "base_url": "https://www.tobii.com/",
+  "must_have": {
+    "home": [
+      "https://www.tobii.com/"
+    ],
+    "about": [
+      "https://www.tobii.com/events/qualisys-animal-sciences-user-group-event",
+      "https://www.tobii.com/events/tactical-performance-psychology-group-conference-2026",
+      "https://www.tobii.com/company",
+      "https://www.tobii.com/blog/eye-tracking-study-recruitment-managing-participants-with-vision-irregularities",
+      "https://www.tobii.com/blog/how-driver-monitoring-systems-will-help-achieve-vision-zero"
+    ],
+    "contact": [
+      "https://www.tobii.com/contact",
+      "https://www.tobii.com/resource-center/scientific-publications/eye-contact-shapes-our-social-behavior",
+      "https://www.tobii.com/contact/subscribe",
+      "https://www.tobii.com/de/contact",
+      "https://www.tobii.com/es/contact"
+    ],
+    "management": [
+      "https://www.tobii.com/resource-center/customer-stories/eye-tracking-gives-a-voice-to-people-with-als",
+      "https://www.tobii.com/resource-center/customer-stories/training-your-team",
+      "https://www.tobii.com/resource-center/scientific-publications/do-people-spend-more"
+    ],
+    "careers": [],
+    "products_services": [
+      "https://www.tobii.com/company",
+      "https://www.tobii.com/products/integration/screen-based-integrations/vision-health-assessment-and-therapy",
+      "https://www.tobii.com/company/this-is-tobii/global-offices",
+      "https://www.tobii.com/company/this-is-tobii/our-software-partners",
+      "https://www.tobii.com/products"
+    ],
+    "group_structure": [
+      "https://www.tobii.com/events/qualisys-animal-sciences-user-group-event",
+      "https://www.tobii.com/events/tactical-performance-psychology-group-conference-2026",
+      "https://www.tobii.com/de/events/qualisys-animal-sciences-user-group-event",
+      "https://www.tobii.com/es/events/qualisys-animal-sciences-user-group-event",
+      "https://www.tobii.com/fr/events/qualisys-animal-sciences-user-group-event"
+    ],
+    "legal_identity": []
+  },
+  "junk": [
+    "https://www.tobii.com/products/product-finder"
+  ],
+  "notes": "Draft generated from URL slugs and titles; correct by hand."
+}

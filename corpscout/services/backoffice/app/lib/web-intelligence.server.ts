@@ -1,6 +1,7 @@
 import { chQuery } from "~/lib/clickhouse.server";
 import type {
   CompanyWebIntelligence,
+  WebAddressObservation,
   WebAuthoritySnapshot,
   WebContactObservation,
   WebIdentifierObservation,
@@ -11,6 +12,7 @@ import type {
 } from "~/lib/web-intelligence";
 
 const MAX_PROFILE_ROWS = 250;
+const MAX_ADDRESS_ROWS = 250;
 const MAX_CONTACT_ROWS = 250;
 const MAX_IDENTIFIER_ROWS = 500;
 
@@ -47,6 +49,15 @@ interface ContactRow {
   source: string;
   source_url: string;
   resolved_at: string;
+}
+
+interface AddressRow {
+  value: string;
+  source_url: string;
+  first_observed_crawl: string;
+  last_observed_crawl: string;
+  observed_crawls: string;
+  observed_at: string;
 }
 
 interface IdentifierRow {
@@ -148,6 +159,20 @@ WHERE is_organization = 1
   )
 ORDER BY crawl_id DESC, length(page_url), page_url, resolved_at DESC
 LIMIT ${MAX_PROFILE_ROWS}`;
+
+const addressesSql = `SELECT
+  argMax(raw_value, tuple(crawl_id, indexed_at)) AS value,
+  argMax(source_url, tuple(crawl_id, indexed_at)) AS source_url,
+  min(crawl_id) AS first_observed_crawl,
+  max(crawl_id) AS last_observed_crawl,
+  toString(uniqExact(crawl_id)) AS observed_crawls,
+  toString(max(observed_at)) AS observed_at
+FROM stg_web_domain_match_features
+PREWHERE feature_type = 'address' AND feature_subtype = 'postal'
+WHERE root_domain = {domain:String}
+GROUP BY normalized_value
+ORDER BY last_observed_crawl DESC, value
+LIMIT ${MAX_ADDRESS_ROWS}`;
 
 const contactsSql = `SELECT
   crawl_id,
@@ -314,6 +339,17 @@ function contactObservations(rows: ContactRow[]): WebContactObservation[] {
     }));
 }
 
+function addressObservations(rows: AddressRow[]): WebAddressObservation[] {
+  return rows.map((row) => ({
+    value: row.value,
+    sourceUrl: row.source_url,
+    firstObservedCrawl: row.first_observed_crawl,
+    lastObservedCrawl: row.last_observed_crawl,
+    observedCrawls: Number(row.observed_crawls),
+    observedAt: row.observed_at,
+  }));
+}
+
 function identifierObservations(
   rows: IdentifierRow[],
 ): WebIdentifierObservation[] {
@@ -470,6 +506,7 @@ export async function getDomainWebIntelligence(
     domain,
   });
   const otherEvidencePromise = Promise.all([
+    chQuery<AddressRow>(addressesSql, { domain }),
     chQuery<ContactRow>(contactsSql, { domain }),
     chQuery<IdentifierRow>(identifiersSql, { domain }),
     chQuery<IndustryRow>(industriesSql, { domain }),
@@ -491,6 +528,7 @@ export async function getDomainWebIntelligence(
     otherEvidencePromise,
   ]);
   const [
+    addressRows,
     contactRows,
     identifierRows,
     industryRows,
@@ -508,6 +546,7 @@ export async function getDomainWebIntelligence(
       observedAt: row.observed_at,
     })),
     organizationClaims: organizationClaims(profileRows),
+    addresses: addressObservations(addressRows),
     contacts: contactObservations(contactRows),
     identifiers: identifierObservations(identifierRows),
     industrySnapshots: industrySnapshots(industryRows, signalRows),
@@ -516,6 +555,7 @@ export async function getDomainWebIntelligence(
     authoritySnapshots: authoritySnapshots(authorityRows),
     truncated: {
       organizationClaims: profileRows.length === MAX_PROFILE_ROWS,
+      addresses: addressRows.length === MAX_ADDRESS_ROWS,
       contacts: contactRows.length === MAX_CONTACT_ROWS,
       identifiers: identifierRows.length === MAX_IDENTIFIER_ROWS,
     },

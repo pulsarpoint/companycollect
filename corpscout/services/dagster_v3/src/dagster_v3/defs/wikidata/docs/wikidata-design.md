@@ -190,7 +190,7 @@ provenance.
 `corpscout.wikidata_company_domains` from `wikidata_company_websites`; those two
 derived tables are not members of the source-snapshot table tuple.
 
-The planned Wikipedia article pipeline is a separate downstream branch:
+The Wikipedia article pipeline is a separate downstream branch:
 
 ```text
 wikidata_snapshot_complete
@@ -205,7 +205,7 @@ not create a persistent DuckDB file. Keeping this branch outside
 `wikidata_snapshot_complete` allows Wikipedia ingestion to lag or retry without
 blocking publication of the structured Wikidata snapshot.
 
-## 6. Wikipedia relationship and current limitation
+## 6. Wikipedia relationship and article enrichment
 
 A Wikidata sitelink connects one QID to a page title on a particular Wikimedia site.
 It is the authoritative bridge between the structured entity and language-specific
@@ -220,7 +220,7 @@ For `Q1421630`, two of the sitelinks returned by a live all-language
 | `enwiki` | Handelsbanken | `https://en.wikipedia.org/wiki/Handelsbanken` |
 | `svwiki` | Svenska Handelsbanken | `https://sv.wikipedia.org/wiki/Svenska_Handelsbanken` |
 
-The planned change stores the current article associated with every returned
+The implemented branch stores the current article associated with every returned
 Wikipedia sitelink, using one row per `(wikidata_id, site_id)` in
 `corpscout.wikidata_company_wikipedia_articles`. Each row carries the Wikimedia
 `site_id`, a consumer-facing `language_code`, page and revision identity, title, exact
@@ -234,6 +234,13 @@ retried without downloading the articles again. Objects contain batches rather t
 one object per article. ClickHouse remains the query layer and stores the current
 revision; the raw snapshot supplies replay and provenance. Historical serving tables,
 embeddings, media binaries, and rendered HTML in ClickHouse remain out of scope.
+
+Migration `000380` owns the article table. The two non-partitioned assets accept
+the same required `source_run_id` date and run in the serialized
+`wikidata_wikipedia` pool. `wikidata_wikipedia_articles_job` selects only this branch;
+its completion-event sensor defaults to STOPPED until a full download is validated.
+The implementation, checkpoint layout and launch configuration are documented in
+[the Wikipedia source design](../../wikipedia/docs/wikipedia-design.md).
 
 ## 7. Configuration and verification
 

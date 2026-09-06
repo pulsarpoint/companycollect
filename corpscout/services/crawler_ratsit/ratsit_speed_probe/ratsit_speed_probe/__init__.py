@@ -1,1 +1,0 @@
-"""Standalone Ratsit speed probe."""

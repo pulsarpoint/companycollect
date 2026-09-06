@@ -1,0 +1,2819 @@
+{
+  "domain": "trumpf.com",
+  "base_url": "https://www.trumpf.com/en_INT/",
+  "preferred_languages": [
+    "en"
+  ],
+  "built_at": "2026-09-03T23:21:44+00:00",
+  "inventory_urls": 1222,
+  "eligible_urls": 1222,
+  "excluded_urls": 0,
+  "candidates": [
+    {
+      "url": "https://www.trumpf.com/en_INT/",
+      "score": 68.0,
+      "reasons": [
+        "homepage",
+        "base locale"
+      ],
+      "title": "TRUMPF SE + Co. KG | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/meta/product-contact/",
+      "score": 58.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "offering",
+        "title mentions contact"
+      ],
+      "title": "Product contact | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/service-engineers-on-a-smart-mission/",
+      "score": 55.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press",
+        "offering"
+      ],
+      "title": "Service engineers on a smart mission | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/sustainability/corporate-governance/compliance/compliance-contact-form/",
+      "score": 55.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "contact",
+        "press",
+        "deep path",
+        "title mentions contact"
+      ],
+      "title": "Compliance contact form | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/sustainability/corporate-governance/data-security/data-protection-contact-form/",
+      "score": 55.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "contact",
+        "press",
+        "deep path",
+        "title mentions contact"
+      ],
+      "title": "Data protection contact form | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/additional-fields-of-activity/financial-services/bank-contact-form/",
+      "score": 54.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "contact",
+        "offering",
+        "deep path",
+        "title mentions contact"
+      ],
+      "title": "Bank contact form | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/additional-fields-of-activity/financial-services/financing-calculator-contact-form/",
+      "score": 54.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "contact",
+        "offering",
+        "deep path",
+        "title mentions contact"
+      ],
+      "title": "Financing calculator contact form | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/additional-fields-of-activity/affiliated-companies-and-other-brands/trumpf-huettinger/your-contact-at-trumpf-huettinger/",
+      "score": 51.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "contact",
+        "offering",
+        "deep path",
+        "title mentions contact"
+      ],
+      "title": "Your contact at TRUMPF Hüttinger | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/additional-fields-of-activity/affiliated-companies-and-other-brands/trumpf-photonics-inc/contact-form-trumpf-photonics-inc/",
+      "score": 51.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "contact",
+        "offering",
+        "deep path",
+        "title mentions contact"
+      ],
+      "title": "Contact form TRUMPF Photonics Inc. | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/contact-person/",
+      "score": 51.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "press",
+        "title mentions contact"
+      ],
+      "title": "Contact people for corporate communications | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/contact-persons-for-global-corporate-communications/",
+      "score": 51.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "press",
+        "title mentions contact"
+      ],
+      "title": "Contact persons for global corporate communications | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/events-and-dates-for-your-calendar/contact-laser-wop-2025/",
+      "score": 48.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "contact"
+      ],
+      "title": "LASER World of PHOTONICS - Kontaktformular | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/meta/product-contact/contact-data/",
+      "score": 47.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "offering",
+        "title mentions contact"
+      ],
+      "title": "Contact data | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/lasers/processing-optics/top-product-group/",
+      "score": 47.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering",
+        "deep path"
+      ],
+      "title": "TOP product group | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/services/services-for-power-electronics/kontakt-services-trumpf-huettinger/",
+      "score": 47.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "offering",
+        "deep path"
+      ],
+      "title": "Kontakt Services TRUMPF Hüttinger | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/solutions/smart-factory-consulting/who-we-are/",
+      "score": 47.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering",
+        "title mentions about"
+      ],
+      "title": "Consulting: Who we are | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/meta/contact/",
+      "score": 46.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "title mentions contact"
+      ],
+      "title": "Contact | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/sustainability/corporate-governance/",
+      "score": 46.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": "Corporate governance | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/",
+      "score": 44.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "Company | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/software/oseon/contact/",
+      "score": 44.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "offering",
+        "deep path",
+        "title mentions contact"
+      ],
+      "title": "Oseon - Contact | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/software/programming-software/programming-software-contact/",
+      "score": 44.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "offering",
+        "deep path",
+        "title mentions contact"
+      ],
+      "title": "Programming software - contact | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/solutions/industries/medical-technology/medical-technology-contact/",
+      "score": 44.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "offering",
+        "deep path",
+        "title mentions contact"
+      ],
+      "title": "Medical Technology Contact | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/a-half-century-at-the-company-trumpf-is-my-second-home/",
+      "score": 43.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": "A half-century at the company: \"TRUMPF is my second home\" | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/future-right-next-to-history-lmd-in-southern-italy/",
+      "score": 43.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": "Future right next to history: LMD in southern Italy | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/going-high-in-down-under-how-the-freighter-group-is-transforming-a-forge-into-a-smart-factory/",
+      "score": 43.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": "Going high in Down Under: How the Freighter Group is transforming a forge into a smart Factory | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/letsgotrumpf-a-film-about-new-beginnings/",
+      "score": 43.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": "#LetsGoTRUMPF: A film about new beginnings | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/management-team-learns-from-the-next-generation/",
+      "score": 43.0,
+      "reasons": [
+        "base locale",
+        "people",
+        "press",
+        "title mentions people"
+      ],
+      "title": "Management team learns from the next generation | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/mission-internationalization-living-between-two-worlds/",
+      "score": 43.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": "Mission Internationalization: Living between two worlds | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/mission-precision-cutting/",
+      "score": 43.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": "Mission: Precision Cutting | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/mobile-devices-are-all-about-lasers/",
+      "score": 43.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": "Mobile devices are all about lasers | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/on-leadership-and-collaboration-in-digitalization/",
+      "score": 43.0,
+      "reasons": [
+        "base locale",
+        "people",
+        "press",
+        "title mentions people"
+      ],
+      "title": "On leadership and collaboration in digitalization | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/small-company-big-ambitions/",
+      "score": 43.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": "Small company big ambitions | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/swiss-company-becomes-a-sheet-metal-processor-40/",
+      "score": 43.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": "Swiss company becomes a sheet metal processor 4.0 | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/the-company-founders-in-china-motivated-and-not-withholding-a-single-hair/",
+      "score": 43.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": "The company founders in China: Motivated, and not withholding a single hair | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/trumpf-and-jordao-a-cool-company-with-a-warm-heart/",
+      "score": 43.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": "TRUMPF and Jordão – a cool company with a warm heart | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/careers/people-at-trumpf/",
+      "score": 42.666666666666664,
+      "reasons": [
+        "base locale",
+        "people",
+        "careers"
+      ],
+      "title": "People at TRUMPF | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/solutions/smart-factory/overview/",
+      "score": 42.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering"
+      ],
+      "title": "What is a Smart Factory? | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/history/",
+      "score": 41.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "History | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/lasers/beam-sources/scientific-lasers/who-we-are/",
+      "score": 41.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering",
+        "deep path",
+        "title mentions about"
+      ],
+      "title": "Who we are | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/machines-systems/automation/separating-and-sorting/contact/",
+      "score": 41.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "offering",
+        "deep path",
+        "title mentions contact"
+      ],
+      "title": "Separating and sorting: Contact | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/machines-systems/laser-tube-cutting-machines/tube-processing-chain/tube-processing-chain-contact-form/",
+      "score": 41.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "offering",
+        "deep path",
+        "title mentions contact"
+      ],
+      "title": "Tube processing chain – contact form | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/solutions/industries/automotive/e-mobility/e-mobility-contact/",
+      "score": 41.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "offering",
+        "deep path",
+        "title mentions contact"
+      ],
+      "title": "E-mobility contact | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/solutions/industries/machine-and-systems-engineering/optimal-production-of-server-electrical-cabinets/machine-and-systems-engineering-contact-form/",
+      "score": 41.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "offering",
+        "deep path",
+        "title mentions contact"
+      ],
+      "title": "Machine and systems engineering contact form | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/landing-pages/global/tecday-machine-and-systems-engineering/contact/",
+      "score": 40.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "deep path",
+        "title mentions contact"
+      ],
+      "title": "TecDay for machine and systems engineering - Contact | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/intech-press-conference-we-want-to-be-the-leading-supplier-of-ai-solutions-in-our-industry/",
+      "score": 40.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering",
+        "title mentions press"
+      ],
+      "title": "INTECH press conference: \"We want to be the leading supplier of AI solutions in our industry.\" | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/careers/",
+      "score": 39.0,
+      "reasons": [
+        "base locale",
+        "careers",
+        "title mentions careers"
+      ],
+      "title": "Careers | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/software/oseon/overview/",
+      "score": 39.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering",
+        "deep path"
+      ],
+      "title": "Oseon - Overview | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/solutions/applications/plasma-technology/arc-management/",
+      "score": 39.0,
+      "reasons": [
+        "base locale",
+        "people",
+        "offering",
+        "deep path",
+        "title mentions people"
+      ],
+      "title": "Arc management | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/principles/company-principles/",
+      "score": 38.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "Company Principles | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/footer/column-3/company/",
+      "score": 38.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "Company | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/mytrumpf/landing-pages-external/company-administrator/",
+      "score": 38.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "Company administrator | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/elringklinger-how-ai-brings-people-together/",
+      "score": 38.0,
+      "reasons": [
+        "base locale",
+        "people",
+        "press"
+      ],
+      "title": "ElringKlinger: how AI brings people together | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/services/services-machines-systems-and-lasers/pre-owned-machines/offers/contact/",
+      "score": 38.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "offering",
+        "deep path",
+        "title mentions contact"
+      ],
+      "title": "Contact | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/solutions/applications/additive-manufacturing/laser-metal-deposition/brake-disk-laser-metal-deposition/contact-high-speed-laser-metal-deposition-of-brake-disks-to-euro-7-standard/",
+      "score": 38.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "offering",
+        "deep path",
+        "title mentions contact"
+      ],
+      "title": "Contact high-speed laser metal deposition of brake disks to Euro 7 standard | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/solutions/industries/automotive/e-mobility/e-mobility-contact/e-mobility-contact-answer-page/",
+      "score": 38.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "offering",
+        "deep path",
+        "title mentions contact"
+      ],
+      "title": "E-mobility contact answer page | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/landing-pages/cn/archive/techday/contact/",
+      "score": 37.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "deep path",
+        "title mentions contact"
+      ],
+      "title": "Blechexpo - Contact | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/landing-pages/global/sales/1000-series/1000-series-contact-form/",
+      "score": 37.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "deep path",
+        "title mentions contact"
+      ],
+      "title": "1000 Series contact form | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/careers/people-at-trumpf/career-story-adrian-bippus/",
+      "score": 36.33333333333333,
+      "reasons": [
+        "base locale",
+        "people",
+        "careers"
+      ],
+      "title": "Career story: Adrian Bippus | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/careers/people-at-trumpf/career-story-alexander-stich/",
+      "score": 36.33333333333333,
+      "reasons": [
+        "base locale",
+        "people",
+        "careers"
+      ],
+      "title": "Career Story: Alexander Stich | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/careers/people-at-trumpf/career-story-amanda-reel/",
+      "score": 36.33333333333333,
+      "reasons": [
+        "base locale",
+        "people",
+        "careers"
+      ],
+      "title": "Career story: Amanda Reel | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/careers/people-at-trumpf/career-story-hirokazu-kito/",
+      "score": 36.33333333333333,
+      "reasons": [
+        "base locale",
+        "people",
+        "careers"
+      ],
+      "title": "Career story: Hirokazu Kito | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/careers/people-at-trumpf/career-story-jie-xia/",
+      "score": 36.33333333333333,
+      "reasons": [
+        "base locale",
+        "people",
+        "careers"
+      ],
+      "title": "Career story: Jie Xia | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/careers/people-at-trumpf/career-story-juan-carlos-conde/",
+      "score": 36.33333333333333,
+      "reasons": [
+        "base locale",
+        "people",
+        "careers"
+      ],
+      "title": "Career story: Juan Carlos Conde | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/careers/people-at-trumpf/career-story-julian-berkmann/",
+      "score": 36.33333333333333,
+      "reasons": [
+        "base locale",
+        "people",
+        "careers"
+      ],
+      "title": "Career story: Julian Berkmann | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/careers/people-at-trumpf/career-story-matthias-wissert/",
+      "score": 36.33333333333333,
+      "reasons": [
+        "base locale",
+        "people",
+        "careers"
+      ],
+      "title": "Career story: Matthias Wissert | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/careers/people-at-trumpf/career-story-robert-gaus/",
+      "score": 36.33333333333333,
+      "reasons": [
+        "base locale",
+        "people",
+        "careers"
+      ],
+      "title": "Career Story: Robert Gaus | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/careers/people-at-trumpf/career-story-sebastian-carl/",
+      "score": 36.33333333333333,
+      "reasons": [
+        "base locale",
+        "people",
+        "careers"
+      ],
+      "title": "Career story: Sebastian Carl | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/careers/people-at-trumpf/career-story-sida-han/",
+      "score": 36.33333333333333,
+      "reasons": [
+        "base locale",
+        "people",
+        "careers"
+      ],
+      "title": "Career story: Sida Han | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/careers/people-at-trumpf/career-story-stefanie-epple/",
+      "score": 36.33333333333333,
+      "reasons": [
+        "base locale",
+        "people",
+        "careers"
+      ],
+      "title": "Career story: Stefanie Epple | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/careers/people-at-trumpf/career-story-volker-metsch/",
+      "score": 36.33333333333333,
+      "reasons": [
+        "base locale",
+        "people",
+        "careers"
+      ],
+      "title": "Career story: Volker Metsch | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/careers/vacancies/",
+      "score": 36.0,
+      "reasons": [
+        "base locale",
+        "careers",
+        "title mentions careers"
+      ],
+      "title": "Vacancies | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/lasers/beam-sources/scientific-lasers/overview/",
+      "score": 36.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering",
+        "deep path"
+      ],
+      "title": "Overview | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/machines-systems/automation/automation-solutions-from-trumpf/overview/",
+      "score": 36.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering",
+        "deep path"
+      ],
+      "title": "Automation solutions overview | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/services/services-machines-systems-and-lasers/product-enhancements/overview/",
+      "score": 36.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering",
+        "deep path"
+      ],
+      "title": "Overview of product enhancements | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/careers/people-at-trumpf/product-manager/",
+      "score": 35.0,
+      "reasons": [
+        "base locale",
+        "people",
+        "careers",
+        "offering"
+      ],
+      "title": "Product Manager | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/careers/people-at-trumpf/service-engineer/",
+      "score": 35.0,
+      "reasons": [
+        "base locale",
+        "people",
+        "careers",
+        "offering"
+      ],
+      "title": "Service engineer | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/",
+      "score": 34.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "title mentions press"
+      ],
+      "title": "Newsroom | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/job-shop-business-turns-into-one-stop-provider/",
+      "score": 33.0,
+      "reasons": [
+        "base locale",
+        "careers",
+        "press"
+      ],
+      "title": "Job shop business turns into one-stop provider | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/machines-systems/2d-laser-cutting-machines/webspecial-autonomes-laserschneiden/autonomous-laser-cutting-web-special/vision-of-autonomous-machines/",
+      "score": 33.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering",
+        "deep path"
+      ],
+      "title": "TRUMPF vision for autonomous machines | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/services/services-for-power-electronics/test-and-qualification-center/tabs/overview/",
+      "score": 33.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering",
+        "deep path"
+      ],
+      "title": "TQZ overview | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/services/services-machines-systems-and-lasers/spare-parts/tabs/overview/",
+      "score": 33.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering",
+        "deep path"
+      ],
+      "title": "Spare parts overview | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/landing-pages/global/sales/panel-bending-with-trumpf/contact-form/",
+      "score": 32.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/landing-pages/global/sales/trubend-1000-basic-edition/overview/",
+      "score": 32.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/landing-pages/global/sales/trubend-series-1000/overview/",
+      "score": 32.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "deep path"
+      ],
+      "title": "Introduction to the world of bending: Overview | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/landing-pages/global/sales/your-introduction-to-the-world-of-lasers-trulaser-1030/overview/",
+      "score": 32.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/additional-fields-of-activity/affiliated-companies-and-other-brands/",
+      "score": 30.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering"
+      ],
+      "title": "Affiliated companies and other brands | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/additional-fields-of-activity/financial-services/",
+      "score": 30.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering"
+      ],
+      "title": "TRUMPF Financial Services | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/meta/product-contact/product-inquiry/",
+      "score": 30.0,
+      "reasons": [
+        "base locale",
+        "contact",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/the-reliability-of-our-products-is-crucial/",
+      "score": 30.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering",
+        "title mentions offering"
+      ],
+      "title": "\"The reliability of our products is crucial\" | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/services/services-machines-systems-and-lasers/tools/punching-tools/tabs/punching-tool-overview/",
+      "score": 30.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/sustainability/",
+      "score": 29.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": "Sustainability | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/global-press-releases/press-release-detail-page/",
+      "score": 28.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "title mentions press"
+      ],
+      "title": "Press release detail page | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/local-press-releases/press-release-detail-page/",
+      "score": 28.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "title mentions press"
+      ],
+      "title": "Press release detail page | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/additional-fields-of-activity/financial-services/legal-notices-for-trumpf-financial-services-gmbh/",
+      "score": 27.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering",
+        "deep path"
+      ],
+      "title": "Legal notices for TRUMPF Financial Services GmbH | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/additional-fields-of-activity/trumpf-venture/portfolio/",
+      "score": 27.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering",
+        "deep path"
+      ],
+      "title": "TRUMPF Venture Portfolio | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/global-press-releases/",
+      "score": 26.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/",
+      "score": 26.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/solutions/",
+      "score": 26.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/landing-pages/global/blechexpo/press/",
+      "score": 25.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "deep path",
+        "title mentions press"
+      ],
+      "title": "Blechexpo - Press | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/landing-pages/global/laser-world-of-photonics-munich/press/",
+      "score": 25.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "deep path",
+        "title mentions press"
+      ],
+      "title": "Press LASER München | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/6-benefits-of-trumpfs-service-app/",
+      "score": 25.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering"
+      ],
+      "title": "6 benefits of TRUMPF's Service app | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/euroblech-every-investment-in-good-service-increases-performance/",
+      "score": 25.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering"
+      ],
+      "title": "EuroBLECH: \"Every investment in good service increases performance\" | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/fit-for-service/",
+      "score": 25.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering"
+      ],
+      "title": "Fit for Service | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/how-trumpf-plans-to-cut-spare-parts-delivery-times/",
+      "score": 25.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering"
+      ],
+      "title": "How TRUMPF plans to cut spare parts delivery times | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/lasers-instead-of-makeshift-solutions-we-have-found-the-solution-to-space-debris/",
+      "score": 25.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering"
+      ],
+      "title": "Lasers instead of makeshift solutions: “We have found the solution to space debris” | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/marking-medical-products-the-right-way-with-lasers/",
+      "score": 25.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering"
+      ],
+      "title": "Marking medical products the right way with lasers | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/our-service-technicians-had-to-run-into-the-air-raid-shelter-six-times-a-day/",
+      "score": 25.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering"
+      ],
+      "title": "\"Our service technicians had to run into the air-raid shelter six times a day\" | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/remote-smart-and-proactive-four-trumpf-services-of-the-future/",
+      "score": 25.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering"
+      ],
+      "title": "Remote, smart, and proactive: Four TRUMPF services of the future | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/smart-and-speedy-storage-solutions/",
+      "score": 25.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "offering"
+      ],
+      "title": "Smart and speedy storage solutions | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/additional-fields-of-activity/financial-services/tabs/financial-services/",
+      "score": 24.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering",
+        "deep path"
+      ],
+      "title": "Financial Services | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/additional-fields-of-activity/financial-services/tabs/financing-solutions/",
+      "score": 24.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering",
+        "deep path"
+      ],
+      "title": "Financing solutions | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/careers/people-at-trumpf/development-engineer/",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "people",
+        "careers"
+      ],
+      "title": "Development engineer | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/careers/people-at-trumpf/production-specialist/",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "people",
+        "careers"
+      ],
+      "title": "Production specialist | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/careers/people-at-trumpf/sales-engineer/",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "people",
+        "careers"
+      ],
+      "title": "Sales engineer | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/meta/product-inquiry/",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": "Product inquiry | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/news-archive/news-detail-page/",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/60-years-of-lasers-gimme-the-news-holo-doc/",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": "60 years of lasers: Gimme the news, Holo-Doc! | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/more-sustainability-lasers-stay-in-the-field-longer-thanks-to-trumpf-and-brose/",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": "More sustainability: Lasers stay in the field longer thanks to TRUMPF and Brose | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/new-laser-cell-for-more-sustainability/",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": "New laser cell for more sustainability | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/only-the-laser-can-6-applications-for-more-sustainability/",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": "Only the laser can: 6 applications for more sustainability | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/the-sustainability-tinkerers-how-trumpf-conserves-resources/",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": "The sustainability tinkerers - how TRUMPF conserves resources | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/stories/viral-in-vegas-a-sheet-metal-worker-becomes-a-social-media-star/",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": "Viral in Vegas – a sheet metal worker becomes a social media star | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/services/",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": "Services | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/solutions/industries/",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": "Industries | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/sustainability/corporate-governance/compliance/",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": "Compliance | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/sustainability/corporate-governance/data-security/",
+      "score": 23.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "press"
+      ],
+      "title": "Data security | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/additional-fields-of-activity/",
+      "score": 21.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "Additional fields of activity | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/events-and-dates-for-your-calendar/",
+      "score": 21.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "Events and dates for your calendar | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/principles/",
+      "score": 21.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "Principles | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/footer/column-1/online-services/",
+      "score": 20.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": "Online services | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/footer/column-2/products/",
+      "score": 20.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": "Products | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/landing-pages/global/innovation-summit-electronic-manufacturing-services/",
+      "score": 20.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": "Innovation Summit \"Electronic Manufacturing Services\" | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/landing-pages/global/laser-world-of-photonics-munich/social-media/",
+      "score": 20.0,
+      "reasons": [
+        "base locale",
+        "press",
+        "deep path"
+      ],
+      "title": "LASER World of PHOTONICS - Social Media | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/mytrumpf/release-notes/service-app-latest-releases/",
+      "score": 20.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": "Service App - Latest releases | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/power-electronics/iot-services-trumpf-huettinger/",
+      "score": 20.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": "IoT Services TRUMPF Hüttinger | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/software/software-service-agreements/",
+      "score": 20.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": "Software service agreements | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/solutions/smart-factory/smart-factory-portfolio/",
+      "score": 20.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": "Smart Factory portfolio | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/solutions/success-stories/3-dimensional-services-success-story/",
+      "score": 20.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": "Success story of our customer 3-Dimensional Services | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/solutions/success-stories/the-success-story-of-our-customer-fega-solutions-gmbh/",
+      "score": 20.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": "The success story of our customer FEGA Solutions GmbH | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/additional-fields-of-activity/affiliated-companies-and-other-brands/trumpf-huettinger/",
+      "score": 19.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering",
+        "deep path"
+      ],
+      "title": "TRUMPF Hüttinger | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/additional-fields-of-activity/affiliated-companies-and-other-brands/trumpf-photonics-inc/",
+      "score": 19.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering",
+        "deep path"
+      ],
+      "title": "TRUMPF Photonics Inc. | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/additional-fields-of-activity/financial-services/financing-inquiry/",
+      "score": 19.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering",
+        "deep path"
+      ],
+      "title": "Financing inquiry | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/additional-fields-of-activity/trumpf-venture/",
+      "score": 18.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "TRUMPF Venture | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/history/1923-1933/",
+      "score": 18.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "1923-1933 | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/history/1934-1949/",
+      "score": 18.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "1934-1949 | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/history/1950-1959/",
+      "score": 18.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "1950-1959 | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/history/1960-1966/",
+      "score": 18.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "1960-1966 | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/history/1967-1977/",
+      "score": 18.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "1967-1977 | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/history/1978-1984/",
+      "score": 18.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "1978-1984 | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/history/1985-1995/",
+      "score": 18.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "1985-1995 | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/history/1996-2004/",
+      "score": 18.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "1996-2004 | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/history/2005-2012/",
+      "score": 18.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "2005-2012 | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/history/2020-today/",
+      "score": 18.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "2020 - today | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/history/berthold-leibinger/",
+      "score": 18.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "The life of Berthold Leibinger | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/history/the-years-2013-2019/",
+      "score": 18.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "The years 2013-2019 | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/principles/quality/",
+      "score": 18.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "Quality | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/principles/suppliers/",
+      "score": 18.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "Suppliers | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/principles/synchro/",
+      "score": 18.0,
+      "reasons": [
+        "base locale",
+        "about"
+      ],
+      "title": "SYNCHRO | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/careers/apprenticeships/",
+      "score": 17.666666666666664,
+      "reasons": [
+        "base locale",
+        "careers"
+      ],
+      "title": "Apprenticeships | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/careers/experienced-professionals/",
+      "score": 17.666666666666664,
+      "reasons": [
+        "base locale",
+        "careers"
+      ],
+      "title": "Experienced professionals | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/careers/five-good-reasons-to-choose-trumpf/",
+      "score": 17.666666666666664,
+      "reasons": [
+        "base locale",
+        "careers"
+      ],
+      "title": "Five good reasons to choose TRUMPF | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/careers/graduates/",
+      "score": 17.666666666666664,
+      "reasons": [
+        "base locale",
+        "careers"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/careers/how-to-apply/",
+      "score": 17.666666666666664,
+      "reasons": [
+        "base locale",
+        "careers"
+      ],
+      "title": "How to apply | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/careers/students/",
+      "score": 17.666666666666664,
+      "reasons": [
+        "base locale",
+        "careers"
+      ],
+      "title": "Students | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/careers/trumpf-as-an-employer/",
+      "score": 17.666666666666664,
+      "reasons": [
+        "base locale",
+        "careers"
+      ],
+      "title": "TRUMPF as an employer | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/mytrumpf/getting-started/mytrumpf-in-a-minute/my-service-calls/",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": "My service calls | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/mytrumpf/getting-started/mytrumpf-in-a-minute/service-app/",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": "Service App | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/mytrumpf/getting-started/mytrumpf-user-guide/mytrumpf-user-guide-my-service-calls/",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": "MyTRUMPF User Guide - My service calls | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/mytrumpf/service-app/campaigns/service-app/",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": "Service App | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/machines-systems/automation/automation-solutions-from-trumpf/",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": "Automation: solutions from TRUMPF | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/power-tools/deburrers/new-product-deburrer/",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": "New product, deburrer | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/services/apps/service-app/",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": "Service app | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/services/services-for-lasers/technical-service/",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": "Technical Service for lasers | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/services/services-for-power-electronics/heating-solutions/",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": "Individual heating solutions | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/services/services-for-power-electronics/iot-services/",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": "IoT Services | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/services/services-for-power-electronics/service-agreements/",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": "Service agreements for power electronics | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/services/services-for-power-electronics/technical-service/",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": "Technical Service for power electronics | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/services/services-machines-systems-and-lasers/product-enhancements/",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/services/services-machines-systems-and-lasers/service-agreements/",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": "Service agreements | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/services/services-machines-systems-and-lasers/smart-services/",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": "Smart Services | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/services/services-machines-systems-and-lasers/technical-service/",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": "Technical Service for machines &amp; systems | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/solutions/industries/medical-technology/developing-medical-products-with-trumpf/",
+      "score": 17.0,
+      "reasons": [
+        "base locale",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/additional-fields-of-activity/trumpf-financial-services/tabs/financing-calculator/",
+      "score": 16.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "offering",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/customer-magazine/",
+      "score": 16.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/dedicated-packs/",
+      "score": 16.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": "Dedicated packs | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/newsroom/fiscal-year-figures-2024-25/",
+      "score": 16.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/sustainability/climate-action-and-environmental-protection/",
+      "score": 16.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": "Climate action and environmental protection | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/sustainability/social-issues-and-the-community/",
+      "score": 16.0,
+      "reasons": [
+        "base locale",
+        "press"
+      ],
+      "title": "Social issues and the community | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/company/principles/quality/safety-data-sheets-for-operating-supplies/",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "about",
+        "deep path"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/lasers/",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/machines-systems/",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/power-electronics/",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": "Power electronics | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/power-tools/",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": "Power tools | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/products/software/",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": "TRUMPF software for sheet metal processing | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/solutions/advantages-of-trumpf-machines/",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": "Advantages of TRUMPF machines | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/solutions/applications/",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": "Applications | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/solutions/smart-factory-consulting/",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": "Smart Factory Consulting | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/solutions/smart-factory/",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": "Smart Factory | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/solutions/success-stories/",
+      "score": 15.0,
+      "reasons": [
+        "base locale",
+        "offering"
+      ],
+      "title": "Customer success stories | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.trumpf.com/en_INT/careers/trumpf-as-an-employer/benefits-and-opportunities/",
+      "score": 14.666666666666666,
+      "reasons": [
+        "base locale",
+        "careers"
+      ],
+      "title": "Benefits and opportunities | TRUMPF",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    }
+  ]
+}

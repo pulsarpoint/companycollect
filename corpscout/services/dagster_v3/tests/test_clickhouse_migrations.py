@@ -392,6 +392,7 @@ EXPECTED_MIGRATIONS = (
     "000377_corpscout_se_company_basic_info",
     "000378_corpscout_se_company_basic_info_history",
     "000379_corpscout_se_company_basic_info_precedence",
+    "000380_corpscout_wikidata_company_wikipedia_articles",
     "000381_corpscout_se_company_basic_info_precedence_rules",
 )
 

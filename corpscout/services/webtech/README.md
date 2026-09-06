@@ -6,6 +6,32 @@ Wappalyzer 6.12.6; the custom scanner integration that wraps it is extension
 version 1.4.1. It exposes a small authenticated API for Dagster and retains the
 local benchmark CLI for isolated experiments.
 
+## Server prerequisites
+
+The scanner host must run a local **recursive caching DNS resolver**. Production
+uses Unbound on `192.168.88.149` itself, listening only on `127.0.0.1:53`, with
+two resolver threads, a 64 MiB message cache, and a 128 MiB RRset cache.
+Cache misses are resolved directly against root, TLD, and authoritative servers;
+do not configure forwarding to the router (`192.168.88.1`) or public recursive
+resolvers. Direct outbound UDP **and** TCP port 53 must be allowed.
+
+The host's `systemd-resolved` stub remains at `127.0.0.53` for applications and
+routes public DNS to Unbound. Tailscale's more-specific internal DNS routes are
+preserved. Unbound caches positive and negative answers, prefetches popular
+records near expiry, and validates DNSSEC with the maintained root trust anchor.
+This keeps the browser workers' DNS load off the router's resolver.
+
+`ansible/site.yml` provisions this prerequisite automatically. To apply only DNS
+configuration without redeploying or restarting the scanner:
+
+```bash
+cd ansible
+ansible-playbook dns.yml
+```
+
+Resolver configuration and verification/rollback details are in
+[`ansible/README.md`](ansible/README.md#recursive-dns-on-the-scanner-host).
+
 ## Remote scanner API
 
 Copy `.env.example` to `.env`, provide the API token and RustFS settings, then

@@ -1,0 +1,2550 @@
+{
+  "domain": "pricer.com",
+  "base_url": "https://www.pricer.com/",
+  "preferred_languages": [
+    "en"
+  ],
+  "built_at": "2026-09-03T23:18:52+00:00",
+  "inventory_urls": 2135,
+  "eligible_urls": 2135,
+  "excluded_urls": 0,
+  "candidates": [
+    {
+      "url": "https://www.pricer.com/",
+      "score": 60.0,
+      "reasons": [
+        "homepage"
+      ],
+      "title": "Pricer | The Worldâs Most Reliable Electronic Shelf Labels (ESL) | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/company-shop-deploys-pricer-s-in-store-solution-to-deliver-dynamic-real-time-pricing-enhancing-its-v",
+      "score": 55.0,
+      "reasons": [
+        "about",
+        "press",
+        "offering",
+        "title mentions offering"
+      ],
+      "title": "Company Shop deploys Pricerâs in-store solution to deliver dynamic real-time pricing, enhancing its value promise, while preventing food waste | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/pricer-and-re-vision-partner-to-enhance-shopper-experience-with-automated-product-position-and-product-flash",
+      "score": 50.0,
+      "reasons": [
+        "about",
+        "press",
+        "offering"
+      ],
+      "title": "Pricer and Re-Vision partner to enhance shopper experience with Automated Product Position and Product Flash | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/thought-leadership-omni-channel-retail-offering-a-seamless-shopping-experience-to-customers",
+      "score": 50.0,
+      "reasons": [
+        "people",
+        "press",
+        "offering",
+        "title mentions people"
+      ],
+      "title": "Thought Leadership : Omni-channel Retail, Offering a Seamless Shopping Experience to Customers | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/planet-retail-news-delhaize-group-implements-pricer-esl-in-belgian-stores",
+      "score": 48.0,
+      "reasons": [
+        "about",
+        "press"
+      ],
+      "title": "Planet Retail news: Delhaize Group implements Pricer ESL in Belgian stores | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/contact",
+      "score": 41.0,
+      "reasons": [
+        "contact",
+        "title mentions contact"
+      ],
+      "title": "Contact | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/legal-notice",
+      "score": 41.0,
+      "reasons": [
+        "contact",
+        "title mentions contact"
+      ],
+      "title": "Legal Notice | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/about/corporate-governance/risk-management",
+      "score": 40.0,
+      "reasons": [
+        "about",
+        "people",
+        "title mentions people"
+      ],
+      "title": "Risk Management | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/about/sustainability/people-society",
+      "score": 40.0,
+      "reasons": [
+        "about",
+        "people",
+        "press"
+      ],
+      "title": "People & Society - inclusivity for all people in our operations | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/about/careers",
+      "score": 38.0,
+      "reasons": [
+        "about",
+        "careers",
+        "title mentions careers"
+      ],
+      "title": "Careers | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/esl-journey/contact-a-pricer-partner",
+      "score": 38.0,
+      "reasons": [
+        "contact",
+        "title mentions contact"
+      ],
+      "title": "ESL Journey / Contact a Pricer Partner | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/nationwide-marketing-group-recommends-pricers-electronic-shelf-labels-to-its-members",
+      "score": 38.0,
+      "reasons": [
+        "about",
+        "press"
+      ],
+      "title": "Nationwide Marketing Group recommends Pricerâs electronic shelf labels to its members | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/pricer-strengthens-its-management-team",
+      "score": 38.0,
+      "reasons": [
+        "people",
+        "press",
+        "title mentions people"
+      ],
+      "title": "Pricer strengthens its management team | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/trevi-the-first-canadian-pool-and-spa-company-to-go-digital-with-jrtech-and-pricers-electronic-shelf-labels",
+      "score": 38.0,
+      "reasons": [
+        "about",
+        "press"
+      ],
+      "title": "TrÃ©vi, the first Canadian pool and spa company to go digital with JRTECH and Pricerâs electronic shelf labels | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/a-new-group-of-e-leclerc-supermarkets-selects-pricer-esl",
+      "score": 38.0,
+      "reasons": [
+        "about",
+        "press"
+      ],
+      "title": "A new group of E. Leclerc supermarkets selects Pricer ESL | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/finnish-co-operative-retailer-s-group-chooses-pricer-as-the-supplier-of-electronic-shelf-labels",
+      "score": 38.0,
+      "reasons": [
+        "about",
+        "press"
+      ],
+      "title": "Finnish co-operative retailer S Group chooses Pricer as the supplier of electronic shelf labels | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/finnish-co-operative-retailer-s-group-installs-pricer-s-digital-in-store-solution-in-over-100-additi",
+      "score": 38.0,
+      "reasons": [
+        "about",
+        "press"
+      ],
+      "title": "Finnish co-operative retailer S Group installs Pricerâs digital in-store solution in over 100 additional stores | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/group-auchan-schiever-upgrades-hypermarkets-order-value-sek-10m",
+      "score": 38.0,
+      "reasons": [
+        "about",
+        "press"
+      ],
+      "title": "Group Auchan Schiever upgrades hypermarkets â order value SEK 10M | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/italian-retail-group-maxi-di-and-pricer-signs-framework-agreement",
+      "score": 38.0,
+      "reasons": [
+        "about",
+        "press"
+      ],
+      "title": "Italian retail group Maxi Di and Pricer signs framework agreement | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/pricer-ab-decides-on-a-repurchase-program-for-own-shares-to-hedge-obligations-for-the-company-s-ince",
+      "score": 38.0,
+      "reasons": [
+        "about",
+        "press"
+      ],
+      "title": "Pricer AB decides on a repurchase program for own shares to hedge obligations for the company's incentive programs | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/pricer-ab-has-completed-the-repurchase-of-own-shares-to-hedge-obligations-for-the-company-s-incentiv",
+      "score": 38.0,
+      "reasons": [
+        "about",
+        "press"
+      ],
+      "title": "Pricer AB has completed the repurchase of own shares to hedge obligations for the company's incentive program | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/pricer-extends-esl-leadership-with-next-generation-graphic-esl-deployment",
+      "score": 38.0,
+      "reasons": [
+        "people",
+        "press",
+        "title mentions people"
+      ],
+      "title": "Pricer extends ESL leadership with next generation graphic ESL deployment | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/pricer-s-ceo-fredrik-berglund-decides-to-leave-the-company",
+      "score": 38.0,
+      "reasons": [
+        "about",
+        "press"
+      ],
+      "title": "Pricerâs CEO Fredrik Berglund decides to leave the company | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/pricer-s-new-organization",
+      "score": 38.0,
+      "reasons": [
+        "about",
+        "press"
+      ],
+      "title": "Pricerâs new organization | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/pricer-strengthens-management-and-its-international-operations",
+      "score": 38.0,
+      "reasons": [
+        "people",
+        "press",
+        "title mentions people"
+      ],
+      "title": "Pricer strengthens management and its international operations | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/pricer-to-unveil-new-global-consumer-insights-study-and-shelf-awareness-vision-at-nrf-2026",
+      "score": 38.0,
+      "reasons": [
+        "about",
+        "press"
+      ],
+      "title": "Pricer to unveil new global consumer insights study and âshelf awarenessâ vision at NRF 2026 | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/strategic-management-recruitments-in-pricer",
+      "score": 38.0,
+      "reasons": [
+        "people",
+        "press",
+        "title mentions people"
+      ],
+      "title": "Strategic management recruitments in Pricer | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/the-board-of-directors-of-pricer-stands-with-its-proposed-dividend-but-with-a-split-payment",
+      "score": 38.0,
+      "reasons": [
+        "people",
+        "press",
+        "title mentions people"
+      ],
+      "title": "The Board of Directors of Pricer stands with its proposed dividend but with a split payment | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/about",
+      "score": 36.0,
+      "reasons": [
+        "about"
+      ],
+      "title": "About | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/about/corporate-governance/board-and-auditor",
+      "score": 35.0,
+      "reasons": [
+        "about",
+        "people"
+      ],
+      "title": "Board and auditor | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/about/corporate-governance/senior-executives",
+      "score": 35.0,
+      "reasons": [
+        "about",
+        "people"
+      ],
+      "title": "Senior executives | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news-press/media-library/management-board",
+      "score": 35.0,
+      "reasons": [
+        "people",
+        "press",
+        "title mentions people"
+      ],
+      "title": "Management & Board | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/media-markt-saturn-regained-market-shares-thanks-to-its-omnichannel-pricing-strategy-enabled-by-pricer",
+      "score": 35.0,
+      "reasons": [
+        "press",
+        "offering",
+        "title mentions offering"
+      ],
+      "title": "Media Markt-Saturn regained market shares thanks to its omnichannel pricing strategy enabled by Pricer | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/use-cases/store-operations/waste-management",
+      "score": 34.0,
+      "reasons": [
+        "people",
+        "offering",
+        "title mentions people"
+      ],
+      "title": "Waste Management | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/about/corporate-governance/",
+      "score": 33.0,
+      "reasons": [
+        "about"
+      ],
+      "title": "Corporate Governance | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/blog/price-management-to-in-store-digitalization-leader",
+      "score": 33.0,
+      "reasons": [
+        "people",
+        "title mentions people"
+      ],
+      "title": "From price management to in-store digitalization leader | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/blog/pricer-nominated-for-saas-company-of-the-year-award",
+      "score": 33.0,
+      "reasons": [
+        "about"
+      ],
+      "title": "Pricer nominated to the SaaS company of the year award | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/blog/transparency-shelf-edge-truth-about-esl",
+      "score": 33.0,
+      "reasons": [
+        "about"
+      ],
+      "title": "Transparency at the Shelf Edge: The Truth About ESLs | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/linda-pimmeshofer-newest-board-member",
+      "score": 33.0,
+      "reasons": [
+        "people",
+        "press"
+      ],
+      "title": "Pricer welcomes Linda Pimmeshofer as newest board member | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/bernt-ingman-is-appointed-new-chairman-of-the-board-of-pricer-ab",
+      "score": 33.0,
+      "reasons": [
+        "people",
+        "press"
+      ],
+      "title": "Bernt Ingman is appointed new Chairman of the Board of Pricer AB | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/goran-sundholm-resigns-as-member-of-the-board-of-pricer-ab",
+      "score": 33.0,
+      "reasons": [
+        "people",
+        "press"
+      ],
+      "title": "GÃ¶ran Sundholm resigns as member of the board of Pricer AB | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/pricer-s-chairman-of-the-board-will-not-stand-for-re-election",
+      "score": 33.0,
+      "reasons": [
+        "people",
+        "press"
+      ],
+      "title": "Pricerâs Chairman of the board will not stand for re-election | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/pricer-welcomes-a-new-global-team-member-to-the-marketing-team",
+      "score": 33.0,
+      "reasons": [
+        "people",
+        "press"
+      ],
+      "title": "Pricer Welcomes a New Global Team Member to the Marketing Team | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/sterling-increases-ownership-in-pricer-and-new-board-member-nominated-to-the-board",
+      "score": 33.0,
+      "reasons": [
+        "people",
+        "press"
+      ],
+      "title": "Sterling increases ownership in Pricer and new board member nominated to the board | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/the-nomination-committee-s-proposal-for-election-of-board-members",
+      "score": 33.0,
+      "reasons": [
+        "people",
+        "press"
+      ],
+      "title": "The Nomination Committeeâs proposal for election of Board members | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/the-nomination-committee-s-proposal-for-election-of-board-members-1",
+      "score": 33.0,
+      "reasons": [
+        "people",
+        "press"
+      ],
+      "title": "The Nomination Committeeâs proposal for election of Board members | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/the-nomination-committee-s-proposal-for-election-of-board-members-2",
+      "score": 33.0,
+      "reasons": [
+        "people",
+        "press"
+      ],
+      "title": "The Nomination Committeeâs proposal for election of Board members | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/the-nomination-committee-s-proposal-for-election-of-board-members-2024",
+      "score": 33.0,
+      "reasons": [
+        "people",
+        "press"
+      ],
+      "title": "The Nomination Committeeâs proposal for election of Board members 2024 | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/the-nomination-committee-s-proposal-for-election-of-board-members-3",
+      "score": 33.0,
+      "reasons": [
+        "people",
+        "press"
+      ],
+      "title": "The Nomination Committeeâs proposal for election of Board members | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/the-nomination-committee-s-proposal-for-election-of-board-members-of-pricer-ab-2025",
+      "score": 33.0,
+      "reasons": [
+        "people",
+        "press"
+      ],
+      "title": "The nomination committee's proposal for election of Board members of Pricer AB 2025 | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/the-nomination-committee-s-proposal-for-election-of-new-board-members",
+      "score": 33.0,
+      "reasons": [
+        "people",
+        "press"
+      ],
+      "title": "The Nomination Committeeâs proposal for election of new Board members | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/the-nomination-committee-s-proposal-for-election-of-new-board-members-1",
+      "score": 33.0,
+      "reasons": [
+        "people",
+        "press"
+      ],
+      "title": "The Nomination Committeeâs proposal for election of new Board members | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/the-nomination-committee-s-proposal-of-new-board-member-at-pricer",
+      "score": 33.0,
+      "reasons": [
+        "people",
+        "press"
+      ],
+      "title": "The Nomination Committeeâs proposal of new Board member at Pricer | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/the-nomination-committee-s-proposal-of-new-board-members-at-pricer",
+      "score": 33.0,
+      "reasons": [
+        "people",
+        "press"
+      ],
+      "title": "The Nomination Committeeâs proposal of new Board members at Pricer | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/the-nomination-committee-s-revised-proposal-for-election-of-board-members",
+      "score": 33.0,
+      "reasons": [
+        "people",
+        "press"
+      ],
+      "title": "The Nomination Committeeâs revised proposal for election of Board members | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/case-studies/one-night-installation-esl-true-team-effort",
+      "score": 32.0,
+      "reasons": [
+        "people",
+        "offering"
+      ],
+      "title": "One night installation of ESLs â a true team effort | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/blog/sustainability-conscious-consumers-and-retailers-driver-for-esl-solutions",
+      "score": 30.0,
+      "reasons": [
+        "press",
+        "offering"
+      ],
+      "title": "Sustainability conscious consumers and retailers driver for ESL solutions | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/about/sustainability",
+      "score": 28.0,
+      "reasons": [
+        "about",
+        "press"
+      ],
+      "title": "Sustainability - a partner for sustainable retail | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/blog/cloud-based-central-management-system",
+      "score": 28.0,
+      "reasons": [
+        "people"
+      ],
+      "title": "Pricer at your service, as a service | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/blog/rocket-scientists-retail-executives-lot-in-common",
+      "score": 28.0,
+      "reasons": [
+        "people"
+      ],
+      "title": "Rocket scientists and retail executives have a lot in common | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/investors",
+      "score": 26.0,
+      "reasons": [
+        "press",
+        "title mentions press"
+      ],
+      "title": "Investors | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-and-news",
+      "score": 26.0,
+      "reasons": [
+        "press",
+        "title mentions press"
+      ],
+      "title": "News and Press | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release",
+      "score": 26.0,
+      "reasons": [
+        "press",
+        "title mentions press"
+      ],
+      "title": "Press Releases | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/fr/actualite/contact-presse",
+      "score": 25.0,
+      "reasons": [
+        "other locale 'fr'",
+        "contact",
+        "press",
+        "title mentions contact"
+      ],
+      "title": "Contact presse | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/albert-heijn-combats-food-waste-with-pricer-and-wasteless-through-ai-powered-dynamic-pricing",
+      "score": 25.0,
+      "reasons": [
+        "press",
+        "offering",
+        "title mentions offering"
+      ],
+      "title": "Albert Heijn combats food waste with Pricer and Wasteless through AI powered Dynamic Pricing | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/musgrave-rolls-out-digital-shelf-edge-capabilities-improve-pricing-accuracy-enhance-cx",
+      "score": 25.0,
+      "reasons": [
+        "press",
+        "offering",
+        "title mentions offering"
+      ],
+      "title": "Musgrave rolls out digital shelf-edge capabilities to improve pricing accuracy and enhance CX | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/bfresh-selects-pricer-for-its-sign-solution-for-item-pricing",
+      "score": 25.0,
+      "reasons": [
+        "press",
+        "offering",
+        "title mentions offering"
+      ],
+      "title": "bfreshÂ® selects Pricer for its sign solution for item pricing | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-and-news/press-contacts",
+      "score": 23.0,
+      "reasons": [
+        "press",
+        "title mentions press"
+      ],
+      "title": "Press Contacts | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/press-release-from-pricer-ab-s-annual-general-meeting-2015",
+      "score": 23.0,
+      "reasons": [
+        "press",
+        "title mentions press"
+      ],
+      "title": "Press release from Pricer ABâs Annual General Meeting 2015 | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/press-release-from-pricer-ab-s-annual-general-meeting-2016",
+      "score": 23.0,
+      "reasons": [
+        "press",
+        "title mentions press"
+      ],
+      "title": "Press release from Pricer ABâs Annual General Meeting 2016 | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/press-release-from-pricer-ab-s-annual-general-meeting-2017",
+      "score": 23.0,
+      "reasons": [
+        "press",
+        "title mentions press"
+      ],
+      "title": "Press release from Pricer ABâs Annual General Meeting 2017 | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/press-release-from-pricer-ab-s-annual-general-meeting-2018",
+      "score": 23.0,
+      "reasons": [
+        "press",
+        "title mentions press"
+      ],
+      "title": "Press release from Pricer ABâs Annual General Meeting 2018 | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/case-studies/saving-meals-east-of-england-co-op-scales-sustainability-with-pricer-esls",
+      "score": 22.0,
+      "reasons": [
+        "press",
+        "offering"
+      ],
+      "title": "Saving 1.8 Million Meals: East of England Co-op Scales Sustainability with Retail Insight AI and Pricer ESLs | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news",
+      "score": 21.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "News | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/reports",
+      "score": 21.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Financial Reports | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/blog/consistent-pricing-key-to-customer-loyalty-ahead-peak-season",
+      "score": 20.0,
+      "reasons": [
+        "offering",
+        "title mentions offering"
+      ],
+      "title": "Consistent Pricing is the Key to Customer Loyalty Ahead of Peak Season | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/blog/dynamic-pricing-brick-and-mortar-stores",
+      "score": 20.0,
+      "reasons": [
+        "offering",
+        "title mentions offering"
+      ],
+      "title": "Dynamic pricing embraced by brick-and-mortar stores | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/blog/dynamic-pricing-retail-bridge-e-gap",
+      "score": 20.0,
+      "reasons": [
+        "offering",
+        "title mentions offering"
+      ],
+      "title": "Dynamic pricing within retail can bridge the e-gap | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/de/nachrichten/presse-kontakt",
+      "score": 20.0,
+      "reasons": [
+        "other locale 'de'",
+        "contact",
+        "press"
+      ],
+      "title": "Presse Kontakt | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/avantis-cooperative-expands-its-exclusive-partnership-with-jrtech-solutions-to-digitize-more-bmr-stores-with-pricer-electronic-shelf-labels",
+      "score": 20.0,
+      "reasons": [
+        "press",
+        "offering"
+      ],
+      "title": "Avantis Cooperative expands its exclusive partnership with JRTech Solutions to digitize more BMR stores with Pricer electronic shelf labels | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/can-customers-like-their-favourite-products-in-stores",
+      "score": 20.0,
+      "reasons": [
+        "press",
+        "offering"
+      ],
+      "title": "Can customers âlikeâ their favourite products in stores? | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/connect-your-store-with-pricers-new-products-and-solutions",
+      "score": 20.0,
+      "reasons": [
+        "press",
+        "offering"
+      ],
+      "title": "Connect your store with Pricerâs new products and solutions | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/ecrs-and-pricer-now-partnering-to-offer-electronic-shelf-labels-esl-solutions-to-the-north-american-market",
+      "score": 20.0,
+      "reasons": [
+        "press",
+        "offering"
+      ],
+      "title": "ECRS and Pricer now partnering to offer Electronic Shelf Labels (ESL) Solutions to the North American Market | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/in-an-industry-first-carrefour-rolls-out-the-pricer-automated-product-geolocation-module-in-its-national-mobile-shopper-app-carrefour-moi",
+      "score": 20.0,
+      "reasons": [
+        "press",
+        "offering"
+      ],
+      "title": "In an Industry first, Carrefour Rolls Out the Pricer Automated Product Geolocation Module in its National Mobile Shopper App âCarrefour & Moiâ | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/jrtech-solutions-install-esls-within-rona-affiliated-dealer-stores-canada",
+      "score": 20.0,
+      "reasons": [
+        "press",
+        "offering"
+      ],
+      "title": "Pricerâs partner JRTech Solutions to install ESLs within RONA Affiliated Dealer Stores throughout Canada | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/pricer-appoints-former-clear-channel-exec-as-chief-product-officer",
+      "score": 20.0,
+      "reasons": [
+        "press",
+        "offering"
+      ],
+      "title": "Pricer appoints former Clear Channel exec as Chief Product Officer as it enhances its Plaza platform and suite of store execution solutions | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/pricer-expands-customer-approach-in-italian-market-with-new-partners-and-new-offering",
+      "score": 20.0,
+      "reasons": [
+        "press",
+        "offering"
+      ],
+      "title": "Pricer Expands Customer Approach in Italian Market with New Partners and New Offering | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/pricer-shows-bargain-prices-in-japan",
+      "score": 20.0,
+      "reasons": [
+        "press",
+        "offering"
+      ],
+      "title": "Pricer shows bargain prices in Japan | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/pricers-partner-jrtech-solutions-installs-esls-within-canadian-pharmacies",
+      "score": 20.0,
+      "reasons": [
+        "press",
+        "offering"
+      ],
+      "title": "Pricerâs partner JRTech Solutions installs ESLs within Canadian pharmacies | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/swedish-post-office-improves-mail-service-with-pricer-dotmatrix",
+      "score": 20.0,
+      "reasons": [
+        "press",
+        "offering"
+      ],
+      "title": "Swedish Post office improves mail service with Pricer DotMatrix | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-and-news/subscription-services",
+      "score": 20.0,
+      "reasons": [
+        "press",
+        "offering"
+      ],
+      "title": "Subscription Services | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/coop-norge-handel-as-selects-pricer-solutions-for-150-stores",
+      "score": 20.0,
+      "reasons": [
+        "press",
+        "offering"
+      ],
+      "title": "COOP NORGE HANDEL AS SELECTS PRICER SOLUTIONS FOR 150 STORES | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/leading-us-retailer-chooses-pricer-s-digital-shelf-edge-solutions",
+      "score": 20.0,
+      "reasons": [
+        "press",
+        "offering"
+      ],
+      "title": "Leading US Retailer chooses Pricerâs Digital Shelf-edge solutions | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/new-facility-in-europe-moves-pricer-s-production-closer-to-customers",
+      "score": 20.0,
+      "reasons": [
+        "press",
+        "offering"
+      ],
+      "title": "New facility in Europe moves Pricerâs production closer to customers | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/pricer-and-jrtech-solutions-signs-51-musd-digital-store-transformation-deal-with-sobeys-in-canada",
+      "score": 20.0,
+      "reasons": [
+        "press",
+        "offering"
+      ],
+      "title": "Pricer and JRTech Solutions signs 51 MUSD digital store transformation deal with Sobeys in Canada | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/pricer-launches-at-nrf-s-big-show-its-ground-breaking-real-time-automated-product-positioning-for-re",
+      "score": 20.0,
+      "reasons": [
+        "press",
+        "offering"
+      ],
+      "title": "Pricer launches at NRFâs Big Show its ground-breaking real time automated product positioning for retailers | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/pricer-launches-pricer-plaza-a-new-and-enhanced-architecture-for-smart-retail-in-store-services-an",
+      "score": 20.0,
+      "reasons": [
+        "press",
+        "offering"
+      ],
+      "title": "Pricer Launches Pricer Plaza â A New and Enhanced Architecture for Smart Retail In-Store Services and Business Models at EuroShop 2020 | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/pricer-partners-in-the-eurostars-funded-project-select-to-advance-sustainable-electronics",
+      "score": 20.0,
+      "reasons": [
+        "press",
+        "offering"
+      ],
+      "title": "Pricer partners in the Eurostars-funded project SELECT to advance sustainable electronics | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/pricer-presents-new-solutions-to-retail-challenges",
+      "score": 20.0,
+      "reasons": [
+        "press",
+        "offering"
+      ],
+      "title": "Pricer presents new solutions to retail challenges | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/pricer-s-partner-jrtech-solutions-signs-framework-agreement-with-castle-building-centre",
+      "score": 20.0,
+      "reasons": [
+        "press",
+        "offering"
+      ],
+      "title": "Pricerâs partner JRTech Solutions signs framework agreement with Castle Building Centre | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/pricer-s-partner-jrtech-solutions-signs-new-framework-agreement-with-metro-to-continue-supplying-pri",
+      "score": 20.0,
+      "reasons": [
+        "press",
+        "offering"
+      ],
+      "title": "Pricerâs partner JRTech Solutions signs new framework agreement with Metro to continue supplying Pricer electronic shelf labels | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/pricer-s-partner-jrtech-solutions-signs-supply-agreement-with-associated-grocers-for-digital-shelf-s",
+      "score": 20.0,
+      "reasons": [
+        "press",
+        "offering"
+      ],
+      "title": "Pricerâs partner JRTech Solutions signs supply agreement with Associated Grocers for digital shelf solutions | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/pricer-to-showcase-next-generation-solutions-to-drive-forward-in-store-capabilities-at-shoptalk-euro",
+      "score": 20.0,
+      "reasons": [
+        "press",
+        "offering"
+      ],
+      "title": "Pricer to showcase next generation solutions to drive forward in-store capabilities at Shoptalk Europe | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/pricer-unveils-new-solutions-to-power-cx-and-unlock-operation-efficiencies-and-labor-productivity-in",
+      "score": 20.0,
+      "reasons": [
+        "press",
+        "offering"
+      ],
+      "title": "Pricer unveils new solutions to power CX and unlock operation efficiencies and labor productivity in-store at RTS | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/pricer-wins-paris-retail-award-customer-experience-360-for-automated-product-positioning-kiosk-for",
+      "score": 20.0,
+      "reasons": [
+        "press",
+        "offering"
+      ],
+      "title": "Pricer wins Paris Retail Award âCustomer Experience 360â for Automated Product Positioning Kiosk for Shoppers | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/production-moves-closer-to-customers-as-pricer-opens-new-facility-with-zollner-elektronik-ag",
+      "score": 20.0,
+      "reasons": [
+        "press",
+        "offering"
+      ],
+      "title": "Production moves closer to customers as Pricer opens new facility with Zollner Elektronik AG | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/systeme-u-selects-pricer-as-referenced-vendor-of-electronic-shelf-edge-solutions",
+      "score": 20.0,
+      "reasons": [
+        "press",
+        "offering"
+      ],
+      "title": "SystÃ¨me U Selects Pricer as Referenced Vendor of Electronic Shelf-Edge Solutions | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/toshiba-tec-europe-to-integrate-and-resell-pricer-s-esl-system-in-their-retail-offering",
+      "score": 20.0,
+      "reasons": [
+        "press",
+        "offering"
+      ],
+      "title": "TOSHIBA TEC Europe to integrate and resell Pricerâs ESL system in their retail offering | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/transforming-the-future-of-retail-pricer-showcases-digital-in-store-automation-solutions-at-nrf",
+      "score": 20.0,
+      "reasons": [
+        "press",
+        "offering"
+      ],
+      "title": "Transforming the future of retail: Pricer showcases digital in-store automation solutions at NRF | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/blog/pricer-interviewed-in-dagens-nyheter",
+      "score": 18.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Pricer interviewed in Dagens Nyheter | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/blog/smart-ways-for-retailers-to-help-reach-global-sustainability-goal",
+      "score": 18.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Smart ways for retailers to help reach global sustainability goal | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/case-studies",
+      "score": 18.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Case studies | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/investors/annual-reports",
+      "score": 18.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Annual Reports | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/breaking-news-at-nrf-2018",
+      "score": 18.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Breaking news at NRF 2018 | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-and-news/media-library",
+      "score": 18.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Media Library | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/pricer-s-system-plays-a-central-part-in-extensive-marketing-campaign-of-media-markt-saturn",
+      "score": 18.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Pricerâs system plays a central part in extensive marketing campaign of Media Markt â Saturn | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/press-release/pricer-showcases-color-esls-consumer-engagement-sustainability-and-shelf-availability-advances-at",
+      "score": 18.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Pricer showcases color ESLs, consumer engagement, sustainability and shelf availability advances at EuroCIS | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/products",
+      "score": 18.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Products | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/use-cases",
+      "score": 18.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Use Cases | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/about/sustainability/circularity-resource-efficiency",
+      "score": 15.0,
+      "reasons": [
+        "about",
+        "press"
+      ],
+      "title": "Circularity & Resource efficiency - supporting a circular economy | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/about/sustainability/climate",
+      "score": 15.0,
+      "reasons": [
+        "about",
+        "press"
+      ],
+      "title": "Climate | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/about/sustainability/code-of-conduct",
+      "score": 15.0,
+      "reasons": [
+        "about",
+        "press"
+      ],
+      "title": "Code of Conduct | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/blog/3-questions-to-giacomo-crucinio-head-of-professional-services",
+      "score": 15.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "3 Questions to Giacomo Crucinio, Head of Professional Services | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/blog/accelerating-portfolio-to-high-impact-color-esl",
+      "score": 15.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "The future is brighter: Accelerating our portfolio to high-impact color ESLs  | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/blog/beauty-of-product-information",
+      "score": 15.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "The Beauty of Product Information | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/blog/future-fit-how-to-make-the-sports-store-deliver-more-value-for-retailers-and-their-customers",
+      "score": 15.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Future fit - How to make the sports store deliver more value for retailers and their customers | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/blog/how-can-retail-meet-the-expectations-of-todays-customers",
+      "score": 15.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "How Can Retail Meet the Expectations of Today's Customers? | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/blog/key-in-store-solutions-for-smart-retail",
+      "score": 15.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Key in-store solutions for smart retail | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/blog/many-uk-shoppers-blame-cost-of-living-crisis-for-poor-product-availability",
+      "score": 15.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Pricer research: Many UK shoppers blame cost-of-living crisis for poor product availability | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/blog/nominated-for-innovative-product-award",
+      "score": 15.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Pricer nominated for Innovative Product Award | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/blog/only-6-plan-to-re-buy-brands",
+      "score": 15.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Shocking Stat! Only 6% Plan to Re-Buy Brands After Trading Down | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/blog/pricer-awarded-global-award-innovative-epaper-product-epaper-industry-alliance",
+      "score": 15.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Pricer awarded The Global Award for Innovative ePaper Product by the ePaper Industry Alliance | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/blog/staff-picking-online-orders-in-store-is-making-customers-unhappy-research-from-pricer",
+      "score": 15.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Staff picking online orders in store is making customers unhappy, the latest research from Pricer shows | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/blog/supermarkets-struggle-retain-customers-discounter-appeal",
+      "score": 15.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Supermarkets Struggle to Retain Customers Amid Discounter Appeal | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/blog/swedish-retail-tech-companies-add-value-to-grocery-stores-with-cloud-solutions",
+      "score": 15.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Swedish retail tech companies add value to grocery stores with cloud solutions | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/blog/unimat-ensure-their-prices-are-correct",
+      "score": 15.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "UNIMAT: Ensure their prices are correct | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/case-studies/swedish-postal-service-sorting-mail-faster",
+      "score": 15.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Swedish Postal Service: Sorting mail, faster | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/about/become-a-partner",
+      "score": 13.0,
+      "reasons": [
+        "about"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/about/ecosystem",
+      "score": 13.0,
+      "reasons": [
+        "about"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/about/pricer-in-brief",
+      "score": 13.0,
+      "reasons": [
+        "about"
+      ],
+      "title": "Pricer In Brief - What we do & How we help you | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/about/support",
+      "score": 13.0,
+      "reasons": [
+        "about"
+      ],
+      "title": "Support | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/about/the-pricer-story",
+      "score": 13.0,
+      "reasons": [
+        "about"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/products/technology/dynamic-product-positioning",
+      "score": 12.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/use-cases/shopper-engagement/find-product",
+      "score": 12.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Find Product | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/use-cases/shopper-engagement/mobile-product-information",
+      "score": 12.0,
+      "reasons": [
+        "offering"
+      ],
+      "title": "Mobile Product Information | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/about/corporate-governance/annual-general-meeting",
+      "score": 10.0,
+      "reasons": [
+        "about"
+      ],
+      "title": "Annual General Meeting | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/about/corporate-governance/application-of-the-code",
+      "score": 10.0,
+      "reasons": [
+        "about"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/about/corporate-governance/internal-control",
+      "score": 10.0,
+      "reasons": [
+        "about"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/about/corporate-governance/nomination-committee",
+      "score": 10.0,
+      "reasons": [
+        "about"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/about/corporate-governance/remuneration",
+      "score": 10.0,
+      "reasons": [
+        "about"
+      ],
+      "title": null,
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/sv/nyheter/nationwide-marketing-group-rekommenderar-pricers-digitala-prisetiketter-till-sina-medlemmar",
+      "score": 10.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "press"
+      ],
+      "title": "Nationwide Marketing Group rekommenderar Pricers digitala prisetiketter till sina medlemmar | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/sv/press-release/company-shop-implementerar-pricers-lo-sning-fo-r-dynamisk-prissaettning-i-butik-staerker-sitt-vaerde",
+      "score": 10.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "press"
+      ],
+      "title": "Company Shop implementerar Pricers lÃ¶sning fÃ¶r dynamisk prissÃ¤ttning i butik â stÃ¤rker sitt vÃ¤rdeerbjudande och minskar matsvinn | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/sv/press-release/ny-organisation-i-pricer",
+      "score": 10.0,
+      "reasons": [
+        "other locale 'sv'",
+        "about",
+        "press"
+      ],
+      "title": "Ny organisation i Pricer | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/de/kontakt",
+      "score": 8.0,
+      "reasons": [
+        "other locale 'de'",
+        "contact"
+      ],
+      "title": "Kontaktiere uns | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/es/la-empresa",
+      "score": 8.0,
+      "reasons": [
+        "other locale 'es'",
+        "about"
+      ],
+      "title": "Acerca de Pricer | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/fr/a-propos",
+      "score": 8.0,
+      "reasons": [
+        "other locale 'fr'",
+        "about"
+      ],
+      "title": "Ã propos de Pricer | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/fr/mentions-legales",
+      "score": 8.0,
+      "reasons": [
+        "other locale 'fr'",
+        "contact"
+      ],
+      "title": "Mentions legales | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/investors/financial-calendar",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Financial Calendar | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/investors/financial-definitions",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Financial Definitions | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/investors/financial-presentations",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Financial Presentations | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/investors/key-figures",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Key Figures | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/investors/rights-issue-2023",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Rights Issue 2023 (Disclaimer) | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/investors/share",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Share | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/it/chi-siamo",
+      "score": 8.0,
+      "reasons": [
+        "other locale 'it'",
+        "about"
+      ],
+      "title": "Chi siamo | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/it/contatti",
+      "score": 8.0,
+      "reasons": [
+        "other locale 'it'",
+        "contact"
+      ],
+      "title": "Contattaci | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/1000th-pricer-esl-installation-with-ishida-in-japan-completed",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "1000th Pricer ESL installation with Ishida in Japan completed | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/a-behind-the-scenes-look-at-leroy-merlins-digital-transformation",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "A behind-the-scenes look at Leroy Merlin's digital transformation | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/appointment-of-the-nomination-committee",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Appointment of the Nomination Committee | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/backlight-fv-promoline-3-16",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Backlight F&V Promoline 3-16 | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/barix-and-pricer-to-demonstrate-new-multi-sensory-retail-experience-solution-at-euroshop",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Barix and Pricer to Demonstrate New Multi-Sensory Retail Experience Solution at EuroShop | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/brand-new-business-activities-in-italy-for-pricer",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Brand new business activities in Italy for Pricer | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/ces-unveiled-paris-and-ces-unveiled-amsterdam",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "CES Unveiled Paris and CES Unveiled Amsterdam | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/consumer-electronics-retailer-cloud-solution-omnichannel-price-control",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Consumer electronics retailer choses cloud-based solution for full omnichannel price control | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/costco-wholesale-selects-pricers-esl-system-for-a-store-in-connecticut-usa",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Costco Wholesale selects Pricer's ESL system for a store in Connecticut, USA | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/covid-19-update",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Covid-19 update | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/da-mag-letiquette-electronique-est-promise-a-un-bel-avenir",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "DA mag : L'Ã©tiquette Ã©lectronique est promise Ã  un bel avenir | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/delhaize-belgium-selects-pricers-graphic-epaper-labels-for-its-stores",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Delhaize Belgium selects Pricerâs Graphic EPaper labels for its stores | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/dotmatrix",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "DotMatrix | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/download-pricers-2015-brochure",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Pricer's new 2015 brochure | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/esl-lights-in-the-bfresh-december-circular",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "ESL lights in the bfresh December circular | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/first-electronic-shelf-label-in-outer-space",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "First electronic shelf label in outer space | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/first-full-european-dotmatrix-store-up-and-running",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "First full European DotMatrix store up and running | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/instant-flash-for-electronic-shelf-labels",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Instant Flash for Electronic Shelf Labels | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/iphone-6-users-set-to-benefit-from-pricers-nfc-enabled-smarttags",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "iPhone 6 Users Set to Benefit from Pricerâs NFC-enabled SmartTAGs | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/letter-from-the-ceo",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Letter from the CEO | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/listen-to-webcast-with-pricers-ceo-jonas-vestin",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Listen to webcast with Pricer's CEO Jonas Vestin | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/meet-magnus-larsson-new-acting-ceo-of-pricer",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Meet Magnus Larsson â New acting CEO of Pricer | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/mobile-meeting-exhibition-2019",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Mobile Meeting & Exhibition 2019 - Milan, Italy | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/new-generation-shelf-labels-highlight-brand-identity",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "New generation shelf labels highlight brand identity | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/newspaper-dedicated-to-pricer",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Newspaper dedicated to Pricer | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/not-all-electronic-shelf-label-systems-are-born-equal",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Not all electronic shelf label systems are born equal | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/online-experience-driving-e-ticket-take-up",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Online experience driving e-ticket take-up | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/paris-retail-week-2019",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Paris Retail Week 2019 | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/phoceis-and-pricer-develop-indoor-geolocation-solution-using-esl-infrastructure",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Phoceis and Pricer Develop âIndoorâ Geolocation Solution Using ESL Infrastructure | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/positive-cooperation-with-hl-display",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Positive cooperation with HL Display | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/pricer-ab-and-psi-antonson-announce-a-new-cooperation",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Pricer AB and PSI Antonson announce a new cooperation | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/pricer-achieves-iso-iec-27001-certification-for-information-security",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Pricer achieves ISO/IEC 27001 certification for information security | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/pricer-and-reflexis-to-exhibit-combined-technologies-to-improve-retail-store-operations-at-euroshop-2017",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Pricer and Reflexis to Exhibit Combined Technologies to Improve Retail Store Operations at EuroShop 2017 | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/pricer-and-thinkgo-combine-their-digital-technologies-for-a-connected-retail-and-exhibit-at-nrf-big-retails-show-2017",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Pricer and Think&Go combine their digital technologies for a connected retail and exhibit at NRF Big Retailâs Show 2017 | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    },
+    {
+      "url": "https://www.pricer.com/news/pricer-and-vega-launch-the-first-content-automated-dynamic-digital-display",
+      "score": 8.0,
+      "reasons": [
+        "press"
+      ],
+      "title": "Pricer and Vega launch the first content-automated dynamic digital display | Pricer",
+      "language": null,
+      "labels": [],
+      "occurrences": 1,
+      "source": "inventory"
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "domain": "kongsberg.com",
+  "base_url": "https://www.kongsberg.com/",
+  "must_have": {
+    "home": [
+      "https://www.kongsberg.com/"
+    ],
+    "about": [
+      "https://www.kongsberg.com/about-us/management-and-organisation/",
+      "https://www.kongsberg.com/",
+      "https://www.kongsberg.com/about-us/contact/office-locations/helix-energy-solutions-group/",
+      "https://www.kongsberg.com/news/stories/2024/6/leadership-with-an-important-social-mission/",
+      "https://www.kongsberg.com/about-us/contact/"
+    ],
+    "contact": [
+      "https://www.kongsberg.com/about-us/contact/office-locations/helix-energy-solutions-group/",
+      "https://www.kongsberg.com/about-us/contact/",
+      "https://www.kongsberg.com/about-us/contact/contact/",
+      "https://www.kongsberg.com/about-us/contact/contact/contact-ocean-science/",
+      "https://www.kongsberg.com/about-us/contact/contact/contact-passive-acoustics/"
+    ],
+    "management": [
+      "https://www.kongsberg.com/about-us/management-and-organisation/",
+      "https://www.kongsberg.com/news/stories/2024/6/leadership-with-an-important-social-mission/",
+      "https://www.kongsberg.com/about-us/australia/leadership-page/",
+      "https://www.kongsberg.com/about-us/management-and-organisation/board-of-directors/",
+      "https://www.kongsberg.com/about-us/usa/leadership-page/"
+    ],
+    "careers": [
+      "https://www.kongsberg.com/careers/vacancies/project-engineer---configuration-management/",
+      "https://www.kongsberg.com/careers/vacancies/kongsberg-i-fredrikstad---team-manager-electronics/",
+      "https://www.kongsberg.com/careers/vacancies/senior-prosjektingenior---team-lead/",
+      "https://www.kongsberg.com/careers/vacancies/software-team-lead-supersoniske-missilsystemer/",
+      "https://www.kongsberg.com/careers/vacancies/team-manager-/"
+    ],
+    "products_services": [
+      "https://www.kongsberg.com/about-us/contact/office-locations/helix-energy-solutions-group/",
+      "https://www.kongsberg.com/about-us/contact/",
+      "https://www.kongsberg.com/support-and-services/ocean-space/training/contact-training/",
+      "https://www.kongsberg.com/news/news-archive/20202/kongsberg-digital-acquires-danish-maritime-software-company-coach-solutions/",
+      "https://www.kongsberg.com/about-us/contact/office-locations/"
+    ],
+    "group_structure": [
+      "https://www.kongsberg.com/about-us/management-and-organisation/",
+      "https://www.kongsberg.com/",
+      "https://www.kongsberg.com/about-us/contact/office-locations/helix-energy-solutions-group/",
+      "https://www.kongsberg.com/news/stories/2024/6/leadership-with-an-important-social-mission/",
+      "https://www.kongsberg.com/about-us/contact/"
+    ],
+    "legal_identity": []
+  },
+  "junk": [],
+  "notes": "Draft generated from URL slugs and titles; correct by hand."
+}

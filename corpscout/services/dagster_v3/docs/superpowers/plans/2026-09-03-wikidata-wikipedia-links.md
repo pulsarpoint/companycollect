@@ -1,7 +1,12 @@
 # Wikidata company Wikipedia articles — design and implementation plan
 
-Date: 2026-09-03. Status: proposed and design-approved; not yet implemented.
+Date: 2026-09-03. Implemented: 2026-09-05 (migration `000380`, two-asset component).
 Scope: the shared Wikidata company source for every country and Wikipedia language.
+
+The implementation's operational contract and launch configuration are in
+[`wikipedia-design.md`](../../../src/dagster_v3/defs/wikipedia/docs/wikipedia-design.md).
+This document preserves the approved design. The initial production-wide download
+and sensor activation are separate rollout steps, not implied by code deployment.
 
 ## 1. Goal
 

@@ -31,6 +31,16 @@ const intelligence: CompanyWebIntelligence = {
       observedAt: "2026-07-25 12:00:00.000",
     },
   ],
+  addresses: [
+    {
+      value: "Example Street 1, 111 22 Stockholm, SE",
+      sourceUrl: "https://example.se/contact",
+      firstObservedCrawl: "CC-MAIN-2026-25",
+      lastObservedCrawl: "CC-MAIN-2026-30",
+      observedCrawls: 2,
+      observedAt: "2026-07-25 12:00:00.000",
+    },
+  ],
   contacts: [
     {
       type: "email",
@@ -109,6 +119,7 @@ const intelligence: CompanyWebIntelligence = {
   ],
   truncated: {
     organizationClaims: false,
+    addresses: false,
     contacts: false,
     identifiers: false,
   },
@@ -123,6 +134,8 @@ describe("WebIntelligenceSection", () => {
     expect(html).toContain("Website-derived intelligence");
     expect(html).toContain("Website evidence, not registry-verified facts");
     expect(html).toContain("Example Aktiebolag");
+    expect(html).toContain("Example Street 1");
+    expect(html).toContain("Observed addresses");
     expect(html).toContain("https://example.se/about");
     expect(html).toContain("Last observed");
     expect(html).toContain("GTM-EXAMPLE");
