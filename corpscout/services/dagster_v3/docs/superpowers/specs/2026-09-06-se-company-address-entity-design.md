@@ -296,6 +296,13 @@ A `partial` row (no postcode) merges with a candidate only when its `city` and
 `street_name` equal that candidate's and exactly one candidate of the company has that
 city and street; otherwise it publishes as its own partial address, which the panel flags.
 
+Amended 2026-09-06 (slice 2b review): a `partial` row lacks the postcode or the city (the
+normalizer marks either). It merges with the one candidate whose location line equals its
+own and whose postcode and city each equal the partial's or are missing on the partial's
+side, at least one of the two present; with no such candidate or more than one it publishes
+alone. A published set never carries one key twice: a partial that would start a candidate
+identical to an existing one joins it instead.
+
 ### 5.3 Rules and set replacement
 
 A `hide` rule with `removed = 0` for a candidate's key turns the row inactive with
