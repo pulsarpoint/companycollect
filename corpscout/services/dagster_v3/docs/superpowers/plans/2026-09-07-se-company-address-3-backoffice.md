@@ -27,7 +27,7 @@
 
 ## Rulings (controller, 2026-09-07)
 
-1. **Remove on a mixed row.** Spec 8 gives the source-delivered case (hide rule) and the reviewer-typed case (tombstone the reviewer slot). A published row can carry both a reviewer member and source members. Ruling: Remove tombstones every `reviewer` member slot of the row AND inserts the hide rule when the row has any non-reviewer member; otherwise the source members would republish it on the next fold.
+1. **Remove on a mixed row.** A published row's key is computed over the union of its members' components, so removing one member would change the key and orphan a hide rule. Ruling: Remove on a row with any non-reviewer member writes the hide rule only; Remove on a reviewer-only row tombstones every reviewer member slot.
 2. **Reviewer slots.** A new address gets slot `r<digits of the stamp>` (for example `r20260907203355123`); editing a draft keeps its slot (hidden field); Activate writes the `reviewer` row under the draft's slot, so the pair `(reviewer, slot)` and `(reviewer_draft, slot)` share one lineage.
 3. **Targeted fold normalizes first.** Spec 8: "the targeted fold normalizes the company's raw rows before folding". `se_company_address_fold_companies` calls `normalize_companies(..., changed_only=True)` for its ids before `fold_companies`; the bucket fold does not (the weekly normalizes).
 4. **The poller route is shared.** The Info tab's resource route `info/run/:runId` only reports a run's status; the Address tab's poller fetches the same route. No new route.

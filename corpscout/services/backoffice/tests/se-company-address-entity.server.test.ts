@@ -447,6 +447,32 @@ describe("se-company-address-entity.server", () => {
     expect(detail?.published[0]?.textSourceReason).toBe("tie-break");
   });
 
+  it("attributes the published text to the most complete member of the text source", async () => {
+    // SCB and Bolagsverket both write slot '' (ratsit writes 'company'), so one
+    // source can hold two members; the text came from the fuller of them.
+    const twoScb = main({
+      ...MERGED_ROW,
+      sources: ["scb", "scb"],
+      slots: ["", "x"],
+      normalized_ids: ["n6", "n7"],
+      text_source: "scb",
+    });
+    clickhouse.query.mockImplementation(async (sql: string) => {
+      if (sql === ADDRESS_MAIN_SQL) return [twoScb];
+      if (sql === ADDRESS_NORMALIZED_SQL) {
+        return [
+          // The first member is the thinner one: picking it would read as a tie.
+          normalized({ slot: "", normalized_id: "n6", postal_code: "11122", city: "Stockholm" }),
+          normalized({ ...SCB_NORMALIZED, slot: "x", normalized_id: "n7" }),
+        ];
+      }
+      return answer(sql);
+    });
+    const detail = await loadSeAddressDetail(COMPANY);
+    expect(detail?.published[0]?.members.map((member) => member.completeness)).toEqual([2, 5]);
+    expect(detail?.published[0]?.textSourceReason).toBe("most complete");
+  });
+
   it("keeps a draft out of fold-pending and reports no fold when every stamp is older", async () => {
     clickhouse.query.mockImplementation(async (sql: string) => {
       // Only the draft (21:00) is newer than the fold now.
@@ -475,6 +501,35 @@ describe("se-company-address-entity.server", () => {
     const unfolded = await loadSeAddressDetail(COMPANY);
     expect(unfolded?.published).toEqual([]);
     expect(unfolded?.foldPending).toBe(true);
+  });
+
+  it("is not fold-pending for an unfolded company whose rows all parse no_address", async () => {
+    // Spec 5.5: a company with no main row is selected only when a current
+    // normalized row is publishable, so nothing is waiting on a fold here.
+    const unpublishable = normalized({
+      source: "ratsit",
+      slot: "x1",
+      normalized_id: "n3",
+      parse_status: "no_address",
+      normalized_address: "",
+    });
+    clickhouse.query.mockImplementation(async (sql: string) => {
+      if (sql === ADDRESS_MAIN_SQL || sql === ADDRESS_HISTORY_SQL || sql === ADDRESS_RULES_SQL) return [];
+      if (sql === ADDRESS_NORMALIZED_SQL) return [unpublishable];
+      if (sql === ADDRESS_RAW_SQL) return [SCB_RAW];
+      return answer(sql);
+    });
+    const nothingToPublish = await loadSeAddressDetail(COMPANY);
+    expect(nothingToPublish).not.toBeNull();
+    expect(nothingToPublish?.foldPending).toBe(false);
+
+    clickhouse.query.mockImplementation(async (sql: string) => {
+      if (sql === ADDRESS_MAIN_SQL || sql === ADDRESS_HISTORY_SQL || sql === ADDRESS_RULES_SQL) return [];
+      if (sql === ADDRESS_NORMALIZED_SQL) return [unpublishable, SCB_NORMALIZED];
+      if (sql === ADDRESS_RAW_SQL) return [SCB_RAW];
+      return answer(sql);
+    });
+    expect((await loadSeAddressDetail(COMPANY))?.foldPending).toBe(true);
   });
 
   it("returns null only when there is no main row, no normalized row and no draft", async () => {
@@ -581,6 +636,31 @@ describe("se-company-address-entity.server", () => {
     expect(row?.replaces_key).toBeNull();
     expect(row?.country_code).toBe("SE");
     expect(row?.kind).toBe("postal");
+  });
+
+  it("writes the country the reviewer typed, not a constant", async () => {
+    // Task 2's validation is what limits the sheet to SE today; the row must
+    // carry whatever came through it, so opening a second country needs no
+    // change here.
+    await saveSeAddressDraft(
+      COMPANY,
+      {
+        intent: "save-draft",
+        slot: null,
+        replacesKey: null,
+        input: {
+          careOf: "",
+          streetLine: "Karl Johans gate 1",
+          postalCode: "01154",
+          city: "Oslo",
+          country: "NO",
+          kind: "postal",
+          note: "",
+        },
+      },
+      NOW,
+    );
+    expect(inserted(clickhouse.insertSuggestions)[0]?.country_code).toBe("NO");
   });
 
   it("activates a draft: the reviewer row and the cleared draft in one insert", async () => {
@@ -725,7 +805,7 @@ describe("se-company-address-entity.server", () => {
     ]);
   });
 
-  it("removes a reviewer-typed address by tombstoning its slot, with no rule", async () => {
+  it("removes a reviewer-only address by tombstoning every one of its slots, with no rule", async () => {
     const reviewerRow = main({
       address_key: REVIEWER_KEY,
       street_name: "Kungsgatan",
@@ -734,9 +814,9 @@ describe("se-company-address-entity.server", () => {
       city: "Stockholm",
       normalized_address: "Kungsgatan 1, 111 43 Stockholm",
       kinds: ["visiting"],
-      sources: ["reviewer"],
-      slots: ["rev1"],
-      normalized_ids: ["n5"],
+      sources: ["reviewer", "reviewer"],
+      slots: ["rev1", "rev2"],
+      normalized_ids: ["n5", "n6"],
       text_source: "reviewer",
     });
     clickhouse.query.mockImplementation(async (sql: string) =>
@@ -744,7 +824,18 @@ describe("se-company-address-entity.server", () => {
     );
     await removeSeAddress(COMPANY, { intent: "remove", addressKey: REVIEWER_KEY, note: "" }, NOW);
     expect(clickhouse.insertRules).not.toHaveBeenCalled();
-    expect(inserted(clickhouse.insertSuggestions)).toEqual([
+    const tombstones = inserted(clickhouse.insertSuggestions);
+    expect(tombstones).toHaveLength(2);
+    // The second slot has no current raw row, so its kind falls back.
+    expect(tombstones[1]).toMatchObject({
+      source: "reviewer",
+      slot: "rev2",
+      kind: "unknown",
+      street_address: null,
+      country_code: null,
+      note: "removed by reviewer",
+    });
+    expect(tombstones.slice(0, 1)).toEqual([
       {
         company_id: COMPANY,
         source: "reviewer",
@@ -771,7 +862,10 @@ describe("se-company-address-entity.server", () => {
     ]);
   });
 
-  it("removes a mixed row with both writes: the source members would republish it otherwise", async () => {
+  it("removes a mixed row with the rule alone: tombstoning a member would re-key the address", async () => {
+    // The published key is the union of the members' components, so retiring
+    // the reviewer member would shrink the union, change the key and leave the
+    // hide rule pointing at an address nothing publishes any more.
     const mixedRow = main({
       ...MERGED_ROW,
       sources: ["scb", "reviewer"],
@@ -783,11 +877,7 @@ describe("se-company-address-entity.server", () => {
       sql === ADDRESS_MAIN_SQL ? [mixedRow] : answer(sql),
     );
     await removeSeAddress(COMPANY, { intent: "remove", addressKey: MERGED_KEY, note: "" }, NOW);
-    const tombstones = inserted(clickhouse.insertSuggestions);
-    expect(tombstones).toHaveLength(1);
-    expect(tombstones[0]?.source).toBe("reviewer");
-    expect(tombstones[0]?.slot).toBe("rev1");
-    expect(tombstones[0]?.street_address).toBeNull();
+    expect(clickhouse.insertSuggestions).not.toHaveBeenCalled();
     expect(inserted(clickhouse.insertRules)).toEqual([
       {
         company_id: COMPANY,

@@ -273,6 +273,9 @@ const COMPONENT_FIELDS = [
 /** A `reviewer_draft` row still holding one of these is a live draft; a row
  * with all four empty is the tombstone an Activate or a Discard left behind. */
 const DRAFT_TEXT_FIELDS = ["street_address", "care_of", "postal_code", "post_town"] as const;
+/** The parse statuses the fold publishes (spec 5.2); anything else -- today
+ * `no_address` -- never produces a published row, so it never makes a fold. */
+const PUBLISHABLE_PARSE_STATUS = new Set(["ok", "partial", "foreign"]);
 
 function slotKey(source: string, slot: string): string {
   return `${source}|${slot}`;
@@ -296,14 +299,20 @@ function activeHideRule(rules: readonly SeAddressRuleRow[], addressKey: string):
  * Why the published text came from `row.text_source`. The fold sorts members by
  * completeness first (spec 5.2), so the text source is the most complete member
  * when it beats every other one outright; when it ties, precedence or recency
- * decided.
+ * decided. A source can hold two slots (SCB and Bolagsverket both write slot
+ * `''`, Ratsit `'company'`), so the attributed member is the most complete of
+ * that source's members -- the one the fold would have sorted first.
  */
 function textSourceReason(
   row: SeAddressRow,
   members: readonly SeAddressMember[],
 ): SeAddressPublished["textSourceReason"] {
   if (members.length === 1) return "single source";
-  const chosen = members.find((member) => member.source === row.text_source);
+  const fromTextSource = members.filter((member) => member.source === row.text_source);
+  const chosen = fromTextSource.reduce<SeAddressMember | undefined>(
+    (best, member) => (best === undefined || member.completeness > best.completeness ? member : best),
+    undefined,
+  );
   if (!chosen) return "tie-break";
   const outright = members.every(
     (member) => member === chosen || member.completeness < chosen.completeness,
@@ -378,7 +387,10 @@ export async function loadSeAddressDetail(companyId: string): Promise<SeAddressD
       foldedAt,
       // A released rule counts too: the release is not applied until the fold.
       [...foldable.map((row) => row.normalized_at), ...rules.map((rule) => rule.decided_at)],
-      foldable.length > 0,
+      // Spec 5.5 (amended): a company with no main row is selected only when a
+      // current normalized row is publishable, so a company whose rows all
+      // parse `no_address` never reads as pending.
+      foldable.some((row) => PUBLISHABLE_PARSE_STATUS.has(row.parse_status)),
     ),
   };
 }
@@ -386,10 +398,13 @@ export async function loadSeAddressDetail(companyId: string): Promise<SeAddressD
 /** A reviewer decision this module refuses; the route renders the message. */
 export class SeAddressDecisionError extends Error {}
 
-/** The five address columns a backoffice raw row carries a value in (`county`
- * and `raw_address` are always NULL from here). `null`, never `''`. */
+/** The address columns a backoffice raw row carries a value in (`county` and
+ * `raw_address` are always NULL from here). The four text columns are `null`,
+ * never `''`; `country` is the reviewer's own (Task 2 validates it to `SE`) and
+ * only reaches the row while the row holds an address. */
 export interface SeAddressRawColumns {
   kind: string;
+  country: string;
   care_of: string | null;
   street_address: string | null;
   postal_code: string | null;
@@ -455,7 +470,8 @@ function suggestionId(companyId: string, source: string, slot: string, stamp: st
 }
 
 /** One version of a raw row written by the backoffice. `country_code` follows
- * the address: `'SE'` while the row holds one, NULL once it is cleared. */
+ * the address: the reviewer's country while the row holds one, NULL once it is
+ * cleared. */
 function rawRowVersion(
   companyId: string,
   source: string,
@@ -485,7 +501,7 @@ function rawRowVersion(
     postal_code: columns.postal_code,
     post_town: columns.post_town,
     county: null,
-    country_code: holdsAddress ? "SE" : null,
+    country_code: holdsAddress ? (textOrNull(columns.country) ?? "SE") : null,
     decided_by: "backoffice",
     note: textOrNull(note),
     replaces_key: replacesKey,
@@ -509,7 +525,7 @@ function clearedRowVersion(
     source,
     slot,
     stamp,
-    { kind, care_of: null, street_address: null, postal_code: null, post_town: null },
+    { kind, country: "", care_of: null, street_address: null, postal_code: null, post_town: null },
     note,
     null,
   );
@@ -564,6 +580,7 @@ export async function saveSeAddressDraft(
       stamp,
       {
         kind: input.kind,
+        country: input.country,
         care_of: textOrNull(input.careOf),
         street_address: textOrNull(input.streetLine),
         postal_code: textOrNull(input.postalCode),
@@ -601,6 +618,7 @@ export async function activateSeAddressDraft(
       stamp,
       {
         kind: draft.kind,
+        country: draft.country_code,
         care_of: textOrNull(draft.care_of),
         street_address: textOrNull(draft.street_address),
         postal_code: textOrNull(draft.postal_code),
@@ -636,12 +654,15 @@ export async function discardSeAddressDraft(
 }
 
 /**
- * Remove (Ruling 1): a published row can carry both reviewer and source
- * members, so Remove tombstones every `reviewer` slot of the row AND, when any
- * member is a source, inserts the hide rule -- otherwise the sources would
- * republish the address at the next fold. The raw rows are read for one reason:
- * a tombstone must carry the slot's own `kind`, which the published row's
- * `kinds` (DISTINCT, not member-parallel) cannot give.
+ * Remove (Ruling 1, amended): the published key is computed over the UNION of
+ * the members' components (`fold.py::_published_from`), so retiring one member
+ * of a mixed row would shrink that union, re-key the address and orphan the
+ * hide rule -- the row would come back under a new key with the old one merely
+ * withdrawn. So a row with any non-reviewer member is hidden by the rule alone,
+ * every member left in place; only a reviewer-only row is removed by
+ * tombstoning its slots, and then no rule is needed. The raw rows are read for
+ * one reason: a tombstone must carry the slot's own `kind`, which the published
+ * row's `kinds` (DISTINCT, not member-parallel) cannot give.
  */
 export async function removeSeAddress(
   companyId: string,
@@ -662,14 +683,6 @@ export async function removeSeAddress(
   if (row.inactive_reason === "hidden" || activeHideRule(rules, row.address_key) !== null) {
     throw new SeAddressDecisionError("Already hidden.");
   }
-  const rawBySlot = new Map(rawRows.map((raw) => [slotKey(raw.source, raw.slot), raw]));
-  const tombstones = row.sources.flatMap((source, index) => {
-    if (source !== REVIEWER_SOURCE) return [];
-    const slot = row.slots[index] ?? "";
-    const kind = rawBySlot.get(slotKey(REVIEWER_SOURCE, slot))?.kind ?? "unknown";
-    return [clearedRowVersion(companyId, REVIEWER_SOURCE, slot, stamp, kind, "removed by reviewer")];
-  });
-  if (tombstones.length > 0) await chInsertSeCompanyAddressSuggestions(tombstones);
   if (row.sources.some((source) => source !== REVIEWER_SOURCE)) {
     await chInsertSeCompanyAddressRules([
       ruleVersion(
@@ -680,7 +693,21 @@ export async function removeSeAddress(
         stamp,
       ),
     ]);
+    return { decidedAt: stamp };
   }
+  const rawBySlot = new Map(rawRows.map((raw) => [slotKey(raw.source, raw.slot), raw]));
+  await chInsertSeCompanyAddressSuggestions(
+    row.slots.map((slot) =>
+      clearedRowVersion(
+        companyId,
+        REVIEWER_SOURCE,
+        slot,
+        stamp,
+        rawBySlot.get(slotKey(REVIEWER_SOURCE, slot))?.kind ?? "unknown",
+        "removed by reviewer",
+      ),
+    ),
+  );
   return { decidedAt: stamp };
 }
 
