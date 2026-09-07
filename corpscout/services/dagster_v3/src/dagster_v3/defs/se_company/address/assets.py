@@ -3,6 +3,7 @@ the fold (`se_company_address_fold`, `se_company_address_fold_companies`) and th
 precedence export; the extractors follow in a later slice."""
 
 import re
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -13,8 +14,14 @@ from pydantic import Field, field_validator
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.se_company.address import tables
-from dagster_v3.defs.se_company.address.batch import BUCKET_COUNT, PAGE_SIZE as FOLD_PAGE_SIZE, fold_bucket, fold_companies
-from dagster_v3.defs.se_company.address.normalize import PAGE_SIZE, normalize_all, normalize_companies
+from dagster_v3.defs.se_company.address.batch import (
+    BUCKET_COUNT,
+    PAGE_SIZE as FOLD_PAGE_SIZE,
+    FoldCounts,
+    fold_bucket,
+    fold_companies,
+)
+from dagster_v3.defs.se_company.address.normalize import PAGE_SIZE, NormalizeCounts, normalize_all, normalize_companies
 from dagster_v3.defs.se_company.address.precedence import precedence_rows
 from dagster_v3.defs.se_company.address.warm import CHUNK_SIZE as WARM_CHUNK_SIZE, warm_geocodes
 from dagster_v3.defs.se_company.common import normalized_se_company_ids
@@ -174,6 +181,27 @@ def _fold_metadata(counts, config, **extra) -> dict:
     }
 
 
+def targeted_fold(
+    client: Any, duckdb: Any, company_ids: Sequence[str], *, changed_only: bool, source_run_id: str,
+    folded_at: datetime, page_size: int, log: Callable[..., object] | None, logger: Any = None,
+) -> tuple[NormalizeCounts, FoldCounts]:
+    """The targeted fold normalizes the companies' raw rows first (spec section 8: a
+    reviewer's draft parses on Fold now), always changed_only, so only rows never
+    normalized, newer than their normalized row or on an older normalizer version are
+    touched; then folds the same ids with the caller's changed_only. `log` (a callable) goes
+    to `fold_companies`, which calls it directly; `logger` (an object with `.info`) goes to
+    `normalize_companies`, which calls `log.info(...)` -- the two functions want different
+    shapes, so the caller passes both."""
+    normalized = normalize_companies(
+        client, company_ids, changed_only=True, normalized_at=folded_at, page_size=page_size, log=logger,
+    )
+    folded = fold_companies(
+        client, duckdb, company_ids, changed_only=changed_only, source_run_id=source_run_id,
+        folded_at=folded_at, page_size=page_size, log=log,
+    )
+    return normalized, folded
+
+
 @dg.asset(
     name="se_company_address_fold",
     partitions_def=ADDRESS_FOLD_PARTITIONS,
@@ -213,7 +241,8 @@ def se_company_address_fold(
     metadata={"table": tables.QUALIFIED_MAIN_TABLE, "history_table": tables.QUALIFIED_HISTORY_TABLE},
     description=(
         "The targeted address fold: the companies named in config.company_ids, whatever "
-        "their bucket. The backoffice's Fold now button launches this asset for one company."
+        "their bucket. The backoffice's Fold now button launches this asset for one company. "
+        "Normalizes the companies' raw rows first, so a reviewer's draft parses on Fold now."
     ),
 )
 def se_company_address_fold_companies(
@@ -222,11 +251,13 @@ def se_company_address_fold_companies(
 ) -> dg.MaterializeResult:
     assert_clickhouse_tables_exist(clickhouse, database=tables.DATABASE, tables=(*_FOLD_TABLES, *_GEOCODE_TABLES))
     with clickhouse.get_connection() as client, sweden_address_osm_duckdb.get_connection() as duckdb:
-        counts = fold_companies(
+        normalized, counts = targeted_fold(
             client, duckdb, config.company_ids, changed_only=config.changed_only, source_run_id=context.run_id,
-            folded_at=datetime.now(UTC), page_size=config.page_size, log=context.log.info,
+            folded_at=datetime.now(UTC), page_size=config.page_size, log=context.log.info, logger=context.log,
         )
-    return dg.MaterializeResult(metadata=_fold_metadata(counts, config))
+    return dg.MaterializeResult(
+        metadata={**_fold_metadata(counts, config), **{f"normalize_{k}": v for k, v in normalized.as_metadata().items()}}
+    )
 
 
 class AddressWarmConfig(dg.Config):
