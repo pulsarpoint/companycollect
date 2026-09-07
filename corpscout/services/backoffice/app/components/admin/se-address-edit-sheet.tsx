@@ -1,5 +1,4 @@
 import type React from "react";
-import { useEffect } from "react";
 import { Form, useNavigation } from "react-router";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
@@ -34,6 +33,12 @@ import type { SeAddressResult } from "~/components/admin/se-address-workspace";
  * context to render at all, so the header lives in `SeAddressEditSheet` alone
  * and the form itself never uses it -- which is what lets a test render the
  * form directly, outside any `Sheet`.
+ *
+ * Nothing here decides when the sheet closes: the sheet is a controlled
+ * component and the workspace closes it, once, on the result of the save it
+ * just posted. An effect in here would fire on mount instead -- the route's
+ * `actionData` outlives the save, so every later Add / Correct / Edit would
+ * open onto a stale success and shut immediately.
  */
 
 export type SeAddressEditMode = "add" | "correct" | "edit-draft";
@@ -127,7 +132,14 @@ export function SeAddressEditForm({
   const navigation = useNavigation();
   const busy =
     navigation.state !== "idle" && (navigation.formMethod ?? "").toUpperCase() === "POST";
-  const error = result && !result.ok ? result.error : undefined;
+  // Only this form's own refusal belongs inside the sheet. A Remove, Reset,
+  // Activate or Discard refusal is the workspace's "Not saved" alert to show;
+  // an intent-less refusal (an older route, a failure before parsing) is shown
+  // in both places rather than nowhere.
+  const error =
+    result && !result.ok && (result.intent === undefined || result.intent === "save-draft")
+      ? result.error
+      : undefined;
   return (
     <Form
       method="post"
@@ -228,9 +240,9 @@ export function SeAddressEditForm({
 
 /**
  * The sheet chrome around `SeAddressEditForm`, as wide as the Info tab's.
- * Controlled by the workspace, but it closes itself on a saved draft: a
- * refusal keeps it open with the typed values and the error, so the reviewer
- * can fix and resubmit.
+ * Fully controlled: the workspace opens it, and closes it on the result of the
+ * save posted from it. A refusal keeps it open with the typed values and the
+ * error, so the reviewer can fix and resubmit.
  */
 export function SeAddressEditSheet({
   open,
@@ -249,11 +261,6 @@ export function SeAddressEditSheet({
   replacesKey: string | null;
   result: SeAddressResult;
 }) {
-  useEffect(() => {
-    if (result?.ok && result.intent === "save-draft") onOpenChange(false);
-    // onOpenChange is the workspace's setter, stable enough; re-run on results.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [result]);
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="flex w-full flex-col data-[side=right]:sm:max-w-3xl">

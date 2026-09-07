@@ -139,19 +139,59 @@ describe("SeAddressEditForm", () => {
     expect(html).toContain("typed from the annual report");
   });
 
-  it("shows a refusal as an alert", () => {
+  it("shows its own refusal as an alert, with or without an intent", () => {
+    for (const result of [
+      { ok: false as const, error: "Postcode must be five digits." },
+      { ok: false as const, intent: "save-draft", error: "Postcode must be five digits." },
+    ]) {
+      const html = render(
+        <SeAddressEditForm
+          mode="add"
+          initial={EMPTY_ADDRESS_INITIAL}
+          slot={null}
+          replacesKey={null}
+          result={result}
+          onCancel={() => {}}
+        />,
+      );
+      expect(html).toContain('role="alert"');
+      expect(html).toContain("Postcode must be five digits.");
+    }
+  });
+
+  it("leaves another intent's refusal to the page's own alert", () => {
     const html = render(
       <SeAddressEditForm
         mode="add"
         initial={EMPTY_ADDRESS_INITIAL}
         slot={null}
         replacesKey={null}
-        result={{ ok: false, error: "Postcode must be five digits." }}
+        result={{ ok: false, intent: "remove", error: "Unknown address." }}
         onCancel={() => {}}
       />,
     );
-    expect(html).toContain('role="alert"');
-    expect(html).toContain("Postcode must be five digits.");
+    expect(html).not.toContain('role="alert"');
+    expect(html).not.toContain("Unknown address.");
+  });
+
+  it("renders on unchanged with a stale successful save behind it", () => {
+    // The sheet is a controlled component: nothing in here reacts to a result.
+    // Closing is the workspace's decision, taken once per action round trip, so
+    // the action data left over from an earlier save -- which the route keeps
+    // serving -- cannot shut a newly opened Add, Correct or Edit.
+    const html = render(
+      <SeAddressEditForm
+        mode="add"
+        initial={EMPTY_ADDRESS_INITIAL}
+        slot={null}
+        replacesKey={null}
+        result={{ ok: true, intent: "save-draft", slot: SLOT }}
+        onCancel={() => {}}
+      />,
+    );
+    expect(html).toContain('name="street_line"');
+    expect(html).toContain("Save draft");
+    expect(html).not.toContain('role="alert"');
   });
 });
 

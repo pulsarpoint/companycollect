@@ -17,7 +17,13 @@ import {
   CardHeader,
   CardTitle,
 } from "~/components/ui/card";
-import { Dialog, DialogContent, DialogFooter, DialogHeader } from "~/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "~/components/ui/dialog";
 import {
   Empty,
   EmptyDescription,
@@ -64,10 +70,12 @@ import { cn } from "~/lib/utils";
  */
 
 /** What the route's action returns. `runId`/`url` come back from Fold now,
- * `slot` from a saved draft; a refusal carries the reviewer-readable reason. */
+ * `slot` from a saved draft; a refusal carries the reviewer-readable reason and
+ * the intent it refused, so the sheet and the page alert can each show only
+ * their own (an intent-less refusal is shown by both rather than by neither). */
 export type SeAddressResult =
   | { ok: true; intent: string; runId?: string; url?: string | null; slot?: string }
-  | { ok: false; error: string }
+  | { ok: false; intent?: string; error: string }
   | null;
 
 /** The street line a reviewer would type for a parsed address: the box when
@@ -164,6 +172,9 @@ export interface PendingAddressDecision {
   slot: string;
   /** The address line being acted on, shown in the dialog. */
   line: string;
+  /** Remove only (Ruling 1, amended): a row every member of which is the
+   * reviewer's own is withdrawn; a row with any source member is hidden whole. */
+  reviewerOnly: boolean;
 }
 
 const DECISION_HEADINGS: Record<PendingAddressDecision["intent"], string> = {
@@ -173,9 +184,26 @@ const DECISION_HEADINGS: Record<PendingAddressDecision["intent"], string> = {
   discard: "Discard this draft",
 };
 
-const DECISION_DESCRIPTIONS: Record<PendingAddressDecision["intent"], string> = {
-  remove:
-    "A hide rule keeps this address out of the next fold; the sources keep delivering it, nothing is deleted. Reset to default brings it back.",
+const REMOVE_DESCRIPTIONS = {
+  whole:
+    "This hides the whole address, all sources included. Use Correct to replace the text under a new key.",
+  reviewer: "This withdraws the reviewer's address.",
+} as const;
+
+/** What Remove will do to one address, in the reviewer's words (Ruling 1,
+ * amended): there is no way to hide one source's contribution to a merged
+ * address, so Remove takes the whole address out; only a row the reviewer alone
+ * contributed is withdrawn instead. Exported because the dialog it appears in
+ * cannot be rendered on its own -- `DialogTitle` needs the Dialog root, and an
+ * open dialog renders nothing at all server-side. */
+export function removeDescription(reviewerOnly: boolean): string {
+  return REMOVE_DESCRIPTIONS[reviewerOnly ? "reviewer" : "whole"];
+}
+
+const DECISION_DESCRIPTIONS: Record<
+  Exclude<PendingAddressDecision["intent"], "remove">,
+  string
+> = {
   reset:
     "The hide rule is released and the next fold publishes this address again, as its sources deliver it.",
   activate:
@@ -192,8 +220,9 @@ const DECISION_CONFIRM: Record<PendingAddressDecision["intent"], string> = {
 
 /**
  * The confirmation's form: what is about to be written, against which address
- * or draft, plus the optional note. Portal-free so a test can render it
- * statically; `AddressDecisionDialog` wraps it in the dialog chrome.
+ * or draft, plus the optional note. `DialogTitle` labels the dialog, so this
+ * body belongs inside a `Dialog` root -- `AddressDecisionDialog` is what
+ * renders it.
  */
 export function AddressDecisionDialogBody({
   pending,
@@ -208,14 +237,17 @@ export function AddressDecisionDialogBody({
   // Discard is the one decision that carries no note at all (the parser reads
   // `{ intent: "discard"; slot }` and nothing else).
   const showNote = intent !== "discard";
+  const description =
+    intent === "remove"
+      ? removeDescription(pending.reviewerOnly)
+      : DECISION_DESCRIPTIONS[intent];
   return (
     <Form method="post" onSubmit={onClose} className="flex flex-col gap-4">
-      {/* Plain heading and paragraph, not DialogTitle/DialogDescription: those
-          need the dialog root's context, and this body also renders on its own
-          in tests. */}
+      {/* DialogTitle, so the dialog is labelled for a screen reader -- which
+          means this body only renders inside a Dialog root, never on its own. */}
       <DialogHeader>
-        <h2 className="text-base font-semibold leading-none">{DECISION_HEADINGS[intent]}</h2>
-        <p className="text-muted-foreground text-sm">{DECISION_DESCRIPTIONS[intent]}</p>
+        <DialogTitle>{DECISION_HEADINGS[intent]}</DialogTitle>
+        <p className="text-muted-foreground text-sm">{description}</p>
       </DialogHeader>
       <div className="rounded-md border p-3 text-sm" data-testid="address-decision-value">
         {pending.line === "" ? EMPTY_VALUE : pending.line}
@@ -478,7 +510,13 @@ function DraftsCard({
                     variant="outline"
                     disabled={busy}
                     onClick={() =>
-                      onDecide({ intent: "activate", addressKey: "", slot: draft.slot, line })
+                      onDecide({
+                        intent: "activate",
+                        addressKey: "",
+                        slot: draft.slot,
+                        line,
+                        reviewerOnly: false,
+                      })
                     }
                   >
                     Activate
@@ -489,7 +527,13 @@ function DraftsCard({
                     variant="outline"
                     disabled={busy}
                     onClick={() =>
-                      onDecide({ intent: "discard", addressKey: "", slot: draft.slot, line })
+                      onDecide({
+                        intent: "discard",
+                        addressKey: "",
+                        slot: draft.slot,
+                        line,
+                        reviewerOnly: false,
+                      })
                     }
                   >
                     Discard
@@ -563,7 +607,8 @@ function FoldCard({
   result: SeAddressResult;
   busy: boolean;
 }) {
-  const runId = result?.ok && result.intent === "fold-now" ? (result.runId ?? "") : "";
+  const launched = result !== null && result.ok && result.intent === "fold-now";
+  const runId = launched ? (result.runId ?? "") : "";
   const runUrl = result?.ok ? (result.url ?? null) : null;
   return (
     <Card>
@@ -590,6 +635,26 @@ function FoldCard({
             Fold now
           </Button>
         </Form>
+        {launched && runId === "" ? (
+          // The run started but its id did not come back, so there is nothing
+          // to poll: say so instead of leaving the click looking ignored.
+          <Alert>
+            <CheckCircle2Icon />
+            <AlertTitle>Fold launched</AlertTitle>
+            <AlertDescription>
+              The run id did not come back, so this page cannot follow it. Check Dagster,
+              then reload.
+              {runUrl === null ? null : (
+                <>
+                  {" "}
+                  <a className="underline" href={runUrl} target="_blank" rel="noreferrer">
+                    Open in Dagster
+                  </a>
+                </>
+              )}
+            </AlertDescription>
+          </Alert>
+        ) : null}
         {runId === "" ? null : (
           // Keyed by run: a relaunch after the ten-minute cap must start a fresh
           // poller (new start instant, timed-out flag cleared), not reuse the old one.
@@ -617,6 +682,9 @@ const SUCCESS_COPY: Record<string, string> = {
 function ResultAlert({ result }: { result: SeAddressResult }) {
   if (result === null) return null;
   if (!result.ok) {
+    // The sheet shows its own refusal, in the form the reviewer is still
+    // typing in; an intent-less one is shown here as well rather than nowhere.
+    if (result.intent === "save-draft") return null;
     return (
       <Alert variant="destructive">
         <TriangleAlertIcon />
@@ -661,7 +729,7 @@ function MemberEntry({ member }: { member: SeAddressMember }) {
       ) : (
         <>
           <p className="text-muted-foreground mt-1 text-xs">
-            {componentsLine(current)} · {current.parse_status}
+            {componentsLine(current)} · {current.parse_status} · {current.normalizer_version}
           </p>
           {current.parse_notes === "" ? null : (
             <p className="text-muted-foreground mt-1 text-xs">{current.parse_notes}</p>
@@ -684,6 +752,12 @@ function AddressPanel({
   onDecide: (pending: PendingAddressDecision) => void;
 }) {
   const hidden = entry !== null && entry.row.inactive_reason === "hidden";
+  // Ruling 1 (amended): only an address the reviewer alone contributed is
+  // withdrawn; anything a source also delivers is hidden whole.
+  const reviewerOnly =
+    entry !== null &&
+    entry.members.length > 0 &&
+    entry.members.every((member) => member.source === "reviewer");
   return (
     <Card>
       <CardHeader>
@@ -761,6 +835,10 @@ function AddressPanel({
                   ),
                 ],
                 ["Geocoded", text(entry.row.geocoded_at)],
+                // Spec 8's "the geocode block with its versions": which
+                // normalizer parsed the components and which fold published them.
+                ["Normalizer", text(entry.row.normalizer_version)],
+                ["Fold", text(entry.row.fold_version)],
               ]}
             />
           </section>
@@ -792,6 +870,7 @@ function AddressPanel({
                   addressKey: entry.row.address_key,
                   slot: "",
                   line: entry.row.normalized_address,
+                  reviewerOnly,
                 })
               }
             >
@@ -809,6 +888,7 @@ function AddressPanel({
                     addressKey: entry.row.address_key,
                     slot: "",
                     line: entry.row.normalized_address,
+                    reviewerOnly,
                   })
                 }
               >
@@ -855,6 +935,14 @@ export function SeAddressWorkspace({
     // said why it did not, and the alert above carries that.
     if (result) setPending(null);
   }, [result]);
+  useEffect(() => {
+    // The saved draft closes the sheet -- here, not in the sheet itself: the
+    // route's `actionData` outlives the save, so an effect inside the sheet
+    // would see that stale success the moment the next Add / Correct / Edit
+    // mounted it and shut it again immediately. Keyed on the result's
+    // identity, this runs once per action round trip.
+    if (result?.ok && result.intent === "save-draft") setSheet(null);
+  }, [result]);
   const selected = selectAddress(detail, selectedKey);
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(20rem,1fr)]">
@@ -862,7 +950,10 @@ export function SeAddressWorkspace({
         <ResultAlert result={result} />
         <AddressesCard
           detail={detail}
-          selectedKey={selectedKey}
+          // The effective selection, not the raw query string: with no
+          // `?address=` the panel describes the first active row, and that is
+          // the row the list must mark.
+          selectedKey={selected?.row.address_key ?? null}
           busy={busy}
           onCorrect={(entry) =>
             setSheet({
