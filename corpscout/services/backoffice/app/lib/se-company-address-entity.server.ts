@@ -131,19 +131,6 @@ export interface SeAddressRuleRow {
   decided_at: string;
 }
 
-/** One source-precedence row (`se_company_address_precedence`); `company_id`
- * `''` is the global order the code exports. */
-export interface SeAddressPrecedenceRow {
-  company_id: string;
-  field: string;
-  source: string;
-  precedence: number;
-  removed: number;
-  decided_by: string;
-  note: string;
-  decided_at: string;
-}
-
 /** One contributing source of a published address, resolved through the row's
  * `normalized_ids` (spec 5.4's lineage). */
 export interface SeAddressMember {
@@ -185,8 +172,6 @@ export interface SeAddressDetail {
   history: SeAddressHistoryRow[];
   /** Every current rule version of this company, released ones included. */
   rules: SeAddressRuleRow[];
-  /** The global rows and this company's own, precedence first. */
-  precedence: SeAddressPrecedenceRow[];
   foldPending: boolean;
 }
 
@@ -249,13 +234,6 @@ export const ADDRESS_RULES_SQL = `SELECT
 FROM corpscout.se_company_address_rule AS r FINAL
 WHERE r.company_id = {companyId:String}
 ORDER BY r.decided_at DESC`;
-
-export const ADDRESS_PRECEDENCE_SQL = `SELECT
-  p.company_id AS company_id, toString(p.field) AS field, toString(p.source) AS source, toUInt32(p.precedence) AS precedence,
-  toUInt8(p.removed) AS removed, toString(p.decided_by) AS decided_by, p.note AS note, toString(p.decided_at) AS decided_at
-FROM corpscout.se_company_address_precedence AS p FINAL
-WHERE p.company_id IN ('', {companyId:String})
-ORDER BY p.precedence DESC`;
 
 const DRAFT_SOURCE = "reviewer_draft";
 const REVIEWER_SOURCE = "reviewer";
@@ -322,18 +300,17 @@ function textSourceReason(
 
 /**
  * The whole tab in one round trip: the published rows with their members, the
- * drafts, the history, the rules and the precedence. Null when the company has
- * no address at any layer -- no published row, no normalized row and no draft
- * -- which is what the route turns into a 404.
+ * drafts, the history and the rules. Null when the company has no address at
+ * any layer -- no published row, no normalized row and no draft -- which the
+ * route turns into the workspace's empty state.
  */
 export async function loadSeAddressDetail(companyId: string): Promise<SeAddressDetail | null> {
-  const [mainRows, history, normalizedRows, rawRows, rules, precedence] = await Promise.all([
+  const [mainRows, history, normalizedRows, rawRows, rules] = await Promise.all([
     chQuery<SeAddressRow>(ADDRESS_MAIN_SQL, { companyId }),
     chQuery<SeAddressHistoryRow>(ADDRESS_HISTORY_SQL, { companyId }),
     chQuery<SeAddressNormalizedRow>(ADDRESS_NORMALIZED_SQL, { companyId }),
     chQuery<SeAddressRawRow>(ADDRESS_RAW_SQL, { companyId }),
     chQuery<SeAddressRuleRow>(ADDRESS_RULES_SQL, { companyId }),
-    chQuery<SeAddressPrecedenceRow>(ADDRESS_PRECEDENCE_SQL, { companyId }),
   ]);
   const normalizedBySlot = new Map(normalizedRows.map((row) => [slotKey(row.source, row.slot), row]));
   const rawBySlot = new Map(rawRows.map((row) => [slotKey(row.source, row.slot), row]));
@@ -373,6 +350,10 @@ export async function loadSeAddressDetail(companyId: string): Promise<SeAddressD
   // Drafts are never folded and never published, so they must not raise "Fold
   // pending" on their own -- Dagster's own selection (spec 5.5) excludes them.
   const foldable = normalizedRows.filter((row) => row.source !== DRAFT_SOURCE);
+  // A raw row the normalize step has not seen yet has no normalized version to
+  // speak for it -- an activated reviewer address, or a Remove's tombstone --
+  // so its own `suggested_at` is what says a fold is owed.
+  const foldableRaw = rawRows.filter((row) => row.source !== DRAFT_SOURCE);
   const foldedAt = mainRows.reduce<string | null>(
     (newest, row) => (newest === null || row.folded_at > newest ? row.folded_at : newest),
     null,
@@ -382,11 +363,14 @@ export async function loadSeAddressDetail(companyId: string): Promise<SeAddressD
     drafts,
     history,
     rules,
-    precedence,
     foldPending: addressFoldPending(
       foldedAt,
       // A released rule counts too: the release is not applied until the fold.
-      [...foldable.map((row) => row.normalized_at), ...rules.map((rule) => rule.decided_at)],
+      [
+        ...foldable.map((row) => row.normalized_at),
+        ...foldableRaw.map((row) => row.suggested_at),
+        ...rules.map((rule) => rule.decided_at),
+      ],
       // Spec 5.5 (amended): a company with no main row is selected only when a
       // current normalized row is publishable, so a company whose rows all
       // parse `no_address` never reads as pending.
@@ -597,7 +581,11 @@ export async function saveSeAddressDraft(
  * Activate: the draft becomes the company's `reviewer` address under the same
  * slot, and the draft is cleared, in ONE insert so a reader never sees the pair
  * half-applied. A Correct (the draft carries `replaces_key`) also hides the key
- * it replaces -- without that rule the source members would republish it.
+ * it replaces -- without that rule the source members would republish it --
+ * unless the draft parses back to that very key: the reviewer only retyped the
+ * address the sources already deliver, and hiding it would hide the reviewer's
+ * own row too. An unparsed draft still gets the rule: the fold decides what it
+ * becomes, and Reset to default is there if the reviewer wants it back.
  */
 export async function activateSeAddressDraft(
   companyId: string,
@@ -605,7 +593,10 @@ export async function activateSeAddressDraft(
   now: Date = new Date(),
 ): Promise<{ decidedAt: string }> {
   const stamp = clickhouseStamp(now);
-  const rawRows = await chQuery<SeAddressRawRow>(ADDRESS_RAW_SQL, { companyId });
+  const [rawRows, normalizedRows] = await Promise.all([
+    chQuery<SeAddressRawRow>(ADDRESS_RAW_SQL, { companyId }),
+    chQuery<SeAddressNormalizedRow>(ADDRESS_NORMALIZED_SQL, { companyId }),
+  ]);
   const draft = findDraft(rawRows, decision.slot);
   if (!draft || draft.street_address === "") {
     throw new SeAddressDecisionError("No draft to activate.");
@@ -629,7 +620,11 @@ export async function activateSeAddressDraft(
     ),
     clearedRowVersion(companyId, DRAFT_SOURCE, decision.slot, stamp, draft.kind, "activated"),
   ]);
-  if (draft.replaces_key !== "") {
+  const draftNormalized =
+    normalizedRows.find((row) => row.source === DRAFT_SOURCE && row.slot === decision.slot) ?? null;
+  const foldsBackToTheSameKey =
+    draftNormalized !== null && draftNormalized.address_key === draft.replaces_key;
+  if (draft.replaces_key !== "" && !foldsBackToTheSameKey) {
     await chInsertSeCompanyAddressRules([
       ruleVersion(companyId, draft.replaces_key, 0, "corrected by reviewer", stamp),
     ]);

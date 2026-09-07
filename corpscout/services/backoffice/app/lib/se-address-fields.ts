@@ -15,6 +15,12 @@ const MAX_CARE_OF = 200;
 const MAX_CITY = 100;
 const KEY_PATTERN = /^[0-9a-f]{64}$/;
 const CONTROL = /[\u0000-\u001f\u007f]/;
+/** The note is a 3-row Textarea, so what the reviewer typed may hold line
+ * breaks (and a tab): this class refuses every other C0 control and DEL but
+ * lets tab, line feed and carriage return through -- a browser submits a
+ * textarea's newlines as CRLF, so refusing CR would refuse every multi-line
+ * note. Every other field keeps the stricter `CONTROL`. */
+const NOTE_CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 
 export function isAddressSource(value: string): value is SeAddressSource {
   return (ADDRESS_SOURCES as readonly string[]).includes(value);
@@ -64,9 +70,14 @@ export interface SeAddressInput {
 }
 export type SeAddressValidation = { ok: true; input: SeAddressInput } | { ok: false; error: string };
 
-function plain(label: string, value: string, max: number): string | { error: string } {
+function plain(
+  label: string,
+  value: string,
+  max: number,
+  control: RegExp = CONTROL,
+): string | { error: string } {
   const trimmed = value.trim();
-  if (CONTROL.test(trimmed)) return { error: `${label} must be plain text.` };
+  if (control.test(trimmed)) return { error: `${label} must be plain text.` };
   if (trimmed.length > max) return { error: `${label} is longer than ${max} characters.` };
   return trimmed;
 }
@@ -88,7 +99,7 @@ export function validateSeAddressInput(raw: Record<string, string>): SeAddressVa
   if (country !== "SE") return { ok: false, error: "Only Swedish addresses can be typed here." };
   const kind = raw.kind ?? "";
   if (!isAddressKind(kind)) return { ok: false, error: "Unknown address kind." };
-  const note = plain("Note", raw.note ?? "", MAX_NOTE_LENGTH);
+  const note = plain("Note", raw.note ?? "", MAX_NOTE_LENGTH, NOTE_CONTROL);
   if (typeof note !== "string") return { ok: false, error: note.error };
   return { ok: true, input: { careOf, streetLine, postalCode, city, country, kind, note } };
 }

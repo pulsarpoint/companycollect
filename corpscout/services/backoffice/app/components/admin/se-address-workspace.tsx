@@ -390,7 +390,7 @@ function AddressesCard({
               <EmptyMedia variant="icon">
                 <MapPinIcon />
               </EmptyMedia>
-              <EmptyTitle>No published address</EmptyTitle>
+              <EmptyTitle>No addresses published yet</EmptyTitle>
               <EmptyDescription>
                 No fold has published an address for this company. Add address types one;
                 Fold now publishes it.
@@ -675,11 +675,30 @@ const SUCCESS_COPY: Record<string, string> = {
   "save-draft": "Draft saved. Activate it to make it this company's reviewer address.",
   activate: "Reviewer address written. Fold now publishes it.",
   discard: "Draft discarded.",
-  remove: "Hide rule written. Fold now applies it.",
   reset: "Rule released. Fold now publishes the address again.",
 };
 
-function ResultAlert({ result }: { result: SeAddressResult }) {
+const REMOVE_SUCCESS = {
+  whole: "Address hidden; fold to apply.",
+  reviewer: "Reviewer address withdrawn; fold to apply.",
+} as const;
+
+/** What Remove just did, in the same two cases the dialog described (Ruling 1,
+ * amended): a row any source also delivers is hidden whole, a row the reviewer
+ * alone contributed is withdrawn. Exported for the same reason
+ * `removeDescription` is: the alert it appears in needs a result to render. */
+export function removeSuccessCopy(reviewerOnly: boolean): string {
+  return REMOVE_SUCCESS[reviewerOnly ? "reviewer" : "whole"];
+}
+
+function ResultAlert({
+  result,
+  removedReviewerOnly,
+}: {
+  result: SeAddressResult;
+  /** The confirmed Remove was of a reviewer-only row. */
+  removedReviewerOnly: boolean;
+}) {
   if (result === null) return null;
   if (!result.ok) {
     // The sheet shows its own refusal, in the form the reviewer is still
@@ -694,7 +713,10 @@ function ResultAlert({ result }: { result: SeAddressResult }) {
     );
   }
   // Fold now speaks through the poller instead.
-  const copy = SUCCESS_COPY[result.intent];
+  const copy =
+    result.intent === "remove"
+      ? removeSuccessCopy(removedReviewerOnly)
+      : SUCCESS_COPY[result.intent];
   if (copy === undefined) return null;
   return (
     <Alert>
@@ -930,6 +952,16 @@ export function SeAddressWorkspace({
     navigation.state !== "idle" && (navigation.formMethod ?? "").toUpperCase() === "POST";
   const [pending, setPending] = useState<PendingAddressDecision | null>(null);
   const [sheet, setSheet] = useState<AddressSheetState | null>(null);
+  // The action's result carries the intent and nothing else, but Remove reads
+  // differently for a reviewer-only row -- so the workspace keeps what the
+  // dialog was opened on. Remove can only be posted from that dialog, so by the
+  // time its result arrives this is the row it acted on; on a fresh load with a
+  // persisting result it is the first-load default, the whole-address wording.
+  const [removedReviewerOnly, setRemovedReviewerOnly] = useState(false);
+  const decide = (next: PendingAddressDecision) => {
+    if (next.intent === "remove") setRemovedReviewerOnly(next.reviewerOnly);
+    setPending(next);
+  };
   useEffect(() => {
     // Any result closes the confirmation: it either wrote what it proposed or
     // said why it did not, and the alert above carries that.
@@ -947,7 +979,7 @@ export function SeAddressWorkspace({
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(20rem,1fr)]">
       <div className="flex flex-col gap-6">
-        <ResultAlert result={result} />
+        <ResultAlert result={result} removedReviewerOnly={removedReviewerOnly} />
         <AddressesCard
           detail={detail}
           // The effective selection, not the raw query string: with no
@@ -976,7 +1008,7 @@ export function SeAddressWorkspace({
                 replacesKey: draft.replacesKey === "" ? null : draft.replacesKey,
               })
             }
-            onDecide={setPending}
+            onDecide={decide}
           />
         )}
         <HistoryCard detail={detail} />
@@ -994,7 +1026,7 @@ export function SeAddressWorkspace({
               replacesKey: null,
             })
           }
-          onDecide={setPending}
+          onDecide={decide}
         />
       </aside>
       <AddressDecisionDialog pending={pending} busy={busy} onClose={() => setPending(null)} />

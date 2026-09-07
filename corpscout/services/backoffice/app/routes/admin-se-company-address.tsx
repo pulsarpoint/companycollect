@@ -1,16 +1,5 @@
-import { FileSearchIcon } from "lucide-react";
-import { data } from "react-router";
 import type { Route } from "./+types/admin-se-company-address";
 import { SeAddressWorkspace } from "~/components/admin/se-address-workspace";
-import { buttonVariants } from "~/components/ui/button";
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "~/components/ui/empty";
 import { parseSeAddressDecision } from "~/lib/se-address-decision-form";
 import { selectedAddressFromSearch } from "~/lib/se-address-fields";
 import {
@@ -22,10 +11,24 @@ import {
   resetSeAddress,
   saveSeAddressDraft,
   SeAddressDecisionError,
+  type SeAddressDetail,
 } from "~/lib/se-company-address-entity.server";
 
 /** Swedish org numbers are 10 digits, or 12 with the century prefix. */
 const COMPANY_ID_PATTERN = /^([0-9]{10}|[0-9]{12})$/;
+
+/** A company no source has suggested an address for is a normal pipeline
+ * state, not a broken link -- and the reviewer must still be able to type one.
+ * So the tab opens on an empty detail rather than a 404: the workspace says
+ * nothing is published and keeps Add address, Correct's counterpart, in reach.
+ * The company layout already 404s a company that does not exist at all. */
+const EMPTY_DETAIL: SeAddressDetail = {
+  published: [],
+  drafts: [],
+  history: [],
+  rules: [],
+  foldPending: false,
+};
 
 // Only `loader`, `action`, `meta` and the component live here. Any other
 // export that touched `~/lib/*.server` would keep that module in the client
@@ -34,10 +37,7 @@ const COMPANY_ID_PATTERN = /^([0-9]{10}|[0-9]{12})$/;
 export async function loader({ request, params }: Route.LoaderArgs) {
   const detail = await loadSeAddressDetail(params.companyId);
   const selectedKey = selectedAddressFromSearch(new URL(request.url).searchParams);
-  // A company no extractor has suggested an address for and no fold has
-  // published one is a normal pipeline state, not a broken link: the page
-  // says so under a 404, exactly as the Info tab does.
-  return data({ detail, selectedKey }, detail ? undefined : { status: 404 });
+  return { detail: detail ?? EMPTY_DETAIL, selectedKey };
 }
 
 /**
@@ -94,44 +94,11 @@ export function meta({ params }: Route.MetaArgs) {
   return [{ title: `${params.companyId} address | CompanyCollect` }];
 }
 
-/** Shown when the company has no address at any layer: no published row, no
- * normalized row and no draft. Mirrors `SeBasicInfoNotFolded`. */
-function AddressNotFolded({ companyId }: { companyId: string }) {
-  return (
-    <div className="flex flex-col gap-6">
-      <Empty className="border">
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <FileSearchIcon />
-          </EmptyMedia>
-          <EmptyTitle>Not folded yet</EmptyTitle>
-          <EmptyDescription>
-            Company {companyId} is not in se_company_address_v2 yet and no source
-            has suggested an address for it. The extractors write suggestions from
-            the registers; the fold publishes the row.
-          </EmptyDescription>
-        </EmptyHeader>
-        <EmptyContent>
-          <a
-            className={buttonVariants({ variant: "outline" })}
-            href={`/company/se/${encodeURIComponent(companyId)}`}
-          >
-            Back to company
-          </a>
-        </EmptyContent>
-      </Empty>
-    </div>
-  );
-}
-
 export default function AdminSwedenCompanyAddress({
   loaderData,
   actionData,
   params,
 }: Route.ComponentProps) {
-  if (!loaderData.detail) {
-    return <AddressNotFolded companyId={params.companyId} />;
-  }
   return (
     <SeAddressWorkspace
       companyId={params.companyId}

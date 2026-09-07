@@ -49,6 +49,12 @@ describe("validateSeAddressInput", () => {
     expect(validateSeAddressInput({ ...base, note: "x".repeat(501) })).toEqual({ ok: false, error: "Note is longer than 500 characters." });
     expect(validateSeAddressInput({ ...base, streetLine: "Storgatan\u00075" })).toEqual({ ok: false, error: "Street line must be plain text." });
   });
+  it("keeps the line breaks of a multi-line note but still refuses a control character in it", () => {
+    // The note is a Textarea, and a browser submits its newlines as CRLF.
+    const multiline = validateSeAddressInput({ ...base, note: "moved next door\nsee the letter\r\nfrom 2026-09" });
+    expect(multiline).toEqual({ ok: true, input: { ...base, postalCode: "11122", note: "moved next door\nsee the letter\r\nfrom 2026-09" } });
+    expect(validateSeAddressInput({ ...base, note: "moved\u0007next door" })).toEqual({ ok: false, error: "Note must be plain text." });
+  });
   it("trims every field and keeps the reviewer's casing", () => {
     const result = validateSeAddressInput({ ...base, streetLine: "  Storgatan 5 ", city: " Stockholm " });
     expect(result.ok && result.input.streetLine).toBe("Storgatan 5");

@@ -23,7 +23,6 @@ import {
   ADDRESS_HISTORY_SQL,
   ADDRESS_MAIN_SQL,
   ADDRESS_NORMALIZED_SQL,
-  ADDRESS_PRECEDENCE_SQL,
   ADDRESS_RAW_SQL,
   ADDRESS_RULES_SQL,
   discardSeAddressDraft,
@@ -34,7 +33,6 @@ import {
   saveSeAddressDraft,
   SeAddressDecisionError,
   type SeAddressNormalizedRow,
-  type SeAddressPrecedenceRow,
   type SeAddressRawRow,
   type SeAddressRow,
   type SeAddressRuleRow,
@@ -313,24 +311,12 @@ const BOX_HIDE_RULE: SeAddressRuleRow = {
   note: "a box is not where they sit",
   decided_at: "2026-09-06 12:00:00.000",
 };
-const GLOBAL_PRECEDENCE: SeAddressPrecedenceRow = {
-  company_id: "",
-  field: "address",
-  source: "scb",
-  precedence: 1000,
-  removed: 0,
-  decided_by: "",
-  note: "",
-  decided_at: "2026-01-01 00:00:00.000",
-};
-
 function answer(sql: string): unknown[] {
   if (sql.includes("FROM corpscout.se_company_address_v2")) return [MERGED_ROW, BOX_ROW];
   if (sql.includes("FROM corpscout.se_company_address_history")) return [HISTORY_ROW];
   if (sql.includes("FROM corpscout.se_company_address_normalized")) return NORMALIZED_ROWS;
   if (sql.includes("FROM corpscout.se_company_address_suggestion")) return RAW_ROWS;
   if (sql.includes("FROM corpscout.se_company_address_rule")) return [BOX_HIDE_RULE];
-  if (sql.includes("FROM corpscout.se_company_address_precedence")) return [GLOBAL_PRECEDENCE];
   throw new Error(`unexpected SQL: ${sql.slice(0, 60)}`);
 }
 
@@ -374,9 +360,6 @@ describe("se-company-address-entity.server", () => {
     expect(ADDRESS_RULES_SQL).toContain("WHERE r.company_id = {companyId:String}");
     expect(ADDRESS_RULES_SQL).toContain("toString(r.address_key) AS address_key");
     expect(ADDRESS_RULES_SQL).toContain("toUInt8(r.removed) AS removed");
-    expect(ADDRESS_PRECEDENCE_SQL).toContain("FROM corpscout.se_company_address_precedence AS p FINAL");
-    expect(ADDRESS_PRECEDENCE_SQL).toContain("WHERE p.company_id IN ('', {companyId:String})");
-    expect(ADDRESS_PRECEDENCE_SQL).toContain("toUInt32(p.precedence) AS precedence");
     // Every nullable component reaches the page as '' -- never null.
     for (const column of ["care_of", "box", "street_name", "house_number", "unit", "postal_code", "city"]) {
       expect(ADDRESS_MAIN_SQL).toContain(`ifNull(m.${column}, '') AS ${column}`);
@@ -427,12 +410,13 @@ describe("se-company-address-entity.server", () => {
     ]);
     expect(detail?.history).toEqual([HISTORY_ROW]);
     expect(detail?.rules).toEqual([BOX_HIDE_RULE]);
-    expect(detail?.precedence).toEqual([GLOBAL_PRECEDENCE]);
     // Bolagsverket's normalized_at (10:00) is newer than the fold (09:00).
     expect(detail?.foldPending).toBe(true);
-    for (const sql of [ADDRESS_MAIN_SQL, ADDRESS_HISTORY_SQL, ADDRESS_NORMALIZED_SQL, ADDRESS_RAW_SQL, ADDRESS_RULES_SQL, ADDRESS_PRECEDENCE_SQL]) {
+    for (const sql of [ADDRESS_MAIN_SQL, ADDRESS_HISTORY_SQL, ADDRESS_NORMALIZED_SQL, ADDRESS_RAW_SQL, ADDRESS_RULES_SQL]) {
       expect(clickhouse.query.mock.calls.find(([text]) => text === sql)?.[1]).toEqual({ companyId: COMPANY });
     }
+    // Nothing reads the source-precedence table: no query goes near it.
+    expect(clickhouse.query.mock.calls.some(([text]) => String(text).includes("se_company_address_precedence"))).toBe(false);
   });
 
   it("calls the text source a tie-break when another member is just as complete", async () => {
@@ -503,6 +487,22 @@ describe("se-company-address-entity.server", () => {
     expect(unfolded?.foldPending).toBe(true);
   });
 
+  it("is fold-pending when a non-draft raw row is newer than the fold, normalized or not", async () => {
+    // What an Activate (or a Remove's tombstone) leaves behind: a reviewer raw
+    // row the normalize step has not seen yet, so no normalized version speaks
+    // for it and only its own suggested_at says a fold is owed.
+    clickhouse.query.mockImplementation(async (sql: string) => {
+      if (sql === ADDRESS_NORMALIZED_SQL) {
+        return [SCB_NORMALIZED, { ...BV_NORMALIZED, normalized_at: "2026-09-07 08:00:00.000" }, RATSIT_NORMALIZED, DRAFT_NORMALIZED];
+      }
+      if (sql === ADDRESS_RAW_SQL) {
+        return [...RAW_ROWS, { ...REVIEWER_RAW, slot: "rev9", suggested_at: "2026-09-07 20:33:55.123" }];
+      }
+      return answer(sql);
+    });
+    expect((await loadSeAddressDetail(COMPANY))?.foldPending).toBe(true);
+  });
+
   it("is not fold-pending for an unfolded company whose rows all parse no_address", async () => {
     // Spec 5.5: a company with no main row is selected only when a current
     // normalized row is publishable, so nothing is waiting on a fold here.
@@ -533,17 +533,11 @@ describe("se-company-address-entity.server", () => {
   });
 
   it("returns null only when there is no main row, no normalized row and no draft", async () => {
-    clickhouse.query.mockImplementation(async (sql: string) =>
-      sql === ADDRESS_PRECEDENCE_SQL ? [GLOBAL_PRECEDENCE] : [],
-    );
+    clickhouse.query.mockImplementation(async () => []);
     expect(await loadSeAddressDetail(COMPANY)).toBeNull();
 
     // A typed draft alone is enough to open the tab.
-    clickhouse.query.mockImplementation(async (sql: string) => {
-      if (sql === ADDRESS_RAW_SQL) return [DRAFT_RAW];
-      if (sql === ADDRESS_PRECEDENCE_SQL) return [GLOBAL_PRECEDENCE];
-      return [];
-    });
+    clickhouse.query.mockImplementation(async (sql: string) => (sql === ADDRESS_RAW_SQL ? [DRAFT_RAW] : []));
     const draftOnly = await loadSeAddressDetail(COMPANY);
     expect(draftOnly?.drafts).toEqual([
       { slot: DRAFT_SLOT, raw: DRAFT_RAW, normalized: null, replacesKey: MERGED_KEY },
@@ -715,6 +709,37 @@ describe("se-company-address-entity.server", () => {
     ]);
     // A Correct: the key the draft replaces is hidden in the same action.
     expect(clickhouse.insertRules).toHaveBeenCalledTimes(1);
+    expect(inserted(clickhouse.insertRules)).toEqual([
+      {
+        company_id: COMPANY,
+        address_key: MERGED_KEY,
+        action: "hide",
+        removed: 0,
+        decided_by: "backoffice",
+        note: "corrected by reviewer",
+        decided_at: STAMP,
+      },
+    ]);
+  });
+
+  it("writes no hide rule when the draft parses back to the very key it replaces", async () => {
+    // The reviewer retyped the address the sources already deliver: the fold
+    // publishes the same key, and a rule would hide the reviewer's own row.
+    clickhouse.query.mockImplementation(async (sql: string) =>
+      sql === ADDRESS_NORMALIZED_SQL
+        ? [...NORMALIZED_ROWS.filter((row) => row !== DRAFT_NORMALIZED), { ...DRAFT_NORMALIZED, address_key: MERGED_KEY }]
+        : answer(sql),
+    );
+    await activateSeAddressDraft(COMPANY, { intent: "activate", slot: DRAFT_SLOT, note: "" }, NOW);
+    expect(clickhouse.insertSuggestions).toHaveBeenCalledTimes(1);
+    expect(clickhouse.insertRules).not.toHaveBeenCalled();
+  });
+
+  it("writes the hide rule for a draft nothing has parsed yet: the fold decides, Reset undoes", async () => {
+    clickhouse.query.mockImplementation(async (sql: string) =>
+      sql === ADDRESS_NORMALIZED_SQL ? NORMALIZED_ROWS.filter((row) => row !== DRAFT_NORMALIZED) : answer(sql),
+    );
+    await activateSeAddressDraft(COMPANY, { intent: "activate", slot: DRAFT_SLOT, note: "" }, NOW);
     expect(inserted(clickhouse.insertRules)).toEqual([
       {
         company_id: COMPANY,

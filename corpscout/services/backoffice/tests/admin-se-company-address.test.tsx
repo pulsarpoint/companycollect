@@ -19,9 +19,10 @@ const server = vi.hoisted(() => ({
 vi.mock("~/lib/se-company-address-entity.server", () => server);
 
 import { action, loader } from "~/routes/admin-se-company-address";
-import { SeAddressWorkspace } from "~/components/admin/se-address-workspace";
+import { removeSuccessCopy, SeAddressWorkspace } from "~/components/admin/se-address-workspace";
 import type {
   SeAddressDetail,
+  SeAddressDraft,
   SeAddressPublished,
   SeAddressRawRow,
   SeAddressRow,
@@ -110,8 +111,40 @@ const detail: SeAddressDetail = {
   drafts: [],
   history: [],
   rules: [],
-  precedence: [],
   foldPending: false,
+};
+
+/** What the route hands the workspace for a company no source has an address
+ * for (and what `loadSeAddressDetail` returning null becomes). */
+const EMPTY_DETAIL: SeAddressDetail = {
+  published: [],
+  drafts: [],
+  history: [],
+  rules: [],
+  foldPending: false,
+};
+
+/** A Correct in progress: the draft replaces the published row above and no
+ * normalize run has parsed it yet. */
+const draft: SeAddressDraft = {
+  slot: SLOT,
+  raw: {
+    ...rawRow,
+    source: "reviewer_draft",
+    slot: SLOT,
+    suggestion_id: "sug-draft",
+    source_record_uid: "",
+    kind: "visiting",
+    care_of: "Anna Svensson",
+    street_address: "Storgatan 7",
+    decided_by: "backoffice",
+    note: "moved next door",
+    replaces_key: KEY,
+    source_run_id: "backoffice",
+    extractor_version: "backoffice-v1",
+  },
+  normalized: null,
+  replacesKey: KEY,
 };
 
 function render(element: React.ReactElement, search = ""): string {
@@ -149,16 +182,56 @@ describe("SeAddressWorkspace", () => {
     expect(settled).not.toContain("Fold pending");
   });
 
-  it("shows the empty state when nothing has been published yet", () => {
+  it("shows the empty state, with Add address still in reach, for a company with no rows", () => {
     const html = render(
       <SeAddressWorkspace
         companyId={COMPANY}
-        detail={{ ...detail, published: [] }}
+        detail={EMPTY_DETAIL}
         selectedKey={null}
         result={null}
       />,
     );
-    expect(html).toContain("No published address");
+    expect(html).toContain("No addresses published yet");
+    expect(html).toContain("Add address");
+  });
+
+  it("renders a draft with its actions, what it replaces and that nothing has parsed it", () => {
+    const html = render(
+      <SeAddressWorkspace
+        companyId={COMPANY}
+        detail={{ ...detail, drafts: [draft] }}
+        selectedKey={KEY}
+        result={null}
+      />,
+    );
+    expect(html).toContain(`data-slot-id="${SLOT}"`);
+    expect(html).toContain("Anna Svensson, Storgatan 7, 11122 Stockholm");
+    expect(html).toContain("moved next door");
+    expect(html).toContain("Visiting");
+    // Not parsed yet: the fold is what turns the draft into an address.
+    expect(html).toContain("parses on Fold now");
+    // The published row the Correct replaces, named by its own line.
+    expect(html).toContain("Replaces");
+    expect(html).toContain("storgatan 5|11122|stockholm|se");
+    for (const label of ["Edit", "Activate", "Discard"]) {
+      expect(html).toContain(`>${label}</button>`);
+    }
+  });
+
+  it("says what Remove did, in the wording of the row it acted on", () => {
+    // The workspace has not been clicked through server-side, so the alert
+    // shows the whole-address wording; the reviewer-only one is the helper's.
+    const html = render(
+      <SeAddressWorkspace
+        companyId={COMPANY}
+        detail={detail}
+        selectedKey={KEY}
+        result={{ ok: true, intent: "remove" }}
+      />,
+    );
+    expect(html).toContain("Address hidden; fold to apply.");
+    expect(removeSuccessCopy(false)).toBe("Address hidden; fold to apply.");
+    expect(removeSuccessCopy(true)).toBe("Reviewer address withdrawn; fold to apply.");
   });
 });
 
@@ -179,21 +252,31 @@ describe("admin-se-company-address route", () => {
     server.launchSeAddressFold.mockReset().mockResolvedValue({ runId: "run-9", url: null });
   });
 
-  it("loads the detail and 404s when the company has none", async () => {
+  it("loads the detail, and opens on an empty one when the company has no rows", async () => {
     const response = await loader({
       request: new Request(`http://x/admin/se/company/${COMPANY}/address`),
       params: { companyId: COMPANY },
     } as never);
-    expect(response.data).toEqual({ detail, selectedKey: null });
-    expect(response.init?.status).toBeUndefined();
+    expect(response).toEqual({ detail, selectedKey: null });
 
+    // No 404: Add address must stay reachable for a company nothing has
+    // suggested an address for. The company layout 404s an unknown company.
     server.loadSeAddressDetail.mockResolvedValueOnce(null);
     const missing = await loader({
       request: new Request(`http://x/admin/se/company/${COMPANY}/address`),
       params: { companyId: COMPANY },
     } as never);
-    expect(missing.data).toEqual({ detail: null, selectedKey: null });
-    expect(missing.init?.status).toBe(404);
+    expect(missing).toEqual({ detail: EMPTY_DETAIL, selectedKey: null });
+    const html = render(
+      <SeAddressWorkspace
+        companyId={COMPANY}
+        detail={missing.detail}
+        selectedKey={missing.selectedKey}
+        result={null}
+      />,
+    );
+    expect(html).toContain("No addresses published yet");
+    expect(html).toContain("Add address");
   });
 
   it("passes the selected key from ?address=, ignoring anything malformed", async () => {
@@ -201,13 +284,13 @@ describe("admin-se-company-address route", () => {
       request: new Request(`http://x/admin/se/company/${COMPANY}/address?address=${KEY}`),
       params: { companyId: COMPANY },
     } as never);
-    expect(selected.data).toEqual({ detail, selectedKey: KEY });
+    expect(selected).toEqual({ detail, selectedKey: KEY });
 
     const malformed = await loader({
       request: new Request(`http://x/admin/se/company/${COMPANY}/address?address=not-a-key`),
       params: { companyId: COMPANY },
     } as never);
-    expect(malformed.data).toEqual({ detail, selectedKey: null });
+    expect(malformed).toEqual({ detail, selectedKey: null });
   });
 
   function post(entries: Record<string, string>) {
