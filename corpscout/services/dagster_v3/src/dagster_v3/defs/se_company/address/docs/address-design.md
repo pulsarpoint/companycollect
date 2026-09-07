@@ -12,6 +12,7 @@ everything past the modules below -- the backoffice Address tab, parity and the 
 | `assets.py` | The Dagster assets: `se_company_address_normalize`, `se_company_address_precedence_clickhouse`, `se_company_address_fold`, `se_company_address_fold_companies` |
 | `geocode.py` | `geocode_addresses`: one served outcome per location key -- the store as cache, the OSM workbench as matcher, the centroid overlay on read (slice 2a) |
 | `adoption.py` | `se_address_geocodes_adopt_keys`, the one-off that copies old identities' outcomes onto location keys (slice 2a) |
+| `warm.py` | `se_address_geocodes_warm`, the bulk warm step that hands every current location key to `geocode_addresses` in 500,000-key chunks so the matcher runs in the bulk mode it is built for (amended 2026-09-07) |
 | `precedence.py` | `ADDRESS_PRECEDENCE`/`precedence_rows`/`precedence_for` (`FIELD = 'text'`): the source order the fold's sort key uses to break a completeness tie, and per-company overrides read out of `se_company_address_precedence` |
 | `fold.py` | The pure per-company fold, `fold_company_addresses` (spec section 5): compatibility grouping into `_Candidate`s, hide/withdraw against a previous published set, `NormalizedRow`/`PublishedAddress`. No I/O, no clock -- the geocode block is attached afterwards by `PublishedAddress.with_geocode` |
 | `batch.py` | The fold's SQL (`normalized_watermarks_sql`, `stale_companies_sql`, `current_normalized_sql`, `current_main_rows_sql`, `hidden_keys_sql`, `company_precedence_sql`, `main_insert_sql`, `history_insert_sql`) and the paging/write loop (`fold_bucket`, `fold_companies`): selection, in-page geocoding of the page's distinct location keys, history-then-main write |
@@ -189,3 +190,14 @@ geocoded on any version, or on this run's current pair whatever its status; the 
 (`collapsed`); a key the store already holds is `existing` and never re-inserted.
 `execute` defaults false and only counts. Metadata:
 `identities/normalized/collapsed/adoptable/existing/adopted/skipped_stale`.
+
+## Warm step (amended 2026-09-07)
+
+`se_address_geocodes_warm` reads every distinct location key of the current `ok`/`partial`
+normalized rows and hands them to `geocode_addresses` in chunks of 500,000, so the matcher
+runs in bulk (the mode it is built for) and the fold pages find their keys in the cache. It
+runs once before the first full fold and after every OSM extract refresh; the fold still
+geocodes in-page whatever the warm step did not cover, so nothing depends on it for
+correctness. `AddressWarmConfig` (`chunk_size`, `limit`); pool `sweden_address_osm_duckdb`
+(`osm_tables.DUCKDB_POOL`), same as the fold's. Metadata:
+`keys/chunks/cache_hits/matched/geocoded/fallback`.

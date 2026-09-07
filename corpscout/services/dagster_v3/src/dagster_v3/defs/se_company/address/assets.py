@@ -16,6 +16,7 @@ from dagster_v3.defs.se_company.address import tables
 from dagster_v3.defs.se_company.address.batch import BUCKET_COUNT, PAGE_SIZE as FOLD_PAGE_SIZE, fold_bucket, fold_companies
 from dagster_v3.defs.se_company.address.normalize import PAGE_SIZE, normalize_all, normalize_companies
 from dagster_v3.defs.se_company.address.precedence import precedence_rows
+from dagster_v3.defs.se_company.address.warm import CHUNK_SIZE as WARM_CHUNK_SIZE, warm_geocodes
 from dagster_v3.defs.se_company.common import normalized_se_company_ids
 from dagster_v3.defs.sweden_address_osm import tables as osm_tables
 
@@ -226,3 +227,36 @@ def se_company_address_fold_companies(
             folded_at=datetime.now(UTC), page_size=config.page_size, log=context.log.info,
         )
     return dg.MaterializeResult(metadata=_fold_metadata(counts, config))
+
+
+class AddressWarmConfig(dg.Config):
+    # Keys per geocode_addresses call. The engine's cost is mostly per call, so large chunks
+    # are the point; lower it only if a chunk presses the host's memory.
+    chunk_size: int = Field(default=WARM_CHUNK_SIZE, ge=10_000, le=5_000_000)
+    # 0 = every key. A small limit times one engine call on prod without warming everything.
+    limit: int = Field(default=0, ge=0)
+
+
+@dg.asset(
+    name="se_address_geocodes_warm",
+    pool=osm_tables.DUCKDB_POOL,
+    group_name=GROUP_NAME,
+    kinds={"clickhouse", "duckdb", "python"},
+    metadata={"table": "corpscout.se_address_geocodes", "reads": tables.QUALIFIED_NORMALIZED_TABLE},
+    description=(
+        "Geocodes every current address location key in bulk through the cache-then-matcher "
+        "function, so the fold pages hit the cache. Run once before the first full fold and "
+        "after every OSM extract refresh. Manual."
+    ),
+)
+def se_address_geocodes_warm(
+    context: dg.AssetExecutionContext, config: AddressWarmConfig, clickhouse: ClickhouseResource,
+    sweden_address_osm_duckdb: DuckDBResource,
+) -> dg.MaterializeResult:
+    assert_clickhouse_tables_exist(clickhouse, database=tables.DATABASE, tables=(tables.NORMALIZED_TABLE, *_GEOCODE_TABLES))
+    with clickhouse.get_connection() as client, sweden_address_osm_duckdb.get_connection() as duckdb:
+        counts = warm_geocodes(
+            client, duckdb, run_id=context.run_id, matched_at=datetime.now(UTC),
+            chunk_size=config.chunk_size, limit=config.limit, log=context.log.info,
+        )
+    return dg.MaterializeResult(metadata={**counts.as_metadata(), "chunk_size": config.chunk_size, "limit": config.limit})

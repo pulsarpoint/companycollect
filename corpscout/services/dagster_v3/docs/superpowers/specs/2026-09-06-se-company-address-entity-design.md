@@ -385,6 +385,13 @@ fold page over the page's distinct keys.
 4. New outcomes are inserted into the cache before the page's main rows are written, so a
    crash between the two costs nothing on retry.
 
+**Warm step** (amended 2026-09-07). `se_address_geocodes_warm` reads every distinct location
+key of the current `ok`/`partial` normalized rows and hands them to `geocode_addresses` in
+chunks of 500,000, so the matcher runs in bulk (the mode it is built for) and the fold pages
+find their keys in the cache. It runs once before the first full fold and after every OSM
+extract refresh; the fold still geocodes in-page whatever the warm step did not cover, so
+nothing depends on it for correctness.
+
 The fold's bucket pool is the pool the OSM refresh asset takes, so an extract swap never
 races a fold. The matcher policy, the workbench scripts and the golden matcher corpus are
 untouched by this design; a policy bump is still a constant change plus a workbench
@@ -560,12 +567,13 @@ Tables `se_company_address_suggestion`, `se_company_address_normalized`,
 `se_company_address_v2` (renamed `se_company_address` at cutover), `se_company_address_history`, `se_company_address_rule`,
 `se_company_address_precedence`. Package `dagster_v3.defs.se_company.address` (`tables`,
 `normalize_se`, `normalize`, `suggestions`, `extract` shared from basic info, `scb`, `bolagsverket`,
-`ratsit`, `precedence`, `fold`, `geocode`, `adoption`, `batch`, `assets`, `jobs`); the old model's module
+`ratsit`, `precedence`, `fold`, `geocode`, `adoption`, `warm`, `batch`, `assets`, `jobs`); the old model's module
 `se_company/address.py` was renamed `address_legacy.py` on 2026-09-06 so the package can take
 the name, its definitions unchanged until the cutover retires them. Assets
 `se_company_address_suggestions_<source>`, `se_company_address_normalize`,
 `se_company_address_fold`, `se_company_address_fold_companies`,
-`se_company_address_precedence_clickhouse`, `se_address_geocodes_adopt_keys`. Backoffice
+`se_company_address_precedence_clickhouse`, `se_address_geocodes_adopt_keys`,
+`se_address_geocodes_warm`. Backoffice
 `app/lib/se-company-address-entity.server.ts`, `app/lib/se-address-fields.ts`,
 `app/lib/se-address-decision-form.ts`, `app/components/admin/se-address-workspace.tsx`,
 `app/components/admin/se-address-edit-sheet.tsx`, route `admin-se-company-address.tsx`.

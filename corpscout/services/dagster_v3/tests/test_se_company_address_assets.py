@@ -36,3 +36,17 @@ def test_config_defaults_and_bounds() -> None:
     assert targeted.company_ids == ["5560000001", "5560000002"] and targeted.changed_only is False
     with pytest.raises(ValueError):
         assets.AddressFoldCompaniesConfig(company_ids=[])
+
+
+def test_the_warm_asset_carries_the_workbench_pool_and_resources() -> None:
+    warm = assets.se_address_geocodes_warm
+    assert warm.op.pool == osm_tables.DUCKDB_POOL
+    assert set(warm.required_resource_keys) >= {"clickhouse", "sweden_address_osm_duckdb"}
+    assert warm.group_names_by_key[warm.key] == assets.GROUP_NAME
+
+
+def test_warm_config_defaults_and_bounds() -> None:
+    assert assets.AddressWarmConfig().chunk_size == assets.WARM_CHUNK_SIZE == 500_000
+    assert assets.AddressWarmConfig().limit == 0
+    with pytest.raises(ValueError):
+        assets.AddressWarmConfig(chunk_size=1)
