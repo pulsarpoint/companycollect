@@ -1,15 +1,16 @@
 """Sweden company translation loaders: free text via the translator service,
 codes via a curated dictionary table.
 
-``activity_description`` is Swedish business-purpose free text (~1.95M
-distinct) -> scanned and enqueued to the Go translator service (the sole
-writer of ``text_translations``), exactly the Norway pattern. Legal-form and
-status-reason values are Bolagsverket/SCB CODES, not prose -- an LLM would
-guess -- so they get labels from the curated in-repo dictionaries below,
-seeded into ``corpscout.se_code_labels`` (migration 000150 owns the schema,
-000305 adds ``label_sv``; the ``se_companies_translated`` view joins both
-sources back, and the SCB info artifact copies the legal-form pair into
-``se_company_info_scb``).
+``activity_description`` is Swedish business-purpose free text (~2.17M
+distinct) on the Bolagsverket register table ``corpscout.se_bolagsverket_companies``
+-> scanned and enqueued to the Go translator service (the sole writer of
+``text_translations``), keyed on that table (migration 000390 moved the key off
+the retiring ``se_companies`` spine) and read back through
+``se_bolagsverket_companies_translated``, exactly the Norway/Latvia pattern.
+Legal-form and status-reason values are Bolagsverket/SCB CODES, not prose --
+an LLM would guess -- so they get labels from the curated in-repo
+dictionaries below, seeded into ``corpscout.se_code_labels`` (migration 000150
+owns the schema, 000305 adds ``label_sv``).
 
 Legal forms carry BOTH languages: the Swedish name is the official term a
 Swedish-facing surface shows and the English one is the gloss beside it.
@@ -43,11 +44,14 @@ SOURCE_LANG = "sv"
 TARGET_LANG = "en"
 SOURCE_LANGUAGE_NAME = "Swedish"
 TARGET_LANGUAGE_NAME = "English"
+# has_company = 1 mirrors the extractors' scope; the export may one day carry rows for
+# organisations that are not companies, and their text is nobody's description.
 ACTIVITY_DESCRIPTION_FIELD = TranslationField(
-    "corpscout.se_companies",
+    "corpscout.se_bolagsverket_companies",
     "activity_description",
     SOURCE_LANG,
     TARGET_LANG,
+    extra_where="has_company = 1",
 )
 
 LEGAL_FORM_LABEL_EN_BY_CODE: dict[str, str] = {
@@ -273,13 +277,13 @@ def se_code_labels_clickhouse(
 
 
 @dg.asset(
-    deps=[dg.AssetKey("sweden_company_companies_clickhouse")],
+    deps=[dg.AssetKey("sweden_company_bolagsverket_companies_clickhouse")],
     group_name=GROUP_NAME,
     kinds={"python", "clickhouse"},
     description=(
-        "Scan corpscout.se_companies.activity_description for untranslated "
-        "texts (anti-join vs text_translations), enqueue them to the "
-        "translator service, and wait for queue completion."
+        "Scan corpscout.se_bolagsverket_companies.activity_description for untranslated "
+        "texts (anti-join vs text_translations under the register's key), enqueue them "
+        "to the translator service, and wait for queue completion."
     ),
 )
 def sweden_company_translation_load(
@@ -295,14 +299,15 @@ def sweden_company_translation_load(
                 ACTIVITY_DESCRIPTION_FIELD.column,
                 source_lang=ACTIVITY_DESCRIPTION_FIELD.source_lang,
                 target_lang=ACTIVITY_DESCRIPTION_FIELD.target_lang,
+                extra_where=ACTIVITY_DESCRIPTION_FIELD.extra_where,
             )
         )
     context.log.info(
         "scanned %d untranslated activity descriptions", len(untranslated_rows)
     )
     enqueue_result = translator.enqueue_translation_rows(
-        source_table="corpscout.se_companies",
-        source_column="activity_description",
+        source_table=ACTIVITY_DESCRIPTION_FIELD.table,
+        source_column=ACTIVITY_DESCRIPTION_FIELD.column,
         source_lang=SOURCE_LANG,
         target_lang=TARGET_LANG,
         source_language_name=SOURCE_LANGUAGE_NAME,

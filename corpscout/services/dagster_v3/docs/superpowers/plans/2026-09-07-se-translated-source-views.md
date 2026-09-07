@@ -778,7 +778,7 @@ class _ScanResource:
 def test_load_asset_enqueues_under_the_field_key(monkeypatch) -> None:
     """The scan's anti-join and the enqueue must name the same key, or the loader
     re-enqueues every text on every run."""
-    session = _FakeSession(stats={"input": 1, "pending": 0, "output": 1, "failed": 0})
+    session = _FakeSession(stats={"input": 0, "pending": 0, "output": 0, "failed": 0})
     monkeypatch.setattr(translator_resource.requests, "Session", lambda: session)
     clickhouse = _ScanResource()
 
@@ -998,7 +998,7 @@ class _ScanResource:
 
 
 def test_load_asset_enqueues_under_the_field_key(monkeypatch) -> None:
-    session = _FakeSession(stats={"input": 1, "pending": 0, "output": 1, "failed": 0})
+    session = _FakeSession(stats={"input": 0, "pending": 0, "output": 0, "failed": 0})
     monkeypatch.setattr(translator_resource.requests, "Session", lambda: session)
     clickhouse = _ScanResource()
 
