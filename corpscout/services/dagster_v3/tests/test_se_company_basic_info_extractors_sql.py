@@ -37,7 +37,11 @@ def test_scb_select_matches_the_contract() -> None:
 def test_bolagsverket_select_matches_the_contract() -> None:
     sql = bolagsverket.bolagsverket_select_sql()
     assert _aliases(sql) == list(SUGGESTION_SELECT_COLUMNS)
-    assert "FROM corpscout.se_bolagsverket_companies FINAL" in sql
+    # The register is read through its _translated view (migration 000390): the English
+    # text and its stamp are columns, and no extractor joins text_translations itself.
+    assert "FROM corpscout.se_bolagsverket_companies_translated AS register FINAL" in sql
+    assert "text_translations" not in sql and "cityHash64" not in sql
+    assert "WHERE has_company = 1 AND company_id IN %(company_ids)s" in sql
     assert "'bolagsverket' AS source" in sql
     assert REGISTER_UID in sql and "'sweden_bolagsverket'" in sql
     assert "if(register.deregistration_date IS NULL, 'active', 'inactive') AS status" in sql
@@ -47,40 +51,27 @@ def test_bolagsverket_select_matches_the_contract() -> None:
         "nullIf(transform(trim(ifNull(register.legal_form_code, '')), ['AB-ORGFO', " in sql
         and "trim(ifNull(register.legal_form_code, ''))), '') AS legal_form_code" in sql
     )
-    assert bolagsverket.BOLAGSVERKET_EXTRACTOR_VERSION == "bolagsverket-v2"
-    # The English description is the translation pipeline's, keyed the way it keys itself.
-    assert "source_table = 'corpscout.se_companies'" in sql
-    assert "source_column = 'activity_description'" in sql
-    assert "source_lang = 'sv' AND target_lang = 'en'" in sql
-    assert "cityHash64(ifNull(register.activity_sv, ''))" in sql
-    # The empty-string hash never enters the translation set, so a company without Swedish
-    # text cannot join a translation of some other company's empty description.
-    assert "FROM register WHERE activity_sv IS NOT NULL)" in sql
-    assert "argMax(translated_text, version) AS translated_text" in sql
-    assert "if(ifNull(translation.translated_text, '') != '', translation.translated_text, register.activity_sv) AS description" in sql
-    assert "if(ifNull(translation.translated_text, '') != '', 'en', if(register.activity_sv IS NULL, NULL, 'sv')) AS description_language" in sql
-    assert "register.activity_sv AS description_sv" in sql
-    # The translation is a second input: observed_at is the later of the register row's own
-    # stamp and the translation's (text_translations.version, unix seconds), so a company
-    # whose text is translated after its last extraction is visited again instead of
-    # keeping the Swedish text on an English-facing field forever.
-    observed_at = "greatest(register.observed_at, ifNull(translation.translated_at, register.observed_at))"
-    assert "toDateTime64(max(version), 3, 'UTC') AS translated_at" in sql
+    assert bolagsverket.BOLAGSVERKET_EXTRACTOR_VERSION == "bolagsverket-v3"
+    swedish = "nullIf(trim(ifNull(register.activity_description, '')), '')"
+    assert f"if(register.activity_description_en != '', register.activity_description_en, {swedish}) AS description" in sql
+    assert f"if(register.activity_description_en != '', 'en', if({swedish} IS NULL, NULL, 'sv')) AS description_language" in sql
+    assert f"{swedish} AS description_sv" in sql
+    # observed_at is the later of the register stamp and the translation stamp, so a text
+    # translated after the last extraction re-selects the company. The text guards the
+    # stamp: under join_use_nulls = 1 an untranslated row's stamp is NULL and a bare
+    # greatest would be NULL.
+    observed_at = (
+        "greatest(register.observed_at, if(register.activity_description_en != '', "
+        "ifNull(register.activity_description_translated_at, register.observed_at), register.observed_at))"
+    )
     assert f"    {observed_at} AS observed_at,\n" in sql
-    current = bolagsverket.bolagsverket_current_sql()
-    # current_sql carries the same CTEs and join, unscoped, so the change scan and the
-    # SELECT compute the same observed_at and the scan converges.
-    assert current.startswith("WITH register AS (\n")
-    assert "FROM corpscout.se_bolagsverket_companies FINAL\n    WHERE has_company = 1\n" in current
-    assert "%(company_ids)s" not in current
-    assert "toDateTime64(max(version), 3, 'UTC') AS translated_at" in current
-    assert current.endswith(
+    # current_sql computes the same observed_at, unscoped, so the change scan converges.
+    assert bolagsverket.bolagsverket_current_sql() == (
         "SELECT\n"
         "    register.company_id AS company_id,\n"
         f"    {observed_at} AS observed_at\n"
-        "FROM register\n"
-        "LEFT JOIN translations AS translation\n"
-        "    ON translation.source_text_hash = cityHash64(ifNull(register.activity_sv, ''))"
+        "FROM corpscout.se_bolagsverket_companies_translated AS register FINAL\n"
+        "WHERE has_company = 1"
     )
 
 

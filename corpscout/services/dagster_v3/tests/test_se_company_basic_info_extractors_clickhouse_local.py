@@ -22,12 +22,14 @@ MIGRATIONS = (
     "000373_corpscout_se_scb_companies.up.sql",
     "000374_corpscout_se_bolagsverket_companies.up.sql",
     "000376_corpscout_se_company_basic_info_suggestion.up.sql",
+    "000390_corpscout_se_source_translated_views.up.sql",
 )
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "se_basic_info_source_tables.sql"
 
 
 def _schema() -> list[str]:
-    statements = []
+    tables: list[str] = []
+    views: list[str] = []
     for name in MIGRATIONS:
         text = (MIGRATIONS_DIR / name).read_text(encoding="utf-8")
         for raw in text.split(";"):
@@ -35,9 +37,13 @@ def _schema() -> list[str]:
                 line for line in raw.splitlines() if not line.strip().startswith("--")
             ).strip()
             if statement.upper().startswith(("CREATE DATABASE", "CREATE TABLE")):
-                statements.append(statement)
-    statements += [s.strip() for s in FIXTURE.read_text(encoding="utf-8").split(";") if s.strip()]
-    return statements
+                tables.append(statement)
+            elif statement.upper().startswith("CREATE OR REPLACE VIEW"):
+                views.append(statement)
+    fixture = [s.strip() for s in FIXTURE.read_text(encoding="utf-8").split(";") if s.strip()]
+    # Views last: 000390's read se_ratsit_company and text_translations, which the fixture
+    # creates. Its INSERT ... SELECT statements are data moves and are not replayed.
+    return tables + fixture + views
 
 
 def _run(statements: list[str], *, join_use_nulls: int) -> list[str]:
@@ -74,7 +80,7 @@ BV_ROW = (
 )
 TRANSLATION_ROW = (
     "INSERT INTO corpscout.text_translations (source_table, source_column, source_text_hash, source_lang, target_lang, translated_text, provider, model, version) VALUES "
-    "('corpscout.se_companies', 'activity_description', cityHash64('Handel med kaffe'), 'sv', 'en', 'Coffee trading', 'p', 'm', 1)"
+    "('corpscout.se_bolagsverket_companies', 'activity_description', cityHash64('Handel med kaffe'), 'sv', 'en', 'Coffee trading', 'p', 'm', 1)"
 )
 
 
@@ -125,7 +131,7 @@ def test_a_later_translation_re_selects_bolagsverket_and_flips_the_language() ->
     """
     late_translation = (
         "INSERT INTO corpscout.text_translations (source_table, source_column, source_text_hash, source_lang, target_lang, translated_text, provider, model, version) VALUES "
-        "('corpscout.se_companies', 'activity_description', cityHash64('Handel med kaffe'), 'sv', 'en', 'Coffee trading', 'p', 'm', "
+        "('corpscout.se_bolagsverket_companies', 'activity_description', cityHash64('Handel med kaffe'), 'sv', 'en', 'Coffee trading', 'p', 'm', "
         "toUnixTimestamp(toDateTime('2026-09-10 00:00:00', 'UTC')))"
     )
     script = _schema() + [
