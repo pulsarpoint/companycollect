@@ -124,18 +124,39 @@ def test_wikidata_select_links_entities_through_orgnr_or_lei() -> None:
 def test_ratsit_select_takes_the_newest_report_and_maps_status_text() -> None:
     sql = ratsit.ratsit_select_sql()
     assert _aliases(sql) == list(SUGGESTION_SELECT_COLUMNS)
-    assert "FROM corpscout.se_ratsit_company FINAL" in sql
+    # Read through the _translated view (migration 000390); no text_translations join here.
+    assert "FROM corpscout.se_ratsit_company_translated FINAL" in sql
+    assert "text_translations" not in sql and "cityHash64" not in sql
     assert "normalizer_version = %(normalizer_version)s" in sql and "company_id IN %(company_ids)s" in sql
     assert "concat('ratsit:', toString(result_sha256)) AS source_record_uid" in sql
-    assert "toDateTime64(normalized_at, 3, 'UTC') AS observed_at" in sql
+    stamp = "toDateTime64(normalized_at, 3, 'UTC')"
+    observed_at = (
+        f"greatest({stamp}, if(business_description_en != '', "
+        f"ifNull(business_description_translated_at, {stamp}), {stamp}))"
+    )
+    assert f"    {observed_at} AS observed_at,\n" in sql
     assert "nullIf(trim(name), '') AS legal_name" in sql
     assert "multiIf(status IS NULL, NULL, startsWith(status, 'Aktiv'), 'active', 'inactive') AS status" in sql
-    assert "nullIf(trim(ifNull(business_description, '')), '') AS description" in sql
-    assert "if(nullIf(trim(ifNull(business_description, '')), '') IS NULL, NULL, 'sv') AS description_language" in sql
-    assert "nullIf(trim(ifNull(business_description, '')), '') AS description_sv" in sql
+    swedish = "nullIf(trim(ifNull(business_description, '')), '')"
+    assert f"if(business_description_en != '', business_description_en, {swedish}) AS description" in sql
+    assert f"if(business_description_en != '', 'en', if({swedish} IS NULL, NULL, 'sv')) AS description_language" in sql
+    assert f"{swedish} AS description_sv" in sql
     assert "CAST(NULL AS Nullable(String)) AS legal_form_code" in sql
     assert sql.rstrip().endswith("ORDER BY normalized_at DESC, result_sha256 DESC\nLIMIT 1 BY company_id")
+    assert ratsit.RATSIT_EXTRACTOR_VERSION == "ratsit-v2"
     assert ratsit.RATSIT_SELECT_PARAMS == {"normalizer_version": RATSIT_NORMALIZER_VERSION}
-    current = ratsit.ratsit_current_sql()
-    assert "toDateTime64(max(normalized_at), 3, 'UTC') AS observed_at" in current
-    assert "normalizer_version = %(normalizer_version)s" in current and "GROUP BY company_id" in current
+    # current_sql takes the newest report per company and stamps it exactly as the SELECT
+    # does, so the change scan converges even when an older report's text is translated
+    # later than the newest report.
+    assert ratsit.ratsit_current_sql() == (
+        "SELECT company_id, observed_at\n"
+        "FROM (\n"
+        "    SELECT\n"
+        "        company_id AS company_id,\n"
+        f"        {observed_at} AS observed_at\n"
+        "    FROM corpscout.se_ratsit_company_translated FINAL\n"
+        "    WHERE normalizer_version = %(normalizer_version)s\n"
+        "    ORDER BY normalized_at DESC, result_sha256 DESC\n"
+        "    LIMIT 1 BY company_id\n"
+        ")"
+    )

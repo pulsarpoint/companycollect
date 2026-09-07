@@ -260,6 +260,69 @@ def test_ratsit_takes_the_newest_report_and_maps_status() -> None:
     assert lines == ["5560000000", f"New Name AB\t\\N\tinactive\tNy text\tsv\tNy text\tratsit:{'b' * 64}\t2026-09-01 00:00:00.000"]
 
 
+RATSIT_ROWS = (
+    "INSERT INTO corpscout.se_ratsit_company (company_id, result_sha256, normalizer_version, schema_version, parser_version, requested_url, source_url, result_bucket, result_object_key, name, organization_number, legal_form, status, business_description, normalized_at) VALUES "
+    f"('5560000000', repeat('a', 64), '{RATSIT_NORMALIZER_VERSION}', 1, 'p', 'u', 'u', 'b', 'k', 'Old Name AB', '556000-0000', 'Aktiebolag', 'Aktiv', 'Gammal text', toDateTime64('2026-08-01 00:00:00', 6, 'UTC')), "
+    f"('5560000000', repeat('b', 64), '{RATSIT_NORMALIZER_VERSION}', 1, 'p', 'u', 'u', 'b', 'k', 'New Name AB', '556000-0000', 'Aktiebolag', 'Aktiv', 'Ny text', toDateTime64('2026-09-01 00:00:00', 6, 'UTC'))"
+)
+RATSIT_TRANSLATION_ROW = (
+    "INSERT INTO corpscout.text_translations (source_table, source_column, source_text_hash, source_lang, target_lang, translated_text, provider, model, version) VALUES "
+    "('corpscout.se_ratsit_company', 'business_description', cityHash64('Ny text'), 'sv', 'en', 'New text', 'p', 'm', 1)"
+)
+
+
+@pytest.mark.parametrize("join_use_nulls", [0, 1], ids=["join_use_nulls_off", "join_use_nulls_on"])
+def test_ratsit_with_a_translation_writes_the_english_text(join_use_nulls: int) -> None:
+    script = _schema() + [
+        RATSIT_ROWS,
+        RATSIT_TRANSLATION_ROW,
+        _insert(ratsit.ratsit_select_sql(), ["5560000000"], normalizer_version=RATSIT_NORMALIZER_VERSION),
+        f"SELECT legal_name, description, description_language, description_sv, toString(observed_at) FROM {tables.QUALIFIED_SUGGESTION_TABLE} FINAL",
+    ]
+    # version 1 is 1970: the report's own stamp is the later one and stays.
+    assert _run(script, join_use_nulls=join_use_nulls) == ["New Name AB\tNew text\ten\tNy text\t2026-09-01 00:00:00.000"]
+
+
+def test_a_later_translation_re_selects_ratsit_and_flips_the_language() -> None:
+    late_translation = (
+        "INSERT INTO corpscout.text_translations (source_table, source_column, source_text_hash, source_lang, target_lang, translated_text, provider, model, version) VALUES "
+        "('corpscout.se_ratsit_company', 'business_description', cityHash64('Ny text'), 'sv', 'en', 'New text', 'p', 'm', "
+        "toUnixTimestamp(toDateTime('2026-09-10 00:00:00', 'UTC')))"
+    )
+    scope = _bind(changed_scope_sql(current_sql=ratsit.ratsit_current_sql()), source="ratsit", normalizer_version=RATSIT_NORMALIZER_VERSION)
+    script = _schema() + [
+        RATSIT_ROWS,
+        _insert(ratsit.ratsit_select_sql(), ["5560000000"], normalizer_version=RATSIT_NORMALIZER_VERSION),
+        _labelled(scope, "converged"),
+        late_translation,
+        _labelled(scope, "translated"),
+        _insert(ratsit.ratsit_select_sql(), ["5560000000"], normalizer_version=RATSIT_NORMALIZER_VERSION),
+        # Two rows now differ only in observed_at; read the newer one without FINAL, whose
+        # ReplacingMergeTree version (suggested_at) can tie inside one clickhouse-local run.
+        f"SELECT description, description_language, toString(observed_at) FROM {tables.QUALIFIED_SUGGESTION_TABLE} ORDER BY observed_at DESC LIMIT 1",
+    ]
+    assert _run(script, join_use_nulls=0) == ["translated\t5560000000", "New text\ten\t2026-09-10 00:00:00.000"]
+
+
+def test_a_translation_of_an_older_ratsit_report_does_not_keep_re_selecting() -> None:
+    """current_sql stamps the newest report only. Translating the OLD report's text later
+    than the newest report must not re-select forever, because the SELECT never writes
+    that stamp."""
+    old_text_translation = (
+        "INSERT INTO corpscout.text_translations (source_table, source_column, source_text_hash, source_lang, target_lang, translated_text, provider, model, version) VALUES "
+        "('corpscout.se_ratsit_company', 'business_description', cityHash64('Gammal text'), 'sv', 'en', 'Old text', 'p', 'm', "
+        "toUnixTimestamp(toDateTime('2026-09-10 00:00:00', 'UTC')))"
+    )
+    scope = _bind(changed_scope_sql(current_sql=ratsit.ratsit_current_sql()), source="ratsit", normalizer_version=RATSIT_NORMALIZER_VERSION)
+    script = _schema() + [
+        RATSIT_ROWS,
+        _insert(ratsit.ratsit_select_sql(), ["5560000000"], normalizer_version=RATSIT_NORMALIZER_VERSION),
+        old_text_translation,
+        _labelled(scope, "stale-text"),
+    ]
+    assert _run(script, join_use_nulls=0) == []
+
+
 def test_llm_scope_selects_two_text_sources_newer_than_the_llm_row() -> None:
     def suggestion(company_id, source, description, observed):
         return (f"INSERT INTO {tables.QUALIFIED_SUGGESTION_TABLE} (company_id, source, source_record_uid, observed_at, description, suggested_at, source_run_id, extractor_version) VALUES "
