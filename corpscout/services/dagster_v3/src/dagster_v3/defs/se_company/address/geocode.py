@@ -55,6 +55,8 @@ from dataclasses import dataclass, replace as dataclass_replace
 from datetime import datetime
 from typing import Any
 
+import pyarrow as pa
+
 from dagster_v3.defs.address_resolution.resolution import (
     replace_address_resolution_candidates,
     replace_address_resolution_results,
@@ -661,22 +663,58 @@ def _match(
     return results
 
 
-def insert_input_rows(duckdb: Any, table: str, rows: Sequence[tuple[Any, ...]]) -> None:
-    """Insert the query rows in ONE transaction.
+_INPUT_SCHEMA = pa.schema(
+    [
+        ("index_scope", pa.string()),
+        ("document_id", pa.string()),
+        ("country_code", pa.string()),
+        ("raw_address", pa.string()),
+        ("search_text", pa.string()),
+        ("street_name", pa.string()),
+        ("house_number", pa.string()),
+        ("unit", pa.string()),
+        ("postal_code", pa.string()),
+        ("locality", pa.string()),
+        ("address_kind", pa.string()),
+        ("reference_precision", pa.string()),
+        ("latitude", pa.float64()),
+        ("longitude", pa.float64()),
+        ("coordinate_spread_meters", pa.float64()),
+        ("supporting_record_count", pa.uint32()),
+        ("source_record_id", pa.string()),
+        ("source_record_url", pa.string()),
+    ]
+)
+# Not an assert: this runs at import time under load_from_defs_folder, and `python -O`
+# would strip it.
+if tuple(_INPUT_SCHEMA.names) != tuple(SEARCH_DOCUMENT_INPUT_COLUMNS):
+    raise ValueError("_INPUT_SCHEMA must list SEARCH_DOCUMENT_INPUT_COLUMNS in order")
 
-    DuckDB's Python connection autocommits, so a bare `executemany` commits and syncs the
-    write-ahead log once per row: measured on prod 2026-09-07 at about 0.28 s per row, which
-    made a 22,000-key page take 1 h 52 min and would have made a 95,000-key warm chunk take
-    7.7 h. One explicit transaction turns that into one commit.
+
+def insert_input_rows(duckdb: Any, table: str, rows: Sequence[tuple[Any, ...]]) -> None:
+    """Insert the query rows as ONE vectorised statement.
+
+    The rows become an Arrow table registered as a view and copied with a single
+    `INSERT ... SELECT`. Neither of the row-by-row alternatives survives production: a bare
+    `executemany` autocommits and syncs the write-ahead log per row (0.28 s each, measured
+    2026-09-07), and `executemany` inside one transaction keeps every row's append state in
+    DuckDB's buffer pool, which exhausted the 97 GiB limit at 462,683 rows the same day.
     """
-    placeholders = ", ".join("?" for _ in SEARCH_DOCUMENT_INPUT_COLUMNS)
-    duckdb.execute("begin transaction")
+    if not rows:
+        return
+    columns = list(zip(*rows, strict=True))
+    arrow = pa.table(
+        {
+            field.name: pa.array(values, type=field.type)
+            for field, values in zip(_INPUT_SCHEMA, columns, strict=True)
+        }
+    )
+    view = f"{table.rsplit('.', 1)[-1]}_arrow"
+    duckdb.register(view, arrow)
     try:
-        duckdb.executemany(f"insert into {table} values ({placeholders})", list(rows))
-        duckdb.execute("commit")
-    except Exception:
-        duckdb.execute("rollback")
-        raise
+        duckdb.execute(f"insert into {table} select * from {view}")
+    finally:
+        duckdb.unregister(view)
 
 
 def run_tables(run_id: str) -> dict[str, str]:

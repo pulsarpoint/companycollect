@@ -990,11 +990,12 @@ def test_sql_texts() -> None:
     assert tuple(projected) == SEARCH_DOCUMENT_INPUT_COLUMNS
 
 
-def test_input_rows_are_inserted_in_one_transaction_and_rolled_back_on_error(
+def test_input_rows_are_inserted_as_one_vectorised_statement(
     workbench: duckdb.DuckDBPyConnection,
 ) -> None:
-    """A bare executemany commits (and syncs the WAL) per row, 0.28 s each on prod; the
-    helper wraps the insert in one transaction, and a bad row leaves the table empty."""
+    """Row-by-row inserts either sync the WAL per row or exhaust the buffer pool (both
+    measured on prod 2026-09-07); the helper registers an Arrow table and copies it with
+    one INSERT ... SELECT, and a malformed row inserts nothing."""
     from dagster_v3.defs.address_resolution.search_documents import (
         replace_address_search_document_input_table,
     )
@@ -1016,9 +1017,22 @@ def test_input_rows_are_inserted_in_one_transaction_and_rolled_back_on_error(
             statements.append("executemany")
             return workbench.executemany(sql, *args, **kwargs)
 
+        def register(self, name, value):
+            statements.append(f"register {name}")
+            return workbench.register(name, value)
+
+        def unregister(self, name):
+            statements.append(f"unregister {name}")
+            return workbench.unregister(name)
+
     geocode.insert_input_rows(Spy(), table, rows)
-    assert statements == ["begin transaction", "executemany", "commit"]
-    assert workbench.execute(f"select count(*) from {table}").fetchone()[0] == 2
+    assert "executemany" not in statements
+    assert statements[0].startswith("register ") and statements[-1].startswith("unregister ")
+    assert [s for s in statements if s.startswith("insert into")] == [f"insert into {table} select * from {table}_arrow"]
+    read_back = workbench.execute(
+        f"select document_id, street_name, supporting_record_count, latitude from {table} order by document_id"
+    ).fetchall()
+    assert read_back == [("k1", STREET.street_name or "", 0, None), ("k2", "", 0, None)]
 
     workbench.execute(f"delete from {table}")
     with pytest.raises(Exception):
