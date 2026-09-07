@@ -1,0 +1,3201 @@
+{
+  "schema_version": "1.1",
+  "audit_date": "2026-09-07",
+  "catalog": {
+    "source_table": "corpscout.technology_catalog",
+    "captured_at": "2026-09-07T09:47:21.848248+00:00",
+    "row_count": 7981,
+    "snapshot_path": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company_research/data/technology-mapping-audit/catalog.json",
+    "snapshot_sha256": "1262e21751af34816b4aff563082dbbb87c1a7c372cb321a9b9e925a8745c68e",
+    "query": "SELECT technology, description, website, categories, groups, source, source_version, source_run_id, updated_at FROM corpscout.technology_catalog FINAL ORDER BY technology"
+  },
+  "review": {
+    "reviewed_by": "assistant",
+    "method": "Source quotations, current catalog names/metadata, and primary documentation; semantic judgments are explicit inputs, not automatic fuzzy matches.",
+    "decisions_sha256": "3a40653874c9e0952c6bd6af22edd3fdec7de105a04bfbe53e0af61269c75fe0",
+    "candidate_generation": "Top four case-folded name similarities plus explicitly reviewed related entries. Scores are retrieval signals, not identity confidence.",
+    "external_model_calls": 0
+  },
+  "matching_policy": {
+    "normalization": "Unicode NFKC, casefold, whitespace normalization; punctuation preserved",
+    "precedence": [
+      "exact_catalog",
+      "unique_normalized_catalog",
+      "accepted_case_insensitive_alias"
+    ],
+    "catalog_collisions": [
+      {
+        "normalized_key": "_hyperscript",
+        "canonical_names": [
+          "_hyperscript",
+          "_hyperscript "
+        ]
+      },
+      {
+        "normalized_key": "aimerce",
+        "canonical_names": [
+          "Aimerce",
+          "Aimerce "
+        ]
+      },
+      {
+        "normalized_key": "aitrillion",
+        "canonical_names": [
+          "AiTrillion",
+          "AiTrillion "
+        ]
+      },
+      {
+        "normalized_key": "fastspring",
+        "canonical_names": [
+          "FastSpring",
+          "Fastspring"
+        ]
+      },
+      {
+        "normalized_key": "framework7",
+        "canonical_names": [
+          "Framework7",
+          "framework7"
+        ]
+      },
+      {
+        "normalized_key": "ibexa dxp",
+        "canonical_names": [
+          "Ibexa DXP",
+          "Ibexa DXP "
+        ]
+      },
+      {
+        "normalized_key": "litespeed cache",
+        "canonical_names": [
+          "LiteSpeed Cache",
+          "Litespeed Cache"
+        ]
+      },
+      {
+        "normalized_key": "moxie",
+        "canonical_names": [
+          "Moxie",
+          "mOxie"
+        ]
+      },
+      {
+        "normalized_key": "ocea",
+        "canonical_names": [
+          "OCEA",
+          "Ocea"
+        ]
+      },
+      {
+        "normalized_key": "offset",
+        "canonical_names": [
+          "Offset",
+          "Offset "
+        ]
+      },
+      {
+        "normalized_key": "publive",
+        "canonical_names": [
+          "PubLive",
+          "Publive"
+        ]
+      },
+      {
+        "normalized_key": "segment consent manager",
+        "canonical_names": [
+          "Segment Consent Manager",
+          "Segment Consent Manager "
+        ]
+      },
+      {
+        "normalized_key": "sendgrid",
+        "canonical_names": [
+          "SendGrid",
+          "Sendgrid"
+        ]
+      },
+      {
+        "normalized_key": "spin.js",
+        "canonical_names": [
+          "Spin.js",
+          "spin.js"
+        ]
+      },
+      {
+        "normalized_key": "timeago",
+        "canonical_names": [
+          "Timeago",
+          "timeago"
+        ]
+      },
+      {
+        "normalized_key": "websocket",
+        "canonical_names": [
+          "WebSocket",
+          "Websocket"
+        ]
+      }
+    ],
+    "before_coverage": "Catalog matching, including unique normalized matches; no aliases",
+    "after_coverage": "The same catalog matching plus accepted aliases"
+  },
+  "inputs": {
+    "primary": [
+      {
+        "path": "data/technology-software-developer-v2/result.json",
+        "format": "extraction_diagnostic",
+        "reason": "Latest saved extraction of the real software-developer page; main coverage denominator.",
+        "sha256": "ef59a59b91fd759a22355b44aa26dc6375da662a18a4da9667c414c1e9638702",
+        "finding_count": 11
+      }
+    ],
+    "historical": [
+      {
+        "path": "data/technology-software-developer-v1/result.json",
+        "format": "research_result",
+        "reason": "Earlier extraction of the same source snapshot; separate comparison, not independent job evidence.",
+        "sha256": "6f255cc780a1a01170395fcec80cbbb88ba8042b2c3fa5ba386cc764639b446f",
+        "finding_count": 13
+      }
+    ],
+    "excluded": [
+      {
+        "path": "data/technology-fixture-v1/result.json",
+        "reason": "Synthetic fixture; not real-company evidence."
+      },
+      {
+        "path": "data/technology-fixture-v2/result.json",
+        "reason": "Synthetic fixture; not real-company evidence."
+      },
+      {
+        "path": "data/kongsberg-v1/result.json",
+        "reason": "Schema 1.0 did not assess technology signals."
+      },
+      {
+        "path": "data/kongsberg-v2/result.json",
+        "reason": "Schema 1.0 did not assess technology signals."
+      }
+    ]
+  },
+  "limitations": [
+    "One real job page and one named employer; this is not a representative technology coverage benchmark.",
+    "The older 40-page jobs benchmark did not extract technology observations and is not counted.",
+    "Company counts refer to source names, not resolved registry identities.",
+    "Alias correctness is independent of whether a claim describes use, required experience, or alternatives."
+  ],
+  "primary_coverage": {
+    "before": {
+      "observation_count": 11,
+      "matched_observation_count": 1,
+      "matched_observation_percent": 9.09,
+      "distinct_raw_label_count": 11,
+      "matched_distinct_label_count": 1,
+      "matched_distinct_label_percent": 9.09,
+      "distinct_job_url_count": 1,
+      "distinct_source_url_count": 1,
+      "distinct_source_snapshot_count": 1,
+      "distinct_named_company_count": 1,
+      "original_source_matched_count": 11
+    },
+    "after": {
+      "observation_count": 11,
+      "matched_observation_count": 1,
+      "matched_observation_percent": 9.09,
+      "distinct_raw_label_count": 11,
+      "matched_distinct_label_count": 1,
+      "matched_distinct_label_percent": 9.09,
+      "distinct_job_url_count": 1,
+      "distinct_source_url_count": 1,
+      "distinct_source_snapshot_count": 1,
+      "distinct_named_company_count": 1,
+      "original_source_matched_count": 11
+    }
+  },
+  "primary_classifications": {
+    "ambiguous": 2,
+    "matched": 1,
+    "missing_from_catalog": 8
+  },
+  "historical_coverage": {
+    "before": {
+      "observation_count": 13,
+      "matched_observation_count": 1,
+      "matched_observation_percent": 7.69,
+      "distinct_raw_label_count": 10,
+      "matched_distinct_label_count": 1,
+      "matched_distinct_label_percent": 10.0,
+      "distinct_job_url_count": 1,
+      "distinct_source_url_count": 1,
+      "distinct_source_snapshot_count": 1,
+      "distinct_named_company_count": 1,
+      "original_source_matched_count": 10
+    },
+    "after": {
+      "observation_count": 13,
+      "matched_observation_count": 1,
+      "matched_observation_percent": 7.69,
+      "distinct_raw_label_count": 10,
+      "matched_distinct_label_count": 1,
+      "matched_distinct_label_percent": 10.0,
+      "distinct_job_url_count": 1,
+      "distinct_source_url_count": 1,
+      "distinct_source_snapshot_count": 1,
+      "distinct_named_company_count": 1,
+      "original_source_matched_count": 10
+    }
+  },
+  "alias_mapping_version": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "technologies": [
+    {
+      "technology_raw": "Azure DevOps",
+      "observation_frequency": 1,
+      "distinct_job_urls": [
+        "https://www.kongsberg.com/careers/vacancies/software-developer/"
+      ],
+      "company_names": [
+        "Kongsberg Discovery Canada Ltd."
+      ],
+      "before": {
+        "status": "unresolved",
+        "technology": null,
+        "method": null
+      },
+      "after": {
+        "status": "unresolved",
+        "technology": null,
+        "method": null
+      },
+      "classification": "missing_from_catalog",
+      "review": {
+        "classification": "missing_from_catalog",
+        "reason": "Azure DevOps is a development tool suite. Catalog Azure describes the cloud platform, and Azure CDN describes another product. Neither is an equivalent alias target.",
+        "related_catalog_names": [
+          "Azure",
+          "Azure CDN"
+        ],
+        "next_action": "Review adding Azure DevOps as its own catalog technology.",
+        "references": [
+          "https://learn.microsoft.com/en-us/azure/devops/user-guide/what-is-azure-devops?view=azure-devops"
+        ]
+      },
+      "catalog_candidates": [
+        {
+          "technology": "Azure CDN",
+          "retrieval_score": 0.6667,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "Azure CDN",
+            "description": "Azure Content Delivery Network (CDN) reduces load times, save bandwidth and speed responsiveness.",
+            "website": "https://azure.microsoft.com/en-us/services/cdn/",
+            "categories": [
+              "CDN",
+              "Caching"
+            ],
+            "groups": [
+              "Servers"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "Azure Edge Network",
+          "retrieval_score": 0.6,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "Azure Edge Network",
+            "description": "Azure Edge Network is a global network infrastructure provided by Microsoft Azure. It is designed to deliver content, applications, and services to end-users with low latency and high performance. The Azure Edge Network consists of a combination of Azure Content Delivery Network (CDN), Azure Front Door, and Azure Traffic Manager.",
+            "website": "https://learn.microsoft.com/en-us/azure/cdn/cdn-overview",
+            "categories": [
+              "Miscellaneous"
+            ],
+            "groups": [
+              "Other"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "Azure",
+          "retrieval_score": 0.5882,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "Azure",
+            "description": "Azure is a cloud computing service for building, testing, deploying, and managing applications and services through Microsoft-managed data centers.",
+            "website": "https://azure.microsoft.com",
+            "categories": [
+              "PaaS"
+            ],
+            "groups": [
+              "Servers"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "Azure AD B2C",
+          "retrieval_score": 0.5833,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "Azure AD B2C",
+            "description": "Azure Active Directory B2C is a customer identity access management (CIAM) solution.",
+            "website": "https://azure.microsoft.com/en-us/services/active-directory/external-identities/b2c/",
+            "categories": [
+              "Authentication"
+            ],
+            "groups": [
+              "Security"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        }
+      ],
+      "reviewed_related_entries": [
+        {
+          "technology": "Azure",
+          "description": "Azure is a cloud computing service for building, testing, deploying, and managing applications and services through Microsoft-managed data centers.",
+          "website": "https://azure.microsoft.com",
+          "categories": [
+            "PaaS"
+          ],
+          "groups": [
+            "Servers"
+          ],
+          "source": "webappanalyzer",
+          "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+          "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+          "updated_at": "2026-09-06 05:25:25.327000+00:00"
+        },
+        {
+          "technology": "Azure CDN",
+          "description": "Azure Content Delivery Network (CDN) reduces load times, save bandwidth and speed responsiveness.",
+          "website": "https://azure.microsoft.com/en-us/services/cdn/",
+          "categories": [
+            "CDN",
+            "Caching"
+          ],
+          "groups": [
+            "Servers"
+          ],
+          "source": "webappanalyzer",
+          "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+          "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+          "updated_at": "2026-09-06 05:25:25.327000+00:00"
+        }
+      ],
+      "observations": [
+        {
+          "input_artifact": "data/technology-software-developer-v2/result.json",
+          "record_id": "31df38b94dc7bff0a11391d1",
+          "data": {
+            "company": "Kongsberg Discovery Canada Ltd.",
+            "technology": "Azure DevOps",
+            "category": "infrastructure_devops",
+            "signal": "required_experience",
+            "scope": "role",
+            "job_employer": "Kongsberg Discovery Canada Ltd.",
+            "job_title": "Software Developer",
+            "job_url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+            "alternative_group": "Git, Azure DevOps, or similar source control and CI/CD platforms",
+            "context": "Experience using Azure DevOps is required as part of source control and CI/CD platforms.",
+            "as_of": null
+          },
+          "original_evidence_status": "source_matched",
+          "sources": [
+            {
+              "url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+              "page_id": "p0001",
+              "fetched_at": "2026-09-06T18:06:48+00:00",
+              "html_sha256": "b29257ab0b0d7d8564b29121750fa50bb01bc13732bc7dc4ef95fe5dc2a88144",
+              "chunk_start": 0,
+              "chunk_end": 26332,
+              "evidence": [
+                {
+                  "text": "Kongsberg Discovery Canada Ltd.",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                },
+                {
+                  "text": "Software Developer",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                },
+                {
+                  "text": "Experience using Git, Azure DevOps, or similar source control and CI/CD platforms.",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                }
+              ],
+              "evidence_status": "source_matched",
+              "issues": [],
+              "html_artifact": "data/technology-software-developer-v2/html/p0001.html",
+              "source_hash_verified": true
+            }
+          ],
+          "mapping": {
+            "status": "unresolved",
+            "technology": null,
+            "method": null
+          }
+        }
+      ]
+    },
+    {
+      "technology_raw": "C/C++",
+      "observation_frequency": 1,
+      "distinct_job_urls": [
+        "https://www.kongsberg.com/careers/vacancies/software-developer/"
+      ],
+      "company_names": [
+        "Kongsberg Discovery Canada Ltd."
+      ],
+      "before": {
+        "status": "unresolved",
+        "technology": null,
+        "method": null
+      },
+      "after": {
+        "status": "unresolved",
+        "technology": null,
+        "method": null
+      },
+      "classification": "ambiguous",
+      "review": {
+        "classification": "ambiguous",
+        "reason": "Combined language label. C exists, but mapping the whole mention to C loses the C++ part. No exact C++ entry was found. This needs compound-claim handling, not a one-to-one alias.",
+        "related_catalog_names": [
+          "C"
+        ],
+        "next_action": "Preserve the combined mention; design supported component extraction and review a separate C++ catalog entry.",
+        "references": []
+      },
+      "catalog_candidates": [
+        {
+          "technology": "CINC",
+          "retrieval_score": 0.4444,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "CINC",
+            "description": "CINC is a lead acquisition and conversion platform for teams and top real estate agents.",
+            "website": "https://www.cincpro.com",
+            "categories": [
+              "Marketing automation",
+              "CRM"
+            ],
+            "groups": [
+              "Marketing",
+              "Business tools"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "CRM+",
+          "retrieval_score": 0.4444,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "CRM+",
+            "description": "CRM+ is a German CRM software product building on Vtiger with GDPR-compliant extensions and improvements.",
+            "website": "https://www.brainformatik.com",
+            "categories": [
+              "CRM"
+            ],
+            "groups": [
+              "Marketing",
+              "Business tools"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "CIVIC",
+          "retrieval_score": 0.4,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "CIVIC",
+            "description": "Civic provides cookie control for user consent and the use of cookies.",
+            "website": "https://www.civicuk.com/cookie-control",
+            "categories": [
+              "Cookie compliance"
+            ],
+            "groups": [
+              "Privacy"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "COCON",
+          "retrieval_score": 0.4,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "COCON",
+            "description": "COCON is an email marketing strategy designed to enhance the performance of a Shopify store.",
+            "website": "https://www.cocon.app",
+            "categories": [
+              "Marketing automation"
+            ],
+            "groups": [
+              "Marketing"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        }
+      ],
+      "reviewed_related_entries": [
+        {
+          "technology": "C",
+          "description": "C is a general-purpose, procedural computer programming language supporting structured programming, lexical variable scope, and recursion, with a static type system.",
+          "website": "https://www.open-std.org/jtc1/sc22/wg14/",
+          "categories": [
+            "Programming languages"
+          ],
+          "groups": [
+            "Web development"
+          ],
+          "source": "webappanalyzer",
+          "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+          "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+          "updated_at": "2026-09-06 05:25:25.327000+00:00"
+        }
+      ],
+      "observations": [
+        {
+          "input_artifact": "data/technology-software-developer-v2/result.json",
+          "record_id": "add8e8bf8176bde9814b544b",
+          "data": {
+            "company": "Kongsberg Discovery Canada Ltd.",
+            "technology": "C/C++",
+            "category": "programming_language",
+            "signal": "stated_use",
+            "scope": "role",
+            "job_employer": "Kongsberg Discovery Canada Ltd.",
+            "job_title": "Software Developer",
+            "job_url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+            "alternative_group": null,
+            "context": "The role involves designing, developing, testing, and maintaining robust C/C++ applications for Windows and Linux.",
+            "as_of": null
+          },
+          "original_evidence_status": "source_matched",
+          "sources": [
+            {
+              "url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+              "page_id": "p0001",
+              "fetched_at": "2026-09-06T18:06:48+00:00",
+              "html_sha256": "b29257ab0b0d7d8564b29121750fa50bb01bc13732bc7dc4ef95fe5dc2a88144",
+              "chunk_start": 0,
+              "chunk_end": 26332,
+              "evidence": [
+                {
+                  "text": "Kongsberg Discovery Canada Ltd.",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                },
+                {
+                  "text": "Software Developer",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                },
+                {
+                  "text": "Design, develop, test, and maintain robust C/C++ applications",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                },
+                {
+                  "text": "Strong C/C++ development experience on both Windows and Linux.",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                }
+              ],
+              "evidence_status": "source_matched",
+              "issues": [],
+              "html_artifact": "data/technology-software-developer-v2/html/p0001.html",
+              "source_hash_verified": true
+            }
+          ],
+          "mapping": {
+            "status": "unresolved",
+            "technology": null,
+            "method": null
+          }
+        }
+      ]
+    },
+    {
+      "technology_raw": "Git",
+      "observation_frequency": 1,
+      "distinct_job_urls": [
+        "https://www.kongsberg.com/careers/vacancies/software-developer/"
+      ],
+      "company_names": [
+        "Kongsberg Discovery Canada Ltd."
+      ],
+      "before": {
+        "status": "matched",
+        "technology": "git",
+        "method": "normalized_catalog"
+      },
+      "after": {
+        "status": "matched",
+        "technology": "git",
+        "method": "normalized_catalog"
+      },
+      "classification": "matched",
+      "review": {
+        "classification": "matched",
+        "reason": "Git matches the unique normalized catalog name git automatically. Case differences are handled by normal matching, not aliases.",
+        "related_catalog_names": [
+          "git",
+          "gitweb"
+        ],
+        "next_action": "No alias needed. Preserve the source's required-experience and alternative-group qualifiers.",
+        "references": [
+          "https://git-scm.com/about"
+        ]
+      },
+      "catalog_candidates": [
+        {
+          "technology": "git",
+          "retrieval_score": 1.0,
+          "same_name_ignoring_case": true,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "git",
+            "description": "",
+            "website": "https://git-scm.com",
+            "categories": [
+              "Development"
+            ],
+            "groups": [
+              "Web development"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "Gist",
+          "retrieval_score": 0.8571,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "Gist",
+            "description": "Gist is email marketing automation, live chat, and helpdesk software.",
+            "website": "https://getgist.com/live-chat",
+            "categories": [
+              "Live chat"
+            ],
+            "groups": [
+              "Communication",
+              "Business tools"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "cgit",
+          "retrieval_score": 0.8571,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "cgit",
+            "description": "cgit is a web interface (cgi) for Git repositories, written in C. licensed under GPLv2.",
+            "website": "https://git.zx2c4.com/cgit",
+            "categories": [
+              "Miscellaneous"
+            ],
+            "groups": [
+              "Other"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "Gista",
+          "retrieval_score": 0.75,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "Gista",
+            "description": "Gista is an AI conversion agent that helps websites turn visitors into leads and customers through automated engagement.",
+            "website": "https://gista.co",
+            "categories": [
+              "Live chat"
+            ],
+            "groups": [
+              "Communication",
+              "Business tools"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        }
+      ],
+      "reviewed_related_entries": [
+        {
+          "technology": "git",
+          "description": "",
+          "website": "https://git-scm.com",
+          "categories": [
+            "Development"
+          ],
+          "groups": [
+            "Web development"
+          ],
+          "source": "webappanalyzer",
+          "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+          "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+          "updated_at": "2026-09-06 05:25:25.327000+00:00"
+        },
+        {
+          "technology": "gitweb",
+          "description": "",
+          "website": "https://git-scm.com",
+          "categories": [
+            "Development"
+          ],
+          "groups": [
+            "Web development"
+          ],
+          "source": "webappanalyzer",
+          "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+          "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+          "updated_at": "2026-09-06 05:25:25.327000+00:00"
+        }
+      ],
+      "observations": [
+        {
+          "input_artifact": "data/technology-software-developer-v2/result.json",
+          "record_id": "0da781932705ba5ff11e3854",
+          "data": {
+            "company": "Kongsberg Discovery Canada Ltd.",
+            "technology": "Git",
+            "category": "engineering_tool",
+            "signal": "required_experience",
+            "scope": "role",
+            "job_employer": "Kongsberg Discovery Canada Ltd.",
+            "job_title": "Software Developer",
+            "job_url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+            "alternative_group": "Git, Azure DevOps, or similar source control and CI/CD platforms",
+            "context": "Experience using Git is required as part of source control and CI/CD platforms.",
+            "as_of": null
+          },
+          "original_evidence_status": "source_matched",
+          "sources": [
+            {
+              "url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+              "page_id": "p0001",
+              "fetched_at": "2026-09-06T18:06:48+00:00",
+              "html_sha256": "b29257ab0b0d7d8564b29121750fa50bb01bc13732bc7dc4ef95fe5dc2a88144",
+              "chunk_start": 0,
+              "chunk_end": 26332,
+              "evidence": [
+                {
+                  "text": "Kongsberg Discovery Canada Ltd.",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                },
+                {
+                  "text": "Software Developer",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                },
+                {
+                  "text": "Experience using Git, Azure DevOps, or similar source control and CI/CD platforms.",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                }
+              ],
+              "evidence_status": "source_matched",
+              "issues": [],
+              "html_artifact": "data/technology-software-developer-v2/html/p0001.html",
+              "source_hash_verified": true
+            }
+          ],
+          "mapping": {
+            "status": "matched",
+            "technology": "git",
+            "method": "normalized_catalog"
+          }
+        }
+      ]
+    },
+    {
+      "technology_raw": "Linux",
+      "observation_frequency": 1,
+      "distinct_job_urls": [
+        "https://www.kongsberg.com/careers/vacancies/software-developer/"
+      ],
+      "company_names": [
+        "Kongsberg Discovery Canada Ltd."
+      ],
+      "before": {
+        "status": "unresolved",
+        "technology": null,
+        "method": null
+      },
+      "after": {
+        "status": "unresolved",
+        "technology": null,
+        "method": null
+      },
+      "classification": "missing_from_catalog",
+      "review": {
+        "classification": "missing_from_catalog",
+        "reason": "No general Linux entry. Existing Linux distributions do not establish which distribution this employer uses.",
+        "related_catalog_names": [
+          "Ubuntu",
+          "Debian",
+          "Alpine Linux",
+          "AlmaLinux",
+          "Red Hat"
+        ],
+        "next_action": "Review adding a general Linux entry while preserving specific distribution identities.",
+        "references": []
+      },
+      "catalog_candidates": [
+        {
+          "technology": "AlmaLinux",
+          "retrieval_score": 0.7143,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "AlmaLinux",
+            "description": "AlmaLinux is an open-source, community-driven Linux operating system that fills the gap left by the discontinuation of the CentOS Linux stable release.",
+            "website": "https://almalinux.org",
+            "categories": [
+              "Operating systems"
+            ],
+            "groups": [
+              "Servers"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "Line-Up",
+          "retrieval_score": 0.6667,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "Line-Up",
+            "description": "Line-Up is an event discovery service that organizes and presents local activities, shows, and gatherings to help audiences access timely information about upcoming events.",
+            "website": "https://www.line-up.tickets",
+            "categories": [
+              "Content curation"
+            ],
+            "groups": [
+              "Marketing",
+              "User generated content"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "LotLinx",
+          "retrieval_score": 0.6667,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "LotLinx",
+            "description": "LotLinx is a provider of digital retailing and marketing technologies for the automotive industry.",
+            "website": "https://lotlinx.com/",
+            "categories": [
+              "Marketing automation"
+            ],
+            "groups": [
+              "Marketing"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "Linguana",
+          "retrieval_score": 0.6154,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "Linguana",
+            "description": "Linguana is a tool that provides AI-driven multi-language support ensuring SEO performance with translations and translated slugs for seamless multilingual user experiences.",
+            "website": "https://www.linguana.io/",
+            "categories": [
+              "SEO"
+            ],
+            "groups": [
+              "Marketing"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        }
+      ],
+      "reviewed_related_entries": [
+        {
+          "technology": "Ubuntu",
+          "description": "Ubuntu is a free and open-source operating system on Linux for the enterprise server, desktop, cloud, and IoT.",
+          "website": "https://www.ubuntu.com/server",
+          "categories": [
+            "Operating systems"
+          ],
+          "groups": [
+            "Servers"
+          ],
+          "source": "webappanalyzer",
+          "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+          "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+          "updated_at": "2026-09-06 05:25:25.327000+00:00"
+        },
+        {
+          "technology": "Debian",
+          "description": "Debian is a Linux software which is a free open-source software.",
+          "website": "https://debian.org",
+          "categories": [
+            "Operating systems"
+          ],
+          "groups": [
+            "Servers"
+          ],
+          "source": "webappanalyzer",
+          "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+          "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+          "updated_at": "2026-09-06 05:25:25.327000+00:00"
+        },
+        {
+          "technology": "Alpine Linux",
+          "description": "Alpine Linux is a security-oriented, lightweight Linux distribution based on musl libc and busybox.",
+          "website": "https://www.alpinelinux.org",
+          "categories": [
+            "Operating systems"
+          ],
+          "groups": [
+            "Servers"
+          ],
+          "source": "webappanalyzer",
+          "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+          "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+          "updated_at": "2026-09-06 05:25:25.327000+00:00"
+        },
+        {
+          "technology": "AlmaLinux",
+          "description": "AlmaLinux is an open-source, community-driven Linux operating system that fills the gap left by the discontinuation of the CentOS Linux stable release.",
+          "website": "https://almalinux.org",
+          "categories": [
+            "Operating systems"
+          ],
+          "groups": [
+            "Servers"
+          ],
+          "source": "webappanalyzer",
+          "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+          "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+          "updated_at": "2026-09-06 05:25:25.327000+00:00"
+        },
+        {
+          "technology": "Red Hat",
+          "description": "Red Hat is an open-source Linux operating system.",
+          "website": "https://www.redhat.com",
+          "categories": [
+            "Operating systems"
+          ],
+          "groups": [
+            "Servers"
+          ],
+          "source": "webappanalyzer",
+          "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+          "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+          "updated_at": "2026-09-06 05:25:25.327000+00:00"
+        }
+      ],
+      "observations": [
+        {
+          "input_artifact": "data/technology-software-developer-v2/result.json",
+          "record_id": "665461c1ac73004c8c43fefd",
+          "data": {
+            "company": "Kongsberg Discovery Canada Ltd.",
+            "technology": "Linux",
+            "category": "operating_system",
+            "signal": "stated_use",
+            "scope": "role",
+            "job_employer": "Kongsberg Discovery Canada Ltd.",
+            "job_title": "Software Developer",
+            "job_url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+            "alternative_group": null,
+            "context": "Development targets Windows and Linux.",
+            "as_of": null
+          },
+          "original_evidence_status": "source_matched",
+          "sources": [
+            {
+              "url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+              "page_id": "p0001",
+              "fetched_at": "2026-09-06T18:06:48+00:00",
+              "html_sha256": "b29257ab0b0d7d8564b29121750fa50bb01bc13732bc7dc4ef95fe5dc2a88144",
+              "chunk_start": 0,
+              "chunk_end": 26332,
+              "evidence": [
+                {
+                  "text": "Kongsberg Discovery Canada Ltd.",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                },
+                {
+                  "text": "Software Developer",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                },
+                {
+                  "text": "Design, develop, test, and maintain robust C/C++ applications for Windows and Linux",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                },
+                {
+                  "text": "Strong C/C++ development experience on both Windows and Linux.",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                }
+              ],
+              "evidence_status": "source_matched",
+              "issues": [],
+              "html_artifact": "data/technology-software-developer-v2/html/p0001.html",
+              "source_hash_verified": true
+            }
+          ],
+          "mapping": {
+            "status": "unresolved",
+            "technology": null,
+            "method": null
+          }
+        }
+      ]
+    },
+    {
+      "technology_raw": "MATLAB",
+      "observation_frequency": 1,
+      "distinct_job_urls": [
+        "https://www.kongsberg.com/careers/vacancies/software-developer/"
+      ],
+      "company_names": [
+        "Kongsberg Discovery Canada Ltd."
+      ],
+      "before": {
+        "status": "unresolved",
+        "technology": null,
+        "method": null
+      },
+      "after": {
+        "status": "unresolved",
+        "technology": null,
+        "method": null
+      },
+      "classification": "missing_from_catalog",
+      "review": {
+        "classification": "missing_from_catalog",
+        "reason": "No MATLAB/MathWorks technology entry found. A similar-looking name such as Matchlab is not the MATLAB programming and numerical-computing product.",
+        "related_catalog_names": [
+          "Matchlab"
+        ],
+        "next_action": "Review adding MATLAB to the catalog.",
+        "references": [
+          "https://www.mathworks.com/products/matlab.html"
+        ]
+      },
+      "catalog_candidates": [
+        {
+          "technology": "Matchlab",
+          "retrieval_score": 0.8571,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "Matchlab",
+            "description": "Matchlab is a recruitment platform that enables employers to attract top talent by directly identifying and engaging the best candidates.",
+            "website": "https://match-lab.nl",
+            "categories": [
+              "Recruitment & staffing"
+            ],
+            "groups": [
+              "Other",
+              "Business tools"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "ChatLab",
+          "retrieval_score": 0.7692,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "ChatLab",
+            "description": "ChatLab is an AI-powered customer service agent that operates as a chatbot on websites to assist with user inquiries.",
+            "website": "https://www.chatlab.com",
+            "categories": [
+              "Live chat"
+            ],
+            "groups": [
+              "Communication",
+              "Business tools"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "Cartylabs",
+          "retrieval_score": 0.6667,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "Cartylabs",
+            "description": "Cartylabs is a Shopify application that provides a fast checkout experience and enables merchants to implement upsell and cross-sell features directly within the shopping cart.",
+            "website": "https://cartylabs.com",
+            "categories": [
+              "Shopify apps"
+            ],
+            "groups": [
+              "Add-ons"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "GitLab",
+          "retrieval_score": 0.6667,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "GitLab",
+            "description": "GitLab is a web-based DevOps lifecycle tool that provides a Git-repository manager providing wiki, issue-tracking and continuous integration and deployment pipeline features, using an open-source license.",
+            "website": "https://about.gitlab.com",
+            "categories": [
+              "Issue trackers",
+              "Development"
+            ],
+            "groups": [
+              "Content",
+              "User generated content",
+              "Web development"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        }
+      ],
+      "reviewed_related_entries": [
+        {
+          "technology": "Matchlab",
+          "description": "Matchlab is a recruitment platform that enables employers to attract top talent by directly identifying and engaging the best candidates.",
+          "website": "https://match-lab.nl",
+          "categories": [
+            "Recruitment & staffing"
+          ],
+          "groups": [
+            "Other",
+            "Business tools"
+          ],
+          "source": "webappanalyzer",
+          "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+          "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+          "updated_at": "2026-09-06 05:25:25.327000+00:00"
+        }
+      ],
+      "observations": [
+        {
+          "input_artifact": "data/technology-software-developer-v2/result.json",
+          "record_id": "f346794303a0e8566b57eade",
+          "data": {
+            "company": "Kongsberg Discovery Canada Ltd.",
+            "technology": "MATLAB",
+            "category": "programming_language",
+            "signal": "preferred_experience",
+            "scope": "role",
+            "job_employer": "Kongsberg Discovery Canada Ltd.",
+            "job_title": "Software Developer",
+            "job_url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+            "alternative_group": null,
+            "context": "MATLAB experience is a strong asset, indicating preferred experience.",
+            "as_of": null
+          },
+          "original_evidence_status": "source_matched",
+          "sources": [
+            {
+              "url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+              "page_id": "p0001",
+              "fetched_at": "2026-09-06T18:06:48+00:00",
+              "html_sha256": "b29257ab0b0d7d8564b29121750fa50bb01bc13732bc7dc4ef95fe5dc2a88144",
+              "chunk_start": 0,
+              "chunk_end": 26332,
+              "evidence": [
+                {
+                  "text": "Kongsberg Discovery Canada Ltd.",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                },
+                {
+                  "text": "Software Developer",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                },
+                {
+                  "text": "MATLAB experience is a strong asset.",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                }
+              ],
+              "evidence_status": "source_matched",
+              "issues": [],
+              "html_artifact": "data/technology-software-developer-v2/html/p0001.html",
+              "source_hash_verified": true
+            }
+          ],
+          "mapping": {
+            "status": "unresolved",
+            "technology": null,
+            "method": null
+          }
+        }
+      ]
+    },
+    {
+      "technology_raw": "MFC",
+      "observation_frequency": 1,
+      "distinct_job_urls": [
+        "https://www.kongsberg.com/careers/vacancies/software-developer/"
+      ],
+      "company_names": [
+        "Kongsberg Discovery Canada Ltd."
+      ],
+      "before": {
+        "status": "unresolved",
+        "technology": null,
+        "method": null
+      },
+      "after": {
+        "status": "unresolved",
+        "technology": null,
+        "method": null
+      },
+      "classification": "missing_from_catalog",
+      "review": {
+        "classification": "missing_from_catalog",
+        "reason": "In this Windows/C++ job context, MFC refers to Microsoft Foundation Class Library. No equivalent canonical entry was found.",
+        "related_catalog_names": [],
+        "next_action": "Review adding Microsoft Foundation Class Library; MFC can become an alias after that target exists.",
+        "references": [
+          "https://learn.microsoft.com/en-us/cpp/mfc/mfc-desktop-applications?view=msvc-170"
+        ]
+      },
+      "catalog_candidates": [
+        {
+          "technology": "Jamf",
+          "retrieval_score": 0.5714,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "Jamf",
+            "description": "Jamf is an Apple device management (MDM) and endpoint security platform.",
+            "website": "https://www.jamf.com",
+            "categories": [
+              "Security"
+            ],
+            "groups": [
+              "Security"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "Mico",
+          "retrieval_score": 0.5714,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "Mico",
+            "description": "Mico is a customer relationship management platform that supports personalized, continuous communication between businesses and customers and includes tools to improve brand visibility across search engines and AI-driven platforms.",
+            "website": "https://mico-inc.com",
+            "categories": [
+              "CRM"
+            ],
+            "groups": [
+              "Marketing",
+              "Business tools"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "ModiFace",
+          "retrieval_score": 0.5455,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "ModiFace",
+            "description": "ModiFace is a provider of Augmented Reality technology for the beauty industry.",
+            "website": "https://modiface.com",
+            "categories": [
+              "Augmented reality"
+            ],
+            "groups": [
+              "Media"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "C",
+          "retrieval_score": 0.5,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "C",
+            "description": "C is a general-purpose, procedural computer programming language supporting structured programming, lexical variable scope, and recursion, with a static type system.",
+            "website": "https://www.open-std.org/jtc1/sc22/wg14/",
+            "categories": [
+              "Programming languages"
+            ],
+            "groups": [
+              "Web development"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        }
+      ],
+      "reviewed_related_entries": [],
+      "observations": [
+        {
+          "input_artifact": "data/technology-software-developer-v2/result.json",
+          "record_id": "eebeebe173b6d8a54a66a9fd",
+          "data": {
+            "company": "Kongsberg Discovery Canada Ltd.",
+            "technology": "MFC",
+            "category": "framework_library",
+            "signal": "required_experience",
+            "scope": "role",
+            "job_employer": "Kongsberg Discovery Canada Ltd.",
+            "job_title": "Software Developer",
+            "job_url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+            "alternative_group": null,
+            "context": "Familiarity with MFC is required.",
+            "as_of": null
+          },
+          "original_evidence_status": "source_matched",
+          "sources": [
+            {
+              "url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+              "page_id": "p0001",
+              "fetched_at": "2026-09-06T18:06:48+00:00",
+              "html_sha256": "b29257ab0b0d7d8564b29121750fa50bb01bc13732bc7dc4ef95fe5dc2a88144",
+              "chunk_start": 0,
+              "chunk_end": 26332,
+              "evidence": [
+                {
+                  "text": "Kongsberg Discovery Canada Ltd.",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                },
+                {
+                  "text": "Software Developer",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                },
+                {
+                  "text": "Familiarity with Windows APIs, MFC, and embedded Linux tooling e.g Yocto .",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                }
+              ],
+              "evidence_status": "source_matched",
+              "issues": [],
+              "html_artifact": "data/technology-software-developer-v2/html/p0001.html",
+              "source_hash_verified": true
+            }
+          ],
+          "mapping": {
+            "status": "unresolved",
+            "technology": null,
+            "method": null
+          }
+        }
+      ]
+    },
+    {
+      "technology_raw": "TCP/IP",
+      "observation_frequency": 1,
+      "distinct_job_urls": [
+        "https://www.kongsberg.com/careers/vacancies/software-developer/"
+      ],
+      "company_names": [
+        "Kongsberg Discovery Canada Ltd."
+      ],
+      "before": {
+        "status": "unresolved",
+        "technology": null,
+        "method": null
+      },
+      "after": {
+        "status": "unresolved",
+        "technology": null,
+        "method": null
+      },
+      "classification": "missing_from_catalog",
+      "review": {
+        "classification": "missing_from_catalog",
+        "reason": "No equivalent protocol-suite catalog entry found. Lexical similarity to unrelated web products is not equivalence.",
+        "related_catalog_names": [],
+        "next_action": "Review adding a protocol-suite entry; preserve the source label.",
+        "references": []
+      },
+      "catalog_candidates": [
+        {
+          "technology": "SPIP",
+          "retrieval_score": 0.6,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "SPIP",
+            "description": "SPIP is a content management system written in PHP that uses one or more databases like SQL, SQLite or PostgreSQL.",
+            "website": "https://www.spip.net",
+            "categories": [
+              "CMS"
+            ],
+            "groups": [
+              "Content"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "TwicPics",
+          "retrieval_score": 0.5714,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "TwicPics",
+            "description": "TwicPics offers on-demand responsive image generation.",
+            "website": "https://www.twicpics.com",
+            "categories": [
+              "CDN",
+              "JavaScript libraries"
+            ],
+            "groups": [
+              "Servers",
+              "Web development"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "Pixpa",
+          "retrieval_score": 0.5455,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "Pixpa",
+            "description": "Pixpa is a software that enables photographers, artists and creative designers build and manage online presence by letting them create a professional portfolio website without the need of any coding skills.",
+            "website": "https://www.pixpa.com",
+            "categories": [
+              "Photo galleries",
+              "Page builders"
+            ],
+            "groups": [
+              "Content",
+              "Media",
+              "Web development"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "Tipsa",
+          "retrieval_score": 0.5455,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "Tipsa",
+            "description": "TIPSA is a parcel delivery company in Spain, Portugal and Andorra.",
+            "website": "https://www.tip-sa.com",
+            "categories": [
+              "Shipping carriers"
+            ],
+            "groups": [
+              "Sales"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        }
+      ],
+      "reviewed_related_entries": [],
+      "observations": [
+        {
+          "input_artifact": "data/technology-software-developer-v2/result.json",
+          "record_id": "d147cdab794045bb677fa270",
+          "data": {
+            "company": "Kongsberg Discovery Canada Ltd.",
+            "technology": "TCP/IP",
+            "category": "protocol_standard",
+            "signal": "required_experience",
+            "scope": "role",
+            "job_employer": "Kongsberg Discovery Canada Ltd.",
+            "job_title": "Software Developer",
+            "job_url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+            "alternative_group": null,
+            "context": "Experience with TCP/IP networking is required.",
+            "as_of": null
+          },
+          "original_evidence_status": "source_matched",
+          "sources": [
+            {
+              "url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+              "page_id": "p0001",
+              "fetched_at": "2026-09-06T18:06:48+00:00",
+              "html_sha256": "b29257ab0b0d7d8564b29121750fa50bb01bc13732bc7dc4ef95fe5dc2a88144",
+              "chunk_start": 0,
+              "chunk_end": 26332,
+              "evidence": [
+                {
+                  "text": "Kongsberg Discovery Canada Ltd.",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                },
+                {
+                  "text": "Software Developer",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                },
+                {
+                  "text": "Experience with TCP/IP networking and system-level programming.",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                }
+              ],
+              "evidence_status": "source_matched",
+              "issues": [],
+              "html_artifact": "data/technology-software-developer-v2/html/p0001.html",
+              "source_hash_verified": true
+            }
+          ],
+          "mapping": {
+            "status": "unresolved",
+            "technology": null,
+            "method": null
+          }
+        }
+      ]
+    },
+    {
+      "technology_raw": "Windows",
+      "observation_frequency": 1,
+      "distinct_job_urls": [
+        "https://www.kongsberg.com/careers/vacancies/software-developer/"
+      ],
+      "company_names": [
+        "Kongsberg Discovery Canada Ltd."
+      ],
+      "before": {
+        "status": "unresolved",
+        "technology": null,
+        "method": null
+      },
+      "after": {
+        "status": "unresolved",
+        "technology": null,
+        "method": null
+      },
+      "classification": "missing_from_catalog",
+      "review": {
+        "classification": "missing_from_catalog",
+        "reason": "No general Windows entry. Windows Server and Windows CE are narrower products; this job does not identify either edition.",
+        "related_catalog_names": [
+          "Windows Server",
+          "Windows CE"
+        ],
+        "next_action": "Review adding a general Windows operating-system entry.",
+        "references": []
+      },
+      "catalog_candidates": [
+        {
+          "technology": "Windows CE",
+          "retrieval_score": 0.8235,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "Windows CE",
+            "description": "Windows CE is an operating system designed for small footprint devices or embedded systems.",
+            "website": "https://microsoft.com",
+            "categories": [
+              "Operating systems"
+            ],
+            "groups": [
+              "Servers"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "WinAds",
+          "retrieval_score": 0.7692,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "WinAds",
+            "description": "Win Ads is a Facebook pixel management app for Shopify that centralizes tracking configuration, event monitoring, and performance optimization within a single interface.",
+            "website": "https://eraofecom.org/collections/tech/products/win-ads-manager",
+            "categories": [
+              "Analytics"
+            ],
+            "groups": [
+              "Analytics"
+            ],
+            "source": "extension-6.12.5",
+            "source_version": "6.12.5",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "IONOS",
+          "retrieval_score": 0.6667,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "IONOS",
+            "description": "IONOS is the web hosting and cloud partner for small and medium-sized businesses.",
+            "website": "https://www.ionos.com",
+            "categories": [
+              "Hosting"
+            ],
+            "groups": [
+              "Servers"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "Owids",
+          "retrieval_score": 0.6667,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "Owids",
+            "description": "Owids is a set of widgets designed to improve website conversion rates and visitor engagement across platforms without requiring coding skills.",
+            "website": "https://owids.com",
+            "categories": [
+              "Widgets"
+            ],
+            "groups": [
+              "Other"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        }
+      ],
+      "reviewed_related_entries": [
+        {
+          "technology": "Windows Server",
+          "description": "Windows Server is a brand name for a group of server operating systems.",
+          "website": "https://microsoft.com/windowsserver",
+          "categories": [
+            "Operating systems"
+          ],
+          "groups": [
+            "Servers"
+          ],
+          "source": "webappanalyzer",
+          "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+          "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+          "updated_at": "2026-09-06 05:25:25.327000+00:00"
+        },
+        {
+          "technology": "Windows CE",
+          "description": "Windows CE is an operating system designed for small footprint devices or embedded systems.",
+          "website": "https://microsoft.com",
+          "categories": [
+            "Operating systems"
+          ],
+          "groups": [
+            "Servers"
+          ],
+          "source": "webappanalyzer",
+          "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+          "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+          "updated_at": "2026-09-06 05:25:25.327000+00:00"
+        }
+      ],
+      "observations": [
+        {
+          "input_artifact": "data/technology-software-developer-v2/result.json",
+          "record_id": "a5cf27a0885fc2d903e148f7",
+          "data": {
+            "company": "Kongsberg Discovery Canada Ltd.",
+            "technology": "Windows",
+            "category": "operating_system",
+            "signal": "stated_use",
+            "scope": "role",
+            "job_employer": "Kongsberg Discovery Canada Ltd.",
+            "job_title": "Software Developer",
+            "job_url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+            "alternative_group": null,
+            "context": "Development targets Windows and Linux.",
+            "as_of": null
+          },
+          "original_evidence_status": "source_matched",
+          "sources": [
+            {
+              "url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+              "page_id": "p0001",
+              "fetched_at": "2026-09-06T18:06:48+00:00",
+              "html_sha256": "b29257ab0b0d7d8564b29121750fa50bb01bc13732bc7dc4ef95fe5dc2a88144",
+              "chunk_start": 0,
+              "chunk_end": 26332,
+              "evidence": [
+                {
+                  "text": "Kongsberg Discovery Canada Ltd.",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                },
+                {
+                  "text": "Software Developer",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                },
+                {
+                  "text": "Design, develop, test, and maintain robust C/C++ applications for Windows and Linux",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                },
+                {
+                  "text": "Strong C/C++ development experience on both Windows and Linux.",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                }
+              ],
+              "evidence_status": "source_matched",
+              "issues": [],
+              "html_artifact": "data/technology-software-developer-v2/html/p0001.html",
+              "source_hash_verified": true
+            }
+          ],
+          "mapping": {
+            "status": "unresolved",
+            "technology": null,
+            "method": null
+          }
+        }
+      ]
+    },
+    {
+      "technology_raw": "Windows APIs",
+      "observation_frequency": 1,
+      "distinct_job_urls": [
+        "https://www.kongsberg.com/careers/vacancies/software-developer/"
+      ],
+      "company_names": [
+        "Kongsberg Discovery Canada Ltd."
+      ],
+      "before": {
+        "status": "unresolved",
+        "technology": null,
+        "method": null
+      },
+      "after": {
+        "status": "unresolved",
+        "technology": null,
+        "method": null
+      },
+      "classification": "missing_from_catalog",
+      "review": {
+        "classification": "missing_from_catalog",
+        "reason": "Broad Windows API family; Microsoft HTTPAPI is only a specific HTTP API/driver entry and is not an equivalent label.",
+        "related_catalog_names": [
+          "Microsoft HTTPAPI",
+          "Windows Server",
+          "Windows CE"
+        ],
+        "next_action": "Review an API-family entry; do not infer a specific Windows API from this broad mention.",
+        "references": []
+      },
+      "catalog_candidates": [
+        {
+          "technology": "Windows CE",
+          "retrieval_score": 0.7273,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "Windows CE",
+            "description": "Windows CE is an operating system designed for small footprint devices or embedded systems.",
+            "website": "https://microsoft.com",
+            "categories": [
+              "Operating systems"
+            ],
+            "groups": [
+              "Servers"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "Windows Server",
+          "retrieval_score": 0.6923,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "Windows Server",
+            "description": "Windows Server is a brand name for a group of server operating systems.",
+            "website": "https://microsoft.com/windowsserver",
+            "categories": [
+              "Operating systems"
+            ],
+            "groups": [
+              "Servers"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "Lindo.ai",
+          "retrieval_score": 0.6,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "Lindo.ai",
+            "description": "Lindo.ai is an AI-based website builder that generates and customizes websites from user inputs without requiring coding knowledge.",
+            "website": "https://lindo.ai",
+            "categories": [
+              "Page builders"
+            ],
+            "groups": [
+              "Web development"
+            ],
+            "source": "extension-6.12.5",
+            "source_version": "6.12.5",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "Webinaris",
+          "retrieval_score": 0.5714,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "Webinaris",
+            "description": "Webinaris is a platform that automates customer acquisition, allowing businesses to attract more customers with significantly reduced effort.",
+            "website": "https://www.webinaris.com",
+            "categories": [
+              "Marketing automation"
+            ],
+            "groups": [
+              "Marketing"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        }
+      ],
+      "reviewed_related_entries": [
+        {
+          "technology": "Microsoft HTTPAPI",
+          "description": "Microsoft HTTPAPI is a kernel-mode HTTP driver in the Windows operating system responsible for handling HTTP requests and responses with efficiency, scalability, and security.",
+          "website": "https://learn.microsoft.com/en-us/windows/win32/http/http-api-start-page",
+          "categories": [
+            "Web servers"
+          ],
+          "groups": [
+            "Servers"
+          ],
+          "source": "webappanalyzer",
+          "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+          "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+          "updated_at": "2026-09-06 05:25:25.327000+00:00"
+        },
+        {
+          "technology": "Windows Server",
+          "description": "Windows Server is a brand name for a group of server operating systems.",
+          "website": "https://microsoft.com/windowsserver",
+          "categories": [
+            "Operating systems"
+          ],
+          "groups": [
+            "Servers"
+          ],
+          "source": "webappanalyzer",
+          "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+          "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+          "updated_at": "2026-09-06 05:25:25.327000+00:00"
+        },
+        {
+          "technology": "Windows CE",
+          "description": "Windows CE is an operating system designed for small footprint devices or embedded systems.",
+          "website": "https://microsoft.com",
+          "categories": [
+            "Operating systems"
+          ],
+          "groups": [
+            "Servers"
+          ],
+          "source": "webappanalyzer",
+          "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+          "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+          "updated_at": "2026-09-06 05:25:25.327000+00:00"
+        }
+      ],
+      "observations": [
+        {
+          "input_artifact": "data/technology-software-developer-v2/result.json",
+          "record_id": "dfecb3269c3801900befb04b",
+          "data": {
+            "company": "Kongsberg Discovery Canada Ltd.",
+            "technology": "Windows APIs",
+            "category": "framework_library",
+            "signal": "required_experience",
+            "scope": "role",
+            "job_employer": "Kongsberg Discovery Canada Ltd.",
+            "job_title": "Software Developer",
+            "job_url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+            "alternative_group": null,
+            "context": "Familiarity with Windows APIs is required.",
+            "as_of": null
+          },
+          "original_evidence_status": "source_matched",
+          "sources": [
+            {
+              "url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+              "page_id": "p0001",
+              "fetched_at": "2026-09-06T18:06:48+00:00",
+              "html_sha256": "b29257ab0b0d7d8564b29121750fa50bb01bc13732bc7dc4ef95fe5dc2a88144",
+              "chunk_start": 0,
+              "chunk_end": 26332,
+              "evidence": [
+                {
+                  "text": "Kongsberg Discovery Canada Ltd.",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                },
+                {
+                  "text": "Software Developer",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                },
+                {
+                  "text": "Familiarity with Windows APIs, MFC, and embedded Linux tooling e.g Yocto .",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                }
+              ],
+              "evidence_status": "source_matched",
+              "issues": [],
+              "html_artifact": "data/technology-software-developer-v2/html/p0001.html",
+              "source_hash_verified": true
+            }
+          ],
+          "mapping": {
+            "status": "unresolved",
+            "technology": null,
+            "method": null
+          }
+        }
+      ]
+    },
+    {
+      "technology_raw": "Yocto",
+      "observation_frequency": 1,
+      "distinct_job_urls": [
+        "https://www.kongsberg.com/careers/vacancies/software-developer/"
+      ],
+      "company_names": [
+        "Kongsberg Discovery Canada Ltd."
+      ],
+      "before": {
+        "status": "unresolved",
+        "technology": null,
+        "method": null
+      },
+      "after": {
+        "status": "unresolved",
+        "technology": null,
+        "method": null
+      },
+      "classification": "missing_from_catalog",
+      "review": {
+        "classification": "missing_from_catalog",
+        "reason": "The source explicitly identifies Yocto as embedded Linux tooling. No equivalent catalog entry was found.",
+        "related_catalog_names": [],
+        "next_action": "Review adding the named tooling/project to the catalog.",
+        "references": []
+      },
+      "catalog_candidates": [
+        {
+          "technology": "TocToc",
+          "retrieval_score": 0.7273,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "TocToc",
+            "description": "Tolstoy is a BPM platform enabling the modeling, automation, and optimization of business processes, simplifying workflows and expediting tasks.",
+            "website": "https://www.toctoc.me",
+            "categories": [
+              "Miscellaneous"
+            ],
+            "groups": [
+              "Other"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "Otto",
+          "retrieval_score": 0.6667,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "Otto",
+            "description": "Otto is a veterinary workflow platform that streamlines scheduling, communication, and payment processes in a single system.",
+            "website": "https://otto.vet/otto-flow",
+            "categories": [
+              "Appointment scheduling"
+            ],
+            "groups": [
+              "Booking"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "ocStore",
+          "retrieval_score": 0.6667,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "ocStore",
+            "description": "ocStore is an online store based on Opencart and open-source.",
+            "website": "https://ocstore.com",
+            "categories": [
+              "Ecommerce"
+            ],
+            "groups": [
+              "Sales"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "Octorate",
+          "retrieval_score": 0.6154,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "Octorate",
+            "description": "Octorate is a hotel booking system and channel manager, facilitating management of reservations across various platforms.",
+            "website": "https://octorate.com",
+            "categories": [
+              "Reservations & delivery"
+            ],
+            "groups": [
+              "Booking"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        }
+      ],
+      "reviewed_related_entries": [],
+      "observations": [
+        {
+          "input_artifact": "data/technology-software-developer-v2/result.json",
+          "record_id": "d5dfdae9489ac2187e0d4322",
+          "data": {
+            "company": "Kongsberg Discovery Canada Ltd.",
+            "technology": "Yocto",
+            "category": "engineering_tool",
+            "signal": "required_experience",
+            "scope": "role",
+            "job_employer": "Kongsberg Discovery Canada Ltd.",
+            "job_title": "Software Developer",
+            "job_url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+            "alternative_group": null,
+            "context": "Familiarity with embedded Linux tooling such as Yocto is required.",
+            "as_of": null
+          },
+          "original_evidence_status": "source_matched",
+          "sources": [
+            {
+              "url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+              "page_id": "p0001",
+              "fetched_at": "2026-09-06T18:06:48+00:00",
+              "html_sha256": "b29257ab0b0d7d8564b29121750fa50bb01bc13732bc7dc4ef95fe5dc2a88144",
+              "chunk_start": 0,
+              "chunk_end": 26332,
+              "evidence": [
+                {
+                  "text": "Kongsberg Discovery Canada Ltd.",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                },
+                {
+                  "text": "Software Developer",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                },
+                {
+                  "text": "Familiarity with Windows APIs, MFC, and embedded Linux tooling e.g Yocto .",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                }
+              ],
+              "evidence_status": "source_matched",
+              "issues": [],
+              "html_artifact": "data/technology-software-developer-v2/html/p0001.html",
+              "source_hash_verified": true
+            }
+          ],
+          "mapping": {
+            "status": "unresolved",
+            "technology": null,
+            "method": null
+          }
+        }
+      ]
+    },
+    {
+      "technology_raw": "sonar hardware",
+      "observation_frequency": 1,
+      "distinct_job_urls": [
+        "https://www.kongsberg.com/careers/vacancies/software-developer/"
+      ],
+      "company_names": [
+        "Kongsberg Discovery Canada Ltd."
+      ],
+      "before": {
+        "status": "unresolved",
+        "technology": null,
+        "method": null
+      },
+      "after": {
+        "status": "unresolved",
+        "technology": null,
+        "method": null
+      },
+      "classification": "ambiguous",
+      "review": {
+        "classification": "ambiguous",
+        "reason": "Generic hardware category, with no named product. Catalog Sonar is business software and SonarQube is code-analysis software; neither is the hardware in this job.",
+        "related_catalog_names": [
+          "Sonar",
+          "SonarQube"
+        ],
+        "next_action": "Keep a generic technology/category signal; do not create a product alias from this label.",
+        "references": []
+      },
+      "catalog_candidates": [
+        {
+          "technology": "Orchard Core",
+          "retrieval_score": 0.6154,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "Orchard Core",
+            "description": "Orchard Core is an open-source modular and multi-tenant application framework built with ASP.NET Core, and a content management system (CMS).",
+            "website": "https://orchardcore.net",
+            "categories": [
+              "CMS"
+            ],
+            "groups": [
+              "Content"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "Shopware",
+          "retrieval_score": 0.5455,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "Shopware",
+            "description": "Shopware is an enterprise-level ecommerce platform.",
+            "website": "https://www.shopware.com",
+            "categories": [
+              "Ecommerce"
+            ],
+            "groups": [
+              "Sales"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "Sonar",
+          "retrieval_score": 0.5263,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "Sonar",
+            "description": "Sonar is a fully integrated system offering loan origination and point-of-sale solutions, combined with customer relationship management capabilities.",
+            "website": "https://sendsonar.com",
+            "categories": [
+              "CRM"
+            ],
+            "groups": [
+              "Marketing",
+              "Business tools"
+            ],
+            "source": "webappanalyzer",
+            "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        },
+        {
+          "technology": "Aimharder",
+          "retrieval_score": 0.5217,
+          "same_name_ignoring_case": false,
+          "automatically_accepted": false,
+          "catalog_entry": {
+            "technology": "Aimharder",
+            "description": "Aimharder is a software platform for managing sports facility operations, including scheduling, memberships, bookings, payments, and administrative tasks.",
+            "website": "https://aimharder.com",
+            "categories": [
+              "Appointment scheduling"
+            ],
+            "groups": [
+              "Booking"
+            ],
+            "source": "extension-6.12.5",
+            "source_version": "6.12.5",
+            "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+            "updated_at": "2026-09-06 05:25:25.327000+00:00"
+          }
+        }
+      ],
+      "reviewed_related_entries": [
+        {
+          "technology": "Sonar",
+          "description": "Sonar is a fully integrated system offering loan origination and point-of-sale solutions, combined with customer relationship management capabilities.",
+          "website": "https://sendsonar.com",
+          "categories": [
+            "CRM"
+          ],
+          "groups": [
+            "Marketing",
+            "Business tools"
+          ],
+          "source": "webappanalyzer",
+          "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+          "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+          "updated_at": "2026-09-06 05:25:25.327000+00:00"
+        },
+        {
+          "technology": "SonarQube",
+          "description": "SonarQube is an open-source platform for the continuous inspection of code quality to perform automatic reviews with static analysis of code to detect bugs, code smells, and security vulnerabilities on 20+ programming languages.",
+          "website": "https://www.sonarqube.org/",
+          "categories": [
+            "Development"
+          ],
+          "groups": [
+            "Web development"
+          ],
+          "source": "webappanalyzer",
+          "source_version": "2b5eed3a5eede8b2415fcd0b27c003d625ad88d3",
+          "source_run_id": "4ce52f4d-f83b-45dc-8d2c-79ff86a1afb0",
+          "updated_at": "2026-09-06 05:25:25.327000+00:00"
+        }
+      ],
+      "observations": [
+        {
+          "input_artifact": "data/technology-software-developer-v2/result.json",
+          "record_id": "a89b2012961d995617352853",
+          "data": {
+            "company": "Kongsberg Discovery Canada Ltd.",
+            "technology": "sonar hardware",
+            "category": "hardware",
+            "signal": "stated_use",
+            "scope": "role",
+            "job_employer": "Kongsberg Discovery Canada Ltd.",
+            "job_title": "Software Developer",
+            "job_url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+            "alternative_group": null,
+            "context": "The software interfaces directly with advanced sonar hardware.",
+            "as_of": null
+          },
+          "original_evidence_status": "source_matched",
+          "sources": [
+            {
+              "url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+              "page_id": "p0001",
+              "fetched_at": "2026-09-06T18:06:48+00:00",
+              "html_sha256": "b29257ab0b0d7d8564b29121750fa50bb01bc13732bc7dc4ef95fe5dc2a88144",
+              "chunk_start": 0,
+              "chunk_end": 26332,
+              "evidence": [
+                {
+                  "text": "Kongsberg Discovery Canada Ltd.",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                },
+                {
+                  "text": "Software Developer",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                },
+                {
+                  "text": "Build software that interfaces directly with advanced sonar hardware.",
+                  "matched_in": "text",
+                  "presence_rechecked": true
+                }
+              ],
+              "evidence_status": "source_matched",
+              "issues": [],
+              "html_artifact": "data/technology-software-developer-v2/html/p0001.html",
+              "source_hash_verified": true
+            }
+          ],
+          "mapping": {
+            "status": "unresolved",
+            "technology": null,
+            "method": null
+          }
+        }
+      ]
+    }
+  ],
+  "historical_mapped_observations": [
+    {
+      "input_artifact": "data/technology-software-developer-v1/result.json",
+      "record_id": "b03ce2c63440ea515ccee16a",
+      "data": {
+        "company": "Kongsberg Discovery Canada Ltd.",
+        "technology": "C/C++",
+        "category": "programming_language",
+        "signal": "stated_use",
+        "scope": "role",
+        "job_employer": "Kongsberg Discovery Canada Ltd.",
+        "job_title": "Software Developer",
+        "job_url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+        "alternative_group": null,
+        "context": "Job responsibility requires developing C/C++ applications.",
+        "as_of": null
+      },
+      "original_evidence_status": "source_matched",
+      "sources": [
+        {
+          "url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+          "page_id": "p0001",
+          "fetched_at": "2026-09-06T18:06:48+00:00",
+          "html_sha256": "b29257ab0b0d7d8564b29121750fa50bb01bc13732bc7dc4ef95fe5dc2a88144",
+          "chunk_start": 0,
+          "chunk_end": 26332,
+          "evidence": [
+            {
+              "text": "Design, develop, test, and maintain robust C/C++ applications for Windows and Linux",
+              "matched_in": "text",
+              "presence_rechecked": true
+            },
+            {
+              "text": "At Kongsberg Discovery Canada Ltd.",
+              "matched_in": "text",
+              "presence_rechecked": true
+            },
+            {
+              "text": "Software Developer",
+              "matched_in": "text",
+              "presence_rechecked": true
+            }
+          ],
+          "evidence_status": "source_matched",
+          "issues": [],
+          "html_artifact": "data/technology-software-developer-v1/html/p0001.html",
+          "source_hash_verified": true
+        }
+      ],
+      "mapping": {
+        "status": "unresolved",
+        "technology": null,
+        "method": null
+      }
+    },
+    {
+      "input_artifact": "data/technology-software-developer-v1/result.json",
+      "record_id": "5578d7736f5e886064481114",
+      "data": {
+        "company": "Kongsberg Discovery Canada Ltd.",
+        "technology": "C/C++",
+        "category": "programming_language",
+        "signal": "required_experience",
+        "scope": "role",
+        "job_employer": "Kongsberg Discovery Canada Ltd.",
+        "job_title": "Software Developer",
+        "job_url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+        "alternative_group": null,
+        "context": "Candidate must have strong C/C++ development experience.",
+        "as_of": null
+      },
+      "original_evidence_status": "source_matched",
+      "sources": [
+        {
+          "url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+          "page_id": "p0001",
+          "fetched_at": "2026-09-06T18:06:48+00:00",
+          "html_sha256": "b29257ab0b0d7d8564b29121750fa50bb01bc13732bc7dc4ef95fe5dc2a88144",
+          "chunk_start": 0,
+          "chunk_end": 26332,
+          "evidence": [
+            {
+              "text": "Strong C/C++ development experience on both Windows and Linux",
+              "matched_in": "text",
+              "presence_rechecked": true
+            },
+            {
+              "text": "At Kongsberg Discovery Canada Ltd.",
+              "matched_in": "text",
+              "presence_rechecked": true
+            },
+            {
+              "text": "Software Developer",
+              "matched_in": "text",
+              "presence_rechecked": true
+            }
+          ],
+          "evidence_status": "source_matched",
+          "issues": [],
+          "html_artifact": "data/technology-software-developer-v1/html/p0001.html",
+          "source_hash_verified": true
+        }
+      ],
+      "mapping": {
+        "status": "unresolved",
+        "technology": null,
+        "method": null
+      }
+    },
+    {
+      "input_artifact": "data/technology-software-developer-v1/result.json",
+      "record_id": "7f728b81c115bbb7855be553",
+      "data": {
+        "company": "Kongsberg Discovery Canada Ltd.",
+        "technology": "Windows",
+        "category": "operating_system",
+        "signal": "stated_use",
+        "scope": "role",
+        "job_employer": "Kongsberg Discovery Canada Ltd.",
+        "job_title": "Software Developer",
+        "job_url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+        "alternative_group": null,
+        "context": "Role develops applications for Windows.",
+        "as_of": null
+      },
+      "original_evidence_status": "source_matched",
+      "sources": [
+        {
+          "url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+          "page_id": "p0001",
+          "fetched_at": "2026-09-06T18:06:48+00:00",
+          "html_sha256": "b29257ab0b0d7d8564b29121750fa50bb01bc13732bc7dc4ef95fe5dc2a88144",
+          "chunk_start": 0,
+          "chunk_end": 26332,
+          "evidence": [
+            {
+              "text": "Design, develop, test, and maintain robust C/C++ applications for Windows and Linux",
+              "matched_in": "text",
+              "presence_rechecked": true
+            },
+            {
+              "text": "At Kongsberg Discovery Canada Ltd.",
+              "matched_in": "text",
+              "presence_rechecked": true
+            },
+            {
+              "text": "Software Developer",
+              "matched_in": "text",
+              "presence_rechecked": true
+            }
+          ],
+          "evidence_status": "source_matched",
+          "issues": [],
+          "html_artifact": "data/technology-software-developer-v1/html/p0001.html",
+          "source_hash_verified": true
+        }
+      ],
+      "mapping": {
+        "status": "unresolved",
+        "technology": null,
+        "method": null
+      }
+    },
+    {
+      "input_artifact": "data/technology-software-developer-v1/result.json",
+      "record_id": "c7fa57d4e4fc7f442393d81e",
+      "data": {
+        "company": "Kongsberg Discovery Canada Ltd.",
+        "technology": "Windows",
+        "category": "operating_system",
+        "signal": "required_experience",
+        "scope": "role",
+        "job_employer": "Kongsberg Discovery Canada Ltd.",
+        "job_title": "Software Developer",
+        "job_url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+        "alternative_group": null,
+        "context": "Candidate must have strong C/C++ development experience on Windows.",
+        "as_of": null
+      },
+      "original_evidence_status": "source_matched",
+      "sources": [
+        {
+          "url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+          "page_id": "p0001",
+          "fetched_at": "2026-09-06T18:06:48+00:00",
+          "html_sha256": "b29257ab0b0d7d8564b29121750fa50bb01bc13732bc7dc4ef95fe5dc2a88144",
+          "chunk_start": 0,
+          "chunk_end": 26332,
+          "evidence": [
+            {
+              "text": "Strong C/C++ development experience on both Windows and Linux",
+              "matched_in": "text",
+              "presence_rechecked": true
+            },
+            {
+              "text": "At Kongsberg Discovery Canada Ltd.",
+              "matched_in": "text",
+              "presence_rechecked": true
+            },
+            {
+              "text": "Software Developer",
+              "matched_in": "text",
+              "presence_rechecked": true
+            }
+          ],
+          "evidence_status": "source_matched",
+          "issues": [],
+          "html_artifact": "data/technology-software-developer-v1/html/p0001.html",
+          "source_hash_verified": true
+        }
+      ],
+      "mapping": {
+        "status": "unresolved",
+        "technology": null,
+        "method": null
+      }
+    },
+    {
+      "input_artifact": "data/technology-software-developer-v1/result.json",
+      "record_id": "a2eb8c27b922a4a0b17265d2",
+      "data": {
+        "company": "Kongsberg Discovery Canada Ltd.",
+        "technology": "Linux",
+        "category": "operating_system",
+        "signal": "stated_use",
+        "scope": "role",
+        "job_employer": "Kongsberg Discovery Canada Ltd.",
+        "job_title": "Software Developer",
+        "job_url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+        "alternative_group": null,
+        "context": "Role develops applications for Linux.",
+        "as_of": null
+      },
+      "original_evidence_status": "source_matched",
+      "sources": [
+        {
+          "url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+          "page_id": "p0001",
+          "fetched_at": "2026-09-06T18:06:48+00:00",
+          "html_sha256": "b29257ab0b0d7d8564b29121750fa50bb01bc13732bc7dc4ef95fe5dc2a88144",
+          "chunk_start": 0,
+          "chunk_end": 26332,
+          "evidence": [
+            {
+              "text": "Design, develop, test, and maintain robust C/C++ applications for Windows and Linux",
+              "matched_in": "text",
+              "presence_rechecked": true
+            },
+            {
+              "text": "At Kongsberg Discovery Canada Ltd.",
+              "matched_in": "text",
+              "presence_rechecked": true
+            },
+            {
+              "text": "Software Developer",
+              "matched_in": "text",
+              "presence_rechecked": true
+            }
+          ],
+          "evidence_status": "source_matched",
+          "issues": [],
+          "html_artifact": "data/technology-software-developer-v1/html/p0001.html",
+          "source_hash_verified": true
+        }
+      ],
+      "mapping": {
+        "status": "unresolved",
+        "technology": null,
+        "method": null
+      }
+    },
+    {
+      "input_artifact": "data/technology-software-developer-v1/result.json",
+      "record_id": "236c049efd7d55d21c00a674",
+      "data": {
+        "company": "Kongsberg Discovery Canada Ltd.",
+        "technology": "Linux",
+        "category": "operating_system",
+        "signal": "required_experience",
+        "scope": "role",
+        "job_employer": "Kongsberg Discovery Canada Ltd.",
+        "job_title": "Software Developer",
+        "job_url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+        "alternative_group": null,
+        "context": "Candidate must have strong C/C++ development experience on Linux.",
+        "as_of": null
+      },
+      "original_evidence_status": "source_matched",
+      "sources": [
+        {
+          "url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+          "page_id": "p0001",
+          "fetched_at": "2026-09-06T18:06:48+00:00",
+          "html_sha256": "b29257ab0b0d7d8564b29121750fa50bb01bc13732bc7dc4ef95fe5dc2a88144",
+          "chunk_start": 0,
+          "chunk_end": 26332,
+          "evidence": [
+            {
+              "text": "Strong C/C++ development experience on both Windows and Linux",
+              "matched_in": "text",
+              "presence_rechecked": true
+            },
+            {
+              "text": "At Kongsberg Discovery Canada Ltd.",
+              "matched_in": "text",
+              "presence_rechecked": true
+            },
+            {
+              "text": "Software Developer",
+              "matched_in": "text",
+              "presence_rechecked": true
+            }
+          ],
+          "evidence_status": "source_matched",
+          "issues": [],
+          "html_artifact": "data/technology-software-developer-v1/html/p0001.html",
+          "source_hash_verified": true
+        }
+      ],
+      "mapping": {
+        "status": "unresolved",
+        "technology": null,
+        "method": null
+      }
+    },
+    {
+      "input_artifact": "data/technology-software-developer-v1/result.json",
+      "record_id": "19e55fdf177be6b052ddc5d8",
+      "data": {
+        "company": "Kongsberg Discovery Canada Ltd.",
+        "technology": "TCP/IP",
+        "category": "protocol_standard",
+        "signal": "required_experience",
+        "scope": "role",
+        "job_employer": "Kongsberg Discovery Canada Ltd.",
+        "job_title": "Software Developer",
+        "job_url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+        "alternative_group": null,
+        "context": "Candidate must have experience with TCP/IP networking.",
+        "as_of": null
+      },
+      "original_evidence_status": "source_matched",
+      "sources": [
+        {
+          "url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+          "page_id": "p0001",
+          "fetched_at": "2026-09-06T18:06:48+00:00",
+          "html_sha256": "b29257ab0b0d7d8564b29121750fa50bb01bc13732bc7dc4ef95fe5dc2a88144",
+          "chunk_start": 0,
+          "chunk_end": 26332,
+          "evidence": [
+            {
+              "text": "Experience with TCP/IP networking and system-level programming.",
+              "matched_in": "text",
+              "presence_rechecked": true
+            },
+            {
+              "text": "At Kongsberg Discovery Canada Ltd.",
+              "matched_in": "text",
+              "presence_rechecked": true
+            },
+            {
+              "text": "Software Developer",
+              "matched_in": "text",
+              "presence_rechecked": true
+            }
+          ],
+          "evidence_status": "source_matched",
+          "issues": [],
+          "html_artifact": "data/technology-software-developer-v1/html/p0001.html",
+          "source_hash_verified": true
+        }
+      ],
+      "mapping": {
+        "status": "unresolved",
+        "technology": null,
+        "method": null
+      }
+    },
+    {
+      "input_artifact": "data/technology-software-developer-v1/result.json",
+      "record_id": "78058f2166091e32abdb4223",
+      "data": {
+        "company": "Kongsberg Discovery Canada Ltd.",
+        "technology": "Windows APIs",
+        "category": "other",
+        "signal": "required_experience",
+        "scope": "role",
+        "job_employer": "Kongsberg Discovery Canada Ltd.",
+        "job_title": "Software Developer",
+        "job_url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+        "alternative_group": null,
+        "context": "Candidate must be familiar with Windows APIs.",
+        "as_of": null
+      },
+      "original_evidence_status": "needs_review",
+      "sources": [
+        {
+          "url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+          "page_id": "p0001",
+          "fetched_at": "2026-09-06T18:06:48+00:00",
+          "html_sha256": "b29257ab0b0d7d8564b29121750fa50bb01bc13732bc7dc4ef95fe5dc2a88144",
+          "chunk_start": 0,
+          "chunk_end": 26332,
+          "evidence": [
+            {
+              "text": "Familiarity with Windows APIs, MFC, and embedded Linux tooling e.g Yocto.",
+              "matched_in": "not_found",
+              "presence_rechecked": true
+            },
+            {
+              "text": "At Kongsberg Discovery Canada Ltd.",
+              "matched_in": "text",
+              "presence_rechecked": true
+            },
+            {
+              "text": "Software Developer",
+              "matched_in": "text",
+              "presence_rechecked": true
+            }
+          ],
+          "evidence_status": "needs_review",
+          "issues": [
+            "evidence_fragment_absent"
+          ],
+          "html_artifact": "data/technology-software-developer-v1/html/p0001.html",
+          "source_hash_verified": true
+        }
+      ],
+      "mapping": {
+        "status": "unresolved",
+        "technology": null,
+        "method": null
+      }
+    },
+    {
+      "input_artifact": "data/technology-software-developer-v1/result.json",
+      "record_id": "c64bf65c1f25563460f10364",
+      "data": {
+        "company": "Kongsberg Discovery Canada Ltd.",
+        "technology": "MFC",
+        "category": "framework_library",
+        "signal": "required_experience",
+        "scope": "role",
+        "job_employer": "Kongsberg Discovery Canada Ltd.",
+        "job_title": "Software Developer",
+        "job_url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+        "alternative_group": null,
+        "context": "Candidate must be familiar with MFC.",
+        "as_of": null
+      },
+      "original_evidence_status": "needs_review",
+      "sources": [
+        {
+          "url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+          "page_id": "p0001",
+          "fetched_at": "2026-09-06T18:06:48+00:00",
+          "html_sha256": "b29257ab0b0d7d8564b29121750fa50bb01bc13732bc7dc4ef95fe5dc2a88144",
+          "chunk_start": 0,
+          "chunk_end": 26332,
+          "evidence": [
+            {
+              "text": "Familiarity with Windows APIs, MFC, and embedded Linux tooling e.g Yocto.",
+              "matched_in": "not_found",
+              "presence_rechecked": true
+            },
+            {
+              "text": "At Kongsberg Discovery Canada Ltd.",
+              "matched_in": "text",
+              "presence_rechecked": true
+            },
+            {
+              "text": "Software Developer",
+              "matched_in": "text",
+              "presence_rechecked": true
+            }
+          ],
+          "evidence_status": "needs_review",
+          "issues": [
+            "evidence_fragment_absent"
+          ],
+          "html_artifact": "data/technology-software-developer-v1/html/p0001.html",
+          "source_hash_verified": true
+        }
+      ],
+      "mapping": {
+        "status": "unresolved",
+        "technology": null,
+        "method": null
+      }
+    },
+    {
+      "input_artifact": "data/technology-software-developer-v1/result.json",
+      "record_id": "4a56cc0254fdaf5764ed4c44",
+      "data": {
+        "company": "Kongsberg Discovery Canada Ltd.",
+        "technology": "Yocto",
+        "category": "engineering_tool",
+        "signal": "required_experience",
+        "scope": "role",
+        "job_employer": "Kongsberg Discovery Canada Ltd.",
+        "job_title": "Software Developer",
+        "job_url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+        "alternative_group": null,
+        "context": "Candidate must be familiar with embedded Linux tooling e.g Yocto.",
+        "as_of": null
+      },
+      "original_evidence_status": "needs_review",
+      "sources": [
+        {
+          "url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+          "page_id": "p0001",
+          "fetched_at": "2026-09-06T18:06:48+00:00",
+          "html_sha256": "b29257ab0b0d7d8564b29121750fa50bb01bc13732bc7dc4ef95fe5dc2a88144",
+          "chunk_start": 0,
+          "chunk_end": 26332,
+          "evidence": [
+            {
+              "text": "Familiarity with Windows APIs, MFC, and embedded Linux tooling e.g Yocto.",
+              "matched_in": "not_found",
+              "presence_rechecked": true
+            },
+            {
+              "text": "At Kongsberg Discovery Canada Ltd.",
+              "matched_in": "text",
+              "presence_rechecked": true
+            },
+            {
+              "text": "Software Developer",
+              "matched_in": "text",
+              "presence_rechecked": true
+            }
+          ],
+          "evidence_status": "needs_review",
+          "issues": [
+            "evidence_fragment_absent"
+          ],
+          "html_artifact": "data/technology-software-developer-v1/html/p0001.html",
+          "source_hash_verified": true
+        }
+      ],
+      "mapping": {
+        "status": "unresolved",
+        "technology": null,
+        "method": null
+      }
+    },
+    {
+      "input_artifact": "data/technology-software-developer-v1/result.json",
+      "record_id": "96420b804ee29bffe1660184",
+      "data": {
+        "company": "Kongsberg Discovery Canada Ltd.",
+        "technology": "Git",
+        "category": "engineering_tool",
+        "signal": "required_experience",
+        "scope": "role",
+        "job_employer": "Kongsberg Discovery Canada Ltd.",
+        "job_title": "Software Developer",
+        "job_url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+        "alternative_group": "Git, Azure DevOps, or similar",
+        "context": "Candidate must have experience using Git or similar source control platforms.",
+        "as_of": null
+      },
+      "original_evidence_status": "source_matched",
+      "sources": [
+        {
+          "url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+          "page_id": "p0001",
+          "fetched_at": "2026-09-06T18:06:48+00:00",
+          "html_sha256": "b29257ab0b0d7d8564b29121750fa50bb01bc13732bc7dc4ef95fe5dc2a88144",
+          "chunk_start": 0,
+          "chunk_end": 26332,
+          "evidence": [
+            {
+              "text": "Experience using Git, Azure DevOps, or similar source control and CI/CD platforms.",
+              "matched_in": "text",
+              "presence_rechecked": true
+            },
+            {
+              "text": "At Kongsberg Discovery Canada Ltd.",
+              "matched_in": "text",
+              "presence_rechecked": true
+            },
+            {
+              "text": "Software Developer",
+              "matched_in": "text",
+              "presence_rechecked": true
+            },
+            {
+              "text": "Git, Azure DevOps, or similar",
+              "matched_in": "text",
+              "presence_rechecked": true
+            }
+          ],
+          "evidence_status": "source_matched",
+          "issues": [],
+          "html_artifact": "data/technology-software-developer-v1/html/p0001.html",
+          "source_hash_verified": true
+        }
+      ],
+      "mapping": {
+        "status": "matched",
+        "technology": "git",
+        "method": "normalized_catalog"
+      }
+    },
+    {
+      "input_artifact": "data/technology-software-developer-v1/result.json",
+      "record_id": "e02baa150a401f088b138981",
+      "data": {
+        "company": "Kongsberg Discovery Canada Ltd.",
+        "technology": "Azure DevOps",
+        "category": "infrastructure_devops",
+        "signal": "required_experience",
+        "scope": "role",
+        "job_employer": "Kongsberg Discovery Canada Ltd.",
+        "job_title": "Software Developer",
+        "job_url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+        "alternative_group": "Git, Azure DevOps, or similar",
+        "context": "Candidate must have experience using Azure DevOps or similar CI/CD platforms.",
+        "as_of": null
+      },
+      "original_evidence_status": "source_matched",
+      "sources": [
+        {
+          "url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+          "page_id": "p0001",
+          "fetched_at": "2026-09-06T18:06:48+00:00",
+          "html_sha256": "b29257ab0b0d7d8564b29121750fa50bb01bc13732bc7dc4ef95fe5dc2a88144",
+          "chunk_start": 0,
+          "chunk_end": 26332,
+          "evidence": [
+            {
+              "text": "Experience using Git, Azure DevOps, or similar source control and CI/CD platforms.",
+              "matched_in": "text",
+              "presence_rechecked": true
+            },
+            {
+              "text": "At Kongsberg Discovery Canada Ltd.",
+              "matched_in": "text",
+              "presence_rechecked": true
+            },
+            {
+              "text": "Software Developer",
+              "matched_in": "text",
+              "presence_rechecked": true
+            },
+            {
+              "text": "Git, Azure DevOps, or similar",
+              "matched_in": "text",
+              "presence_rechecked": true
+            }
+          ],
+          "evidence_status": "source_matched",
+          "issues": [],
+          "html_artifact": "data/technology-software-developer-v1/html/p0001.html",
+          "source_hash_verified": true
+        }
+      ],
+      "mapping": {
+        "status": "unresolved",
+        "technology": null,
+        "method": null
+      }
+    },
+    {
+      "input_artifact": "data/technology-software-developer-v1/result.json",
+      "record_id": "c45b5873d5fbc2cd552470a3",
+      "data": {
+        "company": "Kongsberg Discovery Canada Ltd.",
+        "technology": "MATLAB",
+        "category": "programming_language",
+        "signal": "preferred_experience",
+        "scope": "role",
+        "job_employer": "Kongsberg Discovery Canada Ltd.",
+        "job_title": "Software Developer",
+        "job_url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+        "alternative_group": null,
+        "context": "MATLAB experience is a strong asset.",
+        "as_of": null
+      },
+      "original_evidence_status": "source_matched",
+      "sources": [
+        {
+          "url": "https://www.kongsberg.com/careers/vacancies/software-developer/",
+          "page_id": "p0001",
+          "fetched_at": "2026-09-06T18:06:48+00:00",
+          "html_sha256": "b29257ab0b0d7d8564b29121750fa50bb01bc13732bc7dc4ef95fe5dc2a88144",
+          "chunk_start": 0,
+          "chunk_end": 26332,
+          "evidence": [
+            {
+              "text": "MATLAB experience is a strong asset.",
+              "matched_in": "text",
+              "presence_rechecked": true
+            },
+            {
+              "text": "At Kongsberg Discovery Canada Ltd.",
+              "matched_in": "text",
+              "presence_rechecked": true
+            },
+            {
+              "text": "Software Developer",
+              "matched_in": "text",
+              "presence_rechecked": true
+            }
+          ],
+          "evidence_status": "source_matched",
+          "issues": [],
+          "html_artifact": "data/technology-software-developer-v1/html/p0001.html",
+          "source_hash_verified": true
+        }
+      ],
+      "mapping": {
+        "status": "unresolved",
+        "technology": null,
+        "method": null
+      }
+    }
+  ]
+}

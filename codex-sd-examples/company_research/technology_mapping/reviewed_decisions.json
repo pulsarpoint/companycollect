@@ -1,0 +1,85 @@
+{
+  "reviewed_at": "2026-09-07",
+  "reviewed_by": "assistant",
+  "catalog_snapshot_sha256": "1262e21751af34816b4aff563082dbbb87c1a7c372cb321a9b9e925a8745c68e",
+  "review_method": "Source quotations, current catalog names/metadata, and primary documentation; semantic judgments are explicit inputs, not automatic fuzzy matches.",
+  "decisions": {
+    "C/C++": {
+      "classification": "ambiguous",
+      "reason": "Combined language label. C exists, but mapping the whole mention to C loses the C++ part. No exact C++ entry was found. This needs compound-claim handling, not a one-to-one alias.",
+      "related_catalog_names": ["C"],
+      "next_action": "Preserve the combined mention; design supported component extraction and review a separate C++ catalog entry.",
+      "references": []
+    },
+    "Windows": {
+      "classification": "missing_from_catalog",
+      "reason": "No general Windows entry. Windows Server and Windows CE are narrower products; this job does not identify either edition.",
+      "related_catalog_names": ["Windows Server", "Windows CE"],
+      "next_action": "Review adding a general Windows operating-system entry.",
+      "references": []
+    },
+    "Linux": {
+      "classification": "missing_from_catalog",
+      "reason": "No general Linux entry. Existing Linux distributions do not establish which distribution this employer uses.",
+      "related_catalog_names": ["Ubuntu", "Debian", "Alpine Linux", "AlmaLinux", "Red Hat"],
+      "next_action": "Review adding a general Linux entry while preserving specific distribution identities.",
+      "references": []
+    },
+    "sonar hardware": {
+      "classification": "ambiguous",
+      "reason": "Generic hardware category, with no named product. Catalog Sonar is business software and SonarQube is code-analysis software; neither is the hardware in this job.",
+      "related_catalog_names": ["Sonar", "SonarQube"],
+      "next_action": "Keep a generic technology/category signal; do not create a product alias from this label.",
+      "references": []
+    },
+    "TCP/IP": {
+      "classification": "missing_from_catalog",
+      "reason": "No equivalent protocol-suite catalog entry found. Lexical similarity to unrelated web products is not equivalence.",
+      "related_catalog_names": [],
+      "next_action": "Review adding a protocol-suite entry; preserve the source label.",
+      "references": []
+    },
+    "Windows APIs": {
+      "classification": "missing_from_catalog",
+      "reason": "Broad Windows API family; Microsoft HTTPAPI is only a specific HTTP API/driver entry and is not an equivalent label.",
+      "related_catalog_names": ["Microsoft HTTPAPI", "Windows Server", "Windows CE"],
+      "next_action": "Review an API-family entry; do not infer a specific Windows API from this broad mention.",
+      "references": []
+    },
+    "MFC": {
+      "classification": "missing_from_catalog",
+      "reason": "In this Windows/C++ job context, MFC refers to Microsoft Foundation Class Library. No equivalent canonical entry was found.",
+      "related_catalog_names": [],
+      "next_action": "Review adding Microsoft Foundation Class Library; MFC can become an alias after that target exists.",
+      "references": ["https://learn.microsoft.com/en-us/cpp/mfc/mfc-desktop-applications?view=msvc-170"]
+    },
+    "Yocto": {
+      "classification": "missing_from_catalog",
+      "reason": "The source explicitly identifies Yocto as embedded Linux tooling. No equivalent catalog entry was found.",
+      "related_catalog_names": [],
+      "next_action": "Review adding the named tooling/project to the catalog.",
+      "references": []
+    },
+    "Git": {
+      "classification": "matched",
+      "reason": "Git matches the unique normalized catalog name git automatically. Case differences are handled by normal matching, not aliases.",
+      "related_catalog_names": ["git", "gitweb"],
+      "next_action": "No alias needed. Preserve the source's required-experience and alternative-group qualifiers.",
+      "references": ["https://git-scm.com/about"]
+    },
+    "Azure DevOps": {
+      "classification": "missing_from_catalog",
+      "reason": "Azure DevOps is a development tool suite. Catalog Azure describes the cloud platform, and Azure CDN describes another product. Neither is an equivalent alias target.",
+      "related_catalog_names": ["Azure", "Azure CDN"],
+      "next_action": "Review adding Azure DevOps as its own catalog technology.",
+      "references": ["https://learn.microsoft.com/en-us/azure/devops/user-guide/what-is-azure-devops?view=azure-devops"]
+    },
+    "MATLAB": {
+      "classification": "missing_from_catalog",
+      "reason": "No MATLAB/MathWorks technology entry found. A similar-looking name such as Matchlab is not the MATLAB programming and numerical-computing product.",
+      "related_catalog_names": ["Matchlab"],
+      "next_action": "Review adding MATLAB to the catalog.",
+      "references": ["https://www.mathworks.com/products/matlab.html"]
+    }
+  }
+}

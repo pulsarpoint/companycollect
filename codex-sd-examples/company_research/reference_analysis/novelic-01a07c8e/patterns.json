@@ -1,0 +1,145 @@
+{
+  "artifact_type": "draft_patterns_for_pipeline_design",
+  "executable": false,
+  "source_thread_id": "01a07c8e-ebaf-7fa2-8dfc-f935cc279dd8",
+  "source_thread_title": "Analyze Novelic company",
+  "source_turn_status": "inProgress",
+  "interpretation": "Observed actions support these design hypotheses. Triggers and implementation choices are proposed abstractions, not recovered internal reasoning or an exact execution graph.",
+  "patterns": [
+    {
+      "id": "follow_related_entities",
+      "observed": "The session searched for acquisition/parent information, opened Sona's subsidiary-statements page, and downloaded NOVELIC and subsidiary filings.",
+      "trigger": "A relevant parent, subsidiary, acquirer or related entity has been identified with evidence.",
+      "next_actions": [
+        "Discover the related entity's official disclosure pages.",
+        "Select documents that explicitly concern the subject company."
+      ],
+      "efficient_implementation": "DeepSeek entity/relation extraction plus targeted web search, Crawl4AI HTML retrieval and a bounded related-domain queue.",
+      "validation": "Distinguish a search hypothesis from a supported relationship, and direct ownership from ultimate economic interest.",
+      "evidence_item_ids": [
+        "exec-a0cf4618-993e-4e7f-80b0-1f7e5503942f",
+        "exec-daebf2b5-d0f0-4381-bde7-f6650777d662",
+        "exec-0188c008-e21e-4cdd-962c-92e93ac95f62"
+      ],
+      "limitation": "The first query already includes Sona; the visible trace does not establish where that initial hypothesis originated."
+    },
+    {
+      "id": "verify_relationship_on_counterparty_site",
+      "observed": "The session searched Infineon and other counterpart sites and opened an Analog Devices partner page.",
+      "trigger": "A named partner/customer/owner claim needs corroboration.",
+      "next_actions": [
+        "Search the named counterparty's official domain for the subject.",
+        "Extract the precise relationship and dates."
+      ],
+      "efficient_implementation": "Small query generation and result assessment followed by source-specific extraction on Crawl4AI content.",
+      "validation": "A partner directory corroborates partnership, not customer revenue, ownership, exclusivity or internal tool deployment.",
+      "evidence_item_ids": [
+        "exec-3d73c2e6-9100-45b0-8e6c-eec77d865543",
+        "exec-90bb635b-7ac7-4bca-a993-6d16d371067f"
+      ],
+      "limitation": "The trace shows searches/opens, not a complete proof ledger for every relationship in the report."
+    },
+    {
+      "id": "route_documents_by_format",
+      "observed": "The session downloaded PDF statements, extracted text, rendered pages, rotated sideways pages and inspected images.",
+      "trigger": "A selected source is a PDF or extracted text is insufficient to interpret a table.",
+      "next_actions": [
+        "Download and retain the document.",
+        "Extract text with page boundaries.",
+        "Render/OCR or inspect only pages requiring visual interpretation."
+      ],
+      "efficient_implementation": "HTTP download plus a PDF parser; targeted OCR/vision fallback alongside Crawl4AI for HTML.",
+      "validation": "Retain page references, table headers, units, signs, accounting period and subject entity.",
+      "evidence_item_ids": [
+        "exec-0188c008-e21e-4cdd-962c-92e93ac95f62",
+        "exec-7f67751c-6a96-4040-b3c1-779742869558",
+        "exec-0e933e4e-51a9-431f-b947-9a0768b927e7",
+        "exec-8c9c666a-ed1e-4fc8-8937-3dd082b12b66"
+      ],
+      "limitation": "Sixteen image inspections in this snapshot are observed actions, not a recommended fixed inspection budget."
+    },
+    {
+      "id": "cache_sources_and_retrieve_passages",
+      "observed": "Downloaded documents were saved once and searched repeatedly with rg/sed; independent downloads were batched.",
+      "trigger": "Multiple objectives or questions concern the same source documents.",
+      "next_actions": [
+        "Store a content-addressed source snapshot and parsed representation.",
+        "Retrieve relevant passages with surrounding headings/table context."
+      ],
+      "efficient_implementation": "Cached source store, local text search and bounded excerpt extraction; concurrent independent fetches.",
+      "validation": "Every extracted claim must link to the original source and section/page. Reuse must not hide stale documents or cut away attribution.",
+      "evidence_item_ids": [
+        "exec-fec85a8f-6bd8-4989-bc5c-bb90958e9fd4",
+        "exec-83651422-877e-4de1-9b06-7b8733a3139f",
+        "exec-d592ed25-e1f5-4446-8546-1cf452d8f744"
+      ]
+    },
+    {
+      "id": "investigate_temporal_conflicts",
+      "observed": "The session compared an older production expectation with later parent earnings-call guidance and revisited the exact launch passage.",
+      "trigger": "Two sources disagree about the same event, status, specification or date.",
+      "next_actions": [
+        "Retain both claims with publication/event dates and scope.",
+        "Seek a current authoritative clarification.",
+        "Keep the conflict unresolved when sources concern different products or entities."
+      ],
+      "efficient_implementation": "Structured claim comparison in code; targeted search and a focused DeepSeek evidence comparison.",
+      "validation": "Newer does not automatically mean superseding. Do not turn an announced production plan into actual shipments.",
+      "evidence_item_ids": [
+        "msg_095d3ee96f7e11a7016a9edf9d39e487d29ff8db84d1146038",
+        "exec-5e2f1fc8-b3f9-4d1b-907a-e91e5acc64e2",
+        "exec-7f0ae362-fa11-4695-9419-d7622d1e1b2a"
+      ]
+    },
+    {
+      "id": "follow_external_recruiting_destination",
+      "observed": "The session parsed Careers links and found the external novelic.oneassessment.com job board.",
+      "trigger": "A company's careers page links to hosted job advertisements.",
+      "next_actions": [
+        "Resolve the explicitly linked employer job board.",
+        "Fetch relevant individual job descriptions when researching specific tools and applications."
+      ],
+      "efficient_implementation": "Crawl4AI links plus bounded same-employer external crawling; small-model job and named-tool extraction.",
+      "validation": "Job URLs can establish recruiting navigation. A job title alone does not establish a technology or commercial service.",
+      "evidence_item_ids": [
+        "exec-5013b88d-55b1-43b3-bfef-df723e7bb0cd",
+        "exec-9e5ef869-a991-4ab1-8e5d-fba6f637a7fb"
+      ],
+      "limitation": "Full individual-ad extraction is a proposed continuation; it is not demonstrated by these link-enumeration events."
+    },
+    {
+      "id": "derive_metrics_after_scope_alignment",
+      "observed": "The session separated accounting bases in its commentary and used Python to calculate changes and ratios from extracted values.",
+      "trigger": "A requested metric can be derived from sourced inputs with matching entity, currency, units and period definitions.",
+      "next_actions": [
+        "Align input definitions explicitly.",
+        "Calculate deterministically and retain formula plus source input IDs."
+      ],
+      "efficient_implementation": "Typed extracted financial facts plus ordinary calculation code, with the LLM resolving textual definitions only where needed.",
+      "validation": "Do not combine Serbian calendar-year standalone and parent March-year-end consolidated figures as like-for-like observations.",
+      "evidence_item_ids": [
+        "msg_095d3ee96f7e11a7016a9edd46798487d28517b85884588f2f",
+        "exec-5e2f1fc8-b3f9-4d1b-907a-e91e5acc64e2"
+      ],
+      "limitation": "This is an optional financial-research capability beyond the current crawler's principal extraction objectives; calculations and inputs require separate verification."
+    },
+    {
+      "id": "expand_only_for_relevant_evidence_gaps",
+      "observed": "Later searches covered patents, EU research projects, certification, current production and competitors rather than repeating the first broad query.",
+      "trigger": "An objective remains unresolved and a concrete source class or query could resolve it.",
+      "next_actions": [
+        "Generate targeted searches from missing facts and discovered identifiers.",
+        "Evaluate whether new evidence changes coverage; stop when further work is unlikely to add useful information."
+      ],
+      "efficient_implementation": "Coverage and claim state in code, with small-model query selection and a bounded search/fetch loop.",
+      "validation": "Preserve not-found versus not-assessed; keep generic formats/capabilities out of technology identities. Avoid open-ended competitor/reputation research unless requested.",
+      "evidence_item_ids": [
+        "exec-77749668-6929-4ece-9ea4-3b0522983127",
+        "exec-c4169042-994e-4a94-92a0-0749d09d9e85",
+        "exec-a4968df5-b759-4c87-a046-fb5cee9100d7",
+        "exec-99a8c2bc-3930-4c9e-a728-981affad766e"
+      ],
+      "limitation": "A universal stopping policy cannot be inferred from one unfinished research session."
+    }
+  ]
+}

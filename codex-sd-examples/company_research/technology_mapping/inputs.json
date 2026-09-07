@@ -1,0 +1,40 @@
+{
+  "primary": [
+    {
+      "path": "data/technology-software-developer-v2/result.json",
+      "format": "extraction_diagnostic",
+      "reason": "Latest saved extraction of the real software-developer page; main coverage denominator."
+    }
+  ],
+  "historical": [
+    {
+      "path": "data/technology-software-developer-v1/result.json",
+      "format": "research_result",
+      "reason": "Earlier extraction of the same source snapshot; separate comparison, not independent job evidence."
+    }
+  ],
+  "excluded": [
+    {
+      "path": "data/technology-fixture-v1/result.json",
+      "reason": "Synthetic fixture; not real-company evidence."
+    },
+    {
+      "path": "data/technology-fixture-v2/result.json",
+      "reason": "Synthetic fixture; not real-company evidence."
+    },
+    {
+      "path": "data/kongsberg-v1/result.json",
+      "reason": "Schema 1.0 did not assess technology signals."
+    },
+    {
+      "path": "data/kongsberg-v2/result.json",
+      "reason": "Schema 1.0 did not assess technology signals."
+    }
+  ],
+  "limitations": [
+    "One real job page and one named employer; this is not a representative technology coverage benchmark.",
+    "The older 40-page jobs benchmark did not extract technology observations and is not counted.",
+    "Company counts refer to source names, not resolved registry identities.",
+    "Alias correctness is independent of whether a claim describes use, required experience, or alternatives."
+  ]
+}

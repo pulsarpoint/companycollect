@@ -1,0 +1,149 @@
+{
+  "purpose": "Astra-reference coverage rubric, not independently verified ground truth. Kept outside agent workspace. No automatic quality score.",
+  "checks": [
+    {
+      "id": "identity",
+      "topic": "Legal identity and registration",
+      "reference_criterion": "Identify NOVELIC d.o.o. and MB 20877537; distinguish legal incorporation 2012 from operating history 2013.",
+      "source_url": "https://www.novelic.com/contact/"
+    },
+    {
+      "id": "ownership",
+      "topic": "Majority ownership",
+      "reference_criterion": "Sona Comstar owns 54%; founders retain the remainder.",
+      "source_url": "https://nsearchives.nseindia.com/corporate/SONACOMS_04092023225204_Intimation.pdf"
+    },
+    {
+      "id": "transaction",
+      "topic": "Announcement versus completed acquisition",
+      "reference_criterion": "Separate January 2023 announcement at EUR40.5m from September closing at adjusted EUR40.097m.",
+      "source_url": "https://nsearchives.nseindia.com/corporate/SONACOMS_04092023225204_Intimation.pdf"
+    },
+    {
+      "id": "entities",
+      "topic": "Related legal entities",
+      "reference_criterion": "Investigate NIRSEN, Romania, North Macedonia, Germany and India; separate direct from ultimate ownership.",
+      "source_url": "https://sonacomstar.com/annual-report-25-26/pdf/Sona%20Comstar%20AR%202025-26_Consolidated%20Financial%20Statements.pdf"
+    },
+    {
+      "id": "locations",
+      "topic": "Current locations and scope",
+      "reference_criterion": "Geographic reach and India expansion, with office presence separated from manufacturing output.",
+      "source_url": "https://www.novelic.com/contact/"
+    },
+    {
+      "id": "leadership",
+      "topic": "Named people and roles",
+      "reference_criterion": "Identify founders and current executives with evidence; avoid merging career patents with company IP.",
+      "source_url": "https://www.novelic.com/management/"
+    },
+    {
+      "id": "services",
+      "topic": "What the company offers",
+      "reference_criterion": "Describe radar/embedded, hardware/software, semiconductor and development/testing services, not only a list of technical words.",
+      "source_url": "https://www.novelic.com/product-engineering-services/"
+    },
+    {
+      "id": "products",
+      "topic": "Named products and purposes",
+      "reference_criterion": "Identify ACAM, ASPER, AGERA, RIOT100, ZORM and robotics offerings with use cases.",
+      "source_url": "https://www.novelic.com/mmwave-radar-sensor-solutions/"
+    },
+    {
+      "id": "specificity",
+      "topic": "Product specification conflicts",
+      "reference_criterion": "Resolve or flag product/model-specific ranges and ROAM 60 versus 79 GHz inconsistency.",
+      "source_url": "https://www.novelic.com/radar-sensor-for-amrs/"
+    },
+    {
+      "id": "customers",
+      "topic": "Customers versus partners",
+      "reference_criterion": "Distinguish named case-study customers, ecosystem partners and unnamed nominations.",
+      "source_url": "https://www.novelic.com/blog/case-study-powering-seamless-smart-lighting-control-with-human-presence-detection-for-firefly/"
+    },
+    {
+      "id": "counterparts",
+      "topic": "Independent partner corroboration",
+      "reference_criterion": "Use counterpart-owned sources for Infineon/ADI/Lattice relationship claims.",
+      "source_url": "https://www.infineon.com/partners/design-partner/novelic"
+    },
+    {
+      "id": "commercialization",
+      "topic": "Latest production timeline",
+      "reference_criterion": "Reconcile early-2026 expectations with later end-2026 parent guidance; do not assert achieved shipments.",
+      "source_url": "https://sonacomstar.com/files/documents/transcript-of-investor-call-for-q4-financials-document-s15F52.pdf"
+    },
+    {
+      "id": "parent_scope",
+      "topic": "Parent order book attribution",
+      "reference_criterion": "Do not attribute the full parent robotics/physical-AI order book to NOVELIC.",
+      "source_url": "https://sonacomstar.com/files/documents/earning-call-transcript-for-q1-financial-results-document-EtmXYW.pdf"
+    },
+    {
+      "id": "financials",
+      "topic": "Recent financial evidence",
+      "reference_criterion": "Find FY2026 group schedules: RSD903.698m revenue and RSD218.326m loss, with units and period.",
+      "source_url": "https://sonacomstar.com/files/documents/novelic-serbia-document-wMpyMY.pdf"
+    },
+    {
+      "id": "financial_scope",
+      "topic": "Comparable financial periods",
+      "reference_criterion": "Keep Serbian calendar-year entity figures apart from March-year-end group schedules; distinguish total income from revenue.",
+      "source_url": "https://sonacomstar.com/files/documents/novelic-serbia-document-wMpyMY.pdf"
+    },
+    {
+      "id": "financial_analysis",
+      "topic": "Liquidity and development assets",
+      "reference_criterion": "Explain operating cash use and material capitalized development without inventing causality or insolvency.",
+      "source_url": "https://sonacomstar.com/files/documents/novelic-serbia-document-wMpyMY.pdf"
+    },
+    {
+      "id": "patents",
+      "topic": "Patent claims and legal stages",
+      "reference_criterion": "Separate company patent list, granted inventions, applications and founder career counts.",
+      "source_url": "https://www.novelic.com/patents/"
+    },
+    {
+      "id": "grants",
+      "topic": "Research grants and allocation",
+      "reference_criterion": "Identify historical research programs and distinguish consortium totals from NOVELIC allocation.",
+      "source_url": "https://cordis.europa.eu/project/id/634928"
+    },
+    {
+      "id": "certificates",
+      "topic": "Certificates versus aspirations",
+      "reference_criterion": "Company claims ISO9001/ISO14001; IATF prerequisites are work in progress, not a confirmed certificate.",
+      "source_url": "https://www.novelic.com/quality-management/"
+    },
+    {
+      "id": "safety",
+      "topic": "Safety scope",
+      "reference_criterion": "Distinguish QM, ASIL/SIL targets, functional-safety services and independently certified products.",
+      "source_url": "https://www.novelic.com/acam-automotive-in-cabin-monitoring-radar/"
+    },
+    {
+      "id": "jobs",
+      "topic": "Hiring evidence",
+      "reference_criterion": "Use current careers evidence and explain hiring priorities without treating links as verified vacancies or headcount growth.",
+      "source_url": "https://www.novelic.com/careers/"
+    },
+    {
+      "id": "workforce",
+      "topic": "Workforce measurement",
+      "reference_criterion": "Date and scope staffing data; do not use historic partner profile headcount as current group employment.",
+      "source_url": "https://www.companywall.rs/firma/novelic-doo/MMQ6ZdTY"
+    },
+    {
+      "id": "competition",
+      "topic": "Supported competitive landscape",
+      "reference_criterion": "Identify relevant competitors and support product overlap with evidence.",
+      "source_url": "https://www.bosch-mobility.com/en/solutions/sensors/interior-monitoring-systems/"
+    },
+    {
+      "id": "unknowns",
+      "topic": "Explicit limits and next evidence",
+      "reference_criterion": "Identify unavailable current economics, customer concentrations, shipment volumes and other material unknowns.",
+      "source_url": null
+    }
+  ]
+}

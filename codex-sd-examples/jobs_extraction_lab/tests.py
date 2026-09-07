@@ -1,21 +1,26 @@
+import asyncio
 import json
+import re
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, patch
 
 import httpx
+from click.testing import CliRunner
 from pydantic import ValidationError
 
 from jobs_extraction_lab.compare import compare_jobs, create_comparison
 from jobs_extraction_lab.corpus import content_hash, is_job_link, write_json
 from jobs_extraction_lab.extract import (
-    OPENROUTER_MODEL,
+    DEFAULT_OPENROUTER_MODEL,
+    INSTRUCTIONS,
     create_prompt,
     extract_openrouter,
     run_extractions,
     validate_evidence,
 )
+from jobs_extraction_lab.main import cli
 from jobs_extraction_lab.models import ExtractionRun, Job, JobExtraction, Page
 from jobs_extraction_lab.repeat import compare_outputs, compare_runs
 from jobs_extraction_lab.segment import (
@@ -61,6 +66,54 @@ def sample_job(**changes) -> Job:
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_teaching_examples_conform_to_schema_and_source(self):
+        examples = (
+            Path(__file__).with_name("prompt_examples.md").read_text(encoding="utf-8")
+        )
+        cases = re.findall(
+            r"source_url: `([^`]+)`.*?```markdown\n(.*?)\n```.*?```json\n(.*?)\n```",
+            examples,
+            re.DOTALL,
+        )
+        self.assertEqual(len(cases), 6)
+        for source_url, markdown, expected in cases:
+            with self.subTest(source_url=source_url, markdown=markdown):
+                page = sample_page().model_copy(
+                    update={
+                        "final_url": source_url,
+                        "job_links": re.findall(r"\]\(([^)]+)\)", markdown),
+                    }
+                )
+                self.assertEqual(
+                    validate_evidence(
+                        JobExtraction.model_validate_json(expected), markdown, page
+                    ),
+                    [],
+                )
+
+    def test_examples_preserve_base_prompt_and_actual_input(self):
+        page = sample_page()
+        markdown = "Engineer in London"
+        payload = json.dumps(
+            {"source_url": page.final_url, "page_markdown": markdown},
+            ensure_ascii=False,
+        )
+        original = "\n\n".join(
+            (
+                INSTRUCTIONS,
+                "OUTPUT JSON SCHEMA:\n"
+                + json.dumps(JobExtraction.model_json_schema(), ensure_ascii=False),
+                "INPUT DATA:\n" + payload,
+            )
+        )
+        self.assertEqual(create_prompt(page, markdown), original)
+        taught = create_prompt(page, markdown, examples="Synthetic example")
+        self.assertIn("Synthetic example", taught)
+        self.assertTrue(taught.endswith("INPUT DATA:\n" + payload))
+        self.assertLess(
+            taught.index("END TEACHING EXAMPLES"), taught.index("INPUT DATA:\n")
+        )
+
     def test_grounded_extraction_passes(self):
         self.assertEqual(
             validate_evidence(
@@ -109,6 +162,21 @@ class EvidenceTests(unittest.TestCase):
 
 
 class ComparisonTests(unittest.TestCase):
+    def test_paired_backend_comparison_rejects_different_examples(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_json(root / "manifest.json", {"pages": [sample_page().model_dump()]})
+            settings = {"instructions": INSTRUCTIONS, "schema": {}}
+            write_json(root / "runs/test/codex/settings.json", settings)
+            write_json(
+                root / "runs/test/openrouter/settings.json",
+                {**settings, "examples": "Example jobs"},
+            )
+            with self.assertRaisesRegex(
+                ValueError, "Cannot compare different examples"
+            ):
+                create_comparison(root, "test")
+
     def test_field_disagreement_retains_both_values(self):
         result = compare_jobs(
             [sample_job()], [sample_job(location="Paris")], sample_page().final_url
@@ -394,9 +462,14 @@ class OpenRouterBoundaryTests(unittest.IsolatedAsyncioTestCase):
     async def test_exact_model_and_schema_sent(self):
         def respond(request):
             body = json.loads(request.content)
-            self.assertEqual(body["model"], OPENROUTER_MODEL)
+            self.assertEqual(body["model"], "z-ai/glm-5.3-flash")
             self.assertTrue(body["provider"]["require_parameters"])
+            self.assertEqual(body["provider"]["only"], ["together"])
+            self.assertFalse(body["provider"]["allow_fallbacks"])
             self.assertEqual(body["response_format"]["type"], "json_schema")
+            self.assertEqual(
+                body["reasoning"], {"enabled": True, "exclude": True, "effort": "low"}
+            )
             self.assertNotIn("tools", body)
             return httpx.Response(
                 200,
@@ -412,7 +485,19 @@ class OpenRouterBoundaryTests(unittest.IsolatedAsyncioTestCase):
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
             result = await extract_openrouter(
-                client, "source", api_key="test-key", attempts=1, max_tokens=100
+                client,
+                "source",
+                api_key="test-key",
+                model="z-ai/glm-5.3-flash",
+                reasoning={"enabled": True, "exclude": True, "effort": "low"},
+                provider_options={
+                    "require_parameters": True,
+                    "only": ["together"],
+                    "allow_fallbacks": False,
+                },
+                timeout=1,
+                attempts=1,
+                max_tokens=100,
             )
         self.assertEqual(result["attempts"], 1)
 
@@ -423,7 +508,15 @@ class OpenRouterBoundaryTests(unittest.IsolatedAsyncioTestCase):
             )
         ) as client:
             result = await extract_openrouter(
-                client, "source", api_key="test-secret", attempts=1, max_tokens=100
+                client,
+                "source",
+                api_key="test-secret",
+                model=DEFAULT_OPENROUTER_MODEL,
+                reasoning={"enabled": True, "exclude": True},
+                provider_options={"require_parameters": True},
+                timeout=1,
+                attempts=1,
+                max_tokens=100,
             )
         self.assertNotIn("test-secret", result["error"])
 
@@ -443,10 +536,45 @@ class OpenRouterBoundaryTests(unittest.IsolatedAsyncioTestCase):
                 transport=httpx.MockTransport(respond)
             ) as client:
                 result = await extract_openrouter(
-                    client, "source", api_key="test-key", attempts=2, max_tokens=100
+                    client,
+                    "source",
+                    api_key="test-key",
+                    model=DEFAULT_OPENROUTER_MODEL,
+                    reasoning={"enabled": True, "exclude": True},
+                    provider_options={"require_parameters": True},
+                    timeout=1,
+                    attempts=2,
+                    max_tokens=100,
                 )
         self.assertEqual(result["attempts"], 2)
+        self.assertEqual(requests[0]["model"], DEFAULT_OPENROUTER_MODEL)
         self.assertEqual(requests[0], requests[1])
+
+    async def test_total_deadline_cancels_a_request_that_never_finishes(self):
+        cancelled = asyncio.Event()
+
+        async def respond(request):
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+            raise AssertionError("Unreachable")
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+            result = await extract_openrouter(
+                client,
+                "source",
+                api_key="test-key",
+                model="z-ai/glm-5.3-flash",
+                reasoning={"enabled": True, "exclude": True},
+                provider_options={"require_parameters": True},
+                timeout=0.02,
+                attempts=2,
+                max_tokens=8192,
+            )
+        self.assertTrue(cancelled.is_set())
+        self.assertIn("total time limit", result["error"])
+        self.assertEqual(result["attempts"], 1)
 
     async def test_changed_markdown_fails_before_model_call(self):
         with TemporaryDirectory() as directory:
@@ -472,8 +600,133 @@ class OpenRouterBoundaryTests(unittest.IsolatedAsyncioTestCase):
                         retry_failed=False,
                         codex_model_label="test",
                         codex_bin=None,
+                        openrouter_model=DEFAULT_OPENROUTER_MODEL,
+                        reasoning_effort=None,
+                        openrouter_provider=None,
                     )
                 call.assert_not_awaited()
+
+    async def test_changed_examples_model_or_effort_cannot_reuse_saved_run(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_json(root / "manifest.json", {"pages": [sample_page().model_dump()]})
+            (root / "markdown").mkdir()
+            (root / "markdown/sample.md").write_text(
+                "Engineer in London", encoding="utf-8"
+            )
+            kwargs = {
+                "backend": "openrouter",
+                "run_id": "examples-test",
+                "api_key": "test-key",
+                "concurrency": 1,
+                "timeout": 1,
+                "attempts": 1,
+                "max_tokens": 100,
+                "limit": None,
+                "retry_failed": False,
+                "codex_model_label": "unused",
+                "codex_bin": None,
+            }
+            with patch(
+                "jobs_extraction_lab.extract.extract_openrouter",
+                new_callable=AsyncMock,
+                return_value={"error": "simulated provider failure"},
+            ) as call:
+                await run_extractions(
+                    root,
+                    **kwargs,
+                    examples="First example",
+                    openrouter_model=DEFAULT_OPENROUTER_MODEL,
+                    reasoning_effort=None,
+                    openrouter_provider=None,
+                )
+                await run_extractions(
+                    root,
+                    **kwargs,
+                    examples="First example",
+                    openrouter_model=DEFAULT_OPENROUTER_MODEL,
+                    reasoning_effort=None,
+                    openrouter_provider=None,
+                )
+                with self.assertRaisesRegex(ValueError, "Run settings changed"):
+                    await run_extractions(
+                        root,
+                        **kwargs,
+                        examples="Changed example",
+                        openrouter_model=DEFAULT_OPENROUTER_MODEL,
+                        reasoning_effort=None,
+                        openrouter_provider=None,
+                    )
+                with self.assertRaisesRegex(ValueError, "Run settings changed"):
+                    await run_extractions(
+                        root,
+                        **kwargs,
+                        examples="First example",
+                        openrouter_model="z-ai/glm-5.3-flash",
+                        reasoning_effort=None,
+                        openrouter_provider=None,
+                    )
+                with self.assertRaisesRegex(ValueError, "Run settings changed"):
+                    await run_extractions(
+                        root,
+                        **kwargs,
+                        examples="First example",
+                        openrouter_model=DEFAULT_OPENROUTER_MODEL,
+                        reasoning_effort="low",
+                        openrouter_provider=None,
+                    )
+                with self.assertRaisesRegex(ValueError, "Run settings changed"):
+                    await run_extractions(
+                        root,
+                        **kwargs,
+                        examples="First example",
+                        openrouter_model=DEFAULT_OPENROUTER_MODEL,
+                        reasoning_effort=None,
+                        openrouter_provider="together",
+                    )
+                call.assert_awaited_once()
+
+
+class CliTests(unittest.TestCase):
+    def test_larger_output_budget_is_forwarded_to_the_selected_model(self):
+        with (
+            TemporaryDirectory() as directory,
+            patch(
+                "jobs_extraction_lab.main.run_extractions",
+                new_callable=AsyncMock,
+                return_value=[],
+            ) as run,
+            patch(
+                "jobs_extraction_lab.main.create_comparison",
+                return_value={"totals": {"paired_pages": 0}},
+            ),
+        ):
+            result = CliRunner().invoke(
+                cli,
+                [
+                    "run",
+                    "--backend",
+                    "openrouter",
+                    "--openrouter-model",
+                    "z-ai/glm-5.3-flash",
+                    "--data-dir",
+                    directory,
+                    "--max-tokens",
+                    "16384",
+                    "--reasoning-effort",
+                    "low",
+                    "--openrouter-provider",
+                    "together",
+                ],
+            )
+        self.assertEqual(result.exit_code, 0, result.output)
+        assert run.await_args is not None
+        self.assertEqual(run.await_args.kwargs["max_tokens"], 16384)
+        self.assertEqual(run.await_args.kwargs["reasoning_effort"], "low")
+        self.assertEqual(run.await_args.kwargs["openrouter_provider"], "together")
+        self.assertEqual(
+            run.await_args.kwargs["openrouter_model"], "z-ai/glm-5.3-flash"
+        )
 
 
 if __name__ == "__main__":

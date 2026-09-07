@@ -1,0 +1,2983 @@
+{
+  "created_at": "2026-09-06T09:37:58+00:00",
+  "policy": "Source-reviewed checkpoint set frozen before extraction inference and before reading selection outputs. Not exhaustive gold or a measure of all-record precision. Matching is case/whitespace-insensitive substring per specified field (OR for lists), punctuation-insensitive digits for phone values, exact enum/job_url equality. Relationship inverses are explicitly equivalent. No outside knowledge.",
+  "pages": {
+    "p001": {
+      "url": "https://www.handelsbanken.se/en/",
+      "source_url": "https://www.handelsbanken.se/en/",
+      "domain": "handelsbanken.se",
+      "source_sha256": "96ca657eeb5302e1b0cc91f8df043075d5b56dd73e8510812e63a574cf855d1a"
+    },
+    "p002": {
+      "url": "https://www.handelsbanken.se/en/personal/contact-and-support",
+      "source_url": "https://www.handelsbanken.se/en/personal/contact-and-support",
+      "domain": "handelsbanken.se",
+      "source_sha256": "60f7b22315f41bc6712ee4ddf83cba5ce600299655df1f1f73548570e9034d50"
+    },
+    "p003": {
+      "url": "https://www.handelsbanken.se/en/about-us/swedish-subsidiaries",
+      "source_url": "https://www.handelsbanken.se/en/about-us/swedish-subsidiaries",
+      "domain": "handelsbanken.se",
+      "source_sha256": "f932b09ffa599eb5e428cab4f6158ec1022c0a78f23985a78e734d3fade6b7e5"
+    },
+    "p004": {
+      "url": "https://www.handelsbanken.se/en/about-us/legal-documents/lei",
+      "source_url": "https://www.handelsbanken.se/en/about-us/legal-documents/lei",
+      "domain": "handelsbanken.se",
+      "source_sha256": "5db5055fb9d19a57ca80a9691d4aa89e9533d4f213ac8a8a2953c2a096589ded"
+    },
+    "p005": {
+      "url": "https://www.handelsbanken.se/en/corporate/digital-services",
+      "source_url": "https://www.handelsbanken.se/en/corporate/digital-services",
+      "domain": "handelsbanken.se",
+      "source_sha256": "2110c00ec42f6f55bd20dd75eff97c5247c7eb48848cd7248771ae227b56566c"
+    },
+    "p006": {
+      "url": "https://www.kongsberg.com/about-us/management-and-organisation/board-of-directors/",
+      "source_url": "https://www.kongsberg.com/about-us/management-and-organisation/board-of-directors/",
+      "domain": "kongsberg.com",
+      "source_sha256": "95b04592a0165c3f4a3c3200af19e11cfc63e7e4aaead18312e37eb8964d1e0f"
+    },
+    "p007": {
+      "url": "https://www.kongsberg.com/about-us/management-and-organisation/group-companies/",
+      "source_url": "https://www.kongsberg.com/about-us/management-and-organisation/group-companies/",
+      "domain": "kongsberg.com",
+      "source_sha256": "e11405c61385291e3f6342ba307bbb6b6c4ece84a08ebce0fb2ee8e8a31d89ce"
+    },
+    "p008": {
+      "url": "https://www.kongsberg.com/about-us/contact/office-locations/aberdeen/",
+      "source_url": "https://www.kongsberg.com/about-us/contact/office-locations/aberdeen/",
+      "domain": "kongsberg.com",
+      "source_sha256": "05584f574be7ae9f8f271bd1a0e9de119a1ff967187b51771cb68ea90f48db1a"
+    },
+    "p009": {
+      "url": "https://www.kongsberg.com/careers/vacancies/project-engineer---configuration-management/",
+      "source_url": "https://www.kongsberg.com/careers/vacancies/project-engineer---configuration-management/",
+      "domain": "kongsberg.com",
+      "source_sha256": "b818043301f872a9589f8568a97946db3bd3de1dad568e29ad80e4569745899c"
+    },
+    "p010": {
+      "url": "https://www.kongsberg.com/about-us/",
+      "source_url": "https://www.kongsberg.com/about-us/",
+      "domain": "kongsberg.com",
+      "source_sha256": "2f287e19a37bb36f8d0b80fda9ca022ad8c86ef14a138eac6eabed63bf5ffdfb"
+    },
+    "p011": {
+      "url": "https://www.polarbrod.se/",
+      "source_url": "https://www.polarbrod.se/",
+      "domain": "polarbrod.se",
+      "source_sha256": "7d2bc910532fb89037a415ea326822b769885af7202aa9741e9600ed8869b36e"
+    },
+    "p012": {
+      "url": "https://www.polarbrod.se/om-polarbrod/kontakt/",
+      "source_url": "https://www.polarbrod.se/om-polarbrod/kontakt/",
+      "domain": "polarbrod.se",
+      "source_sha256": "88cad8a52a05dca59387b6551127d791a3baf61b727881a79ec63946ddbd8c4f"
+    },
+    "p013": {
+      "url": "https://www.polarbrod.se/om-polarbrod/jobba-hos-oss/",
+      "source_url": "https://www.polarbrod.se/om-polarbrod/jobba-hos-oss/",
+      "domain": "polarbrod.se",
+      "source_sha256": "94d700c7a881f20c21fa7b28598d03beca7253f4794d7b1c40544eaadeed7101"
+    },
+    "p014": {
+      "url": "https://www.polarbrod.se/om-polarbrod/jobba-hos-oss/har-finns-polarbrodskoncernen/",
+      "source_url": "https://www.polarbrod.se/om-polarbrod/jobba-hos-oss/har-finns-polarbrodskoncernen/",
+      "domain": "polarbrod.se",
+      "source_sha256": "bd915acf12e423bc5bbfbeba5163b043470768ff79e26a39bc6196849b25cfed"
+    },
+    "p015": {
+      "url": "https://www.polarbrod.se/foodservice-produkter/hallakaka/",
+      "source_url": "https://www.polarbrod.se/foodservice-produkter/hallakaka/",
+      "domain": "polarbrod.se",
+      "source_sha256": "1caea0709b7cccac88375f94d823a2cadf78bafcae6cdb5ebc397bf13ccda2ec"
+    },
+    "p016": {
+      "url": "https://www.pricer.com/contact",
+      "source_url": "https://www.pricer.com/contact",
+      "domain": "pricer.com",
+      "source_sha256": "882edf341c13088621f7cc65a4a2f1afeff4949ea6e7dbfcba68f93fa374ffbe"
+    },
+    "p017": {
+      "url": "https://www.pricer.com/about/pricer-in-brief",
+      "source_url": "https://www.pricer.com/about/pricer-in-brief",
+      "domain": "pricer.com",
+      "source_sha256": "ff0a0c7673bf24da2afc94d338d00a544cec603b6bf8d8945d60efb58d6f5714"
+    },
+    "p018": {
+      "url": "https://www.pricer.com/about/corporate-governance/senior-executives",
+      "source_url": "https://www.pricer.com/about/corporate-governance/senior-executives",
+      "domain": "pricer.com",
+      "source_sha256": "3dc8c10c5f9ff25349ef8134528169540d141f9fe3aa04c28ec8b9e213635dfb"
+    },
+    "p019": {
+      "url": "https://www.pricer.com/about/ecosystem",
+      "source_url": "https://www.pricer.com/about/ecosystem",
+      "domain": "pricer.com",
+      "source_sha256": "cd5f9dd3813c6bc77212185bb18ad476120ac1a4491342d07fe72d2fd61ebc84"
+    },
+    "p020": {
+      "url": "https://www.pricer.com/products",
+      "source_url": "https://www.pricer.com/products",
+      "domain": "pricer.com",
+      "source_sha256": "aaf372bb870f0602b976dd5695e88fae8a12c1723f0a38919e40b2907e9b67b4"
+    },
+    "p021": {
+      "url": "https://www.tobii.com/contact",
+      "source_url": "https://www.tobii.com/contact",
+      "domain": "tobii.com",
+      "source_sha256": "957643897dcd56cd8b6cf3851fb2dd63fd109212d0da9750d4bf28ccd3716aa2"
+    },
+    "p022": {
+      "url": "https://www.tobii.com/company/this-is-tobii",
+      "source_url": "https://www.tobii.com/company/this-is-tobii",
+      "domain": "tobii.com",
+      "source_sha256": "9718b278e7639c1477dc8a9485a8859fce1d40fd7390179ca0b12377c053ba72"
+    },
+    "p023": {
+      "url": "https://www.tobii.com/company/this-is-tobii/our-software-partners",
+      "source_url": "https://www.tobii.com/company/this-is-tobii/our-software-partners",
+      "domain": "tobii.com",
+      "source_sha256": "1025f76cdbac81710eeb0e52782003c951a813fc7716c721210204f6c1f40520"
+    },
+    "p024": {
+      "url": "https://www.tobii.com/products/consulting-services",
+      "source_url": "https://www.tobii.com/products/consulting-services",
+      "domain": "tobii.com",
+      "source_sha256": "035036e0e187718adef60a0d081f6d5632585c421805f590af902d001eb3cbd3"
+    },
+    "p025": {
+      "url": "https://www.tobii.com/products/eye-trackers",
+      "source_url": "https://www.tobii.com/products/eye-trackers",
+      "domain": "tobii.com",
+      "source_sha256": "447c92e3dbe70c60959163ae376771eef399436c298b8db5f3ae86dfc313a198"
+    },
+    "p026": {
+      "url": "https://www.trumpf.com/en_INT/",
+      "source_url": "https://www.trumpf.com/en_INT/",
+      "domain": "trumpf.com",
+      "source_sha256": "0eef4b45f6065e07a4f26d4be8965f835306c6e729b37d4a63f45e1acd7f8848"
+    },
+    "p027": {
+      "url": "https://www.trumpf.com/en_INT/newsroom/contact-person/",
+      "source_url": "https://www.trumpf.com/en_INT/newsroom/contact-person/",
+      "domain": "trumpf.com",
+      "source_sha256": "810277130763d67e60f70207242ce9ccbbbdf47cee85bd28e5f1e00c156195dd"
+    },
+    "p028": {
+      "url": "https://www.trumpf.com/en_INT/company/additional-fields-of-activity/affiliated-companies-and-other-brands/",
+      "source_url": "https://www.trumpf.com/en_INT/company/additional-fields-of-activity/affiliated-companies-and-other-brands/",
+      "domain": "trumpf.com",
+      "source_sha256": "1559177763de1f96e4bf7d119b568419fe51c089c7477a6489c752f0e2997568"
+    },
+    "p029": {
+      "url": "https://www.trumpf.com/en_INT/company/additional-fields-of-activity/financial-services/legal-notices-for-trumpf-financial-services-gmbh/",
+      "source_url": "https://www.trumpf.com/en_INT/company/additional-fields-of-activity/financial-services/legal-notices-for-trumpf-financial-services-gmbh/",
+      "domain": "trumpf.com",
+      "source_sha256": "c0c7d0b674df85fec0f53f2398071abf33f9887b9a93abedcfd592531949bb32"
+    },
+    "p030": {
+      "url": "https://www.trumpf.com/en_INT/company/additional-fields-of-activity/financial-services/",
+      "source_url": "https://www.trumpf.com/en_INT/company/additional-fields-of-activity/financial-services/",
+      "domain": "trumpf.com",
+      "source_sha256": "c927c5ebd3ea017a8f22bb9cd5354830049348995eb662664018692324e6b73d"
+    },
+    "p031": {
+      "url": "https://www.vaisala.com/en/investors/corporate-governance/board-directors",
+      "source_url": "https://www.vaisala.com/en/investors/corporate-governance/board-directors",
+      "domain": "vaisala.com",
+      "source_sha256": "869470125aa5020134761f9b4d4aaea58637b70bf42b8a98ba15e38e9b2a7e04"
+    },
+    "p032": {
+      "url": "https://www.vaisala.com/en/services",
+      "source_url": "https://www.vaisala.com/en/services",
+      "domain": "vaisala.com",
+      "source_sha256": "a8b331828281da3e757d3c98578d815a30dbe9c1ba35d57e8159c5a74cc3ff11"
+    },
+    "p033": {
+      "url": "https://www.vaisala.com/en/vaisala-company/our-story",
+      "source_url": "https://www.vaisala.com/en/vaisala-company/our-story",
+      "domain": "vaisala.com",
+      "source_sha256": "ae74be5a39e679f97b0e540a663f574ef595469e87aa5339627b56f4e6f0a867"
+    },
+    "p034": {
+      "url": "https://www.vaisala.com/en/careers",
+      "source_url": "https://www.vaisala.com/en/careers",
+      "domain": "vaisala.com",
+      "source_sha256": "f342929c19212fd7467f9f5c6dca0167aed5494bef657a1151632a4d51bb2336"
+    },
+    "p035": {
+      "url": "https://www.vaisala.com/en/services/calibration-services",
+      "source_url": "https://www.vaisala.com/en/services/calibration-services",
+      "domain": "vaisala.com",
+      "source_sha256": "527ea108cce5756c2a0080b68801b16c4ed8d838e9f7eb08dc8cb2b1778c4914"
+    },
+    "p036": {
+      "url": "https://www.vestas.com/en/about/our-governance/our-management",
+      "source_url": "https://www.vestas.com/en/about/our-governance/our-management",
+      "domain": "vestas.com",
+      "source_sha256": "38e6eee7f83f2835d83baafe74f4159b4175e5049045bb65608eeaeac662750d"
+    },
+    "p037": {
+      "url": "https://www.vestas.com/en/about/our-locations",
+      "source_url": "https://www.vestas.com/en/about/our-locations",
+      "domain": "vestas.com",
+      "source_sha256": "553816d75a146f5cc8b0142edafb5619e88b53816a16780f48541d33dc84de90"
+    },
+    "p038": {
+      "url": "https://www.vestas.com/en/about/our-partners/Customers",
+      "source_url": "https://www.vestas.com/en/about/our-partners/Customers",
+      "domain": "vestas.com",
+      "source_sha256": "f58d06bbbb2ac52f3ccf680a9842ae4904d3def23a7cf11d535aca35cd0c8e36"
+    },
+    "p039": {
+      "url": "https://www.vestas.com/en/energy-solutions/service/digital-services",
+      "source_url": "https://www.vestas.com/en/energy-solutions/service/digital-services",
+      "domain": "vestas.com",
+      "source_sha256": "e7188191ddf267fd6f4691fe61f227a0e975efbaec4666518aa05d1fec2c1f2a"
+    },
+    "p040": {
+      "url": "https://www.vestas.com/en/careers/job-openings",
+      "source_url": "https://careers.vestas.com/search/?q=&locationsearch=",
+      "domain": "vestas.com",
+      "source_sha256": "371fc5696903c748ad1bd3c08fb3c1e57caa221bf4764bf1e1df54a7c328cb5a"
+    }
+  },
+  "checks": [
+    {
+      "check_id": "f001",
+      "page_id": "p002",
+      "objective": "company_profile",
+      "expected": {
+        "company": "Handelsbanken",
+        "field": "registration_number",
+        "value": "502007-7862"
+      },
+      "alternatives": [],
+      "source_needle": "502007-7862",
+      "support_excerpt": "37 peppol id: 0007:5020077862 mail address for billing: shbab@pdf.scancloud.se company information organisation number: 502007-7862 swift-/bic address: handsess lei number (legal entity identifier): nhbdilhztycnbv5uyz31 giin number: tt0d1b.00000.le.752 we are here for you advice, help and support advisory services we have an extensive branch network across the country with more ",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f002",
+      "page_id": "p002",
+      "objective": "company_profile",
+      "expected": {
+        "company": "Handelsbanken",
+        "field": "lei",
+        "value": "NHBDILHZTYCNBV5UYZ31"
+      },
+      "alternatives": [],
+      "source_needle": "NHBDILHZTYCNBV5UYZ31",
+      "support_excerpt": "company information organisation number: 502007-7862 swift-/bic address: handsess lei number (legal entity identifier): nhbdilhztycnbv5uyz31 giin number: tt0d1b.00000.le.752 we are here for you advice, help and support advisory services we have an extensive branch network across the country with more than 1 ,800 advisors. find a branch contact us becoming a customer personal service arou",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f003",
+      "page_id": "p010",
+      "objective": "company_profile",
+      "expected": {
+        "company": "Kongsberg",
+        "field": "founded",
+        "value": "1814"
+      },
+      "alternatives": [],
+      "source_needle": "1814",
+      "support_excerpt": "unch services and production of small satellites to downloading and managing satellite data. the company was founded in 1814 in the town of kongsberg, norway. today, we are more than 7,500 employees in about 20 countries. the company is headquartered in norway and listed on the oslo stock exchange. the norwegian government controls about 50.01 percent of the shares in kon",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f004",
+      "page_id": "p010",
+      "objective": "company_profile",
+      "expected": {
+        "company": "Kongsberg",
+        "field": "employee_count",
+        "value": [
+          "7,500",
+          "7500"
+        ]
+      },
+      "alternatives": [],
+      "source_needle": "7,500",
+      "support_excerpt": " and managing satellite data. the company was founded in 1814 in the town of kongsberg, norway. today, we are more than 7,500 employees in about 20 countries. the company is headquartered in norway and listed on the oslo stock exchange. the norwegian government controls about 50.01 percent of the shares in kongsberg. through innovation and state-of-the-art industrial produ",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f005",
+      "page_id": "p013",
+      "objective": "company_profile",
+      "expected": {
+        "company": "Polarbröd",
+        "field": "employee_count",
+        "value": "270"
+      },
+      "alternatives": [],
+      "source_needle": "270",
+      "support_excerpt": "ationer? se lediga tjänster här finns vi polarbrödskoncernen finns i älvsbyn, bredbyn och umeå och består idag av cirka 270 medarbetare. läs mer om våra verksamhetsorter vårt erbjudande hos oss får du vara med och forma framtiden – både för dig själv och för kommande generationer. vi erbjuder en inspirerande och utvecklande miljö. vi erbjuder också en arbetsplats där du ",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f006",
+      "page_id": "p014",
+      "objective": "company_profile",
+      "expected": {
+        "company": "Polarbröd",
+        "field": "employee_count",
+        "value": "270"
+      },
+      "alternatives": [],
+      "source_needle": "270",
+      "support_excerpt": "ge svenska här finns polarbrödskoncernen polarbrödskoncernen finns i älvsbyn, bredbyn och umeå och består idag av cirka 270 medarbetare. polarbröd har sitt huvudkontor och ett bageri i älvsbyn. polarbröds andra bageri ligger i bredbyn i västernorrland. dessutom finns ett marknads- och kommunikationskontor i umeå. polarrenen, som verkar inom fastigheter, förnybar energi o",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f007",
+      "page_id": "p022",
+      "objective": "company_profile",
+      "expected": {
+        "company": "Tobii",
+        "field": "founded",
+        "value": "2001"
+      },
+      "alternatives": [],
+      "source_needle": "2001",
+      "support_excerpt": "e headquartered in stockholm, tobii is a global technology company with teams and partners around the world. founded in 2001 ~ 500 tobiians net sales 857 msek (2024) listed on nasdaq stockholm (tobii) since 2015 tolbii corporate our global presence 16 countries 1,000+ patents and applications discover attention computing see how technology that understands human attention",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f008",
+      "page_id": "p022",
+      "objective": "company_profile",
+      "expected": {
+        "company": "Tobii",
+        "field": "employee_count",
+        "value": "500"
+      },
+      "alternatives": [],
+      "source_needle": "500",
+      "support_excerpt": "uartered in stockholm, tobii is a global technology company with teams and partners around the world. founded in 2001 ~ 500 tobiians net sales 857 msek (2024) listed on nasdaq stockholm (tobii) since 2015 tolbii corporate our global presence 16 countries 1,000+ patents and applications discover attention computing see how technology that understands human attention and i",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f009",
+      "page_id": "p029",
+      "objective": "company_profile",
+      "expected": {
+        "company": "TRUMPF Financial Services",
+        "field": "legal_name",
+        "value": "TRUMPF Financial Services GmbH"
+      },
+      "alternatives": [],
+      "source_needle": "TRUMPF Financial Services GmbH",
+      "support_excerpt": "legal notices for trumpf financial services gmbh | trumpf country/region and language selection close products back overview products machines & systems back overview machines & systems 2d laser cutting machines 3d laser cutting machines laser welding systems and arc welding cells laser tube cutti",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f010",
+      "page_id": "p033",
+      "objective": "company_profile",
+      "expected": {
+        "company": "Vaisala",
+        "field": "employee_count",
+        "value": [
+          "2,400",
+          "2400"
+        ]
+      },
+      "alternatives": [],
+      "source_needle": "2,400",
+      "support_excerpt": "on as we take on our most important role to date: the fight against climate change. today, we are a global team of over 2,400 innovators and solution seekers, working relentlessly towards our purpose of taking every measure for the planet. we know that when our earth’s future is at stake, good enough data is never good enough. not when great data can save energy, resources",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f011",
+      "page_id": "p034",
+      "objective": "company_profile",
+      "expected": {
+        "company": "Vaisala",
+        "field": "employee_count",
+        "value": [
+          "2 400",
+          "2400",
+          "2,400"
+        ]
+      },
+      "alternatives": [],
+      "source_needle": "2 400",
+      "support_excerpt": "e for the planet - this is the unique mix that attracted us to work at vaisala. it's also why we choose to stay here. > 2 400 employees 26 offices globally 23% of personnel in r&d 4.0/5 employee engagement score > 2 400 employees 26 offices globally 23% of personnel in r&d 4.0/5 employee engagement score our planet needs you from predicting hurricanes and wildfires, to opt",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f012",
+      "page_id": "p002",
+      "objective": "company_contacts",
+      "expected": {
+        "owner": "Handelsbanken",
+        "type": "phone",
+        "value": "0771-77 88 99"
+      },
+      "alternatives": [],
+      "source_needle": "0771-77 88 99",
+      "support_excerpt": "h office. contact us about banking matters or digital service call us 24/7 help with banking and support questions call 0771-77 88 99 chat with us open every day 8am-10pm to the chat ask us on facebook open every day 8am-10pm go to handelsbanken on facebook opens in a new window support matters find answers to frequently asked questions to support page meet us at the branch office",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f013",
+      "page_id": "p002",
+      "objective": "company_contacts",
+      "expected": {
+        "owner": "Handelsbanken",
+        "type": "email",
+        "value": "SHBAB@pdf.scancloud.se"
+      },
+      "alternatives": [],
+      "source_needle": "SHBAB@pdf.scancloud.se",
+      "support_excerpt": "andelsbanken ab fe 7628 831 90 östersund sweden gln: 7350043760137 peppol id: 0007:5020077862 mail address for billing: shbab@pdf.scancloud.se company information organisation number: 502007-7862 swift-/bic address: handsess lei number (legal entity identifier): nhbdilhztycnbv5uyz31 giin number: tt0d1b.00000.le.752 we are here for you advice, help and support advisory services we have an e",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f014",
+      "page_id": "p008",
+      "objective": "company_contacts",
+      "expected": {
+        "owner": [
+          "Kongsberg",
+          "Aberdeen",
+          "General Inquiries"
+        ],
+        "type": "email",
+        "value": "info.uk@kd.kongsberg.com"
+      },
+      "alternatives": [],
+      "source_needle": "info.uk@kd.kongsberg.com",
+      "support_excerpt": ">united kingdom</span> </div> <div class=\"addresssection__links\"> <li> <div class=\"contactinfo__email\"> <a href=\"mailto:info.uk@kd.kongsberg.com\">info.uk<wbr><text>@</text>kd.kongsberg.com</wbr></a> </div> </li> <li> <div class=\"contactinfo__call contactinfo__phone\"> <a href=\"tel:+44%201224%20278%20300\">+44 1224 278 300</a> </div> </li> </div> </div> </div> </section> <section class=\"officec",
+      "support_kind": "html"
+    },
+    {
+      "check_id": "f015",
+      "page_id": "p008",
+      "objective": "company_contacts",
+      "expected": {
+        "owner": [
+          "Kongsberg",
+          "Rental"
+        ],
+        "type": "email",
+        "value": "rental.uk@kd.kongsberg.com"
+      },
+      "alternatives": [],
+      "source_needle": "rental.uk@kd.kongsberg.com",
+      "support_excerpt": "ontactinfo__title\">contact</h2> <div class=\"contactinfo__linksection\"> <div class=\"contactinfo__email\"> <a href=\"mailto:rental.uk@kd.kongsberg.com\">send email</a> </div> <div class=\"contactinfo__call contactinfo__phone\"> <a href=\"tel:+44%201224%20278%20580\">+44 1224 278 580</a> </div> </div> </div> </div> </div> </section> </div> </section> </article> </main> <div id=\"react_0hnob09ki1gmk\"><foo",
+      "support_kind": "html"
+    },
+    {
+      "check_id": "f016",
+      "page_id": "p008",
+      "objective": "company_contacts",
+      "expected": {
+        "owner": [
+          "Kongsberg",
+          "support"
+        ],
+        "type": "email",
+        "value": "discovery.support@kd.kongsberg.com"
+      },
+      "alternatives": [],
+      "source_needle": "discovery.support@kd.kongsberg.com",
+      "support_excerpt": "ection\"> <h3 class=\"contactinfo__subtitle\">global support hotline</h3> <div class=\"contactinfo__email\"> <a href=\"mailto:discovery.support@kd.kongsberg.com\">discovery.support<wbr><text>@</text>kd.kongsberg.com</wbr></a> </div> </div> </div> </div> </div> </section> <section class=\"officecontactinfo\"> <div class=\"officecontactinfo__wrapper\"> <div class=\"officecontactinfo__container\"> <h2 class=\"officeco",
+      "support_kind": "html"
+    },
+    {
+      "check_id": "f017",
+      "page_id": "p012",
+      "objective": "company_contacts",
+      "expected": {
+        "owner": "Helena Rönnmark",
+        "type": "email",
+        "value": "helena.ronnmark@polarbrod.se",
+        "owner_kind": "person"
+      },
+      "alternatives": [],
+      "source_needle": "helena.ronnmark@polarbrod.se",
+      "support_excerpt": "a facebook x mail stäng av export polarbröd norge svenska presskontakt helena rönnmark kommunikationschef 010-450 60 04 helena.ronnmark@polarbrod.se kristin simonsson kommunikatör 010-450 60 24 kristin.simonsson@polarbrod.se pressrum polarbröd är ett familjeföretag med hundraåriga traditioner av norrländskt entreprenörskap och brödkultur. vi har funnits i fem generationer och vill finnas lika lä",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f018",
+      "page_id": "p012",
+      "objective": "company_contacts",
+      "expected": {
+        "owner": "Helena Rönnmark",
+        "type": "phone",
+        "value": "010-450 60 04",
+        "owner_kind": "person"
+      },
+      "alternatives": [],
+      "source_needle": "010-450 60 04",
+      "support_excerpt": "a stäng av dela facebook x mail stäng av export polarbröd norge svenska presskontakt helena rönnmark kommunikationschef 010-450 60 04 helena.ronnmark@polarbrod.se kristin simonsson kommunikatör 010-450 60 24 kristin.simonsson@polarbrod.se pressrum polarbröd är ett familjeföretag med hundraåriga traditioner av norrländskt entreprenörskap och brödkultur. vi har funnits i fem generat",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f019",
+      "page_id": "p012",
+      "objective": "company_contacts",
+      "expected": {
+        "owner": "Kristin Simonsson",
+        "type": "email",
+        "value": "kristin.simonsson@polarbrod.se",
+        "owner_kind": "person"
+      },
+      "alternatives": [],
+      "source_needle": "kristin.simonsson@polarbrod.se",
+      "support_excerpt": "ena rönnmark kommunikationschef 010-450 60 04 helena.ronnmark@polarbrod.se kristin simonsson kommunikatör 010-450 60 24 kristin.simonsson@polarbrod.se pressrum polarbröd är ett familjeföretag med hundraåriga traditioner av norrländskt entreprenörskap och brödkultur. vi har funnits i fem generationer och vill finnas lika länge till. det moderna företaget har vuxit från ett litet familjebageri till ",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f020",
+      "page_id": "p012",
+      "objective": "company_contacts",
+      "expected": {
+        "owner": "Kristin Simonsson",
+        "type": "phone",
+        "value": "010-450 60 24",
+        "owner_kind": "person"
+      },
+      "alternatives": [],
+      "source_needle": "010-450 60 24",
+      "support_excerpt": "esskontakt helena rönnmark kommunikationschef 010-450 60 04 helena.ronnmark@polarbrod.se kristin simonsson kommunikatör 010-450 60 24 kristin.simonsson@polarbrod.se pressrum polarbröd är ett familjeföretag med hundraåriga traditioner av norrländskt entreprenörskap och brödkultur. vi har funnits i fem generationer och vill finnas lika länge till. det moderna företaget har vuxit frå",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f021",
+      "page_id": "p016",
+      "objective": "company_contacts",
+      "expected": {
+        "owner": "Pricer",
+        "type": "email",
+        "value": "info@pricer.com"
+      },
+      "alternatives": [],
+      "source_needle": "info@pricer.com",
+      "support_excerpt": "asses: sweden (hq) pricer ab box 6302 s- 102 35 stockholm visiting address: hälsingegatan 47 s- 113 31 stockholm sweden info@pricer.com driving directions france pricer s.a.s. parc ariane – bât. saturne 3 rue hélène boucher 78280 guyancourt phone : +33 1 6108 4020 fax : +33 1 6108 4030 info@pricer.com driving directions 30 km west of paris. easy access via the a13 / a12 freeways. lo",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f022",
+      "page_id": "p016",
+      "objective": "company_contacts",
+      "expected": {
+        "owner": [
+          "Pricer",
+          "France"
+        ],
+        "type": "phone",
+        "value": "+33 1 6108 4020"
+      },
+      "alternatives": [],
+      "source_needle": "+33 1 6108 4020",
+      "support_excerpt": "er.com driving directions france pricer s.a.s. parc ariane – bât. saturne 3 rue hélène boucher 78280 guyancourt phone : +33 1 6108 4020 fax : +33 1 6108 4030 info@pricer.com driving directions 30 km west of paris. easy access via the a13 / a12 freeways. located in the town of st quentin en yvelines in a business park. debugger: content double module.layout: equal layoutclasses: amer",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f023",
+      "page_id": "p027",
+      "objective": "company_contacts",
+      "expected": {
+        "owner": "Andreas Möller",
+        "type": "email",
+        "value": [
+          "andreas.moeller@trumpf.com",
+          "andreas.moeller(at)trumpf.com"
+        ],
+        "owner_kind": "person"
+      },
+      "alternatives": [],
+      "source_needle": "andreas.moeller@trumpf.com",
+      "support_excerpt": "hydrated\"> <div> dr. andreas möller </div> <div> chief communications and public affairs officer </div> <a href=\"mailto:andreas.moeller@trumpf.com\"> andreas.moeller(at)trumpf.com </a> <a href=\"tel:+49-7156-30336824\"> phone +49 7156 30336824 </a> </ux-iws-contact-card> <ux-iws-contact-card class=\"hydrated\"> <div> marleen kledig </div> <div> executive assistant corporate and management communica",
+      "support_kind": "html"
+    },
+    {
+      "check_id": "f024",
+      "page_id": "p027",
+      "objective": "people",
+      "expected": {
+        "name": "Andreas Möller",
+        "role": "Chief Communications and Public Affairs Officer",
+        "company": "TRUMPF"
+      },
+      "alternatives": [],
+      "source_needle": "Andreas Möller",
+      "support_excerpt": "people directly. if you are not a journalist, please use the general contact form. your international press contact dr. andreas möller chief communications and public affairs officer andreas.moeller(at)trumpf.com phone +49 7156 30336824 marleen kledig executive assistant corporate and management communications marleen.kledig(at)trumpf.com phone +49 7156 30330408 rainer berghausen h",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f025",
+      "page_id": "p027",
+      "objective": "company_contacts",
+      "expected": {
+        "owner": "Marleen Kledig",
+        "type": "email",
+        "value": [
+          "marleen.kledig@trumpf.com",
+          "marleen.kledig(at)trumpf.com"
+        ],
+        "owner_kind": "person"
+      },
+      "alternatives": [],
+      "source_needle": "marleen.kledig@trumpf.com",
+      "support_excerpt": "\"> <div> marleen kledig </div> <div> executive assistant corporate and management communications </div> <a href=\"mailto:marleen.kledig@trumpf.com\"> marleen.kledig(at)trumpf.com </a> <a href=\"tel:+49-7156-30330408\"> phone +49 7156 30330408 </a> </ux-iws-contact-card> <ux-iws-contact-card class=\"hydrated\"> <div> rainer berghausen </div> <div> head of group communications, spokesperson </div> <a",
+      "support_kind": "html"
+    },
+    {
+      "check_id": "f026",
+      "page_id": "p027",
+      "objective": "people",
+      "expected": {
+        "name": "Marleen Kledig",
+        "role": "Executive Assistant",
+        "company": "TRUMPF"
+      },
+      "alternatives": [],
+      "source_needle": "Marleen Kledig",
+      "support_excerpt": "r. andreas möller chief communications and public affairs officer andreas.moeller(at)trumpf.com phone +49 7156 30336824 marleen kledig executive assistant corporate and management communications marleen.kledig(at)trumpf.com phone +49 7156 30330408 rainer berghausen head of group communications, spokesperson rainer.berghausen(at)trumpf.com phone +49 7156 30331720 stephanie pohl assi",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f027",
+      "page_id": "p027",
+      "objective": "company_contacts",
+      "expected": {
+        "owner": "Rainer Berghausen",
+        "type": "email",
+        "value": [
+          "rainer.berghausen@trumpf.com",
+          "rainer.berghausen(at)trumpf.com"
+        ],
+        "owner_kind": "person"
+      },
+      "alternatives": [],
+      "source_needle": "rainer.berghausen@trumpf.com",
+      "support_excerpt": "lass=\"hydrated\"> <div> rainer berghausen </div> <div> head of group communications, spokesperson </div> <a href=\"mailto:rainer.berghausen@trumpf.com\"> rainer.berghausen(at)trumpf.com </a> <a href=\"tel:+49-7156-30331720\"> phone +49 7156 30331720 </a> </ux-iws-contact-card> <ux-iws-contact-card class=\"hydrated\"> <div> stephanie pohl </div> <div> assistant group communications </div> <a href=\"mailt",
+      "support_kind": "html"
+    },
+    {
+      "check_id": "f028",
+      "page_id": "p027",
+      "objective": "people",
+      "expected": {
+        "name": "Rainer Berghausen",
+        "role": "Head of Group Communications",
+        "company": "TRUMPF"
+      },
+      "alternatives": [],
+      "source_needle": "Rainer Berghausen",
+      "support_excerpt": "kledig executive assistant corporate and management communications marleen.kledig(at)trumpf.com phone +49 7156 30330408 rainer berghausen head of group communications, spokesperson rainer.berghausen(at)trumpf.com phone +49 7156 30331720 stephanie pohl assistant group communications stephanie.pohl(at)trumpf.com phone +49 7156 30331920 dr. manuel thomä head of international media relati",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f029",
+      "page_id": "p027",
+      "objective": "company_contacts",
+      "expected": {
+        "owner": "Stephanie Pohl",
+        "type": "email",
+        "value": [
+          "stephanie.pohl@trumpf.com",
+          "stephanie.pohl(at)trumpf.com"
+        ],
+        "owner_kind": "person"
+      },
+      "alternatives": [],
+      "source_needle": "stephanie.pohl@trumpf.com",
+      "support_excerpt": "-contact-card class=\"hydrated\"> <div> stephanie pohl </div> <div> assistant group communications </div> <a href=\"mailto:stephanie.pohl@trumpf.com\"> stephanie.pohl(at)trumpf.com </a> <a href=\"tel:+49-7156-30331920\"> phone +49 7156 30331920 </a> </ux-iws-contact-card> <ux-iws-contact-card class=\"hydrated\"> <div> dr. manuel thomä </div> <div> head of international media relations, spokesperson <",
+      "support_kind": "html"
+    },
+    {
+      "check_id": "f030",
+      "page_id": "p027",
+      "objective": "people",
+      "expected": {
+        "name": "Stephanie Pohl",
+        "role": "Assistant Group Communications",
+        "company": "TRUMPF"
+      },
+      "alternatives": [],
+      "source_needle": "Stephanie Pohl",
+      "support_excerpt": "08 rainer berghausen head of group communications, spokesperson rainer.berghausen(at)trumpf.com phone +49 7156 30331720 stephanie pohl assistant group communications stephanie.pohl(at)trumpf.com phone +49 7156 30331920 dr. manuel thomä head of international media relations, spokesperson manuel.thomae(at)trumpf.com phone +49 7156 30330992 ramona hönl spokesperson machine tools ramon",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f031",
+      "page_id": "p027",
+      "objective": "company_contacts",
+      "expected": {
+        "owner": "Manuel Thomä",
+        "type": "email",
+        "value": [
+          "manuel.thomae@trumpf.com",
+          "manuel.thomae(at)trumpf.com"
+        ],
+        "owner_kind": "person"
+      },
+      "alternatives": [],
+      "source_needle": "manuel.thomae@trumpf.com",
+      "support_excerpt": "drated\"> <div> dr. manuel thomä </div> <div> head of international media relations, spokesperson </div> <a href=\"mailto:manuel.thomae@trumpf.com\"> manuel.thomae(at)trumpf.com </a> <a href=\"tel:+49-7156-30330992\"> phone +49 7156 30330992 </a> </ux-iws-contact-card> <ux-iws-contact-card class=\"hydrated\"> <div> ramona hönl </div> <div> spokesperson machine tools </div> <a href=\"mailto:ramona.ho",
+      "support_kind": "html"
+    },
+    {
+      "check_id": "f032",
+      "page_id": "p027",
+      "objective": "people",
+      "expected": {
+        "name": "Manuel Thomä",
+        "role": "Head of International Media Relations",
+        "company": "TRUMPF"
+      },
+      "alternatives": [],
+      "source_needle": "Manuel Thomä",
+      "support_excerpt": "49 7156 30331720 stephanie pohl assistant group communications stephanie.pohl(at)trumpf.com phone +49 7156 30331920 dr. manuel thomä head of international media relations, spokesperson manuel.thomae(at)trumpf.com phone +49 7156 30330992 ramona hönl spokesperson machine tools ramona.hoenl(at)trumpf.com phone +49 7156 30331251 gabriel pankow spokesperson for laser technology gabrie",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f033",
+      "page_id": "p027",
+      "objective": "company_contacts",
+      "expected": {
+        "owner": "Ramona Hönl",
+        "type": "email",
+        "value": [
+          "ramona.hoenl@trumpf.com",
+          "ramona.hoenl(at)trumpf.com"
+        ],
+        "owner_kind": "person"
+      },
+      "alternatives": [],
+      "source_needle": "ramona.hoenl@trumpf.com",
+      "support_excerpt": "<ux-iws-contact-card class=\"hydrated\"> <div> ramona hönl </div> <div> spokesperson machine tools </div> <a href=\"mailto:ramona.hoenl@trumpf.com\"> ramona.hoenl(at)trumpf.com </a> <a href=\"tel:+49-7156-30331251\"> phone +49 7156 30331251 </a> </ux-iws-contact-card> <ux-iws-contact-card class=\"hydrated\"> <div> gabriel pankow </div> <div> spokesperson for laser technology </div> <a href=\"mailto:",
+      "support_kind": "html"
+    },
+    {
+      "check_id": "f034",
+      "page_id": "p027",
+      "objective": "people",
+      "expected": {
+        "name": "Ramona Hönl",
+        "role": "Spokesperson Machine Tools",
+        "company": "TRUMPF"
+      },
+      "alternatives": [],
+      "source_needle": "Ramona Hönl",
+      "support_excerpt": "r. manuel thomä head of international media relations, spokesperson manuel.thomae(at)trumpf.com phone +49 7156 30330992 ramona hönl spokesperson machine tools ramona.hoenl(at)trumpf.com phone +49 7156 30331251 gabriel pankow spokesperson for laser technology gabriel.pankow(at)trumpf.com phone +49 7156 30331559 catharina daum international communications manager catharina.daum(at",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f035",
+      "page_id": "p027",
+      "objective": "company_contacts",
+      "expected": {
+        "owner": "Gabriel Pankow",
+        "type": "email",
+        "value": [
+          "gabriel.pankow@trumpf.com",
+          "gabriel.pankow(at)trumpf.com"
+        ],
+        "owner_kind": "person"
+      },
+      "alternatives": [],
+      "source_needle": "gabriel.pankow@trumpf.com",
+      "support_excerpt": "ntact-card class=\"hydrated\"> <div> gabriel pankow </div> <div> spokesperson for laser technology </div> <a href=\"mailto:gabriel.pankow@trumpf.com\"> gabriel.pankow(at)trumpf.com </a> <a href=\"tel:+49-7156-30331559\"> phone +49 7156 30331559 </a> </ux-iws-contact-card> <ux-iws-contact-card class=\"hydrated\"> <div> catharina daum </div> <div> international communications manager </div> <a href=\"ma",
+      "support_kind": "html"
+    },
+    {
+      "check_id": "f036",
+      "page_id": "p027",
+      "objective": "people",
+      "expected": {
+        "name": "Gabriel Pankow",
+        "role": "Spokesperson for Laser Technology",
+        "company": "TRUMPF"
+      },
+      "alternatives": [],
+      "source_needle": "Gabriel Pankow",
+      "support_excerpt": "f.com phone +49 7156 30330992 ramona hönl spokesperson machine tools ramona.hoenl(at)trumpf.com phone +49 7156 30331251 gabriel pankow spokesperson for laser technology gabriel.pankow(at)trumpf.com phone +49 7156 30331559 catharina daum international communications manager catharina.daum(at)trumpf.com phone +49 30 20143207 political communication kristin furtenbach head of represen",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f037",
+      "page_id": "p027",
+      "objective": "company_contacts",
+      "expected": {
+        "owner": "Catharina Daum",
+        "type": "email",
+        "value": [
+          "catharina.daum@trumpf.com",
+          "catharina.daum(at)trumpf.com"
+        ],
+        "owner_kind": "person"
+      },
+      "alternatives": [],
+      "source_needle": "catharina.daum@trumpf.com",
+      "support_excerpt": "ct-card class=\"hydrated\"> <div> catharina daum </div> <div> international communications manager </div> <a href=\"mailto:catharina.daum@trumpf.com\"> catharina.daum(at)trumpf.com </a> <a href=\"tel:+49-30-20143207\"> phone +49 30 20143207 </a> </ux-iws-contact-card> </div> </div> </div> <div class=\"ux-row ux-u-mx-zero\"> <div class=\"ux-col-12 ux-col-md-10 ux-u-offset-md-1 ux-col-lg-8 ux-u-offset-l",
+      "support_kind": "html"
+    },
+    {
+      "check_id": "f038",
+      "page_id": "p027",
+      "objective": "people",
+      "expected": {
+        "name": "Catharina Daum",
+        "role": "International Communications Manager",
+        "company": "TRUMPF"
+      },
+      "alternatives": [],
+      "source_needle": "Catharina Daum",
+      "support_excerpt": "+49 7156 30331251 gabriel pankow spokesperson for laser technology gabriel.pankow(at)trumpf.com phone +49 7156 30331559 catharina daum international communications manager catharina.daum(at)trumpf.com phone +49 30 20143207 political communication kristin furtenbach head of representative office berlin kristin.furtenbach(at)trumpf.com phone +49 30 20143206 your global contacts for c",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f039",
+      "page_id": "p027",
+      "objective": "company_contacts",
+      "expected": {
+        "owner": "Kristin Furtenbach",
+        "type": "email",
+        "value": [
+          "kristin.furtenbach@trumpf.com",
+          "kristin.furtenbach(at)trumpf.com"
+        ],
+        "owner_kind": "person"
+      },
+      "alternatives": [],
+      "source_needle": "kristin.furtenbach@trumpf.com",
+      "support_excerpt": "ard class=\"hydrated\"> <div> kristin furtenbach </div> <div> head of representative office berlin </div> <a href=\"mailto:kristin.furtenbach@trumpf.com\"> kristin.furtenbach(at)trumpf.com </a> <a href=\"tel:+49-30-20143206\"> phone +49 30 20143206 </a> </ux-iws-contact-card> </div> </div> </div> <div class=\"row\" id=\"c717168\"> <!-- teaser (single, centered) (tm_copy) - organisms-teaser-1-fach-uebersich",
+      "support_kind": "html"
+    },
+    {
+      "check_id": "f040",
+      "page_id": "p027",
+      "objective": "people",
+      "expected": {
+        "name": "Kristin Furtenbach",
+        "role": "Head of Representative Office Berlin",
+        "company": "TRUMPF"
+      },
+      "alternatives": [],
+      "source_needle": "Kristin Furtenbach",
+      "support_excerpt": "na daum international communications manager catharina.daum(at)trumpf.com phone +49 30 20143207 political communication kristin furtenbach head of representative office berlin kristin.furtenbach(at)trumpf.com phone +49 30 20143206 your global contacts for corporate communications are you a journalist looking for a press contact in a specific country? here you can find a list of our col",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f041",
+      "page_id": "p029",
+      "objective": "company_contacts",
+      "expected": {
+        "owner": [
+          "TRUMPF Financial Services",
+          "TRUMPF Bank"
+        ],
+        "type": "email",
+        "value": "leasing@de.trumpf.com"
+      },
+      "alternatives": [],
+      "source_needle": "leasing@de.trumpf.com",
+      "support_excerpt": "f=\"tel:+49-7156-30331129\"> phone +49 7156 30331129 </a> </div> <a class=\"ux-text-link ux-text-link--green\" href='mailto:leasing@de.trumpf.com?subject=inquiry%20via%20website:%20\"legal%20notices%20for%20trumpf%20financial%20services%20gmbh\"&amp;body=%0d%0athis%20inquiry%20came%20via%20the%20page%20https://www.trumpf.com/en_int/company/additional-fields-of-activity/financial-services/legal-",
+      "support_kind": "html"
+    },
+    {
+      "check_id": "f042",
+      "page_id": "p032",
+      "objective": "company_contacts",
+      "expected": {
+        "owner": [
+          "Vaisala",
+          "Help desk",
+          "Helpdesk"
+        ],
+        "type": "email",
+        "value": "helpdesk@vaisala.com"
+      },
+      "alternatives": [],
+      "source_needle": "helpdesk@vaisala.com",
+      "support_excerpt": "ou need help with using your vaisala products, or to ask about servicing a product under warranty? email our help desk: helpdesk@vaisala.com find your local service partner here . myvaisala customer portal myvaisala provides you with information on the status of your orders, service requests, or warranty claims. you can also view and download calibration certificates and submit technical",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f043",
+      "page_id": "p037",
+      "objective": "company_contacts",
+      "expected": {
+        "owner": "Vestas",
+        "type": "email",
+        "value": "vestas@vestas.com"
+      },
+      "alternatives": [],
+      "source_needle": "vestas@vestas.com",
+      "support_excerpt": "h of the company. vestas headquarters hedeager 42 8200 aarhus n denmark phone: (+45) 97 30 00 00 fax: (+45) 97 30 31 30 vestas@vestas.com corporate hub ørestads boulevard 108 2300 copenhagen s denmark below you can find addresses of main vestas offices around the world organised by type of activity. find a contact for sales and service find a contact for production find a contact for ",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f044",
+      "page_id": "p037",
+      "objective": "company_contacts",
+      "expected": {
+        "owner": "Vestas",
+        "type": "phone",
+        "value": "(+45) 97 30 00 00"
+      },
+      "alternatives": [],
+      "source_needle": "(+45) 97 30 00 00",
+      "support_excerpt": "h & development showcases the global reach of the company. vestas headquarters hedeager 42 8200 aarhus n denmark phone: (+45) 97 30 00 00 fax: (+45) 97 30 31 30 vestas@vestas.com corporate hub ørestads boulevard 108 2300 copenhagen s denmark below you can find addresses of main vestas offices around the world organised by type of activity. find a contact for sales and service find a c",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f045",
+      "page_id": "p002",
+      "objective": "locations",
+      "expected": {
+        "company": "Handelsbanken",
+        "address": "Kungsträdgårdsgatan 2",
+        "kind": "headquarters"
+      },
+      "alternatives": [],
+      "source_needle": "Kungsträdgårdsgatan 2",
+      "support_excerpt": " to make a complaint in a specific case and how we handle it. make a complaint official contact information head office kungsträdgårdsgatan 2 106 70 stockholm switchboard: +46 8-701 10 00 billing address svenska handelsbanken ab fe 7628 831 90 östersund sweden gln: 7350043760137 peppol id: 0007:5020077862 mail address for billing: shbab@pdf.scancloud.se company information organisation nu",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f046",
+      "page_id": "p008",
+      "objective": "locations",
+      "expected": {
+        "company": "Kongsberg Discovery",
+        "address": "Thermopylae House"
+      },
+      "alternatives": [],
+      "source_needle": "Thermopylae House",
+      "support_excerpt": "ltd - aberdeen kongsberg discovery uk ltd - aberdeen aberdeenshire, ab32 6fe scotland, united kingdom general inquiries thermopylae house, prospect road, arnhall business park, westhill aberdeenshire, ab32 6fe scotland united kingdom info.uk @ kd.kongsberg.com +44 1224 278 300 sales contact send email +44 1224 278 300 global support hotline discovery.support @ kd.kongsberg.com rental ",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f047",
+      "page_id": "p016",
+      "objective": "locations",
+      "expected": {
+        "company": "Pricer",
+        "address": "Hälsingegatan 47"
+      },
+      "alternatives": [],
+      "source_needle": "Hälsingegatan 47",
+      "support_excerpt": "content double module.layout: equal layoutclasses: sweden (hq) pricer ab box 6302 s- 102 35 stockholm visiting address: hälsingegatan 47 s- 113 31 stockholm sweden info@pricer.com driving directions france pricer s.a.s. parc ariane – bât. saturne 3 rue hélène boucher 78280 guyancourt phone : +33 1 6108 4020 fax : +33 1 6108 4030 info@pricer.com driving directions 30 km west of paris.",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f048",
+      "page_id": "p016",
+      "objective": "locations",
+      "expected": {
+        "company": "Pricer",
+        "address": "303 Perimeter Center North"
+      },
+      "alternatives": [],
+      "source_needle": "303 Perimeter Center North",
+      "support_excerpt": "entin en yvelines in a business park. debugger: content double module.layout: equal layoutclasses: americas pricer inc. 303 perimeter center north, suite 525 atlanta, ga 30346 usa phone : +1 866 463 4766 fax : +1 866 256 2485 info@pricer.com driving directions spain - portugal - andorra pricer iberia – spain - portugal – andorra c/ haya no 4, 4th floor, office 4 28044 madrid info@pricer.com de",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f049",
+      "page_id": "p016",
+      "objective": "locations",
+      "expected": {
+        "company": "Pricer",
+        "address": "C/ Haya"
+      },
+      "alternatives": [],
+      "source_needle": "C/ Haya",
+      "support_excerpt": "1 866 256 2485 info@pricer.com driving directions spain - portugal - andorra pricer iberia – spain - portugal – andorra c/ haya no 4, 4th floor, office 4 28044 madrid info@pricer.com debugger: content double module.layout: equal layoutclasses: uk pricer uk & i ltd regus building – office 210 central boulevard blythe valley business park solihull birmingham b90 8ag info@price",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f050",
+      "page_id": "p016",
+      "objective": "locations",
+      "expected": {
+        "company": "Pricer",
+        "address": "Ruhrallee 191"
+      },
+      "alternatives": [],
+      "source_needle": "Ruhrallee 191",
+      "support_excerpt": " (mi) italy info@pricer.com debugger: content double module.layout: equal layoutclasses: germany pricer (germany ) gmbh ruhrallee 191 45136 essen info@pricer.com israel pricer e.s.l. israel ltd. 20 cinor st appartement 74 7777 302 ashdod phone : +972 54 55 44 170 info@pricer.com debugger: content double module.layout: equal layoutclasses: taiwan pricer taiwan branch 10f. 7, no. 9,",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f051",
+      "page_id": "p016",
+      "objective": "locations",
+      "expected": {
+        "company": "Pricer",
+        "address": "52 Wyndham Street"
+      },
+      "alternatives": [],
+      "source_needle": "52 Wyndham Street",
+      "support_excerpt": "o@pricer.com debugger: content double module.layout: equal layoutclasses: asia pricer production and sales 5/f, w place 52 wyndham street, central hong kong phone : +852 3103 1188 info@pricer.com norway pricer as innspurten 11c n-0663 oslo norway phone : +47 974 89 289 info@pricer.com use cases price automation store operations shopper engagement products esls platforms technology abo",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f052",
+      "page_id": "p016",
+      "objective": "locations",
+      "expected": {
+        "company": "Pricer",
+        "address": "Innspurten 11C"
+      },
+      "alternatives": [],
+      "source_needle": "Innspurten 11C",
+      "support_excerpt": "ion and sales 5/f, w place 52 wyndham street, central hong kong phone : +852 3103 1188 info@pricer.com norway pricer as innspurten 11c n-0663 oslo norway phone : +47 974 89 289 info@pricer.com use cases price automation store operations shopper engagement products esls platforms technology about pricer in brief become a partner sustainability corporate governance ecosystem partners",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f053",
+      "page_id": "p029",
+      "objective": "locations",
+      "expected": {
+        "company": "TRUMPF Financial Services",
+        "address": "Johann-Maus-Straße 2",
+        "kind": "headquarters"
+      },
+      "alternatives": [],
+      "source_needle": "Johann-Maus-Straße 2",
+      "support_excerpt": "login to mytrumpf legal notices for trumpf financial services gmbh company headquarters: trumpf financial services gmbh johann-maus-strasse 2 71254 ditzingen, germany managing board: diane zetzmann‐krien, johannes krauss chairman of the supervisory board: dr. rer. pol. lars grünert disclosure information pdf 25/11/2025 275 kb disclosure report pursuant to the crr – fiscal year 2024/2025 p",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f054",
+      "page_id": "p037",
+      "objective": "locations",
+      "expected": {
+        "company": "Vestas",
+        "address": "Hedeager 42",
+        "kind": "headquarters"
+      },
+      "alternatives": [],
+      "source_needle": "Hedeager 42",
+      "support_excerpt": "ested in sales, manufacturing and research & development showcases the global reach of the company. vestas headquarters hedeager 42 8200 aarhus n denmark phone: (+45) 97 30 00 00 fax: (+45) 97 30 31 30 vestas@vestas.com corporate hub ørestads boulevard 108 2300 copenhagen s denmark below you can find addresses of main vestas offices around the world organised by type of activity",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f055",
+      "page_id": "p037",
+      "objective": "locations",
+      "expected": {
+        "company": "Vestas",
+        "address": "Ørestads Boulevard 108"
+      },
+      "alternatives": [],
+      "source_needle": "Ørestads Boulevard 108",
+      "support_excerpt": "rters hedeager 42 8200 aarhus n denmark phone: (+45) 97 30 00 00 fax: (+45) 97 30 31 30 vestas@vestas.com corporate hub ørestads boulevard 108 2300 copenhagen s denmark below you can find addresses of main vestas offices around the world organised by type of activity. find a contact for sales and service find a contact for production find a contact for research vestas wind systems a/s hede",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f056",
+      "page_id": "p005",
+      "objective": "products_services",
+      "expected": {
+        "company": "Handelsbanken",
+        "name": "Online Banking",
+        "kind": "service"
+      },
+      "alternatives": [],
+      "source_needle": "Online Banking",
+      "support_excerpt": " policy öppnas i nytt fönster manage preferences essential only accept all go to content go to menu log in modal öppnad online banking log in personal banking log in corporate banking internetbanken privat internetbanken företag sign documents digital signature other services globalon-line institutional asset management nordic-i search menu corporate / digital services digital corp",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f057",
+      "page_id": "p005",
+      "objective": "products_services",
+      "expected": {
+        "company": "Handelsbanken",
+        "name": "Online Self-Employed",
+        "kind": "service"
+      },
+      "alternatives": [],
+      "source_needle": "Online Self-Employed",
+      "support_excerpt": " private and business finances as a sole trader, and manage international banking through globalon-line. online banking online self-employed – for sole traders if you are a sole trader you may not need all the services included in online banking. online self-employed lets you manage both your personal and business banking in one place. read more about what’s included in the self-employed",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f058",
+      "page_id": "p015",
+      "objective": "products_services",
+      "expected": {
+        "company": "Polarbröd",
+        "name": "Hällakaka",
+        "kind": "product"
+      },
+      "alternatives": [],
+      "source_needle": "Hällakaka",
+      "support_excerpt": "hällakaka | polarbröd poäng 0 0 poäng din profil registrera dina kvitton se din historik meny poäng rensa recept sortiment sortiment tillbaka stäng av våra bröd smörgåsar ingredienser här finns vi hållbarhet hållbarhet tillbaka stäng av vårt hållbarhetsarbete",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f059",
+      "page_id": "p020",
+      "objective": "products_services",
+      "expected": {
+        "company": "Pricer",
+        "name": "Pricer Avenue",
+        "kind": "product"
+      },
+      "alternatives": [],
+      "source_needle": "Pricer Avenue",
+      "support_excerpt": "ish french german italian spanish swedish contact products products devices electronic shelf labels electronic displays pricer avenuetm attachments platforms pricer plaza technology optical wireless communications instant flash dynamic product positioning speed superior battery life stability & reliability future proof & innovation nfc redirection quick search use cases use cases ",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f060",
+      "page_id": "p020",
+      "objective": "products_services",
+      "expected": {
+        "company": "Pricer",
+        "name": "Pricer Plaza",
+        "kind": "product"
+      },
+      "alternatives": [],
+      "source_needle": "Pricer Plaza",
+      "support_excerpt": "ish contact products products devices electronic shelf labels electronic displays pricer avenuetm attachments platforms pricer plaza technology optical wireless communications instant flash dynamic product positioning speed superior battery life stability & reliability future proof & innovation nfc redirection quick search use cases use cases price automation price integrity boos",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f061",
+      "page_id": "p020",
+      "objective": "products_services",
+      "expected": {
+        "company": "Pricer",
+        "name": "SmartTAG Color",
+        "kind": "product"
+      },
+      "alternatives": [],
+      "source_needle": "SmartTAG Color",
+      "support_excerpt": "r - and every store runs smoother, whether you're running one location or a global network. more on pricer plaza pricer smarttag color: real-time store operations in up to 6 colors esls and displays designed to bridge the gap between visual merchandising and real-time execution. achieve 100% operational automation through sub-second updates and unbeatable 10-year battery life. main",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f062",
+      "page_id": "p020",
+      "objective": "products_services",
+      "expected": {
+        "company": "Pricer",
+        "name": "HangTAG",
+        "kind": "product"
+      },
+      "alternatives": [],
+      "source_needle": "HangTAG",
+      "support_excerpt": " life. maintain brand integrity and \"freshness\" cues with vibrant 4 and 6-color displays. more on smarttag color pricer hangtag: designed for peg hook precision hangtag is engineered specifically for dual-arm peg hook optimizes shelf space without compromising visibility, making it ideal for high-density product environments where every centimeter counts. more on pricer hang",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f063",
+      "page_id": "p020",
+      "objective": "products_services",
+      "expected": {
+        "company": "Pricer",
+        "name": "StoreLink",
+        "kind": "product"
+      },
+      "alternatives": [],
+      "source_needle": "StoreLink",
+      "support_excerpt": "an installation, it’s easy to bring digital labeling to life across every part of the store. more on accessories pricer storelink integrated optical access point (ioap) that supports direct connection to pricer plaza. more on pricer storelink get in touch! let's talk retail digitisation! contact us use cases price automation store operations shopper engagement products esls pl",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f064",
+      "page_id": "p024",
+      "objective": "products_services",
+      "expected": {
+        "company": "Tobii",
+        "name": [
+          "Training",
+          "education"
+        ],
+        "kind": "service"
+      },
+      "alternatives": [],
+      "source_needle": "Training from eye tracking experts",
+      "support_excerpt": "h human factors research academic and scientific studies training and skills assessment projects tobii insight services training from eye tracking experts build the skills needed to successfully plan, conduct, and analyze eye tracking studies. our training programs are designed for researchers, ux professionals, and academic institutions looking to build expertise in eye tracking methodology and best ",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f065",
+      "page_id": "p024",
+      "objective": "products_services",
+      "expected": {
+        "company": "Tobii",
+        "name": [
+          "integration consulting",
+          "Customer Integration"
+        ],
+        "kind": "service"
+      },
+      "alternatives": [],
+      "source_needle": "Eye tracking integration consulting",
+      "support_excerpt": "practices data quality optimization gaze data interpretation advanced research techniques training & education services eye tracking integration consulting our integration specialists help organizations integrate eye tracking into software, hardware, research environments, and commercial products to reduce development time and accelerate deployment. support for: software & hardware integrations researc",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f066",
+      "page_id": "p024",
+      "objective": "products_services",
+      "expected": {
+        "company": "Tobii",
+        "name": [
+          "Tobii Insight",
+          "eye tracking studies",
+          "research services"
+        ],
+        "kind": "service"
+      },
+      "alternatives": [],
+      "source_needle": "Tobii Insight services",
+      "support_excerpt": "nsumer behavior research human factors research academic and scientific studies training and skills assessment projects tobii insight services training from eye tracking experts build the skills needed to successfully plan, conduct, and analyze eye tracking studies. our training programs are designed for researchers, ux professionals, and academic institutions looking to build expertise in",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f067",
+      "page_id": "p025",
+      "objective": "products_services",
+      "expected": {
+        "company": "Tobii",
+        "name": "Tobii Pro Glasses 3",
+        "kind": "product"
+      },
+      "alternatives": [],
+      "source_needle": "Tobii Pro Glasses 3",
+      "support_excerpt": "ables wearable eye trackers capture real-world behavior and attention as it happens, in natural environments. wearables tobii pro glasses 3 designed for the real world, our advanced wearable eye tracker allows you to conduct behavioral research in a wide range of settings. wearables tobii glasses x a versatile wearable eye tracker suitable for ux, sports, consumer, and industrial enviro",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f068",
+      "page_id": "p025",
+      "objective": "products_services",
+      "expected": {
+        "company": "Tobii",
+        "name": "Tobii Glasses X",
+        "kind": "product"
+      },
+      "alternatives": [],
+      "source_needle": "Tobii Glasses X",
+      "support_excerpt": "rld, our advanced wearable eye tracker allows you to conduct behavioral research in a wide range of settings. wearables tobii glasses x a versatile wearable eye tracker suitable for ux, sports, consumer, and industrial environments. designed to deliver reliable insights in dynamic, high-movement settings. 1 2 screen-based screen-based eye trackers our screen-based eye trackers deliv",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f069",
+      "page_id": "p025",
+      "objective": "products_services",
+      "expected": {
+        "company": "Tobii",
+        "name": "Tobii Pro Spectrum",
+        "kind": "product"
+      },
+      "alternatives": [],
+      "source_needle": "Tobii Pro Spectrum",
+      "support_excerpt": "te data on what captures a person's attention and where they look— in real-time for the widest population. screen based tobii pro spectrum this high-performance research system captures gaze data at speeds up to 1200 hz. a screen-based eye tracker for extensive research from fixation-based studies to micro-saccades. screen based tobii tobii pro fusion screen-based eye tracker, capturin",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f070",
+      "page_id": "p025",
+      "objective": "products_services",
+      "expected": {
+        "company": "Tobii",
+        "name": "Tobii Pro Fusion",
+        "kind": "product"
+      },
+      "alternatives": [],
+      "source_needle": "Tobii Pro Fusion",
+      "support_excerpt": "hz. a screen-based eye tracker for extensive research from fixation-based studies to micro-saccades. screen based tobii tobii pro fusion screen-based eye tracker, capturing gaze data at speeds up to 250 hz. this powerful research system supports from fixation to saccade-based research outside of the lab. screen based tobii pro spark a powerful screen-based eye tracker, capturing gaze",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f071",
+      "page_id": "p025",
+      "objective": "products_services",
+      "expected": {
+        "company": "Tobii",
+        "name": "Tobii Pro Spark",
+        "kind": "product"
+      },
+      "alternatives": [],
+      "source_needle": "Tobii Pro Spark",
+      "support_excerpt": "250 hz. this powerful research system supports from fixation to saccade-based research outside of the lab. screen based tobii pro spark a powerful screen-based eye tracker, capturing gaze data at 60 hz. with this affordable system, anyone can easily enhance their research with data that illuminates human attention and intent. 1 3 webcam eye tracking webcam eye tracking solutions run",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f072",
+      "page_id": "p028",
+      "objective": "products_services",
+      "expected": {
+        "company": "TRUMPF Scientific",
+        "name": "Dira",
+        "kind": "product"
+      },
+      "alternatives": [],
+      "source_needle": "Dira",
+      "support_excerpt": "ric field. the numerous versions and options mean that customers always get a system tailored to their needs. portfolio dira series lasers from the dira series deliver pulses with picosecond durations and pulse energy of up to 200 mj – the highest pulse energy rate that can currently be generated using a regenerative amplifier. optical parametric amplifiers optical parame",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f073",
+      "page_id": "p030",
+      "objective": "products_services",
+      "expected": {
+        "company": [
+          "TRUMPF Financial Services",
+          "TRUMPF Bank"
+        ],
+        "name": [
+          "Machine financing",
+          "Financing"
+        ],
+        "kind": "service"
+      },
+      "alternatives": [],
+      "source_needle": "Machine financing",
+      "support_excerpt": "l legal notices and disclosure information of trumpf financial services gmbh. what kind of financing does trumpf offer? machine financing tap into new growth opportunities for your business by financing directly with trumpf. our experts understand your needs and can advise you comprehensively on the type of financing that suits you best. find out more do you have any questions? we wil",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f074",
+      "page_id": "p032",
+      "objective": "products_services",
+      "expected": {
+        "company": "Vaisala",
+        "name": "Calibration",
+        "kind": "service"
+      },
+      "alternatives": [],
+      "source_needle": "Calibration",
+      "support_excerpt": "t application areas measurements product types product families explore all products services services support services calibration services technical support training services remote and digital services project services maintenance and upgrade services product line services services for liquid measurement viewlinc cms services services for weather applications data subscriptio",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f075",
+      "page_id": "p032",
+      "objective": "products_services",
+      "expected": {
+        "company": "Vaisala",
+        "name": "Technical support",
+        "kind": "service"
+      },
+      "alternatives": [],
+      "source_needle": "Technical support",
+      "support_excerpt": "easurements product types product families explore all products services services support services calibration services technical support training services remote and digital services project services maintenance and upgrade services product line services services for liquid measurement viewlinc cms services services for weather applications data subscription services xweather the wea",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f076",
+      "page_id": "p032",
+      "objective": "products_services",
+      "expected": {
+        "company": "Vaisala",
+        "name": "Training",
+        "kind": "service"
+      },
+      "alternatives": [],
+      "source_needle": "Training",
+      "support_excerpt": "t types product families explore all products services services support services calibration services technical support training services remote and digital services project services maintenance and upgrade services product line services services for liquid measurement viewlinc cms services services for weather applications data subscription services xweather the weather inte",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f077",
+      "page_id": "p035",
+      "objective": "products_services",
+      "expected": {
+        "company": "Vaisala",
+        "name": "Calibration Care Agreement",
+        "kind": "service"
+      },
+      "alternatives": [],
+      "source_needle": "Calibration Care Agreement",
+      "support_excerpt": " performance on a top level throughout its lifetime. accredited iso/iec 17025 calibration standard iso 9001 calibration calibration care agreement on-site calibration vaisala circular accredited iso/iec 17025 calibration regulatory compliance is essential for many of our customers varying from the life science industry to other demanding measurement environments. a high-quality calibration ser",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f078",
+      "page_id": "p035",
+      "objective": "products_services",
+      "expected": {
+        "company": "Vaisala",
+        "name": [
+          "On-site calibration",
+          "On-Site Calibration"
+        ],
+        "kind": "service"
+      },
+      "alternatives": [],
+      "source_needle": "On-site calibration",
+      "support_excerpt": " throughout its lifetime. accredited iso/iec 17025 calibration standard iso 9001 calibration calibration care agreement on-site calibration vaisala circular accredited iso/iec 17025 calibration regulatory compliance is essential for many of our customers varying from the life science industry to other demanding measurement environments. a high-quality calibration service that is accredi",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f079",
+      "page_id": "p039",
+      "objective": "products_services",
+      "expected": {
+        "company": "Vestas",
+        "name": "VestasOnline"
+      },
+      "alternatives": [],
+      "source_needle": "VestasOnline",
+      "support_excerpt": "t edge samsung browser cookies energy solutions investor media careers about sustainability customer portals shopvestas vestasonline choose your site global global germany de china cn japan jp united states us canada ca energy solutions energy solutions onshore wind turbines onshore wind turbines enventustm platform 4 mw platform 2 mw platform offshore wind turbines offshore wind",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f080",
+      "page_id": "p039",
+      "objective": "products_services",
+      "expected": {
+        "company": "Vestas",
+        "name": "Scipher"
+      },
+      "alternatives": [],
+      "source_needle": "Scipher",
+      "support_excerpt": "ccess vestasonline smarter data, smarter decisions make the most of the industry's largest and most robust dataset with scipher® – our industrial energy analytics platform. scipher® uses smart technology and machine learning to give you actionable insights quickly, helping you make faster, better decisions. explore the benefits of the scipher® platform customer data integrat",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f081",
+      "page_id": "p039",
+      "objective": "products_services",
+      "expected": {
+        "company": "Vestas",
+        "name": "VestasDeveloper"
+      },
+      "alternatives": [],
+      "source_needle": "VestasDeveloper",
+      "support_excerpt": "and stay efficient. that’s why vestas offers secure, standardised apis through the customer data integration platform — vestasdeveloper. vestasdeveloper enables you to access and receive vestas operations data via vestas apis. this helps you to not only on the automation journeys but also making it easy to connect your systems and unlock value faster, on your terms. learn more about",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f082",
+      "page_id": "p039",
+      "objective": "products_services",
+      "expected": {
+        "company": "Vestas",
+        "name": "ShopVestas"
+      },
+      "alternatives": [],
+      "source_needle": "ShopVestas",
+      "support_excerpt": "ri microsoft edge samsung browser cookies energy solutions investor media careers about sustainability customer portals shopvestas vestasonline choose your site global global germany de china cn japan jp united states us canada ca energy solutions energy solutions onshore wind turbines onshore wind turbines enventustm platform 4 mw platform 2 mw platform offshore wind turbines ",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f083",
+      "page_id": "p006",
+      "objective": "people",
+      "expected": {
+        "name": "Eivind Reiten",
+        "role": "Chair",
+        "company": "Kongsberg"
+      },
+      "alternatives": [],
+      "source_needle": "Eivind Reiten",
+      "support_excerpt": "ies d) monitoring kongsberg`s compliance with its code of ethics and business conduct as well as its compliance program eivind reiten chair of the board read more merete hverven member of the board read more morten henriksen member of the board read more marianne wiinholt member of the board read more pål eitrheim member of the board read more kjersti rød employee-elected member o",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f084",
+      "page_id": "p006",
+      "objective": "people",
+      "expected": {
+        "name": "Merete Hverven",
+        "role": "Member",
+        "company": "Kongsberg"
+      },
+      "alternatives": [],
+      "source_needle": "Merete Hverven",
+      "support_excerpt": "th its code of ethics and business conduct as well as its compliance program eivind reiten chair of the board read more merete hverven member of the board read more morten henriksen member of the board read more marianne wiinholt member of the board read more pål eitrheim member of the board read more kjersti rød employee-elected member of the board read more nora solheim stuedal e",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f085",
+      "page_id": "p006",
+      "objective": "people",
+      "expected": {
+        "name": "Morten Henriksen",
+        "role": "Member",
+        "company": "Kongsberg"
+      },
+      "alternatives": [],
+      "source_needle": "Morten Henriksen",
+      "support_excerpt": " well as its compliance program eivind reiten chair of the board read more merete hverven member of the board read more morten henriksen member of the board read more marianne wiinholt member of the board read more pål eitrheim member of the board read more kjersti rød employee-elected member of the board read more nora solheim stuedal employee-elected member of the board read more r",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f086",
+      "page_id": "p006",
+      "objective": "people",
+      "expected": {
+        "name": "Marianne Wiinholt",
+        "role": "Member",
+        "company": "Kongsberg"
+      },
+      "alternatives": [],
+      "source_needle": "Marianne Wiinholt",
+      "support_excerpt": "hair of the board read more merete hverven member of the board read more morten henriksen member of the board read more marianne wiinholt member of the board read more pål eitrheim member of the board read more kjersti rød employee-elected member of the board read more nora solheim stuedal employee-elected member of the board read more rune fanøy employee-elected member of the board r",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f087",
+      "page_id": "p006",
+      "objective": "people",
+      "expected": {
+        "name": "Pål Eitrheim",
+        "role": "Member",
+        "company": "Kongsberg"
+      },
+      "alternatives": [],
+      "source_needle": "Pål Eitrheim",
+      "support_excerpt": "r of the board read more morten henriksen member of the board read more marianne wiinholt member of the board read more pål eitrheim member of the board read more kjersti rød employee-elected member of the board read more nora solheim stuedal employee-elected member of the board read more rune fanøy employee-elected member of the board read more management and organisation in kon",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f088",
+      "page_id": "p006",
+      "objective": "people",
+      "expected": {
+        "name": "Kjersti Rød",
+        "role": "Employee-elected",
+        "company": "Kongsberg"
+      },
+      "alternatives": [],
+      "source_needle": "Kjersti Rød",
+      "support_excerpt": "ember of the board read more marianne wiinholt member of the board read more pål eitrheim member of the board read more kjersti rød employee-elected member of the board read more nora solheim stuedal employee-elected member of the board read more rune fanøy employee-elected member of the board read more management and organisation in kongsberg management and organisation the man",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f089",
+      "page_id": "p006",
+      "objective": "people",
+      "expected": {
+        "name": "Nora Solheim Stuedal",
+        "role": "Employee-elected",
+        "company": "Kongsberg"
+      },
+      "alternatives": [],
+      "source_needle": "Nora Solheim Stuedal",
+      "support_excerpt": "e board read more pål eitrheim member of the board read more kjersti rød employee-elected member of the board read more nora solheim stuedal employee-elected member of the board read more rune fanøy employee-elected member of the board read more management and organisation in kongsberg management and organisation the management of kongsberg, consisting of ten members with varied backgrou",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f090",
+      "page_id": "p006",
+      "objective": "people",
+      "expected": {
+        "name": "Rune Fanøy",
+        "role": "Employee-elected",
+        "company": "Kongsberg"
+      },
+      "alternatives": [],
+      "source_needle": "Rune Fanøy",
+      "support_excerpt": " rød employee-elected member of the board read more nora solheim stuedal employee-elected member of the board read more rune fanøy employee-elected member of the board read more management and organisation in kongsberg management and organisation the management of kongsberg, consisting of ten members with varied backgrounds and experiences, is committed to develop the company’s",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f091",
+      "page_id": "p012",
+      "objective": "people",
+      "expected": {
+        "name": "Helena Rönnmark",
+        "role": [
+          "Kommunikationschef",
+          "Communications"
+        ],
+        "company": "Polarbröd"
+      },
+      "alternatives": [],
+      "source_needle": "Helena Rönnmark",
+      "support_excerpt": "dservice polarbutiken stäng av rensa stäng av dela facebook x mail stäng av export polarbröd norge svenska presskontakt helena rönnmark kommunikationschef 010-450 60 04 helena.ronnmark@polarbrod.se kristin simonsson kommunikatör 010-450 60 24 kristin.simonsson@polarbrod.se pressrum polarbröd är ett familjeföretag med hundraåriga traditioner av norrländskt entreprenörskap och brödkul",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f092",
+      "page_id": "p012",
+      "objective": "people",
+      "expected": {
+        "name": "Kristin Simonsson",
+        "role": [
+          "Kommunikatör",
+          "Communicator"
+        ],
+        "company": "Polarbröd"
+      },
+      "alternatives": [],
+      "source_needle": "Kristin Simonsson",
+      "support_excerpt": "port polarbröd norge svenska presskontakt helena rönnmark kommunikationschef 010-450 60 04 helena.ronnmark@polarbrod.se kristin simonsson kommunikatör 010-450 60 24 kristin.simonsson@polarbrod.se pressrum polarbröd är ett familjeföretag med hundraåriga traditioner av norrländskt entreprenörskap och brödkultur. vi har funnits i fem generationer och vill finnas lika länge till. det mode",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f093",
+      "page_id": "p013",
+      "objective": "people",
+      "expected": {
+        "name": "Olof Forsén",
+        "role": "Controller",
+        "company": "Polarbröd"
+      },
+      "alternatives": [],
+      "source_needle": "Olof Forsén",
+      "support_excerpt": "ndag, samtidigt som man går in i helgen med tillfredsställelse över veckan och mår bra under ledighet. våra medarbetare olof forsén controller min och polarbröds historia sträcker sig över 10 år bakåt när jag började jobba extra i bageriet. ett extrajobb som sedan blev till ett sommarjobb under studietiden till civilekonom. januari 2018 började jag som redovisningsekonom och ida",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f094",
+      "page_id": "p013",
+      "objective": "people",
+      "expected": {
+        "name": "Goy Granberg",
+        "role": [
+          "Processoperatör",
+          "Process operator"
+        ],
+        "company": "Polarbröd"
+      },
+      "alternatives": [],
+      "source_needle": "Goy Granberg",
+      "support_excerpt": "till att stötta och hjälpa varandra. och ett inspirerade arbete där det ständigt dyker upp nya utmaningar att ta tag i. goy granberg processoperatör på polarbröd får vi arbeta med teknik i framkant som driver den moderna brödproduktionen framåt. och att polarbröd dessutom är en väldigt trivsam arbetsplats med bra arbetskamrater och ledning är bara ett ytterligare plus. hans nilss",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f095",
+      "page_id": "p018",
+      "objective": "people",
+      "expected": {
+        "name": "Magnus Larsson",
+        "role": "CEO",
+        "company": "Pricer"
+      },
+      "alternatives": [],
+      "source_needle": "Magnus Larsson",
+      "support_excerpt": "at is both customer-oriented and process-driven. the senior executives include the ceo, cfo and the operating managers. magnus larsson president and ceo education : bachelor of science in electrical engineering born : 1970 nationality : swedish employed since : 2019, acting ceo february-december 2022 other assignments : none. holdings : 89,242 b shares and 200,000 warrants previous",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f096",
+      "page_id": "p018",
+      "objective": "people",
+      "expected": {
+        "name": "Claes Wenthzel",
+        "role": "CFO",
+        "company": "Pricer"
+      },
+      "alternatives": [],
+      "source_needle": "Claes Wenthzel",
+      "support_excerpt": "vices primarily in the telecom industry. previous employers include edgeware, nokia siemens networks, nokia and sonera. claes wenthzel cfo education : business studies and economics born : 1962 nationality : swedish employed since : 2024 other assignments : board member wencon ab and pewe international ab. holdings : 550,000 b shares and 50,000 warrants previous assignments : cfo o",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f097",
+      "page_id": "p018",
+      "objective": "people",
+      "expected": {
+        "name": "Ken Hansen",
+        "role": "COO",
+        "company": "Pricer"
+      },
+      "alternatives": [],
+      "source_needle": "Ken Hansen",
+      "support_excerpt": "publ.), starbreeze ab (publ.) and catena media plc, and acting cfo of pricer ab (publ.). chairman of stille ab (publ.). ken hansen coo education : higher technical examination programme born : 1977 nationality : danish employed since : 2025 other assignments : none. holdings : 54,637 b shares previous assignments : more than 25 years of international technical experience, inclu",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f098",
+      "page_id": "p018",
+      "objective": "people",
+      "expected": {
+        "name": "Chris Chalkitis",
+        "role": "Chief Digital Officer",
+        "company": "Pricer"
+      },
+      "alternatives": [],
+      "source_needle": "Chris Chalkitis",
+      "support_excerpt": " content, chief operating officer at millicom, and service business manager and lead project business manager at nokia. chris chalkitis chief digital officer education : certified engineer born : 1969 nationality : swedish employed since : 2019 other assignments : none holdings : 39,772 b shares and 100,000 warrants previous assignments : several key positions within the communicati",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f099",
+      "page_id": "p018",
+      "objective": "people",
+      "expected": {
+        "name": "Finn Wikander",
+        "role": "Chief Product Officer",
+        "company": "Pricer"
+      },
+      "alternatives": [],
+      "source_needle": "Finn Wikander",
+      "support_excerpt": " as vireone ab (founder and president), apsis, com hem, tele 2, and ericsson. different roles within pricer since 2019. finn wikander chief product officer education : international master's in economics born : 1975 nationality : swedish employed since : 2023 other assignments : none holdings : 100,000 warrants previous assignments : chief product officer, clear channel scandinavi",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f100",
+      "page_id": "p018",
+      "objective": "people",
+      "expected": {
+        "name": "Mats Arnehall",
+        "role": "Chief Growth Officer",
+        "company": "Pricer"
+      },
+      "alternatives": [],
+      "source_needle": "Mats Arnehall",
+      "support_excerpt": "marketing manager, philips consumer lifestyle; product marketing manager, apple; key account manager, silicon graphics. mats arnehall chief growth officer education : high school diploma, internal trainee programs born : 1965 nationality : swedish employed since : 2013 other assignments : none holdings : 100,000 b shares and 100,000 warrants previous assignments : more than 25 yea",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f101",
+      "page_id": "p018",
+      "objective": "people",
+      "expected": {
+        "name": "Kajsa Blixth",
+        "role": "Chief Commercial Officer",
+        "company": "Pricer"
+      },
+      "alternatives": [],
+      "source_needle": "Kajsa Blixth",
+      "support_excerpt": "tions (coop sverige, coca-cola company and hl display). area sales director nordics, baltics, asia at pricer 2013-2022. kajsa blixth chief commercial officer education : bba born : 1970 nationality : swedish employed since : 2025 other assignments : none holdings : 0 previous assignments : global head of brand & marketing (pricer), chief communication, brand & sustainability (pia",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f102",
+      "page_id": "p018",
+      "objective": "people",
+      "expected": {
+        "name": "Cecilia Vinell",
+        "role": "People",
+        "company": "Pricer"
+      },
+      "alternatives": [],
+      "source_needle": "Cecilia Vinell",
+      "support_excerpt": "(pricer), chief communication, brand & sustainability (piab group), cmo (piab group), vp small appliances (electrolux). cecilia vinell svp people & communications education : ba in political science born : 1967 nationality : swedish employed since : 2019 other assignments : none holdings : 10,000 warrants previous assignments : head of people and communications, and head of corpora",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f103",
+      "page_id": "p029",
+      "objective": "people",
+      "expected": {
+        "name": "Diane Zetzmann",
+        "role": [
+          "Managing Board",
+          "Managing Director"
+        ],
+        "company": "TRUMPF Financial Services"
+      },
+      "alternatives": [],
+      "source_needle": "Diane Zetzmann",
+      "support_excerpt": "mbh company headquarters: trumpf financial services gmbh johann-maus-strasse 2 71254 ditzingen, germany managing board: diane zetzmann‐krien, johannes krauss chairman of the supervisory board: dr. rer. pol. lars grünert disclosure information pdf 25/11/2025 275 kb disclosure report pursuant to the crr – fiscal year 2024/2025 pdf 25/11/2025 73 kb disclosure report pursuant to art. 2",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f104",
+      "page_id": "p029",
+      "objective": "people",
+      "expected": {
+        "name": "Johannes Krauß",
+        "role": [
+          "Managing Board",
+          "Managing Director"
+        ],
+        "company": "TRUMPF Financial Services"
+      },
+      "alternatives": [],
+      "source_needle": "Johannes Krauß",
+      "support_excerpt": "rs: trumpf financial services gmbh johann-maus-strasse 2 71254 ditzingen, germany managing board: diane zetzmann‐krien, johannes krauss chairman of the supervisory board: dr. rer. pol. lars grünert disclosure information pdf 25/11/2025 275 kb disclosure report pursuant to the crr – fiscal year 2024/2025 pdf 25/11/2025 73 kb disclosure report pursuant to art. 26a of the german bankin",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f105",
+      "page_id": "p031",
+      "objective": "people",
+      "expected": {
+        "name": "Ville Voipio",
+        "role": "Chair",
+        "company": "Vaisala"
+      },
+      "alternatives": [],
+      "source_needle": "Ville Voipio",
+      "support_excerpt": "als as a team. all members of the board in 2025 were independent of the company. with the exception of raimo voipio and ville voipio, all other members of the board in 2025 were independent of major shareholders. corporate governance statement 2025 members of the board of directors ville voipio chair of the board member of the people and sustainability committee chair of the nomi",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f106",
+      "page_id": "p031",
+      "objective": "people",
+      "expected": {
+        "name": "Raimo Voipio",
+        "role": "Vice",
+        "company": "Vaisala"
+      },
+      "alternatives": [],
+      "source_needle": "Raimo Voipio",
+      "support_excerpt": "he established goals as a team. all members of the board in 2025 were independent of the company. with the exception of raimo voipio and ville voipio, all other members of the board in 2025 were independent of major shareholders. corporate governance statement 2025 members of the board of directors ville voipio chair of the board member of the people and sustainability committee ",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f107",
+      "page_id": "p031",
+      "objective": "people",
+      "expected": {
+        "name": "Annica Bresky",
+        "role": "Member",
+        "company": "Vaisala"
+      },
+      "alternatives": [],
+      "source_needle": "Annica Bresky",
+      "support_excerpt": "ad more raimo voipio vice chair of the board member of the audit committee member of the nomination committee read more annica bresky member of the board member of the people and sustainability committee member of the nomination committee read more antti jääskeläinen member of the board chair of the people and sustainability committee read more elina björklund member of the board ",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f108",
+      "page_id": "p031",
+      "objective": "people",
+      "expected": {
+        "name": "Antti Jääskeläinen",
+        "role": "Member",
+        "company": "Vaisala"
+      },
+      "alternatives": [],
+      "source_needle": "Antti Jääskeläinen",
+      "support_excerpt": "esky member of the board member of the people and sustainability committee member of the nomination committee read more antti jääskeläinen member of the board chair of the people and sustainability committee read more elina björklund member of the board member of the audit committee read more kaarina ståhlberg member of the board chair of the audit committee read more tuomas syrjänen m",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f109",
+      "page_id": "p031",
+      "objective": "people",
+      "expected": {
+        "name": "Elina Björklund",
+        "role": "Member",
+        "company": "Vaisala"
+      },
+      "alternatives": [],
+      "source_needle": "Elina Björklund",
+      "support_excerpt": "n committee read more antti jääskeläinen member of the board chair of the people and sustainability committee read more elina björklund member of the board member of the audit committee read more kaarina ståhlberg member of the board chair of the audit committee read more tuomas syrjänen member of the board member of the people and sustainability committee member of the nomination c",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f110",
+      "page_id": "p031",
+      "objective": "people",
+      "expected": {
+        "name": "Kaarina Ståhlberg",
+        "role": "Member",
+        "company": "Vaisala"
+      },
+      "alternatives": [],
+      "source_needle": "Kaarina Ståhlberg",
+      "support_excerpt": "ople and sustainability committee read more elina björklund member of the board member of the audit committee read more kaarina ståhlberg member of the board chair of the audit committee read more tuomas syrjänen member of the board member of the people and sustainability committee member of the nomination committee read more meetings, duties and decision-making the board of directors",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f111",
+      "page_id": "p031",
+      "objective": "people",
+      "expected": {
+        "name": "Tuomas Syrjänen",
+        "role": "Member",
+        "company": "Vaisala"
+      },
+      "alternatives": [],
+      "source_needle": "Tuomas Syrjänen",
+      "support_excerpt": "rd member of the audit committee read more kaarina ståhlberg member of the board chair of the audit committee read more tuomas syrjänen member of the board member of the people and sustainability committee member of the nomination committee read more meetings, duties and decision-making the board of directors convenes at least eight times a year and if otherwise needed. the presiden",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f112",
+      "page_id": "p036",
+      "objective": "people",
+      "expected": {
+        "name": "Henrik Andersen",
+        "role": "CEO",
+        "company": "Vestas"
+      },
+      "alternatives": [],
+      "source_needle": "Henrik Andersen",
+      "support_excerpt": "h the danish business authority. the members of the executive management description: group president & ceo file title: henrik andersen view profile format: application/pdf size: 56 kb description: executive vice president & cfo file title: jakob wegge-larsen view profile format: application/pdf size: 111 kb the members of our day-to-day management - the executive management team - ",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f113",
+      "page_id": "p036",
+      "objective": "people",
+      "expected": {
+        "name": "Jakob Wegge-Larsen",
+        "role": [
+          "CFO",
+          "Finance"
+        ],
+        "company": "Vestas"
+      },
+      "alternatives": [],
+      "source_needle": "Jakob Wegge-Larsen",
+      "support_excerpt": "enrik andersen view profile format: application/pdf size: 56 kb description: executive vice president & cfo file title: jakob wegge-larsen view profile format: application/pdf size: 111 kb the members of our day-to-day management - the executive management team - are appointed by the board. furthermore, the board decides in collaboration with the ceo on the split of responsibilities be",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f114",
+      "page_id": "p036",
+      "objective": "people",
+      "expected": {
+        "name": "Thomas Alsbjerg",
+        "role": "Digital Solutions",
+        "company": "Vestas"
+      },
+      "alternatives": [],
+      "source_needle": "Thomas Alsbjerg",
+      "support_excerpt": "iew profile format: application/pdf size: 111 kb description: evp, digital solutions and vestas development file title: thomas alsbjerg view profile format: application/pdf size: 46 kb description: evp, sales file title: javier rodriguez diez view profile format: application/pdf size: 81 kb description: evp, technology & operations file title: felix henseler view profile format: app",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f115",
+      "page_id": "p036",
+      "objective": "people",
+      "expected": {
+        "name": "Javier Rodriguez Diez",
+        "role": "Sales",
+        "company": "Vestas"
+      },
+      "alternatives": [],
+      "source_needle": "Javier Rodriguez Diez",
+      "support_excerpt": "opment file title: thomas alsbjerg view profile format: application/pdf size: 46 kb description: evp, sales file title: javier rodriguez diez view profile format: application/pdf size: 81 kb description: evp, technology & operations file title: felix henseler view profile format: application/pdf size: 135 kb description: evp, people & culture file title: anne pearce view profile format: a",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f116",
+      "page_id": "p036",
+      "objective": "people",
+      "expected": {
+        "name": "Felix Henseler",
+        "role": "Technology",
+        "company": "Vestas"
+      },
+      "alternatives": [],
+      "source_needle": "Felix Henseler",
+      "support_excerpt": "r rodriguez diez view profile format: application/pdf size: 81 kb description: evp, technology & operations file title: felix henseler view profile format: application/pdf size: 135 kb description: evp, people & culture file title: anne pearce view profile format: application/pdf size: 62 kb description: evp, service file title: christian venderby view profile format: application/p",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f117",
+      "page_id": "p036",
+      "objective": "people",
+      "expected": {
+        "name": "Anne Pearce",
+        "role": "People",
+        "company": "Vestas"
+      },
+      "alternatives": [],
+      "source_needle": "Anne Pearce",
+      "support_excerpt": " title: felix henseler view profile format: application/pdf size: 135 kb description: evp, people & culture file title: anne pearce view profile format: application/pdf size: 62 kb description: evp, service file title: christian venderby view profile format: application/pdf size: 56 kb our global matrix organisation our operating model creates a regional focus to implementing an",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f118",
+      "page_id": "p036",
+      "objective": "people",
+      "expected": {
+        "name": "Christian Venderby",
+        "role": "Service",
+        "company": "Vestas"
+      },
+      "alternatives": [],
+      "source_needle": "Christian Venderby",
+      "support_excerpt": " culture file title: anne pearce view profile format: application/pdf size: 62 kb description: evp, service file title: christian venderby view profile format: application/pdf size: 56 kb our global matrix organisation our operating model creates a regional focus to implementing and living vestas’ strategy. furthermore, it secures global alignment and best practices to be shared and im",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f119",
+      "page_id": "p003",
+      "objective": "company_relationships",
+      "expected": {
+        "subject": "Handelsbanken",
+        "relationship": "parent_of",
+        "object": "Handelsbanken Liv"
+      },
+      "alternatives": [
+        {
+          "subject": "Handelsbanken Liv",
+          "relationship": "subsidiary_of",
+          "object": "Handelsbanken"
+        }
+      ],
+      "source_needle": "Handelsbanken Liv",
+      "support_excerpt": "enu about us / swedish subsidiaries swedish subsidiaries here you will find information about some of our subsidiaries: handelsbanken liv handelsbanken fonder stadshypotek handelsbanken finans efn ekonomikanalen subsidiaries in sweden handelsbanken liv handelsbanken liv is handelsbanken's life insurance company and is a wholly owned subsidiary. handelsbanken fonder handelsbanken fonde",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f120",
+      "page_id": "p003",
+      "objective": "company_relationships",
+      "expected": {
+        "subject": "Handelsbanken",
+        "relationship": "parent_of",
+        "object": "Handelsbanken Fonder AB"
+      },
+      "alternatives": [
+        {
+          "subject": "Handelsbanken Fonder AB",
+          "relationship": "subsidiary_of",
+          "object": "Handelsbanken"
+        }
+      ],
+      "source_needle": "Handelsbanken Fonder AB",
+      "support_excerpt": " liv handelsbanken liv is handelsbanken's life insurance company and is a wholly owned subsidiary. handelsbanken fonder handelsbanken fonder ab is a fund company and a wholly owned subsidiary of handelsbanken. stadshypotek stadshypotek ab is handelsbanken's mortgage institute. the company dates back to 1865. since 1997, stadshypotek has been a wholly-owned subsidiary of handelsbanken. hande",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f121",
+      "page_id": "p003",
+      "objective": "company_relationships",
+      "expected": {
+        "subject": "Handelsbanken",
+        "relationship": "parent_of",
+        "object": "Stadshypotek AB"
+      },
+      "alternatives": [
+        {
+          "subject": "Stadshypotek AB",
+          "relationship": "subsidiary_of",
+          "object": "Handelsbanken"
+        }
+      ],
+      "source_needle": "Stadshypotek AB",
+      "support_excerpt": "elsbanken fonder handelsbanken fonder ab is a fund company and a wholly owned subsidiary of handelsbanken. stadshypotek stadshypotek ab is handelsbanken's mortgage institute. the company dates back to 1865. since 1997, stadshypotek has been a wholly-owned subsidiary of handelsbanken. handelsbanken finans handelsbanken finans is a wholly owned subsidiary of handelsbanken. handelsbank",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f122",
+      "page_id": "p003",
+      "objective": "company_relationships",
+      "expected": {
+        "subject": "Handelsbanken",
+        "relationship": "parent_of",
+        "object": "Handelsbanken Finans"
+      },
+      "alternatives": [
+        {
+          "subject": "Handelsbanken Finans",
+          "relationship": "subsidiary_of",
+          "object": "Handelsbanken"
+        }
+      ],
+      "source_needle": "Handelsbanken Finans",
+      "support_excerpt": "ries here you will find information about some of our subsidiaries: handelsbanken liv handelsbanken fonder stadshypotek handelsbanken finans efn ekonomikanalen subsidiaries in sweden handelsbanken liv handelsbanken liv is handelsbanken's life insurance company and is a wholly owned subsidiary. handelsbanken fonder handelsbanken fonder ab is a fund company and a wholly owned subsidiary of",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f123",
+      "page_id": "p003",
+      "objective": "company_relationships",
+      "expected": {
+        "subject": "Handelsbanken",
+        "relationship": "parent_of",
+        "object": "EFN Ekonomikanalen AB"
+      },
+      "alternatives": [
+        {
+          "subject": "EFN Ekonomikanalen AB",
+          "relationship": "subsidiary_of",
+          "object": "Handelsbanken"
+        }
+      ],
+      "source_needle": "EFN Ekonomikanalen AB",
+      "support_excerpt": "ndelsbanken finans is in charge of a settlement portfolio consisting of structured leasing products. efn ekonomikanalen efn ekonomikanalen ab, a wholly owned subsidiary of svenska handelsbanken ab, produces content on personal finance, the stock market and economic developments. efn is a registered trademark, and its editorial content is published and distributed by efn ab. looking for mo",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f124",
+      "page_id": "p007",
+      "objective": "company_relationships",
+      "expected": {
+        "subject": "Kongsberg",
+        "relationship": "parent_of",
+        "object": "Kongsberg Geospatial Ltd."
+      },
+      "alternatives": [
+        {
+          "subject": "Kongsberg Geospatial Ltd.",
+          "relationship": "subsidiary_of",
+          "object": "Kongsberg"
+        }
+      ],
+      "source_needle": "Kongsberg Geospatial Ltd.",
+      "support_excerpt": " list of group companies can be found below. subsidiaries see the full overview in the lists below. falkor nanoavionics kongsberg geospatial ltd. kongsberg aviation maintenance services joint ventures and associated companies see the full overview in the lists below. patria an associated company, owned by the state of finland (50.1 per cent) and kongsberg (49.9 per cent). kongsberg satellite ",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f125",
+      "page_id": "p007",
+      "objective": "company_relationships",
+      "expected": {
+        "subject": "Kongsberg",
+        "relationship": "parent_of",
+        "object": "Kongsberg Discovery UK Limited"
+      },
+      "alternatives": [
+        {
+          "subject": "Kongsberg Discovery UK Limited",
+          "relationship": "subsidiary_of",
+          "object": "Kongsberg"
+        }
+      ],
+      "source_needle": "Kongsberg Discovery UK Limited",
+      "support_excerpt": "igital pte. ltd. singapore 83.33 kongsberg discovery spain s.l.u. spain 100 kongsberg norcontrol ltd. great britain 100 kongsberg discovery uk limited great britain 100 nanoavionics uk ltd. great britain 98.82 futureon ltd great britain 74.83 kongsberg defence switzerland ag switzerland 100 kongsberg hungaria kft. hungary 100 kongsberg digital inc. usa 83.33 kongsberg discovery us llc usa 100 kong",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f126",
+      "page_id": "p007",
+      "objective": "company_relationships",
+      "expected": {
+        "subject": "Kongsberg",
+        "relationship": "parent_of",
+        "object": "Kongsberg Defence & Aerospace AS"
+      },
+      "alternatives": [
+        {
+          "subject": "Kongsberg Defence & Aerospace AS",
+          "relationship": "subsidiary_of",
+          "object": "Kongsberg"
+        }
+      ],
+      "source_needle": "Kongsberg Defence & Aerospace AS",
+      "support_excerpt": " norwegian group companies: kongsberg norcontrol as - mexico branch mexico kongsberg norcontrol as - spain branch spain kongsberg defence & aerospace as - kuwait branch kuwait kongsberg defence & aerospace as - oman branch oman kongsberg defence & aerospace as - australia branch australia kongsberg defence & aerospace as - qatar branch qatar kongsberg digital as - philippines branch philippines futu",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f127",
+      "page_id": "p019",
+      "objective": "company_relationships",
+      "expected": {
+        "subject": "Pricer",
+        "relationship": "partner_of",
+        "object": "Visual Art"
+      },
+      "alternatives": [
+        {
+          "subject": "Visual Art",
+          "relationship": "partner_of",
+          "object": "Pricer"
+        }
+      ],
+      "source_needle": "Visual Art",
+      "support_excerpt": "ecosystem below you can see examples of some of the partners we work with. if you want to know more, please contact us. visual art visual art is a leading full-service agency within digital communication channels, offering a combination of creative expertise, tech-innovation and a simple and intuitive digital signage software cms signage player. more on visual art get in touch!",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f128",
+      "page_id": "p023",
+      "objective": "company_relationships",
+      "expected": {
+        "subject": "Tobii",
+        "relationship": "partner_of",
+        "object": "Brain Products"
+      },
+      "alternatives": [
+        {
+          "subject": "Brain Products",
+          "relationship": "partner_of",
+          "object": "Tobii"
+        }
+      ],
+      "source_needle": "Brain Products",
+      "support_excerpt": "ombining eye tracking data with other electrophysiological data streams, such as eeg but also gsr and other biosignals. brain products eeg leading manufacturer of end-to-end neurophysiological research solutions: high-quality, versatile eeg solutions, powerful software and in-depth support. visit brain products bitbrain eeg and biometrics easy, practical, and reliable eeg systems, ",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f129",
+      "page_id": "p023",
+      "objective": "company_relationships",
+      "expected": {
+        "subject": "Tobii",
+        "relationship": "partner_of",
+        "object": "Biopac"
+      },
+      "alternatives": [
+        {
+          "subject": "Biopac",
+          "relationship": "partner_of",
+          "object": "Tobii"
+        }
+      ],
+      "source_needle": "Biopac",
+      "support_excerpt": "osignal sensors and software solutions for real-world human behaviour research, health and neuroscience. visit bitbrain biopac systems, inc. biometrics high-quality physiology measurement and interpretation systems with innovative, scalable tools and world-class support for wired or wireless research. visit biopac systems inc. somareality eye tracking specializes in develop",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f130",
+      "page_id": "p023",
+      "objective": "company_relationships",
+      "expected": {
+        "subject": "Tobii",
+        "relationship": "partner_of",
+        "object": "Qualisys"
+      },
+      "alternatives": [
+        {
+          "subject": "Qualisys",
+          "relationship": "partner_of",
+          "object": "Tobii"
+        }
+      ],
+      "source_needle": "Qualisys",
+      "support_excerpt": "ystems when combined with our wearable eye trackers make it possible to study the links between attention and movement. qualisys motion capture leading provider of high-end motion capture systems and expertise in movement capture and analysis within biomechanics, sport research and engineering. visit qualisys vicon motion capture world leading provider of tailored motion capt",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f131",
+      "page_id": "p023",
+      "objective": "company_relationships",
+      "expected": {
+        "subject": "Tobii",
+        "relationship": "partner_of",
+        "object": "Shimmer"
+      },
+      "alternatives": [
+        {
+          "subject": "Shimmer",
+          "relationship": "partner_of",
+          "object": "Tobii"
+        }
+      ],
+      "source_needle": "Shimmer",
+      "support_excerpt": "solutions for stimulating human brain and body, used for recordings in both clinical and research settings. visit g.tec shimmer biometrics leading provider of medical-grade wearable sensors. the shimmer gsr+ is fully integrated into tobii pro lab, to be used with our screen-based eye trackers. visit shimmer cortivision fnirs cortivision is a tech company delivering innovatio",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f132",
+      "page_id": "p028",
+      "objective": "company_relationships",
+      "expected": {
+        "subject": "TRUMPF",
+        "relationship": "parent_of",
+        "object": "AMPHOS"
+      },
+      "alternatives": [
+        {
+          "subject": "AMPHOS",
+          "relationship": "subsidiary_of",
+          "object": "TRUMPF"
+        }
+      ],
+      "source_needle": "AMPHOS",
+      "support_excerpt": "mtosecond pulse synchronization, customized laser head controls, delay generators and optical components. find out more amphos amphos (\"amplifying photonics\") is a spin-off from the renowned fraunhofer ilt and rwth aachen. it has been part of the trumpf group since 2018. amphos develops and manufactures high-power ukp lasers for scientific and industrial applications. portf",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f133",
+      "page_id": "p009",
+      "objective": "jobs",
+      "expected": {
+        "employer": "Kongsberg",
+        "title": "Project Engineer - Configuration Management",
+        "location": "Kongsberg"
+      },
+      "alternatives": [],
+      "source_needle": "Project Engineer - Configuration Management",
+      "support_excerpt": "project engineer - configuration management - kongsberg - an international technology group skip to content home - corporate what we do support and services careers how we work investors company home - corporate careers vacancies project engineer - configuration management project engineer - ",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f134",
+      "page_id": "p040",
+      "objective": "jobs",
+      "expected": {
+        "employer": "Vestas",
+        "title": "Gestionnaire de site",
+        "location": "Degelis",
+        "job_url": "https://careers.vestas.com/job/Degelis-Gestionnaire-de-site-Queb-G5T-0C1/1393571933/"
+      },
+      "alternatives": [],
+      "source_needle": "Gestionnaire de site",
+      "support_excerpt": "l full-time temporary job title location job family work experience job title location job family work experience reset gestionnaire de site gestionnaire de site degelis, quebec, ca, g5t 0c1 +1 more... 6 sept 2026 degelis, quebec, ca, g5t 0c1 +1 more... field operations management supervisor settingiano e pisticci supervisor settingiano e pisticci taranto, ta, it +1 more... 6 sept 2026 t",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f135",
+      "page_id": "p040",
+      "objective": "jobs",
+      "expected": {
+        "employer": "Vestas",
+        "title": "Supervisor Settingiano e Pisticci",
+        "location": "Taranto",
+        "job_url": "https://careers.vestas.com/job/Taranto-Supervisor-Settingiano-e-Pisticci-TA/1393376033/"
+      },
+      "alternatives": [],
+      "source_needle": "Supervisor Settingiano e Pisticci",
+      "support_excerpt": "degelis, quebec, ca, g5t 0c1 +1 more... 6 sept 2026 degelis, quebec, ca, g5t 0c1 +1 more... field operations management supervisor settingiano e pisticci supervisor settingiano e pisticci taranto, ta, it +1 more... 6 sept 2026 taranto, ta, it +1 more... field operations team leader electrical supervisor electrical supervisor taipei, taiwan, tw 6 sept 2026 taipei, taiwan, tw field operations skilled w",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f136",
+      "page_id": "p040",
+      "objective": "jobs",
+      "expected": {
+        "employer": "Vestas",
+        "title": "Electrical Supervisor",
+        "location": "Taipei",
+        "job_url": "https://careers.vestas.com/job/Taipei-Electrical-Supervisor-Taiw/1413575233/"
+      },
+      "alternatives": [],
+      "source_needle": "Electrical Supervisor",
+      "support_excerpt": "r settingiano e pisticci taranto, ta, it +1 more... 6 sept 2026 taranto, ta, it +1 more... field operations team leader electrical supervisor electrical supervisor taipei, taiwan, tw 6 sept 2026 taipei, taiwan, tw field operations skilled worker / semi-skilled worker technician ii technician ii montezuma, ia, us 6 sept 2026 montezuma, ia, us field operations skilled worker / semi-skilled ",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f137",
+      "page_id": "p040",
+      "objective": "jobs",
+      "expected": {
+        "employer": "Vestas",
+        "title": "Technician II",
+        "location": "Montezuma",
+        "job_url": "https://careers.vestas.com/job/Montezuma-Technician-II-IA-50171/1403556333/"
+      },
+      "alternatives": [],
+      "source_needle": "Technician II",
+      "support_excerpt": "ical supervisor taipei, taiwan, tw 6 sept 2026 taipei, taiwan, tw field operations skilled worker / semi-skilled worker technician ii technician ii montezuma, ia, us 6 sept 2026 montezuma, ia, us field operations skilled worker / semi-skilled worker bop (balance of plant) engineer bop (balance of plant) engineer burgos, ilocos, ph 6 sept 2026 burgos, ilocos, ph field operations sk",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f138",
+      "page_id": "p040",
+      "objective": "jobs",
+      "expected": {
+        "employer": "Vestas",
+        "title": "BOP (Balance of Plant) Engineer",
+        "location": "BURGOS",
+        "job_url": "https://careers.vestas.com/job/BURGOS-BOP-%28Balance-of-Plant%29-Engineer-Iloc/1403162233/"
+      },
+      "alternatives": [],
+      "source_needle": "BOP (Balance of Plant) Engineer",
+      "support_excerpt": " ii technician ii montezuma, ia, us 6 sept 2026 montezuma, ia, us field operations skilled worker / semi-skilled worker bop (balance of plant) engineer bop (balance of plant) engineer burgos, ilocos, ph 6 sept 2026 burgos, ilocos, ph field operations skilled worker / semi-skilled worker technician iii technician iii staceyville, ia, us 6 sept 2026 staceyville, ia, us field operations skilled worker",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f139",
+      "page_id": "p040",
+      "objective": "jobs",
+      "expected": {
+        "employer": "Vestas",
+        "title": "Technician III",
+        "location": "Staceyville",
+        "job_url": "https://careers.vestas.com/job/Staceyville-Technician-III-IA-50225/1403559233/"
+      },
+      "alternatives": [],
+      "source_needle": "Technician III",
+      "support_excerpt": "plant) engineer burgos, ilocos, ph 6 sept 2026 burgos, ilocos, ph field operations skilled worker / semi-skilled worker technician iii technician iii staceyville, ia, us 6 sept 2026 staceyville, ia, us field operations skilled worker / semi-skilled worker service technician bisaccia service technician bisaccia bisaccia, pi, it 6 sept 2026 bisaccia, pi, it field operations skilled w",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f140",
+      "page_id": "p040",
+      "objective": "jobs",
+      "expected": {
+        "employer": "Vestas",
+        "title": "Service Technician Bisaccia",
+        "location": "Bisaccia",
+        "job_url": "https://careers.vestas.com/job/Bisaccia-Service-Technician-Bisaccia-PI/1393347933/"
+      },
+      "alternatives": [],
+      "source_needle": "Service Technician Bisaccia",
+      "support_excerpt": "echnician iii staceyville, ia, us 6 sept 2026 staceyville, ia, us field operations skilled worker / semi-skilled worker service technician bisaccia service technician bisaccia bisaccia, pi, it 6 sept 2026 bisaccia, pi, it field operations skilled worker / semi-skilled worker purchasing manager purchasing manager seoul, seoul-teukpyolsi, kr, 04323 6 sept 2026 seoul, seoul-teukpyolsi, kr, 04323 s",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f141",
+      "page_id": "p040",
+      "objective": "jobs",
+      "expected": {
+        "employer": "Vestas",
+        "title": "Purchasing Manager",
+        "location": "Seoul",
+        "job_url": "https://careers.vestas.com/job/Seoul-Purchasing-Manager-Seou-04323/1413558133/"
+      },
+      "alternatives": [],
+      "source_needle": "Purchasing Manager",
+      "support_excerpt": "technician bisaccia bisaccia, pi, it 6 sept 2026 bisaccia, pi, it field operations skilled worker / semi-skilled worker purchasing manager purchasing manager seoul, seoul-teukpyolsi, kr, 04323 6 sept 2026 seoul, seoul-teukpyolsi, kr, 04323 supply chain and logistics specialist transport coordinator (m/f/d) transport coordinator (m/f/d) hannover, ni, de 6 sept 2026 hannover, ni, de supp",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f142",
+      "page_id": "p040",
+      "objective": "jobs",
+      "expected": {
+        "employer": "Vestas",
+        "title": "Transport Coordinator (m/f/d)",
+        "location": "Hannover",
+        "job_url": "https://careers.vestas.com/job/Hannover-Transport-Coordinator-%28mfd%29-NI/1413655933/"
+      },
+      "alternatives": [],
+      "source_needle": "Transport Coordinator (m/f/d)",
+      "support_excerpt": "seoul, seoul-teukpyolsi, kr, 04323 6 sept 2026 seoul, seoul-teukpyolsi, kr, 04323 supply chain and logistics specialist transport coordinator (m/f/d) transport coordinator (m/f/d) hannover, ni, de 6 sept 2026 hannover, ni, de supply chain and logistics skilled worker / semi-skilled worker tax manager tax manager pasay, 00, ph, 1300 6 sept 2026 pasay, 00, ph, 1300 finance management results 1 – 10",
+      "support_kind": "rendered_text"
+    },
+    {
+      "check_id": "f143",
+      "page_id": "p040",
+      "objective": "jobs",
+      "expected": {
+        "employer": "Vestas",
+        "title": "Tax Manager",
+        "location": "Pasay",
+        "job_url": "https://careers.vestas.com/job/Pasay-Tax-Manager-00-1300/1424523833/"
+      },
+      "alternatives": [],
+      "source_needle": "Tax Manager",
+      "support_excerpt": "r (m/f/d) hannover, ni, de 6 sept 2026 hannover, ni, de supply chain and logistics skilled worker / semi-skilled worker tax manager tax manager pasay, 00, ph, 1300 6 sept 2026 pasay, 00, ph, 1300 finance management results 1 – 10 of 649 page 1 of 65 « 1 2 3 4 5 6 7 8 9 10 » vestas careers vestas.com join vestas’ talent universe contact us privacy policy opens in a new tab. opens",
+      "support_kind": "rendered_text"
+    }
+  ],
+  "selection": [
+    {
+      "page_id": "p001",
+      "objective": "company_profile",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p001",
+      "objective": "products_services",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p002",
+      "objective": "company_profile",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p002",
+      "objective": "company_contacts",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p002",
+      "objective": "locations",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p003",
+      "objective": "company_relationships",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p005",
+      "objective": "products_services",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p006",
+      "objective": "people",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p007",
+      "objective": "company_relationships",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p008",
+      "objective": "company_contacts",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p008",
+      "objective": "locations",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p009",
+      "objective": "jobs",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p009",
+      "objective": "people",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p009",
+      "objective": "company_contacts",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p009",
+      "objective": "locations",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p010",
+      "objective": "company_profile",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p010",
+      "objective": "products_services",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p010",
+      "objective": "jobs",
+      "role": "navigation",
+      "useful": true
+    },
+    {
+      "page_id": "p010",
+      "objective": "people",
+      "role": "navigation",
+      "useful": true
+    },
+    {
+      "page_id": "p011",
+      "objective": "products_services",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p011",
+      "objective": "jobs",
+      "role": "navigation",
+      "useful": true
+    },
+    {
+      "page_id": "p011",
+      "objective": "company_contacts",
+      "role": "navigation",
+      "useful": true
+    },
+    {
+      "page_id": "p012",
+      "objective": "company_contacts",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p012",
+      "objective": "people",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p013",
+      "objective": "company_profile",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p013",
+      "objective": "people",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p013",
+      "objective": "jobs",
+      "role": "navigation",
+      "useful": true
+    },
+    {
+      "page_id": "p014",
+      "objective": "company_profile",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p014",
+      "objective": "locations",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p014",
+      "objective": "company_relationships",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p015",
+      "objective": "products_services",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p016",
+      "objective": "company_contacts",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p016",
+      "objective": "locations",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p017",
+      "objective": "company_profile",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p017",
+      "objective": "products_services",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p018",
+      "objective": "people",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p019",
+      "objective": "company_relationships",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p020",
+      "objective": "products_services",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p021",
+      "objective": "company_contacts",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p022",
+      "objective": "company_profile",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p022",
+      "objective": "products_services",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p023",
+      "objective": "company_relationships",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p024",
+      "objective": "products_services",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p025",
+      "objective": "products_services",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p026",
+      "objective": "products_services",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p026",
+      "objective": "company_profile",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p026",
+      "objective": "jobs",
+      "role": "navigation",
+      "useful": true
+    },
+    {
+      "page_id": "p026",
+      "objective": "company_contacts",
+      "role": "navigation",
+      "useful": true
+    },
+    {
+      "page_id": "p027",
+      "objective": "company_contacts",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p027",
+      "objective": "people",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p028",
+      "objective": "company_relationships",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p028",
+      "objective": "products_services",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p029",
+      "objective": "company_profile",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p029",
+      "objective": "company_contacts",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p029",
+      "objective": "locations",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p029",
+      "objective": "people",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p030",
+      "objective": "products_services",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p030",
+      "objective": "people",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p031",
+      "objective": "people",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p032",
+      "objective": "products_services",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p032",
+      "objective": "company_contacts",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p033",
+      "objective": "company_profile",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p034",
+      "objective": "company_profile",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p034",
+      "objective": "people",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p034",
+      "objective": "jobs",
+      "role": "navigation",
+      "useful": true
+    },
+    {
+      "page_id": "p035",
+      "objective": "products_services",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p036",
+      "objective": "people",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p037",
+      "objective": "locations",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p037",
+      "objective": "company_contacts",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p039",
+      "objective": "products_services",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p039",
+      "objective": "jobs",
+      "role": "navigation",
+      "useful": true
+    },
+    {
+      "page_id": "p040",
+      "objective": "jobs",
+      "role": "direct",
+      "useful": true
+    },
+    {
+      "page_id": "p004",
+      "objective": "company_relationships",
+      "role": "none",
+      "useful": false
+    },
+    {
+      "page_id": "p004",
+      "objective": "people",
+      "role": "none",
+      "useful": false
+    },
+    {
+      "page_id": "p004",
+      "objective": "jobs",
+      "role": "none",
+      "useful": false
+    },
+    {
+      "page_id": "p006",
+      "objective": "jobs",
+      "role": "none",
+      "useful": false
+    },
+    {
+      "page_id": "p012",
+      "objective": "jobs",
+      "role": "none",
+      "useful": false
+    },
+    {
+      "page_id": "p015",
+      "objective": "people",
+      "role": "none",
+      "useful": false
+    },
+    {
+      "page_id": "p015",
+      "objective": "jobs",
+      "role": "none",
+      "useful": false
+    },
+    {
+      "page_id": "p018",
+      "objective": "jobs",
+      "role": "none",
+      "useful": false
+    },
+    {
+      "page_id": "p031",
+      "objective": "jobs",
+      "role": "none",
+      "useful": false
+    },
+    {
+      "page_id": "p036",
+      "objective": "jobs",
+      "role": "none",
+      "useful": false
+    }
+  ],
+  "negative_checks": [
+    {
+      "page_id": "p013",
+      "objective": "jobs",
+      "field": "title",
+      "forbidden": [
+        "Controller",
+        "Processoperatör",
+        "Produktionstekniker",
+        "Marknadschef",
+        "Projektledare",
+        "kvalitet- och miljöchef"
+      ],
+      "reason": "Employee testimonials describe existing employees, not vacancies."
+    },
+    {
+      "page_id": "p034",
+      "objective": "jobs",
+      "field": "title",
+      "forbidden": [
+        "Data Scientist",
+        "Product and Package Design Specialist",
+        "Customer Experience Manager",
+        "Transportation Weather Data Scientist"
+      ],
+      "reason": "Employee stories are not vacancies."
+    },
+    {
+      "page_id": "p038",
+      "objective": "company_relationships",
+      "empty": true,
+      "reason": "404 body contains no customer relationship."
+    },
+    {
+      "page_id": "p004",
+      "objective": "company_relationships",
+      "field": "relationship",
+      "forbidden": [
+        "parent_of",
+        "subsidiary_of",
+        "owns_brand"
+      ],
+      "reason": "LEI issuers are listed as issuers, not owned entities."
+    }
+  ],
+  "selection_metadata_only_control": {
+    "page_id": "p038",
+    "objective": "company_relationships",
+    "note": "URL looks like customers but destination is 404. Excluded from positive recall; evaluate separately as fetch failure, not necessarily selection error."
+  }
+}

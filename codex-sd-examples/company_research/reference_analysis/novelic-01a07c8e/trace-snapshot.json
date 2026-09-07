@@ -1,0 +1,681 @@
+{
+  "artifact_type": "observable_codex_session_snapshot",
+  "exported_at": "2026-09-07T16:32:51Z",
+  "source_thread": {
+    "id": "01a07c8e-ebaf-7fa2-8dfc-f935cc279dd8",
+    "kind": "codex",
+    "hostId": "local",
+    "title": "Analyze Novelic company",
+    "preview": "Can you make full analysis of the novelic.com as a company, everything that we can get about it",
+    "status": {
+      "type": "active",
+      "activeFlags": []
+    },
+    "cwd": "/Users/graovic/pulsarpoint/ppoint",
+    "createdAt": 1788796136,
+    "updatedAt": 1788798643
+  },
+  "source_page": {
+    "order": "newest_first",
+    "limit": 2,
+    "nextCursor": null,
+    "hasMore": false
+  },
+  "limitations": [
+    "Source turn was still in progress. This snapshot is not a completed run or exhaustive network trace.",
+    "Reasoning items are excluded. No private reasoning is reconstructed.",
+    "Some tool output excerpts are truncated; several web events expose action=other without target URLs.",
+    "Web requests performed inside commands are represented by those commands, not separate request events.",
+    "File-change diffs are omitted; file paths and statuses are retained.",
+    "A search query is a hypothesis, not proof of the names or relationships it contains."
+  ],
+  "turns": [
+    {
+      "id": "01a07c8f-3d4c-7981-b962-1554a009384b",
+      "status": "inProgress",
+      "error": null,
+      "startedAt": 1788796157,
+      "completedAt": null,
+      "durationMs": null,
+      "items": [
+        {
+          "type": "userMessage",
+          "id": "01a07c8f-407d-7f02-b8bd-dfa1d7424fff",
+          "content": [
+            {
+              "type": "text",
+              "text": "Can you make full analysis of the novelic.com as a company, everything that we can get about it \n"
+            }
+          ]
+        },
+        {
+          "type": "agentMessage",
+          "id": "msg_095d3ee96f7e11a7016a9edd01e69887d29601d980b43cf84e",
+          "text": "I’ll investigate NOVELIC’s ownership, products, leadership, finances, customers, partnerships, and public footprint, then assemble a sourced company report. I’ll distinguish verified facts from estimates and information that isn’t publicly available.",
+          "phase": "commentary"
+        },
+        {
+          "type": "webSearch",
+          "id": "exec-a0cf4618-993e-4e7f-80b0-1f7e5503942f",
+          "query": "NOVELIC company acquisition Sona Comstar 2025 2026",
+          "action": {
+            "type": "search",
+            "query": "NOVELIC company acquisition Sona Comstar 2025 2026",
+            "queries": null
+          }
+        },
+        {
+          "type": "commandExecution",
+          "id": "exec-ddac4aef-b315-460c-b941-beb4ed9e0507",
+          "command": "/bin/zsh -lc \"pwd && rg --files -g 'AGENTS.md' -g '*novelic*' -g '*research*' -g '*report*' | head -60\"",
+          "cwd": "/Users/graovic/pulsarpoint/ppoint",
+          "status": "completed",
+          "exitCode": 0,
+          "durationMs": 9
+        },
+        {
+          "type": "webSearch",
+          "id": "exec-c0f966f7-0b5e-4beb-9737-65c7aa3606b2",
+          "query": "site:sonacomstar.com \"2025-26\" \"annual report\" ...",
+          "action": {
+            "type": "search",
+            "query": null,
+            "queries": [
+              "site:sonacomstar.com \"2025-26\" \"annual report\"",
+              "site:sonacomstar.com \"Novelic\" \"2026\" revenue",
+              "site:novelic.com \"2026\" radar"
+            ]
+          }
+        },
+        {
+          "type": "webSearch",
+          "id": "exec-d631992a-4847-4bf2-9626-d469a209d5b9",
+          "query": "site:novelic.com about us founders Milan Bjelica Dragan ...",
+          "action": {
+            "type": "search",
+            "query": null,
+            "queries": [
+              "site:novelic.com about us founders Milan Bjelica Dragan",
+              "Novelic doo Beograd 2012 matični broj prihodi 2025 2024",
+              "site:sonacomstar.com NOVELIC 40.5 2023 acquisition"
+            ]
+          }
+        },
+        {
+          "type": "commandExecution",
+          "id": "exec-2eeb95f0-a68a-463d-a07d-ac9bc5c5a6dd",
+          "command": "/bin/zsh -lc 'cat AGENTS.md'",
+          "cwd": "/Users/graovic/pulsarpoint/ppoint",
+          "status": "completed",
+          "exitCode": 0,
+          "durationMs": 0,
+          "output": {
+            "text": "## Go Logging and Error Handling\n\nFor Go projects, follow the detailed logging and error-handling guide in:\n\n`docs/skills/go-logging.md`\n\nCore rules:\n\n- Use `log/slog` for structured logging.\n- Use `github.com/cockroachdb/errors` for error wrapping and stack traces.\n- Do not log the same error in every layer.\n- Lower layers should wrap and return errors.\n- Boundary layers should log errors once.\n- Never expose verbose internal errors or stack traces to external clients.\n- Never log secrets, tokens, passwords, cookies, or sensitive request bodies.\n\nPattern:\n\n```text\nrepository/external client -> wrap error\nservice layer              -> add business context\nhandler/worker/consumer    -> log once\nclient response            -> return safe message\n```\n\n## Go Architecture and Indirection\n\nPrefer simple, direct code over abstraction by default.\n\nCore rules:\n\n- Do not add interfaces just because a type is passed between functions.\n- Do not add interfaces only to make tests mockable when the concrete dependency can be tested at a real boundary, such as HTTP, NATS, SQL, or Temporal test utilities.\n- Add an interface only when there are multiple real implementations, a stable package boundary requires it, or the caller genuinely owns behavior rather than a concrete implementation.\n- Keep Temporal registration direct in app wiring. Register workflows and activities on the Temporal worker directly, for example with `RegisterActivityWithOptions`, instead of hiding registration behind local registry interfaces.\n- Avoid generic service/facade layers when a source-specific package can expose a small concrete API.\n- If a file introduces an interface, the reason should be obvious from nearby code. If not, remove the interface and use the concrete type.\n\nPattern:\n\n```text\napp wiring       ",
+            "truncated": true,
+            "originalChars": 2077
+          }
+        },
+        {
+          "type": "webSearch",
+          "id": "exec-5133ce23-3f33-4039-9ee3-2e8dc7cbb1ee",
+          "query": "https://www.novelic.com/about-us/",
+          "action": {
+            "type": "openPage",
+            "url": "https://www.novelic.com/about-us/"
+          }
+        },
+        {
+          "type": "agentMessage",
+          "id": "msg_095d3ee96f7e11a7016a9edd2b8c1c87d2b408c65245b8e936",
+          "text": "NOVELIC is a Serbian radar and embedded engineering company, majority owned by India’s Sona Comstar since 2023. I found both Serbian financial summaries and public filings from its parent; comparing them should clarify its financial position and the progress of its move into automotive product manufacturing.",
+          "phase": "commentary"
+        },
+        {
+          "type": "webSearch",
+          "id": "exec-daebf2b5-d0f0-4381-bde7-f6650777d662",
+          "query": "https://sonacomstar.com/investor/subsidiary-companies-financial-statements",
+          "action": {
+            "type": "openPage",
+            "url": "https://sonacomstar.com/investor/subsidiary-companies-financial-statements"
+          }
+        },
+        {
+          "type": "commandExecution",
+          "id": "exec-9994dcca-bbdf-40dc-8724-ec7a258eb6e3",
+          "command": "/bin/zsh -lc 'cat /Users/graovic/.codex/plugins/cache/openai-primary-runtime/pdf/26.905.11957/skills/pdf/SKILL.md'",
+          "cwd": "/Users/graovic/pulsarpoint/ppoint",
+          "status": "completed",
+          "exitCode": 0,
+          "durationMs": 0,
+          "output": {
+            "text": "---\nname: \"pdf\"\ndescription: \"Read, create, inspect, render, and verify PDF files where visual layout matters, including fillable AcroForms. Use Poppler rendering plus Python tools such as reportlab, pdfplumber, and pypdf for generation and extraction.\"\n---\n\n# PDF Skill\n\n## When To Use\n\n- Read or review PDF content where layout and visuals matter.\n- Create PDFs programmatically with reliable formatting.\n- Fill and validate interactive PDF forms.\n- Validate final rendering before delivery.\n\n## Tools + Contract Requirements\n\nImmediately before the first create/edit authoring command, run `mark_artifact_operation_started.mjs` successfully exactly once using the command below. Do not run it for read-only work. For edits, replace `create` with `edit`; adjust the expected count and output format to match the requested outputs.\n\n```bash\nnode container_tools/mark_artifact_operation_started.mjs --operation-kind create --expected-output-count 1 --output-format pdf\n```\n\n## Workflow\n\n1. Prefer visual review: render PDF pages to PNGs and inspect them.\n   - Use `pdftoppm` from the bundled runtime or system Poppler when available.\n   - If unavailable, install Poppler or ask the user to review the output locally.\n2. Use `reportlab` to generate PDFs when creating new documents.\n3. Use `pdfplumber` or `pypdf` for text extraction and quick checks; do not rely on text extraction for layout fidelity.\n4. After each meaningful update, re-render pages and verify alignment, spacing, and legibility.\n\n## Fill And Validate AcroForms\n\nVisual review alone is not a correctness check for a fillable PDF. A page `/Widget` annotation can render a value from its appearance stream while the canonical `/AcroForm/Fields` tree is missing or contains a stale value.\n\n1. Keep the result interactive by default; s",
+            "truncated": true,
+            "originalChars": 7119
+          }
+        },
+        {
+          "type": "webSearch",
+          "id": "exec-3cbb757b-3a44-489c-854a-2245045920f1",
+          "query": "'million'",
+          "action": {
+            "type": "findInPage",
+            "url": null,
+            "pattern": "million"
+          }
+        },
+        {
+          "type": "mcpToolCall",
+          "id": "exec-914f5f56-bc18-4ea8-972a-06f182e5134c",
+          "server": "codex_app",
+          "tool": "load_workspace_dependencies",
+          "arguments": {},
+          "status": "completed",
+          "durationMs": 49
+        },
+        {
+          "type": "agentMessage",
+          "id": "msg_095d3ee96f7e11a7016a9edd46798487d28517b85884588f2f",
+          "text": "I found NOVELIC’s own financial statements published by Sona Comstar, which give us stronger evidence than company-directory estimates. I’m using the PDF skill to check the figures and reporting periods directly; the Serbian calendar-year accounts and the parent’s March year-end reports need to be kept separate.",
+          "phase": "commentary"
+        },
+        {
+          "type": "webSearch",
+          "id": "exec-a2658b1c-1d68-4c8c-920b-d6264d5e852f",
+          "query": "",
+          "action": {
+            "type": "other"
+          }
+        },
+        {
+          "type": "webSearch",
+          "id": "exec-33432d11-6848-43d0-9258-bd44ebaff3e9",
+          "query": "",
+          "action": {
+            "type": "other"
+          }
+        },
+        {
+          "type": "commandExecution",
+          "id": "exec-0188c008-e21e-4cdd-962c-92e93ac95f62",
+          "command": "/bin/zsh -lc \"mkdir -p output/research/novelic-2026-09-07/sources tmp/pdfs/novelic\n/Users/graovic/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 - <<'PY'\nfrom pathlib import Path\nfrom concurrent.futures import ThreadPoolExecutor\nimport urllib.request\nfrom pypdf import PdfReader\nbase=Path('output/research/novelic-2026-09-07/sources')\nitems={\n'novelic-fy2026':'https://sonacomstar.com/files/documents/novelic-serbia-document-wMpyMY.pdf',\n'novelic-fy2025':'https://sonacomstar.com/files/documents/novelic-d-o-o-beograd--document-aWNkDI.pdf',\n'novelic-india-fy2026':'https://sonacomstar.com/files/documents/novelic-india-private-limited-2026-document-PLmLJm.pdf',\n'acquisition-2023':'https://sonacomstar.com/files/documents/investor-presentation-on-acquisition-of-novelic-document-Wnkycf.pdf',\n'parent-q1fy2027-call':'https://sonacomstar.com/files/documents/earning-call-transcript-for-q1-financial-results-document-EtmXYW.pdf'}\ndef fetch(item):\n name,url=item\n req=urllib.request.Request(url,headers={'User-Agent':'Mozilla/5.0'})\n data=urllib.request.urlopen(req,timeout=60).read()\n path=base/(name+'.pdf'); path.write_bytes(data)\n r=PdfReader(path)\n (base/(name+'.txt')).write_text('\\\\n'.join(f'\\\\nPAGE {i+1}\\\\n{p.extract_text()}' for i,p in enumerate(r.pages)))\n return f'{name}: {len(r.pages)} pages, {len(data)} bytes'\nfor result in ThreadPoolExecutor(max_workers=5).map(fetch,items.items()): print(result)\nPY\ncommand -v pdftoppm\"",
+          "cwd": "/Users/graovic/pulsarpoint/ppoint",
+          "status": "completed",
+          "exitCode": 0,
+          "durationMs": 5098,
+          "output": {
+            "text": "novelic-fy2026: 4 pages, 648912 bytes\nnovelic-fy2025: 4 pages, 598131 bytes\nnovelic-india-fy2026: 25 pages, 1115556 bytes\nacquisition-2023: 18 pages, 1849008 bytes\nparent-q1fy2027-call: 25 pages, 467848 bytes\n/opt/homebrew/bin/pdftoppm\n",
+            "truncated": false
+          }
+        },
+        {
+          "type": "webSearch",
+          "id": "exec-4213d1b0-a4f5-4903-aa7c-ebef7bed925a",
+          "query": "",
+          "action": {
+            "type": "other"
+          }
+        },
+        {
+          "type": "webSearch",
+          "id": "exec-2a814fb3-b47b-409a-8ba0-83ea3e37778a",
+          "query": "",
+          "action": {
+            "type": "other"
+          }
+        },
+        {
+          "type": "commandExecution",
+          "id": "exec-7f67751c-6a96-4040-b3c1-779742869558",
+          "command": "/bin/zsh -lc \"pdftoppm -scale-to 1700 -png output/research/novelic-2026-09-07/sources/novelic-fy2026.pdf tmp/pdfs/novelic/fy2026 >/dev/null 2>&1\npdftoppm -scale-to 1700 -png output/research/novelic-2026-09-07/sources/novelic-fy2025.pdf tmp/pdfs/novelic/fy2025 >/dev/null 2>&1\nrg -n -i -C 4 'novelic|radar|acam|perception|revenue from operations|incorporat|subsidiar|shareholder' output/research/novelic-2026-09-07/sources/novelic-india-fy2026.txt | head -160\"",
+          "cwd": "/Users/graovic/pulsarpoint/ppoint",
+          "status": "completed",
+          "exitCode": 0,
+          "durationMs": 2557,
+          "output": {
+            "text": "24- \n25- \n26-Independent Auditor’s Report \n27- \n28:To the Members of Novelic India Private Limited  \n29- \n30-Report on the Audit of the Financial Statements \n31- \n32-Opinion \n33- \n34:1. We have audited the accompanying financial statements of Novelic India Private Limited  (‘the Company’), which \n35-comprise the Balance Sheet as at 31 March 20 26, the Statement of Profit and Loss (including Other Comprehensive \n36-Income), the Statement of Cash Flow and the Statement of Changes in Equity for the period then ended, and notes \n37-to the financial statements, including material accounting policy information and other explanatory information. \n38- \n--\n73- \n74-\n75-PAGE 2\n76- \n77:Independent Auditor’s Report of even date to the members of Novelic India Private Limited on \n78-financial statements for the period ended 31 March 2026 (Cont’d) \n79- \n80-Responsibilities of Management for the Financial Statements \n81- \n--\n137- \n138-\n139-PAGE 3\n140- \n141:Independent Auditor’s Report of even date to the members of Novelic India Private Limited on \n142-financial statements for the period ended 31 March 2026 (Cont’d) \n143- \n144-9. We communicate with those charged with governance regarding, among other matters, the planned scope and timing \n145-of the audit and significant audit findings, including any significant deficiencies in internal control that we identify \n--\n201-including foreign entities (‘the Funding Parties’), with the understanding, whether recorded in writing or \n202-\n203-PAGE 4\n204- \n205:Independent Auditor’s Report of even date to the members of Novelic India Private Limited on \n206-financial statements for the period ended 31 March 2026 (Cont’d) \n207- \n208-otherwise, that the Company shall, whether directly or indirectly, lend or invest in other persons or entities \n209",
+            "truncated": true,
+            "originalChars": 8168
+          }
+        },
+        {
+          "type": "imageView",
+          "id": "exec-3b11d938-aec7-4ff4-872a-ed1272f6f473",
+          "path": "/Users/graovic/pulsarpoint/ppoint/tmp/pdfs/novelic/fy2026-1.png"
+        },
+        {
+          "type": "imageView",
+          "id": "exec-c398689d-4414-4c19-97e6-7712bd3810ce",
+          "path": "/Users/graovic/pulsarpoint/ppoint/tmp/pdfs/novelic/fy2026-2.png"
+        },
+        {
+          "type": "imageView",
+          "id": "exec-44d17c4a-4e05-40d8-a643-0c1f6e853c6d",
+          "path": "/Users/graovic/pulsarpoint/ppoint/tmp/pdfs/novelic/fy2026-3.png"
+        },
+        {
+          "type": "imageView",
+          "id": "exec-d243558d-198c-4d2b-92d2-b2b5733dd012",
+          "path": "/Users/graovic/pulsarpoint/ppoint/tmp/pdfs/novelic/fy2026-4.png"
+        },
+        {
+          "type": "commandExecution",
+          "id": "exec-0e933e4e-51a9-431f-b947-9a0768b927e7",
+          "command": "/bin/zsh -lc \"/Users/graovic/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 - <<'PY'\nfrom pypdf import PdfReader,PdfWriter\nfrom pathlib import Path\nfor yr in [2025,2026]:\n r=PdfReader(f'output/research/novelic-2026-09-07/sources/novelic-fy{yr}.pdf')\n w=PdfWriter()\n for p in r.pages:\n  p.rotate(90) if yr==2026 and len(w.pages)<2 else None\n  w.add_page(p)\n w.write(f'tmp/pdfs/novelic/rotated-{yr}.pdf')\nPY\npdftoppm -f 1 -l 2 -scale-to 2300 -png tmp/pdfs/novelic/rotated-2026.pdf tmp/pdfs/novelic/read2026 >/dev/null 2>&1\"",
+          "cwd": "/Users/graovic/pulsarpoint/ppoint",
+          "status": "completed",
+          "exitCode": 0,
+          "durationMs": 1308
+        },
+        {
+          "type": "webSearch",
+          "id": "exec-53e360f9-d6d0-4923-ad46-fb0fc7761fa6",
+          "query": "site:sonacomstar.com \"2026\" \"Novelic\" \"loss\" ...",
+          "action": {
+            "type": "search",
+            "query": null,
+            "queries": [
+              "site:sonacomstar.com \"2026\" \"Novelic\" \"loss\"",
+              "site:novelic.com Infineon Texas Instruments partnerships VBG Firefly Miele"
+            ]
+          }
+        },
+        {
+          "type": "imageView",
+          "id": "exec-8c9c666a-ed1e-4fc8-8937-3dd082b12b66",
+          "path": "/Users/graovic/pulsarpoint/ppoint/tmp/pdfs/novelic/read2026-1.png"
+        },
+        {
+          "type": "imageView",
+          "id": "exec-5270f889-de0f-4ca8-a761-5dde6db95dcc",
+          "path": "/Users/graovic/pulsarpoint/ppoint/tmp/pdfs/novelic/read2026-2.png"
+        },
+        {
+          "type": "imageView",
+          "id": "exec-741755db-5c5b-4d04-a2c1-c67c756427ec",
+          "path": "/Users/graovic/pulsarpoint/ppoint/tmp/pdfs/novelic/fy2025-1.png"
+        },
+        {
+          "type": "imageView",
+          "id": "exec-669efe63-9a75-431f-a8a6-11c54780f9a9",
+          "path": "/Users/graovic/pulsarpoint/ppoint/tmp/pdfs/novelic/fy2025-2.png"
+        },
+        {
+          "type": "webSearch",
+          "id": "exec-3d73c2e6-9100-45b0-8e6c-eec77d865543",
+          "query": "site:infineon.com Novelic preferred partner ...",
+          "action": {
+            "type": "search",
+            "query": null,
+            "queries": [
+              "site:infineon.com Novelic preferred partner",
+              "site:vbg.eu Novelic",
+              "site:firefly*.nl Novelic radar"
+            ]
+          }
+        },
+        {
+          "type": "agentMessage",
+          "id": "msg_095d3ee96f7e11a7016a9edef779d087d29f282b84097bae93",
+          "text": "The latest financial schedules show a material change: NOVELIC’s group reported a loss for the year ended March 2026. That makes its production launch and new automotive orders especially relevant. I’m checking the parent’s audited disclosures to confirm the amounts and understand the accounting differences before drawing conclusions.",
+          "phase": "commentary"
+        },
+        {
+          "type": "webSearch",
+          "id": "exec-76e2ff5f-e348-413a-9d9b-8d8fceaee8b7",
+          "query": "",
+          "action": {
+            "type": "other"
+          }
+        },
+        {
+          "type": "commandExecution",
+          "id": "exec-fec85a8f-6bd8-4989-bc5c-bb90958e9fd4",
+          "command": "/bin/zsh -lc \"/Users/graovic/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 - <<'PY'\nfrom pathlib import Path\nfrom concurrent.futures import ThreadPoolExecutor\nfrom urllib.request import urlopen\nfrom pypdf import PdfReader,PdfWriter\nbase=Path('output/research/novelic-2026-09-07/sources')\nitems={\n'parent-fy2026-consolidated':'https://sonacomstar.com/annual-report-25-26/pdf/Sona%20Comstar%20AR%202025-26_Consolidated%20Financial%20Statements.pdf',\n'parent-fy2026-board':'https://sonacomstar.com/annual-report-25-26/pdf/Sona%20Comstar%20AR%202025-26_Board%27s%20Report.pdf'}\ndef fetch(item):\n name,url=item;path=base/(name+'.pdf');path.write_bytes(urlopen(url,timeout=60).read());r=PdfReader(path)\n (base/(name+'.txt')).write_text('\\\\n'.join(f'\\\\nPAGE {i+1}\\\\n{p.extract_text()}' for i,p in enumerate(r.pages)))\n return name\nfor result in ThreadPoolExecutor(max_workers=2).map(fetch,items.items()):print(result)\nr=PdfReader(base/'novelic-fy2025.pdf');w=PdfWriter()\nfor i,p in enumerate(r.pages):\n if i<2:p.rotate(90)\n w.add_page(p)\nw.write('tmp/pdfs/novelic/rotated-2025.pdf')\nPY\npdftoppm -f 1 -l 2 -scale-to 2300 -png tmp/pdfs/novelic/rotated-2025.pdf tmp/pdfs/novelic/read2025 >/dev/null 2>&1\nrg -n -i -C 7 'Novelic|sensors and software' output/research/novelic-2026-09-07/sources/parent-fy2026-consolidated.txt output/research/novelic-2026-09-07/sources/parent-fy2026-board.txt\"",
+          "cwd": "/Users/graovic/pulsarpoint/ppoint",
+          "status": "completed",
+          "exitCode": 0,
+          "durationMs": 4378,
+          "output": {
+            "text": "parent-fy2026-consolidated\nparent-fy2026-board\noutput/research/novelic-2026-09-07/sources/parent-fy2026-board.txt-160-strengths in motors and controllers for a new application \noutput/research/novelic-2026-09-07/sources/parent-fy2026-board.txt-161-outside its current product portfolio. The approval and \noutput/research/novelic-2026-09-07/sources/parent-fy2026-board.txt-162-commercialisation of railway HVAC systems and electric \noutput/research/novelic-2026-09-07/sources/parent-fy2026-board.txt-163-panels expanded the railway product offering beyond \noutput/research/novelic-2026-09-07/sources/parent-fy2026-board.txt-164-safety-critical brake systems and couplers to include \noutput/research/novelic-2026-09-07/sources/parent-fy2026-board.txt-165-products that enhance passenger comfort.\noutput/research/novelic-2026-09-07/sources/parent-fy2026-board.txt-166-  Your Company also continued to build capabilities \noutput/research/novelic-2026-09-07/sources/parent-fy2026-board.txt:167:aligned with the future of mobility. Through NOVELIC’s \noutput/research/novelic-2026-09-07/sources/parent-fy2026-board.txt-168-sensing and perception technologies, the Company is \noutput/research/novelic-2026-09-07/sources/parent-fy2026-board.txt-169-strengthening its position in in-cabin sensing and short-\noutput/research/novelic-2026-09-07/sources/parent-fy2026-board.txt-170-range radar applications.\noutput/research/novelic-2026-09-07/sources/parent-fy2026-board.txt-171-  During the year, it also collaborated with Neura \noutput/research/novelic-2026-09-07/sources/parent-fy2026-board.txt-172-Robotics to jointly develop advanced components and \noutput/research/novelic-2026-09-07/sources/parent-fy2026-board.txt-173-technologies for robots, cobots and humanoids. These \noutput/research/novelic-2026-09-0",
+            "truncated": true,
+            "originalChars": 25633
+          }
+        },
+        {
+          "type": "commandExecution",
+          "id": "exec-83651422-877e-4de1-9b06-7b8733a3139f",
+          "command": "/bin/zsh -lc \"sed -n '5550,5740p' output/research/novelic-2026-09-07/sources/parent-fy2026-consolidated.txt\nrg -n -i -C 3 'radar|acam|novelic|sensors|perception' output/research/novelic-2026-09-07/sources/parent-q1fy2027-call.txt | tail -180\"",
+          "cwd": "/Users/graovic/pulsarpoint/ppoint",
+          "status": "completed",
+          "exitCode": 0,
+          "durationMs": 0,
+          "output": {
+            "text": "i)  HDFC,SBI, CITI, JP Morgan  and Indusind Banks are represented as Working capital lenders. \n* Above information is given as per the norms of working capital lenders\n53  Previous year's figures has been regrouped and/ or reclassed wherever necessary to confirm to the current year's \ngroupings and classifications. The impact of such reclassification/regrouping is not material to the financial statements..\n54 Authorisation of Consolidated financial statements\n  The Consolidated financial Statements for the year ended March 31, 2026 were approved by the Board of Directors on \nApril 30, 2026.\nThis is the summary of material accounting policy information and other explanatory information form an integral part of these \nConsolidated financial statements.\nFor Walker Chandiok & Co LLP For and on behalf of the Board of Directors of \nChartered Accountants SONA BLW PRECISION FORGINGS LIMITED\nFirm Registration No.: 001076N/N500013\nNalin Jain Jeffrey Mark Overly Vivek Vikram Singh\nPartner Chairman and Independent Director Managing Director and \nMembership No: 503498 DIN: 09041143 Group Chief Executive Officer\nPlace: Florida, USA DIN: 07698495\nRohit Nanda Suman Poddar\nGroup Chief Financial Officer Company Secretary\nM.No. - ACS-24008\nPlace: New Delhi Place: Gurugram\nDate: April 30, 2026 Date: April 30, 2026\n\nPAGE 77\n364\nSona Comstar Annual Report 2025-26\nForm AOC-1\nStatement containing the salient features of financial statements of Subsidiaries\nPart A\n[Pursuant to the first proviso of sub-section (3) of Section 129 of the Companies Act, 2013 read with Rule 5 of the Companies (Accounts) Rules, 2014]\n1 Name of the subsidiary\nComstar \nAutomotive \nTechnology \nServices Private \nLimited\nComstar \nAutomotive \nUSA LLC\nComstar \nAutomotive \nHong Kong \nLtd.\nComestel \nAutomotive \nTechnologies \n",
+            "truncated": true,
+            "originalChars": 10491
+          }
+        },
+        {
+          "type": "webSearch",
+          "id": "exec-77749668-6929-4ece-9ea4-3b0522983127",
+          "query": "Novelic 2025 2026 layoffs otkazi iskustva HelloWorld Joberty ...",
+          "action": {
+            "type": "search",
+            "query": null,
+            "queries": [
+              "Novelic 2025 2026 layoffs otkazi iskustva HelloWorld Joberty",
+              "Novelic lawsuit litigation sanctions bankruptcy dispute recall",
+              "site:cordis.europa.eu NOVELIC",
+              "Novelic NIRSEN acquisition 2022 2021"
+            ]
+          }
+        },
+        {
+          "type": "imageView",
+          "id": "exec-eb7c5118-281c-4545-a710-274379d670b4",
+          "path": "/Users/graovic/pulsarpoint/ppoint/tmp/pdfs/novelic/read2025-1.png"
+        },
+        {
+          "type": "imageView",
+          "id": "exec-1a20199f-f76f-4627-a3f2-ead17b41efa5",
+          "path": "/Users/graovic/pulsarpoint/ppoint/tmp/pdfs/novelic/read2025-2.png"
+        },
+        {
+          "type": "imageView",
+          "id": "exec-ea6454ef-94e7-4d79-899e-f690e4ac8842",
+          "path": "/Users/graovic/pulsarpoint/ppoint/tmp/pdfs/novelic/fy2025-3.png"
+        },
+        {
+          "type": "imageView",
+          "id": "exec-4ffe0494-117d-4b55-beae-d5e281cccb81",
+          "path": "/Users/graovic/pulsarpoint/ppoint/tmp/pdfs/novelic/fy2025-4.png"
+        },
+        {
+          "type": "webSearch",
+          "id": "exec-a9068399-957b-4d0e-8a2d-be8b27278707",
+          "query": "\"NOVELIC\" site:cordis.europa.eu ...",
+          "action": {
+            "type": "search",
+            "query": null,
+            "queries": [
+              "\"NOVELIC\" site:cordis.europa.eu",
+              "\"NOVELIC\" lawsuit sanctions litigation bankruptcy",
+              "\"NOVELIC\" \"VBG\" radar case study",
+              "\"NOVELIC\" \"2025\" \"Neto\""
+            ]
+          }
+        },
+        {
+          "type": "webSearch",
+          "id": "exec-95ef8289-0d13-467e-a0e9-52dbcd173cec",
+          "query": "",
+          "action": {
+            "type": "other"
+          }
+        },
+        {
+          "type": "webSearch",
+          "id": "exec-c4169042-994e-4a94-92a0-0749d09d9e85",
+          "query": "\"GLAM\" \"NOVELIC\" \"cordis\" ...",
+          "action": {
+            "type": "search",
+            "query": null,
+            "queries": [
+              "\"GLAM\" \"NOVELIC\" \"cordis\"",
+              "\"HUDES\" \"NOVELIC\" Innovation Fund",
+              "\"NOVELIC\" \"IATF\" certification",
+              "\"NOVELIC\" \"lawsuit\" OR \"sanctioned\" OR \"stečaj\" OR \"spor\""
+            ]
+          }
+        },
+        {
+          "type": "webSearch",
+          "id": "exec-07abcbd6-8a8f-405e-9d9a-2d600b84ddbb",
+          "query": "site:euroncap.com 2026 child presence detection direct sensing 5 points protocol ...",
+          "action": {
+            "type": "search",
+            "query": null,
+            "queries": [
+              "site:euroncap.com 2026 child presence detection direct sensing 5 points protocol",
+              "site:bitsensing.com in cabin monitoring radar",
+              "site:acsia.com Caaresys Harman child presence radar",
+              "site:inxspect.com radar safety sensors SIL2"
+            ]
+          }
+        },
+        {
+          "type": "webSearch",
+          "id": "exec-14ec17b6-9970-4576-be8f-4d0269e3856f",
+          "query": "https://cordis.europa.eu/project/id/634928",
+          "action": {
+            "type": "openPage",
+            "url": "https://cordis.europa.eu/project/id/634928"
+          }
+        },
+        {
+          "type": "commandExecution",
+          "id": "exec-5013b88d-55b1-43b3-bfef-df723e7bb0cd",
+          "command": "/bin/zsh -lc \"/Users/graovic/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 - <<'PY'\nfrom urllib.request import urlopen,Request\nfrom bs4 import BeautifulSoup\nfor url in ['https://www.novelic.com/careers/','https://www.novelic.com/privacy-policy/','https://www.novelic.com/']:\n s=BeautifulSoup(urlopen(Request(url,headers={'User-Agent':'Mozilla/5.0'}),timeout=30).read(),'html.parser')\n print('\\\\nURL',url)\n for a in s.find_all('a',href=True):\n  label=a.get_text(' ',strip=True);href=a['href']\n  if any(x in (href+' '+label).lower() for x in ['linkedin','instagram','facebook','youtube','job','vacanc','bamboo','teamtailor','partner','infineon','texas','festo','miele']): print(label,href)\nPY\"",
+          "cwd": "/Users/graovic/pulsarpoint/ppoint",
+          "status": "failed",
+          "exitCode": 1,
+          "durationMs": 0,
+          "output": {
+            "text": "Traceback (most recent call last):\n  File \"<stdin>\", line 2, in <module>\nModuleNotFoundError: No module named 'bs4'\n",
+            "truncated": false
+          }
+        },
+        {
+          "type": "webSearch",
+          "id": "exec-a4968df5-b759-4c87-a046-fb5cee9100d7",
+          "query": "\"NOVELIC\" \"production\" \"2026\" \"started\" ...",
+          "action": {
+            "type": "search",
+            "query": null,
+            "queries": [
+              "\"NOVELIC\" \"production\" \"2026\" \"started\"",
+              "site:news.harman.com Caaresys in cabin radar",
+              "site:inxpect.com radar safety SIL2",
+              "site:bosch-mobility.com interior monitoring radar"
+            ]
+          }
+        },
+        {
+          "type": "commandExecution",
+          "id": "exec-9e5ef869-a991-4ab1-8e5d-fba6f637a7fb",
+          "command": "/bin/zsh -lc \"/Users/graovic/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 - <<'PY'\nfrom urllib.request import urlopen,Request\nfrom html.parser import HTMLParser\nclass Links(HTMLParser):\n def handle_starttag(self,tag,attrs):\n  a=dict(attrs)\n  if tag=='a' and any(x in a.get('href','').lower() for x in ['linkedin','instagram','facebook','youtube','job','vacanc','bamboo','teamtailor','partner','infineon','texas','festo','miele']):print(a['href'])\nfor url in ['https://www.novelic.com/careers/','https://www.novelic.com/']:\n print(url); raw=urlopen(Request(url,headers={'User-Agent':'Mozilla/5.0'}),timeout=30).read().decode();Links().feed(raw)\nPY\"",
+          "cwd": "/Users/graovic/pulsarpoint/ppoint",
+          "status": "completed",
+          "exitCode": 0,
+          "durationMs": 2067,
+          "output": {
+            "text": "https://www.novelic.com/careers/\nhttps://novelic.oneassessment.com/job/Analog-IC-Layout-Engineer-y14qlqy\nhttps://novelic.oneassessment.com/job/Data-Engineer-k3vrrny\nhttps://novelic.oneassessment.com/job/Internship-DSP-for-IoT-Radar-Sensors-BaKj4\nhttps://novelic.oneassessment.com/job/FPGA-Engineer-j8qgvpj\nhttps://novelic.oneassessment.com/job/Junior-Data-Acquisition-Engineer-jwr648k\nhttps://novelic.oneassessment.com/job/Production-Manager-Automotive-Radar-Program-India-yl1g7gj\nhttps://novelic.oneassessment.com/job/Production-test-technician-y68eevk\nhttps://novelic.oneassessment.com/job/Quality-Manager-Automotive-Radar-j8no63j\nhttps://novelic.oneassessment.com/job/Quality-Specialist-Hardware-k3r87nk\nhttps://novelic.oneassessment.com/job/Quality-Specialist-Software-Cybersecurity-k41zwgk\nhttps://novelic.oneassessment.com/job/Release-Train-Engineer-Delivery-Owner-yop23ej\nhttps://novelic.oneassessment.com/job/RF-Radar-Engineer-y14wexy\nhttps://novelic.oneassessment.com/job/Senior-Robotics-Engineer-k03pn7k\nhttps://novelic.oneassessment.com/job/Senior-DSP-Engineer-kgm9mmk\nhttps://novelic.oneassessment.com/job/Senior-HW-Engineer-yre2q9k\nhttps://novelic.oneassessment.com/job/Software-Architect-Autonomy-Platform-kvq707y\nhttps://www.linkedin.com/company/novelic/\nhttps://www.youtube.com/channel/UCo8gf3yCMIYYOyVaVgnkT1A\nhttps://www.instagram.com/novelic.technology/\nhttps://www.novelic.com/\nhttps://www.infineon.com/cms/en/partners/design-partners/novelic/\nhttps://www.analog.com/en/about-adi/alliances/partner/novelic-doo.html\nhttps://www.latticesemi.com/Support/Partners/NOVELIC\nhttps://www.linkedin.com/company/novelic/\nhttps://www.youtube.com/channel/UCo8gf3yCMIYYOyVaVgnkT1A\nhttps://www.instagram.com/novelic.technology/\n",
+            "truncated": false
+          }
+        },
+        {
+          "type": "agentMessage",
+          "id": "msg_095d3ee96f7e11a7016a9edf9d39e487d29ff8db84d1146038",
+          "text": "I found a later update to the launch timeline: Sona Comstar’s April 2026 earnings call targets the first India production start for the end of 2026. Earlier NOVELIC pages mention Q1 2026, so I’ll use the later guidance and won’t treat a nomination or installed production line as proof of volume shipments. I’m also verifying named customers, patents, hiring, and competitor offerings.",
+          "phase": "commentary"
+        },
+        {
+          "type": "webSearch",
+          "id": "exec-90bb635b-7ac7-4bca-a993-6d16d371067f",
+          "query": "https://www.analog.com/en/about-adi/alliances/partner/novelic-doo.html",
+          "action": {
+            "type": "openPage",
+            "url": "https://www.analog.com/en/about-adi/alliances/partner/novelic-doo.html"
+          }
+        },
+        {
+          "type": "commandExecution",
+          "id": "exec-99a8c2bc-3930-4c9e-a728-981affad766e",
+          "command": "/bin/zsh -lc \"/Users/graovic/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 - <<'PY'\nfrom urllib.request import urlopen,Request\nfrom html.parser import HTMLParser\nclass Text(HTMLParser):\n def __init__(self):super().__init__();self.data=[];self.skip=0\n def handle_starttag(self,t,a):\n  if t in ('script','style'):self.skip+=1\n def handle_endtag(self,t):\n  if t in ('script','style'):self.skip=max(0,self.skip-1)\n def handle_data(self,d):\n  if not self.skip and d.strip():self.data.append(d.strip())\nfor url,terms in [\n ('https://cordis.europa.eu/project/id/634928',['NOVELIC']),\n ('https://patents.google.com/patent/US9865150B2/en',['Current Assignee','Original Assignee','2018-01-09','Active','Expired']),\n ('https://patents.google.com/patent/US10928499B2/en',['Current Assignee','Original Assignee','2021-02-23','Active','Expired']),\n ('https://patents.google.com/patent/US20250323427A1/en',['Current Assignee','Original Assignee','2025-10-16','Active','Pending'])]:\n p=Text();p.feed(urlopen(Request(url,headers={'User-Agent':'Mozilla/5.0'}),timeout=30).read().decode())\n print('\\\\nURL',url)\n for i,s in enumerate(p.data):\n  if any(t in s for t in terms):print(' | '.join(p.data[max(0,i-1):i+8]))\nPY\"",
+          "cwd": "/Users/graovic/pulsarpoint/ppoint",
+          "status": "completed",
+          "exitCode": 0,
+          "durationMs": 2971,
+          "output": {
+            "text": "\nURL https://cordis.europa.eu/project/id/634928\n€ 283 316,25 | NOVELIC DOO BEOGRAD-ZVEZDARA | Serbia | Net EU contribution | Net EU financial contribution. The sum of money that the participant receives, deducted by the EU contribution to its linked third party. It considers the distribution of the EU financial contribution between direct beneficiaries of the project and other types of participants, like third-party participants. | € 467 700,00 | Address | Veljka Dugoševića 54 | 11000 BEOGRAD\n\nURL https://patents.google.com/patent/US9865150B2/en\nLegal status (The legal status is an assumption and is not a legal conclusion. Google has not performed a legal analysis and makes no representation as to the accuracy of the status listed.) | Active - Reinstated | Application number | US15/303,246 | Other versions | US20170039835A1 | ( | en | Inventor\nDarko TASOVAC | Current Assignee (The listed assignees may be inaccurate. Google has not performed a legal analysis and makes no representation or warranty as to the accuracy of the list.) | Novelic doo | Original Assignee | Novelic doo | Priority date (The priority date is an assumption and is not a legal conclusion. Google has not performed a legal analysis and makes no representation as to the accuracy of the date listed.) | 2014-04-14 | Filing date | 2015-04-15\nNovelic doo | Original Assignee | Novelic doo | Priority date (The priority date is an assumption and is not a legal conclusion. Google has not performed a legal analysis and makes no representation as to the accuracy of the date listed.) | 2014-04-14 | Filing date | 2015-04-15 | Publication date | 2018-01-09\nPublication date | 2018-01-09 | 2015-04-15 | Application filed by Novelic doo | filed | Critical | Novelic doo | 2016-10-11 | Assigned to NOVELIC D.O.O.\npatent/US2",
+            "truncated": true,
+            "originalChars": 7789
+          }
+        },
+        {
+          "type": "webSearch",
+          "id": "exec-8acb43ed-d67b-491e-8dda-0c6908044846",
+          "query": "site:analog.com \"NOVELIC\" \"partner\" ...",
+          "action": {
+            "type": "search",
+            "query": null,
+            "queries": [
+              "site:analog.com \"NOVELIC\" \"partner\"",
+              "\"NOVELIC\" \"CES\" \"award\" 2025 AAVI winners",
+              "\"NOVELIC\" \"99051424\""
+            ]
+          }
+        },
+        {
+          "type": "commandExecution",
+          "id": "exec-5e2f1fc8-b3f9-4d1b-907a-e91e5acc64e2",
+          "command": "/bin/zsh -lc \"/Users/graovic/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 - <<'PY'\nfrom pathlib import Path\nfrom urllib.request import urlopen\nfrom pypdf import PdfReader\np=Path('output/research/novelic-2026-09-07/sources/parent-q4fy2026-call.pdf')\np.write_bytes(urlopen('https://sonacomstar.com/files/documents/transcript-of-investor-call-for-q4-financials-document-s15F52.pdf',timeout=45).read())\nr=PdfReader(p)\ns='\\\\n'.join(f'\\\\nPAGE {i+1}\\\\n{page.extract_text()}' for i,page in enumerate(r.pages));p.with_suffix('.txt').write_text(s)\nlines=s.splitlines()\nfor i,l in enumerate(lines):\n if 'Novelic' in l or 'SOP is' in l:print('\\\\n'.join(lines[max(0,i-4):i+22]))\nprint('Calculated changes:')\nprint('FY26 consolidated revenue growth',100*(903.698/1097.668-1))\nprint('FY26 net margin',-218.326/903.698*100)\nprint('CY25 net margin',-215.433/1150.796*100)\nprint('CY25 headcount change',100*(131/143-1))\nprint('FY26 intangible share',1208.023/2088.249*100)\nprint('FY26 equity share',1571.012/2088.249*100)\nprint('FY26 liquid cash+short term assets',76.642+4.289)\nprint('FY25 liquid cash+short term assets',46.115+288.050)\nPY\"",
+          "cwd": "/Users/graovic/pulsarpoint/ppoint",
+          "status": "completed",
+          "exitCode": 0,
+          "durationMs": 1914,
+          "output": {
+            "text": "from operations. Net of capex spend of 369 crores, we generated 290 crores \nas free cash flows. Apart from these other major cash movements include \nnearly 1 ,800 crores of aggregate amount which we used for purchase of \nrailway business, additional land that we purchased for about 110 crores, \nand there was a payment for the last tranche of acquisition of Novelic \nshareholding.  \n\nPAGE 9\n \n \n \n \nSona Comstar – Q4 FY26 Earnings Call     Page 8 of 18 \n \n \n Besides this, we distributed about 200 crores as dividend to the shareholders. \nAnd we added some short -term borrowings of about 226 crores and 86 \ncrores of interest income. These were positive cash inflows. As a result of all \nthese items, we ended the year with cash and investments of 1,269 crores. \nSlide 22: \n This brings us to the last slide on the key ratios. As I had explained in the last \ntwo quarters also, the newly purchased railway business has a different cost \nstructure, and even the working capital cycle is also structured differently. \nThis has flown through some of our key ratios in this year, and, that is why you \nsee a dip in some of the ratios, namely value addition over employee cost \nand working capital turnover ratios.  \nand whatever opportunities come, we will keep reporting, as and when we \nwin. But overall, I don't think it is a material change in the opportunity set that \nEurope presents for us. I think it'll still be a fairly a good place to win a lot of \nbusiness over the next 12 months or so.  \nAditya Jhawar:  Oh, that's, uh, that's good to know.  The second question is on Novelic. We \nunderstand that they are setting up, you know, manufacturing in Tamil Nadu. \nSo, how is, you know, progress, in terms of engagement with customers? Any \nsense you can give of what could be the potential kit ",
+            "truncated": true,
+            "originalChars": 8759
+          }
+        },
+        {
+          "type": "webSearch",
+          "id": "exec-7033caa9-a7f3-41ea-85e0-11564c8e35c9",
+          "query": "",
+          "action": {
+            "type": "other"
+          }
+        },
+        {
+          "type": "commandExecution",
+          "id": "exec-76155cc8-19cf-4c6d-b0a6-2c7e8ab742f7",
+          "command": "/bin/zsh -lc \"pdftoppm -f 77 -l 77 -scale-to 2800 -png output/research/novelic-2026-09-07/sources/parent-fy2026-consolidated.pdf tmp/pdfs/novelic/parent-aoc >/dev/null 2>&1\n/Users/graovic/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 - <<'PY'\nfrom urllib.request import urlopen,Request\nfrom pypdf import PdfReader\nfrom io import BytesIO\nu='https://tmng-al.uspto.gov/resting2/api/casedoc/cms/case/99051424/office-action/OfficeAction8212957.pdf'\ntry:\n r=PdfReader(BytesIO(urlopen(Request(u,headers={'User-Agent':'Mozilla/5.0'}),timeout=30).read()))\n print(r.pages[0].extract_text()[:6000])\nexcept Exception as e: print(type(e).__name__,str(e)[:200])\nPY\"",
+          "cwd": "/Users/graovic/pulsarpoint/ppoint",
+          "status": "completed",
+          "exitCode": 0,
+          "durationMs": 30115,
+          "output": {
+            "text": "To: GARFIELD GOODRUM(garfield.goodrum@gdrmlaw.net)\nSubject: U.S. Trademark Application Serial No. 99051424 - VERIFIED HUMAN \nPRESENCE\nSent: February 02, 2026 07:32:37 PM EST\nSent As: tmng.notices@uspto.gov\nAttachments\nscreencapture-www-ensco-com-national-security-microsearch-17700744076451\nscreencapture-pointsecurityinc-com-microsearch-g4-0-wired-human-presence-detection-\nsystems-17700745176851\nscreencapture-www-novelic-com-riot100-human-presence-detection-17700746071731\nscreencapture-ellipticlabs-com-products-17700746658631\nscreencapture-www-infineon-com-application-presence-sensing-17700747387541\nscreencapture-www-qorvo-com-design-hub-blog-the-ai-powered-future-of-people-sensing-\n17700748030901\nscreencapture-solink-com-resources-industry-insights-security-cameras-with-motion-\ndetectors-17700749448231\nscreencapture-www-pioneersecurity-com-video-verification-proactive-monitoring-ai-based-\nmotion-detection-17700749847951\nscreencapture-www-securitymonster-com-commercial-motion-detection-monitoring-\n17700750519011\nscreencapture-sonitrolsv-com-news-motion-sensors-vs-audio-sensors-choosing-the-best-\nsecurity-system-for-your-business-17700750913511\nscreencapture-radiusvision-com-blog-videofied-motion-viewer-a-great-solution-for-video-\nverified-alarms-17700759679161\nscreencapture-interfacesystems-com-business-security-systems-video-verified-alarm-\n17700761039201\nscreencapture-www-originwirelessai-com-trushieldsecurity-future-of-diy-home-security-\n17700763152251\nscreencapture-www-originwirelessai-com-ai-sensing-monetizable-security-17700765387221\nUnited States Patent and Trademark Office (USPTO)\nOffice Action (Official Letter) About Applicant’s Trademark Application\nU.S. Application Serial No. 99051424\nMark:  VERIFIED HUMAN PRESENCE\nCorrespondence Address:  \nGARFIELD GOODRUM \nG",
+            "truncated": true,
+            "originalChars": 1939
+          }
+        },
+        {
+          "type": "commandExecution",
+          "id": "exec-3985ea2e-3a9f-42e6-a237-69c25d03c15f",
+          "command": "/bin/zsh -lc 'pwd && rg --files output/research/novelic-2026-09-07 tmp/pdfs/novelic | head -45'",
+          "cwd": "/Users/graovic/pulsarpoint/ppoint",
+          "status": "completed",
+          "exitCode": 0,
+          "durationMs": 0,
+          "output": {
+            "text": "/Users/graovic/pulsarpoint/ppoint\noutput/research/novelic-2026-09-07/sources/novelic-india-fy2026.txt\noutput/research/novelic-2026-09-07/sources/parent-q1fy2027-call.txt\noutput/research/novelic-2026-09-07/sources/parent-q4fy2026-call.pdf\noutput/research/novelic-2026-09-07/sources/novelic-india-fy2026.pdf\noutput/research/novelic-2026-09-07/sources/parent-q1fy2027-call.pdf\noutput/research/novelic-2026-09-07/sources/parent-q4fy2026-call.txt\noutput/research/novelic-2026-09-07/sources/novelic-fy2025.pdf\noutput/research/novelic-2026-09-07/sources/novelic-fy2026.pdf\noutput/research/novelic-2026-09-07/sources/parent-fy2026-consolidated.pdf\noutput/research/novelic-2026-09-07/sources/parent-fy2026-board.pdf\noutput/research/novelic-2026-09-07/sources/acquisition-2023.txt\noutput/research/novelic-2026-09-07/sources/novelic-fy2026.txt\noutput/research/novelic-2026-09-07/sources/novelic-fy2025.txt\noutput/research/novelic-2026-09-07/sources/parent-fy2026-board.txt\noutput/research/novelic-2026-09-07/sources/acquisition-2023.pdf\noutput/research/novelic-2026-09-07/sources/parent-fy2026-consolidated.txt\ntmp/pdfs/novelic/read2026-2.png\ntmp/pdfs/novelic/read2026-1.png\ntmp/pdfs/novelic/rotated-2026.pdf\ntmp/pdfs/novelic/parent-aoc-77.png\ntmp/pdfs/novelic/rotated-2025.pdf\ntmp/pdfs/novelic/read2025-2.png\ntmp/pdfs/novelic/read2025-1.png\ntmp/pdfs/novelic/fy2025-1.png\ntmp/pdfs/novelic/fy2025-2.png\ntmp/pdfs/novelic/fy2025-3.png\ntmp/pdfs/novelic/fy2025-4.png\ntmp/pdfs/novelic/fy2026-1.png\ntmp/pdfs/novelic/fy2026-3.png\ntmp/pdfs/novelic/fy2026-2.png\ntmp/pdfs/novelic/fy2026-4.png\n",
+            "truncated": false
+          }
+        },
+        {
+          "type": "agentMessage",
+          "id": "msg_095d3ee96f7e11a7016a9ee5cc547487d2996a6ae5b7e3a4cc",
+          "text": "The main finding is that NOVELIC has credible technology and industry relationships, but its latest financials show a significant loss while automotive production is still ramping up. I’m assembling the report now, keeping Serbian calendar-year accounts separate from the group’s March year-end figures and distinguishing named customers from partners and unnamed contract wins.",
+          "phase": "commentary"
+        },
+        {
+          "type": "commandExecution",
+          "id": "exec-d592ed25-e1f5-4446-8546-1cf452d8f744",
+          "command": "/bin/zsh -lc \"rg -n -C 3 '755.77|186.23|1,760.22|537.33|NIRSEN|47904590|7666705|292904|20877537' output/research/novelic-2026-09-07/sources/parent-fy2026-consolidated.txt\"",
+          "cwd": "/Users/graovic/pulsarpoint/ppoint",
+          "status": "completed",
+          "exitCode": 0,
+          "durationMs": 0,
+          "output": {
+            "text": "1296-NOVELIC ESC North \n1297-Macedonia\n1298-ER&D Services * *\n1299:NIRSEN D.O.O Serbia ER&D Services * *\n1300-NOVELIC GMBH (w.e.f. from June 20, 2024) Germany ER&D Services * *\n1301-Novelic India Private Limited (w.e.f. from \n1302-November 28, 2025)\n--\n3404-Capital creditors*  209.87  654.40 \n3405-Forward contract payables (refer note 34 and 48)  448.60  -   \n3406-Security deposits  3.76  3.33 \n3407:Payable to founders of Novelic d.o.o.  (refer note 49)  -    537.33 \n3408-Other payables  51.04  25.96 \n3409-Total other financial liabilities - current  1,193.77  1,566.87 \n3410-* includes MSME balance of INR 73.16 million (March 31, 2025: INR 162.54 million)\n--\n5249-46 INTANGIBLE ASSETS IMPAIRMENT TESTING\n5250- Goodwill\n5251-  As per note no. 5, the group had recognised an amount of INR 5,564.06 million as goodwill on account of acquisition \n5252:of Novelic d.o.o. Beograd (INR 1,760.22 million), Comstar Automotive Hongkong Limited (INR 80.79 million), Comstar \n5253-Automotive Technology Services Private Limited (INR 59.04 million), Comstar Automotive USA LLC (INR 36.02 million) in \n5254-addition to goodwill recognised at standalone (INR 3,628.00 million). Annual test for impairment of goodwill was carried \n5255-out as at March 31, 2026 and March 31, 2025, details of which are outlined below. The outcome of the test indicated that \n--\n5644-456925R\n5645-6235944 N-2017025334 N-2017026101 U34100HR20 \n5646-20PTC090921\n5647:N-2023075621 20877537 47904590 7666705 21651532 HRB 292904 U29301TN20 \n5648-25FTC186474\n5649-3 Reporting period for the subsidiary \n5650-concerned, if different from the holding \n--\n5703-10 Total assets 91.35 984.98 127.24 1,499.98 790.13 - 294.12 314.77 8.78 1,039.86 1,924.82 50.65 4.10 31.06 61.15 0.08\n5704-11 Total liabilities 10.84 346.04 162.74 324.89 75",
+            "truncated": true,
+            "originalChars": 2618
+          }
+        },
+        {
+          "type": "commandExecution",
+          "id": "exec-9ce82974-5e32-4a77-91eb-eb06b01274a3",
+          "command": "/bin/zsh -lc \"rg -n -C 4 'Novelic|NOVELIC|SOP|end of|radar|8 billion|6 billion' output/research/novelic-2026-09-07/sources/parent-q4fy2026-call.txt output/research/novelic-2026-09-07/sources/parent-q1fy2027-call.txt\"",
+          "cwd": "/Users/graovic/pulsarpoint/ppoint",
+          "status": "completed",
+          "exitCode": 0,
+          "durationMs": 0,
+          "output": {
+            "text": "output/research/novelic-2026-09-07/sources/parent-q4fy2026-call.txt-133-and electrification. We have started seeing this in the data as well. So in \noutput/research/novelic-2026-09-07/sources/parent-q4fy2026-call.txt-134-March, BEV sales grew by nearly 45% year on year in the EU. In India, electric \noutput/research/novelic-2026-09-07/sources/parent-q4fy2026-call.txt-135-cars and two -wheelers grew 65% and 45%, respectively year on year, in \noutput/research/novelic-2026-09-07/sources/parent-q4fy2026-call.txt-136-March. And both are trending above 50% in April as well. So we think it's a \noutput/research/novelic-2026-09-07/sources/parent-q4fy2026-call.txt:137:sustained trend of electrification growth across the board. Even North \noutput/research/novelic-2026-09-07/sources/parent-q4fy2026-call.txt-138-America saw its best monthly BEV run rate in March, ever since the US subsidy \noutput/research/novelic-2026-09-07/sources/parent-q4fy2026-call.txt-139-cuts for EV, which has been a setback for that subset of the industry. So all in \noutput/research/novelic-2026-09-07/sources/parent-q4fy2026-call.txt-140-all, after a period of weak EV sentiment, the EV narrative is shifting again, \noutput/research/novelic-2026-09-07/sources/parent-q4fy2026-call.txt-141-and as all of you would know, we are fairly well positioned to gain from this.  \n--\noutput/research/novelic-2026-09-07/sources/parent-q4fy2026-call.txt-193-Now I go to our financial performance in the last quarter. Our revenue grew \noutput/research/novelic-2026-09-07/sources/parent-q4fy2026-call.txt-194-by a fairly strong 47% year on year, while EBITDA and net profit increased by \noutput/research/novelic-2026-09-07/sources/parent-q4fy2026-call.txt-195-32% and 17% respectively. Here I want to reiterate that our business recovery ",
+            "truncated": true,
+            "originalChars": 34816
+          }
+        },
+        {
+          "type": "imageView",
+          "id": "exec-b1e5e6e5-4157-4cd3-adfd-3da3aa14204c",
+          "path": "/Users/graovic/pulsarpoint/ppoint/tmp/pdfs/novelic/read2026-2.png"
+        },
+        {
+          "type": "imageView",
+          "id": "exec-e6cccd5a-9956-4c74-b816-b115dfd41dd9",
+          "path": "/Users/graovic/pulsarpoint/ppoint/tmp/pdfs/novelic/read2026-1.png"
+        },
+        {
+          "type": "imageView",
+          "id": "exec-be0ab4d5-7ef6-4f1b-9b19-9a51d64887ee",
+          "path": "/Users/graovic/pulsarpoint/ppoint/tmp/pdfs/novelic/fy2026-3.png"
+        },
+        {
+          "type": "imageView",
+          "id": "exec-ebc397f0-81e3-4655-91a0-7feb903d24de",
+          "path": "/Users/graovic/pulsarpoint/ppoint/tmp/pdfs/novelic/parent-aoc-77.png"
+        },
+        {
+          "type": "commandExecution",
+          "id": "exec-7f0ae362-fa11-4695-9419-d7622d1e1b2a",
+          "command": "/bin/zsh -lc \"sed -n '465,496p' output/research/novelic-2026-09-07/sources/parent-q4fy2026-call.txt\"",
+          "cwd": "/Users/graovic/pulsarpoint/ppoint",
+          "status": "completed",
+          "exitCode": 0,
+          "durationMs": 0,
+          "output": {
+            "text": "Vivek Vikram Singh: Sure. So, on the manufacturing and production thing, I can have Sat answer \nthat. On the overall opportunities, Europe continues to look good because \nnext year is when in -cabin safety has to be part of getting the NCAP \ncertification. So it was moved by a year. So what would have been great if it \nwas 2026, now that's moved to 27. So that's on plan. What they're doing in \nIndia, Sat, if you are there, you can fill Aditya on.  \nSat Mohan Gupta: Yeah, Aditya, I mean, for Novelic India, we have set up the entity in India and \nwe have started the launch process for one of the customers. The SOP is \ngoing to be end of this year. the lines are already set up, because it's a sensor \nassembly unit. So we have an SMT line in-house and we'll be using that SMT \nline. \nAditya Jhawar: Any sense on, you know, kit value or the quantum, I mean, just ballpark, how \nshould we think about the ramp up? \nVivek Vikram Singh: As you know, we don't use the phrase kit value because to be honest, I don't \nunderstand it. I don't understand what it is there. I mean, we supply a sensor, \nthat is the part, second, giving away pricing information is a competitive \ndisadvantage.  \nAditya Jhawar: Fair enough. Fair enough. \nVivek Vikram Singh: And before you go, for all those on the call, I think Aditya in  Investec has \nlaunched a pretty good initiative. So if you have children between the ages \nof 12 to 18, he's organizing a trip to China to see the automotive ecosystems, \nsee robotics. If you have the time, please do take them. I think children of \nIndia needs to look at what's going on in the rest of the world because we do \nneed technology in this country. \nAditya Jhawar: Yeah, thank you. Thank you so much. All the best. \nModerator: Yeah, the next question is from uh Vijay Pan",
+            "truncated": true,
+            "originalChars": 1950
+          }
+        },
+        {
+          "type": "webSearch",
+          "id": "exec-7af4a12e-c386-4787-bf9e-90dc9d32b227",
+          "query": "https://nsearchives.nseindia.com/corporate/SONACOMS_04092023225204_Intimation.pdf",
+          "action": {
+            "type": "openPage",
+            "url": "https://nsearchives.nseindia.com/corporate/SONACOMS_04092023225204_Intimation.pdf"
+          }
+        },
+        {
+          "type": "fileChange",
+          "id": "exec-14e83af9-52db-40bb-a46c-fa4d4e38304a",
+          "status": "completed",
+          "changes": [
+            {
+              "path": "/Users/graovic/pulsarpoint/ppoint/output/research/novelic-2026-09-07/novelic-company-analysis.md",
+              "kind": {
+                "type": "add"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

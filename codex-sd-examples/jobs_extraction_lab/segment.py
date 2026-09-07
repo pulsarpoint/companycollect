@@ -456,7 +456,7 @@ def merge_windows(window_dir: Path, run_id: str, baseline_run: str) -> dict[str,
     comparison = summary["baseline_comparison"]
     shared = summary["shared_reference_comparison"]
     lines = [
-        "# Segmented Liquid extraction",
+        "# Segmented job extraction",
         "",
         summary["interpretation"],
         "",

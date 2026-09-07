@@ -1,0 +1,45 @@
+{
+  "source_page_id": "lever-finn--w002",
+  "markdown_sha256": "4fbdfd20c76d8eba27597fd2a5c4bdcb0d49fb6234bd7157540c8ccaa89984ca",
+  "annotation_note": "Checked against the frozen window before the 32K GLM trials. Apply the prompt's nearest visible organizational-group rule: Tech for the first three jobs, Account Management for the fourth. Core Functions is absent from this chunk. Preserve Growth / E-Commerce as part of the second title. Evidence below is an allowed example quotation, not a required exact output string.",
+  "extraction": {
+    "jobs": [
+      {
+        "title": "Senior Data Analyst - Operations (m/f/x)",
+        "location": "Germany",
+        "department": "Tech",
+        "employment_type": "Full Time",
+        "workplace_type": "Remote",
+        "job_url": "https://jobs.lever.co/finn/e79dcd50-2487-4b40-a169-b80dc81ee2e8",
+        "evidence": "Senior Data Analyst - Operations (m/f/x)"
+      },
+      {
+        "title": "Senior Product Manager (m/f/x) Growth / E-Commerce",
+        "location": "Munich",
+        "department": "Tech",
+        "employment_type": "Full Time",
+        "workplace_type": "On-site",
+        "job_url": "https://jobs.lever.co/finn/2c8b9d92-9b7f-47c8-a5fc-03203d33a8a8",
+        "evidence": "Senior Product Manager (m/f/x) Growth / E-Commerce"
+      },
+      {
+        "title": "Staff SAP FICO Analyst (m/f/x)",
+        "location": "Europe",
+        "department": "Tech",
+        "employment_type": "Full Time",
+        "workplace_type": "Remote",
+        "job_url": "https://jobs.lever.co/finn/71c93ab7-c168-43b1-97f9-f1c029576dbf",
+        "evidence": "Staff SAP FICO Analyst (m/f/x)"
+      },
+      {
+        "title": "(Junior) Account Manager (m/w/d)",
+        "location": "Germany",
+        "department": "Account Management",
+        "employment_type": "Full Time",
+        "workplace_type": "Remote",
+        "job_url": "https://jobs.lever.co/finn/103dc21a-1894-4cfc-a514-efa86f6c021c",
+        "evidence": "(Junior) Account Manager (m/w/d)"
+      }
+    ]
+  }
+}

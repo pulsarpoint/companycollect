@@ -1,0 +1,79 @@
+{
+  "schema_version": "1.0",
+  "run_id": "fixture-run",
+  "site_url": "https://example.test",
+  "model": "test-model",
+  "records": [
+    {
+      "record_id": "c2f17b81e01d3d766658c56a",
+      "data": {
+        "company": "DemoWorks",
+        "technology": "Yocto",
+        "category": "programming_language",
+        "signal": "stated_use",
+        "scope": "team",
+        "job_employer": "DemoWorks",
+        "job_title": "Engineer",
+        "job_url": "https://example.test/jobs/engineer",
+        "alternative_group": null,
+        "context": "The team uses Yocto.",
+        "as_of": null,
+        "catalog_match": {
+          "status": "proposed",
+          "canonical_technology": null,
+          "proposed_technology": {
+            "name": "Yocto",
+            "description": "Embedded Linux build tooling",
+            "website": null,
+            "category_ids": [],
+            "category_suggestion": "Development tools",
+            "saas": null,
+            "oss": null,
+            "pricing": []
+          },
+          "proposal_id": "8463dbd5f100e5718e8369e425569373bdb59fd9778f396a65ab9a8d6cc535ef",
+          "catalog_version": "74af6393d5712c7bc380e88e938652fd42a79ec30ae45428ad7b6804f564be9d",
+          "match_method": "no_accepted_match",
+          "reason": "No matching identity in the local catalog",
+          "searches": [
+            {
+              "query": "Yocto",
+              "catalog_version": "74af6393d5712c7bc380e88e938652fd42a79ec30ae45428ad7b6804f564be9d",
+              "canonical_technology": null,
+              "match_method": "not_found",
+              "candidates": [],
+              "note": "Candidates are suggestions, not proof of identity. Preserve source spelling."
+            }
+          ]
+        }
+      },
+      "sources": [
+        {
+          "url": "https://example.test/jobs/engineer",
+          "page_id": "p0001",
+          "fetched_at": "2026-09-06T00:00:00Z",
+          "html_sha256": "ced89128f2d7a13699fd6ec2bb7f8b9712061c843a6b26c89c26d735f90ce4dd",
+          "chunk_start": 0,
+          "chunk_end": 54,
+          "evidence": [
+            {
+              "text": "DemoWorks",
+              "matched_in": "text"
+            },
+            {
+              "text": "Engineer",
+              "matched_in": "text"
+            },
+            {
+              "text": "Our team uses Yocto.",
+              "matched_in": "text"
+            }
+          ],
+          "evidence_status": "source_matched",
+          "issues": []
+        }
+      ],
+      "evidence_status": "source_matched"
+    }
+  ]
+}

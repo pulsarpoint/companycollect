@@ -1,0 +1,36 @@
+{
+  "acquisition": [
+    {"id":"cash_paid","question":"Cash paid to founders in the Novelic acquisition consideration table.","expected_value":"2109.62","currency":"INR","scale":1000000},
+    {"id":"revenue","question":"Novelic total revenue in the financial information table; identify the exact covered period.","expected_value":"484.31","currency":"INR","scale":1000000}
+  ],
+  "net_assets": [
+    {"id":"assets_share_2026","question":"Novelic net assets as a percentage of consolidated net assets for the current 2026 reporting year.","expected_value":"2.39","currency":"percent","scale":1},
+    {"id":"net_assets_2026","question":"Novelic net assets amount for the current 2026 reporting year.","expected_value":"1464.32","currency":"INR","scale":1000000},
+    {"id":"profit_2026","question":"Novelic share in profit or loss amount for the current 2026 reporting year.","expected_value":"-186.35","currency":"INR","scale":1000000},
+    {"id":"assets_share_2025","question":"Novelic net assets as a percentage of consolidated net assets for the comparative 2025 reporting year.","expected_value":"2.52","currency":"percent","scale":1},
+    {"id":"net_assets_2025","question":"Novelic net assets amount for the comparative 2025 reporting year.","expected_value":"1423.84","currency":"INR","scale":1000000},
+    {"id":"profit_2025","question":"Novelic share in profit or loss amount for the comparative 2025 reporting year.","expected_value":"7.29","currency":"INR","scale":1000000}
+  ],
+  "aoc1": [
+    {"id":"turnover","question":"Turnover of Novelic d.o.o. in the AOC-1 subsidiary statement, excluding the other Novelic entities.","expected_value":"755.77","currency":"INR","scale":1000000},
+    {"id":"profit_before_tax","question":"Profit before taxation of Novelic d.o.o. in the AOC-1 subsidiary statement.","expected_value":"-186.23","currency":"INR","scale":1000000},
+    {"id":"profit_after_tax","question":"Profit after taxation of Novelic d.o.o. in the AOC-1 subsidiary statement.","expected_value":"-186.23","currency":"INR","scale":1000000}
+  ],
+  "scan_balance": [
+    {"id":"total_assets_rsd","question":"Novelic Group total assets in the IFRS consolidated column denominated in RSD, excluding locally consolidated and individual subsidiary columns.","expected_value":"2088249","currency":"RSD","scale":1000},
+    {"id":"total_assets_eur","question":"Novelic Group total assets in the IFRS consolidated column denominated in EUR.","expected_value":"17784","currency":"EUR","scale":1000}
+  ],
+  "scan_income": [
+    {"id":"revenue_rsd","question":"Novelic Group revenue in the IFRS consolidated RSD column, with the reporting period.","expected_value":"903698","currency":"RSD","scale":1000},
+    {"id":"revenue_eur","question":"Novelic Group revenue in the IFRS consolidated EUR column, with the reporting period.","expected_value":"7708","currency":"EUR","scale":1000},
+    {"id":"profit_before_tax_rsd","question":"Novelic Group profit before tax in the IFRS consolidated RSD column; retain the sign.","expected_value":"-218695","currency":"RSD","scale":1000}
+  ],
+  "scan_cashflow": [
+    {"id":"opening_cash","question":"Group cash and cash equivalents at the beginning of the year.","expected_value":"46115","currency":"RSD","scale":1000},
+    {"id":"operating_cash","question":"Group net cash from operating activities.","expected_value":"-160917","currency":"RSD","scale":1000},
+    {"id":"investing_cash","question":"Group net cash from investing activities.","expected_value":"9090","currency":"RSD","scale":1000},
+    {"id":"financing_cash","question":"Group net cash from financing activities.","expected_value":"182354","currency":"RSD","scale":1000},
+    {"id":"closing_cash","question":"Group cash and cash equivalents at the end of the year.","expected_value":"76642","currency":"RSD","scale":1000},
+    {"id":"profit_before_tax","question":"Group profit or loss before income tax shown in the cash flow statement; retain the sign.","expected_value":"-218695","currency":"RSD","scale":1000}
+  ]
+}

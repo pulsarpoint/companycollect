@@ -12,12 +12,12 @@ from dotenv import dotenv_values
 
 from jobs_extraction_lab.compare import create_comparison
 from jobs_extraction_lab.corpus import collect_pages
-from jobs_extraction_lab.extract import run_extractions
+from jobs_extraction_lab.extract import DEFAULT_OPENROUTER_MODEL, run_extractions
 
 
 @click.group()
 def cli() -> None:
-    """Compare Codex and Liquid LFM on identical downloaded job-board Markdown."""
+    """Compare Codex and OpenRouter models on identical job-board Markdown."""
 
 
 @cli.command("collect")
@@ -65,7 +65,17 @@ def collect_command(
 
 @cli.command("run")
 @click.option("--backend", type=click.Choice(["codex", "openrouter"]), required=True)
+@click.option(
+    "--openrouter-model",
+    default=DEFAULT_OPENROUTER_MODEL,
+    show_default=True,
+    help="Exact OpenRouter model ID; applies to the openrouter backend only.",
+)
 @click.option("--run-id", default="initial")
+@click.option(
+    "--openrouter-provider",
+    help="Restrict OpenRouter to one provider slug, with provider fallbacks disabled.",
+)
 @click.option(
     "--data-dir",
     type=click.Path(path_type=Path, exists=True),
@@ -73,23 +83,43 @@ def collect_command(
 )
 @click.option("--env-file", type=click.Path(path_type=Path, exists=True))
 @click.option(
+    "--examples-file",
+    type=click.Path(path_type=Path, exists=True, dir_okay=False),
+    help="Optional teaching examples appended to the extraction prompt; use a new run ID.",
+)
+@click.option(
     "--codex-bin", type=click.Path(path_type=Path, exists=True, dir_okay=False)
 )
 @click.option("--concurrency", type=click.IntRange(1, 8), default=2)
 @click.option("--timeout", type=click.IntRange(min=1), default=300)
 @click.option("--attempts", type=click.IntRange(1, 5), default=3)
-@click.option("--max-tokens", type=click.IntRange(1, 8192), default=8192)
+@click.option(
+    "--reasoning-effort",
+    type=click.Choice(["low", "medium", "high", "max"]),
+    help="OpenRouter reasoning effort; omit to use the provider default. Model must support it.",
+)
+@click.option(
+    "--max-tokens",
+    type=click.IntRange(min=1),
+    default=8192,
+    show_default=True,
+    help="OpenRouter output budget, including reasoning; the provider enforces its maximum.",
+)
 @click.option("--limit", type=click.IntRange(min=1))
 @click.option("--retry-failed", is_flag=True)
 def run_command(
     backend: Literal["codex", "openrouter"],
+    openrouter_model: str,
+    openrouter_provider: str | None,
     run_id: str,
     data_dir: Path,
     env_file: Path | None,
+    examples_file: Path | None,
     codex_bin: Path | None,
     concurrency: int,
     timeout: int,
     attempts: int,
+    reasoning_effort: str | None,
     max_tokens: int,
     limit: int | None,
     retry_failed: bool,
@@ -109,6 +139,13 @@ def run_command(
         config = tomllib.loads(codex_config_path.read_text(encoding="utf-8"))
         codex_model_label = f"configured_default:{config.get('model', 'unspecified')};effort:{config.get('model_reasoning_effort', 'unspecified')}"
     try:
+        examples = (
+            examples_file.read_text(encoding="utf-8")
+            if examples_file is not None
+            else None
+        )
+        if examples is not None and not examples.strip():
+            raise ValueError("Examples file is empty")
         results = asyncio.run(
             run_extractions(
                 data_dir,
@@ -123,6 +160,10 @@ def run_command(
                 retry_failed=retry_failed,
                 codex_model_label=codex_model_label,
                 codex_bin=codex_bin,
+                openrouter_model=openrouter_model,
+                reasoning_effort=reasoning_effort,
+                openrouter_provider=openrouter_provider,
+                examples=examples,
             )
         )
         report = create_comparison(data_dir, run_id)

@@ -1,0 +1,59 @@
+{
+  "version": "1.0",
+  "scope": "Selected manually source-checked facts, not exhaustive recall or an Astra-derived gold set.",
+  "sources": [
+    {
+      "page_id": "p0006",
+      "url": "https://www.novelic.com/antenna-design-and-3d-electromagnetic-simulations/",
+      "html_sha256": "c48c7d542e1c1cc52c19a92095abd1a5a4b96ad8e619ac7ac1067177b107efbe",
+      "expected_technology_names": [
+        "CST Studio Suite",
+        "Ansys HFSS",
+        "WIPL-D Pro CAD",
+        "ADS Momentum",
+        "ADS",
+        "AWR Microwave Office"
+      ],
+      "company": "NOVELIC",
+      "expected_technology_signal": "mentioned",
+      "signal_reason": "The source advertises experience in these design tools; it does not establish a current installed stack.",
+      "expected_contact": "sales@novelic.com",
+      "service_page_heading": "Antenna Design and 3D Electromagnetic Simulations",
+      "forbidden_technology_names": [
+        "XML",
+        "JSON",
+        "CVAT XML",
+        "Radar",
+        "FPGA",
+        "AI",
+        "CAD",
+        "CFD",
+        "RISC-V"
+      ],
+      "review_notes": "Check source-matched attribution and exact separate quotation fragments; source presence alone does not prove the statement type."
+    },
+    {
+      "page_id": "p0008",
+      "url": "https://www.novelic.com/automotive-annotation/",
+      "html_sha256": "a033f979140c3b0524227acc5aa495ba45298f831318a7ae985d5d5f39a880ee",
+      "expected_technology_names": [],
+      "company": "NOVELIC",
+      "expected_technology_signal": null,
+      "signal_reason": null,
+      "expected_contact": "sales@novelic.com",
+      "service_page_heading": "Automotive Annotation",
+      "forbidden_technology_names": [
+        "XML",
+        "JSON",
+        "CVAT XML",
+        "Radar",
+        "FPGA",
+        "AI",
+        "CAD",
+        "CFD",
+        "RISC-V"
+      ],
+      "review_notes": "Check source-matched attribution and exact separate quotation fragments; source presence alone does not prove the statement type."
+    }
+  ]
+}

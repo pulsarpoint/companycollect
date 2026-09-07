@@ -1,5 +1,15 @@
 # Company website crawler examples
 
+Start with the [research checkpoint](RESEARCH_CHECKPOINT.md) for saved decisions,
+benchmark findings and the next website-extraction fixes. PDF/OCR experiments are paused.
+
+The combined [company_research package](company_research/README.md) accepts a URL
+and returns attributed JSON for ten objectives, including technology signals from
+job descriptions, using Crawl4AI cleaned HTML and
+DeepSeek through OpenRouter. It provides a Python API and CLI, built-in prompts,
+page selection, overlapping extraction windows and explicit coverage/failure statuses.
+Install it separately with `pip install -e ./company_research`.
+
 The repository contains three approaches and one experiment harness:
 
 - `ex1`: the application manages the crawl frontier and the LLM ranks links.

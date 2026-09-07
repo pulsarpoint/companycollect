@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 
 from openai_codex import AsyncCodex, CodexConfig, Sandbox
+from openai_codex.generated.v2_all import ReasoningEffort
 from pydantic import ValidationError
 
 from ex1.aux import analysis_token_usage
@@ -21,8 +22,10 @@ async def extract_codex(
     timeout: int,
     operation: str,
     codex_bin: Path | None,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> StructuredTurnOutcome[JobExtraction]:
-    if codex_bin is None:
+    if codex_bin is None and model is None and reasoning_effort is None:
         return await run_structured_turn(
             prompt=prompt,
             base_instructions=instructions,
@@ -31,16 +34,26 @@ async def extract_codex(
             operation_name=operation,
         )
     try:
-        async with AsyncCodex(CodexConfig(codex_bin=str(codex_bin))) as codex:
+        async with AsyncCodex(
+            CodexConfig(codex_bin=str(codex_bin) if codex_bin is not None else None)
+        ) as codex:
             thread = await codex.thread_start(
                 base_instructions=instructions,
                 ephemeral=True,
                 sandbox=Sandbox.read_only,
+                model=model,
+                config={"model_reasoning_effort": reasoning_effort}
+                if reasoning_effort is not None
+                else None,
             )
             turn = await thread.turn(
                 prompt,
                 output_schema=structured_output_schema(JobExtraction),
                 sandbox=Sandbox.read_only,
+                model=model,
+                effort=ReasoningEffort(reasoning_effort)
+                if reasoning_effort is not None
+                else None,
             )
             result, timed_out = await _run_turn_with_timeout(
                 codex, turn, timeout_seconds=timeout, operation_name=operation

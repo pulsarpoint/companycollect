@@ -1,0 +1,14 @@
+{
+  "thread_id": "01a07c8e-ebaf-7fa2-8dfc-f935cc279dd8",
+  "thread_title": "Analyze Novelic company",
+  "model_attributed_by_user": "gpt-6-astra",
+  "model_and_effort_in_task_export": null,
+  "duration_ms": 2813306,
+  "completed_at_unix": 1788798970,
+  "prompt_sha256": "3a67f80b657252fb39e027bce70f10e93d517ad5c3e88e0cadf7bd421a1dd142",
+  "report_sha256": "110e453e1b017931cff5be671b027633a484572947bf7e9b29babc3870c903e5",
+  "reference_is_ground_truth": false,
+  "token_usage": null,
+  "cost_usd": null,
+  "source_directory": "/Users/graovic/pulsarpoint/ppoint/output/research/novelic-2026-09-07"
+}

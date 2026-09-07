@@ -88,8 +88,8 @@ def create_comparison(data_dir: Path, run_id: str) -> dict[str, Any]:
         if path.is_file():
             settings[backend] = json.loads(path.read_text(encoding="utf-8"))
     if len(settings) == 2:
-        for field in ("instructions", "schema"):
-            if settings["codex"][field] != settings["openrouter"][field]:
+        for field in ("instructions", "schema", "examples"):
+            if settings["codex"].get(field) != settings["openrouter"].get(field):
                 raise ValueError(f"Cannot compare different {field}")
     rows: list[dict[str, Any]] = []
     totals = {

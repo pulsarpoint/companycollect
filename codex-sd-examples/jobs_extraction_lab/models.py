@@ -53,6 +53,8 @@ class ExtractionRun(BaseModel):
     backend: Literal["codex", "openrouter"]
     requested_model: str
     actual_model: str | None = None
+    provider: str | None = None
+    response_id: str | None = None
     input_hash: str
     markdown_sha256: str
     started_at: str

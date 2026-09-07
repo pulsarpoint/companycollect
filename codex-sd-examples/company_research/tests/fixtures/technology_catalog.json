@@ -1,0 +1,126 @@
+{
+  "schema_version": "1.0",
+  "version": "74af6393d5712c7bc380e88e938652fd42a79ec30ae45428ad7b6804f564be9d",
+  "synced_at": "2026-09-07T00:00:00Z",
+  "entries": [
+    {
+      "technology": "C",
+      "description": "C technology",
+      "website": "https://example.test",
+      "category_ids": [
+        1
+      ],
+      "categories": [
+        "Development"
+      ],
+      "groups": [
+        "Software"
+      ]
+    },
+    {
+      "technology": "C++",
+      "description": "C++ technology",
+      "website": "https://example.test",
+      "category_ids": [
+        1
+      ],
+      "categories": [
+        "Development"
+      ],
+      "groups": [
+        "Software"
+      ]
+    },
+    {
+      "technology": "C#",
+      "description": "C# technology",
+      "website": "https://example.test",
+      "category_ids": [
+        1
+      ],
+      "categories": [
+        "Development"
+      ],
+      "groups": [
+        "Software"
+      ]
+    },
+    {
+      "technology": "git",
+      "description": "git technology",
+      "website": "https://example.test",
+      "category_ids": [
+        1
+      ],
+      "categories": [
+        "Development"
+      ],
+      "groups": [
+        "Software"
+      ]
+    },
+    {
+      "technology": "Python",
+      "description": "Python technology",
+      "website": "https://example.test",
+      "category_ids": [
+        1
+      ],
+      "categories": [
+        "Development"
+      ],
+      "groups": [
+        "Software"
+      ]
+    },
+    {
+      "technology": "Amazon Web Services",
+      "description": "Amazon Web Services technology",
+      "website": "https://example.test",
+      "category_ids": [
+        1
+      ],
+      "categories": [
+        "Development"
+      ],
+      "groups": [
+        "Software"
+      ]
+    },
+    {
+      "technology": "Moxie",
+      "description": "Moxie technology",
+      "website": "https://example.test",
+      "category_ids": [
+        1
+      ],
+      "categories": [
+        "Development"
+      ],
+      "groups": [
+        "Software"
+      ]
+    },
+    {
+      "technology": "mOxie",
+      "description": "mOxie technology",
+      "website": "https://example.test",
+      "category_ids": [
+        1
+      ],
+      "categories": [
+        "Development"
+      ],
+      "groups": [
+        "Software"
+      ]
+    }
+  ],
+  "aliases": [
+    {
+      "alias": "AWS",
+      "alias_key": "aws",
+      "technology": "Amazon Web Services"
+    }
+  ]
+}
