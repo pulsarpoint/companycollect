@@ -368,10 +368,11 @@ fold page over the page's distinct keys.
    `replace_address_resolution_results`, under `SWEDEN_ADDRESS_RESOLUTION_POLICY`. The
    workbench is opened READ-WRITE: the shared reference documents are built once per OSM
    extract (`ensure_reference_documents`, keyed on the extract's md5) and the fuzzy
-   reference street postings, keyed on the extract md5 and the policy version
-   (`ensure_reference_postings`, amended 2026-09-07: the postings were rebuilt per call,
-   which a caller that pages cannot afford), and the five per-run tables -- input, query,
-   street variants, candidates, results -- are created and dropped in a `finally` under the
+   reference street postings, keyed on the extract md5, the policy version and the
+   documents' own build stamp (`ensure_reference_postings`, amended 2026-09-07: the
+   postings were rebuilt per call, which a caller that pages cannot afford), and the five
+   per-run tables -- input, query, street variants, candidates, results -- are created and
+   dropped in a `finally` under the
    run id. All of them, the two shared reference tables included, live in the
    `sweden_company_enrichment` schema the shadow evaluation already uses.
 3. Outcomes `unmatched`, `ambiguous` and `postal_box` go through the centroid fallback with

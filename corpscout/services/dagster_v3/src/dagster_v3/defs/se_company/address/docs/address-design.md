@@ -137,10 +137,12 @@ function raises `ValueError` naming the location key if handed one.
 
 **The per-extract caches (2026-09-07).** Two inputs the resolver needs are shared, not
 per-call: the OSM reference documents (keyed on the extract's md5) and the fuzzy reference
-street postings built from them (keyed on the md5 AND the policy version, because the
-posting rule is the policy's). `ensure_reference_postings` builds whichever moved and
-returns the md5; both live as real tables in `sweden_company_enrichment`, beside the
-manifests that record what they were built for. The postings used to be rebuilt inside
+street postings built from them (keyed on the md5, the policy version -- the posting rule
+is the policy's -- and the documents' own `built_at`, because the shadow run rebuilds the
+documents unconditionally under an unmoved md5). A postings manifest whose table has gone
+missing is no cache either. `ensure_reference_postings` builds whichever moved and returns
+the md5; both live as real tables in `sweden_company_enrichment`, beside the manifests that
+record what they were built for. The postings used to be rebuilt inside
 `replace_address_resolution_candidates` on every call -- an unnest of every reference
 street's deletion signatures plus a DISTINCT over millions of rows. A one-shot rematch pays
 that once; the fold calls the geocode function once per 20,000-company PAGE and paid it per

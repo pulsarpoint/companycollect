@@ -9,9 +9,12 @@ result, and neither should pay to rebuild it when the snapshot has not moved.
 The 2026-09-07 fix extends the same idea one step further, to the derived index the matcher's
 fuzzy retrieval joins against. Those postings were rebuilt inside
 `replace_address_resolution_candidates` on every call -- which the fold, calling the engine
-once per 20,000-company page, paid per page over the whole reference table. They are keyed on
-the extract md5 AND the policy version, because the posting rule
-(`minimum_fuzzy_street_length`, the `suffix_exact` exclusion) is the policy's.
+once per 20,000-company page, paid per page over the whole reference table. Their key has
+three parts: the extract md5, the policy version (the posting rule --
+`minimum_fuzzy_street_length`, the `suffix_exact` exclusion -- is the policy's), and the
+DOCUMENTS' `built_at` (the shadow run rebuilds the documents unconditionally under the same
+md5, so the md5 alone cannot say the documents are the ones the postings were made from).
+A missing postings table beats all three: the manifest can outlive the table it describes.
 """
 
 from collections.abc import Iterator
@@ -30,8 +33,10 @@ from dagster_v3.defs.sweden_company.address_resolution_shadow import (
     REFERENCE_POSTINGS_TABLE,
     ensure_reference_documents,
     ensure_reference_postings,
+    reference_documents_built_at,
     reference_documents_md5,
     reference_postings_key,
+    replace_reference_documents,
 )
 
 POLICY = SWEDEN_ADDRESS_RESOLUTION_POLICY.version
@@ -147,10 +152,14 @@ def test_reference_postings_are_built_once_per_extract_and_policy(
     connection: duckdb.DuckDBPyConnection,
 ) -> None:
     """Built on the first call, reused while the key holds, rebuilt when either half moves."""
-    assert reference_postings_key(connection) == ("", "")
+    assert reference_postings_key(connection) == ("", "", "")
 
     assert ensure_reference_postings(connection) == "md5-a"
-    assert reference_postings_key(connection) == ("md5-a", POLICY)
+    assert reference_postings_key(connection) == (
+        "md5-a",
+        POLICY,
+        reference_documents_built_at(connection),
+    )
     postings = connection.execute(
         f"select count(*) from {QUALIFIED_REFERENCE_POSTINGS_TABLE}"
     ).fetchone()[0]
@@ -178,7 +187,7 @@ def test_reference_postings_are_built_once_per_extract_and_policy(
         " set policy_version = 'se-address-resolution-policy-v6'"
     )
     assert ensure_reference_postings(connection) == "md5-a"
-    assert reference_postings_key(connection) == ("md5-a", POLICY)
+    assert reference_postings_key(connection)[:2] == ("md5-a", POLICY)
     assert (
         connection.execute(
             f"select count(*) from {QUALIFIED_REFERENCE_POSTINGS_MANIFEST_TABLE}"
@@ -200,10 +209,79 @@ def test_a_new_extract_rebuilds_the_documents_and_the_postings(
     assert ensure_reference_postings(connection) == "md5-b"
 
     assert reference_documents_md5(connection) == "md5-b"
-    assert reference_postings_key(connection) == ("md5-b", POLICY)
+    assert reference_postings_key(connection) == (
+        "md5-b",
+        POLICY,
+        reference_documents_built_at(connection),
+    )
     assert (
         connection.execute(
             f"select count(*) from {QUALIFIED_SHADOW_REFERENCE_DOCUMENTS_TABLE}"
         ).fetchone()[0]
         > 0
+    )
+
+
+def test_rebuilt_documents_on_the_same_extract_rebuild_the_postings(
+    connection: duckdb.DuckDBPyConnection,
+) -> None:
+    """The md5 names the OSM EXTRACT, not the documents built from it.
+
+    `replace_sweden_address_resolution_shadow` calls `replace_reference_documents`
+    unconditionally on every shadow run, so the documents can change under a fixed md5 --
+    a change to the document builders or to `INDEX_SCOPE` would do it. Postings left from
+    the previous build would then describe documents that no longer exist, silently, since
+    a stale posting produces a wrong candidate rather than an error. The key therefore
+    carries the documents' `built_at`.
+    """
+    assert ensure_reference_postings(connection) == "md5-a"
+    stale = reference_documents_built_at(connection)
+    assert reference_postings_key(connection)[2] == stale
+
+    replace_reference_documents(connection)
+
+    rebuilt = reference_documents_built_at(connection)
+    # Guards the test itself: with an unmoved stamp the assertions below prove nothing.
+    assert rebuilt != stale
+    assert reference_postings_key(connection)[2] == stale  # the cache is now stale
+
+    assert ensure_reference_postings(connection) == "md5-a"
+
+    assert reference_postings_key(connection) == ("md5-a", POLICY, rebuilt)
+    # And a plain second call still no-ops -- the fix must not rebuild on every call.
+    built_at = connection.execute(
+        f"select built_at from {QUALIFIED_REFERENCE_POSTINGS_MANIFEST_TABLE}"
+    ).fetchone()[0]
+    assert ensure_reference_postings(connection) == "md5-a"
+    assert (
+        connection.execute(
+            f"select built_at from {QUALIFIED_REFERENCE_POSTINGS_MANIFEST_TABLE}"
+        ).fetchone()[0]
+        == built_at
+    )
+
+
+def test_a_missing_postings_table_rebuilds_however_well_the_manifest_matches(
+    connection: duckdb.DuckDBPyConnection,
+) -> None:
+    """The manifest can outlive the table it describes -- dropped by hand, or lost with the
+    workbench file. Trusting the manifest alone would report a cache that is not there and
+    the engine would fail on a missing table, so the probe is on the TABLE."""
+    assert ensure_reference_postings(connection) == "md5-a"
+    connection.execute(f"drop table {QUALIFIED_REFERENCE_POSTINGS_TABLE}")
+
+    assert reference_postings_key(connection) == ("", "", "")
+
+    assert ensure_reference_postings(connection) == "md5-a"
+
+    assert (
+        connection.execute(
+            f"select count(*) from {QUALIFIED_REFERENCE_POSTINGS_TABLE}"
+        ).fetchone()[0]
+        > 0
+    )
+    assert reference_postings_key(connection) == (
+        "md5-a",
+        POLICY,
+        reference_documents_built_at(connection),
     )

@@ -26,8 +26,8 @@ THE THREE THINGS THIS MODULE IS.
 
    BOTH shared inputs are per-EXTRACT caches in the enrichment schema, not per-call work:
    `ensure_reference_postings` builds the documents (keyed on the extract md5) and the
-   postings (keyed on the md5 and the policy version) only when one of them moved, and the
-   candidate step is handed the postings by name. That matters because this function is
+   postings (keyed on the md5, the policy version and the documents' own build stamp) only
+   when one of them moved, and the candidate step is handed the postings by name. That matters because this function is
    called once per fold PAGE: rebuilding the postings -- an unnest of every reference
    street's deletion signatures plus a DISTINCT over millions of rows -- inside every page
    is what the one-shot rematch could afford and a paging caller cannot. The five per-run

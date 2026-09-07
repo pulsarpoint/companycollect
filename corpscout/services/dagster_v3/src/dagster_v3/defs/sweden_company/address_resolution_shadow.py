@@ -240,6 +240,31 @@ def reference_documents_md5(connection: Any) -> str:
     return row[0] if row else ""
 
 
+def reference_documents_built_at(connection: Any) -> str:
+    """The documents manifest's ``built_at`` as text, ``''`` when there is none to read.
+
+    The md5 alone does not say the documents are unchanged. `replace_sweden_address_resolution_shadow`
+    rebuilds them UNCONDITIONALLY on every shadow run, under the same extract md5, so a change
+    to the document builders or to `INDEX_SCOPE` produces different documents on the same md5.
+    Anything derived from the documents (the fuzzy postings) has to follow this stamp too.
+    A manifest that predates the column -- or no manifest at all -- reads as ``''``, which
+    matches nothing and so forces one rebuild rather than raising.
+    """
+    [(exists,)] = connection.execute(
+        "select count(*) from information_schema.columns"
+        " where table_schema = ? and table_name = ? and column_name = 'built_at'",
+        [address_canonicalization.ENRICHMENT_SCHEMA, REFERENCE_MANIFEST_TABLE],
+    ).fetchall()
+    if not exists:
+        return ""
+    row = connection.execute(
+        f"select built_at::varchar from {QUALIFIED_REFERENCE_MANIFEST_TABLE}"
+    ).fetchone()
+    if not row or row[0] is None:
+        return ""
+    return str(row[0])
+
+
 def ensure_reference_documents(
     connection: Any, *, log: Callable[..., object] | None = None
 ) -> str:
@@ -264,7 +289,7 @@ def replace_reference_postings(
     once and a caller that pages (the address entity's fold, 20,000 companies at a time) pays
     per page over the WHOLE reference table. They depend only on the reference documents and
     the policy, so they cache exactly like the documents do -- one manifest row recording the
-    pair they were built for.
+    documents build and the policy version they were made from.
 
     The table is persistent, not temporary: a DuckDB temporary table dies with the connection
     and cannot be schema-qualified, and this one lives beside the reference documents in the
@@ -282,15 +307,21 @@ def replace_reference_postings(
         temporary=False,
     )
     reference_md5 = reference_documents_md5(connection)
+    documents_built_at = reference_documents_built_at(connection)
     connection.execute(
         f"""
         create or replace table {QUALIFIED_REFERENCE_POSTINGS_MANIFEST_TABLE} as
         select
             ?::varchar as reference_md5,
             ?::varchar as policy_version,
+            ?::varchar as documents_built_at,
             now()::timestamp as built_at
         """,
-        [reference_md5, SWEDEN_ADDRESS_RESOLUTION_POLICY.version],
+        [
+            reference_md5,
+            SWEDEN_ADDRESS_RESOLUTION_POLICY.version,
+            documents_built_at,
+        ],
     )
     if log is not None:
         [(postings,)] = connection.execute(
@@ -304,25 +335,41 @@ def replace_reference_postings(
         )
 
 
-def reference_postings_key(connection: Any) -> tuple[str, str]:
-    """The postings manifest's ``(reference_md5, policy_version)``, ``('', '')`` when none."""
-    [(exists,)] = connection.execute(
-        "select count(*) from information_schema.tables"
-        " where table_schema = ? and table_name = ?",
+def reference_postings_key(connection: Any) -> tuple[str, str, str]:
+    """The cached postings' ``(reference_md5, policy_version, documents_built_at)``.
+
+    ``('', '', '')`` -- a key nothing matches, so the caller rebuilds -- whenever there is no
+    usable cache to describe: no manifest, a manifest predating one of the three columns, or
+    a manifest whose POSTINGS TABLE is gone. The last case is the one a manifest cannot see:
+    the table is dropped by hand, or lost with the workbench file, while the manifest that
+    described it survives; reading the manifest alone would then report a cache that is not
+    there and the engine would fail on a missing table.
+    """
+    [(columns,)] = connection.execute(
+        "select count(*) from information_schema.columns"
+        " where table_schema = ? and table_name = ?"
+        " and column_name in ('reference_md5', 'policy_version', 'documents_built_at')",
         [
             address_canonicalization.ENRICHMENT_SCHEMA,
             REFERENCE_POSTINGS_MANIFEST_TABLE,
         ],
     ).fetchall()
-    if not exists:
-        return "", ""
+    if columns != 3:
+        return "", "", ""
+    [(postings,)] = connection.execute(
+        "select count(*) from information_schema.tables"
+        " where table_schema = ? and table_name = ?",
+        [address_canonicalization.ENRICHMENT_SCHEMA, REFERENCE_POSTINGS_TABLE],
+    ).fetchall()
+    if not postings:
+        return "", "", ""
     row = connection.execute(
-        "select reference_md5, policy_version"
+        "select reference_md5, policy_version, documents_built_at"
         f" from {QUALIFIED_REFERENCE_POSTINGS_MANIFEST_TABLE}"
     ).fetchone()
     if not row:
-        return "", ""
-    return str(row[0]), str(row[1])
+        return "", "", ""
+    return str(row[0]), str(row[1]), str(row[2])
 
 
 def ensure_reference_postings(
@@ -332,14 +379,18 @@ def ensure_reference_postings(
 
     Returns the current reference md5, the same value `ensure_reference_documents` returns
     (and through the same call) -- a caller wanting the postings wants the documents too, and
-    both are keyed on the extract. The postings additionally carry the policy version: the
-    fuzzy posting rule is the policy's (`minimum_fuzzy_street_length`, the suffix_exact
-    exclusion), so a policy bump on an unmoved extract must rebuild them.
+    both are keyed on the extract. The postings key has two more parts. The POLICY VERSION,
+    because the fuzzy posting rule is the policy's (`minimum_fuzzy_street_length`, the
+    suffix_exact exclusion), so a policy bump on an unmoved extract must rebuild them. And the
+    documents' own `built_at`, because the md5 identifies the OSM EXTRACT, not the documents:
+    the shadow run rebuilds the documents unconditionally under the same md5, and postings
+    left over from the previous build would describe documents that no longer exist.
     """
     reference_md5 = ensure_reference_documents(connection, log=log)
     if reference_postings_key(connection) == (
         reference_md5,
         SWEDEN_ADDRESS_RESOLUTION_POLICY.version,
+        reference_documents_built_at(connection),
     ):
         return reference_md5
     replace_reference_postings(connection, log=log)
