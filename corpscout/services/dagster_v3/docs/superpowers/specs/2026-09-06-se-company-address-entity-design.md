@@ -469,6 +469,17 @@ Actions, each through the confirmation dialog, all in one action round-trip:
 - **Fold now**: launches `se_company_address_fold_companies` for the company; the page
   reloads when the run finishes.
 
+Amended 2026-09-07 (slice 3 plan): Remove on a row with any non-reviewer member writes the
+hide rule only, leaving every member in place; on a reviewer-only row it tombstones every
+reviewer member slot instead, since a mixed row's key is computed over the union of its
+members' components and retiring one would re-key the row and orphan the hide rule. A new
+address's raw row takes slot `r<the stamp's 17 digits>` (for example `r20260907203355123`);
+editing a draft keeps its slot (a hidden field), and Activate writes the `reviewer` row under
+that same slot, so the pair `(reviewer, slot)` and `(reviewer_draft, slot)` share one lineage.
+The targeted fold (`se_company_address_fold_companies`) normalizes the company's raw rows
+first, always `changed_only=True` for that step, before folding with the caller's own
+`changed_only` -- the bucket fold does not normalize first; only the weekly schedule does.
+
 Validation lives in the client-safe parser: a box or a street line, a five-digit postcode, a
 city, lengths capped (street 200, care-of 200, city 100, note 500), plain text, `kind` from
 the catalogue. The results carry the intent, as the basic-info route does.
@@ -576,4 +587,6 @@ the name, its definitions unchanged until the cutover retires them. Assets
 `se_address_geocodes_warm`. Backoffice
 `app/lib/se-company-address-entity.server.ts`, `app/lib/se-address-fields.ts`,
 `app/lib/se-address-decision-form.ts`, `app/components/admin/se-address-workspace.tsx`,
-`app/components/admin/se-address-edit-sheet.tsx`, route `admin-se-company-address.tsx`.
+`app/components/admin/se-address-edit-sheet.tsx`,
+`app/components/admin/fold-run-poller.tsx` (shared with the Info tab), route
+`admin-se-company-address.tsx`.

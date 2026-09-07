@@ -1,5 +1,7 @@
 """Wiring of the address fold assets: partitions, the OSM workbench pool, config bounds."""
 
+from types import SimpleNamespace
+
 import dagster as dg
 import pytest
 
@@ -50,3 +52,27 @@ def test_warm_config_defaults_and_bounds() -> None:
     assert assets.AddressWarmConfig().limit == 0
     with pytest.raises(ValueError):
         assets.AddressWarmConfig(chunk_size=1)
+
+
+def test_targeted_fold_normalizes_the_ids_before_folding_them(monkeypatch) -> None:
+    from datetime import UTC, datetime
+
+    calls: list[tuple] = []
+
+    def fake_normalize(client, ids, *, changed_only, normalized_at, page_size, log):
+        calls.append(("normalize", list(ids), changed_only))
+        return SimpleNamespace(as_metadata=lambda: {"rows": 3})
+
+    def fake_fold(client, duckdb, ids, *, changed_only, source_run_id, folded_at, page_size, log):
+        calls.append(("fold", list(ids), changed_only, source_run_id))
+        return SimpleNamespace(as_metadata=lambda: {"published": 2})
+
+    monkeypatch.setattr(assets, "normalize_companies", fake_normalize)
+    monkeypatch.setattr(assets, "fold_companies", fake_fold)
+    now = datetime(2026, 9, 7, 20, 0, tzinfo=UTC)
+    normalized, folded = assets.targeted_fold(
+        object(), object(), ["5560000001"], changed_only=False, source_run_id="run-1", folded_at=now,
+        page_size=20_000, log=None,
+    )
+    assert calls == [("normalize", ["5560000001"], True), ("fold", ["5560000001"], False, "run-1")]
+    assert normalized.as_metadata() == {"rows": 3} and folded.as_metadata() == {"published": 2}

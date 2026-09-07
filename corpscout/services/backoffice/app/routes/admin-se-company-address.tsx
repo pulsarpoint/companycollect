@@ -1,68 +1,109 @@
 import type { Route } from "./+types/admin-se-company-address";
-import { SeCompanyAddressTab } from "~/components/admin/se-company-address";
+import { SeAddressWorkspace } from "~/components/admin/se-address-workspace";
+import { parseSeAddressDecision } from "~/lib/se-address-decision-form";
+import { selectedAddressFromSearch } from "~/lib/se-address-fields";
 import {
-  appendSeCompanyAddressCorrection,
-  loadSeCompanyAddresses,
-} from "~/lib/se-company-address.server";
-import { SeAddressCorrectionValidationError } from "~/lib/se-address-corrections";
-import {
-  buildCorrectionInput,
-  liveOverrideRefusal,
-} from "~/lib/se-address-review-form";
+  activateSeAddressDraft,
+  discardSeAddressDraft,
+  launchSeAddressFold,
+  loadSeAddressDetail,
+  removeSeAddress,
+  resetSeAddress,
+  saveSeAddressDraft,
+  SeAddressDecisionError,
+  type SeAddressDetail,
+} from "~/lib/se-company-address-entity.server";
 
-// Only `loader`, `action` and the component live here -- see
-// admin-se-company-layout.tsx for why. Any other export that touched
-// `~/lib/*.server` would keep that module in the client bundle and break the
-// production build.
+/** Swedish org numbers are 10 digits, or 12 with the century prefix. */
+const COMPANY_ID_PATTERN = /^([0-9]{10}|[0-9]{12})$/;
 
-export async function loader({ params }: Route.LoaderArgs) {
-  return { detail: await loadSeCompanyAddresses(params.companyId) };
+/** A company no source has suggested an address for is a normal pipeline
+ * state, not a broken link -- and the reviewer must still be able to type one.
+ * So the tab opens on an empty detail rather than a 404: the workspace says
+ * nothing is published and keeps Add address, Correct's counterpart, in reach.
+ * The company layout already 404s a company that does not exist at all. */
+const EMPTY_DETAIL: SeAddressDetail = {
+  published: [],
+  drafts: [],
+  history: [],
+  rules: [],
+  foldPending: false,
+};
+
+// Only `loader`, `action`, `meta` and the component live here. Any other
+// export that touched `~/lib/*.server` would keep that module in the client
+// bundle and break the production build.
+
+export async function loader({ request, params }: Route.LoaderArgs) {
+  const detail = await loadSeAddressDetail(params.companyId);
+  const selectedKey = selectedAddressFromSearch(new URL(request.url).searchParams);
+  return { detail: detail ?? EMPTY_DETAIL, selectedKey };
 }
 
+/**
+ * One of the entity's six decisions (remove, reset, save-draft, activate,
+ * discard, fold-now). The store's refusals are the reviewer's to read;
+ * anything else is a real failure and must not be dressed up as a form error.
+ */
 export async function action({ request, params }: Route.ActionArgs) {
-  const built = buildCorrectionInput(await request.formData(), {
-    companyId: params.companyId,
-  });
-  if (!built.ok) {
-    return { ok: false as const, error: built.error };
+  if (!COMPANY_ID_PATTERN.test(params.companyId)) {
+    return { ok: false as const, intent: "", error: "Company id must be 10 or 12 digits." };
   }
-  // A second override of a row that already carries a live one is refused
-  // here as well as on the page: the later one would win by created_at and
-  // bury the first, and a page left open (or a hand-rolled post) must not be
-  // able to do that silently. Only that kind needs the current ledger --
-  // a reject and an override decide different questions, and an undo is the
-  // way out of an override.
-  if (built.input.kind === "override_field") {
-    const addressKey = String(built.input.payload?.address_key ?? "");
-    const current = await loadSeCompanyAddresses(params.companyId);
-    const refusal = liveOverrideRefusal(
-      built.input.kind,
-      addressKey,
-      current.corrections,
-    );
-    if (refusal) return { ok: false as const, error: refusal };
+  const form = await request.formData();
+  // Read once, before parsing: every returned result carries the posted
+  // intent so the workspace and the edit sheet can each show only their own.
+  const intent = String(form.get("intent") ?? "");
+  const parsed = parseSeAddressDecision(form);
+  if (!parsed.ok) return { ok: false as const, intent, error: parsed.error };
+  const { decision } = parsed;
+  if (decision.intent === "fold-now") {
+    const { runId, url } = await launchSeAddressFold(params.companyId);
+    return { ok: true as const, intent, runId, url };
   }
   try {
-    const result = await appendSeCompanyAddressCorrection(built.input);
-    return { ok: true as const, correctionId: result.correctionId };
+    if (decision.intent === "save-draft") {
+      const { slot } = await saveSeAddressDraft(params.companyId, decision);
+      return { ok: true as const, intent, slot };
+    }
+    if (decision.intent === "activate") {
+      await activateSeAddressDraft(params.companyId, decision);
+      return { ok: true as const, intent };
+    }
+    if (decision.intent === "discard") {
+      await discardSeAddressDraft(params.companyId, decision);
+      return { ok: true as const, intent };
+    }
+    if (decision.intent === "remove") {
+      await removeSeAddress(params.companyId, decision);
+      return { ok: true as const, intent };
+    }
+    await resetSeAddress(params.companyId, decision);
+    return { ok: true as const, intent };
   } catch (error) {
-    // The validator's refusals are the reviewer's to read (a malformed
-    // payload, an address that is no longer published, evidence that moved
-    // while the page was open); anything else is a real failure.
-    if (error instanceof SeAddressCorrectionValidationError) {
-      return { ok: false as const, error: error.message };
+    if (error instanceof SeAddressDecisionError) {
+      return { ok: false as const, intent, error: error.message };
     }
     throw error;
   }
 }
 
+export function meta({ params }: Route.MetaArgs) {
+  // The entity carries no company name of its own (unlike the Info tab's
+  // `detail.info.legal_name`); the layout's own meta already titles the page
+  // with the company, so this just names the tab.
+  return [{ title: `${params.companyId} address | CompanyCollect` }];
+}
+
 export default function AdminSwedenCompanyAddress({
   loaderData,
   actionData,
+  params,
 }: Route.ComponentProps) {
   return (
-    <SeCompanyAddressTab
+    <SeAddressWorkspace
+      companyId={params.companyId}
       detail={loaderData.detail}
+      selectedKey={loaderData.selectedKey}
       result={actionData ?? null}
     />
   );

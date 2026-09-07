@@ -177,6 +177,34 @@ export async function chInsertSeBasicInfoSuggestions<T extends object>(
   });
 }
 
+/**
+ * Append a reviewer raw-row version to the SE address suggestion table; the
+ * normalize asset parses it and the fold reads the newest version per
+ * (company_id, source, slot) through FINAL.
+ */
+export async function chInsertSeCompanyAddressSuggestions<T extends object>(
+  values: T[],
+): Promise<void> {
+  if (values.length === 0) return;
+  await getWriteClient().insert({
+    table: "se_company_address_suggestion",
+    values,
+    format: "JSONEachRow",
+  });
+}
+
+/** Append a hide-rule version (or its release) to the SE address rule table. */
+export async function chInsertSeCompanyAddressRules<T extends object>(
+  values: T[],
+): Promise<void> {
+  if (values.length === 0) return;
+  await getWriteClient().insert({
+    table: "se_company_address_rule",
+    values,
+    format: "JSONEachRow",
+  });
+}
+
 /** Append reviewer decisions to the Sweden company-address correction ledger;
  * Dagster's sensor picks them up. */
 export async function chInsertSeCompanyAddressCorrections<T extends object>(
