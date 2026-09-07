@@ -61,7 +61,7 @@
 - Consumes: nothing.
 - Produces: views `corpscout.se_bolagsverket_companies_translated` (columns of `se_bolagsverket_companies` plus `activity_description_en String`, `activity_description_translated_at DateTime64(3, 'UTC')`) and `corpscout.se_ratsit_company_translated` (columns of `se_ratsit_company` plus `business_description_en String`, `business_description_translated_at DateTime64(3, 'UTC')`). Tasks 2 and 3 read them; the local harness replays their `CREATE OR REPLACE VIEW` statements from this file.
 
-- [ ] **Step 1: Write the failing migration test**
+- [x] **Step 1: Write the failing migration test**
 
 Append to `tests/test_clickhouse_migrations.py`:
 
@@ -110,12 +110,12 @@ def test_se_source_translated_views_re_key_translations_and_define_views() -> No
 
 Also add `"000390_corpscout_se_source_translated_views",` as the last entry of the `MIGRATIONS` tuple, after `"000389_corpscout_technology_proposals",`.
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run (from `corpscout/services/dagster_v3`): `uv run pytest tests/test_clickhouse_migrations.py -q -k "se_source_translated_views or ledger or every_migration"`
 Expected: FAIL with `FileNotFoundError` for the 000390 up file (and any ledger-completeness test that lists files on disk fails until the files exist).
 
-- [ ] **Step 3: Write the up migration**
+- [x] **Step 3: Write the up migration**
 
 `corpscout/clickhouse/migrations/000390_corpscout_se_source_translated_views.up.sql`:
 
@@ -200,7 +200,7 @@ LEFT JOIN (
 ) AS act ON act.source_text_hash = cityHash64(ifNull(c.business_description, ''));
 ```
 
-- [ ] **Step 4: Write the down migration**
+- [x] **Step 4: Write the down migration**
 
 `corpscout/clickhouse/migrations/000390_corpscout_se_source_translated_views.down.sql`:
 
@@ -212,12 +212,12 @@ DROP VIEW IF EXISTS corpscout.se_ratsit_company_translated;
 DROP VIEW IF EXISTS corpscout.se_bolagsverket_companies_translated;
 ```
 
-- [ ] **Step 5: Run the migration tests**
+- [x] **Step 5: Run the migration tests**
 
 Run: `uv run pytest tests/test_clickhouse_migrations.py -q`
 Expected: PASS (the whole file, so the ledger-completeness tests see both new files).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add corpscout/clickhouse/migrations/000390_corpscout_se_source_translated_views.up.sql corpscout/clickhouse/migrations/000390_corpscout_se_source_translated_views.down.sql corpscout/services/dagster_v3/tests/test_clickhouse_migrations.py
@@ -243,7 +243,7 @@ version preserved, and creates the two plain _translated views with a
 - Consumes: `corpscout.se_bolagsverket_companies_translated` from Task 1; `define_suggestion_asset`, `SUGGESTION_SELECT_COLUMNS` from `basic_info/extract.py` (unchanged); `bolagsverket_legal_form_sql` from `basic_info/legal_form.py` (unchanged).
 - Produces: `bolagsverket_current_sql() -> str`, `bolagsverket_select_sql() -> str`, `BOLAGSVERKET_EXTRACTOR_VERSION = "bolagsverket-v3"`, `TRANSLATED_TABLE = "corpscout.se_bolagsverket_companies_translated"`, asset `se_basic_info_suggestions_bolagsverket` (same key, same deps).
 
-- [ ] **Step 1: Rewrite the SQL pin test**
+- [x] **Step 1: Rewrite the SQL pin test**
 
 Replace `test_bolagsverket_select_matches_the_contract` in `tests/test_se_company_basic_info_extractors_sql.py` with:
 
@@ -289,12 +289,12 @@ def test_bolagsverket_select_matches_the_contract() -> None:
     )
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `uv run pytest tests/test_se_company_basic_info_extractors_sql.py -q -k bolagsverket`
 Expected: FAIL on `"FROM corpscout.se_bolagsverket_companies_translated AS register FINAL" in sql`.
 
-- [ ] **Step 3: Rewrite the extractor**
+- [x] **Step 3: Rewrite the extractor**
 
 Replace the whole of `src/dagster_v3/defs/se_company/basic_info/bolagsverket.py` with:
 
@@ -387,12 +387,12 @@ se_basic_info_suggestions_bolagsverket = define_suggestion_asset(
 )
 ```
 
-- [ ] **Step 4: Run the SQL pins**
+- [x] **Step 4: Run the SQL pins**
 
 Run: `uv run pytest tests/test_se_company_basic_info_extractors_sql.py -q`
 Expected: PASS (all five extractors; the wikidata test still finds `FROM corpscout.se_bolagsverket_companies FINAL WHERE has_company = 1` in its own links CTE).
 
-- [ ] **Step 5: Teach the local harness to replay the views and move the seeded key**
+- [x] **Step 5: Teach the local harness to replay the views and move the seeded key**
 
 In `tests/test_se_company_basic_info_extractors_clickhouse_local.py`:
 
@@ -440,12 +440,12 @@ TRANSLATION_ROW = (
 
 In `test_a_later_translation_re_selects_bolagsverket_and_flips_the_language`, change the `late_translation` literal's first value from `'corpscout.se_companies'` to `'corpscout.se_bolagsverket_companies'`.
 
-- [ ] **Step 6: Run the local tests**
+- [x] **Step 6: Run the local tests**
 
 Run: `docker info >/dev/null 2>&1 && echo docker-ok; uv run pytest tests/test_se_company_basic_info_extractors_clickhouse_local.py -q`
 Expected: PASS for every test (13 including parametrizations). If the run reports SKIPPED with "no clickhouse-local binary and no docker", start docker and re-run; do not proceed on a skip.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/dagster_v3/defs/se_company/basic_info/bolagsverket.py tests/test_se_company_basic_info_extractors_sql.py tests/test_se_company_basic_info_extractors_clickhouse_local.py
@@ -470,7 +470,7 @@ extractor. The clickhouse-local harness replays 000390's views."
 - Consumes: `corpscout.se_ratsit_company_translated` from Task 1; `RATSIT_NORMALIZER_VERSION` from `sweden_ratsit/normalization.py` (unchanged, value `ratsit-normalizer-v2`).
 - Produces: `ratsit_current_sql() -> str`, `ratsit_select_sql() -> str`, `RATSIT_EXTRACTOR_VERSION = "ratsit-v2"`, `TRANSLATED_TABLE = "corpscout.se_ratsit_company_translated"`, asset `se_basic_info_suggestions_ratsit` (same key, same deps, same `select_params`).
 
-- [ ] **Step 1: Rewrite the SQL pin test**
+- [x] **Step 1: Rewrite the SQL pin test**
 
 Replace `test_ratsit_select_takes_the_newest_report_and_maps_status_text` with:
 
@@ -516,12 +516,12 @@ def test_ratsit_select_takes_the_newest_report_and_maps_status_text() -> None:
     )
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `uv run pytest tests/test_se_company_basic_info_extractors_sql.py -q -k ratsit`
 Expected: FAIL on `"FROM corpscout.se_ratsit_company_translated FINAL" in sql`.
 
-- [ ] **Step 3: Rewrite the extractor**
+- [x] **Step 3: Rewrite the extractor**
 
 Replace the whole of `src/dagster_v3/defs/se_company/basic_info/ratsit.py` with:
 
@@ -611,12 +611,12 @@ se_basic_info_suggestions_ratsit = define_suggestion_asset(
 )
 ```
 
-- [ ] **Step 4: Run the SQL pins**
+- [x] **Step 4: Run the SQL pins**
 
 Run: `uv run pytest tests/test_se_company_basic_info_extractors_sql.py -q`
 Expected: PASS.
 
-- [ ] **Step 5: Add the local behaviour tests**
+- [x] **Step 5: Add the local behaviour tests**
 
 Append after `test_ratsit_takes_the_newest_report_and_maps_status` in `tests/test_se_company_basic_info_extractors_clickhouse_local.py` (the existing test keeps passing: without a translation row the Swedish text stays with language `sv`):
 
@@ -684,12 +684,12 @@ def test_a_translation_of_an_older_ratsit_report_does_not_keep_re_selecting() ->
     assert _run(script, join_use_nulls=0) == []
 ```
 
-- [ ] **Step 6: Run the local tests**
+- [x] **Step 6: Run the local tests**
 
 Run: `uv run pytest tests/test_se_company_basic_info_extractors_clickhouse_local.py -q`
 Expected: PASS, none skipped (docker or clickhouse-local present, as in Task 2).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/dagster_v3/defs/se_company/basic_info/ratsit.py tests/test_se_company_basic_info_extractors_sql.py tests/test_se_company_basic_info_extractors_clickhouse_local.py
@@ -714,7 +714,7 @@ newest report only so the change scan converges."
 - Consumes: `TranslationField`, `build_scan_sql` from `translator_load/loader.py` (unchanged); `TranslatorResource.enqueue_translation_rows(source_table=, source_column=, source_lang=, target_lang=, source_language_name=, target_language_name=, rows=)` (unchanged).
 - Produces: `ACTIVITY_DESCRIPTION_FIELD = TranslationField("corpscout.se_bolagsverket_companies", "activity_description", "sv", "en", extra_where="has_company = 1")`; asset `sweden_company_translation_load` depending on `sweden_company_bolagsverket_companies_clickhouse`; its two checks unchanged in name.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/test_sweden_company_translation.py`:
 
@@ -778,7 +778,7 @@ class _ScanResource:
 def test_load_asset_enqueues_under_the_field_key(monkeypatch) -> None:
     """The scan's anti-join and the enqueue must name the same key, or the loader
     re-enqueues every text on every run."""
-    session = _FakeSession(stats={"input": 1, "pending": 0, "output": 1, "failed": 0})
+    session = _FakeSession(stats={"input": 0, "pending": 0, "output": 0, "failed": 0})
     monkeypatch.setattr(translator_resource.requests, "Session", lambda: session)
     clickhouse = _ScanResource()
 
@@ -813,12 +813,12 @@ In `tests/test_sweden_financial_concepts.py`, change the block at lines 90-94 to
     }
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run pytest tests/test_sweden_company_translation.py tests/test_sweden_financial_concepts.py -q`
 Expected: the four new tests FAIL (field still names `corpscout.se_companies`); the financial-concepts graph test FAILS on `parent_keys`.
 
-- [ ] **Step 3: Re-point the field, the dep and the enqueue**
+- [x] **Step 3: Re-point the field, the dep and the enqueue**
 
 In `src/dagster_v3/defs/sweden_company/translation.py`:
 
@@ -899,12 +899,12 @@ def sweden_company_translation_load(
 
 The rest of the function body (warnings, wait, `MaterializeResult`) is unchanged.
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run pytest tests/test_sweden_company_translation.py tests/test_sweden_financial_concepts.py tests/test_translator_load.py tests/test_translation_coverage.py tests/test_se_company_scb.py -q`
 Expected: PASS. (`test_se_company_scb.py` still expects the old artifact to depend on `sweden_company_translation_load`; that dep is untouched.)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/dagster_v3/defs/sweden_company/translation.py tests/test_sweden_company_translation.py tests/test_sweden_financial_concepts.py
@@ -930,7 +930,7 @@ than the retiring se_companies builder."
 - Consumes: `RATSIT_NORMALIZER_VERSION` (`ratsit-normalizer-v2`), `translation_coverage_result`, `TranslationField`, `build_scan_sql`, `TranslatorResource`, `translator_queue_health_check` (all unchanged).
 - Produces: `BUSINESS_DESCRIPTION_FIELD`, asset `sweden_ratsit_translation_load` (group `sweden_ratsit`, dep `se_ratsit_normalized`), checks `sweden_ratsit_translator_queue_health_check` (`translator_queue_healthy`) and `sweden_ratsit_translation_coverage` (`translations_present`).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/test_sweden_ratsit_translation.py`:
 
@@ -998,7 +998,7 @@ class _ScanResource:
 
 
 def test_load_asset_enqueues_under_the_field_key(monkeypatch) -> None:
-    session = _FakeSession(stats={"input": 1, "pending": 0, "output": 1, "failed": 0})
+    session = _FakeSession(stats={"input": 0, "pending": 0, "output": 0, "failed": 0})
     monkeypatch.setattr(translator_resource.requests, "Session", lambda: session)
     clickhouse = _ScanResource()
 
@@ -1022,12 +1022,12 @@ def test_load_asset_enqueues_under_the_field_key(monkeypatch) -> None:
     ]
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `uv run pytest tests/test_sweden_ratsit_translation.py -q`
 Expected: FAIL at import (`ModuleNotFoundError: dagster_v3.defs.sweden_ratsit.translation`).
 
-- [ ] **Step 3: Create the scan module**
+- [x] **Step 3: Create the scan module**
 
 Create `src/dagster_v3/defs/sweden_ratsit/translation.py`:
 
@@ -1144,7 +1144,7 @@ def sweden_ratsit_translation_coverage(clickhouse: ClickhouseResource) -> dg.Ass
     return translation_coverage_result(clickhouse, (BUSINESS_DESCRIPTION_FIELD,))
 ```
 
-- [ ] **Step 4: Register the asset and add it to the coverage job list**
+- [x] **Step 4: Register the asset and add it to the coverage job list**
 
 In `src/dagster_v3/defs/sweden_ratsit/assets.py`, add after the existing `from dagster_v3.defs.sweden_ratsit.resources import (...)` import block:
 
@@ -1192,12 +1192,12 @@ TRANSLATION_LOAD_ASSETS = (
 )
 ```
 
-- [ ] **Step 5: Run the tests, including the whole-repository loader check**
+- [x] **Step 5: Run the tests, including the whole-repository loader check**
 
 Run: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run pytest tests/test_sweden_ratsit_translation.py tests/test_translation_coverage.py tests/test_sweden_ratsit_pilot.py tests/test_schedule_cron_contracts.py -q`
 Expected: PASS. `test_translation_coverage_job_covers_every_loader` loads every Definitions and proves the new `translations_present` check is in the ten-minute job.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/dagster_v3/defs/sweden_ratsit/translation.py src/dagster_v3/defs/sweden_ratsit/assets.py src/dagster_v3/defs/czech_legal_forms/assets.py tests/test_sweden_ratsit_translation.py
@@ -1215,17 +1215,17 @@ ten-minute coverage job."
 
 **Files:** none new.
 
-- [ ] **Step 1: Run the full Dagster unit suite**
+- [x] **Step 1: Run the full Dagster unit suite**
 
 Run (from `corpscout/services/dagster_v3`): `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run pytest -q -x -m "not integration"`
 Expected: PASS.
 
-- [ ] **Step 2: Run the integration tests this work touches**
+- [x] **Step 2: Run the integration tests this work touches**
 
 Run: `uv run pytest tests/test_se_company_basic_info_extractors_clickhouse_local.py tests/test_se_company_basic_info_clickhouse_local.py -q`
 Expected: PASS, none skipped.
 
-- [ ] **Step 3: Migration-number collision check**
+- [x] **Step 3: Migration-number collision check**
 
 Run: `git fetch origin main && git ls-tree --name-only origin/main corpscout/clickhouse/migrations/ | tail -2`, and on prod:
 
@@ -1235,7 +1235,7 @@ SELECT max(version) FROM corpscout.schema_migrations
 
 Expected: no `000390` on `origin/main`, prod head `389`. If either differs, renumber the migration (file names, the `MIGRATIONS` entries in both test files, the test name) before merging.
 
-- [ ] **Step 4: Merge**
+- [x] **Step 4: Merge**
 
 ```bash
 git checkout main && git merge --no-ff se-translated-source-views -m "Merge branch 'se-translated-source-views'"

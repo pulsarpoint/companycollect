@@ -402,6 +402,7 @@ EXPECTED_MIGRATIONS = (
     "000387_corpscout_se_company_address_precedence",
     "000388_corpscout_technology_aliases",
     "000389_corpscout_technology_proposals",
+    "000390_corpscout_se_source_translated_views",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -4162,3 +4163,45 @@ def test_the_se_registry_pair_is_retired_by_000375_and_by_nothing_else() -> None
     assert "ENGINE = ReplacingMergeTree(observed_at)" in down
     assert "ORDER BY (company_id, source, observed_at, observation_fingerprint)" in down
     assert "ORDER BY (company_id, source)" in down
+
+
+def test_se_source_translated_views_re_key_translations_and_define_views() -> None:
+    """Spec 2026-09-07-se-translated-source-views: translations keyed on the register
+    tables, exposed as plain views. Additive: the spine key stays until slice 5."""
+    up = _normalize_sql("\n".join(_statement_lines(_migration_sql("000390_corpscout_se_source_translated_views.up.sql"))))
+    down = _normalize_sql("\n".join(_statement_lines(_migration_sql("000390_corpscout_se_source_translated_views.down.sql"))))
+
+    assert up.count("INSERT INTO corpscout.text_translations") == 2
+    # Bolagsverket: every spine-key row under the register's name, version preserved so
+    # the translation stamps (and the extractor's change scan) do not move.
+    assert (
+        "SELECT 'corpscout.se_bolagsverket_companies', source_column, source_text_hash, source_lang, target_lang, "
+        "translated_text, provider, model, version FROM corpscout.text_translations "
+        "WHERE source_table = 'corpscout.se_companies' AND source_column = 'activity_description'"
+    ) in up
+    # Ratsit: seeded only where a Ratsit text is the same text, so the LLM sees the rest only.
+    assert (
+        "SELECT 'corpscout.se_ratsit_company', 'business_description', source_text_hash, source_lang, target_lang, "
+        "translated_text, provider, model, version FROM corpscout.text_translations "
+        "WHERE source_table = 'corpscout.se_companies' AND source_column = 'activity_description' "
+        "AND source_text_hash IN ( SELECT cityHash64(ifNull(business_description, '')) FROM corpscout.se_ratsit_company "
+        "WHERE ifNull(business_description, '') != '' )"
+    ) in up
+    for view, base, column in (
+        ("se_bolagsverket_companies_translated", "se_bolagsverket_companies", "activity_description"),
+        ("se_ratsit_company_translated", "se_ratsit_company", "business_description"),
+    ):
+        assert (
+            f"CREATE OR REPLACE VIEW corpscout.{view} AS SELECT c.*, ifNull(act.translated_text, '') AS {column}_en, "
+            f"act.translated_at AS {column}_translated_at FROM corpscout.{base} AS c LEFT JOIN ( "
+            "SELECT source_text_hash, argMax(translated_text, version) AS translated_text, "
+            "toDateTime64(max(version), 3, 'UTC') AS translated_at FROM corpscout.text_translations "
+            f"WHERE source_table = 'corpscout.{base}' AND source_column = '{column}' "
+            "AND source_lang = 'sv' AND target_lang = 'en' AND source_text_hash != cityHash64('') "
+            f"GROUP BY source_text_hash ) AS act ON act.source_text_hash = cityHash64(ifNull(c.{column}, ''))"
+        ) in up, view
+    for verb in ("DELETE", "ALTER", "DROP", "RENAME"):
+        assert verb not in up.upper()
+    assert "DROP VIEW IF EXISTS corpscout.se_ratsit_company_translated" in down
+    assert "DROP VIEW IF EXISTS corpscout.se_bolagsverket_companies_translated" in down
+    assert "DELETE" not in down.upper() and "INSERT" not in down.upper()

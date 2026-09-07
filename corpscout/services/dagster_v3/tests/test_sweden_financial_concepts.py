@@ -90,7 +90,7 @@ def test_translation_assets_are_wired() -> None:
     company_load_node = graph.get(dg.AssetKey("sweden_company_translation_load"))
     assert company_load_node.group_name == "sweden_company"
     assert company_load_node.parent_keys == {
-        dg.AssetKey("sweden_company_companies_clickhouse")
+        dg.AssetKey("sweden_company_bolagsverket_companies_clickhouse")
     }
 
     check_keys = {

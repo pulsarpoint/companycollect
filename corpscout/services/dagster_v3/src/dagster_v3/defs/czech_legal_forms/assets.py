@@ -326,6 +326,7 @@ TRANSLATION_LOAD_ASSETS = (
     "norway_brreg_translation_load",
     "sweden_company_translation_load",
     "sweden_financial_taxonomy_translation_load",
+    "sweden_ratsit_translation_load",
 )
 
 # Checks only -- no asset is materialised, so this cannot re-download or
