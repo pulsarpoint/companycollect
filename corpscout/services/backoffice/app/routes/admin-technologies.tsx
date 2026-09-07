@@ -1,4 +1,5 @@
 import type { Route } from "./+types/admin-technologies";
+import { Link } from "react-router";
 import { TechnologiesTable } from "~/components/admin/technologies-table";
 import {
   parseTechnologyListFilters,
@@ -36,6 +37,7 @@ export default function AdminTechnologies({ loaderData }: Route.ComponentProps) 
     <div className="flex flex-1 flex-col gap-6 p-4 md:p-6">
       <header className="flex flex-col gap-3">
         <h1 className="text-2xl font-semibold tracking-tight">Technologies</h1>
+        <Link className="text-sm underline underline-offset-4" to="/admin/technology-proposals">Review crawler proposals</Link>
         <p className="text-sm text-muted-foreground">
           The technology catalog behind every detection — icons, descriptions
           and categories per detector, plus each technology&apos;s adopting

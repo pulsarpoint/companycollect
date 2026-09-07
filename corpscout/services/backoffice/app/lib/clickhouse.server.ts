@@ -116,6 +116,15 @@ export async function chInsertCompanyDomains<T extends object>(
   });
 }
 
+export async function chInsertTechnologyProposals(values: object[]): Promise<void> {
+  if (values.length === 0) return;
+  await getWriteClient().insert({ table: "new_tech", values, format: "JSONEachRow" });
+}
+
+export async function chInsertTechnologyReview(value: object): Promise<void> {
+  await getWriteClient().insert({ table: "technology_proposal_reviews", values: [value], format: "JSONEachRow" });
+}
+
 /** Append reviewed decisions to the Sweden company-person correction ledger. */
 export async function chInsertSeCompanyPersonCorrections<T extends object>(
   values: T[],

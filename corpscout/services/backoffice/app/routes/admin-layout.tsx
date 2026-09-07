@@ -131,6 +131,18 @@ function AdminBreadcrumbs() {
     );
   }
 
+  if (pathname === "/admin/technology-proposals" || pathname.startsWith("/admin/technology-proposals/")) {
+    return <Breadcrumb><BreadcrumbList>
+      <BreadcrumbItem><BreadcrumbLink render={<Link to="/admin/technologies" />}>Technologies</BreadcrumbLink></BreadcrumbItem>
+      <BreadcrumbSeparator />
+      <BreadcrumbItem>{pathname === "/admin/technology-proposals"
+        ? <BreadcrumbPage>Proposals</BreadcrumbPage>
+        : <BreadcrumbLink render={<Link to="/admin/technology-proposals" />}>Proposals</BreadcrumbLink>}
+      </BreadcrumbItem>
+      {pathname !== "/admin/technology-proposals" && <><BreadcrumbSeparator /><BreadcrumbItem><BreadcrumbPage>Review</BreadcrumbPage></BreadcrumbItem></>}
+    </BreadcrumbList></Breadcrumb>;
+  }
+
   if (onTechnologiesIndexPage || onTechnologyDetailPage) {
     return (
       <Breadcrumb>

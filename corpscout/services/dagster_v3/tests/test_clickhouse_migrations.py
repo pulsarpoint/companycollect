@@ -400,6 +400,8 @@ EXPECTED_MIGRATIONS = (
     "000385_corpscout_se_company_address_history",
     "000386_corpscout_se_company_address_rule",
     "000387_corpscout_se_company_address_precedence",
+    "000388_corpscout_technology_aliases",
+    "000389_corpscout_technology_proposals",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}

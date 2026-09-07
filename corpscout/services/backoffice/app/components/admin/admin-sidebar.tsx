@@ -156,7 +156,9 @@ export function AdminSidebar() {
                 // /admin/technologies/:slug detail page.
                 isActive={
                   pathname === "/admin/technologies" ||
-                  pathname.startsWith("/admin/technologies/")
+                  pathname.startsWith("/admin/technologies/") ||
+                  pathname === "/admin/technology-proposals" ||
+                  pathname.startsWith("/admin/technology-proposals/")
                 }
                 tooltip="Technology catalog"
                 render={<Link to="/admin/technologies" />}

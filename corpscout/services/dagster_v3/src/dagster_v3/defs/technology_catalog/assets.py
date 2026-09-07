@@ -27,6 +27,11 @@ from dagster_v3.defs.clickhouse.resolved import (
 )
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.technology_catalog import tables
+from dagster_v3.defs.technology_catalog.aliases import (
+    build_alias_rows,
+    load_technology_aliases,
+)
+from dagster_v3.defs.technology_catalog.reviewed import load_reviewed_technologies
 from dagster_v3.defs.technology_catalog.catalog import (
     MergedTechnology,
     load_custom_layer,
@@ -82,7 +87,12 @@ def custom_source_dir() -> Path:
 # behind the repo. The overlay SHA is deliberately excluded: it is fetched at
 # run time and the weekly schedule already covers it; this version is only
 # about OUR edits to the custom definitions.
-_DEFINITION_FILES = ("technologies.json", "categories.json", "fingerprints.json")
+_DEFINITION_FILES = (
+    "technologies.json",
+    "categories.json",
+    "fingerprints.json",
+    "technology_aliases.json",
+)
 
 
 def custom_definitions_hash() -> str:
@@ -151,7 +161,8 @@ def build_rows(
         "Merged technology catalog (vendored Wappalyzer extension bundle, "
         "overlaid by the maintained webappanalyzer catalog, overlaid by our "
         "repo-owned custom entries — later wins per name), icons synced to "
-        "the technology-icons bucket, published via stage + EXCHANGE TABLES."
+        "the technology-icons bucket, reviewed aliases validated against the merge, "
+        "published via stage + EXCHANGE TABLES."
     ),
 )
 def technology_catalog_clickhouse(
@@ -189,7 +200,32 @@ def technology_catalog_clickhouse(
         len(custom.technologies),
     )
 
-    merged = merge_layers(extension, overlay, custom)
+    with clickhouse.get_connection() as client:
+        reviewed, reviewed_aliases = load_reviewed_technologies(
+            client,
+            base=custom,
+            existing_names=set(extension.technologies)
+            | set(overlay.technologies)
+            | set(custom.technologies),
+        )
+    merged = merge_layers(extension, overlay, custom, reviewed)
+    # Validate the complete curated alias file before any publication or icon
+    # writes. A bad target must not leave a newly published catalog behind.
+    aliases, alias_source_version = load_technology_aliases(
+        custom_dir, {technology.technology for technology in merged}
+    )
+    file_aliases = {alias.alias_key: alias.technology for alias in aliases}
+    for alias in reviewed_aliases:
+        if (
+            alias.alias_key in file_aliases
+            and file_aliases[alias.alias_key] != alias.technology
+        ):
+            raise ValueError(
+                f"Curated and administrator aliases conflict: {alias.alias!r}"
+            )
+    reviewed_aliases = [
+        alias for alias in reviewed_aliases if alias.alias_key not in file_aliases
+    ]
 
     technology_catalog_object_store.ensure_bucket()
     icon_result = sync_icons(
@@ -258,6 +294,29 @@ def technology_catalog_clickhouse(
     )
     context.log.info("technology_fingerprints: %d rows", fingerprint_count)
 
+    alias_rows = build_alias_rows(
+        aliases,
+        source_version=alias_source_version,
+        source_run_id=context.run_id,
+        updated_at=updated_at,
+    ) + build_alias_rows(
+        reviewed_aliases,
+        source_version=reviewed.source_version,
+        source="admin_review",
+        source_run_id=context.run_id,
+        updated_at=updated_at,
+    )
+    alias_count = _staged_replace(
+        clickhouse,
+        table=tables.TECHNOLOGY_ALIASES_TABLE,
+        columns=tables.TECHNOLOGY_ALIASES_COLUMNS,
+        rows=alias_rows,
+        # Empty is meaningful only after successfully reading and validating
+        # the explicit curated list. Missing files never reach publication.
+        floor=0,
+    )
+    context.log.info("technology_aliases: %d rows", alias_count)
+
     per_source = {
         source: sum(1 for technology in merged if technology.source == source)
         for source in (
@@ -267,7 +326,7 @@ def technology_catalog_clickhouse(
         )
     }
 
-    # Append one provenance row AFTER both tables are published, so the log
+    # Append one provenance row AFTER all three tables are published, so the log
     # only ever records completed publishes. definitions_hash is the full
     # content hash of the custom files (its 12-char prefix is the asset
     # code_version); a run whose hash differs from the previous row is a real
@@ -299,6 +358,10 @@ def technology_catalog_clickhouse(
             "overlay_sha": overlay_sha,
             "custom_version": custom.source_version,
             "fingerprint_rows": fingerprint_count,
+            "alias_rows": alias_count,
+            "alias_source_version": alias_source_version,
+            "reviewed_technology_rows": len(reviewed.technologies),
+            "reviewed_source_version": reviewed.source_version,
             "definitions_hash": definitions_hash,
         }
     )
@@ -306,9 +369,7 @@ def technology_catalog_clickhouse(
 
 def _append_publish_log(clickhouse: ClickhouseResource, row: tuple) -> None:
     """Insert one row into the append-only publish ledger (migration 000361)."""
-    qualified = (
-        f"`{RESOLVED_DATABASE}`.`{tables.TECHNOLOGY_CATALOG_PUBLISH_LOG_TABLE}`"
-    )
+    qualified = f"`{RESOLVED_DATABASE}`.`{tables.TECHNOLOGY_CATALOG_PUBLISH_LOG_TABLE}`"
     column_list = ", ".join(tables.TECHNOLOGY_CATALOG_PUBLISH_LOG_COLUMNS)
     with clickhouse.get_connection() as client:
         client.execute(f"INSERT INTO {qualified} ({column_list}) VALUES", [row])
@@ -347,8 +408,8 @@ def _staged_replace(
 ) -> int:
     """Fill a staging copy, enforce the floor, then swap it in atomically.
 
-    A result below the floor is a broken merge or extraction, never a
-    legitimate publish — refuse to swap rather than shrink a serving table.
+    Positive floors guard detector/catalog baselines. A validated curated
+    alias list uses floor=0 so removing its final alias publishes an empty table.
     """
     qualified = f"`{RESOLVED_DATABASE}`.`{table}`"
     stage = f"`{RESOLVED_DATABASE}`.`_tmp_{table}_{uuid.uuid4().hex}`"
@@ -412,9 +473,7 @@ def domain_signal_technologies_clickhouse(
         tables=(tables.DOMAIN_SIGNAL_TECHNOLOGIES_TABLE,),
     )
     bucket = detection.partition_bucket(context.partition_key)
-    qualified = (
-        f"`{RESOLVED_DATABASE}`.`{tables.DOMAIN_SIGNAL_TECHNOLOGIES_TABLE}`"
-    )
+    qualified = f"`{RESOLVED_DATABASE}`.`{tables.DOMAIN_SIGNAL_TECHNOLOGIES_TABLE}`"
     stage = (
         f"`{RESOLVED_DATABASE}`."
         f"`_tmp_{tables.DOMAIN_SIGNAL_TECHNOLOGIES_TABLE}_{uuid.uuid4().hex}`"
@@ -437,8 +496,7 @@ ORDER BY signal_type, technology, pattern"""
         signals, skipped = detection.group_fingerprints(fingerprint_rows)
         for technology, pattern in skipped:
             context.log.warning(
-                "%s: pattern %r uses constructs Vectorscan cannot compile; "
-                "skipped",
+                "%s: pattern %r uses constructs Vectorscan cannot compile; skipped",
                 technology,
                 pattern,
             )
@@ -458,8 +516,7 @@ ORDER BY signal_type, technology, pattern"""
                 client.execute(f"SELECT count() FROM {candidates}")[0][0]
             )
             context.log.info(
-                "bucket %d: %d candidates extracted, matching %d fingerprint "
-                "signals…",
+                "bucket %d: %d candidates extracted, matching %d fingerprint signals…",
                 bucket,
                 candidate_count,
                 len(signals),

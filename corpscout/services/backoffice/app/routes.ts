@@ -91,6 +91,7 @@ export default [
   // Codex-thread resource APIs (JSON; no admin chrome). The demo subpage uses
   // the same service functions through its own actions.
   route("admin/api/codex/threads", "routes/admin-api-codex-threads.ts"),
+  route("admin/api/technology-submissions", "routes/admin-api-technology-submissions.ts"),
   route("admin/api/codex/threads/:threadId", "routes/admin-api-codex-thread.ts"),
   route(
     "admin/api/codex/threads/:threadId/messages",
@@ -108,6 +109,8 @@ export default [
     // Country-agnostic (the catalog is global), so they sit beside the other
     // workspace pages, not under a country prefix.
     route("technologies", "routes/admin-technologies.tsx"),
+    route("technology-proposals", "routes/admin-technology-proposals.tsx"),
+    route("technology-proposals/:proposalId", "routes/admin-technology-proposal.tsx"),
     route("technologies/:slug", "routes/admin-technology-detail.tsx"),
     route("general/roles", "routes/admin-general-roles.tsx"),
     route("settings/llms", "routes/admin-settings-llms.tsx"),
