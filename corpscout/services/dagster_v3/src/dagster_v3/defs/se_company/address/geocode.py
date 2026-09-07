@@ -607,9 +607,9 @@ def _match(
         replace_address_search_document_input_table(
             duckdb, table_name=tables["input"]
         )
-        placeholders = ", ".join("?" for _ in SEARCH_DOCUMENT_INPUT_COLUMNS)
-        duckdb.executemany(
-            f"insert into {tables['input']} values ({placeholders})",
+        insert_input_rows(
+            duckdb,
+            tables["input"],
             [_input_row(key, address) for key, address in addresses.items()],
         )
         replace_address_search_documents(
@@ -659,6 +659,24 @@ def _match(
         )
     _log(log, "geocode: resolver returned %d results", len(results))
     return results
+
+
+def insert_input_rows(duckdb: Any, table: str, rows: Sequence[tuple[Any, ...]]) -> None:
+    """Insert the query rows in ONE transaction.
+
+    DuckDB's Python connection autocommits, so a bare `executemany` commits and syncs the
+    write-ahead log once per row: measured on prod 2026-09-07 at about 0.28 s per row, which
+    made a 22,000-key page take 1 h 52 min and would have made a 95,000-key warm chunk take
+    7.7 h. One explicit transaction turns that into one commit.
+    """
+    placeholders = ", ".join("?" for _ in SEARCH_DOCUMENT_INPUT_COLUMNS)
+    duckdb.execute("begin transaction")
+    try:
+        duckdb.executemany(f"insert into {table} values ({placeholders})", list(rows))
+        duckdb.execute("commit")
+    except Exception:
+        duckdb.execute("rollback")
+        raise
 
 
 def run_tables(run_id: str) -> dict[str, str]:

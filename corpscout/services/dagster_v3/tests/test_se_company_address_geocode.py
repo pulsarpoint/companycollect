@@ -988,3 +988,39 @@ def test_sql_texts() -> None:
         if line.startswith("    ")
     ]
     assert tuple(projected) == SEARCH_DOCUMENT_INPUT_COLUMNS
+
+
+def test_input_rows_are_inserted_in_one_transaction_and_rolled_back_on_error(
+    workbench: duckdb.DuckDBPyConnection,
+) -> None:
+    """A bare executemany commits (and syncs the WAL) per row, 0.28 s each on prod; the
+    helper wraps the insert in one transaction, and a bad row leaves the table empty."""
+    from dagster_v3.defs.address_resolution.search_documents import (
+        replace_address_search_document_input_table,
+    )
+
+    table = "_geocode_test_input"
+    replace_address_search_document_input_table(workbench, table_name=table)
+    rows = [geocode._input_row(key, address) for key, address in {"k1": STREET, "k2": BOX}.items()]
+
+    statements: list[str] = []
+
+    class Spy:
+        """Delegates to the real connection; DuckDB's own methods are read-only."""
+
+        def execute(self, sql, *args, **kwargs):
+            statements.append(sql.strip().lower())
+            return workbench.execute(sql, *args, **kwargs)
+
+        def executemany(self, sql, *args, **kwargs):
+            statements.append("executemany")
+            return workbench.executemany(sql, *args, **kwargs)
+
+    geocode.insert_input_rows(Spy(), table, rows)
+    assert statements == ["begin transaction", "executemany", "commit"]
+    assert workbench.execute(f"select count(*) from {table}").fetchone()[0] == 2
+
+    workbench.execute(f"delete from {table}")
+    with pytest.raises(Exception):
+        geocode.insert_input_rows(workbench, table, [rows[0], ("only", "two")])
+    assert workbench.execute(f"select count(*) from {table}").fetchone()[0] == 0
