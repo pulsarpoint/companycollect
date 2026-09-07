@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Any
 
 from dagster_v3.defs.address_resolution.resolution import (
+    _replace_fuzzy_street_postings,
     replace_address_resolution_candidates,
     replace_address_resolution_results,
 )
@@ -39,6 +40,10 @@ SHADOW_RESULTS_TABLE = "se_address_resolution_results_shadow"
 SHADOW_COMPARISON_TABLE = "se_address_resolution_comparison_shadow"
 UNMATCHED_DIAGNOSTICS_TABLE = "se_address_resolution_unmatched_diagnostics"
 REFERENCE_MANIFEST_TABLE = "se_address_resolution_reference_manifest"
+REFERENCE_POSTINGS_TABLE = "se_address_resolution_reference_street_postings"
+REFERENCE_POSTINGS_MANIFEST_TABLE = (
+    "se_address_resolution_reference_postings_manifest"
+)
 
 QUALIFIED_SHADOW_QUERY_DOCUMENTS_TABLE = (
     f"{address_canonicalization.ENRICHMENT_SCHEMA}.{SHADOW_QUERY_DOCUMENTS_TABLE}"
@@ -63,6 +68,13 @@ QUALIFIED_UNMATCHED_DIAGNOSTICS_TABLE = (
 )
 QUALIFIED_REFERENCE_MANIFEST_TABLE = (
     f"{address_canonicalization.ENRICHMENT_SCHEMA}.{REFERENCE_MANIFEST_TABLE}"
+)
+QUALIFIED_REFERENCE_POSTINGS_TABLE = (
+    f"{address_canonicalization.ENRICHMENT_SCHEMA}.{REFERENCE_POSTINGS_TABLE}"
+)
+QUALIFIED_REFERENCE_POSTINGS_MANIFEST_TABLE = (
+    f"{address_canonicalization.ENRICHMENT_SCHEMA}"
+    f".{REFERENCE_POSTINGS_MANIFEST_TABLE}"
 )
 
 INDEX_SCOPE = "SE-address-resolution-shadow-v2"
@@ -239,6 +251,99 @@ def ensure_reference_documents(
     if reference_documents_md5(connection) == current:
         return current
     return replace_reference_documents(connection, log=log)
+
+
+def replace_reference_postings(
+    connection: Any, *, log: Callable[..., object] | None = None
+) -> None:
+    """Build the fuzzy reference street postings from the current reference documents.
+
+    The postings are the reference side of the matcher's fuzzy retrieval: every reference
+    street crossed with its deletion signatures, de-duplicated. `replace_address_resolution_candidates`
+    used to rebuild them on every call, which a one-shot rematch over the whole query set pays
+    once and a caller that pages (the address entity's fold, 20,000 companies at a time) pays
+    per page over the WHOLE reference table. They depend only on the reference documents and
+    the policy, so they cache exactly like the documents do -- one manifest row recording the
+    pair they were built for.
+
+    The table is persistent, not temporary: a DuckDB temporary table dies with the connection
+    and cannot be schema-qualified, and this one lives beside the reference documents in the
+    enrichment schema so a later run on the same extract inherits it.
+    """
+    connection.execute(
+        f"create schema if not exists {address_canonicalization.ENRICHMENT_SCHEMA}"
+    )
+    _replace_fuzzy_street_postings(
+        connection,
+        source_table=QUALIFIED_SHADOW_REFERENCE_DOCUMENTS_TABLE,
+        postings_table=QUALIFIED_REFERENCE_POSTINGS_TABLE,
+        policy=SWEDEN_ADDRESS_RESOLUTION_POLICY,
+        reference_documents=True,
+        temporary=False,
+    )
+    reference_md5 = reference_documents_md5(connection)
+    connection.execute(
+        f"""
+        create or replace table {QUALIFIED_REFERENCE_POSTINGS_MANIFEST_TABLE} as
+        select
+            ?::varchar as reference_md5,
+            ?::varchar as policy_version,
+            now()::timestamp as built_at
+        """,
+        [reference_md5, SWEDEN_ADDRESS_RESOLUTION_POLICY.version],
+    )
+    if log is not None:
+        [(postings,)] = connection.execute(
+            f"select count(*) from {QUALIFIED_REFERENCE_POSTINGS_TABLE}"
+        ).fetchall()
+        log(
+            "reference postings rebuilt for extract %s policy %s: %d postings",
+            reference_md5,
+            SWEDEN_ADDRESS_RESOLUTION_POLICY.version,
+            postings,
+        )
+
+
+def reference_postings_key(connection: Any) -> tuple[str, str]:
+    """The postings manifest's ``(reference_md5, policy_version)``, ``('', '')`` when none."""
+    [(exists,)] = connection.execute(
+        "select count(*) from information_schema.tables"
+        " where table_schema = ? and table_name = ?",
+        [
+            address_canonicalization.ENRICHMENT_SCHEMA,
+            REFERENCE_POSTINGS_MANIFEST_TABLE,
+        ],
+    ).fetchall()
+    if not exists:
+        return "", ""
+    row = connection.execute(
+        "select reference_md5, policy_version"
+        f" from {QUALIFIED_REFERENCE_POSTINGS_MANIFEST_TABLE}"
+    ).fetchone()
+    if not row:
+        return "", ""
+    return str(row[0]), str(row[1])
+
+
+def ensure_reference_postings(
+    connection: Any, *, log: Callable[..., object] | None = None
+) -> str:
+    """Rebuild the reference documents AND their fuzzy postings when either key moved.
+
+    Returns the current reference md5, the same value `ensure_reference_documents` returns
+    (and through the same call) -- a caller wanting the postings wants the documents too, and
+    both are keyed on the extract. The postings additionally carry the policy version: the
+    fuzzy posting rule is the policy's (`minimum_fuzzy_street_length`, the suffix_exact
+    exclusion), so a policy bump on an unmoved extract must rebuild them.
+    """
+    reference_md5 = ensure_reference_documents(connection, log=log)
+    if reference_postings_key(connection) == (
+        reference_md5,
+        SWEDEN_ADDRESS_RESOLUTION_POLICY.version,
+    ):
+        return reference_md5
+    replace_reference_postings(connection, log=log)
+    return reference_md5
 
 
 def _replace_query_documents(connection: Any) -> None:

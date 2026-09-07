@@ -367,10 +367,13 @@ fold page over the page's distinct keys.
    matched by the existing engine, `replace_address_resolution_candidates` then
    `replace_address_resolution_results`, under `SWEDEN_ADDRESS_RESOLUTION_POLICY`. The
    workbench is opened READ-WRITE: the shared reference documents are built once per OSM
-   extract (`ensure_reference_documents`, keyed on the extract's md5) and the five per-run
-   tables -- input, query, street variants, candidates, results -- are created and dropped
-   in a `finally` under the run id. All of them, the shared reference table included, live
-   in the `sweden_company_enrichment` schema the shadow evaluation already uses.
+   extract (`ensure_reference_documents`, keyed on the extract's md5) and the fuzzy
+   reference street postings, keyed on the extract md5 and the policy version
+   (`ensure_reference_postings`, amended 2026-09-07: the postings were rebuilt per call,
+   which a caller that pages cannot afford), and the five per-run tables -- input, query,
+   street variants, candidates, results -- are created and dropped in a `finally` under the
+   run id. All of them, the two shared reference tables included, live in the
+   `sweden_company_enrichment` schema the shadow evaluation already uses.
 3. Outcomes `unmatched`, `ambiguous` and `postal_box` go through the centroid fallback with
    the same postcode-then-city rule and spread cap as `geocode_serving_overlay`, labelled
    `centroid_fallback` and `matched_area`. Box addresses therefore get their town centroid.

@@ -9,6 +9,7 @@ from dagster_v3.defs.address_resolution.golden import (
     evaluate_golden_address_resolution_corpus,
 )
 from dagster_v3.defs.address_resolution.resolution import (
+    _replace_fuzzy_street_postings,
     replace_address_resolution_candidates,
     replace_address_resolution_results,
 )
@@ -772,6 +773,150 @@ def test_suffix_exact_variant_is_excluded_from_fuzzy_street_postings() -> None:
         ("control-street", "matched_corrected", "expanded_street_fuzzy_postcode_house"),
         ("exact-only-street", "unmatched", ""),
     ]
+
+
+CACHED_POSTINGS_TABLE = "cached_reference_street_postings"
+DEFAULT_REFERENCE_POSTINGS_TABLE = "_address_resolution_reference_street_postings"
+
+# One exact pair (Storgatan 5, which the non-fuzzy strategies find without any postings at
+# all) and one fuzzy pair ('Stavstensv' -> 'Stavstensvägen' against the 1-edit reference
+# 'Stavstensvager', which ONLY the fuzzy postings can reach). A parity check that used the
+# exact pair alone would pass with the postings join broken.
+_CANDIDATE_QUERY_ROWS = """
+    insert into query_input values
+        (
+            'test', 'exact-street', 'SE',
+            'Storgatan 5, 11122 Stockholm', 'Storgatan 5, 11122 Stockholm',
+            'Storgatan', '5', '', '11122', 'Stockholm',
+            'physical', '', null, null, null, 0, 'exact-street', ''
+        ),
+        (
+            'test', 'fuzzy-street', 'SE',
+            'Stavstensv 7, 54321 Othertown', 'Stavstensv 7, 54321 Othertown',
+            'Stavstensv', '7', '', '54321', 'Othertown',
+            'physical', '', null, null, null, 0, 'fuzzy-street', ''
+        )
+"""
+_CANDIDATE_REFERENCE_ROWS = """
+    insert into reference_input values
+        (
+            'test', 'exact-reference', 'SE',
+            'Storgatan 5, 11122 Stockholm', 'Storgatan 5, 11122 Stockholm',
+            'Storgatan', '5', '', '11122', 'Stockholm',
+            'physical', 'building', 59.33, 18.06, 0.0, 1,
+            'ref/exact', 'https://example.test/exact'
+        ),
+        (
+            'test', 'fuzzy-reference', 'SE',
+            'Stavstensvager 7, 54321 Othertown',
+            'Stavstensvager 7, 54321 Othertown',
+            'Stavstensvager', '7', '', '54321', 'Othertown',
+            'physical', 'building', 60.0, 19.0, 0.0, 1,
+            'ref/fuzzy', 'https://example.test/fuzzy'
+        )
+"""
+
+
+def _build_candidate_inputs(connection: duckdb.DuckDBPyConnection) -> None:
+    """Query documents, street variants and reference documents for the postings tests."""
+    replace_address_search_document_input_table(connection, table_name="query_input")
+    connection.execute(_CANDIDATE_QUERY_ROWS)
+    replace_address_search_document_input_table(connection, table_name="reference_input")
+    connection.execute(_CANDIDATE_REFERENCE_ROWS)
+    replace_address_search_documents(
+        connection,
+        source_sql="select * from query_input",
+        table_name="query_documents",
+    )
+    replace_address_street_variants(
+        connection,
+        document_table="query_documents",
+        variant_table="query_street_variants",
+        languages_by_country={},
+        suffix_expansions_by_country={"SE": {"v": "vägen"}},
+        exact_suffix_expansions_by_country={},
+    )
+    replace_address_search_documents(
+        connection,
+        source_sql="select * from reference_input",
+        table_name="reference_documents",
+    )
+
+
+def _candidate_rows(connection: duckdb.DuckDBPyConnection) -> list[tuple[object, ...]]:
+    return sorted(
+        connection.execute(
+            "select query_document_id, reference_document_id, strategy, score"
+            " from candidates"
+        ).fetchall()
+    )
+
+
+def test_a_cached_reference_postings_table_yields_the_same_candidates() -> None:
+    """The per-extract postings cache must be a pure speed-up, not a behaviour change.
+
+    `replace_address_resolution_candidates` rebuilt the reference postings on every call --
+    an unnest of every reference street's deletion signatures plus a DISTINCT over the whole
+    reference table. The address fold calls the engine once per 20,000-company page and so
+    paid that per page. Passing `reference_postings_table` skips the rebuild; this pins that
+    the candidates are IDENTICAL either way, on a fixture whose fuzzy pair is reachable only
+    through those postings.
+    """
+    with duckdb.connect(":memory:") as connection:
+        _build_candidate_inputs(connection)
+        replace_address_resolution_candidates(
+            connection,
+            query_table="query_documents",
+            query_street_variant_table="query_street_variants",
+            reference_table="reference_documents",
+            candidate_table="candidates",
+            policy=SWEDEN_ADDRESS_RESOLUTION_POLICY,
+        )
+        default_rows = _candidate_rows(connection)
+
+    with duckdb.connect(":memory:") as connection:
+        _build_candidate_inputs(connection)
+        _replace_fuzzy_street_postings(
+            connection,
+            source_table="reference_documents",
+            postings_table=CACHED_POSTINGS_TABLE,
+            policy=SWEDEN_ADDRESS_RESOLUTION_POLICY,
+            reference_documents=True,
+            temporary=False,
+        )
+        replace_address_resolution_candidates(
+            connection,
+            query_table="query_documents",
+            query_street_variant_table="query_street_variants",
+            reference_table="reference_documents",
+            candidate_table="candidates",
+            policy=SWEDEN_ADDRESS_RESOLUTION_POLICY,
+            reference_postings_table=CACHED_POSTINGS_TABLE,
+        )
+        cached_rows = _candidate_rows(connection)
+        reference_postings_built = [
+            row[0]
+            for row in connection.execute(
+                "select table_name from duckdb_tables() where table_name = ?",
+                [DEFAULT_REFERENCE_POSTINGS_TABLE],
+            ).fetchall()
+        ]
+        cached_is_persistent = connection.execute(
+            "select temporary from duckdb_tables() where table_name = ?",
+            [CACHED_POSTINGS_TABLE],
+        ).fetchone()
+
+    # The fixture is only decisive if the default path reaches the fuzzy pair -- the one
+    # candidate that exists ONLY because of the reference postings.
+    strategies = {(row[0], row[2]) for row in default_rows}
+    assert ("fuzzy-street", "expanded_street_fuzzy_postcode_house") in strategies
+    assert any(query == "exact-street" for query, _ in strategies)
+    assert cached_rows == default_rows
+    # The whole point: the caller's postings are used INSTEAD of a rebuild.
+    assert reference_postings_built == []
+    # `temporary=False` must give a real table -- a temporary one dies with the connection
+    # and so could never be a per-extract cache.
+    assert cached_is_persistent == (False,)
 
 
 def _resolve_strandbergsg_regression_lock(

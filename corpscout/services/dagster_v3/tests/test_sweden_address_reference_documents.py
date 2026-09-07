@@ -1,9 +1,17 @@
-"""The reference documents (OSM buildings + streets) built once per OSM extract.
+"""The reference documents (OSM buildings + streets) built once per OSM extract, and the
+fuzzy reference street postings built from them.
 
 The shadow evaluation used to rebuild these on every run. Task 2 turns that build into a
 named, idempotent step keyed on the OSM snapshot's md5 (`geocode_demand.fresh_reference_md5`):
 the address entity's geocode function (a later task) and the shadow evaluation both read the
 result, and neither should pay to rebuild it when the snapshot has not moved.
+
+The 2026-09-07 fix extends the same idea one step further, to the derived index the matcher's
+fuzzy retrieval joins against. Those postings were rebuilt inside
+`replace_address_resolution_candidates` on every call -- which the fold, calling the engine
+once per 20,000-company page, paid per page over the whole reference table. They are keyed on
+the extract md5 AND the policy version, because the posting rule
+(`minimum_fuzzy_street_length`, the `suffix_exact` exclusion) is the policy's.
 """
 
 from collections.abc import Iterator
@@ -11,12 +19,22 @@ from collections.abc import Iterator
 import duckdb
 import pytest
 
+from dagster_v3.defs.sweden_company.address_resolution_policy import (
+    SWEDEN_ADDRESS_RESOLUTION_POLICY,
+)
 from dagster_v3.defs.sweden_company.address_resolution_shadow import (
     QUALIFIED_REFERENCE_MANIFEST_TABLE,
+    QUALIFIED_REFERENCE_POSTINGS_MANIFEST_TABLE,
+    QUALIFIED_REFERENCE_POSTINGS_TABLE,
     QUALIFIED_SHADOW_REFERENCE_DOCUMENTS_TABLE,
+    REFERENCE_POSTINGS_TABLE,
     ensure_reference_documents,
+    ensure_reference_postings,
     reference_documents_md5,
+    reference_postings_key,
 )
+
+POLICY = SWEDEN_ADDRESS_RESOLUTION_POLICY.version
 
 
 @pytest.fixture()
@@ -122,4 +140,70 @@ def test_reference_documents_are_built_once_per_extract(
             f"select count(*) from {QUALIFIED_REFERENCE_MANIFEST_TABLE}"
         ).fetchone()[0]
         == 1
+    )
+
+
+def test_reference_postings_are_built_once_per_extract_and_policy(
+    connection: duckdb.DuckDBPyConnection,
+) -> None:
+    """Built on the first call, reused while the key holds, rebuilt when either half moves."""
+    assert reference_postings_key(connection) == ("", "")
+
+    assert ensure_reference_postings(connection) == "md5-a"
+    assert reference_postings_key(connection) == ("md5-a", POLICY)
+    postings = connection.execute(
+        f"select count(*) from {QUALIFIED_REFERENCE_POSTINGS_TABLE}"
+    ).fetchone()[0]
+    assert postings > 0
+    # A temporary table would die with the connection, so it could never be a cache.
+    assert connection.execute(
+        "select temporary from duckdb_tables() where table_name = ?",
+        [REFERENCE_POSTINGS_TABLE],
+    ).fetchone() == (False,)
+
+    built_at = connection.execute(
+        f"select built_at from {QUALIFIED_REFERENCE_POSTINGS_MANIFEST_TABLE}"
+    ).fetchone()[0]
+    assert ensure_reference_postings(connection) == "md5-a"
+    assert (
+        connection.execute(
+            f"select built_at from {QUALIFIED_REFERENCE_POSTINGS_MANIFEST_TABLE}"
+        ).fetchone()[0]
+        == built_at
+    )  # no rebuild
+
+    # A policy bump on an unmoved extract still rebuilds: the posting rule is the policy's.
+    connection.execute(
+        f"update {QUALIFIED_REFERENCE_POSTINGS_MANIFEST_TABLE}"
+        " set policy_version = 'se-address-resolution-policy-v6'"
+    )
+    assert ensure_reference_postings(connection) == "md5-a"
+    assert reference_postings_key(connection) == ("md5-a", POLICY)
+    assert (
+        connection.execute(
+            f"select count(*) from {QUALIFIED_REFERENCE_POSTINGS_MANIFEST_TABLE}"
+        ).fetchone()[0]
+        == 1
+    )
+
+
+def test_a_new_extract_rebuilds_the_documents_and_the_postings(
+    connection: duckdb.DuckDBPyConnection,
+) -> None:
+    """`ensure_reference_postings` chains `ensure_reference_documents`: one call keeps both
+    caches honest, and returns the md5 the geocode function stamps on every row it writes."""
+    assert ensure_reference_postings(connection) == "md5-a"
+    connection.execute(
+        "update sweden_address_osm.address_points set source_md5 = 'md5-b'"
+    )
+
+    assert ensure_reference_postings(connection) == "md5-b"
+
+    assert reference_documents_md5(connection) == "md5-b"
+    assert reference_postings_key(connection) == ("md5-b", POLICY)
+    assert (
+        connection.execute(
+            f"select count(*) from {QUALIFIED_SHADOW_REFERENCE_DOCUMENTS_TABLE}"
+        ).fetchone()[0]
+        > 0
     )

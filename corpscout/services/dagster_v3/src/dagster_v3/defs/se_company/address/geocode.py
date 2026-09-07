@@ -20,8 +20,19 @@ THE THREE THINGS THIS MODULE IS.
 
 2. An ENGINE CALL for the misses. The same resolver the Sweden shadow evaluation runs
    (`address_resolution_shadow.replace_sweden_address_resolution_shadow`), on the same
-   once-per-extract reference documents, over per-run tables named with the run id and
-   dropped in a `finally`. Nothing in the engine, the policy or the OSM assets changes here.
+   once-per-extract reference documents AND their fuzzy street postings, over per-run tables
+   named with the run id and dropped in a `finally`. Nothing in the engine, the policy or the
+   OSM assets changes here.
+
+   BOTH shared inputs are per-EXTRACT caches in the enrichment schema, not per-call work:
+   `ensure_reference_postings` builds the documents (keyed on the extract md5) and the
+   postings (keyed on the md5 and the policy version) only when one of them moved, and the
+   candidate step is handed the postings by name. That matters because this function is
+   called once per fold PAGE: rebuilding the postings -- an unnest of every reference
+   street's deletion signatures plus a DISTINCT over millions of rows -- inside every page
+   is what the one-shot rematch could afford and a paging caller cannot. The five per-run
+   tables (input, query, variants, candidates, results) stay per call; so do the QUERY-side
+   postings the engine builds from them.
 
 3. A FALLBACK OVERLAY on the way out, for `unmatched`/`ambiguous`/`postal_box`. The store
    keeps the matcher's RAW outcome; the coarse postcode-or-city centroid is applied on READ
@@ -66,8 +77,9 @@ from dagster_v3.defs.sweden_company.address_resolution_policy import (
 )
 from dagster_v3.defs.sweden_company.address_resolution_shadow import (
     INDEX_SCOPE,
+    QUALIFIED_REFERENCE_POSTINGS_TABLE,
     QUALIFIED_SHADOW_REFERENCE_DOCUMENTS_TABLE,
-    ensure_reference_documents,
+    ensure_reference_postings,
 )
 from dagster_v3.defs.sweden_company.centroid_keys import city_key_sql, postcode_key_sql
 
@@ -428,7 +440,7 @@ def geocode_addresses(
         _log(log, "geocode: no addresses")
         return {}
     _reject_unmatchable(addresses)
-    reference_md5 = ensure_reference_documents(duckdb, log=log)
+    reference_md5 = ensure_reference_postings(duckdb, log=log)
     policy_version = SWEDEN_ADDRESS_RESOLUTION_POLICY.version
 
     outcomes = _read_cache(
@@ -584,7 +596,11 @@ def _match(
     run_id: str,
     log: Callable[..., object] | None,
 ) -> dict[str, Mapping[str, Any]]:
-    """The resolver over the misses, in per-run tables that never outlive the call."""
+    """The resolver over the misses, in per-run tables that never outlive the call.
+
+    The reference documents and their fuzzy postings are NOT per-run: both are built once per
+    OSM extract by `ensure_reference_postings` (the caller) and passed in by name.
+    """
     duckdb.execute(f"create schema if not exists {ENRICHMENT_SCHEMA}")
     tables = run_tables(run_id)
     try:
@@ -617,6 +633,7 @@ def _match(
             reference_table=QUALIFIED_SHADOW_REFERENCE_DOCUMENTS_TABLE,
             candidate_table=tables["candidates"],
             policy=SWEDEN_ADDRESS_RESOLUTION_POLICY,
+            reference_postings_table=QUALIFIED_REFERENCE_POSTINGS_TABLE,
         )
         replace_address_resolution_results(
             duckdb,

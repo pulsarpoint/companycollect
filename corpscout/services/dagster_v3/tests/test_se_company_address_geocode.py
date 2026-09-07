@@ -18,6 +18,10 @@ Slice 2a, spec sections 3.7 (as amended for the location key) and 6. What this f
    check `missing_provenance` gates on them) and a `candidate_count` clamped to `UInt16`.
 7. Both id-bound reads render past ClickHouse's default `max_query_size` at a full chunk,
    and both pass the raised `GEOCODE_QUERY_SETTINGS`.
+8. The two shared matcher inputs are per-EXTRACT caches, not per-call work: one
+   `ensure_reference_postings` per call, and the candidate step handed the cached postings by
+   name instead of rebuilding them (2026-09-07 -- the fold calls this function once per
+   20,000-company page and paid the whole-reference rebuild per page).
 
 The ClickHouse side is a `FakeClient` scripted per key: the three SQL texts it answers are
 pinned separately here (shape) and against a real ClickHouse in
@@ -51,7 +55,9 @@ from dagster_v3.defs.sweden_company.address_resolution_shadow import (
 )
 from dagster_v3.defs.sweden_company.address_resolution_shadow import (
     QUALIFIED_REFERENCE_MANIFEST_TABLE,
+    QUALIFIED_REFERENCE_POSTINGS_TABLE,
     QUALIFIED_SHADOW_REFERENCE_DOCUMENTS_TABLE,
+    ensure_reference_postings,
 )
 from dagster_v3.defs.sweden_company.geocode_store import STORE_COLUMNS
 
@@ -387,6 +393,60 @@ def test_a_miss_is_matched_and_cached(workbench: duckdb.DuckDBPyConnection) -> N
     assert row["candidate_record_ids"] == ["osm/1"]
     assert row["source_record_id"] is None
     assert _fold_tables(workbench) == []
+
+
+def test_the_reference_postings_are_a_per_extract_cache_the_engine_is_handed(
+    workbench: duckdb.DuckDBPyConnection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One `ensure_reference_postings` per call, and the candidate step takes its table.
+
+    The postings are the reference side of the matcher's fuzzy retrieval -- every reference
+    street crossed with its deletion signatures. `replace_address_resolution_candidates`
+    rebuilt them on every call over the WHOLE reference table, which the fold, calling this
+    function once per 20,000-company page, paid per page (prod 2026-09-07: page 1 of
+    `bucket_00` sat in the candidates step past 20 minutes). Both halves of the fix are
+    pinned here: the cache is ensured (once), and the engine is told to use it.
+    """
+    ensured: list[object] = []
+    candidate_calls: list[dict[str, Any]] = []
+
+    def _counting_ensure(connection: Any, *, log: Any = None) -> str:
+        ensured.append(connection)
+        return ensure_reference_postings(connection, log=log)
+
+    real_candidates = geocode.replace_address_resolution_candidates
+
+    def _recording_candidates(connection: Any, **kwargs: Any) -> None:
+        candidate_calls.append(kwargs)
+        real_candidates(connection, **kwargs)
+
+    monkeypatch.setattr(geocode, "ensure_reference_postings", _counting_ensure)
+    monkeypatch.setattr(
+        geocode, "replace_address_resolution_candidates", _recording_candidates
+    )
+
+    outcomes = _run(workbench, FakeClient(), {STREET_KEY: STREET})
+
+    assert outcomes[STREET_KEY].match_status == "matched_exact"
+    assert ensured == [workbench]
+    assert [call["reference_postings_table"] for call in candidate_calls] == [
+        QUALIFIED_REFERENCE_POSTINGS_TABLE
+    ]
+    # The cache is a real table left behind for the next page, and the engine's own
+    # temporary reference postings were never built.
+    assert (
+        workbench.execute(
+            f"select count(*) from {QUALIFIED_REFERENCE_POSTINGS_TABLE}"
+        ).fetchone()[0]
+        > 0
+    )
+    assert (
+        workbench.execute(
+            "select count(*) from duckdb_tables() where table_name = ?",
+            ["_address_resolution_reference_street_postings"],
+        ).fetchone()[0]
+        == 0
+    )
 
 
 def test_the_query_index_scope_is_the_reference_scope() -> None:

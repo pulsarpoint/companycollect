@@ -135,6 +135,19 @@ later extract matches it.
 `foreign` and `no_address` addresses never reach it: the fold filters them out and the
 function raises `ValueError` naming the location key if handed one.
 
+**The per-extract caches (2026-09-07).** Two inputs the resolver needs are shared, not
+per-call: the OSM reference documents (keyed on the extract's md5) and the fuzzy reference
+street postings built from them (keyed on the md5 AND the policy version, because the
+posting rule is the policy's). `ensure_reference_postings` builds whichever moved and
+returns the md5; both live as real tables in `sweden_company_enrichment`, beside the
+manifests that record what they were built for. The postings used to be rebuilt inside
+`replace_address_resolution_candidates` on every call -- an unnest of every reference
+street's deletion signatures plus a DISTINCT over millions of rows. A one-shot rematch pays
+that once; the fold calls the geocode function once per 20,000-company PAGE and paid it per
+page (measured on prod 2026-09-07: page 1 of `bucket_00` sat in the candidates step past 20
+minutes). `_match` now passes the cached table to the engine by name. The five per-run
+tables and the QUERY-side postings the engine builds from them stay per call.
+
 **The hit rule.** A cached row is a hit when its `(policy_version, reference_md5)` is the
 pair this run computes with, or when its `policy_version` is `legacy_adopted_v1` -- the
 one-time import, which is on no resolver version at all and would be thrown away on the

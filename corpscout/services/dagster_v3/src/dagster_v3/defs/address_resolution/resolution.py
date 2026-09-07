@@ -14,8 +14,19 @@ def replace_address_resolution_candidates(
     reference_table: str,
     candidate_table: str,
     policy: AddressResolutionPolicy,
+    reference_postings_table: str | None = None,
 ) -> None:
-    """Generate auditable candidates through explicit retrieval strategies."""
+    """Generate auditable candidates through explicit retrieval strategies.
+
+    ``reference_postings_table`` names an already-built fuzzy reference street postings
+    table. Building those postings unnests every reference street's deletion signatures and
+    de-duplicates the result -- affordable once for a one-shot run over the whole query set,
+    ruinous for a caller that pages through its queries and pays it per page. A caller that
+    holds the postings for the current reference extract passes them here (see
+    ``sweden_company/address_resolution_shadow.ensure_reference_postings``); when it is None
+    they are rebuilt into the temporary table this function has always used. The QUERY-side
+    postings are rebuilt either way: they are made of this call's own query documents.
+    """
     query_variant_documents_table = "_address_resolution_query_street_variant_documents"
     connection.execute(
         f"""
@@ -33,7 +44,6 @@ def replace_address_resolution_candidates(
         """
     )
     query_postings_table = "_address_resolution_query_street_postings"
-    reference_postings_table = "_address_resolution_reference_street_postings"
     _replace_fuzzy_street_postings(
         connection,
         source_table=query_variant_documents_table,
@@ -41,13 +51,17 @@ def replace_address_resolution_candidates(
         policy=policy,
         reference_documents=False,
     )
-    _replace_fuzzy_street_postings(
-        connection,
-        source_table=reference_table,
-        postings_table=reference_postings_table,
-        policy=policy,
-        reference_documents=True,
-    )
+    if reference_postings_table is None:
+        reference_postings = "_address_resolution_reference_street_postings"
+        _replace_fuzzy_street_postings(
+            connection,
+            source_table=reference_table,
+            postings_table=reference_postings,
+            policy=policy,
+            reference_documents=True,
+        )
+    else:
+        reference_postings = reference_postings_table
     connection.execute(
         f"""
         create or replace table {candidate_table} as
@@ -59,7 +73,7 @@ def replace_address_resolution_candidates(
                 query.street_variant_kind,
                 reference.normalized_street as reference_street
             from {query_postings_table} query
-            inner join {reference_postings_table} reference
+            inner join {reference_postings} reference
                 on query.index_scope = reference.index_scope
                and query.country_code = reference.country_code
                and query.normalized_house_number
@@ -565,7 +579,11 @@ def _replace_fuzzy_street_postings(
     postings_table: str,
     policy: AddressResolutionPolicy,
     reference_documents: bool,
+    temporary: bool = True,
 ) -> None:
+    # A persistent postings table (``temporary=False``) is what a per-extract cache needs: a
+    # DuckDB temporary table dies with the connection, and may not be schema-qualified.
+    materialization = "temporary table" if temporary else "table"
     reference_filter = (
         "and reference_precision = 'building'" if reference_documents else ""
     )
@@ -583,7 +601,7 @@ def _replace_fuzzy_street_postings(
     )
     connection.execute(
         f"""
-        create or replace temporary table {postings_table} as
+        create or replace {materialization} {postings_table} as
         select distinct
             document_id,
             index_scope,
