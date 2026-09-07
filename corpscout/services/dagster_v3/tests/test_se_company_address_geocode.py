@@ -836,8 +836,9 @@ def test_the_id_bound_reads_pass_the_raised_query_size_setting(
     workbench: duckdb.DuckDBPyConnection,
 ) -> None:
     """Both id-bound reads -- the cache lookup and the centroid fallback -- carry
-    GEOCODE_QUERY_SETTINGS. The INSERT does not: its values go over the wire as a block,
-    not in the statement text."""
+    GEOCODE_QUERY_SETTINGS, and so does the INSERT since the warm step pushes up to
+    500,000 rows through it per call: its values go over the wire as a block, so the
+    size limit is moot for it, but max_execution_time bounds a stalled insert."""
     client = FakeClient(
         fallback_rows=[(BOX_KEY, "city", 59.32, 18.07, "STOCKHOLM", 4211, 9100.0)]
     )
@@ -855,7 +856,7 @@ def test_the_id_bound_reads_pass_the_raised_query_size_setting(
     assert sorted(kinds) == ["fallback", "insert", "lookup"]
     assert dict(zip(kinds, client.settings_calls, strict=True)) == {
         "lookup": geocode.GEOCODE_QUERY_SETTINGS,
-        "insert": None,
+        "insert": geocode.GEOCODE_QUERY_SETTINGS,
         "fallback": geocode.GEOCODE_QUERY_SETTINGS,
     }
     assert geocode.GEOCODE_QUERY_SETTINGS == {

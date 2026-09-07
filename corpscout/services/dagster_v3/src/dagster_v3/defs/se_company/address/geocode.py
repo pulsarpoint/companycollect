@@ -475,7 +475,7 @@ def geocode_addresses(
             )
             for key, result in results.items()
         ]
-        clickhouse.execute(cache_insert_sql(), rows)
+        clickhouse.execute(cache_insert_sql(), rows, settings=GEOCODE_QUERY_SETTINGS)
         for key, result in results.items():
             outcomes[key] = _outcome_from_result(
                 key,
