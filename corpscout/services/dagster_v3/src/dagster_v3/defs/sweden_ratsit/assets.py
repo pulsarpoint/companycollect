@@ -46,6 +46,10 @@ from dagster_v3.defs.sweden_ratsit.resources import (
     ratsit_round_robin_assignments,
     validate_ratsit_company_report,
 )
+from dagster_v3.defs.sweden_ratsit.translation import (
+    sweden_ratsit_translation_load,
+    sweden_ratsit_translator_queue_health_check,
+)
 
 RATSIT_MAX_COMPANIES = RATSIT_HARD_MAX_COMPANIES
 RATSIT_S3_BUCKET = "source-sweden-ratsit"
@@ -1545,7 +1549,8 @@ se_ratsit_normalize_job = dg.define_asset_job(
 
 
 defs = dg.Definitions(
-    assets=[se_ratsit_scan_dispatch, se_ratsit_normalized],
+    assets=[se_ratsit_scan_dispatch, se_ratsit_normalized, sweden_ratsit_translation_load],
+    asset_checks=[sweden_ratsit_translator_queue_health_check],
     jobs=[se_ratsit_scan_dispatch_job, se_ratsit_normalize_job],
     resources={
         "sweden_ratsit_browser": SwedenRatsitBrowserResource(
