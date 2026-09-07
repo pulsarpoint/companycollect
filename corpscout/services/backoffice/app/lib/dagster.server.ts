@@ -54,6 +54,9 @@ export const ASSET_JOB_NAME = "__ASSET_JOB";
 /** The targeted basic-info fold (spec 5): re-folds the companies named in its
  * config whatever their bucket. Launched by the Info tab's Fold now. */
 export const SE_BASIC_INFO_FOLD_COMPANIES_ASSET = "se_company_basic_info_fold_companies";
+/** The targeted address fold (address spec section 8): normalizes then re-folds
+ * the companies named in its config. Launched by the Address tab's Fold now. */
+export const SE_COMPANY_ADDRESS_FOLD_COMPANIES_ASSET = "se_company_address_fold_companies";
 
 /** The two instigators that drive THIS pipeline. The repository has 52 schedules
  * and 15 sensors; a page that renders all of them tells its reader nothing. */
