@@ -201,3 +201,33 @@ geocodes in-page whatever the warm step did not cover, so nothing depends on it 
 correctness. `AddressWarmConfig` (`chunk_size`, `limit`); pool `sweden_address_osm_duckdb`
 (`osm_tables.DUCKDB_POOL`), same as the fold's. Metadata:
 `keys/chunks/cache_hits/matched/geocoded/fallback`.
+
+## Backoffice (slice 3, 2026-09-07)
+
+The Address tab (`corpscout/services/backoffice`, spec section 8) is five files over
+`chQuery`/`chInsertSeCompanyAddressSuggestions`/`chInsertSeCompanyAddressRules`:
+`app/lib/se-address-fields.ts` (the catalogue, `selectedAddressFromSearch`,
+`validateSeAddressInput`, `addressFoldPending`), `app/lib/se-address-decision-form.ts`
+(`parseSeAddressDecision`, the six intents `remove`/`reset`/`fold-now`/`save-draft`/
+`activate`/`discard`), `app/lib/se-company-address-entity.server.ts` (`loadSeAddressDetail`
+over the six tables, the five reviewer writes and `launchSeAddressFold`),
+`app/components/admin/se-address-workspace.tsx` (the two-column tab) and
+`app/components/admin/se-address-edit-sheet.tsx` (the Add / Correct / edit-draft sheet); the
+route `admin-se-company-address.tsx` dispatches the six intents to those functions.
+
+A reviewer address lives in a raw row (`se_company_address_suggestion`) under slot
+`r<the stamp's 17 digits>` (Ruling 2 -- for example `r20260907203355123`): Save draft writes
+it under `reviewer_draft`, Activate writes the `reviewer` row under that same slot so the two
+share one lineage, and Discard/Activate leave a tombstone version (every address column NULL,
+the slot's `kind` carried over) rather than deleting anything. `suggestion_id` is
+`sha256(company_id "\n" source "\n" slot "\n" stamp)` hex with the stamp spelled exactly as
+`suggested_at` -- the same computation the extractors run in SQL
+(`suggestions.py::ADDRESS_TRAILING_SELECT_SQL`). Remove writes a `hide` rule
+(`se_company_address_rule`, `action='hide'`) when the published row carries any non-reviewer
+member, leaving every member in place; on a reviewer-only row it tombstones every reviewer
+slot instead, since a mixed row's key is computed over the union of its members' components
+and retiring one would re-key the row and orphan the hide rule (Ruling 1, amended). Reset to
+default releases the hide rule (`removed=1`). Fold now (`launchSeAddressFold`) launches
+`se_company_address_fold_companies` for the one company id -- the targeted fold normalizes
+that company's raw rows first (Task 1's `targeted_fold`), so a draft saved a moment earlier
+parses before it folds.
