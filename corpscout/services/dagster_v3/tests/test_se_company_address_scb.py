@@ -63,16 +63,16 @@ def test_the_select_reads_only_the_scb_rows() -> None:
     assert "nullIf(addresses.normalized_address, '')" in sql
 
 
-def test_the_two_scb_assets_are_separate_and_write_separate_tables() -> None:
+def test_the_address_scb_asset_writes_its_own_table() -> None:
     from dagster_v3.definitions import defs as load_defs
 
     graph = load_defs().get_repository_def().asset_graph
     address = graph.get(dg.AssetKey("se_company_address_scb_clickhouse"))
-    info = graph.get(dg.AssetKey("se_company_info_scb_clickhouse"))
     assert address.parent_keys == {dg.AssetKey("sweden_company_addresses_clickhouse")}
-    assert address.group_name == info.group_name == "se_company_scb"
+    assert address.group_name == "se_company_scb"
     assert address.metadata["table"] == "corpscout.se_company_address_scb"
-    assert info.metadata["table"] == "corpscout.se_company_info_scb"
+    # Slice 4 retired the info artifact that used to share this module.
+    assert dg.AssetKey("se_company_info_scb_clickhouse") not in graph.get_all_asset_keys()
 
 
 class _FakeClient:
