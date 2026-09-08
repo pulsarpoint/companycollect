@@ -1,5 +1,5 @@
 import { chQuery } from "~/lib/clickhouse.server";
-import type { CountryConfig } from "~/lib/countries";
+import { companiesFrom, type CountryConfig } from "~/lib/countries";
 
 /**
  * A country's traded companies, read from precomputed market facts.
@@ -220,7 +220,7 @@ export async function getTradedCompanies(
     const names = await chQuery<{ company_id: string; name: string }>(
       `SELECT toString(${country.idColumn}) AS company_id,
               any(${country.nameColumn}) AS name
-       FROM ${country.companiesTable}
+       FROM ${companiesFrom(country)}
        WHERE ${country.idColumn} IN {ids:Array(String)}
        GROUP BY company_id`,
       { ids: rows.map((r) => r.company_id) },

@@ -191,6 +191,12 @@ export interface CountryConfig {
   flag: string;
   /** ClickHouse table holding the canonical company rows. */
   companiesTable: string;
+  /**
+   * True when `companiesTable` is a ReplacingMergeTree whose rows are re-published
+   * in place (several versions per company until the parts merge), so every read must
+   * say FINAL. Readers go through `companiesFrom()` rather than the bare table name.
+   */
+  companiesTableFinal?: boolean;
   /** Column holding the national registry identifier. */
   idColumn: string;
   /** Column holding the display name. */
@@ -748,6 +754,7 @@ LIMIT 100`,
     name: "Sweden",
     flag: "🇸🇪",
     companiesTable: "se_company_basic_info",
+    companiesTableFinal: true,
     // The canonical company_id is the normalized 10- or 12-digit organization
     // number and the table's sorting key (basic-info slice 5, 2026-09-08).
     idColumn: "company_id",
@@ -769,7 +776,7 @@ LIMIT 100`,
       {
         key: "id",
         label: "ID",
-        expr: "registration_number",
+        expr: "company_id",
         sortable: true,
         kind: "id",
       },
@@ -2220,6 +2227,13 @@ LIMIT 1`,
 export function getCountry(code: string): CountryConfig | undefined {
   const normalized = code.toLowerCase();
   return COUNTRIES.find((c) => c.code === normalized);
+}
+
+/** The FROM-clause source for a country's company rows: the table, plus FINAL when it needs one. */
+export function companiesFrom(country: CountryConfig): string {
+  return country.companiesTableFinal
+    ? `${country.companiesTable} FINAL`
+    : country.companiesTable;
 }
 
 export function getSortColumn(

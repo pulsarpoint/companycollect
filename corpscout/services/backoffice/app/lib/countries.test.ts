@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { COUNTRIES, getCountry, getSortColumn } from "~/lib/countries";
+import { COUNTRIES, companiesFrom, getCountry, getSortColumn } from "~/lib/countries";
 
 describe("country registry", () => {
   it("contains all ten countries with unique lowercase ISO2 codes", () => {
@@ -26,6 +26,15 @@ describe("country registry", () => {
     expect(
       se?.columns.find((column) => column.key === "registered")?.label,
     ).toBe("Registered");
+  });
+
+  it("reads Sweden's re-published entity table with FINAL and the others bare", () => {
+    // se_company_basic_info is a ReplacingMergeTree the fold rewrites in place; a bare
+    // read counts every unmerged version of a company (slice 5, 2026-09-08).
+    expect(companiesFrom(getCountry("se")!)).toBe("se_company_basic_info FINAL");
+    expect(companiesFrom(getCountry("no")!)).toBe("no_companies");
+    const withFinal = COUNTRIES.filter((c) => c.companiesTableFinal).map((c) => c.code);
+    expect(withFinal).toEqual(["se"]);
   });
 });
 

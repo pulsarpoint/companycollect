@@ -1,5 +1,5 @@
 import { chQuery } from "~/lib/clickhouse.server";
-import type { CountryConfig } from "~/lib/countries";
+import { companiesFrom, type CountryConfig } from "~/lib/countries";
 
 export interface FacetOption {
   value: string;
@@ -73,7 +73,7 @@ function facetSql(country: CountryConfig, facetKey: string): string {
     return `SELECT toString(${column.expr}) AS value,
        coalesce(nullIf(any(t.source_label_en), ''), nullIf(any(t.source_label), ''), toString(${column.expr})) AS label,
        count() AS cnt
-FROM ${country.companiesTable}
+FROM ${companiesFrom(country)}
 LEFT JOIN (
   SELECT legal_form_code, any(source_label) AS source_label, any(source_label_en) AS source_label_en
   FROM company_entity_types_translated
@@ -89,7 +89,7 @@ LIMIT 50000`;
   return `SELECT toString(${column.expr}) AS value,
        toString(${column.expr}) AS label,
        count() AS cnt
-FROM ${country.companiesTable}
+FROM ${companiesFrom(country)}
 WHERE toString(${column.expr}) != ''
 GROUP BY value
 ORDER BY cnt DESC

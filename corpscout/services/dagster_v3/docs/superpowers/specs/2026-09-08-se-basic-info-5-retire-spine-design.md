@@ -87,6 +87,10 @@ design until this slice).
 - `company_signals/rules.py` and `company_identifier/rules.py` name the main table;
   `company_serving/publish.py` reconciles against it; `sweden_ratsit` selects active
   companies from it.
+- `sweden_uhm_procurement_job` selects the awards export's upstream chain minus the fold's
+  own chain (`AssetSelection.assets(fold).upstream()`), so the monthly job never plans the
+  partitioned fold or its extractors; the contract test that no schedule reaches the fold
+  assets stays green.
 
 ### 3. dbt
 
@@ -102,6 +106,12 @@ design until this slice).
 - Every query in the reader table above re-pointed; `countries.ts` SE shell rewritten per
   section 1; `SHELL_REGISTER_SQL` reads the main table too (kept as the fallback shape so
   the header's `published` logic is untouched); the countries and tabs tests re-pinned.
+- `se_company_basic_info` is a ReplacingMergeTree the fold rewrites in place, so a bare
+  read sees every unmerged version (9,997,901 rows for 3,523,558 companies on prod). The
+  SE profile sets `companiesTableFinal: true` and every generic reader of `companiesTable`
+  (list, count, stats, facets, markets, procurements, financial aggregates, overview,
+  facts) goes through `companiesFrom(country)`, which appends `FINAL` for that flag.
+- The SE list's id column is `company_id` (the spine's `registration_number` is gone).
 
 ### 5. Ledger and drops
 

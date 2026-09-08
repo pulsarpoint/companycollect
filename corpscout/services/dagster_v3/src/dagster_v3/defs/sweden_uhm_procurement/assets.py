@@ -159,11 +159,13 @@ def sweden_uhm_procurement_awards_clickhouse(
     return dg.MaterializeResult(metadata=counts)
 
 
+# The basic-info fold is a lineage dependency of the awards export (the export annotates
+# matches against the main table); the job must never plan the partitioned fold or its
+# extractors, so the fold's chain is subtracted from the upstream selection.
 sweden_uhm_procurement_job = dg.define_asset_job(
     "sweden_uhm_procurement_job",
-    selection=dg.AssetSelection.assets(
-        "sweden_uhm_procurement_awards_clickhouse"
-    ).upstream(),
+    selection=dg.AssetSelection.assets("sweden_uhm_procurement_awards_clickhouse").upstream()
+    - dg.AssetSelection.assets("se_company_basic_info_fold").upstream(),
 )
 
 sweden_uhm_procurement_schedule = dg.ScheduleDefinition(

@@ -5,7 +5,7 @@ import {
   restKeys,
 } from "~/components/detail/countries/no-financials";
 import { isLineageKey } from "~/components/detail/fields";
-import { COUNTRIES, getCountry } from "~/lib/countries";
+import { COUNTRIES, companiesFrom, getCountry } from "~/lib/countries";
 import { getFacetOptions } from "~/lib/facets.server";
 import { filterableFacetKeys } from "~/lib/filters";
 import { getCompanySection } from "~/lib/company-sections.server";
@@ -210,7 +210,7 @@ describe("searchCompanies across all countries", () => {
     async (_code, country) => {
       const [seed] = await chQuery<{ id: string }>(
         `SELECT toString(${country.idColumn}) AS id
-         FROM ${country.companiesTable}
+         FROM ${companiesFrom(country)}
          LIMIT 1`,
       );
       const shell = await getCompanyShell(country, seed.id);
@@ -329,7 +329,7 @@ describe("searchCompanies across all countries", () => {
       // companyKeyExpr the plain LIMIT 1 alone would miss.
       const joined = await chQuery(
         `SELECT ${companyKeyExpr} AS key
-         FROM ${country.companiesTable}
+         FROM ${companiesFrom(country)}
          WHERE toString(${companyKeyExpr}) IN (SELECT company_id FROM ${table})
          LIMIT 1`,
       );
@@ -808,7 +808,7 @@ describe("addresses", () => {
     expect(detail!.addresses[0].address_is_foreign).toBe(0);
   }, 30_000);
 
-  it("sweden exposes the primary legal-name registration date", async () => {
+  it("sweden exposes the folded status with its source and the register dates", async () => {
     const se = getCountry("se")!;
     const [detail, industrySection, addressSection] = await Promise.all([
       getCompanyDetail(se, "5562434182"),
@@ -816,11 +816,15 @@ describe("addresses", () => {
       getCompanySection("se", "5562434182", "addresses"),
     ]);
 
-    expect(detail!.record.legal_name_registration_date).toBe("1984-11-08");
+    // The shell projects the basic-info entity (slice 5): the status and its winning
+    // source come from the fold, the registration date is the folded incorporation
+    // date. The spine's legal-name registration date, status observation stamp and
+    // conflict flag were lineage columns the page never showed as content.
+    expect(detail!.record.registration_number).toBe("5562434182");
+    expect(detail!.record.registration_date).toBe("1984-08-19");
     expect(detail!.record.status).toBe("active");
     expect(detail!.record.status_source).toBe("bolagsverket");
-    expect(detail!.record.status_observed_at).toBeTruthy();
-    expect(detail!.record.status_conflict).toBe(0);
+    expect(detail!.record).not.toHaveProperty("legal_name_registration_date");
     expect(industrySection).toMatchObject({
       section: "industries",
       industries: [

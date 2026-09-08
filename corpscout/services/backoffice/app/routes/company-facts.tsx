@@ -21,7 +21,7 @@ import {
 } from "~/components/ui/empty";
 import { Input } from "~/components/ui/input";
 import { chQuery } from "~/lib/clickhouse.server";
-import { getCountry } from "~/lib/countries";
+import { companiesFrom, getCountry } from "~/lib/countries";
 import type {
   XbrlConceptTextSource,
   XbrlFact,
@@ -43,7 +43,7 @@ export async function loader({ params }: Route.LoaderArgs) {
   }
   const [names, facts, doc] = await Promise.all([
     chQuery<{ name: string }>(
-      `SELECT ${country.nameColumn} AS name FROM ${country.companiesTable}
+      `SELECT ${country.nameColumn} AS name FROM ${companiesFrom(country)}
        WHERE ${country.idColumn} = {id:String} LIMIT 1`,
       { id: params.id },
     ),

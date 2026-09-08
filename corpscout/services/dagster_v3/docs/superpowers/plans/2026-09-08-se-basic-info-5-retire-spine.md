@@ -63,7 +63,7 @@
 - Consumes: `se_company_basic_info` as listed in Global Constraints; asset key `se_company_basic_info_fold`.
 - Produces: nothing new; every listed module names `se_company_basic_info` where it named `se_companies`.
 
-- [ ] **Step 1: Re-pin the tests**
+- [x] **Step 1: Re-pin the tests**
 
 Apply these exact substitutions:
 
@@ -74,12 +74,12 @@ Apply these exact substitutions:
 - `tests/test_sweden_platsbanken_clickhouse_local.py`: the stub `CREATE TABLE corpscout.se_companies (company_id String)` becomes `CREATE TABLE corpscout.se_company_basic_info (company_id String)` (engine and order unchanged).
 - `tests/test_sweden_ratsit_pilot.py`: lines 283 and 674 `"FROM corpscout.se_companies FINAL"` become `"FROM corpscout.se_company_basic_info FINAL"`; line 971 `{dg.AssetKey("sweden_company_companies_clickhouse")}` becomes `{dg.AssetKey("se_company_basic_info_fold")}`.
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run pytest tests/test_company_identifier.py tests/test_company_signals_rules.py tests/test_sweden_uhm_procurement_source.py tests/test_sweden_platsbanken_assets.py tests/test_sweden_ratsit_pilot.py -q -k "register or companies_table or LEFT_ANY or parent_keys or selection or spine or scan_dispatch or sweden_reads" 2>&1 | tail -3`
 Expected: FAIL on the re-pinned assertions.
 
-- [ ] **Step 3: Re-point the modules**
+- [x] **Step 3: Re-point the modules**
 
 Exact substitutions (each string occurs once unless noted):
 
@@ -102,12 +102,12 @@ Exact substitutions (each string occurs once unless noted):
 - `company_domain_suggestions/assets.py`: `"se_companies",` in the table tuple becomes `"se_company_basic_info",`.
 - `sweden_ratsit/assets.py`: `RATSIT_ACTIVE_COMPANIES_TABLE = "se_companies"` becomes `RATSIT_ACTIVE_COMPANIES_TABLE = "se_company_basic_info"`; the asset dep `deps=[dg.AssetKey("sweden_company_companies_clickhouse")],` becomes `deps=[dg.AssetKey("se_company_basic_info_fold")],`; the description `"Selects one of 128 stable CRC32 buckets from active corpscout.se_companies, "` becomes `"...from active corpscout.se_company_basic_info, "`.
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run pytest tests/test_company_identifier.py tests/test_company_signals_rules.py tests/test_sweden_uhm_procurement_source.py tests/test_sweden_platsbanken_assets.py tests/test_sweden_ratsit_pilot.py tests/test_company_domain_suggestions_dbt.py tests/test_company_serving_dbt.py -q 2>&1 | tail -3`
 Expected: PASS except `test_company_domain_suggestions_dbt.py` items that pin dbt sources (Task 3). Then `uv run pytest tests/test_sweden_platsbanken_clickhouse_local.py -q` (docker): PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add corpscout/services/dagster_v3/src/dagster_v3/defs/sweden_uhm_procurement corpscout/services/dagster_v3/src/dagster_v3/defs/sweden_platsbanken corpscout/services/dagster_v3/src/dagster_v3/defs/company_serving/publish.py corpscout/services/dagster_v3/src/dagster_v3/defs/company_signals/rules.py corpscout/services/dagster_v3/src/dagster_v3/defs/company_identifier corpscout/services/dagster_v3/src/dagster_v3/defs/company_domain_suggestions/inputs.py corpscout/services/dagster_v3/src/dagster_v3/defs/company_domain_suggestions/dbt_run.py corpscout/services/dagster_v3/src/dagster_v3/defs/company_domain_suggestions/assets.py corpscout/services/dagster_v3/src/dagster_v3/defs/sweden_ratsit/assets.py corpscout/services/dagster_v3/tests/test_company_identifier.py corpscout/services/dagster_v3/tests/test_company_signals_rules.py corpscout/services/dagster_v3/tests/test_sweden_uhm_procurement_source.py corpscout/services/dagster_v3/tests/test_sweden_platsbanken_assets.py corpscout/services/dagster_v3/tests/test_sweden_platsbanken_clickhouse_local.py corpscout/services/dagster_v3/tests/test_sweden_ratsit_pilot.py
@@ -134,7 +134,7 @@ table; their lineage points at the basic-info fold."
 - Consumes: `tables.QUALIFIED_SCB_COMPANIES_TABLE` (exists).
 - Produces: `identities_normalized` attached to `sweden_company_scb_companies_clickhouse`; no `sweden_company_companies_clickhouse` asset; `WIKIDATA_REGISTRY_SEED_SPEC.spine_asset_key == "se_company_basic_info_fold"`.
 
-- [ ] **Step 1: Re-pin the tests**
+- [x] **Step 1: Re-pin the tests**
 
 - `tests/test_sweden_company_assets.py`: remove `"sweden_company_companies_clickhouse",` from the job's expected key set (line 24) and from the group loop tuple (line 42); line 85 becomes `assert ("sweden_company_scb_companies_clickhouse", "identities_normalized") in names`.
 - `tests/test_clickhouse_leaf_checks.py`: remove the line `"sweden_company_companies_clickhouse",`.
@@ -143,7 +143,7 @@ table; their lineage points at the basic-info fold."
 Run: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run pytest tests/test_sweden_company_assets.py tests/test_clickhouse_leaf_checks.py -q 2>&1 | tail -2`
 Expected: FAIL (the asset and leaf still exist).
 
-- [ ] **Step 2: Remove the builder and re-target the check**
+- [x] **Step 2: Remove the builder and re-target the check**
 
 - `sweden_company/assets.py`: delete the whole `sweden_company_companies_clickhouse` asset (decorator through `return dg.MaterializeResult(...)`, lines 136-159). Change the check:
   ```python
@@ -173,12 +173,12 @@ Expected: FAIL (the asset and leaf still exist).
 
 Then `rg -n "COMPANIES_TABLE_CH\b|QUALIFIED_COMPANIES_TABLE|SE_COMPANIES_EXPORT_COLUMNS|sweden_company_companies_clickhouse" src tests` must return only the other countries' identically named constants (slovakia_rpo, czech_ares, france_sirene, uk_companies_house, norway_brreg) and `tests/test_wikidata_assets.py:380` (a `not in` assertion that stays true).
 
-- [ ] **Step 3: Check definitions and run the tests**
+- [x] **Step 3: Check definitions and run the tests**
 
 Run: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run dg check defs 2>&1 | tail -1 && WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run pytest tests/test_sweden_company_assets.py tests/test_clickhouse_leaf_checks.py tests/test_clickhouse_migrations.py tests/test_wikidata_assets.py tests/test_sweden_company_source_tables.py -q 2>&1 | tail -2`
 Expected: "All definitions loaded successfully." and PASS.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add corpscout/services/dagster_v3/src/dagster_v3/defs/sweden_company corpscout/services/dagster_v3/src/dagster_v3/defs/common/clickhouse_checks.py corpscout/services/dagster_v3/tests/test_sweden_company_assets.py corpscout/services/dagster_v3/tests/test_clickhouse_leaf_checks.py corpscout/services/dagster_v3/tests/test_clickhouse_migrations.py
@@ -204,7 +204,7 @@ the freshness leaf, the job entry and the export column list go."
 **Interfaces:**
 - Produces: `register_record_uid_sql(source_slug: str, alias: str) -> str` in `common.py`; dbt macro `se_register_record_uid(source_slug, alias)` rendering the identical text.
 
-- [ ] **Step 1: Write the parity test and re-pin the dbt tests**
+- [x] **Step 1: Write the parity test and re-pin the dbt tests**
 
 Create `tests/test_se_register_record_uid.py`:
 
@@ -248,7 +248,7 @@ def test_bolagsverket_helper_is_the_general_one_with_its_slug() -> None:
 Run: `uv run pytest tests/test_se_register_record_uid.py tests/test_company_domain_suggestions_dbt.py tests/test_company_serving_dbt.py -q 2>&1 | tail -3`
 Expected: FAIL (`register_record_uid_sql` missing; sources still name `se_companies`).
 
-- [ ] **Step 2: The shared helper and macro**
+- [x] **Step 2: The shared helper and macro**
 
 In `src/dagster_v3/defs/se_company/common.py` replace `bolagsverket_record_uid_sql` with:
 
@@ -288,7 +288,7 @@ lower(hex(SHA256(concat('company-source-record-v1\nstructured\n', '{{ source_slu
 {%- endmacro %}
 ```
 
-- [ ] **Step 3: Sources and models**
+- [x] **Step 3: Sources and models**
 
 `company_serving/dbt/models/sources.yml`: replace `      - name: se_companies` with three lines `      - name: se_company_basic_info`, `      - name: se_bolagsverket_companies`, `      - name: se_scb_companies`.
 
@@ -354,7 +354,7 @@ and the ESEF join `INNER JOIN {{ source('corpscout', 'se_companies') }} AS compa
 
 Then `rg -n "se_companies'" src/dagster_v3/defs/company_serving/dbt src/dagster_v3/defs/company_domain_suggestions/dbt` must print nothing.
 
-- [ ] **Step 4: Parse and test**
+- [x] **Step 4: Parse and test**
 
 Run: `uv run --frozen --no-sync dbt parse --project-dir src/dagster_v3/defs/company_serving/dbt --profiles-dir src/dagster_v3/defs/company_serving/dbt 2>&1 | tail -2 && uv run --frozen --no-sync dbt parse --project-dir src/dagster_v3/defs/company_domain_suggestions/dbt --profiles-dir src/dagster_v3/defs/company_domain_suggestions/dbt 2>&1 | tail -2` (if a project has no profiles dir beside it, use the one the `.local_defs_state` refresh uses; `ls src/dagster_v3/defs/*/dbt/profiles.yml` lists them).
 Expected: both parse.
@@ -362,7 +362,7 @@ Expected: both parse.
 Run: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run pytest tests/test_se_register_record_uid.py tests/test_company_domain_suggestions_dbt.py tests/test_company_serving_dbt.py tests/test_se_company_basic_info_extractors_sql.py tests/test_se_companies_serving_mv.py -q 2>&1 | tail -2`
 Expected: PASS, none skipped (the domain-suggestions dbt local run uses docker).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add corpscout/services/dagster_v3/src/dagster_v3/defs/se_company/common.py corpscout/services/dagster_v3/src/dagster_v3/defs/company_serving/dbt corpscout/services/dagster_v3/src/dagster_v3/defs/company_domain_suggestions/dbt corpscout/services/dagster_v3/tests/test_se_register_record_uid.py corpscout/services/dagster_v3/tests/test_company_domain_suggestions_dbt.py corpscout/services/dagster_v3/tests/test_company_serving_dbt.py corpscout/services/dagster_v3/tests/fixtures/company_domain_suggestions/clickhouse.sql
@@ -386,7 +386,7 @@ the Python helper."
 - Consumes: the main table and register columns from Global Constraints.
 - Produces: the SE `companyShellQuery` projecting `company_id`, `registration_number`, `legal_name`, `legal_name_raw`, `legal_form_code`, `status`, `status_source`, `status_reason`, `dissolution_date`, `activity_description_original`, `registration_date`, `source_run_id`, `updated_from_raw_at` and the six `__shell_*` fields.
 
-- [ ] **Step 1: Re-pin the tests**
+- [x] **Step 1: Re-pin the tests**
 
 - `app/lib/countries.test.ts`: line 22 `expect(se?.companiesTable).toBe("se_companies");` becomes `toBe("se_company_basic_info")`; line 249 `toContain("FROM se_companies AS c")` becomes `toContain("FROM se_company_basic_info AS i FINAL")`; line 251-253 `"activity_description AS activity_description_original"` becomes `"i.description_sv AS activity_description_original"`; line 254-256 `"incorporation_date AS registration_date"` stays (it matches `i.incorporation_date AS registration_date`).
 - `tests/company-serving-sections.test.ts`: `"FROM se_companies AS c"` becomes `"FROM se_company_basic_info AS i FINAL"` and `"PREWHERE c.company_id = {id:String}"` becomes `"WHERE i.company_id = {id:String}"`.
@@ -407,7 +407,7 @@ the Python helper."
 Run: `npx vitest run app/lib/countries.test.ts tests/company-serving-sections.test.ts tests/se-company-tabs.server.test.ts tests/technologies.server.test.ts tests/address-quality.test.ts 2>&1 | rg "Tests |FAIL" | head -3`
 Expected: failures on the re-pinned assertions.
 
-- [ ] **Step 2: Re-point the queries**
+- [x] **Step 2: Re-point the queries**
 
 - `countries.ts` line 750: `companiesTable: "se_companies",` becomes `companiesTable: "se_company_basic_info",`; reword the comment above `idColumn` to `// The canonical company_id is the normalized 10- or 12-digit organization number and the table's sorting key.` Replace the whole `companyShellQuery` template (from ``companyShellQuery: `SELECT c.* EXCEPT`` through ``LIMIT 1`,``) with:
   ```ts
@@ -461,12 +461,12 @@ Expected: failures on the re-pinned assertions.
 
 Then `rg -n "\bse_companies\b" app tests --glob '!*serving*'` must print only comment lines that describe history (`address-quality.server.ts` docs, `countries.ts` comments about translations) or nothing; fix any query it finds.
 
-- [ ] **Step 3: Typecheck and tests**
+- [x] **Step 3: Typecheck and tests**
 
 Run: `npm run typecheck 2>&1 | rg "error TS" | head -3; npx vitest run app/lib/countries.test.ts tests/company-serving-sections.test.ts tests/se-company-tabs.server.test.ts tests/technologies.server.test.ts tests/address-quality.test.ts 2>&1 | rg "Tests |FAIL" | head -3`
 Expected: no TS errors; the five files pass.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add app/lib/countries.ts app/lib/address-companies.server.ts app/lib/address-quality.server.ts app/lib/company-domains.server.ts app/lib/technologies.server.ts app/lib/se-ratsit-results.server.ts app/lib/se-company-shell.server.ts app/lib/countries.test.ts tests/company-serving-sections.test.ts tests/se-company-tabs.server.test.ts tests/technologies.server.test.ts tests/address-quality.test.ts tests/queries.server.test.ts
@@ -488,7 +488,7 @@ table."
 - Modify: `tests/test_clickhouse_migrations.py` (`EMPTIED_MIGRATIONS`; delete `test_sweden_company_presentation_fields_are_migrated`; the 000084 export-column test already lost its spine entry in Task 2)
 - Create: `corpscout/clickhouse/operations/se_companies_retire.md`
 
-- [ ] **Step 1: Ledger**
+- [x] **Step 1: Ledger**
 
 - 000084 up: delete the `CREATE TABLE IF NOT EXISTS corpscout.se_companies (...) ENGINE = ReplacingMergeTree(updated_from_raw_at) ORDER BY (company_id);` block (lines 3-29) and add above the next statement the comment `-- se_companies (the old Sweden company spine) was dropped by hand in basic-info slice 5 (2026-09-08) and its DDL left this file per the dev-phase ledger policy.` 000084 down: delete `DROP TABLE IF EXISTS corpscout.se_companies;`.
 - 000244 up: delete the `ALTER TABLE corpscout.se_companies ADD COLUMN ... scb_source_record_uid ... AFTER scb_source_payload_hash;` statement (lines 192-210). 000244 down: delete its `ALTER TABLE corpscout.se_companies` statement (line 20 onward to its semicolon).
@@ -499,7 +499,7 @@ table."
 Run: `uv run pytest tests/test_clickhouse_migrations.py tests/test_company_signals_rules.py tests/test_sweden_company_source_tables.py -q 2>&1 | tail -2`
 Expected: PASS.
 
-- [ ] **Step 2: Drop script**
+- [x] **Step 2: Drop script**
 
 Create `corpscout/clickhouse/operations/se_companies_retire.md`:
 
@@ -539,7 +539,7 @@ The DELETE is a lightweight delete over 2,176,663 rows; watch it with
 `SELECT * FROM system.mutations WHERE table = 'text_translations' AND NOT is_done`.
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add corpscout/clickhouse/migrations/000084_corpscout_se_company_registry.up.sql corpscout/clickhouse/migrations/000084_corpscout_se_company_registry.down.sql corpscout/clickhouse/migrations/000244_corpscout_company_source_records.up.sql corpscout/clickhouse/migrations/000244_corpscout_company_source_records.down.sql corpscout/clickhouse/migrations/000281_corpscout_se_company_presentation_fields.up.sql corpscout/clickhouse/migrations/000281_corpscout_se_company_presentation_fields.down.sql corpscout/services/dagster_v3/tests/test_clickhouse_migrations.py corpscout/clickhouse/operations/se_companies_retire.md
@@ -551,9 +551,9 @@ git commit -m "chore(clickhouse): the se_companies spine's DDL leaves the ledger
 
 ### Task 6: Whole-suite verification and merge
 
-- [ ] **Step 1:** `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run pytest -q -m "not integration" --deselect tests/test_schedule_cron_contracts.py::test_every_schedule_fires_on_a_unique_minute_hour_pair -p no:cacheprovider 2>&1 | tail -6` from `corpscout/services/dagster_v3`. Expected: only the four failures already on main.
-- [ ] **Step 2:** `uv run pytest tests/test_sweden_platsbanken_clickhouse_local.py tests/test_company_domain_suggestions_dbt.py tests/test_se_companies_serving_sql.py -q`. Expected: PASS, none skipped.
-- [ ] **Step 3:** backoffice `npm run typecheck && npx vitest run 2>&1 | rg "Tests |×"`. Expected: only the live-database timeouts already on main.
+- [x] **Step 1:** `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run pytest -q -m "not integration" --deselect tests/test_schedule_cron_contracts.py::test_every_schedule_fires_on_a_unique_minute_hour_pair -p no:cacheprovider 2>&1 | tail -6` from `corpscout/services/dagster_v3`. Expected: only the four failures already on main.
+- [x] **Step 2:** `uv run pytest tests/test_sweden_platsbanken_clickhouse_local.py tests/test_company_domain_suggestions_dbt.py tests/test_se_companies_serving_sql.py -q`. Expected: PASS, none skipped.
+- [x] **Step 3:** backoffice `npm run typecheck && npx vitest run 2>&1 | rg "Tests |×"`. Expected: only the live-database timeouts already on main.
 - [ ] **Step 4:** `git checkout main && git merge --no-ff se-basic-info-5-retire-spine -m "Merge branch 'se-basic-info-5-retire-spine'"` (append the footer).
 
 ---
