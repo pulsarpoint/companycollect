@@ -3,19 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // One hoisted chQuery for every tab loader: the SQL each one sends is the
 // contract these tests pin, so the mock records the calls rather than
 // standing in for a live ClickHouse.
-const clickhouse = vi.hoisted(() => ({ insert: vi.fn(), query: vi.fn() }));
+const clickhouse = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock("~/lib/clickhouse.server", () => ({
-  chInsertSeCompanyAddressCorrections: clickhouse.insert,
   chQuery: clickhouse.query,
 }));
 
-import {
-  ADDRESS_STATUS_INPUTS_SQL,
-  ADDRESSES_SQL,
-  CORRECTIONS_SQL as ADDRESS_CORRECTIONS_SQL,
-  REMOVED_SQL,
-  loadSeCompanyAddresses,
-} from "~/lib/se-company-address.server";
 import {
   COMPANY_DOMAINS_SQL,
   loadSeCompanyDomains,
@@ -65,10 +57,6 @@ const ALL_SQL: Array<[string, string]> = [
   ["SHELL_REGISTER_SQL", SHELL_REGISTER_SQL],
   ["SHELL_ENTITY_TYPE_SQL", SHELL_ENTITY_TYPE_SQL],
   ["SHELL_LEGAL_FORM_LABEL_SQL", SHELL_LEGAL_FORM_LABEL_SQL],
-  ["ADDRESSES_SQL", ADDRESSES_SQL],
-  ["REMOVED_SQL", REMOVED_SQL],
-  ["ADDRESS_CORRECTIONS_SQL", ADDRESS_CORRECTIONS_SQL],
-  ["ADDRESS_STATUS_INPUTS_SQL", ADDRESS_STATUS_INPUTS_SQL],
   ["PEOPLE_SQL", PEOPLE_SQL],
   ["PEOPLE_ROLES_SQL", PEOPLE_ROLES_SQL],
   ["COMPANY_DOMAINS_SQL", COMPANY_DOMAINS_SQL],
@@ -99,16 +87,8 @@ describe("company area SQL", () => {
     }
   });
 
-  /**
-   * Every statement that returns ROWS is bounded. The one exception is named
-   * rather than skipped: ADDRESS_STATUS_INPUTS_SQL is a per-company aggregate
-   * with no GROUP BY, so it returns exactly one row whatever it reads, and
-   * bounding it is the very bug review T7-m5 fixed -- a LIMIT there caps the
-   * applied-correction ids and flips an applied decision to stale.
-   */
   it("bounds every statement that returns rows", () => {
     for (const [name, sql] of ALL_SQL) {
-      if (sql === ADDRESS_STATUS_INPUTS_SQL) continue;
       expect(sql, name).toMatch(/LIMIT \d+/);
       const limit = Number(/LIMIT (\d+)/.exec(sql)?.[1] ?? "0");
       // The lead-price series is the one deliberately larger read: five years
@@ -118,8 +98,6 @@ describe("company area SQL", () => {
         sql === COMPANY_LEAD_PRICES_SQL ? 1500 : 900,
       );
     }
-    expect(ADDRESS_STATUS_INPUTS_SQL).not.toMatch(/LIMIT/);
-    expect(ADDRESS_STATUS_INPUTS_SQL).not.toContain("GROUP BY");
   });
 
   // FINAL is not decoration: without it a ReplacingMergeTree hands back every
@@ -185,30 +163,6 @@ describe("company area SQL", () => {
     expect(COMPANY_TRADED_SYMBOLS_SQL).toContain(
       "corpscout.eodhd_symbols AS es FINAL",
     );
-    // The address final is a ReplacingMergeTree on resolved_at, so both of its
-    // reads take FINAL; the ledger it joins nothing to is a plain MergeTree.
-    for (const sql of [ADDRESSES_SQL, REMOVED_SQL, ADDRESS_STATUS_INPUTS_SQL]) {
-      expect(sql).toContain("corpscout.se_company_address AS a FINAL");
-    }
-    expect(ADDRESS_CORRECTIONS_SQL).not.toContain("FINAL");
-  });
-
-  /**
-   * The address tab used to read a six-table LEFT JOIN chain
-   * (se_company_addresses_current -> display -> members -> links ->
-   * se_addresses_current -> geocodes), and ClickHouse's habit of filling a
-   * LEFT JOIN miss with each column's *type default* rather than NULL put a
-   * geocode confidence of 0 taken on 1970-01-01 on the page. The datatype
-   * removed the reason for the chain: the geocode is resolved once and stored
-   * on the published row. Pin that, so nobody re-adds a join here.
-   */
-  it("reads the address final on its own, with no join chain behind it", () => {
-    for (const sql of [ADDRESSES_SQL, REMOVED_SQL]) {
-      expect(sql).not.toContain("JOIN");
-      expect(sql).not.toContain("se_company_addresses_current");
-      expect(sql).not.toContain("se_address_geocodes_current");
-      expect(sql).toContain("toString(a.geocode_status) AS geocode_status");
-    }
   });
 
   it("filters the role join in a subquery, not in an outer WHERE", () => {
@@ -329,20 +283,6 @@ describe("loadSeCompanyShell", () => {
 });
 
 describe("tab loaders", () => {
-  it("reads the live rows, the tombstones and the ledger of one company", async () => {
-    await loadSeCompanyAddresses(COMPANY);
-    const sent = clickhouse.query.mock.calls.map(([sql]) => sql as string);
-    expect(sent).toEqual([
-      ADDRESSES_SQL,
-      REMOVED_SQL,
-      ADDRESS_STATUS_INPUTS_SQL,
-      ADDRESS_CORRECTIONS_SQL,
-    ]);
-    for (const [, params] of clickhouse.query.mock.calls) {
-      expect(params).toMatchObject({ companyId: COMPANY });
-    }
-  });
-
   it("reads domains with the company id as a parameter", async () => {
     await loadSeCompanyDomains(COMPANY);
     expect(clickhouse.query).toHaveBeenCalledWith(COMPANY_DOMAINS_SQL, {

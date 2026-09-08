@@ -191,16 +191,3 @@ export async function chInsertSeCompanyAddressRules<T extends object>(
     format: "JSONEachRow",
   });
 }
-
-/** Append reviewer decisions to the Sweden company-address correction ledger;
- * Dagster's sensor picks them up. */
-export async function chInsertSeCompanyAddressCorrections<T extends object>(
-  values: T[],
-): Promise<void> {
-  if (values.length === 0) return;
-  await getWriteClient().insert({
-    table: "se_company_address_correction",
-    values,
-    format: "JSONEachRow",
-  });
-}
