@@ -2,7 +2,12 @@
 through tests/se_company_ddl.py so tables.py and the deployed schema cannot drift."""
 
 from dagster_v3.defs.se_company.basic_info import tables
-from tests.se_company_ddl import declared_columns, table_block
+from tests.se_company_ddl import MIGRATIONS_DIR, declared_columns, table_block
+
+# Added by ALTER after the CREATE (000394, slice 6): pinned through declared_columns and
+# its own migration file, not the CREATE block.
+ALTER_ADDED = {"economic_activity"}
+ECONOMIC_ACTIVITY_MIGRATION = MIGRATIONS_DIR / "000394_corpscout_se_company_basic_info_economic_activity.up.sql"
 
 
 def test_suggestion_table_is_one_current_row_per_company_and_source() -> None:
@@ -14,7 +19,10 @@ def test_suggestion_table_is_one_current_row_per_company_and_source() -> None:
     # NULL means no opinion: every value column is Nullable. There is no content hash
     # (owner decision 2026-09-03): the source's observed_at is the change signal.
     for column in tables.VALUE_COLUMNS:
+        if column in ALTER_ADDED:
+            continue
         assert f"    {column} Nullable(" in block, column
+    assert "economic_activity Nullable(String) AFTER status" in ECONOMIC_ACTIVITY_MIGRATION.read_text()
     assert "content_hash" not in block
     assert "MATERIALIZED" not in block
     assert "decided_by Nullable(String)" in block
@@ -28,9 +36,16 @@ def test_main_table_carries_a_source_beside_every_folded_value() -> None:
     assert "ORDER BY company_id" in block
     assert "CONSTRAINT valid_company_id CHECK match(company_id, '^([0-9]{10}|[0-9]{12})$')" in block
     for field in tables.FOLDED_FIELDS:
+        if field in ALTER_ADDED:
+            continue
         assert f"    {field}_source LowCardinality(String)" in block, field
-    # status is '' when unknown, like the old table -- never NULL.
+    # status is '' when unknown, like the old table -- never NULL; economic_activity the same
+    # (000394), both listed in NON_NULLABLE_FIELDS.
     assert "    status LowCardinality(String)," in block
+    assert tables.NON_NULLABLE_FIELDS == ("status", "economic_activity")
+    alter = ECONOMIC_ACTIVITY_MIGRATION.read_text()
+    assert "ALTER TABLE corpscout.se_company_basic_info\n    ADD COLUMN IF NOT EXISTS economic_activity LowCardinality(String) AFTER status_source," in alter
+    assert "ADD COLUMN IF NOT EXISTS economic_activity_source LowCardinality(String) AFTER economic_activity;" in alter
     assert "    legal_name String," in block
     for column in ("legal_form_code", "incorporation_date", "lei", "wikidata_id",
                    "description", "description_language", "description_sv"):
@@ -71,9 +86,10 @@ def test_precedence_table_carries_global_and_company_rules() -> None:
 
 def test_column_tuples_agree_with_each_other() -> None:
     assert tables.VALUE_COLUMNS == (
-        "legal_name", "legal_form_code", "status", "incorporation_date", "lei",
+        "legal_name", "legal_form_code", "status", "economic_activity", "incorporation_date", "lei",
         "wikidata_id", "description", "description_language", "description_sv",
     )
+    assert tables.ECONOMIC_ACTIVITIES == ("active", "never", "ceased")
     assert tables.FOLDED_FIELDS == tuple(c for c in tables.VALUE_COLUMNS if c != "description_language")
     assert tables.QUALIFIED_SUGGESTION_TABLE == "corpscout.se_company_basic_info_suggestion"
     assert tables.QUALIFIED_MAIN_TABLE == "corpscout.se_company_basic_info"

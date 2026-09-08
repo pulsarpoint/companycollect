@@ -53,6 +53,7 @@ def ratsit_select_sql() -> str:
         "    nullIf(trim(name), '') AS legal_name,\n"
         "    CAST(NULL AS Nullable(String)) AS legal_form_code,\n"
         "    multiIf(status IS NULL, NULL, startsWith(status, 'Aktiv'), 'active', 'inactive') AS status,\n"
+        "    CAST(NULL AS Nullable(String)) AS economic_activity,\n"
         "    CAST(NULL AS Nullable(Date32)) AS incorporation_date,\n"
         "    CAST(NULL AS Nullable(String)) AS lei,\n"
         "    CAST(NULL AS Nullable(String)) AS wikidata_id,\n"

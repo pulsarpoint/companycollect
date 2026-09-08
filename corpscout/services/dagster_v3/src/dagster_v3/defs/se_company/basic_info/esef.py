@@ -34,6 +34,7 @@ def esef_select_sql() -> str:
         "    CAST(NULL AS Nullable(String)) AS legal_name,\n"
         "    CAST(NULL AS Nullable(String)) AS legal_form_code,\n"
         "    CAST(NULL AS Nullable(String)) AS status,\n"
+        "    CAST(NULL AS Nullable(String)) AS economic_activity,\n"
         "    CAST(NULL AS Nullable(Date32)) AS incorporation_date,\n"
         "    nullIf(upperUTF8(trim(lei)), '') AS lei,\n"
         "    CAST(NULL AS Nullable(String)) AS wikidata_id,\n"

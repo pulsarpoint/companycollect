@@ -32,6 +32,7 @@ const bolagsverket: SeBasicInfoSuggestionRow = {
   legal_name: "Sportstugan upa",
   legal_form_code: "51",
   status: "inactive",
+  economic_activity: "",
   incorporation_date: "1937-05-12",
   lei: "",
   wikidata_id: "",
@@ -48,6 +49,7 @@ const scb: SeBasicInfoSuggestionRow = {
   source: "scb",
   legal_form_code: "51",
   status: "active",
+  economic_activity: "",
   description: "",
   description_language: "",
   description_sv: "",
@@ -65,6 +67,7 @@ const emptyDraft: SeBasicInfoSuggestionRow = {
   legal_name: "",
   legal_form_code: "",
   status: "",
+  economic_activity: "",
   incorporation_date: "",
   lei: "",
   wikidata_id: "",
@@ -86,6 +89,8 @@ const detail: SeBasicInfoDetail = {
     legal_form_code_source: "scb",
     status: "active",
     status_source: "scb",
+    economic_activity: "",
+    economic_activity_source: "",
     incorporation_date: "1937-05-12",
     incorporation_date_source: "scb",
     lei: "",
@@ -401,7 +406,7 @@ describe("SeBasicInfoWorkspace", () => {
     const draftRow: SeBasicInfoSuggestionRow = { ...emptyDraft, status: "inactive" };
     const withDraft: SeBasicInfoDetail = { ...detail, suggestions: [...detail.suggestions, draftRow] };
     const html = render(<SeBasicInfoWorkspace companyId={COMPANY} detail={withDraft} selectedField="status" result={null} />, "?field=status");
-    expect((html.match(/>Edit</g) ?? []).length).toBe(8);
+    expect((html.match(/>Edit</g) ?? []).length).toBe(9);
     const statusRowAt = html.indexOf(">Status<");
     const nextFieldAt = html.indexOf("</li>", statusRowAt);
     const statusRow = html.slice(statusRowAt, nextFieldAt);

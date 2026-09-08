@@ -209,6 +209,31 @@ def test_empty_string_is_not_a_supply() -> None:
     assert (row.status, row.status_source) == ("", "")
 
 
+def test_economic_activity_comes_from_scb_and_is_empty_not_null_when_unknown() -> None:
+    # Slice 6: SCB's Företagsstatus as its own field; '' on the main row when no source
+    # supplies it, exactly like status (NON_NULLABLE_FIELDS).
+    row = fold_basic_info(
+        "5560000000",
+        [suggestion("scb", legal_name="SCB AB", status="active", economic_activity="never"),
+         suggestion("bolagsverket", status="active", economic_activity="ceased")],
+        source_run_id="r",
+    )
+    assert row is not None
+    assert (row.economic_activity, row.economic_activity_source) == ("never", "scb")
+    assert (row.status, row.status_source) == ("active", "bolagsverket")
+    assert "economic_activity" in row.changed_fields_against(None)
+    values = row.as_tuple(T2)
+    assert values[tables.MAIN_COLUMNS.index("economic_activity")] == "never"
+    assert values[tables.MAIN_COLUMNS.index("economic_activity_source")] == "scb"
+
+    bare = fold_basic_info("5560000000", [suggestion("scb", legal_name="SCB AB")], source_run_id="r")
+    assert bare is not None
+    assert (bare.economic_activity, bare.economic_activity_source) == ("", "")
+    assert "economic_activity" not in bare.changed_fields_against(None)
+    # '' and '' compare as no value: no change between two unknowns.
+    assert "economic_activity" not in bare.changed_fields_against(replace(bare, source_run_id="other"))
+
+
 def test_company_id_mismatch_is_refused() -> None:
     with pytest.raises(ValueError, match="company_id"):
         fold_basic_info("5561111111", [suggestion("scb", legal_name="X")], source_run_id="r")

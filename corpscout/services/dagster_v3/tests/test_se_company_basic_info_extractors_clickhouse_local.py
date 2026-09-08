@@ -23,12 +23,14 @@ MIGRATIONS = (
     "000374_corpscout_se_bolagsverket_companies.up.sql",
     "000376_corpscout_se_company_basic_info_suggestion.up.sql",
     "000390_corpscout_se_source_translated_views.up.sql",
+    "000394_corpscout_se_company_basic_info_economic_activity.up.sql",
 )
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "se_basic_info_source_tables.sql"
 
 
 def _schema() -> list[str]:
     tables: list[str] = []
+    alters: list[str] = []
     views: list[str] = []
     for name in MIGRATIONS:
         text = (MIGRATIONS_DIR / name).read_text(encoding="utf-8")
@@ -40,10 +42,15 @@ def _schema() -> list[str]:
                 tables.append(statement)
             elif statement.upper().startswith("CREATE OR REPLACE VIEW"):
                 views.append(statement)
+            elif statement.upper().startswith("ALTER TABLE"):
+                # 000394 alters the three entity tables; only the suggestion table exists here.
+                target = statement.split()[2]
+                if any(f"CREATE TABLE IF NOT EXISTS {target}\n" in t for t in tables):
+                    alters.append(statement)
     fixture = [s.strip() for s in FIXTURE.read_text(encoding="utf-8").split(";") if s.strip()]
     # Views last: 000390's read se_ratsit_company and text_translations, which the fixture
     # creates. Its INSERT ... SELECT statements are data moves and are not replayed.
-    return tables + fixture + views
+    return tables + alters + fixture + views
 
 
 def _run(statements: list[str], *, join_use_nulls: int) -> list[str]:

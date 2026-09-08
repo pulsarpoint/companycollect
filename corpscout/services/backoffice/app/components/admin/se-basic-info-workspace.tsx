@@ -38,6 +38,7 @@ import {
   basicInfoFieldLabel,
   basicInfoSourceLabel,
   type SeBasicInfoField,
+  economicActivityLabel,
 } from "~/lib/se-basic-info-fields";
 import type {
   SeBasicInfoDetail,
@@ -122,6 +123,7 @@ function FieldValue({
     );
   }
   if (kind === "identifier") return <span className="font-mono break-all">{value}</span>;
+  if (field === "economic_activity") return text(economicActivityLabel(value));
   return text(value);
 }
 
