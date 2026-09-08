@@ -71,6 +71,7 @@ def _schema_statements(migrations: tuple[str, ...]) -> list[str]:
                 statements.append(statement)
     return statements
 
+
 # Page size one so every boundary is exercised, including the one that falls between the two
 # collision rows. Reaches the SQL through _company_addresses_page_sql's `LIMIT {QUERY_BATCH_SIZE}`.
 PAGE_SIZE = 1
