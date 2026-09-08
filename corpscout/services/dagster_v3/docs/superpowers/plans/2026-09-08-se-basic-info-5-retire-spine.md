@@ -561,7 +561,28 @@ git commit -m "chore(clickhouse): the se_companies spine's DDL leaves the ledger
 ### Task 7: Prod rollout (owner-named)
 
 - [x] **Step 1:** dbt state: from `corpscout/services/dagster_v3`, run the two `dbt parse` commands for `finland_ytj` and `exchange_rates_v2` and `uv run --frozen --no-sync dg utils refresh-defs-state` (the company_serving and domain-suggestions component projects changed), then `uv run --frozen --no-sync dg check defs`.
-- [ ] **Step 2:** deploy: `cd ansible && ANSIBLE_BECOME_TIMEOUT=60 ansible-playbook -i inventory.ini light_sync.yml`; verify `sweden_company_companies_clickhouse` is gone from the code location.
-- [ ] **Step 3:** materialise the company_domain_suggestions staging dbt assets (recreates `stg_se_company_match_features`) and the company_serving publish job; both must finish green (the publish job's anchor checks now count the main table).
+- [x] **Step 2:** deploy: `cd ansible && ANSIBLE_BECOME_TIMEOUT=60 ansible-playbook -i inventory.ini light_sync.yml`; verify `sweden_company_companies_clickhouse` is gone from the code location.
+- [x] **Step 3:** materialise the company_domain_suggestions staging dbt assets (recreates `stg_se_company_match_features`) and the company_serving publish job; both must finish green (the publish job's anchor checks now count the main table).
 - [x] **Step 4:** smoke `http://localhost:5183/company/se/5020077862`, the SE address list, the domains review queue and the technologies page.
-- [ ] **Step 5:** run `corpscout/clickhouse/operations/se_companies_retire.md`: gates, then the DROP and the DELETE.
+- [x] **Step 5:** run `corpscout/clickhouse/operations/se_companies_retire.md`: gates, then the DROP and the DELETE.
+
+## Rollout record (2026-09-08, UTC)
+
+- 13:48 dbt state refreshed locally (3/3 states, both manifests); `dg check defs` clean.
+- 14:38 light_sync deployed by the owner (a first attempt never reached the host; verified by
+  md5 of the host tree, not by the code-location reload stamp). Code location: 636 assets, no
+  `sweden_company_companies_clickhouse`, UHM and identifier exports depend on the fold.
+- Run `0415b82a`: `stg_se_company_match_features` rebuilt from `se_company_basic_info` (SUCCESS).
+- Run `3144bbe9`: company_serving dbt build + publish FAILED after 27 min on two anchor tests
+  that predate this slice: `company_contact_current_build` (140 rows with company_id '' from
+  ten unresolved ESEF LEIs, 5 rows for 5565401493) and `company_management_current_build`
+  (24 ESEF rows for 5565401493, Rizzo Group AB (publ.), in no register). The ESEF sources grew
+  after the last green publish (2026-08-25); neither id was ever in the spine. Owner decision:
+  no change to the serving models; fix the ESEF people extraction and LEI mapping upstream.
+  The publish stays red until then; the current serving tables keep the 2026-08-25 data.
+- Gate: no view, MV or dictionary reads `se_companies` (the stg view's provenance literal
+  `'se_companies.legal_name'` was renamed in `0ee29f509`, on the host with the next deploy;
+  the gate regex matches FROM/JOIN). Counts: 3,523,558 spine rows, 2,176,663 spine-keyed
+  translation rows.
+- ~15:35 `DROP TABLE corpscout.se_companies` and the lightweight DELETE of the spine-keyed
+  `text_translations` rows executed (owner: "Drop now"). Backoffice smoke after the drop green.
