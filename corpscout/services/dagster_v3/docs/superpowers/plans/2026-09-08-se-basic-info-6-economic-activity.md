@@ -82,7 +82,7 @@
 - [x] **Step 1 (owner):** apply 000393 (other session's) then 000394: `make clickhouse-migrate-up-one` twice from `corpscout`.
 - [x] **Step 2 (owner):** dbt-state refresh + light_sync deploy. (Deployed 20:17 UTC, host verified in sync, no dbt change so no refresh needed.)
 - [x] **Step 3:** materialise `se_company_basic_info_precedence_clickhouse`. (Run 52b3dc6c, 32 global pairs, the two economic_activity rows present.)
-- [ ] **Step 4:** launch `se_basic_info_suggestions_scb` with `execute: true, since: "2000-01-01T00:00:00Z"`.
+- [x] **Step 4:** launch `se_basic_info_suggestions_scb` with `execute: true, since: "2000-01-01T00:00:00Z"`. (Run 2dfcbf0e: all 1,818,909 SCB rows are scb-v2: 1,366,111 active, 326,980 never, 125,818 ceased.)
 - [ ] **Step 5:** backfill all 64 partitions of `se_company_basic_info_fold`.
 - [ ] **Step 6:** smoke `http://localhost:5183/admin/se/company/5020077862/info?field=economic_activity` and `http://localhost:5183/company/se/5020077862`; count the three values on the main table.
 
