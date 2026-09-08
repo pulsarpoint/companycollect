@@ -119,6 +119,12 @@ lei_features AS (
       )
 ),
 
+-- Slice 4a (2026-09-08) reads the address entity instead of the retired
+-- se_company_addresses_current projection. The entity's normalized_address is a display
+-- line (not the old pre-normalized matching string), so normalized_value is computed here
+-- from the street part (the mapping table's replaceRegexpOne, which strips the trailing
+-- ", postcode city" segment), postal_code and city, through the existing address-text
+-- normalization macro.
 address_features AS (
     SELECT DISTINCT
         'SE' AS country_iso2,
@@ -126,23 +132,14 @@ address_features AS (
         companies.company_name,
         'address' AS feature_type,
         'postal' AS feature_subtype,
-        addresses.normalized_address AS normalized_value,
-        ifNull(
-            nullIf(trim(ifNull(addresses.raw_address, '')), ''),
-            arrayStringConcat(arrayFilter(component -> component != '', [
-                ifNull(addresses.street_address, ''),
-                trim(concat(
-                    ifNull(addresses.postal_code, ''),
-                    ' ',
-                    ifNull(addresses.post_town, '')
-                )),
-                ifNull(addresses.country_code, '')
-            ]), ', ')
-        ) AS raw_value,
-        concat(addresses.source, '.', addresses.address_type) AS source_field
-    FROM {{ source('corpscout', 'se_company_addresses_current') }} AS addresses
+        {{ normalize_address_text(
+            "concat(replaceRegexpOne(addresses.normalized_address, ',\\\\s*[0-9]{3} [0-9]{2}[^,]*$', ''), ' ', ifNull(addresses.postal_code, ''), ' ', ifNull(addresses.city, ''))"
+        ) }} AS normalized_value,
+        addresses.normalized_address AS raw_value,
+        concat(toString(addresses.text_source), '.', arrayStringConcat(arrayMap(x -> toString(x), addresses.kinds), '|')) AS source_field
+    FROM {{ source('corpscout', 'se_company_address_v2') }} AS addresses FINAL
     INNER JOIN companies USING (company_id)
-    WHERE addresses.has_address = 1
+    WHERE addresses.active = 1
       AND addresses.normalized_address != ''
 ),
 

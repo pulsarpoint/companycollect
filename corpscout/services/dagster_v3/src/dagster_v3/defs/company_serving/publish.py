@@ -325,16 +325,18 @@ def _validate_presence_counts(
             "SELECT countDistinct(tuple(company_id, classification_code)) "
             f"FROM {stages[tables.INDUSTRIES.name]}"
         ),
-        # The display table this counted is retired (migration 000314), so this reconciles
-        # against the source the section-presence model now reads, with the same filter and
-        # the same key. Anchored like financials and sources: se_company_addresses_current
-        # is not a serving stage, so the anchor join is spelled out here.
+        # se_company_addresses_current (itself standing in for the retired
+        # se_company_address_display_current_build, migration 000314) is retired in favor
+        # of the address entity table (slice 4a, 2026-09-08), which the section-presence
+        # model now reads too, so this reconciles with the same filter and the same key
+        # (address_key). Anchored like financials and sources: se_company_address_v2 is not
+        # a serving stage, so the anchor join is spelled out here.
         "addresses": (
-            "SELECT countDistinct(tuple(addresses.company_id, addresses.address_fingerprint)) "
-            "FROM corpscout.se_company_addresses_current AS addresses "
+            "SELECT countDistinct(tuple(addresses.company_id, addresses.address_key)) "
+            "FROM corpscout.se_company_address_v2 AS addresses FINAL "
             f"INNER JOIN (SELECT DISTINCT company_id FROM {stages[tables.EXTERNAL_IDENTIFIERS.name]}) AS anchors "
             "ON anchors.company_id = addresses.company_id "
-            "WHERE addresses.has_address = 1 AND addresses.has_observation = 1"
+            "WHERE addresses.active = 1"
         ),
         "sources": (
             "SELECT countDistinct(tuple(company_id, source_record_uid)) "

@@ -91,11 +91,17 @@ def test_sweden_company_match_features_are_normalized_and_technology_independent
         "se_companies",
         "se_scb_companies",
         "se_bolagsverket_companies",
-        "se_company_addresses_current",
+        "se_company_address_v2",
         "se_industries",
         "gleif_lei_records",
     ):
         assert f"source('corpscout', '{source}')" in model_sql
+    # Slice 4a (2026-09-08): the retired se_company_addresses_current projection is gone
+    # from this model; address_features reads the address entity, active rows only.
+    assert "source('corpscout', 'se_company_addresses_current')" not in model_sql
+    assert "addresses.active = 1" in model_sql
+    assert "replaceRegexpOne(addresses.normalized_address" in model_sql
+    assert "addresses.text_source" in model_sql
 
     # The retired registry projection is gone, and the two source_field values it produced
     # are still produced -- by a literal per union branch instead of by a `source` column.
