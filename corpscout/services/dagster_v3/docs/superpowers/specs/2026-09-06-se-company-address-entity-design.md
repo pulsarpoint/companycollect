@@ -632,6 +632,43 @@ The corrections queue page keeps reading the old ledger until the cutover retire
    addresses section and the same-building lookup render from the new data. Found on the
    way: `countries.ts` still reads `se_company_addresses_current` for the generic list's
    Place column and detail address block (closed in 4b).
+   Slice 4b shipped 2026-09-08 (plan `2026-09-08-se-company-address-4b-retire.md`, main
+   d2585108): migration 000393 renamed `se_company_address_v2` to `se_company_address` and the
+   old table to `se_company_address_legacy` in one RENAME and re-pointed `se_companies_serving`
+   in place with `ALTER TABLE ... MODIFY QUERY` (probed first on a scratch refreshable view on
+   prod: the query changes, the data stays, the refresh clause survives), applied in 4.4 s with
+   the ledger clean at 393; the first refresh under the new query (19:45 UTC) succeeded in
+   14.5 min. Every reader names the table through one constant (`tables.MAIN_TABLE`,
+   `companies_current.COMPANY_ADDRESS_TABLE`, the backoffice's `se-address-tables.ts`; dbt
+   source `se_company_address`). Deleted: `se_company/address_legacy.py`, `address_rules.py`,
+   `se_company/scb.py`, `se_company/bolagsverket.py` (the old publisher with its jobs,
+   correction sensor and weekly), `sweden_company_addresses_clickhouse` with its publish
+   helpers, the canonical, shared, demand, resolution (golden, shadow, current, diagnostics),
+   store-append, legacy-adoption and store-backfill assets with eight jobs, four checks and
+   four freshness leaves, `address_resolution_assets.py`, `geocode_legacy_adoption.py`,
+   `address_resolution_promotion.py`, `shared_address_geocoding.py`; kept: the matcher, the
+   policy constant, the OSM workbench, the centroid tables, `se_address_geocodes`, the
+   reference-document and posting builders. The weekly geocoding job selects the OSM refresh,
+   the centroids, `se_address_geocodes_warm` and the serving refresh (its deps re-pointed at
+   the warm step); the OSM-snapshot freshness WARN and the geocode-cache leaf moved onto the
+   warm asset; the extract weekly took the name `se_company_address_weekly`, STOPPED (the old
+   schedule of that name was found RUNNING on prod, the renamed one inherited the state and was
+   stopped by hand; whether the extract weekly runs is the owner's call). Backoffice: the dead
+   old Address tab, its helpers and the empty corrections queue (route, loader, table,
+   constants, writer, nav link) are gone; the generic list's Place column and the detail
+   address block moved off `se_company_addresses_current` (the 4a miss), the Place column
+   keeping the display-cased town from the composed line. Verified on prod: no old job in
+   Dagster, the address tab, both admin lists, the quality queue, the generic pages, the
+   addresses section and the same-building lookup render from the renamed table; the unit
+   suite 3,282 passed with the five known unrelated failures. Handed to 4c, in drop order:
+   `se_company_address_legacy`, `se_company_address_scb`, `se_company_address_bolagsverket`,
+   `se_company_address_correction`, `se_company_addresses`, `se_company_addresses_current`,
+   `se_company_address_members_current`, the `se_address_geocodes_served` view, then
+   `se_addresses_current` and `se_company_address_links_current`, then the
+   `se_address_geocodes_current` materialized view; with them the one-off
+   `se_address_geocodes_adopt_keys` (it reads `se_addresses_current`), the migration-file
+   edits and the fixture cleanup under the ledger policy, and `geocode_serving_overlay`'s
+   retirement once the served view is gone.
 
 **Parity**: per company, the set of active `normalized_address` lines in the new table
 against the current `se_company_address` (`is_current = 1`) lines, classified as identical,
