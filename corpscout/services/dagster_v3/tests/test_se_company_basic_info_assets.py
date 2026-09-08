@@ -88,6 +88,18 @@ def test_assets_are_registered_with_pool_partitions_and_backfill_policy() -> Non
         assert "basic_info" not in sensor.name
 
 
+def test_ratsit_extractor_depends_on_the_normalized_ratsit_table() -> None:
+    # Basic info consumes Ratsit: the extractor's upstream is the real normalized table,
+    # not the multi-asset op name (a phantom key Dagster renders as an external node).
+    from dagster_v3.definitions import defs as load_defs
+
+    graph = load_defs().get_repository_def().asset_graph
+    extractor = graph.get(dg.AssetKey("se_basic_info_suggestions_ratsit"))
+    assert extractor.parent_keys == {dg.AssetKey("se_ratsit_company")}
+    assert graph.get(dg.AssetKey("se_ratsit_company")).is_executable
+
+
+
 class _FakePrecedenceClient:
     """Records every statement/params pair; the stale-count query always returns 0
     rows changed (nothing pre-existing to go stale in this test)."""

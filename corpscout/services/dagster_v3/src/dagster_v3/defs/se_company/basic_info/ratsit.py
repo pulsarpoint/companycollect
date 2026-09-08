@@ -73,7 +73,7 @@ se_basic_info_suggestions_ratsit = define_suggestion_asset(
     current_sql=ratsit_current_sql(),
     select_sql=ratsit_select_sql(),
     select_params=RATSIT_SELECT_PARAMS,
-    deps=[dg.AssetKey("se_ratsit_normalized")],
+    deps=[dg.AssetKey("se_ratsit_company")],
     description=(
         "One ratsit suggestion row per company from the newest normalized Ratsit report "
         "(se_ratsit_company_translated): name, active/inactive from the status text, the "

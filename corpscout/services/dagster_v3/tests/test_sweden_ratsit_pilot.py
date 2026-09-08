@@ -968,7 +968,7 @@ def test_ratsit_dispatch_and_normalized_table_assets_are_registered() -> None:
 
     assert dg.AssetKey("se_ratsit_scan_dispatch") in asset_keys
     scan_node = repository.asset_graph.get(dg.AssetKey("se_ratsit_scan_dispatch"))
-    assert scan_node.parent_keys == {dg.AssetKey("se_company_basic_info_fold")}
+    assert scan_node.parent_keys == set()
     assert scan_node.partitions_def == RATSIT_PARTITIONS
     for asset_name in (
         "se_ratsit_company",
