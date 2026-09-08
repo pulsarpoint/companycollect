@@ -69,6 +69,19 @@ describe("getSwedenCompaniesAtSameBuilding", () => {
     expect(sql).toContain("target.geocode_precision = 'building' DESC");
     expect(sql).toContain("AND ifNull(target.box, '') = ''");
     expect(sql).toContain("AND ifNull(target.street_name, '') != ''");
+    // The target CTE is EMPTY for every company that names no building (all
+    // foreign, box only, postcode only, addressless). A scalar subquery over an
+    // empty set must therefore have a Nullable result type: ClickHouse 26.5
+    // raises INCORRECT_RESULT_OF_SCALAR_SUBQUERY for the LowCardinality
+    // country_code otherwise, and the detail page 500s.
+    expect(sql).toContain(
+      "CAST(toString(target.country_code), 'Nullable(String)') AS country_code",
+    );
+    for (const column of ["street_name", "house_number", "postal_code"]) {
+      expect(sql).toContain(
+        `CAST(ifNull(target.${column}, ''), 'Nullable(String)') AS ${column}`,
+      );
+    }
     // Published rows only, on both sides of the lookup.
     expect(sql.match(/active = 1/g)).toHaveLength(2);
     // Components, not a rebuilt street key -- and the floor is ignored, so the
@@ -104,6 +117,18 @@ describe("getSwedenCompaniesAtSameBuilding", () => {
     expect(over.truncated).toBe(true);
     expect(over.calls[0][0]).toContain("LIMIT 51");
   });
+
+  it("answers empty for a company whose addresses name no building", async () => {
+    // 5565007076 is published with ONE address, a c/o box line: the target CTE
+    // is empty, and before the Nullable cast ClickHouse 26.5 answered the whole
+    // query with "Scalar subquery returned empty result of type
+    // LowCardinality(String) which cannot be Nullable" -- a 500 on the company
+    // detail page rather than an empty Same-building card.
+    const result = await getSwedenCompaniesAtSameBuilding("5565007076");
+
+    expect(result.companies).toEqual([]);
+    expect(result.truncated).toBe(false);
+  }, 30_000);
 
   it("finds other registrations in the same building while ignoring floor", async () => {
     const result = await getSwedenCompaniesAtSameBuilding("8024123872");

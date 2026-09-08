@@ -25,14 +25,23 @@ const ADDRESS_TABLE = "corpscout.se_company_address_v2";
  * published address (visiting before postal, a matched building before a
  * fallback) among the ones that name a street: a PO box and a postcode-only
  * address identify no building, so neither can anchor the lookup.
+ *
+ * EVERY TARGET COLUMN IS CAST TO Nullable(String), because for a great many
+ * companies this CTE is EMPTY -- an all-foreign, box-only, postcode-only or
+ * addressless company names no building. ClickHouse 26.5 raises
+ * INCORRECT_RESULT_OF_SCALAR_SUBQUERY when a scalar subquery over an empty set
+ * has to produce a LowCardinality(String) (`country_code`); a Nullable result
+ * type is well defined for the empty case and yields NULL, which makes every
+ * comparison in `matching_company_ids` NULL and the neighbour set correctly
+ * empty. The company's own detail page was throwing a 500 instead.
  */
 const SWEDEN_SAME_BUILDING_QUERY = `WITH
   target_address AS (
     SELECT
-      ifNull(target.street_name, '') AS street_name,
-      ifNull(target.house_number, '') AS house_number,
-      ifNull(target.postal_code, '') AS postal_code,
-      toString(target.country_code) AS country_code
+      CAST(ifNull(target.street_name, ''), 'Nullable(String)') AS street_name,
+      CAST(ifNull(target.house_number, ''), 'Nullable(String)') AS house_number,
+      CAST(ifNull(target.postal_code, ''), 'Nullable(String)') AS postal_code,
+      CAST(toString(target.country_code), 'Nullable(String)') AS country_code
     FROM ${ADDRESS_TABLE} AS target FINAL
     PREWHERE target.company_id = {id:String}
     WHERE target.active = 1

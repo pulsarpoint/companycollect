@@ -42,7 +42,7 @@ const qualityOptions: Array<{
   { value: "all", label: "All reviewable" },
   { value: "ambiguous", label: "Ambiguous" },
   { value: "unmatched", label: "Unmatched" },
-  { value: "invalid", label: "Invalid" },
+  { value: "invalid", label: "Invalid or property" },
   { value: "street_fallback", label: "Street fallback" },
   { value: "city_fallback", label: "City fallback" },
   { value: "low_confidence", label: "Low confidence" },
@@ -52,6 +52,7 @@ function qualityLabel(row: AddressQualityRow): string {
   if (row.geocodePrecision === "street") return "Street fallback";
   if (row.geocodePrecision === "city") return "City fallback";
   if (row.matchStatus === "invalid_address") return "Invalid address";
+  if (row.matchStatus === "property_identifier") return "Property identifier";
   if (row.matchStatus === "matched_exact" && row.matchConfidence < 0.8) {
     return "Low confidence";
   }
@@ -62,6 +63,7 @@ function qualityVariant(
   row: AddressQualityRow,
 ): "destructive" | "outline" | "secondary" {
   if (row.matchStatus === "invalid_address") return "destructive";
+  if (row.matchStatus === "property_identifier") return "destructive";
   if (row.matchStatus === "unmatched") return "outline";
   return "secondary";
 }
@@ -314,9 +316,9 @@ export function AddressQualityReview({
           description="No exact OSM address candidate"
         />
         <QualityMetric
-          title="Invalid"
+          title="Invalid or property"
           value={result.stats.invalid}
-          description="Insufficient normalized address"
+          description="Unparseable line, or a cadastral property designation"
         />
         <QualityMetric
           title="Street fallback"

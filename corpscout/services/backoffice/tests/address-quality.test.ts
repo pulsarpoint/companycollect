@@ -123,8 +123,13 @@ describe("Sweden address quality queue", () => {
     const stats = sqlOf("countIf(");
     expect(stats).toContain("countIf(address.geocode_status = 'ambiguous')");
     expect(stats).toContain("countIf(address.geocode_status = 'unmatched')");
+    // Invalid and property are ONE queue: the entity writes 'invalid_address'
+    // for a line it could not parse and 'property_identifier' for a cadastral
+    // designation, and both need the same reviewer. Counting only the first
+    // would leave every property row out of the tile AND out of the filter it
+    // links to.
     expect(stats).toContain(
-      "countIf(address.geocode_status = 'invalid_address')",
+      "countIf(address.geocode_status IN ('invalid_address', 'property_identifier'))",
     );
     expect(stats).toContain("countIf(address.geocode_precision = 'street')");
     expect(stats).toContain("countIf(address.geocode_precision = 'city')");
@@ -134,6 +139,26 @@ describe("Sweden address quality queue", () => {
     expect(page).toContain(
       "address.geocode_status = 'matched_exact'\n    AND address.geocode_confidence < 0.8",
     );
+  });
+
+  it("puts a property identifier in the invalid queue and in All reviewable", async () => {
+    await searchAddressQualityQueue({
+      filter: "invalid",
+      query: "",
+      page: 1,
+      pageSize: 25,
+    });
+
+    // The page the tile links to filters on the SAME widened predicate...
+    const page = sqlOf("AS display_address");
+    expect(page).toContain(
+      "address.geocode_status IN ('invalid_address', 'property_identifier')",
+    );
+    // ...and the All-reviewable predicate, the union of the tiles, admits it
+    // too -- otherwise a property row would count in one tile and vanish from
+    // the queue that is supposed to contain every reviewable address.
+    const stats = sqlOf("countIf(");
+    expect(stats).toContain("'property_identifier'\n    )");
   });
 
   it("maps the entity's columns onto the queue's row shape", async () => {

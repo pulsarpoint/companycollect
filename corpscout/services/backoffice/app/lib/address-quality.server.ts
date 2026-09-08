@@ -128,7 +128,12 @@ interface AddressQualityCompanyNameRow {
 
 const QUALITY_FILTER_SQL: Record<AddressQualityFilter, string> = {
   all: `(
-    address.geocode_status IN ('ambiguous', 'unmatched', 'invalid_address')
+    address.geocode_status IN (
+      'ambiguous',
+      'unmatched',
+      'invalid_address',
+      'property_identifier'
+    )
     OR address.geocode_precision = 'street'
     OR address.geocode_precision = 'city'
     OR (
@@ -138,7 +143,14 @@ const QUALITY_FILTER_SQL: Record<AddressQualityFilter, string> = {
   )`,
   ambiguous: "address.geocode_status = 'ambiguous'",
   unmatched: "address.geocode_status = 'unmatched'",
-  invalid: "address.geocode_status = 'invalid_address'",
+  // The entity's geocoder writes BOTH statuses for a line it cannot place as
+  // an address: 'invalid_address' for one it could not parse into a street, and
+  // 'property_identifier' for a cadastral designation ("Kvarteret Lodjuret 3"),
+  // which OSM's address layer will never match. They are one reviewer queue --
+  // the tile is labelled "Invalid or property" -- so a property row is not
+  // invisible to review just because it has its own status.
+  invalid:
+    "address.geocode_status IN ('invalid_address', 'property_identifier')",
   street_fallback: "address.geocode_precision = 'street'",
   city_fallback: "address.geocode_precision = 'city'",
   low_confidence: `(
@@ -209,7 +221,7 @@ const ADDRESS_QUALITY_COLUMNS_SQL = `address.company_id AS company_id,
 const ADDRESS_QUALITY_ORDER_SQL = `ORDER BY
          multiIf(
            address.geocode_status = 'ambiguous', 0,
-           address.geocode_status = 'invalid_address', 1,
+           address.geocode_status IN ('invalid_address', 'property_identifier'), 1,
            address.geocode_precision = 'street', 2,
            address.geocode_precision = 'city', 3,
            address.geocode_status = 'unmatched', 4,
