@@ -13,7 +13,6 @@ from dagster_v3.defs.sweden_company import tables
 from dagster_v3.defs.sweden_company.clickhouse import (
     export_sweden_company_clickhouse_companies,
     export_sweden_company_clickhouse_industries,
-    publish_sweden_company_clickhouse_addresses,
     publish_sweden_company_industry_history,
     publish_sweden_company_profile_history,
     publish_sweden_company_source_table,
@@ -273,40 +272,6 @@ def sweden_company_profile_history_clickhouse(
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse", "bolagsverket", "scb"},
     pool=SWEDEN_COMPANY_DUCKDB_POOL,
-    metadata={"table": tables.QUALIFIED_COMPANY_ADDRESSES_TABLE},
-    description=(
-        "Appends changed Sweden company address observations to ClickHouse "
-        "corpscout.se_company_addresses."
-    ),
-)
-def sweden_company_addresses_clickhouse(
-    context: dg.AssetExecutionContext,
-    sweden_company_duckdb: DuckDBResource,
-    clickhouse: ClickhouseResource,
-) -> dg.MaterializeResult:
-    with read_only_duckdb_connection(sweden_company_duckdb) as connection:
-        result = publish_sweden_company_clickhouse_addresses(
-            duckdb_connection=connection,
-            clickhouse=clickhouse,
-            log=context.log.info,
-        )
-    return dg.MaterializeResult(
-        metadata={
-            "table": tables.QUALIFIED_COMPANY_ADDRESSES_TABLE,
-            "address_candidates": result.address_candidates,
-            "address_observations_inserted": result.address_observations_inserted,
-            "first_address_observations": result.first_address_observations,
-            "address_changes": result.address_changes,
-            "address_removals": result.address_removals,
-        }
-    )
-
-
-@dg.asset(
-    deps=["sweden_company_normalized_duckdb"],
-    group_name=GROUP_NAME,
-    kinds={"python", "duckdb", "clickhouse", "bolagsverket", "scb"},
-    pool=SWEDEN_COMPANY_DUCKDB_POOL,
     metadata={"table": tables.QUALIFIED_INDUSTRIES_TABLE},
     description="Exports normalized Sweden industries to ClickHouse corpscout.se_industries.",
 )
@@ -391,7 +356,6 @@ sweden_company_refresh_job = dg.define_asset_job(
         "sweden_company_scb_companies_clickhouse",
         "sweden_company_bolagsverket_companies_clickhouse",
         "sweden_company_profile_history_clickhouse",
-        "sweden_company_addresses_clickhouse",
         "sweden_company_industries_clickhouse",
         "sweden_company_industry_history_clickhouse",
     ).upstream(),
@@ -415,7 +379,6 @@ defs = dg.Definitions(
         sweden_company_scb_companies_clickhouse,
         sweden_company_bolagsverket_companies_clickhouse,
         sweden_company_profile_history_clickhouse,
-        sweden_company_addresses_clickhouse,
         sweden_company_industries_clickhouse,
         sweden_company_industry_history_clickhouse,
         se_code_labels_clickhouse,

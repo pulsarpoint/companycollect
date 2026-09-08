@@ -906,12 +906,11 @@ def test_the_id_bound_reads_pass_the_raised_query_size_setting(
 def test_the_extract_provenance_is_stamped_on_every_written_row(
     workbench: duckdb.DuckDBPyConnection,
 ) -> None:
-    """I3: the live store check `missing_provenance`
-    (sweden_company/address_geocoding_assets.py::STORE_INVARIANTS_SQL) fails any store row
-    with a NULL in one of these five, so the entity's own rows carry the OSM extract's
-    provenance -- read from the workbench exactly as
+    """I3: no stored outcome may carry a NULL in one of these five -- the contract the
+    retired store-completeness check asserted as `missing_provenance` -- so the entity's own
+    rows carry the OSM extract's provenance, read from the workbench exactly as
     address_resolution_promotion.py reads it. `source_record_id`/`source_record_url` stay
-    NULL: the check does not count them."""
+    NULL: they name one imported source record, which a resolver answer does not have."""
     client = FakeClient()
 
     _run(workbench, client, {STREET_KEY: STREET})

@@ -46,10 +46,9 @@ from dagster_v3.defs.sweden_company.address_resolution_shadow import (
 def test_sweden_golden_address_resolution_corpus() -> None:
     """Gates on the real Sweden call path, including the v7 variant maps.
 
-    Mirrors `address_resolution_assets._evaluate_golden_corpus` exactly -- the golden
-    gate must exercise the same maps the production asset passes, or it silently
-    validates the matcher without ever touching v7 despite the policy being stamped
-    v7. Expected to be unchanged by v7: the maps are additive and the corpus may not
+    Mirrors `evaluate_golden_address_resolution_corpus` exactly -- the golden gate must
+    exercise the same maps the production call path passes, or it silently validates the
+    matcher without ever touching v7 despite the policy being stamped v7. Expected to be unchanged by v7: the maps are additive and the corpus may not
     contain any punctuated or separate-definite-form streets.
     """
     evaluation = evaluate_golden_address_resolution_corpus(

@@ -230,6 +230,21 @@ def test_a_stale_success_fails_the_check() -> None:
     assert not result["passed"]
 
 
+def test_the_refresh_asset_runs_after_the_centroids_and_the_warm() -> None:
+    """The store-append asset it used to wait on is gone; the warm step is what now puts the
+    week's new OSM extract into the geocode cache the fold reads, so it is what this must
+    follow to force a refresh that reflects the week."""
+    from dagster_v3.definitions import defs as load_defs
+
+    node = load_defs().get_repository_def().asset_graph.get(
+        dg.AssetKey("sweden_companies_current_clickhouse")
+    )
+    assert {key.path[-1] for key in node.parent_keys} == {
+        "sweden_geocode_centroids_clickhouse",
+        "se_address_geocodes_warm",
+    }
+
+
 def test_the_check_is_registered_on_the_asset() -> None:
     assert sweden_companies_current_refresh_check.check_keys == {
         dg.AssetCheckKey(

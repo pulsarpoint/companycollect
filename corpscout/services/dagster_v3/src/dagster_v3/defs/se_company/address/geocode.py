@@ -212,10 +212,10 @@ class GeocodeOutcome:
 class ExtractProvenance:
     """The OSM extract every row this run writes was matched against.
 
-    The live store check `missing_provenance`
-    (`sweden_company/address_geocoding_assets.py::STORE_INVARIANTS_SQL`) fails the store if
-    ANY row has a NULL in one of these five, so the entity's rows carry them exactly as the
-    promotion's imported rows do. The two per-RECORD columns (`source_record_id`,
+    No stored outcome may carry a NULL in one of these five -- the contract the retired
+    store-completeness check used to assert (`missing_provenance`, deleted with the demand
+    chain in slice 4b) -- so the entity's rows carry them exactly as the promotion's
+    imported rows did. The two per-RECORD columns (`source_record_id`,
     `source_record_url`) are a different thing and stay NULL: they name one imported source
     record, which a resolver answer over several candidates does not have, and the check
     does not count them.

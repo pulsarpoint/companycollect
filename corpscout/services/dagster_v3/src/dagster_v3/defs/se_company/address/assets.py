@@ -23,7 +23,13 @@ from dagster_v3.defs.se_company.address.batch import (
 )
 from dagster_v3.defs.se_company.address.normalize import PAGE_SIZE, NormalizeCounts, normalize_all, normalize_companies
 from dagster_v3.defs.se_company.address.precedence import precedence_rows
-from dagster_v3.defs.se_company.address.warm import CHUNK_SIZE as WARM_CHUNK_SIZE, warm_geocodes
+from dagster_v3.defs.se_company.address.warm import (
+    CHUNK_SIZE as WARM_CHUNK_SIZE,
+    MAX_OSM_SNAPSHOT_AGE,
+    fetch_osm_snapshot_freshness,
+    osm_snapshot_is_fresh,
+    warm_geocodes,
+)
 from dagster_v3.defs.se_company.common import normalized_se_company_ids
 from dagster_v3.defs.sweden_address_osm import tables as osm_tables
 
@@ -293,3 +299,42 @@ def se_address_geocodes_warm(
             chunk_size=config.chunk_size, limit=config.limit, log=context.log.info,
         )
     return dg.MaterializeResult(metadata={**counts.as_metadata(), "chunk_size": config.chunk_size, "limit": config.limit})
+
+
+@dg.asset_check(
+    asset=se_address_geocodes_warm,
+    name="osm_snapshot_fresh",
+    description=(
+        "Warns when stored Sweden coordinates come from an OSM snapshot over nine "
+        "days old."
+    ),
+)
+def se_address_geocodes_osm_snapshot_freshness_check(
+    clickhouse: ClickhouseResource,
+) -> dg.AssetCheckResult:
+    """The one thing still watching the age of the matcher's reference data.
+
+    A stale extract is invisible from every other angle: the cache answers fast, the fold
+    publishes rows, and every outcome carries a policy and a reference that agree with each
+    other -- they are simply all computed against an OSM snapshot nobody refreshed. WARN,
+    because a week-late extract is not a reason to fail a run.
+    """
+    checked_at = datetime.now(UTC)
+    with clickhouse.get_connection() as client:
+        snapshot_at = fetch_osm_snapshot_freshness(client)
+    snapshot_age_hours = (
+        (checked_at - snapshot_at.astimezone(UTC)).total_seconds() / 3600
+        if snapshot_at is not None and snapshot_at.tzinfo is not None
+        else None
+    )
+    return dg.AssetCheckResult(
+        passed=osm_snapshot_is_fresh(snapshot_at=snapshot_at, now=checked_at),
+        severity=dg.AssetCheckSeverity.WARN,
+        metadata={
+            "latest_osm_snapshot_at": (
+                snapshot_at.isoformat() if snapshot_at is not None else None
+            ),
+            "snapshot_age_hours": snapshot_age_hours,
+            "maximum_snapshot_age_hours": MAX_OSM_SNAPSHOT_AGE.total_seconds() / 3600,
+        },
+    )

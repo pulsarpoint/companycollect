@@ -1,13 +1,18 @@
 """The bulk warm step: reads every current location key, hands them to `geocode_addresses`
 in chunks. A fake client records every statement; `geocode_addresses` is stubbed."""
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
 
-from dagster_v3.defs.se_company.address import warm
+import dagster as dg
+
+from dagster_v3.defs.se_company.address import assets, warm
 from dagster_v3.defs.se_company.address.geocode import GEOCODE_QUERY_SETTINGS, GeocodeOutcome
 from dagster_v3.defs.sweden_company.address_resolution_policy import SWEDEN_ADDRESS_RESOLUTION_POLICY
 from dagster_v3.defs.sweden_company.geocode_serving_overlay import GEOCODE_FALLBACK_PROVIDER
+from dagster_v3.defs.sweden_company.geocode_store import QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE
 
 POLICY = SWEDEN_ADDRESS_RESOLUTION_POLICY.version
 REFERENCE = "ref-1"
@@ -138,3 +143,60 @@ def test_no_rows_makes_zero_chunks_and_no_geocode_call(monkeypatch) -> None:
 def test_warm_counts_as_metadata_names_the_six_counters() -> None:
     counts = warm.WarmCounts(keys=1, chunks=2, cache_hits=3, matched=4, geocoded=5, fallback=6)
     assert set(counts.as_metadata()) == {"keys", "chunks", "cache_hits", "matched", "geocoded", "fallback"}
+
+
+def test_the_osm_freshness_warn_hangs_off_the_warm_asset() -> None:
+    """It used to hang off sweden_address_geocode_store_clickhouse. A check left on a
+    retired asset is a check that quietly stops running."""
+    assert {key.asset_key for key in
+            assets.se_address_geocodes_osm_snapshot_freshness_check.check_keys} == {
+        dg.AssetKey("se_address_geocodes_warm")
+    }
+
+
+class SnapshotClient:
+    """Answers the freshness query and records what it was asked."""
+
+    def __init__(self, rows: list[tuple[Any, ...]]) -> None:
+        self.rows = rows
+        self.executed: list[str] = []
+
+    def execute(self, sql: str, params: Any = None, settings: Any = None) -> list[tuple[Any, ...]]:
+        self.executed.append(sql)
+        assert sql == warm.SNAPSHOT_FRESHNESS_SQL
+        return self.rows
+
+
+class SnapshotResource:
+    def __init__(self, client: Any) -> None:
+        self._client = client
+
+    @contextmanager
+    def get_connection(self) -> Iterator[Any]:
+        yield self._client
+
+
+def test_the_freshness_query_reads_the_store_and_nothing_else() -> None:
+    assert warm.SNAPSHOT_FRESHNESS_SQL.strip().startswith("SELECT max(source_snapshot_at)")
+    assert QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE in warm.SNAPSHOT_FRESHNESS_SQL
+    assert "canonical" not in warm.SNAPSHOT_FRESHNESS_SQL
+    assert "se_company_address_geocodes" not in warm.SNAPSHOT_FRESHNESS_SQL
+
+
+def test_the_freshness_check_reports_the_age_of_the_newest_stored_snapshot() -> None:
+    client = SnapshotClient([(datetime(1999, 1, 1, tzinfo=UTC),)])
+
+    result = assets.se_address_geocodes_osm_snapshot_freshness_check.node_def.compute_fn.decorated_fn(
+        SnapshotResource(client)
+    )
+
+    assert not result.passed
+    assert result.severity == dg.AssetCheckSeverity.WARN
+    assert client.executed == [warm.SNAPSHOT_FRESHNESS_SQL]
+    # Dagster wraps check metadata, so the nine-day threshold is read off the value.
+    assert result.metadata["maximum_snapshot_age_hours"].value == 216.0
+
+
+def test_an_empty_store_reports_no_snapshot_rather_than_raising() -> None:
+    assert warm.fetch_osm_snapshot_freshness(SnapshotClient([(None,)])) is None
+    assert not warm.osm_snapshot_is_fresh(snapshot_at=None, now=datetime.now(UTC))

@@ -116,8 +116,8 @@ The table-specific ClickHouse assets publish the normalized DuckDB tables to Cli
 
 It asserts that migrations have already created the target tables. Company and
 industry facts are full-replaced through staging-table swaps because the source
-files are full snapshots. Addresses, proceedings, and
-complete SNI states use historical storage semantics: each snapshot is compared
+files are full snapshots. Proceedings and complete SNI states use historical
+storage semantics: each snapshot is compared
 with its physical `*_current` table and only a changed state is appended to the
 observation table. Unchanged reruns append nothing. A disappearing record or
 procedure appends a typed tombstone, and an A → B → A sequence preserves all
@@ -130,16 +130,13 @@ physical current snapshot so normal reads never aggregate the complete history.
 | `sweden_company_scb_companies_clickhouse` | `sweden_company.scb_companies` | `corpscout.se_scb_companies` | the whole SCB record per company, replaced only when its payload hash changes |
 | `sweden_company_bolagsverket_companies_clickhouse` | `sweden_company.bolagsverket_companies` | `corpscout.se_bolagsverket_companies` | the whole Bolagsverket record per company, replaced only when its payload hash changes |
 | `sweden_company_profile_history_clickhouse` | `sweden_company.company_proceedings` | `corpscout.se_company_proceeding_observations` | append-only proceeding history |
-| `sweden_company_addresses_clickhouse` | `sweden_company.company_addresses` | `corpscout.se_company_addresses` | append-only source-specific address observations |
 | `sweden_company_industries_clickhouse` | `sweden_company.company_industry_codes` | `corpscout.se_industries` | SCB SNI activity codes with derived 4-digit NACE Rev. 2 class code |
 | `sweden_company_industry_history_clickhouse` | `sweden_company.company_industry_states` | `corpscout.se_company_industry_observations` | append-only complete SCB SNI states |
 
-`corpscout.se_company_addresses_current` stores one current candidate per
-`(company_id, address_type, source)`. Current-address consumers filter it to
-`has_address = 1`; history and provenance consumers read the append-only base
-table. The initial migration resolves the newest historical observation with
-`(observed_at, source_run_id)` as its deterministic order before creating the
-physical snapshot.
+This pipeline no longer publishes addresses. The SE address model is the address
+entity `corpscout.se_company_address`, built by `se_company/address` from its own
+per-source suggestions. The DuckDB `company_addresses` table above is still built by
+the normalize step, but nothing exports it to ClickHouse any more.
 
 The same split applies to company profiles and classifications:
 

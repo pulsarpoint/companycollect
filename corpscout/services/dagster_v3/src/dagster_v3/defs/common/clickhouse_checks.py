@@ -195,23 +195,13 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
         ("se_bolagsverket_companies",),
         WEEKLY,
     ),
-    ClickhouseLeaf(
-        "sweden_company_addresses_clickhouse", ("se_company_addresses",), WEEKLY
-    ),
     ClickhouseLeaf("sweden_company_industries_clickhouse", ("se_industries",), WEEKLY),
-    # The members bridge. Its publish asset carried one asset check until the canonical
-    # ClickHouse table it also read retired; without a leaf it would now carry none at all,
-    # and se_company_address joins through this table on every resolution.
+    # The geocode cache. Its old host, the store-append asset, retired with the demand chain
+    # in slice 4b; corpscout.se_address_geocodes is now written by geocode_addresses from
+    # inside the weekly warm step (and, between weeks, from the fold), so the warm asset is
+    # what materializes on the weekly cadence this leaf measures.
     ClickhouseLeaf(
-        "sweden_company_canonical_addresses_clickhouse",
-        ("se_company_address_members_current",),
-        WEEKLY,
-    ),
-    # The legacy per-company geocode pair retired with
-    # address_geocoding_assets.LEGACY_PAIR_RETIREMENT_DROP_SQL; the versioned store is the
-    # weekly Sweden geocode leaf in its place.
-    ClickhouseLeaf(
-        "sweden_address_geocode_store_clickhouse",
+        "se_address_geocodes_warm",
         ("se_address_geocodes",),
         WEEKLY,
     ),
@@ -222,11 +212,6 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
     # check needs materializations to measure and would never see one again. The leaf
     # above, on the store the view reads, is what still watches this chain from Dagster --
     # the view's own health lives in ClickHouse's system.view_refreshes.
-    ClickhouseLeaf(
-        "sweden_shared_addresses_clickhouse",
-        ("se_addresses_current", "se_company_address_links_current"),
-        WEEKLY,
-    ),
     # sweden_financial — reports/facts are scoped incremental exports. The
     # source-owned observation and other derived publishers are unscheduled
     # full rebuilds, so they receive row-count checks but no freshness check.

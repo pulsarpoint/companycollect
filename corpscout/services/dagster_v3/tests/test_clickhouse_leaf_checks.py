@@ -46,9 +46,6 @@ def test_registry_covers_the_known_scheduled_leaves() -> None:
         "sweden_company_companies_clickhouse",
         "sweden_company_scb_companies_clickhouse",
         "sweden_company_bolagsverket_companies_clickhouse",
-        "sweden_address_geocode_store_clickhouse",
-        "sweden_company_canonical_addresses_clickhouse",
-        "sweden_shared_addresses_clickhouse",
         "sweden_financial_backfill_reports_clickhouse",
         "sweden_financial_current_facts_clickhouse",
         "se_bolagsverket_financial_metrics_clickhouse",
@@ -74,17 +71,6 @@ def test_registry_covers_the_known_scheduled_leaves() -> None:
         for leaf in chk.CLICKHOUSE_LEAVES
         if "se_address_geocodes_current" in leaf.tables
     ]
-
-    # The members publish lost its only asset check when the canonical ClickHouse table
-    # retired, so this leaf is now the whole of what watches it -- and the se_company_address
-    # final joins through that table on every resolution.
-    members = next(
-        leaf
-        for leaf in chk.CLICKHOUSE_LEAVES
-        if leaf.asset_key == "sweden_company_canonical_addresses_clickhouse"
-    )
-    assert members.tables == ("se_company_address_members_current",)
-    assert members.max_age == chk.WEEKLY
 
 
 def test_every_leaf_has_a_row_count_check_and_scheduled_leaves_freshness() -> None:
@@ -138,6 +124,10 @@ RETIRED_LEAF_ASSET_KEYS = (
     "se_company_address_clickhouse",
     "se_company_address_scb_clickhouse",
     "se_company_address_bolagsverket_clickhouse",
+    "sweden_company_addresses_clickhouse",
+    "sweden_company_canonical_addresses_clickhouse",
+    "sweden_shared_addresses_clickhouse",
+    "sweden_address_geocode_store_clickhouse",
 )
 
 
@@ -154,3 +144,15 @@ def test_every_leaf_hangs_off_an_asset_that_exists() -> None:
     graph_keys = {key.path[-1] for key in _repo().asset_graph.get_all_asset_keys()}
     for spec in chk.CLICKHOUSE_LEAVES:
         assert spec.asset_key in graph_keys, spec.asset_key
+
+
+def test_the_geocode_cache_is_watched_through_the_warm_asset() -> None:
+    """The store-append asset that used to carry this leaf retired in slice 4b, but
+    corpscout.se_address_geocodes is still written every week -- by the geocode function,
+    from inside the warm step. Moving the leaf keeps the table watched; dropping it would
+    have left the entity's only cache with no freshness or row-count check at all."""
+    warm = next(
+        leaf for leaf in chk.CLICKHOUSE_LEAVES if leaf.asset_key == "se_address_geocodes_warm"
+    )
+    assert warm.tables == ("se_address_geocodes",)
+    assert warm.max_age == chk.WEEKLY

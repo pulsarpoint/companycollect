@@ -25,11 +25,11 @@ def test_sweden_company_refresh_job_and_schedule_registered() -> None:
         "sweden_company_scb_companies_clickhouse",
         "sweden_company_bolagsverket_companies_clickhouse",
         "sweden_company_profile_history_clickhouse",
-        "sweden_company_addresses_clickhouse",
         "sweden_company_industries_clickhouse",
         "sweden_company_industry_history_clickhouse",
     }
     assert "sweden_company_clickhouse" not in asset_keys
+    assert "sweden_company_addresses_clickhouse" not in asset_keys
 
     asset_graph = repo.asset_graph
     asset_node = asset_graph.get(dg.AssetKey("sweden_company_raw_snapshot_s3"))
@@ -42,7 +42,6 @@ def test_sweden_company_refresh_job_and_schedule_registered() -> None:
         "sweden_company_companies_clickhouse",
         "sweden_company_scb_companies_clickhouse",
         "sweden_company_bolagsverket_companies_clickhouse",
-        "sweden_company_addresses_clickhouse",
         "sweden_company_industries_clickhouse",
     ):
         clickhouse_node = asset_graph.get(dg.AssetKey(asset_key))

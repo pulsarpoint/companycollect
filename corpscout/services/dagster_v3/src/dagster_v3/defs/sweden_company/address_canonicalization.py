@@ -23,9 +23,9 @@ QUALIFIED_CANONICAL_ADDRESSES_TABLE = (
 QUALIFIED_ADDRESS_MEMBERS_TABLE = f"{ENRICHMENT_SCHEMA}.{ADDRESS_MEMBERS_TABLE}"
 
 CLICKHOUSE_DATABASE = "corpscout"
-# The canonical table has no ClickHouse name any more -- the copy retires by
-# address_geocoding_assets.CANONICAL_RETIREMENT_DROP_SQL, run directly rather than through
-# the migration ledger. CANONICAL_ADDRESSES_TABLE above is the DuckDB build's, which stays:
+# The canonical table has no ClickHouse name any more -- the copy retires by a DROP the
+# controller runs directly rather than through the migration ledger (owner ruling
+# 2026-08-25). CANONICAL_ADDRESSES_TABLE above is the DuckDB build's, which stays:
 # the members bridge derives from it and this module's invariants assert on it.
 QUALIFIED_CLICKHOUSE_ADDRESS_MEMBERS_TABLE = (
     f"{CLICKHOUSE_DATABASE}.{ADDRESS_MEMBERS_TABLE}"
