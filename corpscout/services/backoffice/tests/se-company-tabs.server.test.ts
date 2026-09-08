@@ -129,7 +129,7 @@ describe("company area SQL", () => {
   it("reads FINAL from every Replacing engine and from none of the snapshots", () => {
     for (const table of [
       "corpscout.se_company_basic_info AS i FINAL",
-      "corpscout.se_companies AS c FINAL",
+      "corpscout.se_company_basic_info AS c FINAL",
       "corpscout.company_entity_types AS t FINAL",
     ]) {
       expect([SHELL_INFO_SQL, SHELL_REGISTER_SQL, SHELL_ENTITY_TYPE_SQL].join("\n"))
@@ -261,7 +261,7 @@ describe("loadSeCompanyShell", () => {
     expect(shell?.entity_type_label).toBe("Company");
     expect(shell?.is_public_sector).toBe(false);
     // Both labels come from the curated dictionary, keyed by the code -- the
-    // header renders for unpublished companies too, and se_companies carries
+    // header renders for unpublished companies too, and the register fallback carries
     // the code only, so reading the published row's own copies would leave
     // half the company area unlabelled.
     expect(shell?.legal_form_label_sv).toBe("Aktiebolag");

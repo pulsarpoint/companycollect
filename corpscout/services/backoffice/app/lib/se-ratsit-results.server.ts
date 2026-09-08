@@ -121,7 +121,7 @@ LIMIT 1`;
 const RATSIT_COMPANY_NAMES_SQL = `SELECT
   company_id,
   legal_name
-FROM corpscout.se_companies FINAL
+FROM corpscout.se_company_basic_info FINAL
 WHERE company_id IN {companyIds:Array(String)}`;
 
 function toRequestRow(

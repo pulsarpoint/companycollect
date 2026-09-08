@@ -28,7 +28,7 @@ export function SeCompanyNotFound({ companyId }: { companyId: string }) {
         </EmptyMedia>
         <EmptyTitle>No company with this id in the register</EmptyTitle>
         <EmptyDescription>
-          {companyId} is not in se_companies, so nothing downstream can carry
+          {companyId} is not in the SE company register, so nothing downstream can carry
           it either. Check the organization number, or look for the company in
           the register list.
         </EmptyDescription>

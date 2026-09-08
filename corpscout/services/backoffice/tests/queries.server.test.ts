@@ -776,13 +776,13 @@ describe("addresses", () => {
   it("sweden reads its addresses table", async () => {
     const se = getCountry("se")!;
     const [row] = await chQuery<{ id: string }>(
-      `SELECT registration_number AS id FROM se_companies
+      `SELECT company_id AS id FROM se_company_basic_info FINAL
        WHERE company_id IN (
          SELECT company_id
          FROM se_company_addresses_current
          WHERE has_address = 1 AND street_address != ''
        )
-       ORDER BY registration_number LIMIT 1`,
+       ORDER BY company_id LIMIT 1`,
     );
     const detail = await getCompanyDetail(se, row.id);
     expect(detail!.addresses.length).toBeGreaterThan(0);

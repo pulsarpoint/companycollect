@@ -117,10 +117,10 @@ describe("Sweden company sections", () => {
   it("removes GLEIF identity scans from the Sweden shell", () => {
     const sweden = getCountry("se")!;
     expect(sweden.detail?.companyShellQuery).toContain(
-      "FROM se_companies AS c",
+      "FROM se_company_basic_info AS i FINAL",
     );
     expect(sweden.detail?.companyShellQuery).toContain(
-      "PREWHERE c.company_id = {id:String}",
+      "WHERE i.company_id = {id:String}",
     );
     expect(sweden.detail?.companyShellQuery).not.toContain(
       "se_companies_translated",
