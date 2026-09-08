@@ -1,5 +1,20 @@
 import { chQuery } from "~/lib/clickhouse.server";
 
+/**
+ * The published SE address entity (spec 2026-09-06, section 3.3): one row per
+ * company and published address, geocode included. Slice 4b renames the table,
+ * so the queue names it exactly once.
+ */
+const ADDRESS_TABLE = "corpscout.se_company_address_v2";
+
+/**
+ * The address line without its trailing postcode and town, so the queue can
+ * show the street part the old chain stored in its own column. Written with a
+ * doubled backslash because the literal reaches ClickHouse as SQL text.
+ */
+const STREET_PART_SQL =
+  "replaceRegexpOne(address.normalized_address, ',\\\\s*[0-9]{3} [0-9]{2}[^,]*$', '')";
+
 export const ADDRESS_QUALITY_FILTERS = [
   "all",
   "ambiguous",
@@ -28,6 +43,9 @@ export interface AddressQualityCompany {
 }
 
 export interface AddressQualityRow {
+  /** The company the published address belongs to: the entity is per company,
+   * so a shared building is now one queue row per registration. */
+  companyId: string;
   addressId: string;
   displayAddress: string;
   representativeSource: string;
@@ -73,6 +91,7 @@ interface AddressQualityStatsRow {
 }
 
 interface AddressQualityDatabaseRow {
+  company_id: string;
   address_id: string;
   display_address: string;
   representative_source: string;
@@ -98,11 +117,6 @@ interface AddressQualityDatabaseRow {
   matched_at: string;
 }
 
-interface AddressQualityCompanyLinkRow {
-  address_id: string;
-  company_id: string;
-}
-
 interface AddressQualityCompanyNameRow {
   company_id: string;
   company_name: string;
@@ -110,52 +124,96 @@ interface AddressQualityCompanyNameRow {
 
 const QUALITY_FILTER_SQL: Record<AddressQualityFilter, string> = {
   all: `(
-    geocode.match_status IN ('ambiguous', 'unmatched', 'invalid_address')
-    OR geocode.geocode_precision = 'street'
-    OR geocode.geocode_precision = 'city'
+    address.geocode_status IN ('ambiguous', 'unmatched', 'invalid_address')
+    OR address.geocode_precision = 'street'
+    OR address.geocode_precision = 'city'
     OR (
-      geocode.match_status = 'matched_exact'
-      AND geocode.match_confidence < 0.8
+      address.geocode_status = 'matched_exact'
+      AND address.geocode_confidence < 0.8
     )
   )`,
-  ambiguous: "geocode.match_status = 'ambiguous'",
-  unmatched: "geocode.match_status = 'unmatched'",
-  invalid: "geocode.match_status = 'invalid_address'",
-  street_fallback: "geocode.geocode_precision = 'street'",
-  city_fallback: "geocode.geocode_precision = 'city'",
+  ambiguous: "address.geocode_status = 'ambiguous'",
+  unmatched: "address.geocode_status = 'unmatched'",
+  invalid: "address.geocode_status = 'invalid_address'",
+  street_fallback: "address.geocode_precision = 'street'",
+  city_fallback: "address.geocode_precision = 'city'",
   low_confidence: `(
-    geocode.match_status = 'matched_exact'
-    AND geocode.match_confidence < 0.8
+    address.geocode_status = 'matched_exact'
+    AND address.geocode_confidence < 0.8
   )`,
 };
 
+/** Published rows only: a hidden or withdrawn address is not reviewable. */
+const PUBLISHED_SQL = `FROM ${ADDRESS_TABLE} AS address FINAL
+       WHERE address.active = 1`;
+
+/** The counters and the filters are the same predicates, so the tiles can
+ * never disagree with the queue they link to. */
 const ADDRESS_QUALITY_STATS_QUERY = `SELECT
-  countIf(
-    match_status IN ('ambiguous', 'unmatched', 'invalid_address')
-    OR geocode_precision = 'street'
-    OR geocode_precision = 'city'
-    OR (match_status = 'matched_exact' AND match_confidence < 0.8)
-  ) AS reviewable,
-  countIf(match_status = 'ambiguous') AS ambiguous,
-  countIf(match_status = 'unmatched') AS unmatched,
-  countIf(match_status = 'invalid_address') AS invalid,
-  countIf(geocode_precision = 'street') AS street_fallback,
-  countIf(geocode_precision = 'city') AS city_fallback,
-  countIf(match_status = 'matched_exact' AND match_confidence < 0.8)
-    AS low_confidence
-FROM corpscout.se_address_geocodes_current`;
+  countIf(${QUALITY_FILTER_SQL.all}) AS reviewable,
+  countIf(${QUALITY_FILTER_SQL.ambiguous}) AS ambiguous,
+  countIf(${QUALITY_FILTER_SQL.unmatched}) AS unmatched,
+  countIf(${QUALITY_FILTER_SQL.invalid}) AS invalid,
+  countIf(${QUALITY_FILTER_SQL.street_fallback}) AS street_fallback,
+  countIf(${QUALITY_FILTER_SQL.city_fallback}) AS city_fallback,
+  countIf(${QUALITY_FILTER_SQL.low_confidence}) AS low_confidence
+${PUBLISHED_SQL}`;
 
 const ADDRESS_SEARCH_SQL = `(
   {query:String} = ''
   OR positionCaseInsensitiveUTF8(
-    address.canonical_display_address,
+    address.normalized_address,
     {query:String}
   ) > 0
-  OR positionCaseInsensitiveUTF8(address.street_address, {query:String}) > 0
-  OR positionCaseInsensitiveUTF8(address.postal_code, {query:String}) > 0
-  OR positionCaseInsensitiveUTF8(address.post_town, {query:String}) > 0
-  OR toString(address.address_id) = {query:String}
+  OR positionCaseInsensitiveUTF8(ifNull(address.postal_code, ''), {query:String}) > 0
+  OR positionCaseInsensitiveUTF8(ifNull(address.city, ''), {query:String}) > 0
+  OR toString(address.address_key) = {query:String}
 )`;
+
+/**
+ * The entity carries no OSM candidate or extract provenance, so the columns the
+ * queue used to read from the geocode serving view are answered with empty
+ * values rather than dropped: the table keeps its shape.
+ */
+const ADDRESS_QUALITY_COLUMNS_SQL = `address.company_id AS company_id,
+         toString(address.address_key) AS address_id,
+         address.normalized_address AS display_address,
+         toString(address.text_source) AS representative_source,
+         ${STREET_PART_SQL} AS street_address,
+         ifNull(address.postal_code, '') AS postal_code,
+         ifNull(address.city, '') AS post_town,
+         if(ifNull(address.box, '') != '', 'postal_box', 'physical') AS address_kind,
+         toUInt64(1) AS company_count,
+         toUInt64(length(address.sources)) AS evidence_count,
+         toString(address.geocode_status) AS match_status,
+         toString(address.geocode_method) AS match_method,
+         ifNull(address.geocode_confidence, 0) AS match_confidence,
+         address.latitude AS latitude,
+         address.longitude AS longitude,
+         toString(address.geocode_precision) AS geocode_precision,
+         toString(address.geocode_method) AS coordinate_method,
+         ifNull(address.city, '') AS coordinate_locality,
+         toUInt64(0) AS coordinate_supporting_point_count,
+         toUInt64(0) AS candidate_count,
+         CAST([], 'Array(String)') AS candidate_record_urls,
+         '' AS source_url,
+         '' AS source_snapshot_at,
+         ifNull(toString(address.geocoded_at), '') AS matched_at`;
+
+/** The old queue put the most-shared address first; a per-company row carries
+ * its source observations instead, so the best-evidenced row leads. */
+const ADDRESS_QUALITY_ORDER_SQL = `ORDER BY
+         multiIf(
+           address.geocode_status = 'ambiguous', 0,
+           address.geocode_status = 'invalid_address', 1,
+           address.geocode_precision = 'street', 2,
+           address.geocode_precision = 'city', 3,
+           address.geocode_status = 'unmatched', 4,
+           5
+         ),
+         length(address.sources) DESC,
+         address.address_key,
+         address.company_id`;
 
 function normalizedPageSize(pageSize: number): number {
   return [25, 50, 100].includes(pageSize) ? pageSize : 50;
@@ -210,75 +268,26 @@ export async function searchAddressQualityQueue(options: {
     query
       ? chQuery<{ total: number | string }>(
           `SELECT count() AS total
-           FROM corpscout.se_address_geocodes_current AS geocode
-           INNER JOIN corpscout.se_addresses_current AS address USING (address_id)
-           WHERE ${qualityFilter}
+           ${PUBLISHED_SQL}
+             AND ${qualityFilter}
              AND ${ADDRESS_SEARCH_SQL}`,
           params,
         )
       : Promise.resolve([]),
     chQuery<AddressQualityDatabaseRow>(
       `SELECT
-         toString(address.address_id) AS address_id,
-         address.canonical_display_address AS display_address,
-         address.representative_address_source AS representative_source,
-         address.street_address,
-         address.postal_code,
-         address.post_town,
-         address.address_kind,
-         address.company_count,
-         address.evidence_count,
-         geocode.match_status,
-         geocode.candidate_count,
-         geocode.candidate_record_urls,
-         geocode.match_method,
-         geocode.match_confidence,
-         geocode.latitude,
-         geocode.longitude,
-         geocode.geocode_precision,
-         ifNull(geocode.coordinate_method, '') AS coordinate_method,
-         ifNull(geocode.coordinate_locality, '') AS coordinate_locality,
-         geocode.coordinate_supporting_point_count,
-         ifNull(geocode.source_url, '') AS source_url,
-         ifNull(toString(geocode.source_snapshot_at), '') AS source_snapshot_at,
-         toString(geocode.matched_at) AS matched_at
-       FROM corpscout.se_address_geocodes_current AS geocode
-       INNER JOIN corpscout.se_addresses_current AS address USING (address_id)
-       WHERE ${qualityFilter}
+         ${ADDRESS_QUALITY_COLUMNS_SQL}
+       ${PUBLISHED_SQL}
+         AND ${qualityFilter}
          AND ${ADDRESS_SEARCH_SQL}
-       ORDER BY
-         multiIf(
-           geocode.match_status = 'ambiguous', 0,
-           geocode.match_status = 'invalid_address', 1,
-           geocode.geocode_precision = 'street', 2,
-           geocode.geocode_precision = 'city', 3,
-           geocode.match_status = 'unmatched', 4,
-           5
-         ),
-         address.company_count DESC,
-         address.address_id
+       ${ADDRESS_QUALITY_ORDER_SQL}
        LIMIT {limit:UInt64}
        OFFSET {offset:UInt64}`,
       params,
     ),
   ]);
 
-  const addressIds = databaseRows.map((row) => row.address_id);
-  const companyLinkRows =
-    addressIds.length === 0
-      ? []
-      : await chQuery<AddressQualityCompanyLinkRow>(
-          `SELECT
-             toString(link.address_id) AS address_id,
-             link.company_id
-           FROM corpscout.se_company_address_links_current AS link
-           PREWHERE link.address_id IN {addressIds:Array(String)}
-           ORDER BY link.address_id, link.company_id
-           LIMIT 3 BY link.address_id`,
-          { addressIds },
-        );
-
-  const companyIds = [...new Set(companyLinkRows.map((row) => row.company_id))];
+  const companyIds = [...new Set(databaseRows.map((row) => row.company_id))];
   const companyNameRows =
     companyIds.length === 0
       ? []
@@ -294,16 +303,6 @@ export async function searchAddressQualityQueue(options: {
     companyNameRows.map((row) => [row.company_id, row.company_name]),
   );
 
-  const companiesByAddress = new Map<string, AddressQualityCompany[]>();
-  for (const company of companyLinkRows) {
-    const companies = companiesByAddress.get(company.address_id) ?? [];
-    companies.push({
-      companyId: company.company_id,
-      companyName: companyNames.get(company.company_id) || company.company_id,
-    });
-    companiesByAddress.set(company.address_id, companies);
-  }
-
   const statsRow = statsRows[0];
   const stats = {
     reviewable: Number(statsRow?.reviewable ?? 0),
@@ -317,6 +316,7 @@ export async function searchAddressQualityQueue(options: {
 
   return {
     rows: databaseRows.map((row) => ({
+      companyId: row.company_id,
       addressId: row.address_id,
       displayAddress: row.display_address,
       representativeSource: row.representative_source,
@@ -342,7 +342,12 @@ export async function searchAddressQualityQueue(options: {
       sourceUrl: row.source_url,
       sourceSnapshotAt: row.source_snapshot_at,
       matchedAt: row.matched_at,
-      companies: companiesByAddress.get(row.address_id) ?? [],
+      companies: [
+        {
+          companyId: row.company_id,
+          companyName: companyNames.get(row.company_id) || row.company_id,
+        },
+      ],
     })),
     stats,
     total: query

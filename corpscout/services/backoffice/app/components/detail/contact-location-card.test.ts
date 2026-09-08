@@ -9,6 +9,7 @@ import {
   canRequestInteractiveGeocode,
   foreignAddressBadgeText,
   geocodeCountryCodeForAddress,
+  isOpenStreetMapGeocode,
   storedAddressGeocode,
 } from "~/components/detail/contact-location-card";
 import type { AddressRow } from "~/lib/queries.server";
@@ -410,5 +411,17 @@ describe("canonical address source evidence", () => {
     );
 
     expect(html).toContain("Source records (2)");
+  });
+});
+
+describe("geocode provider recognition", () => {
+  it("treats every OpenStreetMap-derived provider as OSM", () => {
+    // The entity's own values, then the retired chain's two spellings.
+    expect(isOpenStreetMapGeocode("osm")).toBe(true);
+    expect(isOpenStreetMapGeocode("centroid_fallback")).toBe(true);
+    expect(isOpenStreetMapGeocode("openstreetmap")).toBe(true);
+    expect(isOpenStreetMapGeocode("")).toBe(false);
+    expect(isOpenStreetMapGeocode(undefined)).toBe(false);
+    expect(isOpenStreetMapGeocode("nominatim")).toBe(false);
   });
 });

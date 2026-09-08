@@ -71,9 +71,19 @@ function columns(): ColumnDef<AddressQualityRow, unknown>[] {
     {
       id: "address",
       header: "Address identity",
+      // The entity publishes one row per company and address, so a queue row
+      // opens that company's Address tab with this address selected -- the
+      // page where the address can actually be corrected.
       cell: ({ row }) => (
         <div className="flex max-w-[28rem] flex-col gap-1">
-          <span className="font-medium">{row.original.displayAddress}</span>
+          <Link
+            to={`/admin/se/company/${encodeURIComponent(
+              row.original.companyId,
+            )}/address?address=${encodeURIComponent(row.original.addressId)}`}
+            className="font-medium underline-offset-2 hover:underline"
+          >
+            {row.original.displayAddress}
+          </Link>
           <span
             className="text-muted-foreground max-w-72 truncate font-mono text-xs"
             title={row.original.addressId}

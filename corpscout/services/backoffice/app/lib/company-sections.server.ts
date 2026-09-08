@@ -18,6 +18,12 @@ import type {
   WikidataPersonRow,
 } from "~/lib/queries.server";
 
+/**
+ * The published SE address entity (spec 2026-09-06, section 3.3). Slice 4b
+ * renames the table, so the addresses section names it exactly once.
+ */
+const SE_COMPANY_ADDRESS_TABLE = "corpscout.se_company_address_v2";
+
 export const COMPANY_SECTION_NAMES = [
   "gleif",
   "wikidata",
@@ -503,126 +509,135 @@ async function getIndustriesSection(
   return { section: "industries", industries: rows };
 }
 
+/**
+ * The company's published addresses, read straight from the SE address entity
+ * (spec 2026-09-06, section 3.3): one row per company and address, geocode
+ * included, with each contributing source zipped out of the row's parallel
+ * arrays and its raw text read from the suggestion store. Slice 4b renames the
+ * table, so the section names it exactly once.
+ *
+ * Active rows come first, hidden and withdrawn ones after, so the detail page
+ * can badge them once it distinguishes them.
+ *
+ * The entity carries neither an OSM candidate list nor extract provenance, so
+ * the geocode columns the retired serving view supplied are answered with
+ * `''` / `0` / `[]` and the section's public type stays as it is.
+ */
 async function getAddressesSection(
   id: string,
 ): Promise<Extract<CompanySectionData, { section: "addresses" }>> {
-  type AddressLinkRow = Pick<AddressRow, "address_type"> &
-    Partial<AddressRow> & {
-      address_id: string;
-      canonical_address_key: string;
-    };
-  type AddressOwnedRow = Pick<AddressRow, "full_address"> &
-    Partial<AddressRow> & { address_id: string };
-  type AddressGeocodeRow = Partial<AddressRow> & { address_id: string };
-  type AddressMemberRow = NonNullable<AddressRow["source_members"]>[number] & {
-    canonical_address_key: string;
+  /** One published address; `members` is `[source, slot, normalized_id]`. */
+  type AddressPublishedRow = Omit<AddressRow, "source_members"> & {
+    address_id: string;
+    members: [string, string, string][];
   };
-  const [links, members] = await Promise.all([
-    chQuery<AddressLinkRow>(
-      `SELECT
-       toString(address_id) AS address_id,
-       toString(canonical_address_key) AS canonical_address_key,
-       if(length(address_types) > 0, address_types[1], 'address') AS address_type,
-       address_types,
-       address_sources,
-       evidence_count AS address_member_count
-     FROM corpscout.se_company_address_links_current
-     PREWHERE company_id = {id:String}
-     ORDER BY address_type, address_id`,
-      { id },
-    ),
-    chQuery<AddressMemberRow>(
-      `SELECT
-         canonical_address_key,
-         address_key,
-         address_type,
-         address_source,
-         raw_address,
-         display_address,
-         street_name,
-         house_number,
-         unit AS address_unit,
-         registry_source_record_uid,
-         registry_source_run_id,
-         toString(source_observed_at) AS source_observed_at
-       FROM corpscout.se_company_address_members_current
-       PREWHERE company_id = {id:String}
-       ORDER BY canonical_address_key, address_source, address_type, address_key`,
-      { id },
-    ),
-  ]);
-  if (links.length === 0) return { section: "addresses", addresses: [] };
-
-  const addressIds = links.map((link) => link.address_id);
-  const [addressRows, geocodeRows] = await Promise.all([
-    chQuery<AddressOwnedRow>(
-      `SELECT
-         toString(address_id) AS address_id,
-         canonical_display_address AS full_address,
-         country_code AS address_country_code,
-         toUInt8(address_kind = 'foreign') AS address_is_foreign,
-         canonical_display_address AS geocode_address,
-         street_address AS geocode_street,
-         street_name,
-         house_number,
-         unit AS address_unit,
-         postal_code AS geocode_postal_code
-       FROM corpscout.se_addresses_current
-       PREWHERE address_id IN {address_ids:Array(String)}`,
-      { address_ids: addressIds },
-    ),
-    chQuery<AddressGeocodeRow>(
-      `SELECT
-         toString(address_id) AS address_id,
-         latitude,
-         longitude,
-         match_status AS geocode_status,
-         geocode_provider,
-         geocode_precision,
-         match_method AS geocode_match_method,
-         match_confidence AS geocode_match_confidence,
-         candidate_count AS geocode_candidate_count,
-         candidate_record_urls AS geocode_candidate_record_urls,
-         ifNull(coordinate_locality, '') AS geocode_coordinate_locality,
-         coordinate_supporting_point_count
-           AS geocode_coordinate_supporting_point_count,
-         coordinate_spread_meters AS geocode_coordinate_spread_meters,
-         ifNull(source_record_id, '') AS geocode_source_record_id,
-         ifNull(source_record_url, '') AS geocode_source_record_url,
-         ifNull(source_url, '') AS geocode_source_url,
-         ifNull(source_object_key, '') AS geocode_source_object_key,
-         ifNull(source_md5, '') AS geocode_source_md5,
-         ifNull(toString(source_snapshot_at), '') AS geocode_source_snapshot_at,
-         ifNull(toString(source_retrieved_at), '') AS geocode_source_retrieved_at,
-         geocode_run_id AS geocode_source_run_id,
-         toString(matched_at) AS geocode_matched_at
-       FROM corpscout.se_address_geocodes_current
-       PREWHERE address_id IN {address_ids:Array(String)}`,
-      { address_ids: addressIds },
-    ),
-  ]);
-  const addressById = new Map(addressRows.map((row) => [row.address_id, row]));
-  const geocodeById = new Map(geocodeRows.map((row) => [row.address_id, row]));
-  const membersByCanonicalAddress = new Map<string, AddressMemberRow[]>();
-  for (const member of members) {
-    const group = membersByCanonicalAddress.get(member.canonical_address_key);
-    if (group) group.push(member);
-    else membersByCanonicalAddress.set(member.canonical_address_key, [member]);
+  /** One raw suggestion, keyed by the published row's (source, slot) pair. */
+  interface AddressRawRow {
+    address_source: string;
+    slot: string;
+    address_type: string;
+    raw_address: string;
+    structured_address: string;
+    registry_source_record_uid: string;
+    registry_source_run_id: string;
+    source_observed_at: string;
   }
-  const addresses = links.map((link): AddressRow => {
-    const address = addressById.get(link.address_id);
-    const geocode = geocodeById.get(link.address_id);
-    if (!address || !geocode)
-      throw new Error(`Incomplete address-owned data for ${link.address_id}`);
-    return {
-      ...link,
-      ...address,
-      ...geocode,
-      source_members: (
-        membersByCanonicalAddress.get(link.canonical_address_key) ?? []
-      ).map(({ canonical_address_key: _, ...member }) => member),
-    };
-  });
+  const [published, rawSuggestions] = await Promise.all([
+    chQuery<AddressPublishedRow>(
+      `SELECT
+         toString(address.address_key) AS address_id,
+         toString(address.address_key) AS canonical_address_key,
+         if(length(address.kinds) > 0, toString(address.kinds[1]), 'address') AS address_type,
+         arrayMap(x -> toString(x), address.kinds) AS address_types,
+         arrayMap(x -> toString(x), address.sources) AS address_sources,
+         toUInt64(length(address.sources)) AS address_member_count,
+         arrayZip(
+           arrayMap(x -> toString(x), address.sources),
+           address.slots,
+           arrayMap(x -> toString(x), address.normalized_ids)
+         ) AS members,
+         address.normalized_address AS full_address,
+         toString(address.country_code) AS address_country_code,
+         toUInt8(address.geocode_status = 'foreign') AS address_is_foreign,
+         replaceRegexpOne(address.normalized_address, ',\\\\s*[0-9]{3} [0-9]{2}[^,]*$', '') AS geocode_street,
+         ifNull(address.street_name, '') AS street_name,
+         ifNull(address.house_number, '') AS house_number,
+         ifNull(address.unit, '') AS address_unit,
+         ifNull(address.postal_code, '') AS geocode_postal_code,
+         address.latitude AS latitude,
+         address.longitude AS longitude,
+         toString(address.geocode_status) AS geocode_status,
+         multiIf(
+           address.geocode_status = 'matched_area', 'centroid_fallback',
+           address.latitude IS NULL, '',
+           'osm'
+         ) AS geocode_provider,
+         toString(address.geocode_precision) AS geocode_precision,
+         toString(address.geocode_method) AS geocode_match_method,
+         ifNull(address.geocode_confidence, 0) AS geocode_match_confidence,
+         toUInt64(0) AS geocode_candidate_count,
+         CAST([], 'Array(String)') AS geocode_candidate_record_urls,
+         ifNull(address.city, '') AS geocode_coordinate_locality,
+         toUInt64(0) AS geocode_coordinate_supporting_point_count,
+         '' AS geocode_source_record_id,
+         '' AS geocode_source_record_url,
+         '' AS geocode_source_url,
+         '' AS geocode_source_object_key,
+         '' AS geocode_source_md5,
+         '' AS geocode_source_snapshot_at,
+         '' AS geocode_source_retrieved_at,
+         '' AS geocode_source_run_id,
+         ifNull(toString(address.geocoded_at), '') AS geocode_matched_at
+       FROM ${SE_COMPANY_ADDRESS_TABLE} AS address FINAL
+       PREWHERE address.company_id = {id:String}
+       ORDER BY address.active DESC, address.inactive_reason, address.normalized_address`,
+      { id },
+    ),
+    chQuery<AddressRawRow>(
+      `SELECT
+         toString(raw.source) AS address_source,
+         raw.slot AS slot,
+         toString(raw.kind) AS address_type,
+         ifNull(raw.raw_address, '') AS raw_address,
+         arrayStringConcat(
+           arrayFilter(part -> part != '', [
+             if(ifNull(raw.care_of, '') != '', concat('c/o ', raw.care_of), ''),
+             ifNull(raw.street_address, ''),
+             trimBoth(concat(ifNull(raw.postal_code, ''), ' ', ifNull(raw.post_town, '')))
+           ]),
+           ', '
+         ) AS structured_address,
+         raw.source_record_uid AS registry_source_record_uid,
+         raw.source_run_id AS registry_source_run_id,
+         toString(raw.observed_at) AS source_observed_at
+       FROM corpscout.se_company_address_suggestion AS raw FINAL
+       PREWHERE raw.company_id = {id:String}
+       ORDER BY raw.source, raw.slot`,
+      { id },
+    ),
+  ]);
+  const rawByMember = new Map(
+    rawSuggestions.map((row) => [`${row.address_source}|${row.slot}`, row]),
+  );
+  const addresses = published.map(({ members, ...row }): AddressRow => ({
+    ...row,
+    // A source delivers either a raw line (Bolagsverket) or the structured
+    // fields (SCB, Ratsit), never both, so the readable line is composed and
+    // the raw one shown next to it only when it says something different.
+    source_members: members.map(([source, slot, normalizedId]) => {
+      const raw = rawByMember.get(`${source}|${slot}`);
+      return {
+        address_key: normalizedId,
+        address_type: raw?.address_type || row.address_type,
+        address_source: source,
+        raw_address: raw?.raw_address ?? "",
+        display_address: raw?.structured_address || raw?.raw_address || "",
+        registry_source_record_uid: raw?.registry_source_record_uid ?? "",
+        registry_source_run_id: raw?.registry_source_run_id ?? "",
+        source_observed_at: raw?.source_observed_at ?? "",
+      };
+    }),
+  }));
   return { section: "addresses", addresses };
 }
 

@@ -832,9 +832,12 @@ describe("addresses", () => {
         },
       ],
     });
+    // The addresses section reads the published address entity, whose display
+    // line is the normalizer's (spaced postcode, title-cased town), not the
+    // registry's shouted one that the retired chain passed through.
     expect(addressSection).toMatchObject({
       section: "addresses",
-      addresses: [{ full_address: "Åbyvägen 215, 23173 ANDERSLÖV" }],
+      addresses: [{ full_address: "Åbyvägen 215, 231 73 Anderslöv" }],
     });
   }, 30_000);
 
