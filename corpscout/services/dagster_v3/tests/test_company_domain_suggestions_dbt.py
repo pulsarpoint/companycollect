@@ -91,7 +91,7 @@ def test_sweden_company_match_features_are_normalized_and_technology_independent
         "se_companies",
         "se_scb_companies",
         "se_bolagsverket_companies",
-        "se_company_address_v2",
+        "se_company_address",
         "se_industries",
         "gleif_lei_records",
     ):
@@ -99,6 +99,9 @@ def test_sweden_company_match_features_are_normalized_and_technology_independent
     # Slice 4a (2026-09-08): the retired se_company_addresses_current projection is gone
     # from this model; address_features reads the address entity, active rows only.
     assert "source('corpscout', 'se_company_addresses_current')" not in model_sql
+    # Slice 4b (2026-09-08): the address entity table was renamed from se_company_address_v2
+    # to se_company_address by migration 000393.
+    assert "source('corpscout', 'se_company_address_v2')" not in model_sql
     assert "addresses.active = 1" in model_sql
     # The street argument is built from the row's COMPONENTS, never carved out of the
     # display line: the line can carry a `c/o Name` prefix, and the web side normalizes the

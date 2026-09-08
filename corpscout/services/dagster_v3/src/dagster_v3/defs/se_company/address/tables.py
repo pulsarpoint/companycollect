@@ -1,9 +1,10 @@
-"""Table names and column tuples of the address entity, pinned against migrations 000382-000387."""
+"""Table names and column tuples of the address entity, pinned against migrations
+000382-000387; the main table was built as `se_company_address_v2` and renamed by 000393."""
 
 DATABASE = "corpscout"
 SUGGESTION_TABLE = "se_company_address_suggestion"
 NORMALIZED_TABLE = "se_company_address_normalized"
-MAIN_TABLE = "se_company_address_v2"
+MAIN_TABLE = "se_company_address"
 HISTORY_TABLE = "se_company_address_history"
 RULE_TABLE = "se_company_address_rule"
 PRECEDENCE_TABLE = "se_company_address_precedence"

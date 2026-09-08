@@ -48,7 +48,6 @@ sources:
       - name: se_bolagsverket_financial_metrics
       - name: se_industries
       - name: nace_categories
-      - name: se_company_addresses_current
-      - name: se_company_address_v2
+      - name: se_company_address
       - name: se_company_address_suggestion
       - name: company_domain_current

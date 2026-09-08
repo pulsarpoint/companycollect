@@ -212,7 +212,7 @@ def targeted_fold(
     metadata={"table": tables.QUALIFIED_MAIN_TABLE, "history_table": tables.QUALIFIED_HISTORY_TABLE},
     description=(
         "Folds the current normalized address rows of the companies in one of 64 hash "
-        "buckets into se_company_address_v2: compatible suggestions merge into one "
+        "buckets into se_company_address: compatible suggestions merge into one "
         "published address, hide rules deactivate, previously published keys without a "
         "candidate are withdrawn, and every candidate gets its geocode from the cache or "
         "the OSM matcher inside the page. Takes the OSM workbench pool so an extract swap "

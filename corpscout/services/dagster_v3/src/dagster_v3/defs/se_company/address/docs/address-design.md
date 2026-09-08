@@ -6,7 +6,7 @@ everything past the modules below -- the backoffice Address tab, parity and the 
 
 | Module | Responsibility |
 | --- | --- |
-| `tables.py` | Table names and column tuples, pinned against migrations 000382-000387 |
+| `tables.py` | Table names and column tuples, pinned against migrations 000382-000387; the main table was built as `se_company_address_v2` and renamed by 000393 |
 | `normalize_se.py` | `normalize_se_address`: pure Swedish parser -- splits, folds and classifies; never expands abbreviations, corrects spelling or guesses a house number (that is the geocoder's job) |
 | `normalize.py` | The normalize step's SQL (`changed_scope_sql`, `changed_rows_sql`, `all_scope_sql`, `all_rows_sql`, `normalized_insert_sql`) and the paging/write loop (`normalize_all`, `normalize_companies`) |
 | `assets.py` | The Dagster assets: `se_company_address_normalize`, `se_company_address_precedence_clickhouse`, `se_company_address_fold`, `se_company_address_fold_companies` |

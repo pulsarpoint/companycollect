@@ -119,7 +119,8 @@ lei_features AS (
       )
 ),
 
--- Slice 4a (2026-09-08) reads the address entity instead of the retired
+-- Slice 4a (2026-09-08) reads the address entity (se_company_address, renamed from
+-- se_company_address_v2 by migration 000393) instead of the retired
 -- se_company_addresses_current projection. The entity's normalized_address is a display
 -- line, not a matching string, so the street argument is built from the row's own
 -- COMPONENTS instead: the box (rendered `Box N`, the display convention) when there is
@@ -154,7 +155,7 @@ address_features AS (
         ) }} AS normalized_value,
         addresses.normalized_address AS raw_value,
         concat(toString(addresses.text_source), '.', arrayStringConcat(arrayMap(x -> toString(x), addresses.kinds), '|')) AS source_field
-    FROM {{ source('corpscout', 'se_company_address_v2') }} AS addresses FINAL
+    FROM {{ source('corpscout', 'se_company_address') }} AS addresses FINAL
     INNER JOIN companies USING (company_id)
     WHERE addresses.active = 1
       AND addresses.normalized_address != ''
