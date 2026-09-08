@@ -83,10 +83,26 @@
 - [x] **Step 2 (owner):** dbt-state refresh + light_sync deploy. (Deployed 20:17 UTC, host verified in sync, no dbt change so no refresh needed.)
 - [x] **Step 3:** materialise `se_company_basic_info_precedence_clickhouse`. (Run 52b3dc6c, 32 global pairs, the two economic_activity rows present.)
 - [x] **Step 4:** launch `se_basic_info_suggestions_scb` with `execute: true, since: "2000-01-01T00:00:00Z"`. (Run 2dfcbf0e: all 1,818,909 SCB rows are scb-v2: 1,366,111 active, 326,980 never, 125,818 ceased.)
-- [ ] **Step 5:** backfill all 64 partitions of `se_company_basic_info_fold`.
-- [ ] **Step 6:** smoke `http://localhost:5183/admin/se/company/5020077862/info?field=economic_activity` and `http://localhost:5183/company/se/5020077862`; count the three values on the main table.
+- [x] **Step 5:** backfill all 64 partitions of `se_company_basic_info_fold`. (Backfill heuqqgli, 64/64 SUCCESS, 1,818,909 history rows name the field.)
+- [x] **Step 6:** smoke `http://localhost:5183/admin/se/company/5020077862/info?field=economic_activity` and `http://localhost:5183/company/se/5020077862`; count the three values on the main table.
 
 ## Verification record (2026-09-08)
 
 - Dagster: 3286 passed, 4 failed (the pre-existing four), 1 skipped; `dg check defs` clean; the clickhouse-local extractor test replays 000394 (17 passed).
 - Backoffice: typecheck clean; the six field tests green (129 tests); the full suite's only new failures are the live SE queries selecting the unapplied column (expected until Task 7 step 1), the rest are the known timeouts and the ESEF tab test.
+
+## Rollout record (2026-09-08, UTC)
+
+- ~20:20 000394 applied by the owner (a first "applied" never reached the server; verified by the ledger and system.columns). Merged `9cb548f4d`.
+- 20:17 light_sync deployed (host verified identical to main, scb-v2 on the host).
+- Run `52b3dc6c` precedence export: 32 global pairs. Run `2dfcbf0e` SCB re-extract with `since`: all 1,818,909 SCB rows scb-v2.
+- Backfill `heuqqgli`: 64/64 buckets, no failure. Main table after the fold:
+
+| economic_activity | companies | of which status active |
+|---|---|---|
+| active | 1,366,111 | 1,325,643 |
+| never | 326,980 | 152,274 |
+| ceased | 125,818 | 87,499 |
+| '' (not filed by SCB) | 1,704,649 | 4,969 |
+
+- Smoke: public SE page and the Info tab (`?field=economic_activity`) render "Economic activity: Active" for Handelsbanken (SCB), status active (Bolagsverket).
