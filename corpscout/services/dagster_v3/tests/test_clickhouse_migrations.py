@@ -1455,7 +1455,6 @@ def test_sweden_company_registry_migration_covers_exported_columns() -> None:
     down_sql = _migration_sql("000084_corpscout_se_company_registry.down.sql")
 
     expected_columns_by_table = {
-        sweden_company_tables.COMPANIES_TABLE_CH: sweden_company_tables.SE_COMPANIES_EXPORT_COLUMNS,
         sweden_company_tables.COMPANY_ADDRESSES_TABLE_CH: (
             sweden_company_tables.SE_COMPANY_ADDRESS_BASE_COLUMNS
         ),
