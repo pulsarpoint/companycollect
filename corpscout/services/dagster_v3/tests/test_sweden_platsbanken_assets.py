@@ -116,7 +116,7 @@ def test_company_projection_requires_all_history_sources_and_company_spine() -> 
         dg.AssetKey("sweden_platsbanken_historical_clickhouse"),
         dg.AssetKey("sweden_platsbanken_jobstream_snapshot_clickhouse"),
         dg.AssetKey("sweden_platsbanken_jobstream_events_clickhouse"),
-        dg.AssetKey("sweden_company_companies_clickhouse"),
+        dg.AssetKey("se_company_basic_info_fold"),
     }
 
 

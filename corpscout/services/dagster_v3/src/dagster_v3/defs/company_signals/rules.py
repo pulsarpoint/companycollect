@@ -56,7 +56,7 @@ TED_SOURCE = "ted_procurement"
 class CountryProcurementRule:
     """How one country's government-contract evidence is assembled.
 
-    company_id_column differs per register -- se_companies keys on company_id,
+    company_id_column differs per register -- se_company_basic_info keys on company_id,
     no_companies on org_number -- and identifier_length is the national company
     number's digit count, used to reject TED winner ids that cannot be one.
     """
@@ -97,7 +97,7 @@ class CountryProcurementRule:
 COUNTRY_PROCUREMENT_RULES: dict[str, CountryProcurementRule] = {
     "SE": CountryProcurementRule(
         country_code="SE",
-        companies_table="se_companies",
+        companies_table="se_company_basic_info",
         company_id_column="company_id",
         identifier_length=10,
         ted_winner_countries=("SE", "SWE"),

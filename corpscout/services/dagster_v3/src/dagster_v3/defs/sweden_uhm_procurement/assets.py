@@ -133,7 +133,7 @@ def sweden_uhm_procurement_awards_duckdb(
     name="sweden_uhm_procurement_awards_clickhouse",
     deps=[
         dg.AssetKey("sweden_uhm_procurement_awards_duckdb"),
-        dg.AssetKey("sweden_company_companies_clickhouse"),
+        dg.AssetKey("se_company_basic_info_fold"),
     ],
     group_name=tables.GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse"},
@@ -141,7 +141,7 @@ def sweden_uhm_procurement_awards_duckdb(
     metadata={"table": tables.QUALIFIED_AWARDS_TABLE},
     description=(
         "Publishes every normalized UHM supplier-award observation for market "
-        "analysis and annotates exact ten-digit se_companies matches. Only exact "
+        "analysis and annotates exact ten-digit se_company_basic_info matches. Only exact "
         "matches can feed company-level government-contract evidence."
     ),
 )

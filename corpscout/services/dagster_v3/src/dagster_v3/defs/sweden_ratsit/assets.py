@@ -59,7 +59,7 @@ RATSIT_PARSER_VERSION = "ratsit-html-v1"
 RATSIT_BROWSER_POOL = "sweden_ratsit_browser"
 RATSIT_NORMALIZE_POOL = "sweden_ratsit_normalize"
 RATSIT_CLICKHOUSE_DATABASE = "corpscout"
-RATSIT_ACTIVE_COMPANIES_TABLE = "se_companies"
+RATSIT_ACTIVE_COMPANIES_TABLE = "se_company_basic_info"
 RATSIT_RESULT_TABLE = "se_company_ratsit"
 RATSIT_BUCKET_COUNT = 128
 RATSIT_UNAVAILABLE_LEGAL_FORM_CODES = ("E-ORGFO", "10")
@@ -1007,7 +1007,7 @@ def _require_aware_timestamp(value: datetime, *, label: str) -> None:
 
 
 @dg.asset(
-    deps=[dg.AssetKey("sweden_company_companies_clickhouse")],
+    deps=[dg.AssetKey("se_company_basic_info_fold")],
     group_name="sweden_ratsit",
     kinds={"python", "browser", "html", "json", "s3", "clickhouse", "ratsit"},
     tags={
@@ -1021,7 +1021,7 @@ def _require_aware_timestamp(value: datetime, *, label: str) -> None:
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     pool=RATSIT_BROWSER_POOL,
     description=(
-        "Selects one of 128 stable CRC32 buckets from active corpscout.se_companies, "
+        "Selects one of 128 stable CRC32 buckets from active corpscout.se_company_basic_info, "
         "skips companies successfully fetched in the previous 30 days using "
         "ClickHouse fetched_at or an existing valid S3 report's LastModified, and "
         "skips prior not-found and non-429 failure results unless explicitly eligible. "

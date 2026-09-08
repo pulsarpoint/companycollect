@@ -310,7 +310,7 @@ def company_history_insert_sql(
             interval.is_end_estimated
     ), company AS (
         SELECT company_id
-        FROM corpscout.se_companies FINAL
+        FROM corpscout.se_company_basic_info FINAL
         WHERE length(company_id) = 10
         GROUP BY company_id
     )
@@ -458,7 +458,7 @@ def publish_company_job_projections(
             tables.VERSIONS_TABLE,
             tables.EVENTS_TABLE,
             *targets,
-            "se_companies",
+            "se_company_basic_info",
         ),
     )
     stages = {target: f"_tmp_{target}_{uuid.uuid4().hex}" for target in targets}

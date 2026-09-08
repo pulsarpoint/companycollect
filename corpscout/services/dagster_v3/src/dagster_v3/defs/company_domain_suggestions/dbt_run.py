@@ -24,7 +24,7 @@ def complete_sweden_dbt_discovery_run(
     }
     company_count = _scalar(
         clickhouse_client,
-        "SELECT count() FROM corpscout.se_companies FINAL WHERE company_id != ''",
+        "SELECT count() FROM corpscout.se_company_basic_info FINAL WHERE company_id != ''",
         params,
     )
     identifier_candidate_pair_count = _scalar(

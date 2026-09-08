@@ -114,7 +114,7 @@ def uhm_awards_insert_sql(*, candidate_table: str, awards_stage: str) -> str:
         u.source_retrieved_at,
         u.resolved_at
     FROM {candidate_table} AS u
-    LEFT ANY JOIN corpscout.se_companies AS c
+    LEFT ANY JOIN corpscout.se_company_basic_info AS c
         ON c.company_id = u.supplier_id_normalized
     """
 
@@ -125,11 +125,11 @@ def export_uhm_awards_clickhouse(
     clickhouse: ClickhouseResource,
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
-    """Publish every UHM observation and annotate exact ``se_companies`` matches."""
+    """Publish every UHM observation and annotate exact ``se_company_basic_info`` matches."""
     assert_clickhouse_tables_exist(
         clickhouse,
         database=tables.CLICKHOUSE_DATABASE,
-        tables=(tables.AWARDS_TABLE, "se_companies"),
+        tables=(tables.AWARDS_TABLE, "se_company_basic_info"),
     )
     candidate_stage = f"_tmp_uhm_candidates_{uuid.uuid4().hex}"
     awards_stage = f"_tmp_{tables.AWARDS_TABLE}_{uuid.uuid4().hex}"
@@ -165,7 +165,7 @@ def export_uhm_awards_clickhouse(
                         AND c.company_id = ''
                     )
                 FROM {qualified_candidates} AS u
-                LEFT ANY JOIN corpscout.se_companies AS c
+                LEFT ANY JOIN corpscout.se_company_basic_info AS c
                     ON c.company_id = u.supplier_id_normalized
                 """
             )
