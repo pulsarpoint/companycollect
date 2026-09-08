@@ -550,6 +550,28 @@ The corrections queue page keeps reading the old ledger until the cutover retire
    `P:203` and bare three-digit trailing numbers ("Georg Lückligs väg 10 B 303") are units,
    today dropped with a `dropped trailing text` note (65,958 rows, 61,073 of them street
    lines).
+   Half 2b shipped 2026-09-08 (plan `2026-09-06-se-company-address-2b-fold.md`, main
+   e6ede020 plus the warm step): `precedence.py` and the precedence export (4 pairs),
+   `fold.py` (compatibility grouping over the union of members, hide rules, withdrawal, one
+   key per set), `batch.py` (selection, 20,000-company pages, in-page geocoding, history
+   before main), the two fold assets on the OSM workbench pool, and three production
+   findings fixed on the way: the matcher's input insert committed and synced the
+   write-ahead log per row (0.28 s each, 66 to 112 minutes per page) and now runs as one
+   Arrow-backed statement; `executemany` inside one transaction exhausted DuckDB's 97 GiB
+   buffer pool at 462,683 rows; and the fuzzy reference postings are cached per extract
+   beside the reference documents. The OSM extract had moved on 2026-09-01, so every
+   adopted cache row was a miss under the hit rule: `se_address_geocodes_warm` (section
+   6) matched 1,923,611 of 2,078,107 location keys in fourteen 150,000-key chunks in
+   5 h 37 min (a 500,000-key chunk ran out of memory), after which the 63-bucket backfill
+   took about 74 s per bucket. Prod: 3,738,245 published rows for 3,495,746 companies, all
+   active, 934,850 merged from several sources (bolagsverket+scb 879,561), history equal to
+   main, no key twice; text_source bolagsverket 2,815,130 / scb 897,197 / ratsit 25,918;
+   geocode_status matched_area 41.3% (centroids: city 1,129,165, postcode 409,724),
+   matched_exact 22.4%, matched_street 19.3%, matched_corrected 11.6%, unmatched 2.2%,
+   matched_site 1.2%, foreign 1.1%, ambiguous 0.6%, postal_box 0.2%, property_identifier
+   0.1%; the store holds 10,561,329 rows (2,071,102 entity rows on extract e0a25a1b,
+   2,019,120 adopted) and the hourly serving refresh takes 432 s. Re-running a folded
+   bucket selects nothing.
 3. Backoffice: the Address tab on the new tables.
 4. Cutover: parity, reader switch, retirement.
 
