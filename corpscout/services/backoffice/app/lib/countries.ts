@@ -769,7 +769,7 @@ LIMIT 100`,
     features: ["financials", "industries"],
     industryJoinKeyExpr: "company_id",
     placeQuery: `SELECT toString(company_id) AS company_id,
-            argMax(ifNull(city, ''), has(kinds, 'postal')) AS place
+            argMax(coalesce(nullIf(extract(normalized_address, '[0-9]{3} [0-9]{2} ([^,]+)$'), ''), initcapUTF8(ifNull(city, ''))), has(kinds, 'postal')) AS place
      FROM ${SE_COMPANY_ADDRESS_TABLE} FINAL
      WHERE company_id IN {ids:Array(String)} AND active = 1
      GROUP BY company_id`,
