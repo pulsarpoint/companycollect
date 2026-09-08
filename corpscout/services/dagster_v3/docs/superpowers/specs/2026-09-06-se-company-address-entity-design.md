@@ -590,6 +590,48 @@ The corrections queue page keeps reading the old ledger until the cutover retire
    tombstones the reviewer slots; a company with no rows still gets the tab; the old
    address modules stay until the cutover. Owner smoke 2026-09-08: good.
 4. Cutover: parity, reader switch, retirement.
+   Slice 4a shipped 2026-09-08 (plan `2026-09-08-se-company-address-4a-readers.md`, main
+   a4e8079f; the rename and the retirement follow as 4b and 4c): normalizer v3
+   (`se-address-normalizer-v3`: a valid postcode with a known town and no street or box is a
+   `partial` row with its care-of kept and a display line composed, foreign rows carry a
+   display line, 00000 and 99999 are invalid); the warm step joins the weekly geocoding job
+   downstream of the OSM refresh so every new extract is matched before the next fold (owner
+   choice); the readers switched by constant: the served company view (migration 000392, a
+   staged swap onto `se_company_address_v2` with the served-overlay join gone, the provider
+   derived from the status, the street part cut from the published line, a has_location rank
+   ahead of the kind ranks in the primary pick), the dbt section-presence and item-source-link
+   models, the match-features staging model (street from components), the publish
+   reconciliation count, the postcode and city centroid map (from the normalized layer), and
+   the backoffice company sections, address-quality queue, same-building lookup and contact
+   card. Prod: normalize v3 wrote partial 29,254 (25,289 companies), no_address 8,895,
+   foreign 42,126; the extract had moved to b231d743, so the warm step re-matched 2,077,103
+   of 2,084,108 keys in 43 min (reference documents and postings rebuilt in 8 min, then
+   150,000-key chunks at about 2 min 15 s each); the 64-bucket backfill took 2 h 11 min
+   (about 2 min per bucket) and published 3,761,803 rows for 3,516,836 companies (938,316
+   merged, no key twice), 23,558 of them standalone postcode-only rows (matched_area city
+   19,687, postcode 3,032, unmatched 839); geocode_status matched_area 41.6%, matched_exact
+   22.3%, matched_street 19.2%, matched_corrected 11.6%, unmatched 2.2%, matched_site 1.2%,
+   foreign 1.1%, ambiguous 0.6%, postal_box 0.2%, property_identifier 0.1%. Parity against
+   `se_company_address` (`is_current = 1`), key = the alphanumerics of street, number and
+   unit (or the box), postcode and town, the old line minus its `|se`, the new side active and
+   not foreign: 3,478,125 companies on both sides, identical 3,325,278 (95.6%), new superset
+   26,057, old superset 38,626, different 88,164 (2.5%), 45,132 old-only (foreign 36,961,
+   no_address 6,696, both 1,475), none new-only. Thirty different companies reviewed: units
+   kept where the old chain dropped floors written `N tr` (15), care-of separated (10),
+   trailing village or farm words dropped (8), `S:t` punctuation kept (1), the box winning
+   over a street on the same line (2); one candidate normalizer defect, `st tomeg 34 b 330`
+   loses the house letter with the bare trailing number. Old-superset samples are the old
+   chain's `street` and `street lgh N` pairs merged by compatibility; new-superset samples are
+   Ratsit rows carrying the municipality as the town (Malmö beside Oxie) on the same street,
+   number and postcode, kept as a second address: a compatibility follow-up (same street,
+   number and postcode should merge regardless of town, or Ratsit's town should map through
+   the postcode). Migration 000392: the migrate client dropped at `SYSTEM WAIT VIEW` after
+   300 s, the replacement populated in 13.5 min, the RENAME ran by hand and the ledger was
+   forced to 392; the live view holds 3,523,558 rows, 3,516,836 with an address; the
+   companies and geocoding lists, the address tab, the address-quality queue, the public
+   addresses section and the same-building lookup render from the new data. Found on the
+   way: `countries.ts` still reads `se_company_addresses_current` for the generic list's
+   Place column and detail address block (closed in 4b).
 
 **Parity**: per company, the set of active `normalized_address` lines in the new table
 against the current `se_company_address` (`is_current = 1`) lines, classified as identical,
