@@ -9,8 +9,17 @@
 -- view goes first and its two sources follow.
 --
 -- Every drop below is async by default (the client is not told to wait): that default is
--- exactly what leaves the roughly 480-second UNDROP window these drops are gated on. If one
--- turns out to be wrong, run UNDROP TABLE corpscout.<name> inside that window.
+-- exactly what leaves the roughly 480-second UNDROP window these drops are gated on -- for
+-- the nine MergeTree tables. Verified on ClickHouse 26.5: UNDROP TABLE does NOT recover a
+-- refreshable materialized view or a plain view -- it returns "has been dropped, or the
+-- database engine does not support UNDROP" for se_companies_serving_retired (refreshable
+-- MV), se_address_geocodes_served (plain view) and se_address_geocodes_current (refreshable
+-- MV). Recovery for those three is recreation, not UNDROP, and this slice emptied the
+-- recreation DDL for two of them out of the ledger:
+--   * se_address_geocodes_served: git show 65c9c4f1e:corpscout/clickhouse/migrations/000327_corpscout_se_address_geocodes_served_postal_box_fallback.up.sql
+--   * se_address_geocodes_current: git show 65c9c4f1e:corpscout/clickhouse/migrations/000320_corpscout_se_address_geocodes_current_mv.up.sql
+--   * se_companies_serving_retired (the parked serving render): migrations 000391 and
+--     000392, still in the tree.
 --
 -- se_address_geocodes_current is a REFRESHABLE MATERIALIZED VIEW (migration 000320), and
 -- DROP TABLE is what removes one together with its inner MergeTree -- migration 000392 ran

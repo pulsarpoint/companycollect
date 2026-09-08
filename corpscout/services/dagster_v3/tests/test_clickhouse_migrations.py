@@ -413,7 +413,7 @@ NOOP_MIGRATIONS = {"000276_noop"}
 
 # Entries whose objects left the ledger by hand (2026-09-03 and 2026-09-08). Development-phase policy: an unused
 # table is dropped by hand on the server and its DDL leaves the file, which stays for
-# history. Nothing is left for these four to declare, so the "creates something" and
+# history. Nothing is left for these migrations to declare, so the "creates something" and
 # "undoes something" assertions cannot apply -- the database statement is all that remains.
 EMPTIED_MIGRATIONS = {
     "000052_corpscout_lei_wikidata_companies_view",

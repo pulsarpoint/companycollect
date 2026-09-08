@@ -15,7 +15,7 @@ WHERE database = 'corpscout'
       'se_company_address_links_current', 'se_address_geocodes_current'
   );
 
--- The kept objects are all still there -- the point of the whole-name matching. Expect 7.
+-- The kept objects are all still there -- the point of the whole-name matching. Expect 9.
 SELECT count() AS kept_present, groupArray(name) AS kept
 FROM system.tables
 WHERE database = 'corpscout'
@@ -23,7 +23,7 @@ WHERE database = 'corpscout'
       'se_company_address', 'se_company_address_suggestion',
       'se_company_address_normalized', 'se_company_address_history',
       'se_company_address_rule', 'se_company_address_precedence',
-      'se_address_geocodes'
+      'se_address_geocodes', 'se_postcode_centroids', 'se_city_centroids'
   );
 
 -- And the serving view still refreshes. Re-run after the next :45.

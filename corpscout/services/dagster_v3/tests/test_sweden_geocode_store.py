@@ -133,7 +133,7 @@ def test_the_read_projects_the_rank_inputs_even_when_they_were_not_requested() -
 def test_the_read_filters_before_ranking() -> None:
     sql = build_current_geocodes_sql(
         columns=("address_id", "match_status"),
-        address_filter_sql="address_id IN (SELECT location_key FROM corpscout.se_company_address_normalized)")
+        address_filter_sql="address_id IN (SELECT address_key FROM corpscout.se_company_address_normalized)")
     # The filter sits in the INNER query: it prunes on the sorting key's leading column, so
     # a page-sized read touches parts, not all 2.09M identities. Filtering the ranked result
     # would be correct and would pay for the whole store on every page.

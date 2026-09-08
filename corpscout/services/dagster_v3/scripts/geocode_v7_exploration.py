@@ -222,6 +222,7 @@ def refresh_control_pool(con: Any, *, sample_permille: int) -> int:
     servable = build_current_geocodes_sql(
         columns=["address_id", "match_status", "candidate_record_ids", "policy_version"]
     )
+    # Input retired in slice 4c: corpscout.se_addresses_current is dropped; this pull no longer runs.
     sql = f"""
         with g as (
             select address_id, match_status, candidate_record_ids, policy_version

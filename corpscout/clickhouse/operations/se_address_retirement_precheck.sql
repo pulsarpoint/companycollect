@@ -3,9 +3,10 @@
 --
 -- Gate 1: nothing left in ClickHouse reads any of these. The match is on a FROM or a JOIN,
 -- so a provenance string literal in a view body cannot hold the gate open, and the trailing
--- character class stops corpscout.se_company_address (the entity, KEPT) from matching the
--- se_company_address_legacy alternative -- the alternatives are ordered longest-first for
--- the same reason.
+-- boundary class ([^_a-zA-Z0-9]|$) is what stops corpscout.se_company_address (the entity,
+-- KEPT) from matching the se_company_address_legacy alternative on a prefix hit -- it rules
+-- out a prefix match regardless of which alternative matches first, so the order the
+-- alternatives are listed in below is irrelevant.
 SELECT count() = 0 AS no_readers, groupArray(name) AS readers
 FROM system.tables
 WHERE database = 'corpscout'
