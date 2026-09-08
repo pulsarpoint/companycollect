@@ -63,18 +63,49 @@ def test_no_address_rows_share_the_empty_identity_key() -> None:
     assert address_key(a) == address_key(b)
 
 
-def test_a_care_of_only_row_has_the_empty_identity_key() -> None:
-    """M1: a raw row with only a care-of (no street) must carry the empty identity's key
-    like every other no_address row, not the care-of/postcode/city it happened to have."""
+def test_a_care_of_only_row_without_a_postal_part_has_the_empty_identity_key() -> None:
+    """M1, as amended by v3 (2026-09-08): a row with no location at all still carries the
+    empty identity's key rather than the care-of it happened to have. What changed is the
+    reach of "no location": a care-of WITH a valid postcode and a known town is now a
+    `partial` address (test below), so the rows that still fall here are the ones whose
+    postal part is missing or unusable."""
     empty = normalize_se_address(RawAddress())
-    care_of_only = normalize_se_address(
+    care_of_only = normalize_se_address(RawAddress(care_of="SEB, Stiftelser & Företag"))
+    unusable_postcode = normalize_se_address(
+        RawAddress(care_of="SEB, Stiftelser & Företag", postal_code="00000", post_town="Stockholm")
+    )
+    for result in (care_of_only, unusable_postcode):
+        assert result.parse_status == "no_address"
+        assert result.care_of is None
+        assert result.postal_code is None
+        assert result.city is None
+        assert address_key(result) == address_key(empty)
+
+
+def test_v3_a_valid_postcode_with_a_known_town_and_no_street_is_partial() -> None:
+    """v3 (2026-09-08): a big-company postal code (`SEB, STIFTELSER & FÖRETAG, 106 40
+    Stockholm`) is a real, if coarse, address -- the old chain published these 27,786
+    companies, and the entity now does too, geocoded to the postcode centroid. The care-of
+    is kept, every other component stays NULL, and the note says why."""
+    with_care_of = normalize_se_address(
         RawAddress(care_of="SEB, Stiftelser & Företag", postal_code="10640", post_town="Stockholm")
     )
-    assert care_of_only.parse_status == "no_address"
-    assert care_of_only.care_of is None
-    assert care_of_only.postal_code is None
-    assert care_of_only.city is None
-    assert address_key(care_of_only) == address_key(empty)
+    assert with_care_of.parse_status == "partial"
+    assert with_care_of.care_of == "seb, stiftelser & företag"
+    assert (with_care_of.postal_code, with_care_of.city) == ("10640", "stockholm")
+    assert (with_care_of.box, with_care_of.street_name, with_care_of.house_number, with_care_of.unit) == (None,) * 4
+    assert with_care_of.normalized_address == "c/o SEB, Stiftelser & Företag, 106 40 Stockholm"
+    assert "no street or box" in with_care_of.parse_notes
+
+    packed = normalize_se_address(RawAddress(raw_address="$$STOCKHOLM$10011$SE-LAND"))
+    assert (packed.parse_status, packed.care_of) == ("partial", None)
+    assert packed.normalized_address == "100 11 Stockholm"
+
+    # The two ways to fail the rule: no usable postcode, and a town the source itself marks
+    # as unknown. Both stay no_address, as every location-less row did before v3.
+    no_code = normalize_se_address(RawAddress(postal_code="1064", post_town="Stockholm"))
+    unknown_town = normalize_se_address(RawAddress(postal_code="10640", post_town="OKÄND"))
+    assert (no_code.parse_status, unknown_town.parse_status) == ("no_address", "no_address")
 
 
 def test_zero_width_space_is_stripped_before_folding() -> None:
@@ -99,7 +130,7 @@ def test_a_malformed_packed_string_notes_the_part_count() -> None:
 
 
 def test_version_constant() -> None:
-    assert NORMALIZER_VERSION == "se-address-normalizer-v2"
+    assert NORMALIZER_VERSION == "se-address-normalizer-v3"
     assert NormalizedAddress.__slots__  # frozen dataclass with slots, hashable inputs to the fold
 
 
@@ -143,9 +174,10 @@ def test_box_after_care_of_prefix_takes_the_box_branch_not_care_of_street() -> N
 
 def test_display_line_reproduces_every_corpus_line_from_components() -> None:
     """The fold composes a merged address's text from the union of its members'
-    components. For every corpus case whose street is not delivered in mixed case,
-    display_line over the stored components must equal the normalizer's own line;
-    mixed-case streets keep their delivered casing only inside normalize_se_address."""
+    components. For every corpus case whose street and care-of are not delivered in mixed
+    case, display_line over the stored components must equal the normalizer's own line;
+    a mixed-case street or care-of keeps its delivered casing only inside
+    normalize_se_address (which passes `street_display`/`care_of_display`)."""
     from dagster_v3.defs.se_company.address.normalize_se import display_line
 
     checked = 0
@@ -155,9 +187,13 @@ def test_display_line_reproduces_every_corpus_line_from_components() -> None:
             continue
         raw = case["raw"]
         street_source = raw.get("street_address") or ""
+        care_of_source = raw.get("care_of") or ""
         if raw.get("raw_address"):
-            street_source = raw["raw_address"].split("$")[0]
-        if street_source not in ("", street_source.upper(), street_source.lower()):
+            packed = raw["raw_address"].split("$")
+            street_source = packed[0]
+            care_of_source = packed[1] if len(packed) > 1 else ""
+        delivered = (street_source, care_of_source)
+        if any(part not in ("", part.upper(), part.lower()) for part in delivered):
             continue
         composed = display_line(
             care_of=expected["care_of"], box=expected["box"], street_name=expected["street_name"],

@@ -61,10 +61,24 @@ re-normalizes every raw row regardless of any of this.
 - `no_address` -- nothing usable was delivered, or the source marks the address unknown.
 - `foreign` -- the post town says `utlandet`, or the source's own `country_code` isn't `SE`.
 
+Amended 2026-09-08: a valid postcode with a known town and no street or box is a `partial`
+address; the old chain published these 27,786 companies and the new one now does too,
+geocoded to the postcode centroid.
+
+## Parse rules (v3)
+
+`NORMALIZER_VERSION` is `se-address-normalizer-v3`, which is v2 plus that one rule: a row
+whose only usable content is a valid postcode and a known town (`SEB, STIFTELSER &
+FÖRETAG, 106 40 Stockholm` -- a big-company postal code) publishes as a `partial` carrying
+its care-of, postcode and city, noted `no street or box`. Everything else without a box or
+a street stays `no_address`. The fold never glues such a row onto a street candidate
+(`partial_compatible` requires a location line on both sides); two sources delivering the
+same one merge through the twin join, and the geocoder serves it the postcode centroid.
+
 ## Parse rules (v2)
 
-`NORMALIZER_VERSION` is `se-address-normalizer-v2`, adding four rules seen in the prod
-`parse_notes` readout on top of the v1 rules above: a box number may be written with a space
+v2 added four rules seen in the prod `parse_notes` readout on top of the v1 rules above:
+a box number may be written with a space
 (`Box 531 65` parses to box `53165`); a box found after a customer reference or a name
 (`NABO 118849 BOX 843`) is parsed as that box, with the prefix taken as `care_of` when none
 was delivered directly; `plan N`, the roman numerals `ii`/`iii`/`iv`, a bare four-digit

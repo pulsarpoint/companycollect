@@ -110,8 +110,8 @@ class PublishedAddress:
     source_run_id: str
 
     def as_normalized_address(self) -> NormalizedAddress:
-        status = FOREIGN_GEOCODE_STATUS if self.geocode_status == FOREIGN_GEOCODE_STATUS else (
-            "ok" if self.postal_code and self.city else "partial"
+        status = FOREIGN_GEOCODE_STATUS if self.geocode_status == FOREIGN_GEOCODE_STATUS else _parse_status(
+            postal_code=self.postal_code, city=self.city, street_name=self.street_name, box=self.box
         )
         return NormalizedAddress(
             self.care_of, self.box, self.street_name, self.house_number, self.unit, self.postal_code, self.city,
@@ -164,6 +164,14 @@ class FoldResult:
     published: int
     hidden: int
     withdrawn: int
+
+
+def _parse_status(*, postal_code: str | None, city: str | None, street_name: str | None, box: str | None) -> str:
+    """The normalizer's own rule, recomputed over a published row's components (spec
+    section 4): `ok` needs a location line AND both postal parts. The location clause is
+    what normalizer v3 added -- a postcode-only address carries a postcode and a city and
+    is still `partial`, because it has no street and no box."""
+    return "ok" if postal_code and city and (street_name or box) else "partial"
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -238,7 +246,10 @@ def _published_from(candidate: _Candidate, company_id: str, hidden_keys: Set[str
     first = candidate.members[0]
     union = candidate.union
     foreign = first.parse_status == "foreign"
-    status = "foreign" if foreign else ("ok" if union["postal_code"] and union["city"] else "partial")
+    status = "foreign" if foreign else _parse_status(
+        postal_code=union["postal_code"], city=union["city"],
+        street_name=union["street_name"], box=union["box"],
+    )
     identity = NormalizedAddress(
         union["care_of"], union["box"], union["street_name"], union["house_number"], union["unit"],
         union["postal_code"], union["city"], candidate.country_code, "", status, "",
