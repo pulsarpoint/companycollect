@@ -19,10 +19,14 @@ def test_the_job_selects_the_three_extractors_and_the_normalize_asset() -> None:
 
 
 def test_the_weekly_is_registered_stopped_with_execute_and_the_page_size() -> None:
-    schedule = _repo().get_schedule_def("se_company_address_v2_weekly")
+    """The `_v2` interim name existed only to avoid colliding with the old model's schedule,
+    which retired in slice 4b; the extract weekly now carries the canonical name. It stays
+    STOPPED, and it stays extract + normalize only -- the fold is manual by design."""
+    schedule = _repo().get_schedule_def("se_company_address_weekly")
     assert schedule.cron_schedule == "5 7 * * 1"
     assert schedule.default_status == dg.DefaultScheduleStatus.STOPPED
     assert schedule.job_name == "se_company_address_extract_job"
+    assert not any(s.name == "se_company_address_v2_weekly" for s in _repo().schedule_defs)
     ops = jobs.WEEKLY_RUN_CONFIG["ops"]
     for name in assets.EXTRACTOR_ASSET_NAMES:
         assert ops[name] == {"config": {"execute": True, "page_size": jobs.WEEKLY_PAGE_SIZE}}
