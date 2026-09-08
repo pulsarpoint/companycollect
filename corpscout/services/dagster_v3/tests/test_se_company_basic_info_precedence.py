@@ -29,8 +29,11 @@ def test_the_numbers_of_the_spec() -> None:
         "reviewer": 20000, "scb": 1000, "bolagsverket": 900, "ratsit": 300, "wikidata": 200,
     }
     assert BASIC_INFO_PRECEDENCE["legal_form_code"] == {"reviewer": 20000, "scb": 1000, "bolagsverket": 900}
+    # Amended 2026-09-08: Bolagsverket's deregistration is the legal status; SCB's
+    # Företagsstatus is an economic-activity flag and only decides where Bolagsverket
+    # has no record (sole traders and other forms it does not register).
     assert BASIC_INFO_PRECEDENCE["status"] == {
-        "reviewer": 20000, "scb": 1000, "bolagsverket": 900, "ratsit": 300,
+        "reviewer": 20000, "bolagsverket": 1000, "scb": 900, "ratsit": 300,
     }
     assert BASIC_INFO_PRECEDENCE["incorporation_date"] == {
         "reviewer": 20000, "scb": 1000, "bolagsverket": 900, "wikidata": 200,
