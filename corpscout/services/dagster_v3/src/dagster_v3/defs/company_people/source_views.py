@@ -51,7 +51,8 @@ columns on all four upstream tables -- this module reads them, it does not recom
 
 Each view is pinned by a drift test (tests/test_se_company_person_views.py) comparing the
 migration-embedded `CREATE OR REPLACE VIEW` statement against a fresh render of the builder
-below -- the `se_address_geocodes_served` pattern (sweden_company/geocode_serving_overlay.py).
+below -- the same drift-pin pattern the now-retired `se_address_geocodes_served` builder
+used (dropped in slice 4c).
 A builder here is therefore the single source of truth; the migration file is a generated
 rendering of it and must never be hand-edited without also updating the function.
 

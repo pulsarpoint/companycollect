@@ -10,7 +10,7 @@ Serving-overlay architecture (see the plan's Global Constraints): these are
 SEPARATE reference tables, NOT the geocode store. The serving read LEFT-JOINs
 them at read time to fill `unmatched`/`ambiguous`/`postal_box` identities
 (the fallback-eligible statuses; see FALLBACK_ELIGIBLE_STATUSES in
-geocode_serving_overlay.py) that carry a postcode or city; the store itself
+se_company/address/constants.py) that carry a postcode or city; the store itself
 keeps only precise outcomes.
 
 The derivation is the robust median-centroid with a >=3-point quality gate

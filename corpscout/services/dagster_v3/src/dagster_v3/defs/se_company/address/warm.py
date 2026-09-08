@@ -13,9 +13,9 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from dagster_v3.defs.se_company.address import tables
+from dagster_v3.defs.se_company.address.constants import GEOCODE_FALLBACK_PROVIDER
 from dagster_v3.defs.se_company.address.geocode import GEOCODE_QUERY_SETTINGS, geocode_addresses
 from dagster_v3.defs.se_company.address.normalize_se import LOCATION_FIELDS, NormalizedAddress, location_key
-from dagster_v3.defs.sweden_company.geocode_serving_overlay import GEOCODE_FALLBACK_PROVIDER
 from dagster_v3.defs.sweden_company.geocode_store import (
     GEOCODED_STATUSES,
     QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE,

@@ -66,9 +66,7 @@ AB` as its street part, by design.
 
 from datetime import UTC, datetime, timedelta
 
-from dagster_v3.defs.sweden_company.geocode_serving_overlay import (
-    GEOCODE_FALLBACK_PROVIDER,
-)
+from dagster_v3.defs.se_company.address.constants import GEOCODE_FALLBACK_PROVIDER
 from dagster_v3.defs.se_company.common import bolagsverket_record_uid_sql
 from dagster_v3.defs.sweden_company.geocode_store import (
     CLICKHOUSE_DATABASE,

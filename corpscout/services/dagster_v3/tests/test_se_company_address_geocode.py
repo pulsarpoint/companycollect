@@ -1075,3 +1075,48 @@ def test_input_rows_are_inserted_as_one_vectorised_statement(
     with pytest.raises(Exception):
         geocode.insert_input_rows(workbench, table, [rows[0], ("only", "two")])
     assert workbench.execute(f"select count(*) from {table}").fetchone()[0] == 0
+
+
+def test_the_fallback_policy_constants_live_in_the_address_package() -> None:
+    """Slice 4c: the retired serving-overlay module went with the served view it built. The
+    centroid-fallback policy it also held is the address entity's, so it moved here --
+    same values, one importable place, no dependency on the retired module."""
+    from dagster_v3.defs.se_company.address import constants
+
+    assert constants.FALLBACK_ELIGIBLE_STATUSES == ("unmatched", "ambiguous", "postal_box")
+    assert constants.POSTCODE_SPREAD_MAX_METERS == 3000.0
+    assert constants.GEOCODE_FALLBACK_PROVIDER == "centroid_fallback"
+    assert constants.GEOCODE_FALLBACK_COORDINATE_METHOD == "centroid_median"
+    assert constants.POSTCODE_PRECISION == "postcode"
+    assert constants.CITY_PRECISION == "city"
+    assert constants.GEOCODE_FALLBACK_STATUS == "matched_area"
+    assert constants.POSTCODE_CENTROIDS_TABLE == "corpscout.se_postcode_centroids"
+    assert constants.CITY_CENTROIDS_TABLE == "corpscout.se_city_centroids"
+
+
+def test_no_module_imports_the_retired_serving_overlay() -> None:
+    """The served view is dropped in this slice, and its builder with it.
+
+    The retired module's own name is split below so this pin does not match itself: the
+    module name is written out, contiguously, nowhere else in this file.
+    """
+    import subprocess
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    retired_module_name = "geocode_serving" + "_overlay"
+    hits = subprocess.run(
+        ["rg", "-l", retired_module_name, "src", "tests"],
+        cwd=root, capture_output=True, text=True,
+    ).stdout.split()
+    assert hits == [], hits
+
+
+def test_the_one_off_adoption_asset_is_gone() -> None:
+    """`se_address_geocodes_adopt_keys` ran once on 2026-09-06 (2,019,120 adopted) and
+    read `se_addresses_current`, which slice 4c drops. Its history is the spec's."""
+    from dagster_v3.definitions import defs as load_defs
+
+    keys = {key.path[-1] for key in load_defs().get_repository_def().asset_graph.get_all_asset_keys()}
+    assert "se_address_geocodes_adopt_keys" not in keys
+    assert "se_address_geocodes_warm" in keys
