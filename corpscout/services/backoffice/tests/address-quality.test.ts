@@ -151,9 +151,14 @@ describe("Sweden address quality queue", () => {
     expect(page).toContain(
       "toString(address.text_source) AS representative_source",
     );
-    // The street part of the line: the postcode and town are cut off the end.
+    // The street part of the line: the postcode and town are cut off the end,
+    // and a line that is ONLY a postal part (normalizer v3's postcode-only
+    // addresses, which have no comma to cut at) has no street part at all --
+    // the strip alone would put the whole "100 11 Stockholm" in the column.
     expect(page).toContain(
-      "replaceRegexpOne(address.normalized_address, ',\\\\s*[0-9]{3} [0-9]{2}[^,]*$', '') AS street_address",
+      "if(match(address.normalized_address, '^[0-9]{3} [0-9]{2}[^,]*$'), ''," +
+        " replaceRegexpOne(address.normalized_address, ',\\\\s*[0-9]{3} [0-9]{2}[^,]*$', ''))" +
+        " AS street_address",
     );
     expect(page).toContain("ifNull(address.city, '') AS post_town");
     expect(page).toContain(

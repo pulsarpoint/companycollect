@@ -516,8 +516,9 @@ async function getIndustriesSection(
  * arrays and its raw text read from the suggestion store. Slice 4b renames the
  * table, so the section names it exactly once.
  *
- * Active rows come first, hidden and withdrawn ones after, so the detail page
- * can badge them once it distinguishes them.
+ * ACTIVE rows only: the section renders every address it is handed the same
+ * way, so a hidden or withdrawn row would show up beside the live ones with
+ * nothing to tell them apart. They come back when the page can badge them.
  *
  * The entity carries neither an OSM candidate list nor extract provenance, so
  * the geocode columns the retired serving view supplied are answered with
@@ -559,7 +560,11 @@ async function getAddressesSection(
          address.normalized_address AS full_address,
          toString(address.country_code) AS address_country_code,
          toUInt8(address.geocode_status = 'foreign') AS address_is_foreign,
-         replaceRegexpOne(address.normalized_address, ',\\\\s*[0-9]{3} [0-9]{2}[^,]*$', '') AS geocode_street,
+         if(
+           match(address.normalized_address, '^[0-9]{3} [0-9]{2}[^,]*$'),
+           '',
+           replaceRegexpOne(address.normalized_address, ',\\\\s*[0-9]{3} [0-9]{2}[^,]*$', '')
+         ) AS geocode_street,
          ifNull(address.street_name, '') AS street_name,
          ifNull(address.house_number, '') AS house_number,
          ifNull(address.unit, '') AS address_unit,
@@ -590,7 +595,8 @@ async function getAddressesSection(
          ifNull(toString(address.geocoded_at), '') AS geocode_matched_at
        FROM ${SE_COMPANY_ADDRESS_TABLE} AS address FINAL
        PREWHERE address.company_id = {id:String}
-       ORDER BY address.active DESC, address.inactive_reason, address.normalized_address`,
+       WHERE address.active = 1
+       ORDER BY address.normalized_address`,
       { id },
     ),
     chQuery<AddressRawRow>(
@@ -619,12 +625,11 @@ async function getAddressesSection(
   const rawByMember = new Map(
     rawSuggestions.map((row) => [`${row.address_source}|${row.slot}`, row]),
   );
-  const addresses = published.map(({ members, ...row }): AddressRow => ({
-    ...row,
+  const addresses = published.map(({ members, ...row }): AddressRow => {
     // A source delivers either a raw line (Bolagsverket) or the structured
     // fields (SCB, Ratsit), never both, so the readable line is composed and
     // the raw one shown next to it only when it says something different.
-    source_members: members.map(([source, slot, normalizedId]) => {
+    const source_members = members.map(([source, slot, normalizedId]) => {
       const raw = rawByMember.get(`${source}|${slot}`);
       return {
         address_key: normalizedId,
@@ -636,8 +641,22 @@ async function getAddressesSection(
         registry_source_run_id: raw?.registry_source_run_id ?? "",
         source_observed_at: raw?.source_observed_at ?? "",
       };
-    }),
-  }));
+    });
+    return {
+      ...row,
+      // Belt and braces for the foreign rows published before the normalizer
+      // composed a display line for them (2026-09-08): an empty line renders
+      // as a blank row here and makes the detail card hide the whole Contact &
+      // location section, so what the first member delivered stands in until
+      // the next fold rewrites the row.
+      full_address:
+        row.full_address ||
+        source_members.find((member) => member.display_address)
+          ?.display_address ||
+        "",
+      source_members,
+    };
+  });
   return { section: "addresses", addresses };
 }
 

@@ -9,11 +9,15 @@ const ADDRESS_TABLE = "corpscout.se_company_address_v2";
 
 /**
  * The address line without its trailing postcode and town, so the queue can
- * show the street part the old chain stored in its own column. Written with a
+ * show the street part the old chain stored in its own column, and `''` for a
+ * line that is ONLY a postal part -- normalizer v3 publishes postcode-only
+ * addresses (`100 11 Stockholm`), which have no comma for the strip to cut at,
+ * so the strip alone would show the whole line as a street. Written with a
  * doubled backslash because the literal reaches ClickHouse as SQL text.
  */
 const STREET_PART_SQL =
-  "replaceRegexpOne(address.normalized_address, ',\\\\s*[0-9]{3} [0-9]{2}[^,]*$', '')";
+  "if(match(address.normalized_address, '^[0-9]{3} [0-9]{2}[^,]*$'), '', " +
+  "replaceRegexpOne(address.normalized_address, ',\\\\s*[0-9]{3} [0-9]{2}[^,]*$', ''))";
 
 export const ADDRESS_QUALITY_FILTERS = [
   "all",

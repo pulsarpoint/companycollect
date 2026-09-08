@@ -238,10 +238,17 @@ export function addressGeocodeOutcomeCopy(
         badge: "PO box",
       };
     case "ambiguous": {
+      // The SE address entity carries no candidate count, so this reads 0 for
+      // every row it feeds. A count is shown only when there is one; without
+      // it the sentence still says what happened, and never claims that zero
+      // records matched an address the matcher called ambiguous.
       const candidates = address.geocode_candidate_count ?? 0;
       return {
         title: "Multiple possible building locations",
-        description: `${candidates} OpenStreetMap records match this address, so no coordinate was selected.`,
+        description:
+          candidates > 0
+            ? `${candidates} OpenStreetMap records match this address, so no coordinate was selected.`
+            : "Several OpenStreetMap records match this address, so no coordinate was selected.",
         badge: "Ambiguous",
       };
     }

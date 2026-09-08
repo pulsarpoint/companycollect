@@ -76,8 +76,16 @@ describe("Sweden company sections", () => {
       "ifNull(address.geocode_confidence, 0) AS geocode_match_confidence",
     );
     expect(sectionServer).toContain("ifNull(address.city, '')");
-    // Active first, so a hidden or withdrawn address never leads the section.
-    expect(sectionServer).toContain("ORDER BY address.active DESC");
+    // ACTIVE ROWS ONLY: the section renders every address it is handed the
+    // same way, so a hidden or withdrawn row would sit among the live ones
+    // with nothing to tell them apart.
+    expect(sectionServer).toContain("WHERE address.active = 1");
+    expect(sectionServer).not.toContain("ORDER BY address.active DESC");
+    // A postcode-only line ("100 11 Stockholm") has no comma to strip at, so
+    // the strip alone would show the whole line as the street.
+    expect(sectionServer).toContain(
+      "match(address.normalized_address, '^[0-9]{3} [0-9]{2}[^,]*$'),",
+    );
     for (const retired of [
       "se_addresses_current",
       "se_address_geocodes_current",
@@ -241,6 +249,37 @@ describe("Sweden addresses section", () => {
       { id: "5595421834" },
       { id: "5595421834" },
     ]);
+  });
+
+  it("stands in a member's line when the published row has none", async () => {
+    // 42,126 active foreign rows were published with an empty
+    // normalized_address before the normalizer composed a display line for
+    // them; the detail card hides a section whose addresses have no line, so
+    // the reader falls back to what the first member delivered rather than
+    // rendering a blank row for an address the register does have.
+    clickhouse.query.mockImplementation(async (sql: string) =>
+      sql.includes("se_company_address_suggestion")
+        ? RAW_SUGGESTIONS
+        : [{ ...PUBLISHED_ADDRESS, full_address: "" }],
+    );
+
+    const section = await getCompanySection("SE", "5595421834", "addresses");
+    const addresses =
+      section.section === "addresses" ? section.addresses : undefined;
+
+    expect(addresses?.[0]?.full_address).toBe(
+      "Gammelvägen 74D$$RAMVIK$87198$SE-LAND",
+    );
+  });
+
+  it("keeps the published line whenever the row carries one", async () => {
+    const section = await getCompanySection("SE", "5595421834", "addresses");
+    const addresses =
+      section.section === "addresses" ? section.addresses : undefined;
+
+    expect(addresses?.[0]?.full_address).toBe(
+      "Gammelvägen 74D, 871 98 Ramvik",
+    );
   });
 
   it("keeps a member the suggestion store no longer holds", async () => {

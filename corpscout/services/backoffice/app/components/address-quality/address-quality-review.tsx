@@ -156,12 +156,19 @@ function columns(): ColumnDef<AddressQualityRow, unknown>[] {
     },
     {
       id: "candidates",
+      // The address entity carries no OSM candidate list and no extract
+      // provenance, so every one of these fields answers 0 / [] / ''. A
+      // rendered "0 candidates" reads as a finding about the address rather
+      // than as a column with nothing to say, so a zero renders nothing and
+      // the cell comes out empty.
       header: "OSM evidence",
       cell: ({ row }) => (
         <div className="flex min-w-40 flex-col items-start gap-1.5">
-          <span className="text-sm tabular-nums">
-            {integer.format(row.original.candidateCount)} candidates
-          </span>
+          {row.original.candidateCount > 0 ? (
+            <span className="text-sm tabular-nums">
+              {integer.format(row.original.candidateCount)} candidates
+            </span>
+          ) : null}
           <div className="flex flex-wrap gap-1">
             {row.original.candidateRecordUrls.slice(0, 2).map((url, index) => (
               <Badge

@@ -1,40 +1,108 @@
-import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { getSwedenCompaniesAtSameBuilding } from "~/lib/address-companies.server";
 
-const lookupServer = readFileSync(
-  new URL("../app/lib/address-companies.server.ts", import.meta.url),
-  "utf8",
-);
+/**
+ * The lookup composes ONE query and maps its rows, so both halves are checked
+ * through a mocked ClickHouse client -- the SQL the module actually sends and
+ * what it makes of the answer -- rather than by reading the module's source
+ * text, which passes just as happily when the query never runs.
+ *
+ * The module is re-imported against the mock per call so the live test below,
+ * which runs the real query against ClickHouse, keeps its real client.
+ */
+async function lookupWithMockedClient(
+  rows: unknown[],
+  id = "5560000001",
+): Promise<{
+  companies: { company_id: string }[];
+  truncated: boolean;
+  calls: [string, Record<string, unknown>][];
+}> {
+  const query = vi.fn().mockResolvedValue(rows);
+  vi.doMock("~/lib/clickhouse.server", () => ({ chQuery: query }));
+  vi.resetModules();
+  try {
+    const module = await import("~/lib/address-companies.server");
+    const result = await module.getSwedenCompaniesAtSameBuilding(id);
+    return {
+      companies: result.companies,
+      truncated: result.truncated,
+      calls: query.mock.calls as [string, Record<string, unknown>][],
+    };
+  } finally {
+    vi.doUnmock("~/lib/clickhouse.server");
+    vi.resetModules();
+  }
+}
+
+function companyRow(index: number): { company_id: string; company_name: string; status: string } {
+  return {
+    company_id: `55600000${String(index).padStart(2, "0")}`,
+    company_name: `Neighbour ${index} AB`,
+    status: "active",
+  };
+}
 
 describe("getSwedenCompaniesAtSameBuilding", () => {
-  it("matches the parsed components of the published address entity", () => {
-    expect(lookupServer).toContain(
-      'const ADDRESS_TABLE = "corpscout.se_company_address_v2"',
-    );
+  it("matches the parsed components of the published address entity", async () => {
+    const { calls } = await lookupWithMockedClient([]);
+
+    expect(calls).toHaveLength(1);
+    const [sql, params] = calls[0];
+    expect(params).toEqual({ id: "5560000001" });
+    // The entity, named through the module's one constant: the target pick and
+    // the neighbour scan are the only two reads, and slice 4b's rename is one
+    // edit.
+    expect(sql.match(/corpscout\.se_company_address_v2/g)).toHaveLength(2);
     for (const retired of [
       "se_addresses_current",
       "se_address_geocodes_current",
       "se_company_address_links_current",
     ]) {
-      expect(lookupServer).not.toContain(retired);
+      expect(sql).not.toContain(retired);
     }
     // The target is the company's primary published address that names a
-    // building: visiting before postal, an exact building before a fallback.
-    expect(lookupServer).toContain("has(target.kinds, 'visiting_or_postal') DESC");
-    expect(lookupServer).toContain("has(target.kinds, 'visiting') DESC");
-    expect(lookupServer).toContain("target.geocode_precision = 'building' DESC");
-    expect(lookupServer).toContain("AND ifNull(target.box, '') = ''");
+    // building: visiting before postal, an exact building before a fallback,
+    // and never a box (a PO box identifies no building).
+    expect(sql).toContain("has(target.kinds, 'visiting_or_postal') DESC");
+    expect(sql).toContain("has(target.kinds, 'visiting') DESC");
+    expect(sql).toContain("target.geocode_precision = 'building' DESC");
+    expect(sql).toContain("AND ifNull(target.box, '') = ''");
+    expect(sql).toContain("AND ifNull(target.street_name, '') != ''");
+    // Published rows only, on both sides of the lookup.
+    expect(sql.match(/active = 1/g)).toHaveLength(2);
     // Components, not a rebuilt street key -- and the floor is ignored, so the
     // regexes the old free-text line needed are gone.
-    expect(lookupServer).toContain(
+    expect(sql).toContain(
       "AND ifNull(street_name, '') = (SELECT street_name FROM target_address)",
     );
-    expect(lookupServer).toContain(
+    expect(sql).toContain(
       "AND ifNull(house_number, '') = (SELECT house_number FROM target_address)",
     );
-    expect(lookupServer).not.toContain("ifNull(unit, '')");
-    expect(lookupServer).not.toContain("replaceRegexpAll");
+    expect(sql).toContain(
+      "AND ifNull(postal_code, '') = (SELECT postal_code FROM target_address)",
+    );
+    expect(sql).not.toContain("ifNull(unit, '')");
+    expect(sql).not.toContain("replaceRegexpAll");
+    // The company asked about is never one of its own neighbours.
+    expect(sql).toContain("AND registration_number != {id:String}");
+  });
+
+  it("maps the answer and flags a page it had to cut", async () => {
+    const under = await lookupWithMockedClient(
+      Array.from({ length: 50 }, (_, index) => companyRow(index)),
+    );
+    expect(under.companies).toHaveLength(50);
+    expect(under.truncated).toBe(false);
+
+    // The query asks for 51 so a full page can be told from an overflowing
+    // one; the 51st row is the signal, not a company to show.
+    const over = await lookupWithMockedClient(
+      Array.from({ length: 51 }, (_, index) => companyRow(index)),
+    );
+    expect(over.companies).toHaveLength(50);
+    expect(over.truncated).toBe(true);
+    expect(over.calls[0][0]).toContain("LIMIT 51");
   });
 
   it("finds other registrations in the same building while ignoring floor", async () => {
