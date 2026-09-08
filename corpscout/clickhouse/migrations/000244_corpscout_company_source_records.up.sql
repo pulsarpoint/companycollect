@@ -189,26 +189,6 @@ ALTER TABLE corpscout.esef_document_company_information
         'company-source-record-v1\nfile\nesef_report_package\n', lowerUTF8(package_sha256)
     )))) AFTER source_document_id;
 
-ALTER TABLE corpscout.se_companies
-    ADD COLUMN IF NOT EXISTS bolagsverket_source_record_uid String DEFAULT if(
-        ifNull(bolagsverket_source_payload_hash, '') = '',
-        '',
-        lower(hex(SHA256(concat(
-            'company-source-record-v1\nstructured\nsweden_bolagsverket\nregistry_company\n',
-            ifNull(bolagsverket_source_record_id, ''), '\n',
-            lowerUTF8(ifNull(bolagsverket_source_payload_hash, ''))
-        ))))
-    ) AFTER bolagsverket_source_payload_hash,
-    ADD COLUMN IF NOT EXISTS scb_source_record_uid String DEFAULT if(
-        ifNull(scb_source_payload_hash, '') = '',
-        '',
-        lower(hex(SHA256(concat(
-            'company-source-record-v1\nstructured\nsweden_scb\nregistry_company\n',
-            ifNull(scb_source_record_id, ''), '\n',
-            lowerUTF8(ifNull(scb_source_payload_hash, ''))
-        ))))
-    ) AFTER scb_source_payload_hash;
-
 ALTER TABLE corpscout.se_company_addresses
     ADD COLUMN IF NOT EXISTS source_record_uid String DEFAULT lower(hex(SHA256(concat(
         'company-source-record-v1\nstructured\n',
