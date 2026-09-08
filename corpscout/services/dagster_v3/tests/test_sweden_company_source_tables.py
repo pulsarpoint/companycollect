@@ -1,7 +1,7 @@
 """The two register source tables of the 2026-09-03 SE basic-info design (spec 3.1).
 
 The column pins read the migration DDL through tests/se_company_ddl.py -- the same helper
-test_se_company_layout.py uses -- so the tuples in sweden_company/tables.py and the
+the address layout test uses -- so the tuples in sweden_company/tables.py and the
 deployed DDL cannot drift apart. The exporter binds those tuples positionally.
 """
 

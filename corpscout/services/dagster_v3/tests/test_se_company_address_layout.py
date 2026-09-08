@@ -1,6 +1,6 @@
 """The address datatype's DDL contract, read from the migration itself.
 
-Mirrors tests/test_se_company_layout.py for the second datatype. What is pinned
+Mirrors the retired info-artifact layout test for the second datatype. What is pinned
 here is the ENVELOPE and the final's provenance tail, not every column -- the
 per-module tests (Tasks 2, 3, 5) pin each module's own insert list against
 declared_columns(), so a column added in a later migration is picked up by the

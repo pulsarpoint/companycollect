@@ -1,13 +1,4 @@
+-- Basic-info slice 4 (2026-09-08): this migration's objects (the retired se_company_info*
+-- tables or their columns) were dropped by hand on the server and their DDL left this
+-- file per the dev-phase ledger policy. The file stays for history.
 CREATE DATABASE IF NOT EXISTS corpscout;
-
--- The exact inverse, in mirrored order: description_source comes back in the slot it
--- held (AFTER description_language, before description_sources), and llm_enhanced goes.
--- The restored column reads as '' for every row -- the label it used to carry ('scb',
--- 'wikidata', 'esef', 'llm', 'reviewed') is not recoverable from the flag, and a
--- resolve_all pass on the reverted code would rewrite it anyway.
-
-ALTER TABLE corpscout.se_company_info
-    ADD COLUMN IF NOT EXISTS description_source LowCardinality(String) AFTER description_language;
-
-ALTER TABLE corpscout.se_company_info
-    DROP COLUMN IF EXISTS llm_enhanced;
