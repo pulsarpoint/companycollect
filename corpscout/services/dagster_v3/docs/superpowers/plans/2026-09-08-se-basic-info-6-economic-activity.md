@@ -75,11 +75,11 @@
 
 - [x] **Step 1:** Dagster unit suite (`-m "not integration"`, the cron-collision test deselected): only the four failures already on main.
 - [x] **Step 2:** `uv run dg check defs`; backoffice full vitest: only the live-DB timeouts and the ESEF tab test already on main.
-- [ ] **Step 3:** Merge `--no-ff` into main (footer) -- AFTER Task 7 step 1: the backoffice dev server runs main and the SE shell selects `i.economic_activity`, so a merge before the migration breaks every SE page (verified: the live SE tests fail with `Identifier 'i.economic_activity' cannot be resolved` until 000394 is applied).
+- [x] **Step 3:** Merge `--no-ff` into main (footer) -- AFTER Task 7 step 1: the backoffice dev server runs main and the SE shell selects `i.economic_activity`, so a merge before the migration breaks every SE page (verified: the live SE tests fail with `Identifier 'i.economic_activity' cannot be resolved` until 000394 is applied).
 
 ## Task 7: Rollout (owner-run steps marked)
 
-- [ ] **Step 1 (owner):** apply 000393 (other session's) then 000394: `make clickhouse-migrate-up-one` twice from `corpscout`.
+- [x] **Step 1 (owner):** apply 000393 (other session's) then 000394: `make clickhouse-migrate-up-one` twice from `corpscout`.
 - [ ] **Step 2 (owner):** dbt-state refresh + light_sync deploy.
 - [ ] **Step 3:** materialise `se_company_basic_info_precedence_clickhouse`.
 - [ ] **Step 4:** launch `se_basic_info_suggestions_scb` with `execute: true, since: "2000-01-01T00:00:00Z"`.
