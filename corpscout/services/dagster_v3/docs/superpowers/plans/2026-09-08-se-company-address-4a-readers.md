@@ -163,12 +163,12 @@ addresses AS (
 
 ### Task 6: Prod run (controller)
 
-1. [ ] Whole-branch review; merge; hot-sync the dagster host.
-2. [ ] `se_company_address_normalize` (`changed_only: true`): the v3 bump selects every raw row (about 30 min). Readout: `parse_status` per source; expect about 28,000 more `partial` rows and the same fewer `no_address`.
-3. [ ] Backfill `se_company_address_fold` bucket_00..bucket_63 (the normalizer bump selects every company): expect about 64 × 75 s plus the in-page matching of the roughly 28,000 new keys; readouts as in slice 2b; the postcode-only rows show `matched_area`/`postcode`.
-4. [ ] Parity (spec 9) with the comparison key `replaceRegexpAll(lower(line), '[^0-9a-zåäö]', '')` on both sides, the new side built without the unit and the care-of, the old side from `normalized_address` with the trailing `|se` dropped: report identical / new superset / old superset / different per company, the old-only breakdown by parse status, and a 30-company sample of `different` reviewed by hand with each difference traced to a spec rule (units kept, hyphens and abbreviation dots preserved, trailing village words dropped, care-of separated); record the numbers in spec section 9.
-5. [ ] Apply migration 000392 (`make -s -C <deploy-worktree>/corpscout clickhouse-migrate-up-one`), watch `system.view_refreshes` for the `_next` populate (the migrate client times out at about 35 s; verify, then `migrate force 392` if the ledger went dirty), confirm the backoffice companies and geocoding lists and the company detail addresses section render from the new data, and that the address-quality queue and same-building lookup work.
-6. [ ] Record in the ledger and spec section 9 (slice 4a shipped); archive the ledger; update memory; hand the retirement list to slice 4b.
+1. [x] Whole-branch review; merge; hot-sync the dagster host.
+2. [x] `se_company_address_normalize` (`changed_only: true`): the v3 bump selects every raw row (about 30 min). Readout: `parse_status` per source; expect about 28,000 more `partial` rows and the same fewer `no_address`.
+3. [x] Backfill `se_company_address_fold` bucket_00..bucket_63 (the normalizer bump selects every company): expect about 64 × 75 s plus the in-page matching of the roughly 28,000 new keys; readouts as in slice 2b; the postcode-only rows show `matched_area`/`postcode`.
+4. [x] Parity (spec 9) with the comparison key `replaceRegexpAll(lower(line), '[^0-9a-zåäö]', '')` on both sides, the new side built without the unit and the care-of, the old side from `normalized_address` with the trailing `|se` dropped: report identical / new superset / old superset / different per company, the old-only breakdown by parse status, and a 30-company sample of `different` reviewed by hand with each difference traced to a spec rule (units kept, hyphens and abbreviation dots preserved, trailing village words dropped, care-of separated); record the numbers in spec section 9.
+5. [x] Apply migration 000392 (`make -s -C <deploy-worktree>/corpscout clickhouse-migrate-up-one`), watch `system.view_refreshes` for the `_next` populate (the migrate client times out at about 35 s; verify, then `migrate force 392` if the ledger went dirty), confirm the backoffice companies and geocoding lists and the company detail addresses section render from the new data, and that the address-quality queue and same-building lookup work.
+6. [x] Record in the ledger and spec section 9 (slice 4a shipped); archive the ledger; update memory; hand the retirement list to slice 4b.
 
 ## Self-review
 
