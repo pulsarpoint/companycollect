@@ -102,6 +102,13 @@ def test_sweden_company_match_features_are_normalized_and_technology_independent
     assert "addresses.active = 1" in model_sql
     assert "replaceRegexpOne(addresses.normalized_address" in model_sql
     assert "addresses.text_source" in model_sql
+    # The address normalized_value MUST come from normalize_postal_address (the same macro
+    # and argument order stg_web_domain_match_features.sql uses), not a bespoke expression
+    # -- int_company_domain_address_matches.sql joins the two by exact string equality.
+    assert "{{ normalize_postal_address(" in model_sql
+    assert "'addresses.postal_code'" in model_sql
+    assert "'addresses.city'" in model_sql
+    assert "'addresses.country_code'" in model_sql
 
     # The retired registry projection is gone, and the two source_field values it produced
     # are still produced -- by a literal per union branch instead of by a `source` column.
@@ -125,6 +132,34 @@ def test_sweden_company_match_features_are_normalized_and_technology_independent
     assert "commoncrawl_" not in model_sql
     assert "root_domain" not in model_sql
     assert "ref('stg_se_company_match_features')" in identifier_sql
+
+
+def test_se_and_web_domain_address_features_share_the_postal_normalization_contract() -> None:
+    """int_company_domain_address_matches.sql joins stg_se_company_match_features's address
+    normalized_value to stg_web_domain_match_features's by EXACT STRING EQUALITY (`USING
+    (normalized_address)`). Both staging models must therefore call the shared
+    normalize_postal_address(street, postal, town, country) macro with the same argument
+    order -- a different macro, or a different order, silently stops the join from
+    matching. This guards the fix for the regression the slice 4a address-entity switch
+    introduced (SE side briefly used a bespoke normalize_address_text expression)."""
+    se_sql = (
+        DBT_DIR / "models" / "staging" / "stg_se_company_match_features.sql"
+    ).read_text()
+    web_sql = (
+        DBT_DIR / "models" / "staging" / "stg_web_domain_match_features.sql"
+    ).read_text()
+
+    for model_sql in (se_sql, web_sql):
+        assert "normalize_postal_address(" in model_sql
+
+    # Both call sites name the shared contract and each other, so a future edit to one
+    # without the other is caught by a reviewer grepping for it, not just by this test.
+    assert "stg_web_domain_match_features.sql" in se_sql
+    assert "stg_se_company_match_features.sql" in web_sql
+    for model_sql in (se_sql, web_sql):
+        assert "SHARED CONTRACT" in model_sql
+        assert "EXACT STRING EQUALITY" in model_sql
+        assert "int_company_domain_address_matches.sql" in model_sql
 
 
 def test_web_domain_match_features_are_incremental_and_auditable() -> None:

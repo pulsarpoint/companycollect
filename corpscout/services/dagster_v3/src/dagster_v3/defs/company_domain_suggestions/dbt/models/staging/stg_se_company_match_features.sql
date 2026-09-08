@@ -123,8 +123,14 @@ lei_features AS (
 -- se_company_addresses_current projection. The entity's normalized_address is a display
 -- line (not the old pre-normalized matching string), so normalized_value is computed here
 -- from the street part (the mapping table's replaceRegexpOne, which strips the trailing
--- ", postcode city" segment), postal_code and city, through the existing address-text
--- normalization macro.
+-- ", postcode city" segment), postal_code, city and country_code.
+--
+-- SHARED CONTRACT with stg_web_domain_match_features.sql's jsonld_address_observations
+-- CTE: both sides feed int_company_domain_address_matches.sql, which joins them by
+-- EXACT STRING EQUALITY on normalized_value (`USING (normalized_address)`). Both CTEs
+-- MUST call the same macro, `normalize_postal_address(street, postal, town, country)`,
+-- in the same argument order, or the join silently stops matching. Change one, change
+-- the other.
 address_features AS (
     SELECT DISTINCT
         'SE' AS country_iso2,
@@ -132,8 +138,11 @@ address_features AS (
         companies.company_name,
         'address' AS feature_type,
         'postal' AS feature_subtype,
-        {{ normalize_address_text(
-            "concat(replaceRegexpOne(addresses.normalized_address, ',\\\\s*[0-9]{3} [0-9]{2}[^,]*$', ''), ' ', ifNull(addresses.postal_code, ''), ' ', ifNull(addresses.city, ''))"
+        {{ normalize_postal_address(
+            "replaceRegexpOne(addresses.normalized_address, ',\\\\s*[0-9]{3} [0-9]{2}[^,]*$', '')",
+            'addresses.postal_code',
+            'addresses.city',
+            'addresses.country_code'
         ) }} AS normalized_value,
         addresses.normalized_address AS raw_value,
         concat(toString(addresses.text_source), '.', arrayStringConcat(arrayMap(x -> toString(x), addresses.kinds), '|')) AS source_field
