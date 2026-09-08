@@ -28,6 +28,7 @@ import {
 } from "~/lib/dagster.server";
 import type { SeAddressDecision } from "~/lib/se-address-decision-form";
 import { addressFoldPending, isAddressKey } from "~/lib/se-address-fields";
+import { SE_COMPANY_ADDRESS_TABLE } from "~/lib/se-address-tables";
 import { clickhouseStamp } from "~/lib/se-basic-info.server";
 
 /** The eight normalized components a published row and a normalized row share. */
@@ -42,7 +43,7 @@ export interface SeAddressComponents {
   country_code: string;
 }
 
-/** One published address (`se_company_address_v2`, 31 columns). `sources`,
+/** One published address (`se_company_address`, 31 columns). `sources`,
  * `slots` and `normalized_ids` are index-parallel -- one entry per member;
  * `kinds` is the DISTINCT member kinds and is never zipped with them. */
 export interface SeAddressRow extends SeAddressComponents {
@@ -194,7 +195,7 @@ ${COMPONENTS_SQL(a)},
 
 export const ADDRESS_MAIN_SQL = `SELECT
 ${MAIN_COLUMNS_SQL("m")}
-FROM corpscout.se_company_address_v2 AS m FINAL
+FROM ${SE_COMPANY_ADDRESS_TABLE} AS m FINAL
 WHERE m.company_id = {companyId:String}
 ORDER BY m.active DESC, m.inactive_reason, m.normalized_address`;
 

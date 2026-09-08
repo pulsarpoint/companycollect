@@ -17,12 +17,7 @@ import type {
   WikidataCompanyRow,
   WikidataPersonRow,
 } from "~/lib/queries.server";
-
-/**
- * The published SE address entity (spec 2026-09-06, section 3.3). Slice 4b
- * renames the table, so the addresses section names it exactly once.
- */
-const SE_COMPANY_ADDRESS_TABLE = "corpscout.se_company_address_v2";
+import { SE_COMPANY_ADDRESS_TABLE } from "~/lib/se-address-tables";
 
 export const COMPANY_SECTION_NAMES = [
   "gleif",

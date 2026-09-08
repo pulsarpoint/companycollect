@@ -53,7 +53,8 @@ describe("getSwedenCompaniesAtSameBuilding", () => {
     // The entity, named through the module's one constant: the target pick and
     // the neighbour scan are the only two reads, and slice 4b's rename is one
     // edit.
-    expect(sql.match(/corpscout\.se_company_address_v2/g)).toHaveLength(2);
+    expect(sql.match(/corpscout\.se_company_address AS/g)).toHaveLength(2);
+    expect(sql).not.toContain("se_company_address_v2");
     for (const retired of [
       "se_addresses_current",
       "se_address_geocodes_current",

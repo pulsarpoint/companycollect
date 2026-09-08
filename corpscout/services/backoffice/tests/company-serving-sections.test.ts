@@ -48,11 +48,10 @@ describe("Sweden company sections", () => {
 
   it("composes the addresses section from the published address entity", () => {
     expect(sectionServer).toContain(
-      'const SE_COMPANY_ADDRESS_TABLE = "corpscout.se_company_address_v2"',
+      'import { SE_COMPANY_ADDRESS_TABLE } from "~/lib/se-address-tables"',
     );
-    expect(sectionServer).toContain(
-      "FROM ${SE_COMPANY_ADDRESS_TABLE} AS address FINAL",
-    );
+    expect(sectionServer).toContain("FROM ${SE_COMPANY_ADDRESS_TABLE} AS address FINAL");
+    expect(sectionServer).not.toContain("se_company_address_v2");
     expect(sectionServer).toContain(
       "if(length(address.kinds) > 0, toString(address.kinds[1]), 'address') AS address_type",
     );

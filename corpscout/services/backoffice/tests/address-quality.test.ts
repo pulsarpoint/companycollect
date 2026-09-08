@@ -105,10 +105,10 @@ describe("Sweden address quality queue", () => {
     }
     // Every address read is one FINAL scan of the published rows.
     for (const sql of queries.filter((q: string) => q.includes("address."))) {
-      expect(sql).toContain(
-        "FROM corpscout.se_company_address_v2 AS address FINAL",
-      );
+      expect(sql).toContain("FROM corpscout.se_company_address AS address FINAL");
       expect(sql).toContain("WHERE address.active = 1");
+      // Slice 4b renamed the table; the interim name must not survive anywhere.
+      expect(sql).not.toContain("se_company_address_v2");
     }
   });
 

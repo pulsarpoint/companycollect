@@ -1,4 +1,5 @@
 import { chQuery } from "~/lib/clickhouse.server";
+import { SE_COMPANY_ADDRESS_TABLE as ADDRESS_TABLE } from "~/lib/se-address-tables";
 
 export interface AddressCompanyMatch {
   company_id: string;
@@ -10,12 +11,6 @@ export interface SameAddressCompaniesResult {
   companies: AddressCompanyMatch[];
   truncated: boolean;
 }
-
-/**
- * The published SE address entity (spec 2026-09-06, section 3.3). Slice 4b
- * renames the table, so the lookup names it exactly once.
- */
-const ADDRESS_TABLE = "corpscout.se_company_address_v2";
 
 /**
  * Companies at the same building. The entity stores parsed components, so the
@@ -56,7 +51,7 @@ const SWEDEN_SAME_BUILDING_QUERY = `WITH
   ),
   matching_company_ids AS (
     SELECT DISTINCT company_id
-    FROM ${ADDRESS_TABLE} FINAL
+    FROM ${ADDRESS_TABLE} AS m FINAL
     WHERE active = 1
       AND ifNull(street_name, '') = (SELECT street_name FROM target_address)
       AND ifNull(house_number, '') = (SELECT house_number FROM target_address)

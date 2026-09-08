@@ -761,9 +761,9 @@ LIMIT 100`,
     features: ["financials", "industries"],
     industryJoinKeyExpr: "company_id",
     placeQuery: `SELECT toString(company_id) AS company_id,
-            argMax(post_town, address_type = 'postal') AS place
-     FROM se_company_addresses_current
-     WHERE company_id IN {ids:Array(String)} AND has_address = 1
+            argMax(ifNull(city, ''), has(kinds, 'postal')) AS place
+     FROM corpscout.se_company_address FINAL
+     WHERE company_id IN {ids:Array(String)} AND active = 1
      GROUP BY company_id`,
     columns: [
       {
@@ -1165,76 +1165,28 @@ LEFT JOIN nace_categories AS n ON n.normalized_code = i.nace_rev2_class_code AND
 WHERE i.company_id = {id:String}
 ORDER BY i.is_primary DESC, i.sequence
 LIMIT 100`,
-      addressQuery: `WITH
-  lowerUTF8(trim(coalesce(post_town, ''))) = 'utlandet' AS source_address_is_foreign,
-  coalesce(nullIf(street_address, ''), raw_address, '') AS source_street_address,
+      addressQuery: `SELECT
+  arrayStringConcat(arrayMap(x -> toString(x), kinds), ',') AS address_type,
+  normalized_address AS full_address,
   if(
-    source_address_is_foreign,
-    if(
-      upperUTF8(coalesce(country_code, '')) NOT IN ('', 'SE'),
-      upperUTF8(country_code),
-      if(match(coalesce(street_address, ''), '(^| )PL {2,}'), 'PL', '')
-    ),
-    coalesce(country_code, 'SE')
-  ) AS resolved_address_country_code,
-  if(
-    resolved_address_country_code = 'PL',
-    replaceRegexpAll(
-      replaceRegexpAll(source_street_address, '^UL[.] +', ''),
-      ' +PL {2,}',
-      ', '
-    ),
-    if(
-      source_address_is_foreign,
-      source_street_address,
-      replaceRegexpAll(source_street_address, ' +[0-9]+ +TR$', '')
-    )
-  ) AS normalized_street_address,
-  if(
-    source_address_is_foreign,
+    geocode_status = 'foreign',
     '',
-    extract(source_street_address, '([0-9]+ +TR)$')
-  ) AS normalized_address_unit,
-  if(
-    NOT source_address_is_foreign AND match(coalesce(postal_code, ''), '^[0-9]{5}$'),
-    concat(substring(postal_code, 1, 3), ' ', substring(postal_code, 4, 2)),
-    if(source_address_is_foreign AND postal_code = '00000', '', coalesce(postal_code, ''))
-  ) AS normalized_postal_code,
-  if(
-    coalesce(care_of, '') = '' OR startsWith(lowerUTF8(coalesce(care_of, '')), 'c/o'),
-    coalesce(care_of, ''),
-    concat('c/o ', care_of)
-  ) AS normalized_care_of
-SELECT address_type AS address_type,
-  if(
-    source_address_is_foreign,
     arrayStringConcat(arrayFilter(x -> x != '', [
-      normalized_care_of,
-      normalized_street_address,
-      resolved_address_country_code
-    ]), ', '),
-    arrayStringConcat(arrayFilter(x -> x != '', [
-      normalized_care_of,
-      normalized_street_address,
-      normalized_address_unit,
-      trim(concat(normalized_postal_code, ' ', coalesce(post_town, '')))
+      trim(concat(ifNull(street_name, ''), ' ', ifNull(house_number, ''))),
+      trim(concat(ifNull(postal_code, ''), ' ', ifNull(city, '')))
     ]), ', ')
-  ) AS full_address,
-  arrayStringConcat(arrayFilter(x -> x != '', [
-    normalized_street_address,
-    if(
-      source_address_is_foreign,
-      '',
-      trim(concat(normalized_postal_code, ' ', coalesce(post_town, '')))
-    )
-  ]), ', ') AS geocode_address,
-  if(source_address_is_foreign, '', normalized_street_address) AS geocode_street,
-  if(source_address_is_foreign, '', coalesce(postal_code, '')) AS geocode_postal_code,
-  resolved_address_country_code AS address_country_code,
-  toUInt8(source_address_is_foreign) AS address_is_foreign
-FROM se_company_addresses_current
+  ) AS geocode_address,
+  if(
+    geocode_status = 'foreign',
+    '',
+    trim(concat(ifNull(street_name, ''), ' ', ifNull(house_number, '')))
+  ) AS geocode_street,
+  if(geocode_status = 'foreign', '', ifNull(postal_code, '')) AS geocode_postal_code,
+  toString(country_code) AS address_country_code,
+  toUInt8(geocode_status = 'foreign') AS address_is_foreign
+FROM corpscout.se_company_address FINAL
 WHERE company_id = {id:String}
-  AND has_address = 1
+  AND active = 1
 ORDER BY address_type
 LIMIT 10`,
       publicContractsQuery: `SELECT

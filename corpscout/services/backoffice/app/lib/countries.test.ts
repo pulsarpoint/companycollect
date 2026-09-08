@@ -308,14 +308,18 @@ describe("detail config", () => {
 
   it("sweden address query exposes foreign-country geocoding metadata", () => {
     const se = getCountry("se")!;
-    expect(se.placeQuery).toContain("se_company_addresses_current");
-    expect(se.detail?.addressQuery).toContain("se_company_addresses_current");
-    expect(se.detail?.addressQuery).toContain("has_address = 1");
+    expect(se.placeQuery).toContain("corpscout.se_company_address FINAL");
+    expect(se.placeQuery).toContain("active = 1");
+    expect(se.detail?.addressQuery).toContain("FROM corpscout.se_company_address FINAL");
+    expect(se.detail?.addressQuery).toContain("active = 1");
     expect(se.detail?.addressQuery).toContain("AS geocode_address");
     expect(se.detail?.addressQuery).toContain("AS geocode_street");
     expect(se.detail?.addressQuery).toContain("AS geocode_postal_code");
     expect(se.detail?.addressQuery).toContain("AS address_country_code");
-    expect(se.detail?.addressQuery).toContain("AS address_is_foreign");
+    for (const retired of ["se_company_addresses_current", "se_company_address_v2"]) {
+      expect(se.placeQuery).not.toContain(retired);
+      expect(se.detail?.addressQuery).not.toContain(retired);
+    }
   });
 
   it("latvia reads current addresses from the history-backed views", () => {

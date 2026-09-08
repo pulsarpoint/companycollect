@@ -1,11 +1,5 @@
 import { chQuery } from "~/lib/clickhouse.server";
-
-/**
- * The published SE address entity (spec 2026-09-06, section 3.3): one row per
- * company and published address, geocode included. Slice 4b renames the table,
- * so the queue names it exactly once.
- */
-const ADDRESS_TABLE = "corpscout.se_company_address_v2";
+import { SE_COMPANY_ADDRESS_TABLE as ADDRESS_TABLE } from "~/lib/se-address-tables";
 
 /**
  * The address line without its trailing postcode and town, so the queue can

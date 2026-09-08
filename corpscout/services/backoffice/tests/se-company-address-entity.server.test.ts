@@ -312,7 +312,7 @@ const BOX_HIDE_RULE: SeAddressRuleRow = {
   decided_at: "2026-09-06 12:00:00.000",
 };
 function answer(sql: string): unknown[] {
-  if (sql.includes("FROM corpscout.se_company_address_v2")) return [MERGED_ROW, BOX_ROW];
+  if (sql.includes("FROM corpscout.se_company_address AS m FINAL")) return [MERGED_ROW, BOX_ROW];
   if (sql.includes("FROM corpscout.se_company_address_history")) return [HISTORY_ROW];
   if (sql.includes("FROM corpscout.se_company_address_normalized")) return NORMALIZED_ROWS;
   if (sql.includes("FROM corpscout.se_company_address_suggestion")) return RAW_ROWS;
@@ -336,7 +336,8 @@ describe("se-company-address-entity.server", () => {
   });
 
   it("pins every read to a FINAL current version, the company parameter and string keys", () => {
-    expect(ADDRESS_MAIN_SQL).toContain("FROM corpscout.se_company_address_v2 AS m FINAL");
+    expect(ADDRESS_MAIN_SQL).toContain("FROM corpscout.se_company_address AS m FINAL");
+    expect(ADDRESS_MAIN_SQL).not.toContain("se_company_address_v2");
     expect(ADDRESS_MAIN_SQL).toContain("WHERE m.company_id = {companyId:String}");
     expect(ADDRESS_MAIN_SQL).toContain("toString(m.address_key) AS address_key");
     expect(ADDRESS_MAIN_SQL).toContain("arrayMap(x -> toString(x), m.normalized_ids) AS normalized_ids");
