@@ -21,7 +21,11 @@ SOURCES: tuple[str, ...] = (
 BASIC_INFO_PRECEDENCE: dict[str, dict[str, int]] = {
     "legal_name": {"reviewer": 20000, "scb": 1000, "bolagsverket": 900, "ratsit": 300, "wikidata": 200},
     "legal_form_code": {"reviewer": 20000, "scb": 1000, "bolagsverket": 900},
-    "status": {"reviewer": 20000, "scb": 1000, "bolagsverket": 900, "ratsit": 300},
+    # Status is legal existence: Bolagsverket's deregistration decides (owner decision
+    # 2026-09-08). SCB's Företagsstatus is an economic-activity flag (registered for VAT,
+    # F-tax or as an employer: 0 never, 1 yes, 9 no longer) and only decides for the
+    # ~668k companies Bolagsverket does not register; it deserves its own field later.
+    "status": {"reviewer": 20000, "bolagsverket": 1000, "scb": 900, "ratsit": 300},
     "incorporation_date": {"reviewer": 20000, "scb": 1000, "bolagsverket": 900, "wikidata": 200},
     "lei": {"reviewer": 20000, "esef": 1000},
     "wikidata_id": {"reviewer": 20000, "wikidata": 1000},
