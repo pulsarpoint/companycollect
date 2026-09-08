@@ -1,9 +1,9 @@
 """The store's ONE read rule, pinned on both sides.
 
-The rule lives twice by necessity -- once as SQL for the two ClickHouse consumers, once as
-Python for the demand scan that has to reason about outcomes in memory. Both halves are
+The rule lives twice by necessity -- once as SQL for the ClickHouse cache lookup, once as
+Python for the warm step that has to reason about outcomes in memory. Both halves are
 generated from the same constants and both are pinned here, because a divergence between
-them is invisible at runtime: the SQL would serve one coordinate and the demand scan would
+them is invisible at runtime: the SQL would serve one coordinate and the Python half would
 believe another, and neither would raise.
 """
 import re
@@ -20,20 +20,16 @@ from dagster_v3.defs.sweden_company.geocode_store import (
     NEWEST_PER_FAMILY_RANK_SQL,
     QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE,
     RANK_INPUT_COLUMNS,
-    RESOLVER_ONLY_FILTER_SQL,
-    SERVING_COLUMNS,
     STORE_COLUMNS,
     STORE_KEY_COLUMNS,
     VALID_STATUSES,
     StoredOutcome,
     build_current_geocodes_sql,
-    build_current_resolver_geocodes_sql,
     choice_rank,
     current_adopted_outcome,
     current_outcome,
     current_outcomes_by_address,
     current_resolver_outcome,
-    current_resolver_outcomes_by_address,
     is_adopted,
     is_geocoded,
 )
@@ -54,25 +50,14 @@ def _outcome(policy: str, md5: str, status: str, matched_at: datetime,
                          match_status=status, matched_at=matched_at)
 
 
-def test_the_store_columns_are_the_serving_columns_plus_the_two_version_columns() -> None:
+def test_the_store_columns_lead_with_the_key_and_cover_the_rank_inputs() -> None:
     assert STORE_KEY_COLUMNS == ("address_id", "policy_version", "reference_md5")
     assert STORE_COLUMNS[:3] == STORE_KEY_COLUMNS
-    assert SERVING_COLUMNS == tuple(
-        column for column in STORE_COLUMNS if column not in ("policy_version", "reference_md5"))
     # Everything the two ranks read must be projectable even when the caller did not ask
-    # for it -- SERVING_COLUMNS omits both version columns, and the choice rank needs them.
+    # for it -- a narrowed projection would otherwise starve the choice rank.
     assert set(RANK_INPUT_COLUMNS) == {
         "address_id", "policy_version", "reference_md5", "match_status", "matched_at"}
     assert set(RANK_INPUT_COLUMNS) <= set(STORE_COLUMNS)
-
-
-def test_the_module_agrees_with_the_canonicalization_module_on_names() -> None:
-    """Two literals, one meaning -- geocode_store spells them itself to stay import-light."""
-    from dagster_v3.defs.sweden_company import address_canonicalization
-    from dagster_v3.defs.sweden_company import geocode_store
-
-    assert geocode_store.CLICKHOUSE_DATABASE == address_canonicalization.CLICKHOUSE_DATABASE
-    assert geocode_store.ENRICHMENT_SCHEMA == address_canonicalization.ENRICHMENT_SCHEMA
 
 
 def test_the_taxonomy_is_internally_consistent() -> None:
@@ -107,7 +92,6 @@ def test_the_two_rank_expressions_spell_their_components_in_order() -> None:
         "policy_version)",
     ]
     assert IS_ADOPTED_SQL == f"toUInt8(policy_version = '{LEGACY_ADOPTED_POLICY_VERSION}')"
-    assert RESOLVER_ONLY_FILTER_SQL == f"policy_version != '{LEGACY_ADOPTED_POLICY_VERSION}'"
 
 
 def test_the_read_runs_both_stages_and_keeps_one_row_per_identity() -> None:
@@ -129,11 +113,16 @@ def test_the_read_runs_both_stages_and_keeps_one_row_per_identity() -> None:
 
 
 def test_the_read_projects_the_rank_inputs_even_when_they_were_not_requested() -> None:
-    """SERVING_COLUMNS has no policy_version and no reference_md5, and the derived
-    `_current` table asks for exactly those 26 columns. If the inner SELECT projected only
-    what was asked for, the outer ORDER BY would reference columns that do not exist and the
-    derivation would fail at run time on the host, not here."""
-    sql = build_current_geocodes_sql(columns=SERVING_COLUMNS)
+    """A caller is free to ask for fewer columns than the two ranks read -- the store minus
+    the version columns is the case the retired serving view used to be. If the inner SELECT
+    projected only what was asked for, the outer ORDER BY would reference columns that do not
+    exist and the read would fail at run time on the host, not here."""
+    version_less = tuple(
+        column
+        for column in STORE_COLUMNS
+        if column not in ("policy_version", "reference_md5")
+    )
+    sql = build_current_geocodes_sql(columns=version_less)
     inner = sql[sql.index("FROM (") : sql.index(") AS candidates")]
     for column in RANK_INPUT_COLUMNS:
         assert re.search(rf"^        {column},?$", inner, re.MULTILINE), column
@@ -144,40 +133,11 @@ def test_the_read_projects_the_rank_inputs_even_when_they_were_not_requested() -
 def test_the_read_filters_before_ranking() -> None:
     sql = build_current_geocodes_sql(
         columns=("address_id", "match_status"),
-        address_filter_sql="address_id IN (SELECT address_id FROM corpscout.se_company_address_links_current)")
+        address_filter_sql="address_id IN (SELECT location_key FROM corpscout.se_company_address_normalized)")
     # The filter sits in the INNER query: it prunes on the sorting key's leading column, so
     # a page-sized read touches parts, not all 2.09M identities. Filtering the ranked result
     # would be correct and would pay for the whole store on every page.
     assert sql.index("WHERE address_id IN (") < sql.index("ORDER BY address_id, is_adopted")
-
-
-def test_the_resolver_only_read_is_stage_one_over_the_resolver_family() -> None:
-    """What the demand scan loads. It is NOT the served answer: an identity whose served
-    answer is an adopted exact still has a resolver `ambiguous`, and that ambiguous is what
-    decides whether the identity is due for a rematch."""
-    sql = build_current_resolver_geocodes_sql(columns=("address_id", "match_status"))
-    assert f"WHERE {RESOLVER_ONLY_FILTER_SQL}" in sql
-    assert f"ORDER BY address_id, {NEWEST_PER_FAMILY_RANK_SQL} DESC" in sql
-    assert sql.rstrip().endswith("LIMIT 1 BY address_id")
-    # One stage only -- no candidates subquery, no servable component.
-    assert "candidates" not in sql and "is_adopted" not in sql
-    filtered = build_current_resolver_geocodes_sql(address_filter_sql="address_id = 'x'")
-    assert f"WHERE (address_id = 'x')\n  AND {RESOLVER_ONLY_FILTER_SQL}" in filtered
-
-
-def test_the_resolver_only_read_parenthesizes_the_caller_filter() -> None:
-    """AND binds tighter than OR.
-
-    An unparenthesized `a OR b` caller filter would leave the adopted-exclusion attached to
-    `b` alone, and adopted rows would come back through the first disjunct -- the read would
-    answer, and answer wrongly. Every filter this builder is given is caller-supplied text,
-    so the builder is the only place that can guarantee the grouping.
-    """
-    sql = build_current_resolver_geocodes_sql(
-        columns=("address_id",),
-        address_filter_sql="address_id = 'x' OR address_id = 'y'")
-    assert (f"WHERE (address_id = 'x' OR address_id = 'y')\n  AND {RESOLVER_ONLY_FILTER_SQL}"
-            in sql)
 
 
 @pytest.mark.parametrize(
@@ -247,9 +207,11 @@ def test_current_outcome_ranks_the_way_the_rule_says(
     assert reversed_choice == chosen, name
 
 
-def test_the_resolver_view_ignores_adopted_rows_entirely() -> None:
-    """What the demand scan reads. An adopted row must never make an identity look matched
-    or make it look due for a rematch -- it is not a resolver answer at all."""
+def test_the_two_families_are_split_before_stage_two_chooses() -> None:
+    """Stage 1 reduces each matcher family on its own. Slice 4c retired the demand scan that
+    read the resolver family directly, but `current_outcome` still selects each family before
+    ranking the survivors -- so an adopted row must never be returned as the resolver answer,
+    nor a resolver row as the adopted one."""
     outcomes = [_outcome(ADOPTED, MD5_A, "matched_exact", T3),
                 _outcome(POLICY, MD5_A, "ambiguous", T1)]
     resolver = current_resolver_outcome(outcomes)
@@ -285,12 +247,28 @@ def test_outcomes_are_grouped_by_identity() -> None:
     assert set(grouped) == {ADDRESS, other}
     assert grouped[ADDRESS].reference_md5 == MD5_B
     assert grouped[other].policy_version == ADOPTED
-    resolver_only = current_resolver_outcomes_by_address(rows)
-    assert set(resolver_only) == {ADDRESS, other}
-    assert resolver_only[other].policy_version == POLICY
 
 
 def test_current_outcome_is_none_for_an_identity_with_no_rows() -> None:
     assert current_outcome([]) is None
     assert current_outcomes_by_address([]) == {}
-    assert current_resolver_outcomes_by_address([]) == {}
+
+
+def test_the_store_keeps_only_the_read_rule_the_entity_uses() -> None:
+    """Slice 4c: the resolver-family read and the serving projection existed for the demand
+    scan and the served view. Both are retired, so the store exposes one read rule --
+    `build_current_geocodes_sql`, what geocode.py's cache lookup renders."""
+    from dagster_v3.defs.sweden_company import geocode_store
+
+    assert callable(geocode_store.build_current_geocodes_sql)
+    for retired in (
+        "SERVING_COLUMNS",
+        "build_current_resolver_geocodes_sql",
+        "RESOLVER_ONLY_FILTER_SQL",
+        "current_resolver_outcomes_by_address",
+        "GEOCODE_APPEND_TABLE",
+        "QUALIFIED_DUCKDB_GEOCODE_APPEND_TABLE",
+        "PREVIOUS_OUTCOMES_TABLE",
+        "QUALIFIED_DUCKDB_PREVIOUS_OUTCOMES_TABLE",
+    ):
+        assert not hasattr(geocode_store, retired), retired

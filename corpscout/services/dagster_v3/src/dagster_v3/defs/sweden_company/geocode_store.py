@@ -3,9 +3,9 @@
 The store (`corpscout.se_address_geocodes`, migration 000317) holds one row per
 (address identity, matcher, reference snapshot). "The current outcome for an identity" is
 therefore a READ RULE over several rows, not a table -- and that rule lives here exactly
-once, as SQL for the ClickHouse consumers and as a pure function for the demand scan.
+once, as SQL for the ClickHouse cache lookup and as a pure function for the warm step.
 Nothing else may re-express it: a consumer that inlined its own ranking would serve a
-different coordinate from the one the demand scan believes is stored, and neither side
+different coordinate from the one the Python half believes is stored, and neither side
 would raise.
 
 THE RULE, IN TWO STAGES.
@@ -46,10 +46,9 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
-# Mirrors address_canonicalization.CLICKHOUSE_DATABASE / ENRICHMENT_SCHEMA. Spelled here so
-# this module stays import-light: defs/se_company/address.py imports it, and
-# address_canonicalization pulls in pyarrow and libpostal. tests/test_sweden_geocode_store.py
-# asserts the two spellings agree.
+# These were mirrored from address_canonicalization so this module could stay import-light
+# (that one pulled in pyarrow and libpostal). It retired in slice 4c, so this is now the one
+# place either name is spelled; address_resolution_shadow qualifies its tables from here.
 CLICKHOUSE_DATABASE = "corpscout"
 ENRICHMENT_SCHEMA = "sweden_company_enrichment"
 
@@ -57,18 +56,9 @@ GEOCODE_STORE_TABLE = "se_address_geocodes"
 QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE = (
     f"{CLICKHOUSE_DATABASE}.{GEOCODE_STORE_TABLE}"
 )
-# What promotion hands the ClickHouse append asset ...
-GEOCODE_APPEND_TABLE = "se_address_geocodes_append"
-QUALIFIED_DUCKDB_GEOCODE_APPEND_TABLE = f"{ENRICHMENT_SCHEMA}.{GEOCODE_APPEND_TABLE}"
-# ... and what the demand asset loads back out of ClickHouse for the run to reason about.
-PREVIOUS_OUTCOMES_TABLE = "se_address_geocodes_previous"
-QUALIFIED_DUCKDB_PREVIOUS_OUTCOMES_TABLE = (
-    f"{ENRICHMENT_SCHEMA}.{PREVIOUS_OUTCOMES_TABLE}"
-)
 
 LEGACY_ADOPTED_POLICY_VERSION = "legacy_adopted_v1"
 LEGACY_ADOPTED_MATCH_METHOD = "legacy_adopted"
-RESOLVER_ONLY_FILTER_SQL = f"policy_version != '{LEGACY_ADOPTED_POLICY_VERSION}'"
 IS_ADOPTED_SQL = f"toUInt8(policy_version = '{LEGACY_ADOPTED_POLICY_VERSION}')"
 
 GEOCODED_STATUSES = (
@@ -89,7 +79,10 @@ VALID_STATUSES = (
 )
 
 STORE_KEY_COLUMNS = ("address_id", "policy_version", "reference_md5")
-# Migration 000317's declaration order. The append binds these positionally.
+# The store's own columns, in migration 000317's declaration order.
+# `se_address_geocodes_current` used to project all but the two version columns; that
+# refreshable view was dropped in slice 4c and the entity reads the store through
+# build_current_geocodes_sql instead.
 STORE_COLUMNS = (
     *STORE_KEY_COLUMNS,
     "address_identity_run_id",
@@ -118,15 +111,8 @@ STORE_COLUMNS = (
     "geocode_run_id",
     "matched_at",
 )
-# What se_address_geocodes_current (the ClickHouse REFRESHABLE MATERIALIZED VIEW behind
-# migration 000320) holds: the store minus the two version columns.
-SERVING_COLUMNS = tuple(
-    column
-    for column in STORE_COLUMNS
-    if column not in ("policy_version", "reference_md5")
-)
-# Columns both ranks read. The inner SELECT projects these whatever the caller asked for --
-# SERVING_COLUMNS omits both version columns, and the choice rank needs them.
+# Columns both ranks read. The inner SELECT projects these whatever the caller asked for,
+# because a caller narrowing the projection would otherwise starve the two ranks.
 RANK_INPUT_COLUMNS = (
     "address_id",
     "policy_version",
@@ -192,44 +178,13 @@ def build_current_geocodes_sql(
     )
 
 
-def build_current_resolver_geocodes_sql(
-    *,
-    columns: Sequence[str] = STORE_COLUMNS,
-    address_filter_sql: str = "",
-) -> str:
-    """Stage 1 alone, over the resolver family: the newest resolver outcome per identity.
-
-    This is what the demand scan reasons about, and it is deliberately NOT the served
-    answer. An identity whose served answer is an imported adopted exact still has a
-    resolver `ambiguous` behind it, and that ambiguous is what decides whether the identity
-    belongs in the retry pool. Ranking the served answer here would make every adopted
-    identity look permanently settled and the resolver would never try it again.
-
-    ``address_filter_sql`` is parenthesized before it is ANDed with the adopted-exclusion.
-    AND binds tighter than OR, so an unparenthesized ``a OR b`` caller filter would leave
-    the exclusion attached to ``b`` alone and adopted rows would leak back into the resolver
-    view through the first disjunct -- a wrong answer, not a syntax error.
-    """
-    projection = ",\n    ".join(columns)
-    filters = [RESOLVER_ONLY_FILTER_SQL]
-    if address_filter_sql:
-        filters.insert(0, f"({address_filter_sql})")
-    where = "\nWHERE " + "\n  AND ".join(filters)
-    return (
-        f"SELECT\n    {projection}\n"
-        f"FROM {QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE}{where}\n"
-        f"ORDER BY address_id, {NEWEST_PER_FAMILY_RANK_SQL} DESC\n"
-        "LIMIT 1 BY address_id"
-    )
-
-
 def is_geocoded(match_status: str) -> bool:
     return match_status in GEOCODED_STATUSES
 
 
 @dataclass(frozen=True)
 class StoredOutcome:
-    """One stored row, reduced to what the ranks and the demand scan need.
+    """One stored row, reduced to what the two ranks need.
 
     ``matched_at`` must carry the store's millisecond precision and no more: the SQL rank
     compares ``DateTime64(3, 'UTC')``, so a datetime holding sub-millisecond microseconds
@@ -277,7 +232,7 @@ def _newest(outcomes: Iterable[StoredOutcome]) -> StoredOutcome | None:
 def current_resolver_outcome(
     outcomes: Iterable[StoredOutcome],
 ) -> StoredOutcome | None:
-    """Stage 1 over the resolver family. This is what the demand scan reasons about."""
+    """Stage 1 over the resolver family: the newest resolver outcome, adopted rows aside."""
     return _newest(outcome for outcome in outcomes if not is_adopted(outcome))
 
 
@@ -306,12 +261,6 @@ def current_outcomes_by_address(
     outcomes: Iterable[StoredOutcome],
 ) -> dict[str, StoredOutcome]:
     return _by_address(outcomes, current_outcome)
-
-
-def current_resolver_outcomes_by_address(
-    outcomes: Iterable[StoredOutcome],
-) -> dict[str, StoredOutcome]:
-    return _by_address(outcomes, current_resolver_outcome)
 
 
 def _by_address(

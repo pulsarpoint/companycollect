@@ -18,11 +18,10 @@ THE THREE THINGS THIS MODULE IS.
    exactly as stale as what it copied and is re-matched after the next extract like any
    other row.
 
-2. An ENGINE CALL for the misses. The same resolver the Sweden shadow evaluation runs
-   (`address_resolution_shadow.replace_sweden_address_resolution_shadow`), on the same
-   once-per-extract reference documents AND their fuzzy street postings, over per-run tables
-   named with the run id and dropped in a `finally`. Nothing in the engine, the policy or the
-   OSM assets changes here.
+2. An ENGINE CALL for the misses. The same resolver the retired Sweden shadow evaluation
+   ran, on the same once-per-extract reference documents AND their fuzzy street postings
+   (built by `address_resolution_shadow`), over per-run tables named with the run id and
+   dropped in a `finally`. Nothing in the engine, the policy or the OSM assets changes here.
 
    BOTH shared inputs are per-EXTRACT caches in the enrichment schema, not per-call work:
    `ensure_reference_postings` builds the documents (keyed on the extract md5) and the
@@ -117,7 +116,7 @@ GEOCODE_QUERY_SETTINGS = {"max_query_size": 1_048_576, "max_execution_time": 180
 # The extract's provenance, read exactly as the retired promotion step read it (its
 # `_replace_promotion_stage`'s `_sweden_address_resolution_osm_provenance`): one row,
 # `first(... order by source_record_id)` per column, off the same workbench table
-# `geocode_demand.fresh_reference_md5` takes the reference md5 from.
+# `address_resolution_shadow.fresh_reference_md5` takes the reference md5 from.
 EXTRACT_PROVENANCE_SQL = f"""select
     first(source_url order by source_record_id),
     first(source_object_key order by source_record_id),

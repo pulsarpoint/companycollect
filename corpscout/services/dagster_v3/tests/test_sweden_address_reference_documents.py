@@ -2,7 +2,7 @@
 fuzzy reference street postings built from them.
 
 The shadow evaluation used to rebuild these on every run. Task 2 turns that build into a
-named, idempotent step keyed on the OSM snapshot's md5 (`geocode_demand.fresh_reference_md5`):
+named, idempotent step keyed on the OSM snapshot's md5 (`address_resolution_shadow.fresh_reference_md5`):
 the address entity's geocode function (a later task) and the shadow evaluation both read the
 result, and neither should pay to rebuild it when the snapshot has not moved.
 
@@ -285,3 +285,19 @@ def test_a_missing_postings_table_rebuilds_however_well_the_manifest_matches(
         POLICY,
         reference_documents_built_at(connection),
     )
+
+
+def test_the_reference_builders_stand_alone_after_the_old_chain_retired() -> None:
+    """Slice 4c: the shadow DRIVER is gone (its two input tables were built by assets slice
+    4b deleted), but the reference-document and posting builders the address entity's
+    geocode function calls stay -- and they no longer reach into geocode_demand for the
+    extract md5, because that module went with the demand scan."""
+    from dagster_v3.defs.sweden_company import address_resolution_shadow as shadow
+
+    assert callable(shadow.fresh_reference_md5)
+    assert callable(shadow.ensure_reference_documents)
+    assert callable(shadow.ensure_reference_postings)
+    assert not hasattr(shadow, "replace_sweden_address_resolution_shadow")
+    assert not hasattr(shadow, "geocode_demand")
+    assert not hasattr(shadow, "shared_addresses")
+    assert not hasattr(shadow, "address_canonicalization")

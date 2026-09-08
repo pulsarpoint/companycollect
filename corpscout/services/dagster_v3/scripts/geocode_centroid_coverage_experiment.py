@@ -67,8 +67,8 @@ import duckdb
 from dotenv import load_dotenv
 
 from dagster_v3.defs.sweden_address_osm import tables as osm_tables
-from dagster_v3.defs.sweden_company.address_canonicalization import ENRICHMENT_SCHEMA
 from dagster_v3.defs.sweden_company.geocode_store import (
+    ENRICHMENT_SCHEMA,
     GEOCODED_STATUSES,
     build_current_geocodes_sql,
 )

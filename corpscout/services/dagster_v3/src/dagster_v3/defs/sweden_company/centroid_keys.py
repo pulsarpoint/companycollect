@@ -8,8 +8,8 @@ the identical input, or the join silently drops rows.
 
 This is a narrow, scoped fix: `city_key_sql` PRESERVES Swedish letters
 (å ä ö). It is not a replacement for the resolver's own accent-stripping
-normalization (the `ln` column built via `strip_accents(...)` in
-`address_canonicalization.py`, and reproduced under ClickHouse's ASCII-only
+normalization (the `ln` column the retired `address_canonicalization.py`
+built via `strip_accents(...)`, reproduced under ClickHouse's ASCII-only
 regex as the ~16%-match diacritic bug the design doc describes) -- that key
 intentionally folds accents for a different matching pass and must not be
 changed here.

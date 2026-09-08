@@ -46,13 +46,15 @@ from dagster_v3.defs.address_resolution.search_documents import (
     replace_address_street_variants,
 )
 from dagster_v3.defs.sweden_company import address_resolution_shadow as sm
-from dagster_v3.defs.sweden_company.address_canonicalization import ENRICHMENT_SCHEMA
 from dagster_v3.defs.sweden_company.address_resolution_policy import (
     SWEDEN_ADDRESS_RESOLUTION_POLICY,
     SWEDEN_STREET_SUFFIX_EXPANSIONS,
     SWEDEN_STREET_VARIANT_LANGUAGES,
 )
-from dagster_v3.defs.sweden_company.geocode_store import GEOCODED_STATUSES
+from dagster_v3.defs.sweden_company.geocode_store import (
+    ENRICHMENT_SCHEMA,
+    GEOCODED_STATUSES,
+)
 
 WORKBENCH_PATH = _SERVICE_ROOT / "data" / "geocode_workbench_local.duckdb"
 _GEO = ", ".join(f"'{s}'" for s in GEOCODED_STATUSES)
