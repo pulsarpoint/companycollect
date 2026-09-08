@@ -554,7 +554,7 @@ git commit -m "chore(clickhouse): the se_companies spine's DDL leaves the ledger
 - [x] **Step 1:** `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run pytest -q -m "not integration" --deselect tests/test_schedule_cron_contracts.py::test_every_schedule_fires_on_a_unique_minute_hour_pair -p no:cacheprovider 2>&1 | tail -6` from `corpscout/services/dagster_v3`. Expected: only the four failures already on main.
 - [x] **Step 2:** `uv run pytest tests/test_sweden_platsbanken_clickhouse_local.py tests/test_company_domain_suggestions_dbt.py tests/test_se_companies_serving_sql.py -q`. Expected: PASS, none skipped.
 - [x] **Step 3:** backoffice `npm run typecheck && npx vitest run 2>&1 | rg "Tests |×"`. Expected: only the live-database timeouts already on main.
-- [ ] **Step 4:** `git checkout main && git merge --no-ff se-basic-info-5-retire-spine -m "Merge branch 'se-basic-info-5-retire-spine'"` (append the footer).
+- [x] **Step 4:** `git checkout main && git merge --no-ff se-basic-info-5-retire-spine -m "Merge branch 'se-basic-info-5-retire-spine'"` (append the footer).
 
 ---
 
