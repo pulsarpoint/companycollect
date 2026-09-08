@@ -69,7 +69,7 @@
 - Consumes: `se_company_basic_info` (000377), `se_bolagsverket_companies` (000374), `se_code_labels` (000150/000305).
 - Produces: `bolagsverket_record_uid_sql(alias: str) -> str` in `common.py`; `build_se_companies_serving_sql()` with the same column list; migration 000391.
 
-- [ ] **Step 1: Write the failing pin test (000391) and the failing serving SQL test**
+- [x] **Step 1: Write the failing pin test (000391) and the failing serving SQL test**
 
 In `tests/test_se_companies_serving_mv.py` replace the module docstring, `MIGRATION`, and the affected assertions:
 
@@ -258,12 +258,12 @@ Rename `test_legal_name_comes_from_company_info` to `test_legal_name_comes_from_
 
 In `tests/test_clickhouse_migrations.py` append `"000391_corpscout_se_companies_serving_basic_info",` after the `000390` entry of the migrations tuple.
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `uv run pytest tests/test_se_companies_serving_mv.py tests/test_se_companies_serving_sql.py -q`
 Expected: the mv tests FAIL with `FileNotFoundError` for 000391; the SQL test FAILS (the builder still selects from `se_company_info`, which the script no longer creates).
 
-- [ ] **Step 3: The shared uid helper**
+- [x] **Step 3: The shared uid helper**
 
 Append to `src/dagster_v3/defs/se_company/common.py`:
 
@@ -292,7 +292,7 @@ BOLAGSVERKET_RECORD_UID_SQL = bolagsverket_record_uid_sql("register")
 
 (keep the import with the other imports at the top of the file).
 
-- [ ] **Step 4: Re-base the builder**
+- [x] **Step 4: Re-base the builder**
 
 In `src/dagster_v3/defs/sweden_company/companies_current.py`:
 
@@ -376,7 +376,7 @@ Replace the FROM block:
 
 `has_description` stays `toUInt8(i.description IS NOT NULL)`. Nothing else in the SELECT changes.
 
-- [ ] **Step 5: Write migration 000391 from the builder**
+- [x] **Step 5: Write migration 000391 from the builder**
 
 Run from `corpscout/services/dagster_v3` (writes both files):
 
@@ -433,12 +433,12 @@ EOF
 
 Then confirm no comment line in either file contains a semicolon: `rg -n "^\s*--.*;" ../../clickhouse/migrations/000391_*` must print nothing.
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests**
 
 Run: `uv run pytest tests/test_se_companies_serving_mv.py tests/test_se_companies_serving_sql.py tests/test_se_companies_current_asset.py tests/test_se_company_basic_info_extractors_sql.py tests/test_clickhouse_migrations.py -q`
 Expected: PASS, none skipped.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add corpscout/services/dagster_v3/src/dagster_v3/defs/se_company/common.py corpscout/services/dagster_v3/src/dagster_v3/defs/se_company/basic_info/bolagsverket.py corpscout/services/dagster_v3/src/dagster_v3/defs/sweden_company/companies_current.py corpscout/clickhouse/migrations/000391_corpscout_se_companies_serving_basic_info.up.sql corpscout/clickhouse/migrations/000391_corpscout_se_companies_serving_basic_info.down.sql corpscout/services/dagster_v3/tests/test_se_companies_serving_mv.py corpscout/services/dagster_v3/tests/test_se_companies_serving_sql.py corpscout/services/dagster_v3/tests/test_clickhouse_migrations.py
@@ -464,7 +464,7 @@ view. Same columns, 000366 cadence, 000347 staged swap."
 - Consumes: `se_company_basic_info` columns `company_id, legal_name, legal_form_code, status, incorporation_date`.
 - Produces: nothing new; every remaining reader of the deleted modules is deleted with them (verified: no other importers).
 
-- [ ] **Step 1: Delete the old pipeline page and dead modules**
+- [x] **Step 1: Delete the old pipeline page and dead modules**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/backoffice
@@ -473,7 +473,7 @@ git rm -q app/routes/admin-se-companies-pipeline.ts app/routes/admin-se-companie
 
 Check nothing else imported them: `rg -n "se-company-info-pipeline|se-company-info\.server|se-info-field-values" app` must print nothing but the comment in `app/lib/se-people-simple-sync.server.test.ts` line 5 (reword that comment to `mirrors se-people-simple-sync's own faked ClickHouse read`).
 
-- [ ] **Step 2: Route, constants, helper, comments**
+- [x] **Step 2: Route, constants, helper, comments**
 
 `app/routes.ts`: delete the four lines
 
@@ -494,16 +494,16 @@ Check nothing else imported them: `rg -n "se-company-info-pipeline|se-company-in
 
 `app/lib/se-company-geocoding-list.server.ts`: line 11 `se_company_address/se_company_info` becomes `se_company_address/se_company_basic_info`; line 19 `se_company_info -- so every query here filters` becomes `se_company_basic_info -- so every query here filters`.
 
-- [ ] **Step 3: Re-point the header**
+- [x] **Step 3: Re-point the header**
 
 `app/lib/se-company-shell.server.ts`: in `SHELL_INFO_SQL` replace `FROM corpscout.se_company_info AS i FINAL` with `FROM corpscout.se_company_basic_info AS i FINAL`. Comments: line 16 `(SHELL_REGISTER_SQL), and se_companies carries` unchanged; line 24 becomes ` * True when the shell came from \`se_company_basic_info\` -- the fold has published`; lines 56-57 become ` * one row type covers either source. \`FINAL\` on both: se_company_basic_info and` / ` * se_companies are ReplacingMergeTrees, and the newest version is the only`.
 
-- [ ] **Step 4: Typecheck and tests**
+- [x] **Step 4: Typecheck and tests**
 
 Run: `npm run typecheck && npx vitest run app/lib/dagster.server.test.ts app/lib/se-company-shell.server.test.ts app/lib/se-people-simple-sync.server.test.ts 2>&1 | tail -5`
 Expected: typecheck clean; tests pass. If `se-company-shell.server.test.ts` does not exist, run `npx vitest run app/lib` instead.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A app/routes.ts app/lib/dagster.server.ts app/lib/dagster.server.test.ts app/lib/clickhouse.server.ts app/lib/se-company-info-filters.ts app/lib/se-company-geocoding-list.server.ts app/lib/se-company-shell.server.ts app/lib/se-people-simple-sync.server.test.ts
@@ -533,7 +533,7 @@ module and the field-values module had no importers left."
 - Consumes: nothing new.
 - Produces: `info.py` exports exactly `DESCRIPTION_PROMPT_VERSION`, `SE_COMPANY_INFO_OBSERVATION`, `OBSERVATION_FLUSH_ROWS`, `OBSERVATION_COLUMNS`, `LlmProfileConfig`, `DEFAULT_LLM_PROFILE`, `llm_api_key_variable`, `build_llm_client`, `DescriptionSuggestion`, `parse_description_suggestion`, `map_ordered`; `info_rules.py` exports `ArtifactRow`, `evidence_set_hash_for`, `_text`.
 
-- [ ] **Step 1: Write the kept-helper tests**
+- [x] **Step 1: Write the kept-helper tests**
 
 Create `tests/test_se_company_llm_support.py`:
 
@@ -651,12 +651,12 @@ Delete the five test files:
 git rm -q tests/test_se_company_info.py tests/test_se_company_info_clickhouse_local.py tests/test_se_company_esef.py tests/test_se_company_wikidata.py tests/test_se_company_scb.py
 ```
 
-- [ ] **Step 2: Run the new tests to verify the state (they pass against the untrimmed module; the address test fails)**
+- [x] **Step 2: Run the new tests to verify the state (they pass against the untrimmed module; the address test fails)**
 
 Run: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run pytest tests/test_se_company_llm_support.py tests/test_se_company_info_rules.py tests/test_se_company_address_scb.py -q`
 Expected: the llm-support and rules tests PASS (the helpers already exist); `test_the_address_scb_asset_writes_its_own_table` FAILS on `graph.has(...)` because the info artifact still exists.
 
-- [ ] **Step 3: Trim `info.py` to the helpers**
+- [x] **Step 3: Trim `info.py` to the helpers**
 
 Replace the whole of `src/dagster_v3/defs/se_company/info.py` with:
 
@@ -798,7 +798,7 @@ def map_ordered(call: Callable[[T], R], items: Sequence[T], *, concurrency: int)
         yield from pool.map(call, items)
 ```
 
-- [ ] **Step 4: Split `scb.py`, delete the other two artifacts, trim `info_rules.py`, drop the leaves**
+- [x] **Step 4: Split `scb.py`, delete the other two artifacts, trim `info_rules.py`, drop the leaves**
 
 `src/dagster_v3/defs/se_company/scb.py`: delete everything from the line `TABLE = "se_company_info_scb"` (line 41) up to but not including `ADDRESS_TABLE = "se_company_address_scb"` (line 191). Keep `GROUP_NAME`, `DATABASE`, the imports. Replace the module docstring with:
 
@@ -870,14 +870,14 @@ def _text(value: object) -> str | None:
 
 `tests/se_company_ddl.py` docstring lines 21-23 become: `The se_company layer's tables live in several migrations (000297 declares the observation table since slice 4 retired the info tables, 000307 the address ones), so the helpers below locate the creating file`.
 
-- [ ] **Step 5: Check definitions and run the se_company tests**
+- [x] **Step 5: Check definitions and run the se_company tests**
 
 Run: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run dg check defs 2>&1 | tail -2 && WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run pytest tests/test_se_company_llm_support.py tests/test_se_company_info_rules.py tests/test_se_company_address_scb.py tests/test_se_company_address_rules.py tests/test_se_company_address.py tests/test_se_company_common.py tests/test_se_company_basic_info_llm.py tests/test_clickhouse_leaf_checks.py tests/test_se_company_layout.py tests/test_se_company_basic_info_tables.py -q`
 Expected: "All definitions loaded successfully." and PASS. If a test still imports a deleted name, it is one of the files this task lists; fix it, do not restore the module.
 
 Also: `rg -n "se_company\.(esef|wikidata)\b|merge_company_info|apply_field_values|FieldValueRow|se_company_info_clickhouse|se_company_info_job" src tests` must print nothing except the string literals inside `tests/test_se_company_common.py` (synthetic job names in the ledger-sensor tests, which stay).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A corpscout/services/dagster_v3/src/dagster_v3/defs/se_company corpscout/services/dagster_v3/src/dagster_v3/defs/common/clickhouse_checks.py corpscout/services/dagster_v3/tests/test_se_company_llm_support.py corpscout/services/dagster_v3/tests/test_se_company_info_rules.py corpscout/services/dagster_v3/tests/test_se_company_address_scb.py corpscout/services/dagster_v3/tests/se_company_ddl.py
@@ -901,7 +901,7 @@ freshness leaves are gone. The observation cache table stays."
 
 **Interfaces:** none; text only.
 
-- [ ] **Step 1: Extend `EMPTIED_MIGRATIONS` and delete the two tests (failing state)**
+- [x] **Step 1: Extend `EMPTIED_MIGRATIONS` and delete the two tests (failing state)**
 
 In `tests/test_clickhouse_migrations.py` replace the `EMPTIED_MIGRATIONS` set with:
 
@@ -930,7 +930,7 @@ Delete the functions `test_se_company_info_esef_enrichment_migration_is_additive
 Run: `uv run pytest tests/test_clickhouse_migrations.py -q -k "create_databases_and_tables or have_down_files"`
 Expected: FAIL for the seven files (they still hold DDL).
 
-- [ ] **Step 2: Empty the seven files**
+- [x] **Step 2: Empty the seven files**
 
 For each of the seven names, both the up and the down file become this body (the tests require exactly one statement line, and the file must end on it, so the comments go above):
 
@@ -951,16 +951,16 @@ for m in 000299_corpscout_se_company_info_sole_traders 000300_corpscout_se_compa
 done
 ```
 
-- [ ] **Step 3: Shrink 000297 to the observation table**
+- [x] **Step 3: Shrink 000297 to the observation table**
 
 Rewrite `000297_corpscout_se_company_info.up.sql` as: the `CREATE DATABASE IF NOT EXISTS corpscout;` line, a comment `-- Sweden company information (2026-08). Basic-info slice 4 (2026-09-08) dropped the five` / `-- se_company_info* tables by hand and their DDL left this file; the observation cache` / `-- below stays: every row is a paid model answer the basic-info LLM extractor reuses.`, then the unchanged `CREATE TABLE IF NOT EXISTS corpscout.se_company_info_enrichment_observation (...) ENGINE = MergeTree ORDER BY (company_id, input_hash, created_at);` block copied verbatim from the current file (lines 156-173). Rewrite the down file as `CREATE DATABASE IF NOT EXISTS corpscout;` followed by `DROP TABLE IF EXISTS corpscout.se_company_info_enrichment_observation;`.
 
-- [ ] **Step 4: Run the ledger tests and the DDL-helper users**
+- [x] **Step 4: Run the ledger tests and the DDL-helper users**
 
 Run: `uv run pytest tests/test_clickhouse_migrations.py tests/test_se_company_address.py tests/test_se_company_address_tables.py tests/test_se_company_address_layout.py tests/test_se_company_address_bolagsverket.py tests/test_se_company_basic_info_tables.py tests/test_sweden_company_source_tables.py tests/test_se_company_layout.py -q`
 Expected: PASS. (`tests/test_se_company_common.py` line 207 reads the observation table by name; it still exists.)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add corpscout/clickhouse/migrations/000297_corpscout_se_company_info.up.sql corpscout/clickhouse/migrations/000297_corpscout_se_company_info.down.sql corpscout/clickhouse/migrations/000299_corpscout_se_company_info_sole_traders.*.sql corpscout/clickhouse/migrations/000300_corpscout_se_company_info_scb_english.*.sql corpscout/clickhouse/migrations/000301_corpscout_se_company_info_description_sv.*.sql corpscout/clickhouse/migrations/000304_corpscout_se_company_info_llm_enhanced.*.sql corpscout/clickhouse/migrations/000306_corpscout_se_company_info_legal_form_label.*.sql corpscout/clickhouse/migrations/000365_corpscout_se_company_info_esef_enrichment.*.sql corpscout/clickhouse/migrations/000371_corpscout_se_company_info_field_value.*.sql corpscout/services/dagster_v3/tests/test_clickhouse_migrations.py
@@ -978,7 +978,7 @@ in EMPTIED_MIGRATIONS. 000297 keeps the observation cache table."
 **Files:**
 - Create: `corpscout/clickhouse/operations/se_company_info_retire.md`
 
-- [ ] **Step 1: Write the gated drop script**
+- [x] **Step 1: Write the gated drop script**
 
 ```markdown
 # Retire the se_company_info tables (basic-info slice 4)
@@ -1024,7 +1024,7 @@ The last statement discards 000391's pre-swap render once the new view has serve
 full refresh; leave it if a rollback is still on the table.
 ```
 
-- [ ] **Step 2: Full unit suite and the integration files this branch touches**
+- [x] **Step 2: Full unit suite and the integration files this branch touches**
 
 Run: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run pytest -q -m "not integration" --deselect tests/test_schedule_cron_contracts.py::test_every_schedule_fires_on_a_unique_minute_hour_pair -p no:cacheprovider 2>&1 | tail -8`
 Expected: only the four failures already present on main (backfill-policy, DuckDB executemany, NACE staged-flow, Lantmäteriet credentials); nothing new.
@@ -1035,7 +1035,7 @@ Expected: PASS, none skipped.
 Backoffice: `cd corpscout/services/backoffice && npm run typecheck && npx vitest run 2>&1 | tail -4`
 Expected: clean and green (live tests that need a server skip as they do on main).
 
-- [ ] **Step 3: Commit and merge**
+- [x] **Step 3: Commit and merge**
 
 ```bash
 git add corpscout/clickhouse/operations/se_company_info_retire.md
