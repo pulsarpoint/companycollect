@@ -13,7 +13,7 @@ from dagster_v3.defs.company_identifier.rules import (
 
 COMPANY_IDENTIFIER_UPSTREAM_ASSET_KEYS = (
     "gleif_reference_clickhouse",
-    "sweden_company_companies_clickhouse",
+    "se_company_basic_info_fold",
 )
 
 _QUALITY_COLUMNS = (

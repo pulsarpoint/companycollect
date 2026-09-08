@@ -1,5 +1,5 @@
 import { chQuery } from "~/lib/clickhouse.server";
-import { COUNTRIES, getCountry, type CountryConfig } from "~/lib/countries";
+import { COUNTRIES, companiesFrom, getCountry, type CountryConfig } from "~/lib/countries";
 
 export const TOP_COMPANIES_LIMIT = 25;
 export const TOP_DIVISIONS_LIMIT = 15;
@@ -186,7 +186,7 @@ LIMIT ${TOP_COMPANIES_LIMIT}`;
 
 function nameLookupSql(c: CountryConfig): string {
   return `SELECT toString(${c.idColumn}) AS id, ${c.nameColumn} AS name
-FROM ${c.companiesTable}
+FROM ${companiesFrom(c)}
 WHERE ${c.idColumn} IN {ids:Array(String)}`;
 }
 

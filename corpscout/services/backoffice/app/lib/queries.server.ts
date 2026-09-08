@@ -13,6 +13,7 @@ import {
   type CountryConfig,
   type FinancialSourceDefinition,
   type SortDir,
+  companiesFrom,
 } from "~/lib/countries";
 import type { CompanyFilters } from "~/lib/filters";
 import {
@@ -53,7 +54,7 @@ export async function getCountryStats(
   // Table/column identifiers come from the static registry, never from users.
   const rows = await chQuery<{ total: string; active: string }>(
     `SELECT count() AS total, countIf(${country.activeExpr}) AS active
-     FROM ${country.companiesTable}`,
+     FROM ${companiesFrom(country)}`,
   );
   const row = rows[0];
   return { total: Number(row.total), active: Number(row.active) };
@@ -163,7 +164,7 @@ export async function companyHasFlag(
   let query: string;
   if ("expr" in source) {
     query = `SELECT 1 AS found
-      FROM ${country.companiesTable}
+      FROM ${companiesFrom(country)}
       WHERE ${country.idColumn} = {id:String}
         AND coalesce(toString(${source.expr}), '') != ''
       LIMIT 1`;
@@ -326,14 +327,14 @@ export async function getCompanyShell(
   const [companies, records] = await Promise.all([
     chQuery<CompanyListRow & { __industry_key?: string }>(
       `SELECT ${selectList}
-       FROM ${country.companiesTable}
+       FROM ${companiesFrom(country)}
        WHERE ${country.idColumn} = {id:String}
        LIMIT 1`,
       { id },
     ),
     chQuery<Record<string, unknown>>(
       country.detail?.recordQuery ??
-        `SELECT * FROM ${country.companiesTable}
+        `SELECT * FROM ${companiesFrom(country)}
          WHERE ${country.idColumn} = {id:String}
          LIMIT 1`,
       { id },
@@ -399,7 +400,7 @@ export async function searchCompanies(
   const where = conds.length > 0 ? `WHERE ${conds.join(" AND ")}` : "";
 
   const countRows = await chQuery<{ total: string }>(
-    `SELECT count() AS total FROM ${country.companiesTable} ${where}`,
+    `SELECT count() AS total FROM ${companiesFrom(country)} ${where}`,
     params,
   );
   const total = Number(countRows[0].total);
@@ -412,7 +413,7 @@ export async function searchCompanies(
 
   const rows = await chQuery<CompanyListRow & { __industry_key?: string }>(
     `SELECT ${selectList}
-     FROM ${country.companiesTable}
+     FROM ${companiesFrom(country)}
      ${where}
      ORDER BY coalesce(toString(${sortColumn.expr}), '') = '' ASC, ${sortColumn.expr} ${dir === "desc" ? "DESC" : "ASC"}, ${country.idColumn}
      LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}`,

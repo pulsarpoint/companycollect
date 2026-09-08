@@ -30,7 +30,7 @@ def test_generated_final_alias_queries_execute_in_clickhouse() -> None:
         INITIAL_MIGRATION.read_text(encoding="utf-8"),
         CONTACTS_MIGRATION.read_text(encoding="utf-8"),
         """
-        CREATE TABLE corpscout.se_companies (company_id String)
+        CREATE TABLE corpscout.se_company_basic_info (company_id String)
         ENGINE = ReplacingMergeTree
         ORDER BY company_id
         """,

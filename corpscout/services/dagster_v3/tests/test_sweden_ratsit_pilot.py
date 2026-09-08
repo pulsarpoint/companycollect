@@ -280,7 +280,7 @@ class FakeClickHouseClient:
         if "FROM system.tables" in sql:
             assert isinstance(parameters, dict)
             return [(table,) for table in parameters["tables"]]
-        if "FROM corpscout.se_companies FINAL" in sql:
+        if "FROM corpscout.se_company_basic_info FINAL" in sql:
             return self.active_company_rows
         if (
             "FROM corpscout.se_company_ratsit FINAL" in sql
@@ -671,7 +671,7 @@ def test_active_company_selection_excludes_unavailable_legal_forms() -> None:
     selection_sql, parameters = next(
         (sql, parameters)
         for sql, parameters in client.calls
-        if "FROM corpscout.se_companies FINAL" in sql
+        if "FROM corpscout.se_company_basic_info FINAL" in sql
     )
     assert "status = 'active'" in selection_sql
     assert (
@@ -968,7 +968,7 @@ def test_ratsit_dispatch_and_normalized_table_assets_are_registered() -> None:
 
     assert dg.AssetKey("se_ratsit_scan_dispatch") in asset_keys
     scan_node = repository.asset_graph.get(dg.AssetKey("se_ratsit_scan_dispatch"))
-    assert scan_node.parent_keys == {dg.AssetKey("sweden_company_companies_clickhouse")}
+    assert scan_node.parent_keys == {dg.AssetKey("se_company_basic_info_fold")}
     assert scan_node.partitions_def == RATSIT_PARTITIONS
     for asset_name in (
         "se_ratsit_company",

@@ -21,7 +21,7 @@
  * the reason §3.3 exists.
  */
 import { chQuery } from "./clickhouse.server";
-import { COUNTRIES } from "./countries";
+import { COUNTRIES, companiesFrom } from "./countries";
 import { sourceSlugToPath } from "./procurement-paths";
 
 export interface ProcurementRegister {
@@ -404,7 +404,7 @@ export async function matchCompanies(
   const perRegisterSql = COUNTRIES.map(
     (c) =>
       `SELECT DISTINCT toString(${c.idColumn}) AS company_id, '${c.code}' AS country_code
-       FROM ${c.companiesTable}
+       FROM ${companiesFrom(c)}
        WHERE toString(${c.idColumn}) IN {ids:Array(String)}`,
   ).join("\nUNION ALL\n");
   const rows = await chQuery<{ company_id: string; country_code: string }>(

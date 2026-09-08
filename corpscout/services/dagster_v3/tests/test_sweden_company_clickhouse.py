@@ -8,7 +8,6 @@ from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.sweden_company import tables
 from dagster_v3.defs.sweden_company.clickhouse import (
-    export_sweden_company_clickhouse_companies,
     export_sweden_company_clickhouse_industries,
     publish_sweden_company_industry_history,
     publish_sweden_company_profile_history,
@@ -67,43 +66,6 @@ class FakeClickHouseClient:
     ) -> None:
         columns = ", ".join(f"`{column}`" for column in column_names)
         self.insert_calls.append((f"INSERT INTO {table} ({columns}) VALUES", rows))
-
-
-def test_export_sweden_company_clickhouse_companies_replaces_companies(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    client = FakeClickHouseClient()
-    resource = ClickhouseResource(host="localhost")
-
-    @contextmanager
-    def fake_get_connection(self: ClickhouseResource) -> Iterator[FakeClickHouseClient]:
-        yield client
-
-    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
-
-    with _sweden_company_duckdb(tmp_path) as connection:
-        rows = export_sweden_company_clickhouse_companies(
-            duckdb_connection=connection,
-            clickhouse=resource,
-        )
-
-    assert rows == 1
-    assert client.table_checks == [(tables.COMPANIES_TABLE_CH,)]
-    assert (
-        f"CREATE TABLE `corpscout`.`_tmp_{tables.COMPANIES_TABLE_CH}_"
-        in client.statements[1]
-    )
-    assert len(client.insert_calls) == 1
-    assert client.insert_calls[0][0].startswith(
-        "INSERT INTO `corpscout`.`_tmp_se_companies_"
-    )
-    assert client.insert_calls[0][1][0][0:4] == (
-        "5560000000",
-        "5560000000",
-        "5560000000$ORGNR-IDORG",
-        "5560000000",
-    )
 
 
 def test_export_sweden_company_clickhouse_industries_replaces_industries(

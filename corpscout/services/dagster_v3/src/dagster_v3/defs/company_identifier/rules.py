@@ -25,7 +25,7 @@ class CountryIdentityRule:
     country_code: str
     issuer_scheme: str
     register_table: str
-    # The register's own id column. They disagree — se_companies.company_id,
+    # The register's own id column. They disagree — se_company_basic_info.company_id,
     # no_companies.org_number, fi_companies.business_id — and hardcoding one
     # silently limited this to Sweden.
     id_column: str
@@ -37,7 +37,7 @@ COUNTRY_IDENTITY_RULES = {
     "SE": CountryIdentityRule(
         country_code="SE",
         issuer_scheme="lei",
-        register_table="se_companies",
+        register_table="se_company_basic_info",
         id_column="company_id",
         identifier_length=10,
         min_expected_rows=500,

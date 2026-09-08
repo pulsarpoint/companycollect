@@ -1,11 +1,4 @@
+-- Basic-info slice 5 (2026-09-08): the se_companies spine these presentation fields
+-- belonged to was dropped by hand and their DDL left this file per the dev-phase ledger
+-- policy. The file stays for history.
 CREATE DATABASE IF NOT EXISTS corpscout;
-
-ALTER TABLE corpscout.se_companies
-    ADD COLUMN IF NOT EXISTS legal_name_registration_date Nullable(Date32)
-        AFTER legal_name_raw,
-    ADD COLUMN IF NOT EXISTS status_source LowCardinality(Nullable(String))
-        AFTER status,
-    ADD COLUMN IF NOT EXISTS status_observed_at Nullable(DateTime64(3, 'UTC'))
-        AFTER status_source,
-    ADD COLUMN IF NOT EXISTS status_conflict UInt8 DEFAULT 0
-        AFTER status_observed_at;

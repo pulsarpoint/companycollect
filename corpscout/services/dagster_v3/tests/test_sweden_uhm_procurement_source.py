@@ -178,7 +178,7 @@ def test_clickhouse_publish_retains_unmatched_supplier_observations() -> None:
         awards_stage="corpscout.awards_stage",
     )
 
-    assert "LEFT ANY JOIN corpscout.se_companies" in sql
+    assert "LEFT ANY JOIN corpscout.se_company_basic_info" in sql
     assert "'exact'" in sql
     assert "'unmatched_company'" in sql
     assert "u.match_eligibility" in sql

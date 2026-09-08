@@ -59,8 +59,8 @@ _DOMAIN_FEATURE_KEYS_EXTERNAL_TABLE = "company_domain_feature_keys"
 _DOMAIN_FEATURE_KEYS_STRUCTURE = [("normalized_value", "String")]
 
 COMPANIES_SQL = """
-SELECT company_id, ifNull(legal_name, '')
-FROM corpscout.se_companies FINAL
+SELECT company_id, legal_name
+FROM corpscout.se_company_basic_info FINAL
 WHERE company_id != ''
 ORDER BY company_id
 """

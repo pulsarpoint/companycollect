@@ -15,7 +15,7 @@ from dagster_v3.defs.company_signals.sources import (
 def test_sweden_reads_its_national_register_alongside_ted() -> None:
     rule = COUNTRY_PROCUREMENT_RULES["SE"]
 
-    assert rule.companies_table == "se_companies"
+    assert rule.companies_table == "se_company_basic_info"
     assert rule.company_id_column == "company_id"
     assert rule.identifier_length == 10
     assert rule.source_slugs == tuple(sorted((UHM_SOURCE_SLUG, TED_SOURCE_SLUG)))

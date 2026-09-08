@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { COUNTRIES, getCountry, getSortColumn } from "~/lib/countries";
+import { COUNTRIES, companiesFrom, getCountry, getSortColumn } from "~/lib/countries";
 
 describe("country registry", () => {
   it("contains all ten countries with unique lowercase ISO2 codes", () => {
@@ -19,13 +19,22 @@ describe("country registry", () => {
 
   it("maps Sweden to its status-based active expression", () => {
     const se = getCountry("se");
-    expect(se?.companiesTable).toBe("se_companies");
+    expect(se?.companiesTable).toBe("se_company_basic_info");
     expect(se?.idColumn).toBe("company_id");
     expect(se?.nameColumn).toBe("legal_name");
     expect(se?.activeExpr).toBe("status = 'active'");
     expect(
       se?.columns.find((column) => column.key === "registered")?.label,
     ).toBe("Registered");
+  });
+
+  it("reads Sweden's re-published entity table with FINAL and the others bare", () => {
+    // se_company_basic_info is a ReplacingMergeTree the fold rewrites in place; a bare
+    // read counts every unmerged version of a company (slice 5, 2026-09-08).
+    expect(companiesFrom(getCountry("se")!)).toBe("se_company_basic_info FINAL");
+    expect(companiesFrom(getCountry("no")!)).toBe("no_companies");
+    const withFinal = COUNTRIES.filter((c) => c.companiesTableFinal).map((c) => c.code);
+    expect(withFinal).toEqual(["se"]);
   });
 });
 
@@ -246,10 +255,10 @@ describe("detail config", () => {
         expect(c.detail?.recordQuery).toContain("{id:String}");
         expect(c.detail?.recordQuery).toContain("c.*");
       } else if (c.code === "se") {
-        expect(c.detail?.companyShellQuery).toContain("FROM se_companies AS c");
+        expect(c.detail?.companyShellQuery).toContain("FROM se_company_basic_info AS i FINAL");
         expect(c.detail?.companyShellQuery).toContain("{id:String}");
         expect(c.detail?.companyShellQuery).toContain(
-          "activity_description AS activity_description_original",
+          "i.description_sv AS activity_description_original",
         );
         expect(c.detail?.companyShellQuery).toContain(
           "incorporation_date AS registration_date",
@@ -267,7 +276,7 @@ describe("detail config", () => {
         expect(c.detail?.companyShellQuery).not.toContain("gleif_lei_records");
         expect(c.detail?.companyShellQuery).not.toContain("replaceRegexpAll");
         expect(c.detail?.companyShellQuery).toContain(
-          "PREWHERE c.company_id = {id:String}",
+          "WHERE i.company_id = {id:String}",
         );
         expect(c.detail?.companyShellQuery).not.toContain(
           "WHERE c.registration_number = {id:String}",

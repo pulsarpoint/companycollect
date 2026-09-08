@@ -293,7 +293,7 @@ describe("the Companies tab read (technology_companies)", () => {
     });
   });
 
-  it("enriches SE rows with se_companies FINAL names and NACE industries keyed by the page's own ids; non-SE rows stay bare", async () => {
+  it("enriches SE rows with se_company_basic_info FINAL names and NACE industries keyed by the page's own ids; non-SE rows stay bare", async () => {
     clickhouse.query
       .mockResolvedValueOnce([
         { country_code: "SE", company_id: "5560125220", root_domain: "example.se" },
@@ -322,7 +322,7 @@ describe("the Companies tab read (technology_companies)", () => {
       { ids: ["5560125220"] },
     );
     expect(TECHNOLOGY_SE_COMPANY_NAMES_SQL).toContain(
-      "FROM corpscout.se_companies FINAL",
+      "FROM corpscout.se_company_basic_info FINAL",
     );
     expect(TECHNOLOGY_SE_COMPANY_NAMES_SQL).toContain(
       "WHERE company_id IN {ids:Array(String)}",

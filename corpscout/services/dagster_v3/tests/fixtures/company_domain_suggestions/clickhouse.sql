@@ -1,9 +1,9 @@
 CREATE DATABASE IF NOT EXISTS corpscout;
 
-CREATE TABLE corpscout.se_companies
+CREATE TABLE corpscout.se_company_basic_info
 (
     company_id String,
-    legal_name Nullable(String)
+    legal_name String
 )
 ENGINE = ReplacingMergeTree
 ORDER BY company_id;
@@ -71,7 +71,7 @@ CREATE TABLE corpscout.commoncrawl_domain_identifiers
 ENGINE = ReplacingMergeTree(resolved_at)
 ORDER BY (root_domain, id_type, id_value, crawl_id);
 
-INSERT INTO corpscout.se_companies VALUES
+INSERT INTO corpscout.se_company_basic_info VALUES
     ('5590000000', 'Acme Security AB'),
     ('5590000001', 'Other Company AB'),
     ('5590000002', 'Bright Future Consulting AB'),

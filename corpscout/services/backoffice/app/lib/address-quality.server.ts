@@ -309,10 +309,10 @@ export async function searchAddressQualityQueue(options: {
       ? []
       : await chQuery<AddressQualityCompanyNameRow>(
           `SELECT
-             toString(registration_number) AS company_id,
-             coalesce(legal_name, '') AS company_name
-           FROM corpscout.se_companies
-           PREWHERE registration_number IN {companyIds:Array(String)}`,
+             company_id,
+             legal_name AS company_name
+           FROM corpscout.se_company_basic_info FINAL
+           WHERE company_id IN {companyIds:Array(String)}`,
           { companyIds },
         );
   const companyNames = new Map(

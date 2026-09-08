@@ -11,7 +11,6 @@ from dagster_v3.defs.common.duckdb_resources import (
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.sweden_company import tables
 from dagster_v3.defs.sweden_company.clickhouse import (
-    export_sweden_company_clickhouse_companies,
     export_sweden_company_clickhouse_industries,
     publish_sweden_company_clickhouse_addresses,
     publish_sweden_company_industry_history,
@@ -132,30 +131,6 @@ def sweden_company_normalized_duckdb(
             "unknown_sni_count": counts["unknown_sni_count"],
             "loaded_at": loaded_at.isoformat(),
         }
-    )
-
-
-@dg.asset(
-    deps=["sweden_company_normalized_duckdb"],
-    group_name=GROUP_NAME,
-    kinds={"python", "duckdb", "clickhouse", "bolagsverket", "scb"},
-    pool=SWEDEN_COMPANY_DUCKDB_POOL,
-    metadata={"table": tables.QUALIFIED_COMPANIES_TABLE},
-    description="Exports normalized Sweden companies to ClickHouse corpscout.se_companies.",
-)
-def sweden_company_companies_clickhouse(
-    context: dg.AssetExecutionContext,
-    sweden_company_duckdb: DuckDBResource,
-    clickhouse: ClickhouseResource,
-) -> dg.MaterializeResult:
-    with read_only_duckdb_connection(sweden_company_duckdb) as connection:
-        rows = export_sweden_company_clickhouse_companies(
-            duckdb_connection=connection,
-            clickhouse=clickhouse,
-            log=context.log.info,
-        )
-    return dg.MaterializeResult(
-        metadata={"rows": rows, "table": tables.QUALIFIED_COMPANIES_TABLE}
     )
 
 
@@ -358,21 +333,22 @@ def sweden_company_industry_history_clickhouse(
 
 
 @dg.asset_check(
-    asset="sweden_company_companies_clickhouse",
+    asset="sweden_company_scb_companies_clickhouse",
     name="identities_normalized",
 )
 def identities_normalized(clickhouse: ClickhouseResource) -> dg.AssetCheckResult:
     """Guard against re-publishing 16-prefixed duplicate identities.
 
-    A dagster deploy running pre-2026-07-18 code would re-export SCB rows
-    keyed as 12-digit '16'+orgnr, silently re-splitting ~745k companies and
-    breaking every downstream join. Fails loudly instead.
+    A dagster deploy running pre-2026-07-18 code would export SCB rows keyed as
+    12-digit '16'+orgnr, silently re-splitting ~745k companies and breaking every
+    downstream join. Checked on the SCB register export, where the ids originate,
+    since the se_companies spine retired (basic-info slice 5, 2026-09-08).
     """
     with clickhouse.get_connection() as client:
         [(prefixed, total, distinct)] = client.execute(
             "SELECT countIf(length(company_id) = 12 AND startsWith(company_id, '16')), "
             "count(), uniqExact(company_id) "
-            f"FROM {tables.QUALIFIED_COMPANIES_TABLE}"
+            f"FROM {tables.QUALIFIED_SCB_COMPANIES_TABLE} FINAL"
         )
     return dg.AssetCheckResult(
         passed=prefixed == 0 and total == distinct,
@@ -387,7 +363,6 @@ def identities_normalized(clickhouse: ClickhouseResource) -> dg.AssetCheckResult
 sweden_company_refresh_job = dg.define_asset_job(
     "sweden_company_refresh_job",
     selection=dg.AssetSelection.assets(
-        "sweden_company_companies_clickhouse",
         "sweden_company_scb_companies_clickhouse",
         "sweden_company_bolagsverket_companies_clickhouse",
         "sweden_company_profile_history_clickhouse",
@@ -411,7 +386,6 @@ defs = dg.Definitions(
         sweden_company_raw_snapshot_s3,
         sweden_company_raw_duckdb,
         sweden_company_normalized_duckdb,
-        sweden_company_companies_clickhouse,
         sweden_company_scb_companies_clickhouse,
         sweden_company_bolagsverket_companies_clickhouse,
         sweden_company_profile_history_clickhouse,

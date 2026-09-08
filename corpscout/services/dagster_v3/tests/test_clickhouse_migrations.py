@@ -429,6 +429,8 @@ EMPTIED_MIGRATIONS = {
     "000365_corpscout_se_company_info_esef_enrichment",
     "000371_corpscout_se_company_info_field_value",
     "000379_corpscout_se_company_basic_info_precedence",
+    # Basic-info slice 5 (2026-09-08): the se_companies spine was dropped by hand.
+    "000281_corpscout_se_company_presentation_fields",
 }
 
 EXPECTED_ACCESS_MIGRATIONS = (
@@ -1455,7 +1457,6 @@ def test_sweden_company_registry_migration_covers_exported_columns() -> None:
     down_sql = _migration_sql("000084_corpscout_se_company_registry.down.sql")
 
     expected_columns_by_table = {
-        sweden_company_tables.COMPANIES_TABLE_CH: sweden_company_tables.SE_COMPANIES_EXPORT_COLUMNS,
         sweden_company_tables.COMPANY_ADDRESSES_TABLE_CH: (
             sweden_company_tables.SE_COMPANY_ADDRESS_BASE_COLUMNS
         ),
@@ -3173,8 +3174,8 @@ def test_company_source_record_migration_covers_shared_contracts() -> None:
         "CREATE TABLE IF NOT EXISTS corpscout.esef_document_group_relationships" in sql
     )
     assert "company-source-record-v1\\nfile\\nesef_report_package" in sql
-    assert "bolagsverket_source_record_uid" in sql
-    assert "scb_source_record_uid" in sql
+    # The se_companies spine's two record-uid columns left this file in basic-info
+    # slice 5 (2026-09-08); the register tables carry the uid through the shared macro.
 
 
 def test_company_serving_lineage_migration_makes_serving_rows_self_contained() -> None:
@@ -3440,29 +3441,6 @@ def test_bolagsverket_vdm_current_view_selects_one_latest_registration_state() -
     assert (
         "DROP VIEW IF EXISTS corpscout.se_bolagsverket_vdm_company_current" in down_sql
     )
-
-
-def test_sweden_company_presentation_fields_are_migrated() -> None:
-    sql = _migration_sql("000281_corpscout_se_company_presentation_fields.up.sql")
-    down_sql = _migration_sql(
-        "000281_corpscout_se_company_presentation_fields.down.sql"
-    )
-
-    assert "ALTER TABLE corpscout.se_companies" in sql
-    for column in (
-        "legal_name_registration_date Nullable(Date32)",
-        "status_source LowCardinality(Nullable(String))",
-        "status_observed_at Nullable(DateTime64(3, 'UTC'))",
-        "status_conflict UInt8 DEFAULT 0",
-    ):
-        assert column in sql
-    for column in (
-        "status_conflict",
-        "status_observed_at",
-        "status_source",
-        "legal_name_registration_date",
-    ):
-        assert f"DROP COLUMN IF EXISTS {column}" in down_sql
 
 
 def test_sweden_annual_report_filing_status_is_evidence_gated() -> None:

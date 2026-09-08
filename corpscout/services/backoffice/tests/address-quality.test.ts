@@ -48,7 +48,7 @@ const PAGE_ROW = {
 function answerFor(sql: string): unknown[] {
   if (sql.includes("countIf(")) return [STATS_ROW];
   if (sql.includes("count() AS total")) return [{ total: 2 }];
-  if (sql.includes("FROM corpscout.se_companies")) {
+  if (sql.includes("FROM corpscout.se_company_basic_info")) {
     return [{ company_id: "5595421834", company_name: "Nordvind AB" }];
   }
   return [PAGE_ROW];

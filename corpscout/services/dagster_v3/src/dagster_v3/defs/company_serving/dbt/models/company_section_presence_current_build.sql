@@ -2,7 +2,7 @@
 
 WITH company_anchors AS (
     SELECT company_id
-    FROM {{ source('corpscout', 'se_companies') }} FINAL
+    FROM {{ source('corpscout', 'se_company_basic_info') }} FINAL
 ),
 section_rows AS (
     SELECT country_code, company_id, 'gleif' AS section, concat('entity:', lei) AS item_key, resolved_at AS observed_at

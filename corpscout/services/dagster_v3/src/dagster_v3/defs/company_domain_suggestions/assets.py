@@ -113,7 +113,7 @@ def sweden_company_domain_suggestions_duckdb(
         database=tables.CLICKHOUSE_DATABASE,
         tables=(
             tables.FEATURES_TABLE,
-            "se_companies",
+            "se_company_basic_info",
             "se_financial_report_signatories",
             "se_industries",
             "gleif_lei_records",

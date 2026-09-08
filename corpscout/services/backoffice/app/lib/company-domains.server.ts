@@ -588,7 +588,7 @@ const COMPANY_DOMAIN_QUEUE_WHERE = `WHERE domains.country_code = {country:String
 
 export const COMPANY_DOMAIN_REVIEW_QUEUE_COUNT_QUERY = `SELECT count() AS total
 FROM company_domains AS domains FINAL
-INNER JOIN se_companies AS companies FINAL
+INNER JOIN se_company_basic_info AS companies FINAL
   ON companies.company_id = domains.company_id
 ${COMPANY_DOMAIN_QUEUE_WHERE}`;
 
@@ -617,7 +617,7 @@ export const COMPANY_DOMAIN_REVIEW_QUEUE_QUERY = `SELECT
   toString(domains.last_seen_at) AS last_seen_at,
   toString(domains.resolved_at) AS resolved_at
 FROM company_domains AS domains FINAL
-INNER JOIN se_companies AS companies FINAL
+INNER JOIN se_company_basic_info AS companies FINAL
   ON companies.company_id = domains.company_id
 ${COMPANY_DOMAIN_QUEUE_WHERE}
 ORDER BY domains.suggested_confidence DESC, companies.legal_name,

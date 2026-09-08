@@ -191,6 +191,12 @@ export interface CountryConfig {
   flag: string;
   /** ClickHouse table holding the canonical company rows. */
   companiesTable: string;
+  /**
+   * True when `companiesTable` is a ReplacingMergeTree whose rows are re-published
+   * in place (several versions per company until the parts merge), so every read must
+   * say FINAL. Readers go through `companiesFrom()` rather than the bare table name.
+   */
+  companiesTableFinal?: boolean;
   /** Column holding the national registry identifier. */
   idColumn: string;
   /** Column holding the display name. */
@@ -747,9 +753,10 @@ LIMIT 100`,
     eurostatGeoCode: "SE",
     name: "Sweden",
     flag: "🇸🇪",
-    companiesTable: "se_companies",
-    // The canonical company_id is the same normalized 10-digit organization
-    // number exposed as registration_number, and is the table's sorting key.
+    companiesTable: "se_company_basic_info",
+    companiesTableFinal: true,
+    // The canonical company_id is the normalized 10- or 12-digit organization
+    // number and the table's sorting key (basic-info slice 5, 2026-09-08).
     idColumn: "company_id",
     nameColumn: "legal_name",
     activeExpr: "status = 'active'",
@@ -769,7 +776,7 @@ LIMIT 100`,
       {
         key: "id",
         label: "ID",
-        expr: "registration_number",
+        expr: "company_id",
         sortable: true,
         kind: "id",
       },
@@ -851,25 +858,39 @@ PREWHERE country_code = 'SE' AND company_id = {id:String}
 WHERE is_active = 1 AND review_status != 'rejected'
 ORDER BY is_primary DESC, suggested_confidence DESC, root_domain
 LIMIT 50`,
-      // The shell deliberately reads only the keyed company anchor. The
-      // translated registered activity is already served lazily through
-      // company_description_current, so joining se_companies_translated here
-      // would scan its source-wide translation aggregates on every page open.
-      // The source field is a registration date, despite the normalized
-      // column's historical incorporation_date name. The legal-name date and
-      // status provenance are normalized by the Sweden company asset.
-      companyShellQuery: `SELECT c.* EXCEPT (activity_description, incorporation_date),
-  c.activity_description AS activity_description_original,
-  c.incorporation_date AS registration_date,
-  c.registration_number AS __shell_id,
-  c.legal_name AS __shell_name,
-  c.legal_form_code AS __shell_legal_form,
-  c.status AS __shell_status,
-  toString(c.incorporation_date) AS __shell_registered,
-  toUInt8(c.status = 'active') AS __shell_active,
-  c.company_id AS __shell_industry_key
-FROM se_companies AS c
-PREWHERE c.company_id = {id:String}
+      // The shell reads the folded basic-info row plus the Bolagsverket register
+      // fields the page has always shown (dissolution date, status reason, raw
+      // name), under the column names the record card and its lineage bucket
+      // already know. The translated activity is served lazily through
+      // company_description_current, never joined here.
+      companyShellQuery: `SELECT
+  i.company_id AS company_id,
+  i.company_id AS registration_number,
+  i.legal_name AS legal_name,
+  b.legal_name_raw AS legal_name_raw,
+  i.legal_form_code AS legal_form_code,
+  i.status AS status,
+  i.status_source AS status_source,
+  b.deregistration_reason AS status_reason,
+  b.deregistration_date AS dissolution_date,
+  i.description_sv AS activity_description_original,
+  i.incorporation_date AS registration_date,
+  i.source_run_id AS source_run_id,
+  i.folded_at AS updated_from_raw_at,
+  i.company_id AS __shell_id,
+  i.legal_name AS __shell_name,
+  i.legal_form_code AS __shell_legal_form,
+  i.status AS __shell_status,
+  toString(i.incorporation_date) AS __shell_registered,
+  toUInt8(i.status = 'active') AS __shell_active,
+  i.company_id AS __shell_industry_key
+FROM se_company_basic_info AS i FINAL
+LEFT JOIN (
+  SELECT company_id, legal_name_raw, deregistration_reason, deregistration_date
+  FROM se_bolagsverket_companies FINAL
+  WHERE has_company = 1
+) AS b ON b.company_id = i.company_id
+WHERE i.company_id = {id:String}
 LIMIT 1`,
       // se_bolagsverket_financial_metrics is keyed on the normalized 10-digit orgnr
       // (= registration_number since the 2026-07-18 identity fix). Some
@@ -996,8 +1017,8 @@ LIMIT 3000`,
   entry[4] AS scope
 FROM (
   SELECT splitByChar('\$', arrayJoin(splitByChar('|', assumeNotNull(legal_name_raw)))) AS entry
-  FROM se_companies
-  WHERE registration_number = {id:String} AND legal_name_raw IS NOT NULL
+  FROM se_bolagsverket_companies FINAL
+  WHERE company_id = {id:String} AND has_company = 1 AND legal_name_raw IS NOT NULL
 )
 WHERE entry[2] IN ('SARS_FORNAMN-ORGNAM', 'FORNAMN_FRSPRAK-ORGNAM')
 ORDER BY registered, name
@@ -2206,6 +2227,13 @@ LIMIT 1`,
 export function getCountry(code: string): CountryConfig | undefined {
   const normalized = code.toLowerCase();
   return COUNTRIES.find((c) => c.code === normalized);
+}
+
+/** The FROM-clause source for a country's company rows: the table, plus FINAL when it needs one. */
+export function companiesFrom(country: CountryConfig): string {
+  return country.companiesTableFinal
+    ? `${country.companiesTable} FINAL`
+    : country.companiesTable;
 }
 
 export function getSortColumn(
