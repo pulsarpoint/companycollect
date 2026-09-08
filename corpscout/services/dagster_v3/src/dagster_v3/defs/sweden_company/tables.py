@@ -5,17 +5,11 @@ from dagster_v3.defs.common.wikidata_registry_seed import WikidataRegistrySeedSp
 DLT_DATASET_NAME = "sweden_company"
 
 SWEDEN_DATABASE = "corpscout"
-COMPANY_ADDRESSES_TABLE_CH = "se_company_addresses"
-COMPANY_ADDRESSES_CURRENT_TABLE_CH = "se_company_addresses_current"
 INDUSTRIES_TABLE_CH = "se_industries"
 COMPANY_PROCEEDING_OBSERVATIONS_TABLE_CH = "se_company_proceeding_observations"
 COMPANY_PROCEEDINGS_CURRENT_TABLE_CH = "se_company_proceedings_current"
 COMPANY_INDUSTRY_OBSERVATIONS_TABLE_CH = "se_company_industry_observations"
 COMPANY_INDUSTRY_CURRENT_TABLE_CH = "se_company_industry_current"
-QUALIFIED_COMPANY_ADDRESSES_TABLE = f"{SWEDEN_DATABASE}.{COMPANY_ADDRESSES_TABLE_CH}"
-QUALIFIED_COMPANY_ADDRESSES_CURRENT_TABLE = (
-    f"{SWEDEN_DATABASE}.{COMPANY_ADDRESSES_CURRENT_TABLE_CH}"
-)
 QUALIFIED_INDUSTRIES_TABLE = f"{SWEDEN_DATABASE}.{INDUSTRIES_TABLE_CH}"
 QUALIFIED_COMPANY_PROCEEDING_OBSERVATIONS_TABLE = (
     f"{SWEDEN_DATABASE}.{COMPANY_PROCEEDING_OBSERVATIONS_TABLE_CH}"
@@ -157,22 +151,6 @@ SE_BOLAGSVERKET_COMPANIES_EXPORT_COLUMNS = (
     "source_record_id",
     "source_payload_hash",
     "observed_at",
-)
-
-SE_COMPANY_ADDRESS_BASE_COLUMNS = (
-    "company_id",
-    "address_type",
-    "source",
-    "raw_address",
-    "street_address",
-    "care_of",
-    "postal_code",
-    "post_town",
-    "country_code",
-    "source_run_id",
-    "source_record_id",
-    "source_payload_hash",
-    "updated_from_raw_at",
 )
 
 SE_COMPANY_PROCEEDING_OBSERVATION_COLUMNS = (

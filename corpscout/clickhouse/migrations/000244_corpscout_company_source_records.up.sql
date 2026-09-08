@@ -189,12 +189,8 @@ ALTER TABLE corpscout.esef_document_company_information
         'company-source-record-v1\nfile\nesef_report_package\n', lowerUTF8(package_sha256)
     )))) AFTER source_document_id;
 
-ALTER TABLE corpscout.se_company_addresses
-    ADD COLUMN IF NOT EXISTS source_record_uid String DEFAULT lower(hex(SHA256(concat(
-        'company-source-record-v1\nstructured\n',
-        if(source = 'bolagsverket', 'sweden_bolagsverket', 'sweden_scb'),
-        '\nregistry_company\n', source_record_id, '\n', lowerUTF8(source_payload_hash)
-    )))) AFTER source_payload_hash;
+-- se_company_addresses removed on 2026-09-08: dropped by hand in SE address slice 4c
+-- (development-phase ledger policy).
 
 ALTER TABLE corpscout.se_industries
     ADD COLUMN IF NOT EXISTS source_record_uid String DEFAULT lower(hex(SHA256(concat(

@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 from dagster_v3.defs.brazil_companies.cnae import tables as brazil_cnae_tables
@@ -432,6 +433,28 @@ EMPTIED_MIGRATIONS = {
     "000379_corpscout_se_company_basic_info_precedence",
     # Basic-info slice 5 (2026-09-08): the se_companies spine was dropped by hand.
     "000281_corpscout_se_company_presentation_fields",
+    # SE address slice 4c (2026-09-08): the old address chain was dropped by hand and its
+    # DDL left these files. 000270-000272 are the legacy per-company geocode pair, dropped
+    # by hand earlier (LEGACY_PAIR_RETIREMENT_DROP_SQL) and only losing its DDL now, and
+    # 000277 altered one table from each half. 000084 and 000244 are NOT here -- each still
+    # declares something that stays (se_industries, the other source_record_uid columns)
+    # and only lost the one statement that named a dropped object.
+    "000255_corpscout_se_company_address_history",
+    "000256_corpscout_se_company_address_current_snapshot",
+    "000265_corpscout_se_company_address_normalization",
+    "000270_corpscout_se_company_address_geocodes",
+    "000271_corpscout_se_company_address_geocode_results",
+    "000272_corpscout_se_company_address_city_fallback",
+    "000273_corpscout_se_company_canonical_addresses",
+    "000274_corpscout_se_shared_addresses",
+    "000275_corpscout_se_address_geocodes_current",
+    "000277_corpscout_se_address_geocode_spread",
+    "000278_corpscout_se_address_components",
+    "000307_corpscout_se_company_address",
+    "000312_corpscout_se_company_addresses_current_uid_default",
+    "000320_corpscout_se_address_geocodes_current_mv",
+    "000325_corpscout_se_address_geocodes_served_view",
+    "000327_corpscout_se_address_geocodes_served_postal_box_fallback",
 }
 
 EXPECTED_ACCESS_MIGRATIONS = (
@@ -1458,9 +1481,6 @@ def test_sweden_company_registry_migration_covers_exported_columns() -> None:
     down_sql = _migration_sql("000084_corpscout_se_company_registry.down.sql")
 
     expected_columns_by_table = {
-        sweden_company_tables.COMPANY_ADDRESSES_TABLE_CH: (
-            sweden_company_tables.SE_COMPANY_ADDRESS_BASE_COLUMNS
-        ),
         sweden_company_tables.INDUSTRIES_TABLE_CH: (
             sweden_company_tables.SE_INDUSTRIES_EXPORT_COLUMNS
         ),
@@ -1471,6 +1491,8 @@ def test_sweden_company_registry_migration_covers_exported_columns() -> None:
         assert f"DROP TABLE IF EXISTS corpscout.{table_name}" in down_sql
         for column_name in column_names:
             assert f"    {column_name} " in sql
+
+    assert "corpscout.se_company_addresses\n" not in sql
 
 
 def test_finland_resolved_migrations_use_corpscout_database() -> None:
@@ -3358,27 +3380,6 @@ def test_company_domain_active_views_require_a_completed_dbt_run() -> None:
     assert sql.count("company_domain_dbt_discovery_runs FINAL") == 2
 
 
-def test_sweden_company_addresses_store_a_normalized_match_key() -> None:
-    sql = _migration_sql("000265_corpscout_se_company_address_normalization.up.sql")
-    down_sql = _migration_sql(
-        "000265_corpscout_se_company_address_normalization.down.sql"
-    )
-
-    for table in ("se_company_addresses", "se_company_addresses_current"):
-        assert f"ALTER TABLE corpscout.{table}" in sql
-        assert "ADD COLUMN IF NOT EXISTS normalized_address String" in sql
-        assert f"ALTER TABLE corpscout.{table}" in down_sql
-        assert "DROP COLUMN IF EXISTS normalized_address" in down_sql
-
-    assert sql.count("normalized_address String MATERIALIZED") == 2
-    assert "normalizeUTF8NFKC" in sql
-    assert r"[^\\p{L}\\p{N}]+" in sql
-    assert "= '00000'" in sql
-    assert "= 'utlandet'" in sql
-    assert "component -> component != ''" in sql
-    assert "care_of" not in sql
-
-
 def test_company_domain_address_nace_matching_has_an_explicit_score() -> None:
     sql = _migration_sql("000266_corpscout_company_domain_address_nace_matching.up.sql")
     down_sql = _migration_sql(
@@ -4157,3 +4158,144 @@ def test_se_source_translated_views_re_key_translations_and_define_views() -> No
     assert "DROP VIEW IF EXISTS corpscout.se_ratsit_company_translated" in down
     assert "DROP VIEW IF EXISTS corpscout.se_bolagsverket_companies_translated" in down
     assert "DELETE" not in down.upper() and "INSERT" not in down.upper()
+
+
+SLICE_4C_EMPTIED = (
+    "000255_corpscout_se_company_address_history",
+    "000256_corpscout_se_company_address_current_snapshot",
+    "000265_corpscout_se_company_address_normalization",
+    "000270_corpscout_se_company_address_geocodes",
+    "000271_corpscout_se_company_address_geocode_results",
+    "000272_corpscout_se_company_address_city_fallback",
+    "000273_corpscout_se_company_canonical_addresses",
+    "000274_corpscout_se_shared_addresses",
+    "000275_corpscout_se_address_geocodes_current",
+    "000277_corpscout_se_address_geocode_spread",
+    "000278_corpscout_se_address_components",
+    "000307_corpscout_se_company_address",
+    "000312_corpscout_se_company_addresses_current_uid_default",
+    "000320_corpscout_se_address_geocodes_current_mv",
+    "000325_corpscout_se_address_geocodes_served_view",
+    "000327_corpscout_se_address_geocodes_served_postal_box_fallback",
+)
+
+# Every name whose DDL leaves the ledger in slice 4c: the twelve this slice's script drops,
+# plus se_company_addresses_canonical_current and the legacy per-company geocode pair, which
+# were dropped by hand earlier and only lose their DDL now. Whole-name matching only:
+# se_company_address (the entity, kept) is a prefix of six of these.
+SLICE_4C_DROPPED_OBJECTS = (
+    "se_companies_serving_retired",
+    "se_company_address_legacy",
+    "se_company_address_scb",
+    "se_company_address_bolagsverket",
+    "se_company_address_correction",
+    "se_company_addresses",
+    "se_company_addresses_current",
+    "se_company_addresses_canonical_current",
+    "se_company_address_members_current",
+    "se_company_address_geocodes",
+    "se_company_address_geocode_results",
+    "se_addresses_current",
+    "se_company_address_links_current",
+    "se_address_geocodes_current",
+    "se_address_geocodes_served",
+)
+
+
+def test_the_slice_4c_migrations_are_emptied_and_registered() -> None:
+    """Dev-phase ledger policy: an object dropped by hand loses its DDL from the file that
+    declared it, and the file stays for history with the database statement alone."""
+    for migration in SLICE_4C_EMPTIED:
+        assert migration in EMPTIED_MIGRATIONS, migration
+        for suffix in (".up.sql", ".down.sql"):
+            sql = _migration_sql(f"{migration}{suffix}")
+            assert _statement_lines(sql) == ["CREATE DATABASE IF NOT EXISTS corpscout;"], (
+                f"{migration}{suffix}"
+            )
+            assert "dropped by hand" in sql, f"{migration}{suffix} lost its removal comment"
+
+
+def test_no_up_migration_declares_a_slice_4c_dropped_object() -> None:
+    """No CREATE and no later ALTER may still build one of them on the way UP.
+
+    UP FILES ONLY, deliberately. 000345's and 000348's DOWN files recreate the parked
+    se_companies_serving_retired verbatim so the serving-view swap chain can walk backwards
+    -- that is the same history 000391-000393 carry, and it is left alone.
+
+    A DROP is history of a drop, not a declaration, so 000314, 000345, 000348 and 000392 pass
+    on their up files by construction: the pattern matches only declarations. So does
+    000308's GRANT on se_company_address_correction, which stays on purpose -- access
+    migrations are not emptied when their target leaves (000298 does the same for
+    se_company_info_correction).
+    """
+    pattern = re.compile(
+        r"(CREATE TABLE IF NOT EXISTS|CREATE OR REPLACE VIEW|CREATE VIEW IF NOT EXISTS"
+        r"|CREATE MATERIALIZED VIEW|ALTER TABLE)\s+(?:corpscout\.)?(\w+)",
+        re.IGNORECASE,
+    )
+    for path in sorted(MIGRATIONS_DIR.glob("*.up.sql")):
+        for _, name in pattern.findall(path.read_text(encoding="utf-8")):
+            assert name not in SLICE_4C_DROPPED_OBJECTS, f"{path.name} declares {name}"
+
+
+def test_sweden_address_geocode_store_migration_is_versioned_and_replacing() -> None:
+    """The store's whole point is that one identity can hold several attributable outcomes.
+
+    Engine and sorting key are asserted as exact strings: a ReplacingMergeTree without
+    matched_at as its version column silently keeps an arbitrary row per key, and a sorting
+    key missing policy_version or reference_md5 would collapse two different matchers'
+    answers into one row -- both are the failure this table exists to make impossible.
+
+    Moved here from tests/test_sweden_company_address_geocoding.py in slice 4c: the store
+    stays, the old chain's test file does not.
+    """
+    up = _migration_sql("000317_corpscout_se_address_geocodes_store.up.sql")
+    down = _migration_sql("000317_corpscout_se_address_geocodes_store.down.sql")
+
+    assert up.startswith("CREATE DATABASE IF NOT EXISTS corpscout;")
+    assert "CREATE TABLE IF NOT EXISTS corpscout.se_address_geocodes\n" in up
+    assert "ENGINE = ReplacingMergeTree(matched_at)" in up
+    assert "ORDER BY (address_id, policy_version, reference_md5)" in up
+    assert "DROP TABLE IF EXISTS corpscout.se_address_geocodes;" in down
+    # The store is NOT the serving table under another name.
+    assert "se_address_geocodes_current" not in up
+
+    for column in (
+        "address_id FixedString(64)",
+        "policy_version LowCardinality(String)",
+        "reference_md5 String",
+        "address_identity_run_id String",
+        "match_status LowCardinality(String)",
+        "candidate_record_urls Array(String)",
+        "match_confidence Float32",
+        "latitude Nullable(Float64)",
+        "coordinate_supporting_point_count UInt32",
+        "coordinate_spread_meters Nullable(Float64)",
+        "source_md5 Nullable(String)",
+        "source_snapshot_at Nullable(DateTime64(3, 'UTC'))",
+        "geocode_run_id String",
+        "matched_at DateTime64(3, 'UTC')",
+    ):
+        assert column in up
+    # The two key columns are never Nullable -- a NULL in a sorting key is a trap.
+    assert "policy_version Nullable" not in up and "reference_md5 Nullable" not in up
+
+
+def test_no_new_migration_drops_a_slice_4c_retirement() -> None:
+    """The gated drops stay out of the ledger (owner ruling 2026-08-25, paid for in UNDROPs).
+    Slice 4c dropped these by hand from
+    corpscout/clickhouse/operations/se_address_retirement_drops.sql; a later
+    migration must not re-declare a drop for them. Only migrations NEWER than 000392 are
+    checked -- 000256's own rename-swap and 000345/000348/000392's serving-view swaps
+    legitimately dropped objects on this list, and history is not what this guard is about."""
+    names = "|".join(sorted(SLICE_4C_DROPPED_OBJECTS, key=len, reverse=True))
+    pattern = re.compile(
+        rf"drop\s+(?:table|view)\s+(?:if\s+exists\s+)?(?:corpscout\.)?({names})"
+        r"([^_a-zA-Z0-9]|$)",
+        re.IGNORECASE,
+    )
+    up_files = [p for p in sorted(MIGRATIONS_DIR.glob("*.up.sql")) if p.name >= "000393"]
+    assert up_files, "no migration up files newer than 000392 -- this guard would pass vacuously"
+    for path in up_files:
+        found = pattern.search(path.read_text(encoding="utf-8"))
+        assert found is None, f"{path.name} drops {found.group(1)}"

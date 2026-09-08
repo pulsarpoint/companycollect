@@ -1,2 +1,1 @@
 DROP TABLE IF EXISTS corpscout.se_industries;
-DROP TABLE IF EXISTS corpscout.se_company_addresses;
