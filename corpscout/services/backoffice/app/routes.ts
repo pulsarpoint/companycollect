@@ -186,10 +186,6 @@ export default [
       route("financial", "routes/admin-se-companies-financial.tsx"),
       route("ratsit", "routes/admin-se-companies-ratsit.tsx"),
     ]),
-    // Not a page: the resource route behind the companies list's Pipeline
-    // sheet. Its loader answers that sheet's fetcher and redirects anyone who
-    // navigates to the URL back to the list.
-    route("se/companies/pipeline", "routes/admin-se-companies-pipeline.ts"),
     // Old bookmarks: the list and the geocoding view moved under se/companies.
     // Thin loader-only routes that 302 to the new URLs.
     route("se/company-info", "routes/admin-se-company-info-redirect.ts"),

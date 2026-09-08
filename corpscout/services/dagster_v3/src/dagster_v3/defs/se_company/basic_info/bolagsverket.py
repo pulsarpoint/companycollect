@@ -10,6 +10,7 @@ selects columns and never joins text_translations."""
 import dagster as dg
 
 from dagster_v3.defs.se_company.basic_info.extract import define_suggestion_asset
+from dagster_v3.defs.se_company.common import bolagsverket_record_uid_sql
 from dagster_v3.defs.se_company.basic_info.legal_form import bolagsverket_legal_form_sql
 
 # v2 (2026-09-04): legal_form_code is the SCB code, not the raw -ORGFO token.
@@ -17,10 +18,7 @@ from dagster_v3.defs.se_company.basic_info.legal_form import bolagsverket_legal_
 BOLAGSVERKET_EXTRACTOR_VERSION = "bolagsverket-v3"
 TRANSLATED_TABLE = "corpscout.se_bolagsverket_companies_translated"
 
-BOLAGSVERKET_RECORD_UID_SQL = (
-    "lower(hex(SHA256(concat('company-source-record-v1\\nstructured\\n', 'sweden_bolagsverket', "
-    "'\\nregistry_company\\n', register.source_record_id, '\\n', lowerUTF8(register.source_payload_hash)))))"
-)
+BOLAGSVERKET_RECORD_UID_SQL = bolagsverket_record_uid_sql("register")
 
 _ACTIVITY_SV = "nullIf(trim(ifNull(register.activity_description, '')), '')"
 # The register row is not the only input: the translation pipeline fills text_translations

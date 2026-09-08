@@ -21,7 +21,7 @@ export interface SeCompanyShell {
   status: string;
   incorporation_date: string;
   /**
-   * True when the shell came from `se_company_info` -- Dagster has published
+   * True when the shell came from `se_company_basic_info` -- the fold has published
    * this company. False means the company exists in the register but its
    * enrichment run has not landed yet, which is a normal pipeline state, not
    * a broken link.
@@ -53,7 +53,7 @@ interface SeLegalFormLabelQueryRow {
 
 /**
  * Both shell queries project the same five columns under the same names, so
- * one row type covers either source. `FINAL` on both: se_company_info and
+ * one row type covers either source. `FINAL` on both: se_company_basic_info and
  * se_companies are ReplacingMergeTrees, and the newest version is the only
  * one a reviewer may be shown. Nullable columns are collapsed with ifNull so
  * the header never has to distinguish "" from null.
@@ -64,7 +64,7 @@ export const SHELL_INFO_SQL = `SELECT
   ifNull(i.legal_form_code, '') AS legal_form_code,
   toString(i.status) AS status,
   ifNull(toString(i.incorporation_date), '') AS incorporation_date
-FROM corpscout.se_company_info AS i FINAL
+FROM corpscout.se_company_basic_info AS i FINAL
 WHERE i.company_id = {companyId:String}
 LIMIT 1`;
 
@@ -104,7 +104,7 @@ LIMIT 1`;
 /**
  * Loads the company header for `/admin/se/company/:companyId/*`.
  *
- * Published rows win: se_company_info is what every surface actually serves.
+ * Published rows win: se_company_basic_info is what every surface actually serves.
  * A company missing from it is looked up in the register instead, and the
  * caller shows a "not published yet" note beside an otherwise complete
  * header. Null means neither table knows this id -- a 404.

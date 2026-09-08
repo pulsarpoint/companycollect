@@ -9,7 +9,6 @@ import { DataTableColumnHeader } from "~/components/data-table/column-header";
 import { DataTablePagination } from "~/components/data-table/pagination";
 import { LegalForm } from "~/components/admin/legal-form";
 import { SeCompanyInfoFilterSheet } from "~/components/admin/se-company-info-filter-sheet";
-import { SeCompanyInfoPipelineSheet } from "~/components/admin/se-company-info-pipeline";
 import type { SortDir } from "~/lib/countries";
 import {
   NO_ROWS_SELECTED,
@@ -350,17 +349,15 @@ export function SeCompanyInfoTable({
 }) {
   return (
     <div className="flex flex-col gap-4">
-      {/* The two sheets this list opens, on one line: Filters on the left with
-          its chips, Pipeline on the right. The pipeline reads the selection --
-          which is why it is rendered from here, where the route component's
-          `selection` already arrives -- and loads nothing until it is opened. */}
+      {/* The Filters sheet with its chips. The old publisher's Pipeline sheet that
+          sat beside it went with basic-info slice 4 (2026-09-08); the selection the
+          route component owns stays for the indicator and the next pipeline sheet. */}
       <div className="flex flex-wrap items-start justify-between gap-2">
         <SeCompanyInfoFilterSheet
           filters={filters}
           view={{ sort, dir, pageSize }}
           options={options}
         />
-        <SeCompanyInfoPipelineSheet selection={selection} />
       </div>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <CountsStrip counts={counts} />

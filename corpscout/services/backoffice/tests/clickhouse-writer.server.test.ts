@@ -12,7 +12,6 @@ vi.mock("@clickhouse/client", () => ({
 import {
   chInsertCompanyDomains,
   chInsertSeCompanyAddressCorrections,
-  chInsertSeCompanyInfoFieldValues,
   chInsertSeCompanyPersonCorrections,
 } from "~/lib/clickhouse.server";
 
@@ -78,21 +77,6 @@ describe("correction and domain ClickHouse writers", () => {
     expect(clickhouse.insert).toHaveBeenCalledWith({
       table: "se_company_person_correction",
       values: [{ correction_id: "test" }],
-      format: "JSONEachRow",
-    });
-  });
-
-  it("writes Sweden company-info field values with the writer client", async () => {
-    vi.stubEnv("CLICKHOUSE_USER", "correction_writer");
-    vi.stubEnv("CLICKHOUSE_PASSWORD", "writer-secret");
-    clickhouse.createClient.mockReturnValue({ insert: clickhouse.insert });
-    clickhouse.insert.mockResolvedValue(undefined);
-
-    await chInsertSeCompanyInfoFieldValues([{ value_id: "test" }]);
-
-    expect(clickhouse.insert).toHaveBeenCalledWith({
-      table: "se_company_info_field_value",
-      values: [{ value_id: "test" }],
       format: "JSONEachRow",
     });
   });

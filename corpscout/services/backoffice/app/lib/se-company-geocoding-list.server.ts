@@ -8,7 +8,7 @@
  * se_companies_current view of migration 000326). It holds ONE ROW PER
  * COMPANY, refreshed every 15 minutes, having ALREADY paid -- once, at
  * refresh time -- the expensive work this tab used to redo on every request:
- * the FINAL merges on se_company_address/se_company_info, the primary-address
+ * the FINAL merges on se_company_address/se_company_basic_info, the primary-address
  * pick, and the LEFT JOIN to the se_address_geocodes_served overlay. Serving
  * reads the plain MergeTree behind the view: NO FINAL, NO join. The previous
  * ~20s page load (recomputing all of that per request) becomes a sub-second
@@ -16,7 +16,7 @@
  *
  * One thing DID widen with 000335: se_companies_current only had companies
  * WITH a current address, while se_companies_serving has ALL of
- * se_company_info -- so every query here filters `has_address = 1`
+ * se_company_basic_info -- so every query here filters `has_address = 1`
  * (GEOCODING_ADDRESS_FILTER_SQL) to keep this tab exactly the "companies with
  * a published address" list it has always been.
  *

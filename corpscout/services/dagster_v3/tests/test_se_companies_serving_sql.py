@@ -73,22 +73,54 @@ SERVED_ROWS = (
 )
 
 
-def _info_row(company_id: str, legal_name: str) -> str:
+BASIC_INFO_COLUMNS = (
+    "company_id, legal_name, legal_name_source, legal_form_code, legal_form_code_source, "
+    "status, status_source, incorporation_date, incorporation_date_source, lei, lei_source, "
+    "wikidata_id, wikidata_id_source, description, description_source, description_language, "
+    "description_sv, description_sv_source, folded_at, fold_version, source_run_id"
+)
+
+
+def _basic_info_row(
+    company_id: str,
+    legal_name: str,
+    *,
+    legal_form_code: str = "NULL",
+    description: str = "NULL",
+    description_language: str = "NULL",
+    description_sv: str = "NULL",
+) -> str:
+    source = "'bolagsverket'" if description != "NULL" else "''"
     return (
-        f"('{company_id}', '{legal_name}', NULL, 'active', NULL, NULL, 'sv', 'scb', "
-        "[], [], 0, '', '', NULL, NULL, ['uid-1'], ['e-1'], [], NULL, 'deterministic', "
-        f"'copy', 'v1', 'run', {_literal(NOW)})"
+        f"('{company_id}', '{legal_name}', 'scb', {legal_form_code}, 'scb', 'active', 'bolagsverket', "
+        f"NULL, '', NULL, '', NULL, '', {description}, {source}, {description_language}, "
+        f"{description_sv}, {source}, {_literal(NOW)}, 'fold-v1', 'run')"
     )
 
 
-INFO_COLUMNS = (
-    "company_id, legal_name, legal_form_code, status, incorporation_date, description, "
-    "description_language, description_source, description_sources, "
-    "description_source_record_uids, description_source_count, primary_nace_code, "
-    "primary_sni_code, wikidata_id, lei, source_record_uids, evidence_hashes, "
-    "correction_ids, suggestion_id, model_provider, model_name, prompt_version, "
-    "source_run_id, resolved_at"
+BOLAGSVERKET_COLUMNS = (
+    "company_id, company_id_raw, legal_name, deregistration_reason, source_run_id, "
+    "source_record_id, source_payload_hash, observed_at"
 )
+
+
+def _bolagsverket_row(company_id: str, *, reason: str = "NULL") -> str:
+    return (
+        f"('{company_id}', '{company_id}$X', 'Register AB', {reason}, 'run', "
+        f"'rec-{company_id}', 'HASH-{company_id}', {_literal(NOW)})"
+    )
+
+
+def _record_uid(company_id: str) -> str:
+    """What the view must render for bolagsverket_source_record_uid: the extractor's
+    company-source-record hash over the register row's id and (lower-cased) payload hash."""
+    import hashlib
+
+    text = (
+        "company-source-record-v1\nstructured\nsweden_bolagsverket\nregistry_company\n"
+        f"rec-{company_id}\nhash-{company_id}"
+    )
+    return hashlib.sha256(text.encode()).hexdigest()
 
 ADDRESS_COLUMNS = (
     "company_id, address_key, address_type, street_address, postal_code, city, "
@@ -198,19 +230,13 @@ def _script(*, join_use_nulls: int) -> str:
     parts = [
         f"SET join_use_nulls = {join_use_nulls};",
         "CREATE DATABASE IF NOT EXISTS corpscout;",
-        table_block("se_company_info"),
-        # 000306's label columns, replayed the way prod got them (table_block renders only
-        # the CREATE migration).
-        "ALTER TABLE corpscout.se_company_info "
-        "ADD COLUMN IF NOT EXISTS legal_form_label_en String DEFAULT '' AFTER legal_form_code, "
-        "ADD COLUMN IF NOT EXISTS legal_form_label_sv String DEFAULT '' AFTER legal_form_label_en;",
+        table_block("se_company_basic_info"),
+        table_block("se_bolagsverket_companies"),
         table_block("se_company_address"),
         _served_table_ddl() + ";",
         # Stubs for the presence-set reads: only the columns the serving SELECT's
         # IN-subqueries touch. Seeds prove each arm independently.
-        "CREATE TABLE corpscout.se_companies (company_id String, activity_description Nullable(String), status_reason Nullable(String), bolagsverket_source_record_uid String, updated_from_raw_at DateTime64(3, 'UTC')) ENGINE = ReplacingMergeTree(updated_from_raw_at) ORDER BY company_id;",
-        "CREATE TABLE corpscout.text_translations (source_table String, source_column String, source_lang String, target_lang String, source_text_hash UInt64, translated_text String, version UInt32) ENGINE = MergeTree ORDER BY source_text_hash;",
-        "CREATE TABLE corpscout.se_code_labels (code_type String, code String, label_en String, version UInt32) ENGINE = MergeTree ORDER BY code;",
+        "CREATE TABLE corpscout.se_code_labels (code_type String, code String, label_en String, label_sv String, version UInt32) ENGINE = MergeTree ORDER BY code;",
         "CREATE TABLE corpscout.se_bolagsverket_financial_metrics (company_id String) ENGINE = MergeTree ORDER BY company_id;",
         "CREATE TABLE corpscout.company_identifier (company_id String, issuer_scheme String, country_code String, is_current UInt8, issuer_id String) ENGINE = MergeTree ORDER BY company_id;",
         "CREATE TABLE corpscout.esef_financial_metrics (lei String) ENGINE = MergeTree ORDER BY lei;",
@@ -221,12 +247,12 @@ def _script(*, join_use_nulls: int) -> str:
         "CREATE TABLE corpscout.company_traded_symbols (country_code String, company_id String) ENGINE = MergeTree ORDER BY company_id;",
         "CREATE TABLE corpscout.se_government_contracts (company_id String) ENGINE = MergeTree ORDER BY company_id;",
         "CREATE TABLE corpscout.company_job_history (company_id String, country_code String) ENGINE = MergeTree ORDER BY company_id;",
-        # Spine rows: COARSE has a translated activity + a labeled status reason; PRECISE has
-        # an activity with NO translation row (text_en must stay ''); NOSERVED has no spine
-        # row at all (every spine-derived field folds to '').
-        f"INSERT INTO corpscout.se_companies VALUES ('{COARSE}', 'Bygghandel med trävaror', 'konkurs avslutad', 'blv-uid-coarse', {_literal(NOW)}), ('{PRECISE}', 'Handel med maskiner', NULL, 'blv-uid-precise', {_literal(NOW)});",
-        "INSERT INTO corpscout.text_translations VALUES ('corpscout.se_companies', 'activity_description', 'sv', 'en', cityHash64('Bygghandel med trävaror'), 'Building trade with timber', 2), ('corpscout.se_companies', 'activity_description', 'sv', 'en', cityHash64('Bygghandel med trävaror'), 'Timber trade (older render)', 1);",
-        "INSERT INTO corpscout.se_code_labels VALUES ('status_reason', 'konkurs avslutad', 'Bankruptcy concluded', 1);",
+        # Register rows: COARSE is deregistered with a labeled reason; PRECISE has no reason;
+        # NOSERVED has no register row at all (every register-derived field folds to '').
+        f"INSERT INTO corpscout.se_bolagsverket_companies ({BOLAGSVERKET_COLUMNS}) VALUES "
+        + ", ".join((_bolagsverket_row(COARSE, reason="'konkurs avslutad'"), _bolagsverket_row(PRECISE)))
+        + ";",
+        "INSERT INTO corpscout.se_code_labels VALUES ('status_reason', 'konkurs avslutad', 'Bankruptcy concluded', '', 1), ('legal_form', '49', 'Limited company (aktiebolag)', 'Aktiebolag', 1);",
         f"INSERT INTO corpscout.se_bolagsverket_financial_metrics VALUES ('{PRECISE}');",
         f"INSERT INTO corpscout.se_financial_reports VALUES ('{COARSE}');",
         f"INSERT INTO corpscout.se_company_person VALUES ('{PRECISE}');",
@@ -240,14 +266,19 @@ def _script(*, join_use_nulls: int) -> str:
         f"INSERT INTO corpscout.company_traded_symbols VALUES ('SE', '{PRECISE}'), ('NO', '{NOSERVED}');",
         f"INSERT INTO corpscout.se_government_contracts VALUES ('{COARSE}');",
         f"INSERT INTO corpscout.company_job_history VALUES ('{POSTAL_BOX}', 'SE'), ('{NOSERVED}', 'NO');",
-        f"INSERT INTO corpscout.se_company_info ({INFO_COLUMNS}) VALUES\n"
+        f"INSERT INTO corpscout.se_company_basic_info ({BASIC_INFO_COLUMNS}) VALUES\n"
         + ",\n".join(
             (
-                _info_row(COARSE, "Coarse AB"),
-                _info_row(PRECISE, "Precise AB"),
-                _info_row(NOSERVED, "Noserved AB"),
-                _info_row(POSTAL_BOX, "Postal Box AB"),
-                _info_row(NOADDRESS, "Addressless AB"),
+                # COARSE: translated activity text -- English in description, Swedish beside it.
+                _basic_info_row(COARSE, "Coarse AB", legal_form_code="'49'",
+                                description="'Building trade with timber'", description_language="'en'",
+                                description_sv="'Bygghandel med trävaror'"),
+                # PRECISE: untranslated -- the Swedish text is the description, language sv.
+                _basic_info_row(PRECISE, "Precise AB", description="'Handel med maskiner'",
+                                description_language="'sv'", description_sv="'Handel med maskiner'"),
+                _basic_info_row(NOSERVED, "Noserved AB"),
+                _basic_info_row(POSTAL_BOX, "Postal Box AB"),
+                _basic_info_row(NOADDRESS, "Addressless AB"),
             )
         )
         + ";",
@@ -326,24 +357,34 @@ def test_presence_flags_come_from_the_child_tables(rows: dict[str, dict]) -> Non
     assert rows[COARSE]["has_people"] == 0
     for company in (COARSE, PRECISE, NOSERVED, POSTAL_BOX):
         assert rows[company]["has_address"] == 1
+    # has_description is the folded description, whatever its language.
+    assert rows[COARSE]["has_description"] == 1
+    assert rows[PRECISE]["has_description"] == 1
+    for company in (NOSERVED, POSTAL_BOX, NOADDRESS):
         assert rows[company]["has_description"] == 0
 
 
-def test_translations_are_absorbed_from_the_spine_join(rows: dict[str, dict]) -> None:
-    # COARSE: activity translated (argMax picks version 2), status reason labeled.
+def test_descriptions_come_from_the_main_row_and_register_fields_from_bolagsverket(rows: dict[str, dict]) -> None:
+    # COARSE: the folded row carries English + Swedish; the register row is deregistered
+    # with a labeled reason; the record uid is the extractor's hash over the register row.
     assert rows[COARSE]["activity_description"] == "Bygghandel med trävaror"
     assert rows[COARSE]["activity_description_en"] == "Building trade with timber"
     assert rows[COARSE]["status_reason"] == "konkurs avslutad"
     assert rows[COARSE]["status_reason_label_en"] == "Bankruptcy concluded"
-    assert rows[COARSE]["bolagsverket_source_record_uid"] == "blv-uid-coarse"
-    # PRECISE: activity present, no translation row -> '' (never invented).
+    assert rows[COARSE]["bolagsverket_source_record_uid"] == _record_uid(COARSE)
+    assert rows[COARSE]["legal_form_code"] == "49"
+    assert rows[COARSE]["legal_form_label_en"] == "Limited company (aktiebolag)"
+    assert rows[COARSE]["legal_form_label_sv"] == "Aktiebolag"
+    # PRECISE: untranslated -> the English column stays '' (never the Swedish text).
     assert rows[PRECISE]["activity_description"] == "Handel med maskiner"
     assert rows[PRECISE]["activity_description_en"] == ""
     assert rows[PRECISE]["status_reason"] == ""
-    # NOSERVED: no spine row at all -> every spine-derived field folds to ''.
+    assert rows[PRECISE]["bolagsverket_source_record_uid"] == _record_uid(PRECISE)
+    # NOSERVED: no register row -> every register-derived field folds to ''.
     assert rows[NOSERVED]["activity_description"] == ""
     assert rows[NOSERVED]["activity_description_en"] == ""
     assert rows[NOSERVED]["bolagsverket_source_record_uid"] == ""
+    assert rows[NOSERVED]["legal_form_label_en"] == ""
 
 
 def test_market_flags_come_from_their_own_tables(rows: dict[str, dict]) -> None:
@@ -374,7 +415,7 @@ def test_source_flags_or_their_arms_together(rows: dict[str, dict]) -> None:
         assert rows[company]["source_wikidata"] == 0
 
 
-def test_legal_name_comes_from_company_info(rows: dict[str, dict]) -> None:
+def test_legal_name_comes_from_the_main_row(rows: dict[str, dict]) -> None:
     assert rows[COARSE]["legal_name"] == "Coarse AB"
     assert rows[PRECISE]["legal_name"] == "Precise AB"
     assert rows[NOSERVED]["legal_name"] == "Noserved AB"

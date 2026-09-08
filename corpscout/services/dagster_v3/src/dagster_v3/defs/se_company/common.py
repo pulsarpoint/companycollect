@@ -435,3 +435,17 @@ def ledger_sensor(
         )
 
     return _sensor
+
+
+def bolagsverket_record_uid_sql(alias: str) -> str:
+    """The Bolagsverket register row's company-source-record uid, as SQL over `alias`.
+
+    The one expression the basic-info Bolagsverket extractor writes as source_record_uid
+    and the serving view renders as bolagsverket_source_record_uid, so the two can never
+    drift: sha256 of the fixed envelope, the register's source_record_id and its
+    lower-cased payload hash.
+    """
+    return (
+        "lower(hex(SHA256(concat('company-source-record-v1\\nstructured\\n', 'sweden_bolagsverket', "
+        f"'\\nregistry_company\\n', {alias}.source_record_id, '\\n', lowerUTF8({alias}.source_payload_hash)))))"
+    )

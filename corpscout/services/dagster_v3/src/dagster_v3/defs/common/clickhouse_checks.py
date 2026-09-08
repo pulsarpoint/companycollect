@@ -227,17 +227,6 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
         ("se_addresses_current", "se_company_address_links_current"),
         WEEKLY,
     ),
-    # se_company — the information pilot: three per-source artifacts and the merged
-    # final, all refreshed by se_company_info_weekly (Mondays 06:50 UTC, RUNNING since
-    # 2026-08-23), so a missed week turns the freshness check red.
-    ClickhouseLeaf("se_company_info_scb_clickhouse", ("se_company_info_scb",), WEEKLY),
-    ClickhouseLeaf(
-        "se_company_info_esef_clickhouse", ("se_company_info_esef",), WEEKLY
-    ),
-    ClickhouseLeaf(
-        "se_company_info_wikidata_clickhouse", ("se_company_info_wikidata",), WEEKLY
-    ),
-    ClickhouseLeaf("se_company_info_clickhouse", ("se_company_info",), WEEKLY),
     # se_company_address — two per-source artifacts and the merged final, all refreshed by
     # se_company_address_weekly. The weekly schedule is now the freshness source, like the
     # info leaves above.
