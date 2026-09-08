@@ -629,10 +629,3 @@ def _spread_sql() -> str:
 )))::double
 """.strip()
 
-
-def _log(
-    log: Callable[..., object] | None,
-    message: str,
-) -> None:
-    if log is not None:
-        log(message)

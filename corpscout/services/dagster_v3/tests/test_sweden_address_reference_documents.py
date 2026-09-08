@@ -227,9 +227,9 @@ def test_rebuilt_documents_on_the_same_extract_rebuild_the_postings(
 ) -> None:
     """The md5 names the OSM EXTRACT, not the documents built from it.
 
-    `replace_sweden_address_resolution_shadow` calls `replace_reference_documents`
-    unconditionally on every shadow run, so the documents can change under a fixed md5 --
-    a change to the document builders or to `INDEX_SCOPE` would do it. Postings left from
+    `replace_reference_documents` rebuilds them unconditionally whenever it is called, so
+    the documents can change under a fixed md5 -- a change to the document builders or to
+    `INDEX_SCOPE` would do it. Postings left from
     the previous build would then describe documents that no longer exist, silently, since
     a stale posting produces a wrong candidate rather than an error. The key therefore
     carries the documents' `built_at`.
