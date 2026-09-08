@@ -11,7 +11,7 @@ WITH registry_rows AS (
     FROM {{ source('corpscout', 'se_financial_report_signatories') }} AS officers
     INNER JOIN (
         SELECT company_id
-        FROM {{ source('corpscout', 'se_companies') }} FINAL
+        FROM {{ source('corpscout', 'se_company_basic_info') }} FINAL
     ) AS company_anchors
         ON company_anchors.company_id = officers.company_id
 ),

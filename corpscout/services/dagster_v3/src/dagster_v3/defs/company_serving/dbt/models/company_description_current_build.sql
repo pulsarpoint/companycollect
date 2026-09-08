@@ -2,7 +2,7 @@
 
 WITH company_anchors AS (
     SELECT company_id
-    FROM {{ source('corpscout', 'se_companies') }} FINAL
+    FROM {{ source('corpscout', 'se_company_basic_info') }} FINAL
 ),
 registry_descriptions AS (
     SELECT

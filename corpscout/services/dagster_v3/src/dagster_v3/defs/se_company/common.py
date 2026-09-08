@@ -437,15 +437,22 @@ def ledger_sensor(
     return _sensor
 
 
-def bolagsverket_record_uid_sql(alias: str) -> str:
-    """The Bolagsverket register row's company-source-record uid, as SQL over `alias`.
+def register_record_uid_sql(source_slug: str, alias: str) -> str:
+    """A register row's company-source-record uid, as SQL over `alias`.
 
-    The one expression the basic-info Bolagsverket extractor writes as source_record_uid
-    and the serving view renders as bolagsverket_source_record_uid, so the two can never
-    drift: sha256 of the fixed envelope, the register's source_record_id and its
-    lower-cased payload hash.
+    The one expression the basic-info register extractors write as source_record_uid,
+    the serving view renders as bolagsverket_source_record_uid, and the company_serving
+    dbt macro se_register_record_uid renders for its source records, so none can drift:
+    sha256 of the fixed envelope, the source slug, the register's source_record_id and
+    its lower-cased payload hash.
     """
     return (
-        "lower(hex(SHA256(concat('company-source-record-v1\\nstructured\\n', 'sweden_bolagsverket', "
-        f"'\\nregistry_company\\n', {alias}.source_record_id, '\\n', lowerUTF8({alias}.source_payload_hash)))))"
+        "lower(hex(SHA256(concat('company-source-record-v1\\nstructured\\n', "
+        f"'{source_slug}', '\\nregistry_company\\n', {alias}.source_record_id, '\\n', "
+        f"lowerUTF8({alias}.source_payload_hash)))))"
     )
+
+
+def bolagsverket_record_uid_sql(alias: str) -> str:
+    """`register_record_uid_sql` for the Bolagsverket register."""
+    return register_record_uid_sql("sweden_bolagsverket", alias)

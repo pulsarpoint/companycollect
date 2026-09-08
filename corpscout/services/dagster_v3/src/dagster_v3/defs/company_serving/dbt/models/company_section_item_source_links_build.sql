@@ -2,32 +2,32 @@
 
 WITH company_anchors AS (
     SELECT company_id
-    FROM {{ source('corpscout', 'se_companies') }} FINAL
+    FROM {{ source('corpscout', 'se_company_basic_info') }} FINAL
 ),
 source_records_raw AS (
     SELECT
-        bolagsverket_source_record_uid AS source_record_uid,
+        {{ se_register_record_uid('sweden_bolagsverket', 'b') }} AS source_record_uid,
         'registry_company' AS record_kind,
-        lowerUTF8(ifNull(bolagsverket_source_payload_hash, '')) AS content_sha256,
-        updated_from_raw_at AS first_seen_at,
-        updated_from_raw_at AS last_seen_at,
+        lowerUTF8(b.source_payload_hash) AS content_sha256,
+        b.observed_at AS first_seen_at,
+        b.observed_at AS last_seen_at,
         'sweden_bolagsverket' AS source_slug,
-        ifNull(bolagsverket_source_record_id, '') AS source_record_key,
+        b.source_record_id AS source_record_key,
         '' AS source_url,
         '' AS source_object_key,
-        lowerUTF8(ifNull(bolagsverket_source_payload_hash, '')) AS payload_sha256,
-        updated_from_raw_at AS retrieved_at,
-        source_run_id
-    FROM {{ source('corpscout', 'se_companies') }} FINAL
-    WHERE bolagsverket_source_record_uid != ''
+        lowerUTF8(b.source_payload_hash) AS payload_sha256,
+        b.observed_at AS retrieved_at,
+        b.source_run_id
+    FROM {{ source('corpscout', 'se_bolagsverket_companies') }} AS b FINAL
+    WHERE b.has_company = 1 AND b.source_payload_hash != ''
     UNION ALL
     SELECT
-        scb_source_record_uid, 'registry_company', lowerUTF8(ifNull(scb_source_payload_hash, '')),
-        updated_from_raw_at, updated_from_raw_at, 'sweden_scb',
-        ifNull(scb_source_record_id, ''), '', '', lowerUTF8(ifNull(scb_source_payload_hash, '')),
-        updated_from_raw_at, source_run_id
-    FROM {{ source('corpscout', 'se_companies') }} FINAL
-    WHERE scb_source_record_uid != ''
+        {{ se_register_record_uid('sweden_scb', 's') }}, 'registry_company', lowerUTF8(s.source_payload_hash),
+        s.observed_at, s.observed_at, 'sweden_scb',
+        s.source_record_id, '', '', lowerUTF8(s.source_payload_hash),
+        s.observed_at, s.source_run_id
+    FROM {{ source('corpscout', 'se_scb_companies') }} AS s FINAL
+    WHERE s.has_company = 1 AND s.source_payload_hash != ''
     UNION ALL
     SELECT
         source_record_uid, 'annual_report_xhtml', lowerUTF8(toString(source_payload_hash)),
@@ -140,13 +140,13 @@ source_records AS (
     ) = 1
 ),
 registry_source_uids AS (
-    SELECT company_id, bolagsverket_source_record_uid AS source_record_uid
-    FROM {{ source('corpscout', 'se_companies') }} FINAL
-    WHERE bolagsverket_source_record_uid != ''
+    SELECT b.company_id AS company_id, {{ se_register_record_uid('sweden_bolagsverket', 'b') }} AS source_record_uid
+    FROM {{ source('corpscout', 'se_bolagsverket_companies') }} AS b FINAL
+    WHERE b.has_company = 1 AND b.source_payload_hash != ''
     UNION ALL
-    SELECT company_id, scb_source_record_uid
-    FROM {{ source('corpscout', 'se_companies') }} FINAL
-    WHERE scb_source_record_uid != ''
+    SELECT s.company_id, {{ se_register_record_uid('sweden_scb', 's') }}
+    FROM {{ source('corpscout', 'se_scb_companies') }} AS s FINAL
+    WHERE s.has_company = 1 AND s.source_payload_hash != ''
 ),
 registry_sources AS (
     SELECT
@@ -197,8 +197,8 @@ esef_sources AS (
         filings.source_run_id,
         toDateTime64(filings.resolved_at, 3, 'UTC') AS linked_at
     FROM {{ source('corpscout', 'esef_entity_registry_map') }} AS mappings FINAL
-    INNER JOIN {{ source('corpscout', 'se_companies') }} AS companies FINAL
-        ON companies.registration_number = mappings.registry_id
+    INNER JOIN {{ source('corpscout', 'se_company_basic_info') }} AS companies FINAL
+        ON companies.company_id = mappings.registry_id
     INNER JOIN {{ source('corpscout', 'esef_filings') }} AS filings FINAL
         ON filings.lei = mappings.lei
     WHERE mappings.country_iso2 = '{{ var("country_code") }}'
