@@ -42,6 +42,7 @@ def main_row(company_id: str, **overrides) -> tuple:
     base = {
         "company_id": company_id, "legal_name": "", "legal_name_source": "",
         "legal_form_code": None, "legal_form_code_source": "", "status": "", "status_source": "",
+        "economic_activity": "", "economic_activity_source": "",
         "incorporation_date": None, "incorporation_date_source": "", "lei": None, "lei_source": "",
         "wikidata_id": None, "wikidata_id_source": "", "description": None, "description_source": "",
         "description_language": None, "description_sv": None, "description_sv_source": "",

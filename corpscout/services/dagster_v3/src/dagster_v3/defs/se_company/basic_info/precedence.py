@@ -26,6 +26,9 @@ BASIC_INFO_PRECEDENCE: dict[str, dict[str, int]] = {
     # F-tax or as an employer: 0 never, 1 yes, 9 no longer) and only decides for the
     # ~668k companies Bolagsverket does not register; it deserves its own field later.
     "status": {"reviewer": 20000, "bolagsverket": 1000, "scb": 900, "ratsit": 300},
+    # Economic activity is that SCB flag as its own field (slice 6, 2026-09-08): active,
+    # never, ceased from Företagsstatus 1, 0, 9. Only SCB knows it.
+    "economic_activity": {"reviewer": 20000, "scb": 1000},
     "incorporation_date": {"reviewer": 20000, "scb": 1000, "bolagsverket": 900, "wikidata": 200},
     "lei": {"reviewer": 20000, "esef": 1000},
     "wikidata_id": {"reviewer": 20000, "wikidata": 1000},

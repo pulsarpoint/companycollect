@@ -112,11 +112,12 @@ def test_export_precedence_inserts_every_pair_and_binds_a_utc_millisecond_string
     pairs, stale = export_precedence(client, exported_at)
 
     expected_rows = precedence_rows()
-    # 30 pairs as BASIC_INFO_PRECEDENCE stands today (not 33 -- counted directly from
-    # precedence_rows() below so this test tracks the dictionary rather than drifting
-    # from it if a source/field pair is added or removed).
-    assert len(expected_rows) == 30
-    assert pairs == len(expected_rows) == 30
+    # 32 pairs as BASIC_INFO_PRECEDENCE stands today (30 before slice 6 added
+    # economic_activity's reviewer and scb rows -- counted directly from precedence_rows()
+    # below so this test tracks the dictionary rather than drifting from it if a
+    # source/field pair is added or removed).
+    assert len(expected_rows) == 32
+    assert pairs == len(expected_rows) == 32
     assert stale == 0
 
     assert len(client.calls) == 2
