@@ -1181,7 +1181,7 @@ WHERE database = 'corpscout'
       'se_company_address_links_current', 'se_address_geocodes_current'
   );
 
--- The kept objects are all still there -- the point of the whole-name matching. Expect 7.
+-- The kept objects are all still there -- the point of the whole-name matching. Expect 9.
 SELECT count() AS kept_present, groupArray(name) AS kept
 FROM system.tables
 WHERE database = 'corpscout'
@@ -1259,7 +1259,7 @@ The code retirement must be **live** before the drops: no deployed asset may nam
      < corpscout/clickhouse/operations/se_address_retirement_drops.sql
    ```
    UNDROP is possible for about 480 seconds after each drop (`UNDROP TABLE corpscout.<name>`), so stay at the terminal until the postcheck is clean.
-5. [ ] Run the postcheck the same way. `all_dropped` must be 1, `still_present` empty, `kept_present` 7.
+5. [ ] Run the postcheck the same way. `all_dropped` must be 1, `still_present` empty, `kept_present` 9 (the entity's six tables, the geocode cache and the two centroid tables).
 6. [ ] Record `SELECT count() FROM system.tables WHERE database = 'corpscout' AND NOT startsWith(name, '.inner') AND NOT startsWith(name, '.tmp.inner')` before step 4 and after step 5; the difference must be exactly 12. Two of the twelve drops (`se_companies_serving_retired`, `se_address_geocodes_current`) are refreshable materialized views, and each keeps its own implicit storage table in `system.tables` under a `.inner_id.*` name (plus a `.tmp.inner_id.*` staging table while a refresh is swapping in) — an unfiltered count would show those inner tables disappearing too and report a delta of 14, not 12.
 7. [ ] Wait for the next `:45` and confirm the serving view still refreshes: `SELECT view, status, last_success_time, exception FROM system.view_refreshes WHERE database='corpscout' AND view='se_companies_serving'` reports a success with an empty exception, and `SELECT count() FROM corpscout.se_companies_serving` is around 3.5M with `countIf(address_count > 0)` around 3.49M. It reads none of the dropped objects (000393's render joins `se_company_address` alone), so this is a regression check, not a gate.
 8. [ ] Backoffice smoke (local, `npm run dev`): the company Address tab (published rows, history, the reviewer's edit sheet, a targeted fold launch), the companies list, the geocoding list with each filter, the address-quality queue, the same-building lookup, and the generic company detail plus the generic list's Place column for SE.
