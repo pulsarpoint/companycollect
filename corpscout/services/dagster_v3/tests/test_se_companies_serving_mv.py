@@ -1,15 +1,14 @@
-"""Migration 000347: is_publicly_traded keyed on the EODHD listings resolve, pinned to its builder.
+"""Migration 000391: the serving view re-based on the basic-info main row, pinned to its builder.
 
 `corpscout.se_companies_serving` is the ONE wide per-company row every admin companies list
-page reads: the info-list columns, the presence and source flags, the address JSON + primary
-geocode summary, and (since 000338) the registered-activity translation, status-reason label
-and spine fields absorbed from the retired `se_companies_translated` view. Because the name
-now has live readers, 000338 is 000320's staged swap -- build under _next, SYSTEM WAIT, one
-atomic RENAME -- not 000335's plain CREATE.
+page reads. Since 000391 its spine is `se_company_basic_info` (slice 4 of the basic-info
+design): legal name, status, legal form and the two descriptions come from the folded row,
+the register fields from `se_bolagsverket_companies`, the legal-form labels from
+`se_code_labels`. `se_company_info`, `se_companies` and `text_translations` are gone from
+the view. Same staged swap as 000347: build under _next, SYSTEM WAIT, one atomic RENAME.
 
 The drift pin couples the migration's embedded SELECT to a fresh render of
 companies_current.build_se_companies_serving_sql -- editing either half alone turns this red.
-Same anti-vacuous shape as the pins for 000320/000325/000326.
 """
 
 import re
@@ -20,7 +19,7 @@ from dagster_v3.defs.sweden_company.companies_current import (
 )
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
-MIGRATION = "000347_corpscout_se_companies_serving_eodhd_listed"
+MIGRATION = "000391_corpscout_se_companies_serving_basic_info"
 VIEW = "corpscout.se_companies_serving"
 NEXT = "corpscout.se_companies_serving_next"
 RETIRED = "corpscout.se_companies_serving_retired"
@@ -87,9 +86,14 @@ def test_the_pin_is_not_vacuous() -> None:
     # The base is ALL of se_company_info, LEFT-joined to the address aggregation --
     # a company with no current address still gets a row.
     # The absorbed translation joins (the retired se_companies_translated's contract).
-    assert "text_translations" in embedded
+    assert "corpscout.se_company_basic_info AS i FINAL" in embedded
+    assert "corpscout.se_bolagsverket_companies" in embedded
+    assert "text_translations" not in embedded
+    assert "corpscout.se_company_info" not in embedded
+    assert "corpscout.se_companies AS" not in embedded
     assert "activity_description_en" in embedded
     assert "se_code_labels" in embedded
+    assert "code_type = 'legal_form'" in embedded
     assert "status_reason_label_en" in embedded
     assert "bolagsverket_source_record_uid" in embedded
     # The market flags (owner 2026-08-28).
@@ -101,7 +105,7 @@ def test_the_pin_is_not_vacuous() -> None:
     assert "company_job_history" in embedded
     assert "LEFT JOIN aggregated" in embedded
     assert "LEFT JOIN primary_address" in embedded
-    assert "INNER JOIN corpscout.se_company_info" not in embedded
+    assert "se_company_info" not in embedded
 
 
 def test_the_up_migration_is_a_staged_swap_waited_on_before_the_rename() -> None:
@@ -119,7 +123,7 @@ def test_the_up_migration_is_a_staged_swap_waited_on_before_the_rename() -> None
 
     create = _create_view_statement(_sql("up"))
     assert _body(create).startswith(f"CREATE MATERIALIZED VIEW {NEXT}\n")
-    assert "REFRESH EVERY 15 MINUTE" in create
+    assert "REFRESH EVERY 1 HOUR OFFSET 45 MINUTE" in create
     assert "ENGINE = MergeTree" in create
     assert "ORDER BY company_id\nAS " in create
     assert "APPEND" not in create
@@ -141,8 +145,8 @@ def test_the_up_migration_drops_nothing() -> None:
     assert "DROP" not in _executable(up).upper()
 
 
-def test_the_down_migration_swaps_back_restarts_and_discards_the_eodhd_render() -> None:
+def test_the_down_migration_swaps_back_restarts_and_discards_the_basic_info_render() -> None:
     down = _executable(_sql("down"))
     assert f"{RETIRED} TO {VIEW}" in down
     assert f"SYSTEM START VIEW {VIEW}" in down
-    assert "DROP VIEW IF EXISTS corpscout.se_companies_serving_eodhd_discard" in down
+    assert "DROP VIEW IF EXISTS corpscout.se_companies_serving_basic_info_discard" in down
