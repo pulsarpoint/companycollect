@@ -1,11 +1,20 @@
-"""Migration 000347: is_publicly_traded keyed on the EODHD listings resolve, pinned to its builder.
+"""Migration 000391: the serving view reads the address entity, pinned to its builder.
 
 `corpscout.se_companies_serving` is the ONE wide per-company row every admin companies list
 page reads: the info-list columns, the presence and source flags, the address JSON + primary
 geocode summary, and (since 000338) the registered-activity translation, status-reason label
 and spine fields absorbed from the retired `se_companies_translated` view. Because the name
-now has live readers, 000338 is 000320's staged swap -- build under _next, SYSTEM WAIT, one
-atomic RENAME -- not 000335's plain CREATE.
+has live readers, every render since 000338 is 000320's staged swap -- build under _next,
+SYSTEM WAIT, one atomic RENAME -- not 000335's plain CREATE.
+
+WHAT 000391 CHANGES (slice 4a, task 3). The address half now reads
+`corpscout.se_company_address_v2` -- the address entity, one row per company and published
+address, `active = 1` -- instead of the old `se_company_address` final table LEFT-JOINed to
+the `se_address_geocodes_served` overlay. The coordinate, status, precision and the derived
+provider all sit on the entity row, so the join is gone; `matched_area` is what the overlay
+used to stamp `centroid_fallback` on, and the derived provider keeps such a row classifying
+`coarse`. The refresh cadence is 000366's hourly one, carried into the _next definition
+(a CREATE cannot inherit it).
 
 The drift pin couples the migration's embedded SELECT to a fresh render of
 companies_current.build_se_companies_serving_sql -- editing either half alone turns this red.
@@ -20,7 +29,7 @@ from dagster_v3.defs.sweden_company.companies_current import (
 )
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
-MIGRATION = "000347_corpscout_se_companies_serving_eodhd_listed"
+MIGRATION = "000391_corpscout_se_companies_serving_address_entity"
 VIEW = "corpscout.se_companies_serving"
 NEXT = "corpscout.se_companies_serving_next"
 RETIRED = "corpscout.se_companies_serving_retired"
@@ -75,7 +84,10 @@ def test_the_pin_is_not_vacuous() -> None:
     assert len(embedded) > 2000
     assert "se_companies_serving" in _sql("up")
     assert "groupArray" in embedded
-    assert "se_address_geocodes_served" in embedded
+    # The address half reads the entity table directly -- no served-overlay join left.
+    assert "corpscout.se_company_address_v2 AS a FINAL" in embedded
+    assert "se_address_geocodes_served" not in embedded
+    assert "a.is_current" not in embedded
     assert "primary_geocode_class" in embedded
     # The consolidated part: presence flags and source flags live IN the view now.
     assert "has_financial" in embedded
@@ -119,7 +131,8 @@ def test_the_up_migration_is_a_staged_swap_waited_on_before_the_rename() -> None
 
     create = _create_view_statement(_sql("up"))
     assert _body(create).startswith(f"CREATE MATERIALIZED VIEW {NEXT}\n")
-    assert "REFRESH EVERY 15 MINUTE" in create
+    # 000366's cadence, restated: a CREATE does not inherit the live view's refresh clause.
+    assert "REFRESH EVERY 1 HOUR OFFSET 45 MINUTE" in create
     assert "ENGINE = MergeTree" in create
     assert "ORDER BY company_id\nAS " in create
     assert "APPEND" not in create
@@ -134,15 +147,16 @@ def test_the_up_migration_is_a_staged_swap_waited_on_before_the_rename() -> None
 
 
 def test_the_up_migration_drops_nothing() -> None:
-    """The pre-translation view keeps its machinery under the _retired name; its drop is the
-    follow-up migration's, together with se_companies_translated once the dbt model repoint
-    is deployed."""
+    """The overlay-reading view keeps its machinery under the _retired name so the down file
+    can swap it back; its drop is a follow-up migration's, as 000345/000348 did for the two
+    earlier retirees."""
     up = _sql("up")
     assert "DROP" not in _executable(up).upper()
 
 
-def test_the_down_migration_swaps_back_restarts_and_discards_the_eodhd_render() -> None:
+def test_the_down_migration_swaps_back_and_discards_the_entity_render() -> None:
     down = _executable(_sql("down"))
+    discard = "corpscout.se_companies_serving_address_entity_discard"
     assert f"{RETIRED} TO {VIEW}" in down
     assert f"SYSTEM START VIEW {VIEW}" in down
-    assert "DROP VIEW IF EXISTS corpscout.se_companies_serving_eodhd_discard" in down
+    assert f"DROP VIEW IF EXISTS {discard}" in down

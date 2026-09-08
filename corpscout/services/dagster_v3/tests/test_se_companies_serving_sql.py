@@ -1,33 +1,47 @@
 """Execute build_se_companies_serving_sql() against a real ClickHouse engine.
 
 The SQL-text is generated, so the risk this test covers is behavioural, not spelling: that the
-FINAL merges, the served-overlay LEFT JOIN, the per-company JSON aggregation and the
-coarse-aware primary-address class all produce the row the companies/geocoding surfaces expect.
-A substring test over the builder output cannot prove any of that; a real engine ranking real
-rows can.
+FINAL merges, the `active = 1` filter, the per-company JSON aggregation and the coarse-aware
+primary-address class all produce the row the companies/geocoding surfaces expect. A substring
+test over the builder output cannot prove any of that; a real engine ranking real rows can.
 
 Runs through clickhouse-local (a local binary, else the pinned server image under Docker, else
 the module skips), twice -- once per `join_use_nulls` setting -- and must answer the same both
-times, because every served-overlay miss this SELECT reads is guarded by `ifNull`.
+times, because every LEFT JOIN this SELECT still makes (the spine, the translations, the
+aggregation) is guarded by `ifNull`/`coalesce`.
 
-The fixture is four companies, each a different shape of the primary-class rule:
+SINCE SLICE 4a the address half reads the ADDRESS ENTITY, `corpscout.se_company_address_v2`
+(migration 000384): one row per company and published address, `active = 1` for the published
+ones, `kinds` an array, and the geocode outcome -- status, precision, coordinate -- on the row
+itself. There is no served-overlay join any more; the `centroid_fallback` provider the overlay
+used to stamp is DERIVED from `geocode_status = 'matched_area'`, which is what the centroid
+overlay writes.
 
-  COARSE      one address, its stored geocode_status 'unmatched', but a served-overlay row
-              stamps provider='centroid_fallback'/precision='city'. primary_geocode_class must
-              be 'coarse' -- the coarse-before-geocoded check firing on provider, NOT the base
-              status. Its JSON element carries the overlay's precision/provider.
-  POSTAL_BOX  one address, its stored geocode_status 'postal_box' (fallback-eligible since
-              2026-08 -- geocode_serving_overlay.py Rule 1), served-overlay row stamps
-              provider='centroid_fallback'/precision='postcode'. Same coarse-before-geocoded
-              proof as COARSE, but from a box rather than an unmatched street: the class expr
-              does not care WHICH non-geocoded status produced the served row.
-  PRECISE     two addresses. The primary (visiting_or_postal) has a served PRECISE row
-              (geocoded); the secondary (postal) is ambiguous with no served row. The primary
-              pick must take the visiting_or_postal row -> class 'geocoded', proving the ranking
+The fixture is seven companies, each a different shape of the primary-class or ranking rule:
+
+  COARSE      one address, geocode_status 'matched_area' with a city-precision centroid.
+              primary_geocode_class must be 'coarse' -- the derived provider firing the
+              coarse-before-geocoded check, NOT 'geocoded' (matched_area is inside the
+              GEOCODED vocabulary and the status alone would say so).
+  POSTAL_BOX  one box address, also 'matched_area' but at postcode precision. Same
+              coarse-before-geocoded proof from a box rather than a street.
+  PRECISE     two addresses. The primary (visiting_or_postal) is matched_exact with a
+              building coordinate; the secondary (postal) is ambiguous with no coordinate.
+              The primary pick must take the visiting_or_postal row -> class 'geocoded'
               (had it taken the postal row the class would be 'ambiguous'). address_count == 2.
-  NOSERVED    one address, stored geocode_status 'unmatched', NO served-overlay row at all.
-              primary_geocode_class classifies from the base status -> 'unmatched'. Paired with
-              COARSE (same base status, opposite class) this is the coarse-awareness proof.
+  VISITING    two addresses, NEITHER visiting_or_postal: a 'visiting' one that is matched_exact
+              and a 'postal' one that is unmatched and whose key sorts FIRST. The pick must
+              take the visiting row -> 'geocoded', proving rank 2 beats rank 3 and that the
+              address_key tiebreak does not override the kind ranks.
+  UNGEOCODED  one address, geocode_status 'unmatched', no coordinate. The derived provider is
+              '' and the class comes from the base status -> 'unmatched'. Paired with COARSE
+              (both ungeocoded by the precise matcher, opposite classes) this is the
+              coarse-awareness proof.
+  HIDDEN      one ACTIVE postal address (matched_exact, with a care-of prefix on its line) and
+              one INACTIVE visiting_or_postal address that outranks it. Only the active row may
+              reach the serving row: address_count == 1, class 'geocoded', and the JSON element
+              carries the active row's key as its address_id.
+  NOADDRESS   no address row at all -- still one serving row, with an empty address summary.
 """
 
 import json
@@ -51,26 +65,34 @@ NOW = datetime(2026, 8, 26, 9, tzinfo=UTC)
 
 COARSE = "5560000011"
 PRECISE = "5560000022"
-NOSERVED = "5560000033"
+UNGEOCODED = "5560000033"
 POSTAL_BOX = "5560000044"
 NOADDRESS = "5560000055"
+HIDDEN = "5560000066"
+VISITING = "5560000077"
 
-# address_id -> the served-overlay row (precise or coarse). Absent ids have no served row.
+ADDRESSED = (COARSE, PRECISE, UNGEOCODED, POSTAL_BOX, HIDDEN, VISITING)
+
 PRECISE_LAT, PRECISE_LON = 59.3300, 18.0600
 COARSE_LAT, COARSE_LON = 55.6050, 13.0000
 POSTAL_BOX_LAT, POSTAL_BOX_LON = 55.3770, 13.1520
-COARSE_ADDR = "a" * 64
-PRECISE_PRIMARY_ADDR = "b" * 64
-PRECISE_SECONDARY_ADDR = "c" * 64
-NOSERVED_ADDR = "d" * 64
-POSTAL_BOX_ADDR = "e" * 64
+HIDDEN_LAT, HIDDEN_LON = 57.7080, 11.9740
+VISITING_LAT, VISITING_LON = 63.8250, 20.2630
 
-# (address_id, geocode_precision, geocode_provider, latitude, longitude)
-SERVED_ROWS = (
-    (COARSE_ADDR, "city", "centroid_fallback", COARSE_LAT, COARSE_LON),
-    (PRECISE_PRIMARY_ADDR, "building", "openstreetmap", PRECISE_LAT, PRECISE_LON),
-    (POSTAL_BOX_ADDR, "postcode", "centroid_fallback", POSTAL_BOX_LAT, POSTAL_BOX_LON),
-)
+# The entity's own keys ARE the serving JSON's address_id since slice 4a. Each is 64 chars,
+# the FixedString(64) width, and the leading letter fixes its sort position for the tiebreak.
+COARSE_KEY = "c" + "1" * 63
+PRECISE_PRIMARY_KEY = "b" + "2" * 63
+PRECISE_SECONDARY_KEY = "d" + "3" * 63
+UNGEOCODED_KEY = "n" + "4" * 63
+POSTAL_BOX_KEY = "p" + "5" * 63
+# The inactive row sorts BEFORE the active one and carries the higher kind rank, so a missing
+# `active = 1` filter would visibly hand it the primary pick.
+HIDDEN_ACTIVE_KEY = "h" + "6" * 63
+HIDDEN_INACTIVE_KEY = "a" + "6" * 63
+# The postal row sorts BEFORE the visiting one: the kind rank, not the key, must decide.
+VISITING_KEY = "v" + "7" * 63
+VISITING_POSTAL_KEY = "a" + "7" * 63
 
 
 def _info_row(company_id: str, legal_name: str) -> str:
@@ -90,10 +112,12 @@ INFO_COLUMNS = (
     "source_run_id, resolved_at"
 )
 
+# The entity columns the serving SELECT reads, plus the provenance ones a published row always
+# carries. Everything omitted takes its type default -- the SELECT never touches it.
 ADDRESS_COLUMNS = (
-    "company_id, address_key, address_type, street_address, postal_code, city, "
-    "address_id, geocode_status, is_current, sources, source_record_uids, "
-    "evidence_hashes, source_run_id, resolved_at"
+    "company_id, address_key, box, postal_code, city, country_code, normalized_address, "
+    "kinds, sources, slots, text_source, active, inactive_reason, latitude, longitude, "
+    "geocode_status, geocode_precision, folded_at, fold_version, source_run_id"
 )
 
 
@@ -101,97 +125,137 @@ def _address_row(
     *,
     company_id: str,
     address_key: str,
-    address_type: str,
-    street: str,
+    kinds: tuple[str, ...],
+    line: str,
     postal_code: str,
     city: str,
-    address_id: str,
     geocode_status: str,
+    geocode_precision: str = "",
+    latitude: float | None = None,
+    longitude: float | None = None,
+    box: str | None = None,
+    active: int = 1,
+    inactive_reason: str = "",
 ) -> str:
+    kinds_sql = "[" + ", ".join(f"'{kind}'" for kind in kinds) + "]"
     return (
-        f"('{company_id}', '{address_key}', '{address_type}', '{street}', "
-        f"'{postal_code}', '{city}', '{address_id}', '{geocode_status}', true, "
-        f"['bolagsverket'], ['uid-1'], ['e-1'], 'run', {_literal(NOW)})"
+        f"('{company_id}', '{address_key}', {_literal(box) if box else 'NULL'}, "
+        f"'{postal_code}', '{city}', 'se', '{line}', {kinds_sql}, ['bolagsverket'], ['0'], "
+        f"'bolagsverket', {active}, '{inactive_reason}', "
+        f"{'NULL' if latitude is None else latitude}, "
+        f"{'NULL' if longitude is None else longitude}, "
+        f"'{geocode_status}', '{geocode_precision}', {_literal(NOW)}, 'v1', 'run')"
     )
 
 
 ADDRESS_ROWS = (
+    # COARSE: the centroid overlay's own outcome -- matched_area at city precision.
     _address_row(
         company_id=COARSE,
-        address_key="k" + "1" * 63,
-        address_type="visiting_or_postal",
-        street="Storgatan 1",
+        address_key=COARSE_KEY,
+        kinds=("visiting_or_postal",),
+        line="Storgatan 1, 231 39 Trelleborg",
         postal_code="231 39",
         city="Trelleborg",
-        address_id=COARSE_ADDR,
-        geocode_status="unmatched",
+        geocode_status="matched_area",
+        geocode_precision="city",
+        latitude=COARSE_LAT,
+        longitude=COARSE_LON,
     ),
-    # PRECISE: the postal (secondary) row sorts AFTER the visiting_or_postal (primary) one.
+    # PRECISE: the postal (secondary) row must lose to the visiting_or_postal (primary) one.
     _address_row(
         company_id=PRECISE,
-        address_key="k" + "2" * 63,
-        address_type="visiting_or_postal",
-        street="Kungsgatan 2",
+        address_key=PRECISE_PRIMARY_KEY,
+        kinds=("visiting_or_postal",),
+        line="Kungsgatan 2, 111 22 Stockholm",
         postal_code="111 22",
         city="Stockholm",
-        address_id=PRECISE_PRIMARY_ADDR,
         geocode_status="matched_exact",
+        geocode_precision="building",
+        latitude=PRECISE_LAT,
+        longitude=PRECISE_LON,
     ),
     _address_row(
         company_id=PRECISE,
-        address_key="k" + "3" * 63,
-        address_type="postal",
-        street="Box 9",
+        address_key=PRECISE_SECONDARY_KEY,
+        kinds=("postal",),
+        line="Box 9, 111 00 Stockholm",
         postal_code="111 00",
         city="Stockholm",
-        address_id=PRECISE_SECONDARY_ADDR,
         geocode_status="ambiguous",
+        box="Box 9",
     ),
     _address_row(
-        company_id=NOSERVED,
-        address_key="k" + "4" * 63,
-        address_type="visiting_or_postal",
-        street="Nygatan 4",
+        company_id=UNGEOCODED,
+        address_key=UNGEOCODED_KEY,
+        kinds=("visiting_or_postal",),
+        line="Nygatan 4, 903 25 Umeå",
         postal_code="903 25",
         city="Umeå",
-        address_id=NOSERVED_ADDR,
         geocode_status="unmatched",
     ),
     _address_row(
         company_id=POSTAL_BOX,
-        address_key="k" + "5" * 63,
-        address_type="postal",
-        street="Box 5305",
+        address_key=POSTAL_BOX_KEY,
+        kinds=("postal",),
+        line="Box 5305, 102 47 Stockholm",
         postal_code="102 47",
         city="Stockholm",
-        address_id=POSTAL_BOX_ADDR,
-        geocode_status="postal_box",
+        geocode_status="matched_area",
+        geocode_precision="postcode",
+        latitude=POSTAL_BOX_LAT,
+        longitude=POSTAL_BOX_LON,
+        box="Box 5305",
+    ),
+    # HIDDEN: the published row carries a care-of prefix -- the street expression strips the
+    # trailing postcode and town off the line and keeps everything before it.
+    _address_row(
+        company_id=HIDDEN,
+        address_key=HIDDEN_ACTIVE_KEY,
+        kinds=("postal",),
+        line="c/o Axfast AB, Vasagatan 7, 411 24 Göteborg",
+        postal_code="411 24",
+        city="Göteborg",
+        geocode_status="matched_exact",
+        geocode_precision="building",
+        latitude=HIDDEN_LAT,
+        longitude=HIDDEN_LON,
+    ),
+    _address_row(
+        company_id=HIDDEN,
+        address_key=HIDDEN_INACTIVE_KEY,
+        kinds=("visiting_or_postal",),
+        line="Withdrawn Gatan 9, 411 25 Göteborg",
+        postal_code="411 25",
+        city="Göteborg",
+        geocode_status="unmatched",
+        active=0,
+        inactive_reason="withdrawn",
+    ),
+    # VISITING: neither row is visiting_or_postal, and the postal one sorts first by key.
+    _address_row(
+        company_id=VISITING,
+        address_key=VISITING_KEY,
+        kinds=("visiting",),
+        line="Rådhusesplanaden 8, 903 28 Umeå",
+        postal_code="903 28",
+        city="Umeå",
+        geocode_status="matched_exact",
+        geocode_precision="building",
+        latitude=VISITING_LAT,
+        longitude=VISITING_LON,
+    ),
+    _address_row(
+        company_id=VISITING,
+        address_key=VISITING_POSTAL_KEY,
+        kinds=("postal",),
+        line="Box 1, 903 01 Umeå",
+        postal_code="903 01",
+        city="Umeå",
+        geocode_status="unmatched",
+        box="Box 1",
     ),
 )
-
-
-def _served_row(row: tuple[str, str, str, float, float]) -> str:
-    address_id, precision, provider, lat, lon = row
-    return f"('{address_id}', '{precision}', '{provider}', {lat}, {lon})"
-
-
-def _served_table_ddl() -> str:
-    """A stand-in for corpscout.se_address_geocodes_served (a VIEW in prod, migration 000325).
-
-    The builder reads only these columns off it, and address_id is FixedString(64) exactly as
-    the real view exposes -- so the Nullable-vs-non-null join this test exercises is the real
-    one. The overlay's own correctness is proven by test_geocode_serving_overlay.py; here it is
-    a fixture of precise/coarse rows.
-    """
-    return (
-        "CREATE TABLE corpscout.se_address_geocodes_served (\n"
-        "  address_id FixedString(64),\n"
-        "  geocode_precision String,\n"
-        "  geocode_provider String,\n"
-        "  latitude Nullable(Float64),\n"
-        "  longitude Nullable(Float64)\n"
-        ") ENGINE = MergeTree ORDER BY address_id"
-    )
 
 
 def _script(*, join_use_nulls: int) -> str:
@@ -204,8 +268,8 @@ def _script(*, join_use_nulls: int) -> str:
         "ALTER TABLE corpscout.se_company_info "
         "ADD COLUMN IF NOT EXISTS legal_form_label_en String DEFAULT '' AFTER legal_form_code, "
         "ADD COLUMN IF NOT EXISTS legal_form_label_sv String DEFAULT '' AFTER legal_form_label_en;",
-        table_block("se_company_address"),
-        _served_table_ddl() + ";",
+        # The address entity itself (migration 000384) -- read FINAL, active rows only.
+        table_block("se_company_address_v2"),
         # Stubs for the presence-set reads: only the columns the serving SELECT's
         # IN-subqueries touch. Seeds prove each arm independently.
         "CREATE TABLE corpscout.se_companies (company_id String, activity_description Nullable(String), status_reason Nullable(String), bolagsverket_source_record_uid String, updated_from_raw_at DateTime64(3, 'UTC')) ENGINE = ReplacingMergeTree(updated_from_raw_at) ORDER BY company_id;",
@@ -222,7 +286,7 @@ def _script(*, join_use_nulls: int) -> str:
         "CREATE TABLE corpscout.se_government_contracts (company_id String) ENGINE = MergeTree ORDER BY company_id;",
         "CREATE TABLE corpscout.company_job_history (company_id String, country_code String) ENGINE = MergeTree ORDER BY company_id;",
         # Spine rows: COARSE has a translated activity + a labeled status reason; PRECISE has
-        # an activity with NO translation row (text_en must stay ''); NOSERVED has no spine
+        # an activity with NO translation row (text_en must stay ''); UNGEOCODED has no spine
         # row at all (every spine-derived field folds to '').
         f"INSERT INTO corpscout.se_companies VALUES ('{COARSE}', 'Bygghandel med trävaror', 'konkurs avslutad', 'blv-uid-coarse', {_literal(NOW)}), ('{PRECISE}', 'Handel med maskiner', NULL, 'blv-uid-precise', {_literal(NOW)});",
         "INSERT INTO corpscout.text_translations VALUES ('corpscout.se_companies', 'activity_description', 'sv', 'en', cityHash64('Bygghandel med trävaror'), 'Building trade with timber', 2), ('corpscout.se_companies', 'activity_description', 'sv', 'en', cityHash64('Bygghandel med trävaror'), 'Timber trade (older render)', 1);",
@@ -231,32 +295,29 @@ def _script(*, join_use_nulls: int) -> str:
         f"INSERT INTO corpscout.se_financial_reports VALUES ('{COARSE}');",
         f"INSERT INTO corpscout.se_company_person VALUES ('{PRECISE}');",
         f"INSERT INTO corpscout.se_company_person_role VALUES ('{PRECISE}', ['esef']);",
-        # The SE filter must hold: NOSERVED's domain is Norwegian and must not count.
-        f"INSERT INTO corpscout.company_domains VALUES ('{COARSE}', 'SE'), ('{NOSERVED}', 'NO');",
+        # The SE filter must hold: UNGEOCODED's domain is Norwegian and must not count.
+        f"INSERT INTO corpscout.company_domains VALUES ('{COARSE}', 'SE'), ('{UNGEOCODED}', 'NO');",
         # Market flags: PRECISE is listed (EODHD listings resolve); COARSE won a government
-        # contract; POSTAL_BOX has job-ad history, and NOSERVED's job rows are Norwegian
+        # contract; POSTAL_BOX has job-ad history, and UNGEOCODED's job rows are Norwegian
         # so the SE filter must exclude them.
-        # PRECISE has an EODHD listing resolve; NOSERVED's is Norwegian and must not count.
-        f"INSERT INTO corpscout.company_traded_symbols VALUES ('SE', '{PRECISE}'), ('NO', '{NOSERVED}');",
+        f"INSERT INTO corpscout.company_traded_symbols VALUES ('SE', '{PRECISE}'), ('NO', '{UNGEOCODED}');",
         f"INSERT INTO corpscout.se_government_contracts VALUES ('{COARSE}');",
-        f"INSERT INTO corpscout.company_job_history VALUES ('{POSTAL_BOX}', 'SE'), ('{NOSERVED}', 'NO');",
+        f"INSERT INTO corpscout.company_job_history VALUES ('{POSTAL_BOX}', 'SE'), ('{UNGEOCODED}', 'NO');",
         f"INSERT INTO corpscout.se_company_info ({INFO_COLUMNS}) VALUES\n"
         + ",\n".join(
             (
                 _info_row(COARSE, "Coarse AB"),
                 _info_row(PRECISE, "Precise AB"),
-                _info_row(NOSERVED, "Noserved AB"),
+                _info_row(UNGEOCODED, "Ungeocoded AB"),
                 _info_row(POSTAL_BOX, "Postal Box AB"),
                 _info_row(NOADDRESS, "Addressless AB"),
+                _info_row(HIDDEN, "Hidden Row AB"),
+                _info_row(VISITING, "Visiting AB"),
             )
         )
         + ";",
-        f"INSERT INTO corpscout.se_company_address ({ADDRESS_COLUMNS}) VALUES\n"
+        f"INSERT INTO corpscout.se_company_address_v2 ({ADDRESS_COLUMNS}) VALUES\n"
         + ",\n".join(ADDRESS_ROWS)
-        + ";",
-        "INSERT INTO corpscout.se_address_geocodes_served "
-        "(address_id, geocode_precision, geocode_provider, latitude, longitude) VALUES\n"
-        + ",\n".join(_served_row(row) for row in SERVED_ROWS)
         + ";",
         f"SELECT * FROM (\n{build_se_companies_serving_sql()}\n) FORMAT JSONEachRow;",
     ]
@@ -295,8 +356,8 @@ def _addresses(row: dict) -> dict[str, dict]:
 
 
 def test_one_row_per_company_including_the_addressless(rows: dict[str, dict]) -> None:
-    # The widened base: a published company with NO current address still gets a row.
-    assert set(rows) == {COARSE, PRECISE, NOSERVED, POSTAL_BOX, NOADDRESS}
+    # The widened base: a published company with NO published address still gets a row.
+    assert set(rows) == {*ADDRESSED, NOADDRESS}
 
 
 def test_an_addressless_company_serves_an_empty_address_summary(
@@ -317,14 +378,14 @@ def test_presence_flags_come_from_the_child_tables(rows: dict[str, dict]) -> Non
     # the owner's 2026-08-25 widening -- and nothing else.
     assert rows[PRECISE]["has_financial"] == 1
     assert rows[COARSE]["has_financial"] == 1
-    assert rows[NOSERVED]["has_financial"] == 0
+    assert rows[UNGEOCODED]["has_financial"] == 0
     assert rows[POSTAL_BOX]["has_financial"] == 0
-    # has_domains honors the SE filter: NOSERVED's Norwegian domain must not count.
+    # has_domains honors the SE filter: UNGEOCODED's Norwegian domain must not count.
     assert rows[COARSE]["has_domains"] == 1
-    assert rows[NOSERVED]["has_domains"] == 0
+    assert rows[UNGEOCODED]["has_domains"] == 0
     assert rows[PRECISE]["has_people"] == 1
     assert rows[COARSE]["has_people"] == 0
-    for company in (COARSE, PRECISE, NOSERVED, POSTAL_BOX):
+    for company in ADDRESSED:
         assert rows[company]["has_address"] == 1
         assert rows[company]["has_description"] == 0
 
@@ -340,30 +401,30 @@ def test_translations_are_absorbed_from_the_spine_join(rows: dict[str, dict]) ->
     assert rows[PRECISE]["activity_description"] == "Handel med maskiner"
     assert rows[PRECISE]["activity_description_en"] == ""
     assert rows[PRECISE]["status_reason"] == ""
-    # NOSERVED: no spine row at all -> every spine-derived field folds to ''.
-    assert rows[NOSERVED]["activity_description"] == ""
-    assert rows[NOSERVED]["activity_description_en"] == ""
-    assert rows[NOSERVED]["bolagsverket_source_record_uid"] == ""
+    # UNGEOCODED: no spine row at all -> every spine-derived field folds to ''.
+    assert rows[UNGEOCODED]["activity_description"] == ""
+    assert rows[UNGEOCODED]["activity_description_en"] == ""
+    assert rows[UNGEOCODED]["bolagsverket_source_record_uid"] == ""
 
 
 def test_market_flags_come_from_their_own_tables(rows: dict[str, dict]) -> None:
     # is_publicly_traded: an EODHD listings-resolve row, SE only.
     assert rows[PRECISE]["is_publicly_traded"] == 1
     assert rows[COARSE]["is_publicly_traded"] == 0
-    assert rows[NOSERVED]["is_publicly_traded"] == 0
+    assert rows[UNGEOCODED]["is_publicly_traded"] == 0
     # has_government_contracts: exact-matched winner rows only.
     assert rows[COARSE]["has_government_contracts"] == 1
     assert rows[PRECISE]["has_government_contracts"] == 0
-    # has_job_ads honors the SE filter: NOSERVED's Norwegian ads must not count.
+    # has_job_ads honors the SE filter: UNGEOCODED's Norwegian ads must not count.
     assert rows[POSTAL_BOX]["has_job_ads"] == 1
-    assert rows[NOSERVED]["has_job_ads"] == 0
+    assert rows[UNGEOCODED]["has_job_ads"] == 0
     assert rows[NOADDRESS]["has_job_ads"] == 0
 
 
 def test_source_flags_or_their_arms_together(rows: dict[str, dict]) -> None:
     # Every addressed fixture row's address is sourced from bolagsverket -> B; PRECISE
     # also earns B via its metrics arm. The addressless company has no B arm at all.
-    for company in (COARSE, PRECISE, NOSERVED, POSTAL_BOX):
+    for company in ADDRESSED:
         assert rows[company]["source_bolagsverket"] == 1
     assert rows[NOADDRESS]["source_bolagsverket"] == 0
     # E: PRECISE via its esef role evidence; nothing else has an arm.
@@ -377,28 +438,67 @@ def test_source_flags_or_their_arms_together(rows: dict[str, dict]) -> None:
 def test_legal_name_comes_from_company_info(rows: dict[str, dict]) -> None:
     assert rows[COARSE]["legal_name"] == "Coarse AB"
     assert rows[PRECISE]["legal_name"] == "Precise AB"
-    assert rows[NOSERVED]["legal_name"] == "Noserved AB"
+    assert rows[UNGEOCODED]["legal_name"] == "Ungeocoded AB"
     assert rows[POSTAL_BOX]["legal_name"] == "Postal Box AB"
     assert rows[NOADDRESS]["legal_name"] == "Addressless AB"
+    assert rows[HIDDEN]["legal_name"] == "Hidden Row AB"
+    assert rows[VISITING]["legal_name"] == "Visiting AB"
 
 
-def test_address_count_matches_current_addresses(rows: dict[str, dict]) -> None:
+def test_address_count_matches_the_published_addresses(rows: dict[str, dict]) -> None:
     assert rows[COARSE]["address_count"] == 1
     assert rows[PRECISE]["address_count"] == 2
-    assert rows[NOSERVED]["address_count"] == 1
+    assert rows[UNGEOCODED]["address_count"] == 1
     assert rows[POSTAL_BOX]["address_count"] == 1
+    assert rows[VISITING]["address_count"] == 2
 
 
-def test_addresses_json_carries_the_coarse_overlay_precision_and_provider(
+def test_an_inactive_row_never_reaches_the_serving_row(rows: dict[str, dict]) -> None:
+    """HIDDEN carries one active postal row and one INACTIVE visiting_or_postal row whose key
+    sorts first. Only the active one may be served -- had the `active = 1` filter gone the
+    count would be 2 and the withdrawn row would have won the primary pick outright."""
+    row = rows[HIDDEN]
+    assert row["address_count"] == 1
+    assert set(_addresses(row)) == {HIDDEN_ACTIVE_KEY}
+    assert row["primary_geocode_class"] == "geocoded"
+    assert row["primary_city"] == "Göteborg"
+    assert row["primary_postal_code"] == "411 24"
+
+
+def test_the_json_address_id_is_the_entity_key(rows: dict[str, dict]) -> None:
+    """Since slice 4a `address_id` IS the address entity's key -- the backoffice geocoding
+    list reads the JSON by that name and links the detail page by that value."""
+    assert set(_addresses(rows[COARSE])) == {COARSE_KEY}
+    assert set(_addresses(rows[PRECISE])) == {
+        PRECISE_PRIMARY_KEY,
+        PRECISE_SECONDARY_KEY,
+    }
+
+
+def test_the_street_element_is_the_line_without_its_postcode_and_town(
     rows: dict[str, dict],
 ) -> None:
-    """The COARSE company's single address element is enriched from the served overlay:
-    precision 'city', provider 'centroid_fallback', the centroid coordinate -- while its stored
-    geocode_status stays the precise matcher's own 'unmatched'. Accented city preserved."""
-    element = _addresses(rows[COARSE])[COARSE_ADDR]
+    """`street_address` is the published line with the trailing `, NNN NN Town` stripped --
+    and nothing else: HIDDEN's care-of prefix survives ahead of the street."""
+    assert _addresses(rows[COARSE])[COARSE_KEY]["street_address"] == "Storgatan 1"
+    assert (
+        _addresses(rows[HIDDEN])[HIDDEN_ACTIVE_KEY]["street_address"]
+        == "c/o Axfast AB, Vasagatan 7"
+    )
+    assert rows[HIDDEN]["primary_street_address"] == "c/o Axfast AB, Vasagatan 7"
+
+
+def test_addresses_json_carries_the_rows_own_geocode_block(
+    rows: dict[str, dict],
+) -> None:
+    """The COARSE company's single address element carries the geocode outcome stored ON the
+    entity row: status 'matched_area', precision 'city', the centroid coordinate, and the
+    provider DERIVED from that status. Accented city preserved."""
+    element = _addresses(rows[COARSE])[COARSE_KEY]
+    assert element["geocode_status"] == "matched_area"
     assert element["geocode_precision"] == "city"
     assert element["geocode_provider"] == "centroid_fallback"
-    assert element["geocode_status"] == "unmatched"
+    assert element["address_type"] == "visiting_or_postal"
     assert element["city"] == "Trelleborg"
     assert float(element["latitude"]) == pytest.approx(COARSE_LAT)
     assert float(element["longitude"]) == pytest.approx(COARSE_LON)
@@ -408,27 +508,28 @@ def test_addresses_json_has_both_elements_for_a_multi_address_company(
     rows: dict[str, dict],
 ) -> None:
     elements = _addresses(rows[PRECISE])
-    assert set(elements) == {PRECISE_PRIMARY_ADDR, PRECISE_SECONDARY_ADDR}
-    primary = elements[PRECISE_PRIMARY_ADDR]
+    assert set(elements) == {PRECISE_PRIMARY_KEY, PRECISE_SECONDARY_KEY}
+    primary = elements[PRECISE_PRIMARY_KEY]
     assert primary["geocode_precision"] == "building"
-    assert primary["geocode_provider"] == "openstreetmap"
-    # The secondary carries no served row: every overlay field folds to '' under both settings.
-    secondary = elements[PRECISE_SECONDARY_ADDR]
+    assert primary["geocode_provider"] == "osm"
+    # The secondary was never geocoded: no coordinate, so no provider either.
+    secondary = elements[PRECISE_SECONDARY_KEY]
+    assert secondary["address_type"] == "postal"
     assert secondary["geocode_precision"] == ""
     assert secondary["geocode_provider"] == ""
     assert secondary["latitude"] == ""
 
 
 def test_accented_city_survives_json_roundtrip(rows: dict[str, dict]) -> None:
-    assert _addresses(rows[NOSERVED])[NOSERVED_ADDR]["city"] == "Umeå"
+    assert _addresses(rows[UNGEOCODED])[UNGEOCODED_KEY]["city"] == "Umeå"
 
 
-def test_primary_class_is_coarse_aware_for_a_centroid_fallback_primary(
+def test_primary_class_is_coarse_aware_for_a_matched_area_primary(
     rows: dict[str, dict],
 ) -> None:
-    """COARSE's primary is a centroid_fallback row whose base status is 'unmatched'. The class
-    must be 'coarse' -- the provider check running BEFORE the geocoded-status check -- not
-    'unmatched' (which the base status alone would give) and not 'geocoded'."""
+    """COARSE's primary is a centroid row: `matched_area`, which lives INSIDE the geocoded
+    status vocabulary. The class must be 'coarse' -- the derived-provider check running BEFORE
+    the geocoded-status check -- not 'geocoded' (which the status alone would give)."""
     row = rows[COARSE]
     assert row["primary_geocode_class"] == "coarse"
     assert row["primary_geocode_precision"] == "city"
@@ -439,15 +540,15 @@ def test_primary_class_is_coarse_aware_for_a_centroid_fallback_primary(
     assert row["primary_street_address"] == "Storgatan 1"
     assert row["primary_postal_code"] == "231 39"
     assert row["primary_city"] == "Trelleborg"
-    assert row["primary_geocode_status"] == "unmatched"
+    assert row["primary_geocode_status"] == "matched_area"
 
 
-def test_primary_class_is_coarse_for_a_centroid_fallback_postal_box(
+def test_primary_class_is_coarse_for_a_postcode_centroid_box(
     rows: dict[str, dict],
 ) -> None:
-    """POSTAL_BOX's primary is a centroid_fallback row whose base status is 'postal_box'
-    (fallback-eligible since 2026-08). The class must be 'coarse', same as COARSE -- the
-    provider check does not care which non-geocoded status produced the served row."""
+    """POSTAL_BOX's primary is a box the centroid overlay placed at postcode precision. The
+    class must be 'coarse', same as COARSE -- the check does not care which address shape the
+    centroid landed on."""
     row = rows[POSTAL_BOX]
     assert row["primary_geocode_class"] == "coarse"
     assert row["primary_geocode_precision"] == "postcode"
@@ -456,7 +557,7 @@ def test_primary_class_is_coarse_for_a_centroid_fallback_postal_box(
     assert row["primary_street_address"] == "Box 5305"
     assert row["primary_postal_code"] == "102 47"
     assert row["primary_city"] == "Stockholm"
-    assert row["primary_geocode_status"] == "postal_box"
+    assert row["primary_geocode_status"] == "matched_area"
 
 
 def test_primary_pick_takes_the_visiting_or_postal_row(rows: dict[str, dict]) -> None:
@@ -464,7 +565,7 @@ def test_primary_pick_takes_the_visiting_or_postal_row(rows: dict[str, dict]) ->
     (ambiguous) one -- had the pick ranked wrong the class would be 'ambiguous'."""
     row = rows[PRECISE]
     assert row["primary_geocode_class"] == "geocoded"
-    assert row["primary_geocode_provider"] == "openstreetmap"
+    assert row["primary_geocode_provider"] == "osm"
     assert float(row["primary_latitude"]) == pytest.approx(PRECISE_LAT)
     # The display fields come from the SAME primary row -- the visiting_or_postal one --
     # not the postal secondary (whose street is "Box 9").
@@ -473,13 +574,24 @@ def test_primary_pick_takes_the_visiting_or_postal_row(rows: dict[str, dict]) ->
     assert row["primary_geocode_status"] == "matched_exact"
 
 
-def test_primary_class_falls_back_to_base_status_with_no_served_row(
+def test_primary_pick_ranks_visiting_above_postal(rows: dict[str, dict]) -> None:
+    """VISITING has no visiting_or_postal row: rank 2 (`visiting`) must beat rank 3
+    (`postal`), and the key tiebreak must not override it -- the postal row's key sorts
+    first, so a pick that fell through to `address_key ASC` would serve 'unmatched'."""
+    row = rows[VISITING]
+    assert row["primary_geocode_class"] == "geocoded"
+    assert row["primary_street_address"] == "Rådhusesplanaden 8"
+    assert row["primary_postal_code"] == "903 28"
+    assert float(row["primary_latitude"]) == pytest.approx(VISITING_LAT)
+
+
+def test_primary_class_falls_back_to_the_base_status_without_a_coordinate(
     rows: dict[str, dict],
 ) -> None:
-    """NOSERVED's primary has no served-overlay row: the class comes from its stored
-    geocode_status ('unmatched'). Same base status as COARSE, opposite class -- the overlay is
-    what separates them."""
-    row = rows[NOSERVED]
+    """UNGEOCODED's primary has no coordinate: the derived provider is '' and the class comes
+    from its stored geocode_status ('unmatched'). Paired with COARSE -- both rows the precise
+    matcher failed on, opposite classes -- the centroid outcome is what separates them."""
+    row = rows[UNGEOCODED]
     assert row["primary_geocode_class"] == "unmatched"
     assert row["primary_geocode_provider"] == ""
     assert row["primary_latitude"] is None

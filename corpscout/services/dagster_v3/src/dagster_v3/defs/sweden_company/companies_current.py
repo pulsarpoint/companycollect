@@ -1,23 +1,22 @@
 """The `corpscout.se_companies_serving` serving SELECT: one wide denormalized row per company.
 
 The companies/geocoding admin surfaces need a per-company row -- legal name, the company's
-current addresses as a JSON array, and a pre-computed geocode summary for the PRIMARY address
--- without paying the FINAL merges on `se_company_address`/`se_company_info`, the served-view
-join, and the per-company aggregation on every request. This module is the single source of
-truth for that SELECT; migration 000335 materializes it as a refreshable MV and the backoffice
-admin companies pages read the materialized table.
+published addresses as a JSON array, and a pre-computed geocode summary for the PRIMARY
+address -- without paying the FINAL merges on `se_company_address_v2`/`se_company_info` and
+the per-company aggregation on every request. This module is the single source of truth for
+that SELECT; migration 000335 materializes it as a refreshable MV, 000391 repoints it at the
+address entity, and the backoffice admin companies pages read the materialized table.
 
 WHAT IT AGGREGATES.
 
-- One row per company. `se_company_address` FINAL, `is_current` only, is reduced to a per-company
-  JSON array of its current addresses (companies carry 1-2), plus an `address_count`.
+- One row per company. `se_company_address_v2` FINAL, `active = 1` only, is reduced to a
+  per-company JSON array of its published addresses (companies carry 1-2), plus an
+  `address_count`.
 - Each address element is a Map(String, String) -- every value stringified so `toJSONString`
-  emits a plain JSON object (verified 2026-08-26 to round-trip a/a/o intact). Its geocode fields
-  (`geocode_precision`, `geocode_provider`, `latitude`, `longitude`) come from the SE geocode
-  SERVING OVERLAY `corpscout.se_address_geocodes_served` (migration 000325, widened by 000327
-  -- precise outcomes pass through, unmatched/ambiguous/postal_box identities filled with a
-  coarse postcode/city centroid), LEFT-JOINed on `address_id`; `geocode_status` stays the
-  value stored on the published row.
+  emits a plain JSON object (verified 2026-08-26 to round-trip a/a/o intact). Its geocode
+  fields (`geocode_status`, `geocode_precision`, `latitude`, `longitude`) sit ON the entity
+  row, written by the address module's geocode step; `geocode_provider` is DERIVED from the
+  status (see below) because the entity does not store one.
 - `legal_name` is INNER-JOINed from `se_company_info` FINAL (every addressed company has one --
   0 orphans verified), matching the sibling company list's own name spine.
 
@@ -28,25 +27,32 @@ the SAME rule that list uses (se-company-geocoding-list.server.ts): a physical
 `visiting_or_postal` outranks `visiting`, which outranks a postal-only row, with `address_key`
 as the deterministic final tiebreak -- expressed here as the identical `ORDER BY ... LIMIT 1 BY
 company_id` idiom rather than an aggregate, so the primary row's own coordinate (which may be
-NULL) is carried through verbatim. The street/postcode/city/geocode_status columns are the
+NULL) is carried through verbatim. The entity keeps the kinds as an ARRAY on one row rather
+than a row per type, so the two rank terms are `has(kinds, ...)` membership tests instead of
+equality on a scalar `address_type`. The street/postcode/city/geocode_status columns are the
 primary row's own display fields carried out alongside the geocode summary: the backoffice
 geocoding list reads them straight off this table for its Company/Address columns and badge
 tooltip, so it never has to re-pick a primary out of the `addresses` JSON (which, being a plain
 map array, carries no `address_key` to tiebreak on).
 
 THE CLASS IS COARSE-AWARE. `primary_geocode_class` mirrors the backoffice's
-GEOCODE_STATUS_CLASS_EXPR EXACTLY (`_geocode_class_expr` below), so the Task 3 repoint is a
-drop-in: the `geocode_provider = 'centroid_fallback'` check for `'coarse'` runs BEFORE the
-geocoded-status membership check, because an overlaid row keeps `match_status` inside the
-GEOCODED vocabulary (`matched_area`) and only its provider tells it apart from a
-building-precise match. Vocabulary: no_outcome / coarse / geocoded / ambiguous / unmatched.
+GEOCODE_STATUS_CLASS_EXPR EXACTLY (`_geocode_class_expr` below): the
+`geocode_provider = 'centroid_fallback'` check for `'coarse'` runs BEFORE the geocoded-status
+membership check, because a centroid row keeps its status inside the GEOCODED vocabulary
+(`matched_area`) and only the provider tells it apart from a building-precise match.
+Vocabulary: no_outcome / coarse / geocoded / ambiguous / unmatched.
 
-NULL-SAFE JOIN. `se_company_address.address_id` is `Nullable(FixedString(64))`;
-`se_address_geocodes_served.address_id` is `FixedString(64)`. The join compares them as
-`toString(s.address_id) = ifNull(toString(a.address_id), '')`, so a company row with a NULL
-address_id folds to '' and matches no served row (a real id is 64 hex chars) -- the same
-overlay-read fallback every absent field takes, answering identically under both
-`join_use_nulls` settings.
+THE DERIVED PROVIDER. The entity stores no provider column, so one is derived from the row:
+`matched_area` -- what the postcode/city centroid overlay writes -- is `centroid_fallback`, a
+row with no coordinate at all gets `''`, and everything else is `'osm'` (the gazetteer the
+address module geocodes against). That reproduces the class the served overlay used to give
+every one of these rows, which is why `_geocode_class_expr` needed no change when slice 4a
+repointed this view at the entity.
+
+STREET FROM THE PUBLISHED LINE. The entity has no `street_address` column: `normalized_address`
+is the display line, `street[, postcode city]`. `_STREET_PART_EXPR` strips the trailing
+`, NNN NN Town` and keeps everything before it, so a `c/o` prefix survives -- the mapping
+rule every slice-4a reader applies to the entity's line.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -59,9 +65,28 @@ from dagster_v3.defs.sweden_company.geocode_store import (
     GEOCODED_STATUSES,
 )
 
-COMPANY_ADDRESS_TABLE = f"{CLICKHOUSE_DATABASE}.se_company_address"
+# The SE address entity (migration 000384), one row per company and published address. It
+# keeps the `_v2` name until slice 4b renames it, and this constant is the one edit that
+# rename costs here.
+COMPANY_ADDRESS_TABLE = f"{CLICKHOUSE_DATABASE}.se_company_address_v2"
 COMPANY_INFO_TABLE = f"{CLICKHOUSE_DATABASE}.se_company_info"
-SERVED_GEOCODES_TABLE = f"{CLICKHOUSE_DATABASE}.se_address_geocodes_served"
+
+# The street part of a published line: everything before a trailing `, NNN NN Town`. Written
+# as a raw string so the doubled backslash reaches ClickHouse, whose string-literal parser
+# unescapes it back to the regex's `\s`.
+_STREET_PART_EXPR = (
+    r"replaceRegexpOne(a.normalized_address, ',\\s*[0-9]{3} [0-9]{2}[^,]*$', '')"
+)
+
+# The entity carries no geocode_provider column; the class expression needs one. `matched_area`
+# is what the postcode/city centroid overlay writes, so it maps to the fallback provider the
+# served view used to stamp; a row with no coordinate has no provider at all.
+_GEOCODE_PROVIDER_EXPR = (
+    "multiIf("
+    f"a.geocode_status = 'matched_area', '{GEOCODE_FALLBACK_PROVIDER}', "
+    "a.latitude IS NULL, '', "
+    "'osm')"
+)
 
 # The address element's Map keys, in emission order. Each value is stringified so the Map is
 # homogeneous (Map(String, String)) and toJSONString renders a flat JSON object.
@@ -83,11 +108,12 @@ def _geocode_class_expr(status_column: str, provider_column: str) -> str:
     """The coarse-aware geocode class, IDENTICAL in semantics to the backoffice's
     `geocodeClassExpr` (se-company-geocoding-list.server.ts).
 
-    `status_column` is the row's stored `geocode_status`; `provider_column` is the served
-    overlay's `geocode_provider` ('' when the identity carries no served row). The
-    centroid-fallback provider is tested BEFORE the geocoded-status membership check so an
-    overlaid coarse row -- whose `match_status` is deliberately the GEOCODED value
-    `matched_area` -- classifies as `'coarse'` and never as `'geocoded'`.
+    `status_column` is the row's stored `geocode_status`; `provider_column` is the DERIVED
+    `geocode_provider` (`_GEOCODE_PROVIDER_EXPR`: `centroid_fallback` for a centroid outcome,
+    '' for a row with no coordinate, `osm` otherwise). The centroid-fallback provider is
+    tested BEFORE the geocoded-status membership check so a coarse row -- whose status is
+    deliberately the GEOCODED value `matched_area` -- classifies as `'coarse'` and never as
+    `'geocoded'`.
     """
     geocoded = ", ".join(f"'{status}'" for status in GEOCODED_STATUSES)
     return (
@@ -104,10 +130,12 @@ def _geocode_class_expr(status_column: str, provider_column: str) -> str:
 # The primary-address pick, mirrored verbatim from se-company-geocoding-list.server.ts's
 # GEOCODING_PUBLISHED_ADDRESS_SQL: a physical visiting_or_postal outranks visiting outranks a
 # postal-only row, address_key the deterministic tiebreak. Applied as ORDER BY + LIMIT 1 BY.
+# The two rank terms are the CTE's `has(kinds, ...)` membership columns -- the entity carries
+# every kind of one address on ONE row, so there is no scalar address_type to compare.
 _PRIMARY_ORDER_BY = (
     "company_id,\n"
-    "    address_type = 'visiting_or_postal' DESC,\n"
-    "    address_type = 'visiting' DESC,\n"
+    "    kind_visiting_or_postal DESC,\n"
+    "    kind_visiting DESC,\n"
     "    address_key ASC"
 )
 
@@ -219,9 +247,9 @@ def build_se_companies_serving_sql() -> str:
     The inner SELECT computes each presence ARM exactly once (each `IN (...)` builds its
     hash set once per refresh); the outer SELECT derives the composite flags from the arms.
     Address columns come from the same three CTEs se_companies_current used, LEFT-joined so
-    a company with no current address still gets a row -- its `addresses` folds to '[]'
+    a company with no published address still gets a row -- its `addresses` folds to '[]'
     (via coalesce/nullIf, correct under both join_use_nulls settings) and its primary
-    summary to the same ''/NULL an absent overlay row produces.
+    summary to the same ''/NULL an ungeocoded row produces.
 
     Flag semantics are ported verbatim from the backoffice's DATATYPE_PRESENCE_EXPR /
     PROFILE_SOURCE_PREDICATES (se-company-info-lists.server.ts, owner ruling 2026-08-25:
@@ -232,22 +260,22 @@ def build_se_companies_serving_sql() -> str:
     return f"""WITH company_addresses AS (
   SELECT
     a.company_id AS company_id,
-    a.address_key AS address_key,
-    a.address_type AS address_type,
+    toString(a.address_key) AS address_key,
+    arrayStringConcat(arrayMap(x -> toString(x), a.kinds), ',') AS address_type,
     toUInt8(has(a.sources, 'bolagsverket')) AS from_bolagsverket,
-    ifNull(a.street_address, '') AS street_address,
+    {_STREET_PART_EXPR} AS street_address,
     ifNull(a.postal_code, '') AS postal_code,
     ifNull(a.city, '') AS city,
-    ifNull(toString(a.address_id), '') AS address_id,
+    toString(a.address_key) AS address_id,
     toString(a.geocode_status) AS geocode_status,
-    ifNull(s.geocode_precision, '') AS geocode_precision,
-    ifNull(s.geocode_provider, '') AS geocode_provider,
-    s.latitude AS latitude,
-    s.longitude AS longitude
+    toString(a.geocode_precision) AS geocode_precision,
+    {_GEOCODE_PROVIDER_EXPR} AS geocode_provider,
+    a.latitude AS latitude,
+    a.longitude AS longitude,
+    has(a.kinds, 'visiting_or_postal') AS kind_visiting_or_postal,
+    has(a.kinds, 'visiting') AS kind_visiting
   FROM {COMPANY_ADDRESS_TABLE} AS a FINAL
-  LEFT JOIN {SERVED_GEOCODES_TABLE} AS s
-    ON toString(s.address_id) = ifNull(toString(a.address_id), '')
-  WHERE a.is_current
+  WHERE a.active = 1
 ),
 primary_address AS (
   SELECT
