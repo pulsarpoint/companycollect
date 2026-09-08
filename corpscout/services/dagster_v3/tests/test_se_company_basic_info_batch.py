@@ -295,9 +295,9 @@ def test_a_full_page_renders_under_the_query_size_setting() -> None:
 
     clickhouse-driver substitutes %(company_ids)s client-side, so the ids land in the query
     TEXT. Rendered exactly as the driver renders it -- escape_params against a
-    SimpleNamespace context, the technique tests/test_se_company_address.py already uses to
-    prove a driver-rendering claim offline -- with 12-digit ids, the wider of the two widths
-    normalized_se_company_ids admits (10-digit organisationsnummer or 12-digit
+    SimpleNamespace context, the technique tests/test_se_company_address_batch.py already
+    uses to prove a driver-rendering claim offline -- with 12-digit ids, the wider of the two
+    widths normalized_se_company_ids admits (10-digit organisationsnummer or 12-digit
     personnummer-based sole-trader ids). No server needed.
     """
     from types import SimpleNamespace

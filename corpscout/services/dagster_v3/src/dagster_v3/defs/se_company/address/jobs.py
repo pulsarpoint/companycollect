@@ -1,4 +1,7 @@
-"""The address extract job and its STOPPED weekly (spec section 7). The fold stays manual."""
+"""The address extract job and its STOPPED weekly (spec section 7). The fold stays manual.
+
+The weekly carries the canonical `se_company_address_weekly` name: the old model's schedule
+of that name was deleted in slice 4b, so the interim `_v2` name is no longer needed."""
 
 import dagster as dg
 
@@ -20,8 +23,8 @@ se_company_address_extract_job = dg.define_asset_job(
     "se_company_address_extract_job",
     selection=dg.AssetSelection.assets(*EXTRACTOR_ASSET_NAMES, NORMALIZE_ASSET),
 )
-se_company_address_v2_weekly = dg.ScheduleDefinition(
-    name="se_company_address_v2_weekly",
+se_company_address_weekly = dg.ScheduleDefinition(
+    name="se_company_address_weekly",
     job=se_company_address_extract_job,
     cron_schedule="5 7 * * 1",
     run_config=WEEKLY_RUN_CONFIG,

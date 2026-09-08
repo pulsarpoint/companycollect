@@ -5,13 +5,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // One hoisted ClickHouse mock covers every `.server` module reachable from the
 // route modules imported below, so the loaders can be exercised end-to-end
 // (loader -> component) without a live database.
-const clickhouse = vi.hoisted(() => ({ query: vi.fn(), insertAddressCorrections: vi.fn() }));
+const clickhouse = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock("~/lib/clickhouse.server", () => ({
   chQuery: clickhouse.query,
-  // Mocking the module replaces every export, so the writer the address
-  // module imports has to be here too -- otherwise it is silently undefined
-  // for any test that ever reaches an append.
-  chInsertSeCompanyAddressCorrections: clickhouse.insertAddressCorrections,
 }));
 
 import AdminSwedenCompanyLayout, {
@@ -19,7 +15,6 @@ import AdminSwedenCompanyLayout, {
 } from "~/routes/admin-se-company-layout";
 import { loader as companyIndexLoader } from "~/routes/admin-se-company-index";
 import { SeCompanyHeader } from "~/components/admin/se-company-header";
-import { SeCompanyAddressTab } from "~/components/admin/se-company-address";
 import { SeCompanyContractsTab } from "~/components/admin/se-company-contracts";
 import { SeCompanyDomainsTab } from "~/components/admin/se-company-domains";
 import { formatAdText, SeCompanyJobsTab } from "~/components/admin/se-company-jobs";
@@ -33,11 +28,6 @@ import AdminSwedenCompanyTechnologyIpAddress from "~/routes/admin-se-company-tec
 import AdminSwedenCompanyTechnologyIpAddresses from "~/routes/admin-se-company-technology-ip-addresses";
 import AdminSwedenCompanyTechnologyWebIntelligence from "~/routes/admin-se-company-technology-web-intelligence";
 import { buildWebTechnologyHistory } from "~/lib/web-technology-history";
-import {
-  loadSeCompanyAddresses,
-  type SeCompanyAddressCorrectionRow,
-  type SeCompanyAddressRow,
-} from "~/lib/se-company-address.server";
 import type {
   CompanyFinancialSource,
   CompanyTechnologyDetail,
@@ -177,160 +167,6 @@ describe("company area header", () => {
     expect(html).toContain("se_company_info");
     // The header still names the company: the register knows who it is.
     expect(html).toContain("Beijer Byggmaterial Aktiebolag");
-  });
-});
-
-const address: SeCompanyAddressRow = {
-  address_key: "f".repeat(64),
-  address_type: "postal",
-  care_of: "Nicklas",
-  street_address: "Borgargatan 16, lgh 1302",
-  normalized_address: "borgargatan 16 lgh 1302|11734|stockholm|se",
-  postal_code: "11734",
-  city: "STOCKHOLM",
-  country_code: "SE",
-  address_id: "9".repeat(64),
-  latitude: "59.3167337",
-  longitude: "18.0347148",
-  geocode_status: "matched_exact",
-  geocoded_at: "2026-08-17 20:14:13.671",
-  sources: ["bolagsverket", "scb"],
-  source_record_uids: ["bolagsverket:5560125220:postal"],
-  evidence_set_hash: "a".repeat(64),
-  correction_ids: [],
-  resolved_at: "2026-08-24 09:12:00.000",
-};
-
-const correction: SeCompanyAddressCorrectionRow = {
-  correction_id: "11111111-1111-4111-8111-111111111111",
-  correction_kind: "reject_address",
-  payload: JSON.stringify({ address_key: "e".repeat(64) }),
-  address_key: "e".repeat(64),
-  evidence_hash: "b".repeat(64),
-  reason: "This is the accountant's address, not the company's.",
-  decided_by: "backoffice",
-  supersedes_correction_id: null,
-  created_at: "2026-08-24 08:00:00.000",
-  is_current: 1,
-  is_stale: 0,
-  is_applied: 1,
-};
-
-const emptyDetail = { addresses: [], removed: [], corrections: [] };
-
-describe("address tab", () => {
-  it("shows one card per published address, its sources, and its geocode with a map link", () => {
-    const html = render(
-      <SeCompanyAddressTab
-        result={null}
-        detail={{
-          ...emptyDetail,
-          addresses: [
-            address,
-            {
-              ...address,
-              address_key: "e".repeat(64),
-              address_type: "visiting_or_postal",
-              sources: ["scb"],
-              latitude: "",
-              longitude: "",
-              geocode_status: "",
-              geocoded_at: "",
-              address_id: "",
-            },
-          ],
-        }}
-      />,
-      seCompanyTabPath(COMPANY_ID, "address"),
-    );
-    expect(html).toContain("Postal address");
-    expect(html).toContain("Visiting or postal address");
-    // One badge per contributing source, in the order the row lists them:
-    // precedence between sources is a fact worth seeing.
-    expect(html).toContain(">bolagsverket<");
-    expect(html).toContain(">scb<");
-    expect(html).toContain("matched_exact");
-    expect(html).toContain("11734");
-    expect(html).toContain("STOCKHOLM");
-    // A geocoded point is checkable on a map; one that never reached the
-    // geocoder says so rather than showing a grid of em dashes or a link to 0,0.
-    expect(html).toContain(
-      'href="https://www.openstreetmap.org/?mlat=59.3167337&amp;mlon=18.0347148#map=18/59.3167337/18.0347148"',
-    );
-    expect(html.match(/openstreetmap\.org\/\?mlat/g)).toHaveLength(1);
-    expect(html).toContain("This address has not been geocoded.");
-    expect(html).not.toContain("1970");
-  });
-
-  it("says so when no source recorded an address", () => {
-    const html = render(
-      <SeCompanyAddressTab detail={emptyDetail} result={null} />,
-      seCompanyTabPath(COMPANY_ID, "address"),
-    );
-    expect(html).toContain("No address recorded");
-  });
-
-  /**
-   * Ruling A8: a rejected address is published is_current = false, and a page
-   * that only listed live rows would hide it -- taking the correction that
-   * rejected it, and the undo that would bring it back, with it.
-   */
-  it("keeps a rejected address visible in its own section, with the decision that removed it", () => {
-    const html = render(
-      <SeCompanyAddressTab
-        result={null}
-        detail={{
-          addresses: [address],
-          removed: [
-            {
-              ...address,
-              address_key: "e".repeat(64),
-              address_type: "visiting",
-              correction_ids: [correction.correction_id],
-            },
-          ],
-          corrections: [correction],
-        }}
-      />,
-      seCompanyTabPath(COMPANY_ID, "address"),
-    );
-    expect(html).toContain("Removed / rejected");
-    expect(html).toContain("Visiting address");
-    expect(html).toContain("This is the accountant&#x27;s address, not the company&#x27;s.");
-    expect(html).toContain(">applied<");
-  });
-
-  /**
-   * Ruling A11: Dagster has no row to stamp a reject that names a key this
-   * company does not publish, so it never appears in any row's correction_ids.
-   * It is applied all the same -- and it still needs somewhere to be seen.
-   */
-  it("shows a correction whose address is gone rather than dropping it", () => {
-    const html = render(
-      <SeCompanyAddressTab
-        detail={{ addresses: [address], removed: [], corrections: [correction] }}
-        result={null}
-      />,
-      seCompanyTabPath(COMPANY_ID, "address"),
-    );
-    expect(html).toContain("Corrections without an address");
-    expect(html).toContain(">applied<");
-    expect(html).not.toContain(">pending<");
-  });
-
-  it("renders what the loader actually returns for a company with one address", async () => {
-    clickhouse.query
-      .mockResolvedValueOnce([address])
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([]);
-    const detail = await loadSeCompanyAddresses(COMPANY_ID);
-    const html = render(
-      <SeCompanyAddressTab detail={detail} result={null} />,
-      seCompanyTabPath(COMPANY_ID, "address"),
-    );
-    expect(html).toContain("Postal address");
-    expect(html).toContain("11734");
-    expect(html).not.toContain("Removed / rejected");
   });
 });
 
@@ -1392,25 +1228,6 @@ describe("the Sources strip every tab opens with", () => {
   // Task 20: the list page says 'BSEW' in letters; each tab has to say the
   // same thing in words, derived from what that tab ALREADY loaded -- no tab
   // gained a query for this. One register, one name, across all five.
-  it("names the registers behind the addresses -- including a tombstoned one's", () => {
-    const html = render(
-      <SeCompanyAddressTab
-        result={null}
-        detail={{
-          ...emptyDetail,
-          addresses: [{ ...address, sources: ["scb"] }],
-          // A rejected address is still evidence Bolagsverket held one, and
-          // its card is still on the page -- so the strip must name it.
-          removed: [
-            { ...address, address_key: "e".repeat(64), sources: ["bolagsverket"] },
-          ],
-        }}
-      />,
-      seCompanyTabPath(COMPANY_ID, "address"),
-    );
-    expect(html).toContain('data-source-strip="Bolagsverket,SCB"');
-  });
-
   // The Financial tab has no strip since it became the shared public
   // financials view: the source switcher already names each register.
 

@@ -1,21 +1,24 @@
 """Force-refresh `corpscout.se_companies_serving` at the end of the weekly geocoding run.
 
 Migration 000335 makes `se_companies_serving` a REFRESHABLE MATERIALIZED VIEW that ClickHouse
-rebuilds on its own EVERY 15 MINUTES, so nothing here computes its contents. What this asset does is
-tighten the timing: the weekly job has just republished the coarse centroids and appended the
-week's geocode outcomes to the store (which `se_address_geocodes_current`, and through it
-`se_address_geocodes_served`, refreshes from). Left to the hourly schedule, the companies view
-would keep serving the PREVIOUS week's join for up to 15 minutes after that data landed. Issuing
+rebuilds on its own; 000366 moved that cadence to HOURLY, OFFSET 45 MINUTE (restated by 000393's
+MODIFY QUERY, which carried the same schedule forward), so nothing here computes its contents.
+What this asset does is tighten the timing: the weekly job has just republished the coarse
+centroids and warmed the address entity's geocode cache against the new OSM extract. Left to the
+hourly schedule, the view would keep serving the PREVIOUS week's join for up to an hour after
+that data landed. Issuing
 `SYSTEM REFRESH VIEW` forces an immediate rebuild and `SYSTEM WAIT VIEW` blocks until it lands, so
 the admin surfaces read fresh rows the moment the run finishes rather than at the next auto-refresh.
 
 Both are SYSTEM statements against a name ClickHouse owns -- there is no DuckDB work and no pool to
-take. `deps` are the two assets that produce its freshest inputs (the centroids and the store
-append), so this asset is ordered LAST in the weekly, after everything the view reads is current.
+take. `deps` are the two assets that produce its freshest inputs: the centroids and the address
+entity's geocode-cache warm. The store-append asset it used to name retired with the old address
+chain in slice 4b; the warm step is what now puts the week's new OSM extract into
+`se_address_geocodes`, so it is what this must follow. Ordered LAST in the weekly, after
+everything the view reads is current.
 
-The refresh-health check hangs off THIS asset, mirroring
-`sweden_address_geocodes_serving_view_refresh_check` on the store asset: the view is never
-materialized, so its only observable health is its refresh state in `system.view_refreshes`, and a
+The refresh-health check hangs off THIS asset: the view is never materialized, so its only
+observable health is its refresh state in `system.view_refreshes`, and a
 refresh that quietly stops (throws, never succeeds, or falls three intervals behind) leaves the
 serving name answering fast with contents that stop advancing. The predicate and its SQL live in
 `companies_current.py` beside the builder so both stay importable and unit-testable.
@@ -33,7 +36,7 @@ from dagster_v3.defs.sweden_company.centroid_assets import CENTROIDS_ASSET_KEY
 GROUP_NAME = "sweden_company"
 
 COMPANIES_CURRENT_ASSET_KEY = "sweden_companies_current_clickhouse"
-GEOCODE_STORE_ASSET_KEY = "sweden_address_geocode_store_clickhouse"
+WARM_ASSET_KEY = "se_address_geocodes_warm"
 
 QUALIFIED_SE_COMPANIES_SERVING_VIEW = f"{companies_current.CLICKHOUSE_DATABASE}.{companies_current.SE_COMPANIES_SERVING_VIEW}"
 
@@ -44,7 +47,7 @@ ROW_COUNT_SQL = f"SELECT count() FROM {QUALIFIED_SE_COMPANIES_SERVING_VIEW}"
 
 @dg.asset(
     name=COMPANIES_CURRENT_ASSET_KEY,
-    deps=[dg.AssetKey(CENTROIDS_ASSET_KEY), dg.AssetKey(GEOCODE_STORE_ASSET_KEY)],
+    deps=[dg.AssetKey(CENTROIDS_ASSET_KEY), dg.AssetKey(WARM_ASSET_KEY)],
     group_name=GROUP_NAME,
     kinds={"python", "clickhouse"},
     metadata={"view": QUALIFIED_SE_COMPANIES_SERVING_VIEW},

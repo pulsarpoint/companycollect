@@ -82,8 +82,6 @@ function AdminBreadcrumbs() {
   const onCompaniesPage =
     pathname === "/admin/se/companies" ||
     pathname.startsWith("/admin/se/companies/");
-  const onCompanyAddressCorrectionsPage =
-    pathname === "/admin/se/company-address/corrections";
 
   if (onEsefPage) {
     return (
@@ -168,28 +166,6 @@ function AdminBreadcrumbs() {
               </BreadcrumbItem>
             </>
           ) : null}
-        </BreadcrumbList>
-      </Breadcrumb>
-    );
-  }
-
-  if (onCompanyAddressCorrectionsPage) {
-    return (
-      <Breadcrumb>
-        <BreadcrumbList>
-          <BreadcrumbItem className="hidden sm:block">
-            <BreadcrumbLink render={<Link to="/admin/se/people" />}>
-              Admin
-            </BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator className="hidden sm:block" />
-          <BreadcrumbItem className="hidden sm:block">
-            <BreadcrumbPage>Sweden</BreadcrumbPage>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator className="hidden sm:block" />
-          <BreadcrumbItem>
-            <BreadcrumbPage>Address corrections</BreadcrumbPage>
-          </BreadcrumbItem>
         </BreadcrumbList>
       </Breadcrumb>
     );

@@ -6,6 +6,10 @@ from tests.se_company_ddl import declared_columns, table_block
 
 COMPANY_ID_CHECK = "CONSTRAINT valid_company_id CHECK match(company_id, '^([0-9]{10}|[0-9]{12})$')"
 
+# Migration 000384 declares the main table under the build name it was created with;
+# 000393 renames the DEPLOYED table and, under the ledger policy, does not touch that file.
+MAIN_DDL_TABLE = "se_company_address_v2"
+
 
 def test_suggestion_table_is_one_current_row_per_company_source_and_slot() -> None:
     block = table_block("se_company_address_suggestion")
@@ -37,8 +41,8 @@ def test_normalized_table_has_the_same_key_and_its_own_version() -> None:
 
 
 def test_main_table_is_one_row_per_company_and_published_address() -> None:
-    block = table_block("se_company_address_v2")
-    assert declared_columns("se_company_address_v2") == list(tables.MAIN_COLUMNS)
+    block = table_block(MAIN_DDL_TABLE)
+    assert declared_columns(MAIN_DDL_TABLE) == list(tables.MAIN_COLUMNS)
     assert "ENGINE = ReplacingMergeTree(folded_at)" in block
     assert "ORDER BY (company_id, address_key)" in block
     assert COMPANY_ID_CHECK in block
@@ -81,7 +85,10 @@ def test_precedence_table_has_the_basic_info_shape() -> None:
 def test_column_tuples_agree_with_each_other() -> None:
     assert tables.QUALIFIED_SUGGESTION_TABLE == "corpscout.se_company_address_suggestion"
     assert tables.QUALIFIED_NORMALIZED_TABLE == "corpscout.se_company_address_normalized"
-    assert tables.QUALIFIED_MAIN_TABLE == "corpscout.se_company_address_v2"
+    assert tables.QUALIFIED_MAIN_TABLE == "corpscout.se_company_address"
+    # The five sibling tables keep names the new one is a PREFIX of, which is why every
+    # string match on the main table elsewhere carries an alias.
+    assert tables.QUALIFIED_SUGGESTION_TABLE.startswith(tables.QUALIFIED_MAIN_TABLE)
     assert tables.QUALIFIED_HISTORY_TABLE == "corpscout.se_company_address_history"
     assert tables.QUALIFIED_RULE_TABLE == "corpscout.se_company_address_rule"
     assert tables.QUALIFIED_PRECEDENCE_TABLE == "corpscout.se_company_address_precedence"

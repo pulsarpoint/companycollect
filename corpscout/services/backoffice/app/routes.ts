@@ -194,10 +194,6 @@ export default [
       "routes/admin-se-company-info-geocoding-redirect.ts",
     ),
     route(
-      "se/company-address/corrections",
-      "routes/admin-se-company-address-corrections.tsx",
-    ),
-    route(
       "se/people/stale-corrections",
       "routes/admin-se-people-stale-corrections.tsx",
     ),

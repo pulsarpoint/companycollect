@@ -190,8 +190,8 @@ def replace_reference_documents(
     never depended on ``source_md5`` to run matching. The manifest then honestly records ``''``
     rather than raising, matching this codebase's convention for "no identifiable value" (see
     `_replace_comparison`'s `coalesce(current.match_status, '')`); a missing reference identity
-    is instead where the promotion step already refuses to publish (see
-    `address_resolution_promotion.py`), same as it did before this manifest existed.
+    is instead where the promotion step already refused to publish, same as it did before this
+    manifest existed.
     """
     connection.execute(
         f"create schema if not exists {address_canonicalization.ENRICHMENT_SCHEMA}"

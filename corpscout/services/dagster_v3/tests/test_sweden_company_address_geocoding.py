@@ -1151,8 +1151,8 @@ def test_the_canonical_and_shared_address_chain_is_built_from_source_observation
 ):
     """Source observations -> canonical addresses -> shared identities -> company links.
 
-    The legacy per-company OSM matcher this test used to drive is retired
-    (LEGACY_PAIR_RETIREMENT_DROP_SQL); the resolver's own ladder is pinned in
+    The legacy per-company OSM matcher this test used to drive is retired, and its tables
+    with it; the resolver's own ladder is pinned in
     tests/test_address_resolution.py.
     What is left here is the identity chain, which stays.
     """
@@ -1260,196 +1260,60 @@ def test_the_canonical_and_shared_address_chain_is_built_from_source_observation
     )
 
 
-def test_sweden_company_address_geocoding_assets_are_company_enhancements() -> None:
+def test_the_weekly_is_the_only_geocoding_job_and_selects_five_assets() -> None:
+    """Slice 4b: the canonical/shared/demand/resolution/store chain is gone, and with it
+    every job that selected it. What is left is the weekly, which refreshes the OSM extract,
+    republishes the centroids, warms the address entity's geocode cache and forces the
+    serving view's refresh -- the five steps the entity actually needs."""
     from dagster_v3.definitions import defs as load_defs
 
     repo = load_defs().get_repository_def()
-    canonical_duckdb = repo.asset_graph.get(
-        dg.AssetKey("sweden_company_canonical_addresses_duckdb")
-    )
-    canonical_clickhouse = repo.asset_graph.get(
-        dg.AssetKey("sweden_company_canonical_addresses_clickhouse")
-    )
-    shared_duckdb = repo.asset_graph.get(dg.AssetKey("sweden_shared_addresses_duckdb"))
-    shared_clickhouse = repo.asset_graph.get(
-        dg.AssetKey("sweden_shared_addresses_clickhouse")
-    )
-    demand = repo.asset_graph.get(
-        dg.AssetKey("sweden_address_geocode_demand_duckdb")
-    )
-    resolution_shadow = repo.asset_graph.get(
-        dg.AssetKey("sweden_address_resolution_shadow_duckdb")
-    )
-    resolution_current = repo.asset_graph.get(
-        dg.AssetKey("sweden_address_resolution_current_duckdb")
-    )
-    job = repo.get_job("sweden_company_address_geocoding_job")
-    shared_job = repo.get_job("sweden_shared_address_identity_job")
-    shared_geocode_job = repo.get_job("sweden_shared_address_geocoding_job")
-    resolution_publish_job = repo.get_job("sweden_address_resolution_publish_job")
     weekly_job = repo.get_job("sweden_company_address_geocoding_weekly_job")
     schedule = repo.get_schedule_def("sweden_company_address_geocoding_weekly")
 
-    assert canonical_duckdb.group_name == "sweden_company"
-    assert canonical_duckdb.parent_keys == {
-        dg.AssetKey("sweden_company_addresses_clickhouse")
-    }
-    assert canonical_clickhouse.parent_keys == {
-        dg.AssetKey("sweden_company_canonical_addresses_duckdb")
-    }
-    assert shared_duckdb.parent_keys == {
-        dg.AssetKey("sweden_company_canonical_addresses_clickhouse")
-    }
-    assert shared_clickhouse.parent_keys == {
-        dg.AssetKey("sweden_shared_addresses_duckdb")
-    }
-    assert demand.parent_keys == {
-        dg.AssetKey("sweden_shared_addresses_clickhouse"),
-        dg.AssetKey("sweden_osm_addresses_duckdb"),
-    }
-    assert demand.pools == {"sweden_address_osm_duckdb"}
-    assert resolution_shadow.parent_keys == {
-        dg.AssetKey("sweden_address_resolution_golden_evaluation"),
-        dg.AssetKey("sweden_address_geocode_demand_duckdb"),
-    }
-    assert resolution_current.parent_keys == {
-        dg.AssetKey("sweden_address_resolution_shadow_duckdb")
-    }
-    assert {key.path[-1] for key in job.asset_layer.executable_asset_keys} == {
-        "sweden_company_canonical_addresses_duckdb",
-        "sweden_company_canonical_addresses_clickhouse",
-        "sweden_shared_addresses_duckdb",
-        "sweden_shared_addresses_clickhouse",
-        "sweden_address_geocode_demand_duckdb",
-        "sweden_address_resolution_golden_evaluation",
-        "sweden_address_resolution_shadow_duckdb",
-        "sweden_address_resolution_current_duckdb",
-        "sweden_address_geocode_store_clickhouse",
-    }
-    assert {key.path[-1] for key in shared_job.asset_layer.executable_asset_keys} == {
-        "sweden_shared_addresses_duckdb",
-        "sweden_shared_addresses_clickhouse",
-    }
-    assert {
-        key.path[-1] for key in shared_geocode_job.asset_layer.executable_asset_keys
-    } == {
-        "sweden_address_geocode_demand_duckdb",
-        "sweden_address_resolution_golden_evaluation",
-        "sweden_address_resolution_shadow_duckdb",
-        "sweden_address_resolution_current_duckdb",
-        "sweden_address_geocode_store_clickhouse",
-    }
-    assert {
-        key.path[-1] for key in resolution_publish_job.asset_layer.executable_asset_keys
-    } == {
-        "sweden_address_resolution_current_duckdb",
-        "sweden_address_geocode_store_clickhouse",
-    }
     assert {key.path[-1] for key in weekly_job.asset_layer.executable_asset_keys} == {
         "sweden_osm_pbf_s3",
         "sweden_osm_addresses_duckdb",
         "sweden_geocode_centroids_clickhouse",
-        "sweden_company_canonical_addresses_duckdb",
-        "sweden_company_canonical_addresses_clickhouse",
-        "sweden_shared_addresses_duckdb",
-        "sweden_shared_addresses_clickhouse",
-        "sweden_address_geocode_demand_duckdb",
-        "sweden_address_resolution_golden_evaluation",
-        "sweden_address_resolution_shadow_duckdb",
-        "sweden_address_resolution_current_duckdb",
-        "sweden_address_geocode_store_clickhouse",
         "se_address_geocodes_warm",
         "sweden_companies_current_clickhouse",
     }
-    # The legacy per-company matcher and its two publish assets retired with the pair
-    # (LEGACY_PAIR_RETIREMENT_DROP_SQL), and sweden_address_geocodes_clickhouse -- the
-    # weekly rebuild of the serving table -- retired with migration 000320, which made
-    # corpscout.se_address_geocodes_current a refreshable materialized view over the same
-    # store. The weekly job is eleven assets now, and none of these four names may come
-    # back into the graph: each one would be a second writer for a table ClickHouse owns.
-    for retired in (
-        "sweden_company_address_osm_matches_duckdb",
-        "sweden_company_address_geocodes_clickhouse",
-        "sweden_company_address_geocode_results_clickhouse",
-        "sweden_address_geocodes_clickhouse",
-    ):
-        assert retired not in {
-            key.path[-1] for key in repo.asset_graph.get_all_asset_keys()
-        }, retired
-    store = repo.asset_graph.get(
-        dg.AssetKey("sweden_address_geocode_store_clickhouse")
-    )
-    assert store.group_name == "sweden_company"
-    assert store.parent_keys == {dg.AssetKey("sweden_address_resolution_current_duckdb")}
-    assert store.pools == {"sweden_address_osm_duckdb"}
-    # The store append rides in every job that promotes, so a promotion is never published
-    # to the serving table without the attributable row landing beside it.
-    for job_name in (
-        "sweden_company_address_geocoding_job",
-        "sweden_shared_address_geocoding_job",
-        "sweden_address_resolution_publish_job",
-        "sweden_company_address_geocoding_weekly_job",
-    ):
-        assert "sweden_address_geocode_store_clickhouse" in {
-            key.path[-1]
-            for key in repo.get_job(job_name).asset_layer.executable_asset_keys
-        }
-    # The backfill is a one-shot: its own job, no schedule, and it is in no other job.
-    backfill_job = repo.get_job("sweden_address_geocode_store_backfill_job")
-    assert {
-        key.path[-1] for key in backfill_job.asset_layer.executable_asset_keys
-    } == {"sweden_address_geocode_store_backfill_clickhouse"}
-    for job_name in (
-        "sweden_company_address_geocoding_weekly_job",
-        "sweden_company_address_geocoding_job",
-    ):
-        assert "sweden_address_geocode_store_backfill_clickhouse" not in {
-            key.path[-1]
-            for key in repo.get_job(job_name).asset_layer.executable_asset_keys
-        }
-    # So is the legacy-adoption import: one shot, its own job, in no other job and on no
-    # schedule. Its inputs are the tables the transition drops, so it can never become
-    # part of a recurring run.
-    adoption_job = repo.get_job("sweden_address_geocode_legacy_adoption_job")
-    assert {
-        key.path[-1] for key in adoption_job.asset_layer.executable_asset_keys
-    } == {"sweden_address_geocode_legacy_adoption_clickhouse"}
-    for job_name in (
-        "sweden_company_address_geocoding_weekly_job",
-        "sweden_company_address_geocoding_job",
-        "sweden_shared_address_geocoding_job",
-    ):
-        assert "sweden_address_geocode_legacy_adoption_clickhouse" not in {
-            key.path[-1]
-            for key in repo.get_job(job_name).asset_layer.executable_asset_keys
-        }
     assert schedule.job.name == "sweden_company_address_geocoding_weekly_job"
     assert schedule.cron_schedule == "5 4 * * 2"
     assert schedule.execution_timezone == "Europe/Stockholm"
     assert schedule.default_status == dg.DefaultScheduleStatus.RUNNING
 
+    graph_keys = {key.path[-1] for key in repo.asset_graph.get_all_asset_keys()}
+    job_names = {job.name for job in repo.get_all_jobs()}
+    for retired in (
+        "sweden_company_addresses_clickhouse",
+        "sweden_company_canonical_addresses_duckdb",
+        "sweden_company_canonical_addresses_clickhouse",
+        "sweden_shared_addresses_duckdb",
+        "sweden_shared_addresses_clickhouse",
+        "sweden_address_geocode_demand_duckdb",
+        "sweden_address_resolution_golden_evaluation",
+        "sweden_address_resolution_shadow_duckdb",
+        "sweden_address_resolution_current_duckdb",
+        "sweden_address_resolution_unmatched_diagnostics_duckdb",
+        "sweden_address_geocode_store_clickhouse",
+        "sweden_address_geocode_store_backfill_clickhouse",
+        "sweden_address_geocode_legacy_adoption_clickhouse",
+    ):
+        assert retired not in graph_keys, retired
+    for retired_job in (
+        "sweden_company_address_geocoding_job",
+        "sweden_shared_address_identity_job",
+        "sweden_shared_address_geocoding_job",
+        "sweden_address_geocode_store_backfill_job",
+        "sweden_address_geocode_legacy_adoption_job",
+        "sweden_address_resolution_shadow_job",
+        "sweden_address_resolution_publish_job",
+        "sweden_address_resolution_diagnostics_job",
+    ):
+        assert retired_job not in job_names, retired_job
 
-def test_sweden_company_address_geocoding_quality_thresholds() -> None:
-    from dagster_v3.defs.sweden_company.address_geocoding_assets import (
-        exact_match_rate_is_stable,
-        osm_snapshot_is_fresh,
-    )
 
-    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
-
-    assert exact_match_rate_is_stable(current_percent=11.6, previous_percent=None)
-    assert exact_match_rate_is_stable(current_percent=10.0, previous_percent=11.6)
-    assert not exact_match_rate_is_stable(current_percent=4.9, previous_percent=5.0)
-    assert not exact_match_rate_is_stable(current_percent=8.0, previous_percent=11.6)
-    assert osm_snapshot_is_fresh(
-        snapshot_at=datetime(2026, 8, 5, 12, 0, tzinfo=UTC),
-        now=now,
-    )
-    assert not osm_snapshot_is_fresh(
-        snapshot_at=datetime(2026, 8, 4, 11, 59, tzinfo=UTC),
-        now=now,
-    )
-    assert not osm_snapshot_is_fresh(snapshot_at=None, now=now)
 
 
 def test_sweden_company_address_geocodes_migration_preserves_provenance() -> None:
@@ -1741,167 +1605,28 @@ def test_sweden_company_address_links_are_bidirectionally_ordered() -> None:
         assert authoritative_column not in link_table
 
 
-class _RecordingClickhouseResource:
-    """A ClickhouseResource stand-in that only has to hand out a context manager."""
-
-    def __init__(self) -> None:
-        self.client = object()
-
-    def get_connection(self):
-        from contextlib import contextmanager
-
-        @contextmanager
-        def _connection():
-            yield self.client
-
-        return _connection()
-
-
-class _RecordingDuckDBResource:
-    def __init__(self) -> None:
-        self.connection = object()
-
-    def get_connection(self):
-        from contextlib import contextmanager
-
-        @contextmanager
-        def _connection():
-            yield self.connection
-
-        return _connection()
-
-
-def test_the_canonical_publish_carries_only_the_members_bridge(monkeypatch) -> None:
-    """One table crosses to ClickHouse now, and it is the one downstream actually joins.
-
-    se_company_address resolves through se_company_address_members_current; the canonical
-    rows themselves stay in DuckDB, where the build writes them and asserts on them. This
-    pins the narrowing behaviourally: the asset must ask for the members table alone, both
-    when it checks the target exists and when it exports -- a publish that still names the
-    canonical table would fail on a host where CANONICAL_RETIREMENT_DROP_SQL has run.
-    """
-    from dagster_v3.defs.sweden_company import (
-        address_canonicalization,
-        address_geocoding_assets,
-    )
-
-    existence_checks: list[tuple[str, ...]] = []
-    exports: list[dict[str, object]] = []
-
-    def _fake_assert_tables_exist(_clickhouse, *, database, tables):
-        assert database == "corpscout"
-        existence_checks.append(tuple(tables))
-
-    def _fake_export(**kwargs):
-        exports.append(kwargs)
-        return 4_674_100
-
-    def _forbidden_multi_table_replace(**_kwargs):
-        raise AssertionError(
-            "the members-only publish must use the single-table exporter"
-        )
-
-    monkeypatch.setattr(
-        address_geocoding_assets,
-        "assert_clickhouse_tables_exist",
-        _fake_assert_tables_exist,
-    )
-    monkeypatch.setattr(
-        address_geocoding_assets,
-        "export_duckdb_connection_table_to_clickhouse",
-        _fake_export,
-    )
-    monkeypatch.setattr(
-        address_geocoding_assets,
-        "replace_duckdb_connection_tables_in_clickhouse",
-        _forbidden_multi_table_replace,
-    )
-
-    context = dg.build_asset_context()
-    result = (
-        address_geocoding_assets.sweden_company_canonical_addresses_clickhouse.node_def.compute_fn.decorated_fn(
-            context,
-            _RecordingDuckDBResource(),
-            _RecordingClickhouseResource(),
-        )
-    )
-
-    assert existence_checks == [("se_company_address_members_current",)]
-    assert len(exports) == 1
-    export = exports[0]
-    assert export["duckdb_schema"] == "sweden_company_enrichment"
-    assert export["duckdb_table"] == "se_company_address_members_current"
-    assert export["clickhouse_database"] == "corpscout"
-    assert export["clickhouse_table"] == "se_company_address_members_current"
-    assert export["columns"] == address_canonicalization.ADDRESS_MEMBER_COLUMNS
-    assert export["truncate"] is True
-    assert result.metadata == {
-        "source_members": 4_674_100,
-        "member_table": "corpscout.se_company_address_members_current",
-    }
-
-
-def test_the_retirement_drops_live_as_pinned_sql_outside_the_ledger() -> None:
-    """A gated drop must never be a numbered migration -- an owner ruling paid for in UNDROPs.
-
-    A bare `migrate up` walks the ledger and does not know that these two drops have
-    preconditions, so on 2026-08-25 it applied both before theirs were met. They are
-    controller-run SQL now, and this is what pins them: the exact statements, IF EXISTS so a
-    re-run after a recovery is a no-op, and the names that must NOT appear in them.
-    """
-    from dagster_v3.defs.sweden_company import address_geocoding_assets as assets
-
-    assert assets.CANONICAL_RETIREMENT_DROP_SQL == (
-        "DROP TABLE IF EXISTS corpscout.se_company_addresses_canonical_current",
-    )
-    assert assets.LEGACY_PAIR_RETIREMENT_DROP_SQL == (
-        "DROP TABLE IF EXISTS corpscout.se_company_address_geocode_results",
-        "DROP TABLE IF EXISTS corpscout.se_company_address_geocodes",
-    )
-    dropped = assets.CANONICAL_RETIREMENT_DROP_SQL + (
-        assets.LEGACY_PAIR_RETIREMENT_DROP_SQL
-    )
-    # Members is what se_company_address joins through, se_addresses_current and the links
-    # are the identity chain, se_address_geocodes is the store and its _current projection
-    # is read by four backoffice modules. None of them is any drop's to touch.
-    for kept in (
-        "se_company_address_members_current",
-        "se_addresses_current",
-        "se_company_address_links_current",
-        "se_address_geocodes",
-        "se_address_geocodes_current",
-    ):
-        assert not any(kept in statement for statement in dropped), kept
-    # One statement each, so nothing rides along in a semicolon-separated script.
-    for statement in dropped:
-        assert statement.count("DROP TABLE") == 1
-        assert ";" not in statement
-
-
-def test_no_drop_migration_file_carries_these_retirements() -> None:
-    """The ledger is walked blind, so the gated drops must not be findable in it.
-
-    This is the regression test for the ruling, and it is the ruling's only teeth: a future
-    task that "just adds the drop migration back" has to trip here rather than on a
-    production table. So it matches DROP TABLE FORMS, not one spelling -- the likeliest way
-    back in is someone pasting CANONICAL_RETIREMENT_DROP_SQL[0] into an up file, and those
-    constants carry no trailing semicolon.
-
-    EXIT CONDITION: delete this guard and add a plain drop migration only once 12f and 12g
-    are recorded as executed in the ledger. Until then a rebuilt-from-ledger environment
-    recreates these tables from 000270/000271/000273 and nothing ever drops them again --
-    the guard is what keeps the only legal remedy pointed at the pinned SQL.
-    """
+def test_no_new_migration_drops_a_slice_4c_retirement() -> None:
+    """The gated drops stay out of the ledger (owner ruling 2026-08-25, paid for in UNDROPs).
+    Slice 4b renames; slice 4c drops these by hand once their gates hold. Only migrations
+    NEWER than 000392 are checked: 000256's own rename-swap legitimately drops the VIEW that
+    se_company_addresses_current used to be, and history is not what this guard is about."""
     migrations = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
-    # Up files only: 000270, 000271 and 000273's DOWN files legitimately drop these tables,
-    # because that is what reverting the migration that CREATED them means.
-    up_files = sorted(migrations.glob("*.up.sql"))
-    assert up_files, "no migration up files found -- this guard would pass vacuously"
+    up_files = [p for p in sorted(migrations.glob("*.up.sql")) if p.name >= "000393"]
+    assert up_files, "no migration up files newer than 000392 -- this guard would pass vacuously"
     pattern = re.compile(
-        r"drop\s+table\s+(?:if\s+exists\s+)?(?:corpscout\.)?"
-        r"(se_company_addresses_canonical_current"
-        r"|se_company_address_geocodes"
-        r"|se_company_address_geocode_results)\b",
+        r"drop\s+(?:table|view)\s+(?:if\s+exists\s+)?(?:corpscout\.)?"
+        r"(se_company_address_legacy"
+        r"|se_company_address_scb"
+        r"|se_company_address_bolagsverket"
+        r"|se_company_address_correction"
+        r"|se_company_addresses"
+        r"|se_company_addresses_current"
+        r"|se_company_addresses_canonical_current"
+        r"|se_company_address_members_current"
+        r"|se_addresses_current"
+        r"|se_company_address_links_current"
+        r"|se_address_geocodes_current"
+        r"|se_address_geocodes_served)\b",
         re.IGNORECASE,
     )
     for path in up_files:

@@ -16,6 +16,7 @@ different ``(address_type, source)`` pairs -- the case where a bare ``(company_i
 cursor would silently drop the second at a page boundary.
 """
 
+import re
 import subprocess
 
 import pytest
@@ -25,16 +26,51 @@ from dagster_v3.defs.sweden_company.address_canonicalization import (
     _CURRENT_COMPANY_ADDRESSES_SELECT,
     _company_addresses_page_sql,
 )
-from tests.test_se_company_address_clickhouse_local import (
-    MIGRATIONS,
-    _schema_statements,
-)
+from tests.se_company_ddl import MIGRATIONS_DIR
 from tests.test_se_company_person_clickhouse_local import (
     _clickhouse_local_command,
     _render,
 )
 
 pytestmark = pytest.mark.integration
+
+# This page read touches only se_company_addresses_current, so the bootstrap script needs
+# just the migration that creates it and the one later ALTER that reaches it -- narrowed
+# from the wider set tests/test_se_company_address_clickhouse_local.py used to share here
+# (that file, and the address-artifact tables its own MIGRATIONS/NEEDED_TABLES existed for,
+# retired in address slice 4b (2026-09-08); this test predates and outlives that module, so
+# its own slice of the schema-bootstrap helper moved here rather than disappearing with it).
+MIGRATIONS = (
+    "000256_corpscout_se_company_address_current_snapshot.up.sql",
+    "000265_corpscout_se_company_address_normalization.up.sql",
+)
+NEEDED_TABLES = frozenset({"se_company_addresses_current"})
+_TABLE_RE = re.compile(r"^(?:CREATE TABLE(?: IF NOT EXISTS)?|ALTER TABLE)\s+corpscout\.(\w+)", re.IGNORECASE)
+# 000256 builds se_company_addresses_current under a staging name and RENAMEs it -- a
+# rename the per-statement filter cannot replay -- so its CREATE is taken and renamed here.
+STAGING_NAME = "se_company_addresses_current_snapshot_000256"
+
+
+def _schema_statements(migrations: tuple[str, ...]) -> list[str]:
+    """CREATE/ALTER TABLE statements for NEEDED_TABLES only, in migration order."""
+    statements: list[str] = []
+    for name in migrations:
+        text = (MIGRATIONS_DIR / name).read_text(encoding="utf-8")
+        text = text.replace(STAGING_NAME, "se_company_addresses_current")
+        for raw in text.split(";"):
+            statement = "\n".join(
+                line for line in raw.splitlines() if not line.strip().startswith("--")
+            ).strip()
+            if not statement:
+                continue
+            if statement.upper().startswith("CREATE DATABASE"):
+                statements.append(statement)
+                continue
+            match = _TABLE_RE.match(statement)
+            if match and match.group(1) in NEEDED_TABLES:
+                statements.append(statement)
+    return statements
+
 
 # Page size one so every boundary is exercised, including the one that falls between the two
 # collision rows. Reaches the SQL through _company_addresses_page_sql's `LIMIT {QUERY_BATCH_SIZE}`.

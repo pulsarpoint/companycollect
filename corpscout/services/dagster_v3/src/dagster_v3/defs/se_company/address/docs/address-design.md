@@ -6,7 +6,7 @@ everything past the modules below -- the backoffice Address tab, parity and the 
 
 | Module | Responsibility |
 | --- | --- |
-| `tables.py` | Table names and column tuples, pinned against migrations 000382-000387 |
+| `tables.py` | Table names and column tuples, pinned against migrations 000382-000387; the main table was built as `se_company_address_v2` and renamed by 000393 |
 | `normalize_se.py` | `normalize_se_address`: pure Swedish parser -- splits, folds and classifies; never expands abbreviations, corrects spelling or guesses a house number (that is the geocoder's job) |
 | `normalize.py` | The normalize step's SQL (`changed_scope_sql`, `changed_rows_sql`, `all_scope_sql`, `all_rows_sql`, `normalized_insert_sql`) and the paging/write loop (`normalize_all`, `normalize_companies`) |
 | `assets.py` | The Dagster assets: `se_company_address_normalize`, `se_company_address_precedence_clickhouse`, `se_company_address_fold`, `se_company_address_fold_companies` |
@@ -137,11 +137,10 @@ newer than the company's current suggestion row from that source, or it has neve
 suggested by that source; `execute: false` (default) previews the count without writing.
 
 `se_company_address_extract_job` (`jobs.py`) selects the three extractors and
-`se_company_address_normalize` (which now `deps` on them); `se_company_address_v2_weekly`
+`se_company_address_normalize` (which now `deps` on them); `se_company_address_weekly`
 schedules it Mondays 07:05 UTC (`5 7 * * 1`) with `execute: true`, `page_size: 20000` per
-extractor and `changed_only: true` on the normalize asset, registered STOPPED. The `v2`
-interim name avoids colliding with `address_legacy.py`'s own `se_company_address_weekly`
-until the cutover retires that schedule and this one takes the canonical name.
+extractor and `changed_only: true` on the normalize asset, registered STOPPED. It took the
+canonical name when slice 4b retired the old model's schedule of the same name.
 
 ## Geocoding (slice 2a)
 
@@ -185,13 +184,13 @@ after the next policy bump or OSM extract like any other row.
 `source_url`, `source_object_key`, `source_md5`, `source_snapshot_at`,
 `source_retrieved_at` -- read once per call by `extract_provenance` off
 `sweden_address_osm.address_points` with the same `first(... order by source_record_id)`
-projection `address_resolution_promotion.py` uses. The live store check
-`missing_provenance` (`sweden_company/address_geocoding_assets.py`) fails the store if any
-row has a NULL in one of them. `source_md5` is the row's own `reference_md5` (both are the
-same read) and `store_row` refuses any other pairing. The two per-RECORD columns,
-`source_record_id` and `source_record_url`, stay NULL and the check does not count them.
-`candidate_count` is clamped to 65,535, the `UInt16` column's ceiling, exactly as the
-promotion's `least(65535, ...)` clamps it.
+projection the retired promotion step used. No stored row may carry a NULL in one of them --
+the contract the retired store-completeness check used to assert (`missing_provenance`,
+deleted with the demand chain in slice 4b). `source_md5` is the row's own `reference_md5`
+(both are the same read) and `store_row` refuses any other pairing. The two per-RECORD
+columns, `source_record_id` and `source_record_url`, stay NULL and are not part of that
+contract. `candidate_count` is clamped to 65,535, the `UInt16` column's ceiling, exactly as
+the retired promotion step's `least(65535, ...)` clamped it.
 
 **Query settings.** Both id-bound reads -- the cache lookup and the centroid fallback --
 bind up to `CACHE_LOOKUP_CHUNK` (5,000) values that clickhouse-driver substitutes CLIENT
@@ -290,5 +289,32 @@ Finish it by hand:
    version the database is actually at. Do NOT re-run the up file: its `CREATE` would fail on
    an existing `_next`, and its `DROP` would take out the view just parked under `_retired`.
 
-The old view's refresh stays stopped by design -- it is the rollback copy, and the down file
-restarts it.
+### If the 000393 rename is interrupted
+
+Migration 000393 (below) is not a staged swap: `SYSTEM STOP VIEW`, one `RENAME TABLE`, `ALTER
+TABLE ... MODIFY QUERY`, `SYSTEM START VIEW`. **If the migrate client drops between the STOP
+and the START**, the view is left stopped and serving its last contents at full speed with
+nothing raising anywhere. Finish it by hand:
+
+1. `SELECT view, status, last_success_time, exception FROM system.view_refreshes WHERE
+   database = 'corpscout' AND view = 'se_companies_serving'` -- a stopped view still lists
+   here.
+2. If the RENAME landed but the MODIFY QUERY did not, run the `ALTER TABLE ... MODIFY QUERY`
+   statement verbatim from the migration file; if neither landed, re-running the whole up file
+   is safe once the view has been started again.
+3. `SYSTEM START VIEW corpscout.se_companies_serving`.
+4. `migrate force 393`.
+
+## Rename and retirement (slice 4b, 2026-09-08)
+
+Migration 000393 gives the address entity its final name: `corpscout.se_company_address_v2`
+becomes `corpscout.se_company_address`, and the old final table of the 2026-08-24 model --
+the one `se_company_address` named before this migration -- parks under
+`se_company_address_legacy` until slice 4c drops it by hand under the ledger policy. One
+`RENAME TABLE` moves both names at once, so there is no instant at which `se_company_address`
+resolves to nothing.
+
+This is NOT a staged swap like 000391/000392 (see above): the view's definition is otherwise
+unchanged, only the table name it reads changes, so 000393 stops the view, renames the
+tables, repoints the query in place with `ALTER TABLE ... MODIFY QUERY`, and starts the view
+again -- there is no `_next` view to build and no `SYSTEM WAIT VIEW` to sit through.

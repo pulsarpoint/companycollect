@@ -7,7 +7,7 @@
  * paging and optional URL-driven filters, so the WHERE clause is built
  * dynamically (like procurements.server.ts's buildSourceFilter) instead of
  * being a fixed string. The paging/sorting helpers and the option-cache TTL
- * are shared with the address ledger's list (se-company-address-lists.server.ts).
+ * follow the same shape this admin surface's other list pages use.
  */
 import { chQuery } from "~/lib/clickhouse.server";
 import type { LegalFormLabels } from "~/lib/se-legal-form";
@@ -530,9 +530,9 @@ export interface SeCompanyInfoFilterOptions {
   legalForms: LegalFormLabels[];
 }
 
-/** The option list a correction ledger's filter sheet takes. The info ledger
- * that first read one is gone; the ADDRESS ledger's loader
- * (se-company-address-lists.server.ts) fills this same shape. */
+/** The option list a correction filter sheet's "decided by" select takes.
+ * Shared across the filter sheets in this admin surface rather than typed
+ * per ledger. */
 export interface SeCompanyInfoCorrectionFilterOptions {
   decidedBy: string[];
 }

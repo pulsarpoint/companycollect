@@ -329,11 +329,12 @@ def _validate_presence_counts(
         # se_company_address_display_current_build, migration 000314) is retired in favor
         # of the address entity table (slice 4a, 2026-09-08), which the section-presence
         # model now reads too, so this reconciles with the same filter and the same key
-        # (address_key). Anchored like financials and sources: se_company_address_v2 is not
-        # a serving stage, so the anchor join is spelled out here.
+        # (address_key). Anchored like financials and sources: se_company_address (renamed
+        # from se_company_address_v2 by migration 000393) is not a serving stage, so the
+        # anchor join is spelled out here.
         "addresses": (
             "SELECT countDistinct(tuple(addresses.company_id, addresses.address_key)) "
-            "FROM corpscout.se_company_address_v2 AS addresses FINAL "
+            "FROM corpscout.se_company_address AS addresses FINAL "
             f"INNER JOIN (SELECT DISTINCT company_id FROM {stages[tables.EXTERNAL_IDENTIFIERS.name]}) AS anchors "
             "ON anchors.company_id = addresses.company_id "
             "WHERE addresses.active = 1"

@@ -175,14 +175,6 @@ SE_COMPANY_ADDRESS_BASE_COLUMNS = (
     "updated_from_raw_at",
 )
 
-SE_COMPANY_ADDRESS_OBSERVATION_COLUMNS = (
-    *SE_COMPANY_ADDRESS_BASE_COLUMNS,
-    "has_address",
-    "address_fingerprint",
-    "observation_fingerprint",
-    "observed_at",
-)
-
 SE_COMPANY_PROCEEDING_OBSERVATION_COLUMNS = (
     "company_id",
     "source",

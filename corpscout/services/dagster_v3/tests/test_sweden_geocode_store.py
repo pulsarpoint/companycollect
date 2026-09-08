@@ -11,7 +11,6 @@ from datetime import UTC, datetime
 
 import pytest
 
-from dagster_v3.defs.sweden_company import shared_address_geocoding
 from dagster_v3.defs.sweden_company.geocode_store import (
     CURRENT_OUTCOME_CHOICE_RANK_SQL,
     GEOCODED_STATUSES,
@@ -60,8 +59,6 @@ def test_the_store_columns_are_the_serving_columns_plus_the_two_version_columns(
     assert STORE_COLUMNS[:3] == STORE_KEY_COLUMNS
     assert SERVING_COLUMNS == tuple(
         column for column in STORE_COLUMNS if column not in ("policy_version", "reference_md5"))
-    # The serving contract is not re-typed here: it IS the shipped export list.
-    assert SERVING_COLUMNS == shared_address_geocoding.ADDRESS_GEOCODE_COLUMNS
     # Everything the two ranks read must be projectable even when the caller did not ask
     # for it -- SERVING_COLUMNS omits both version columns, and the choice rank needs them.
     assert set(RANK_INPUT_COLUMNS) == {
@@ -78,13 +75,9 @@ def test_the_module_agrees_with_the_canonicalization_module_on_names() -> None:
     assert geocode_store.ENRICHMENT_SCHEMA == address_canonicalization.ENRICHMENT_SCHEMA
 
 
-def test_the_taxonomy_has_one_home() -> None:
-    """address_resolution_promotion imported these; re-declaring them anywhere would let a
+def test_the_taxonomy_is_internally_consistent() -> None:
+    """geocode_store is the taxonomy's one home; re-declaring these anywhere would let a
     status be geocoded on one side of the pipeline and not on the other."""
-    from dagster_v3.defs.sweden_company import address_resolution_promotion
-
-    assert address_resolution_promotion.GEOCODED_STATUSES is GEOCODED_STATUSES
-    assert address_resolution_promotion.VALID_STATUSES is VALID_STATUSES
     assert set(GEOCODED_STATUSES) < set(VALID_STATUSES)
     assert len(VALID_STATUSES) == 11
     assert LEGACY_ADOPTED_POLICY_VERSION not in VALID_STATUSES

@@ -29,9 +29,6 @@ from dagster_v3.defs.sweden_company.address_resolution_policy import (
     SWEDEN_STREET_SUFFIX_EXPANSIONS,
     SWEDEN_STREET_VARIANT_LANGUAGES,
 )
-from dagster_v3.defs.sweden_company.address_resolution_promotion import (
-    replace_current_geocodes_from_address_resolution_shadow,
-)
 from dagster_v3.defs.sweden_company.address_resolution_shadow import (
     QUALIFIED_SHADOW_COMPARISON_TABLE,
     QUALIFIED_SHADOW_QUERY_STREET_VARIANTS_TABLE,
@@ -46,10 +43,9 @@ from dagster_v3.defs.sweden_company.address_resolution_shadow import (
 def test_sweden_golden_address_resolution_corpus() -> None:
     """Gates on the real Sweden call path, including the v7 variant maps.
 
-    Mirrors `address_resolution_assets._evaluate_golden_corpus` exactly -- the golden
-    gate must exercise the same maps the production asset passes, or it silently
-    validates the matcher without ever touching v7 despite the policy being stamped
-    v7. Expected to be unchanged by v7: the maps are additive and the corpus may not
+    Mirrors `evaluate_golden_address_resolution_corpus` exactly -- the golden gate must
+    exercise the same maps the production call path passes, or it silently validates the
+    matcher without ever touching v7 despite the policy being stamped v7. Expected to be unchanged by v7: the maps are additive and the corpus may not
     contain any punctuated or separate-definite-form streets.
     """
     evaluation = evaluate_golden_address_resolution_corpus(
@@ -1206,213 +1202,15 @@ def test_sweden_shadow_exact_suffix_variant_matches_punctuated_street() -> None:
         ).fetchone() == ("matched_corrected", "expanded_street_postcode_house", "Villavägen")
 
 
-def test_sweden_shadow_results_are_promoted_to_live_geocodes() -> None:
-    with duckdb.connect(":memory:") as connection:
-        _create_sweden_shadow_fixture(connection)
-        replace_sweden_address_resolution_shadow(
-            connection=connection,
-            evaluation_run_id="shadow-test-run",
-            evaluated_at=datetime(2026, 8, 17, tzinfo=UTC),
-            log=None,
-        )
-
-        counts = replace_current_geocodes_from_address_resolution_shadow(
-            connection=connection,
-            geocode_run_id="promotion-test-run",
-            matched_at=datetime(2026, 8, 17, 1, tzinfo=UTC),
-            expected_policy_version=SWEDEN_ADDRESS_RESOLUTION_POLICY.version,
-        )
-
-        assert counts["rows"] == 8
-        assert counts["geolocated"] == 5
-        assert counts["status_counts"] == {
-            "matched_corrected": 2,
-            "matched_exact": 1,
-            "matched_street": 2,
-            "unmatched": 3,
-        }
-        assert connection.execute(
-            """
-            select
-                match_status,
-                match_method,
-                geocode_precision,
-                coordinate_method,
-                source_record_id,
-                source_md5,
-                geocode_run_id
-            from sweden_company_enrichment.se_address_geocodes_current
-            where address_id = 'abbreviation'
-            """
-        ).fetchone() == (
-            "matched_corrected",
-            "expanded_street_fuzzy_postcode_house",
-            "building",
-            "osm_record",
-            "osm/karl-johansgatan-80",
-            "osm-snapshot-md5",
-            "promotion-test-run",
-        )
-
-
-def test_sweden_shadow_promotion_rejects_postcode_conflict_match_override() -> None:
-    with duckdb.connect(":memory:") as connection:
-        _create_sweden_shadow_fixture(connection)
-        replace_sweden_address_resolution_shadow(
-            connection=connection,
-            evaluation_run_id="shadow-test-run",
-            evaluated_at=datetime(2026, 8, 17, tzinfo=UTC),
-            log=None,
-        )
-        replace_current_geocodes_from_address_resolution_shadow(
-            connection=connection,
-            geocode_run_id="first-promotion-test-run",
-            matched_at=datetime(2026, 8, 17, 1, tzinfo=UTC),
-            expected_policy_version=SWEDEN_ADDRESS_RESOLUTION_POLICY.version,
-        )
-        # The gate consults the store's PREVIOUS resolver outcome, not the row the first
-        # promotion just wrote, so the still-supported building match this test is about
-        # is seeded there. 'osm/exact' is the candidate the fixture's OSM reference still
-        # carries for Vaxtorpsgrand 26, which is what makes it "still supported".
-        connection.execute(
-            """
-            update sweden_company_enrichment.se_address_geocodes_previous
-            set
-                match_status = 'matched_exact',
-                match_method = 'parsed_full_exact',
-                match_confidence = 1.0,
-                candidate_record_ids = ['osm/exact']
-            where address_id = 'exact'
-            """
-        )
-        connection.execute(
-            """
-            update sweden_company_enrichment.se_address_resolution_results_shadow
-            set
-                resolution_status = 'matched_street',
-                match_strategy = 'street_requested_house_missing_postcode_conflict',
-                match_confidence = 0.35
-            where query_document_id = 'exact'
-            """
-        )
-
-        try:
-            replace_current_geocodes_from_address_resolution_shadow(
-                connection=connection,
-                geocode_run_id="promotion-test-run",
-                matched_at=datetime(2026, 8, 17, 1, tzinfo=UTC),
-                expected_policy_version=SWEDEN_ADDRESS_RESOLUTION_POLICY.version,
-            )
-        except ValueError as error:
-            assert "1 still-supported building matches" in str(error)
-        else:
-            raise AssertionError(
-                "Promotion must reject a postcode-conflict fallback that "
-                "overrides a still-supported building match"
-            )
-
-
-def test_sweden_shadow_promotion_replaces_invalid_legacy_building_match() -> None:
-    with duckdb.connect(":memory:") as connection:
-        _create_sweden_shadow_fixture(connection)
-        replace_sweden_address_resolution_shadow(
-            connection=connection,
-            evaluation_run_id="shadow-test-run",
-            evaluated_at=datetime(2026, 8, 17, tzinfo=UTC),
-            log=None,
-        )
-        replace_current_geocodes_from_address_resolution_shadow(
-            connection=connection,
-            geocode_run_id="first-promotion-test-run",
-            matched_at=datetime(2026, 8, 17, 1, tzinfo=UTC),
-            expected_policy_version=SWEDEN_ADDRESS_RESOLUTION_POLICY.version,
-        )
-        connection.execute(
-            """
-            update sweden_company_enrichment.se_address_geocodes_previous
-            set
-                match_status = 'matched_exact',
-                match_method = 'country_street_house_exact_unique',
-                match_confidence = 1.0,
-                candidate_record_ids = ['osm/furutunet-1']
-            where address_id = 'postcode-conflict'
-            """
-        )
-
-        counts = replace_current_geocodes_from_address_resolution_shadow(
-            connection=connection,
-            geocode_run_id="replacement-promotion-test-run",
-            matched_at=datetime(2026, 8, 17, 2, tzinfo=UTC),
-            expected_policy_version=SWEDEN_ADDRESS_RESOLUTION_POLICY.version,
-        )
-
-        assert counts["rows"] == 8
-        assert connection.execute(
-            """
-            select match_status, match_method, geocode_run_id
-            from sweden_company_enrichment.se_address_geocodes_current
-            where address_id = 'postcode-conflict'
-            """
-        ).fetchone() == (
-            "matched_street",
-            "street_requested_house_missing_postcode_conflict",
-            "replacement-promotion-test-run",
-        )
-
-
-def test_sweden_shadow_promotion_allows_postcode_conflict_refresh() -> None:
-    with duckdb.connect(":memory:") as connection:
-        _create_sweden_shadow_fixture(connection)
-        replace_sweden_address_resolution_shadow(
-            connection=connection,
-            evaluation_run_id="shadow-test-run",
-            evaluated_at=datetime(2026, 8, 17, tzinfo=UTC),
-            log=None,
-        )
-        replace_current_geocodes_from_address_resolution_shadow(
-            connection=connection,
-            geocode_run_id="first-promotion-test-run",
-            matched_at=datetime(2026, 8, 17, 1, tzinfo=UTC),
-            expected_policy_version=SWEDEN_ADDRESS_RESOLUTION_POLICY.version,
-        )
-
-        counts = replace_current_geocodes_from_address_resolution_shadow(
-            connection=connection,
-            geocode_run_id="refresh-promotion-test-run",
-            matched_at=datetime(2026, 8, 17, 2, tzinfo=UTC),
-            expected_policy_version=SWEDEN_ADDRESS_RESOLUTION_POLICY.version,
-        )
-
-        assert counts["rows"] == 8
-        assert connection.execute(
-            """
-            select match_status, match_method, geocode_run_id
-            from sweden_company_enrichment.se_address_geocodes_current
-            where address_id = 'postcode-conflict'
-            """
-        ).fetchone() == (
-            "matched_street",
-            "street_requested_house_missing_postcode_conflict",
-            "refresh-promotion-test-run",
-        )
-
-
-def test_a_partial_pending_week_scopes_every_stage_to_the_pending_set() -> None:
+def test_a_partial_pending_week_scopes_the_shadow_stages_to_the_pending_set() -> None:
     """The ordinary week: some identities are due, most are not, and one of the due ones is
     brand new.
 
-    Every stage has to narrow to the same three rows -- query documents, results, the
-    comparison, and the promoted geocodes -- and the comparison has to survive an identity
-    with no previous outcome at all. A fixture where pending IS the whole universe cannot
-    see any of that: the scope predicate, the queries==pending invariant and the LEFT join
-    all look correct when the two sets coincide.
-
-    The DuckDB `se_address_geocodes_current` this asserts on is the promotion's OWN copy of
-    what it decided, and pending-scoped is the right shape for it. It shares a name with the
-    ClickHouse serving object and nothing else: that one is a materialized view over every
-    stored identity (migration 000320), so a week like this one leaves it complete rather
-    than three rows long. tests/test_sweden_geocode_store_clickhouse_local.py executes the
-    view's SELECT over exactly that shape.
+    Every stage has to narrow to the same three rows -- query documents, results, and the
+    comparison -- and the comparison has to survive an identity with no previous outcome at
+    all. A fixture where pending IS the whole universe cannot see any of that: the scope
+    predicate, the queries==pending invariant and the LEFT join all look correct when the
+    two sets coincide.
     """
     pending = ("exact", "typo", "nonexistent")
     with duckdb.connect(":memory:") as connection:
@@ -1434,12 +1232,6 @@ def test_a_partial_pending_week_scopes_every_stage_to_the_pending_set() -> None:
             evaluated_at=datetime(2026, 8, 17, tzinfo=UTC),
             log=None,
         )
-        promoted = replace_current_geocodes_from_address_resolution_shadow(
-            connection=connection,
-            geocode_run_id="promotion-test-run",
-            matched_at=datetime(2026, 8, 17, 1, tzinfo=UTC),
-            expected_policy_version=SWEDEN_ADDRESS_RESOLUTION_POLICY.version,
-        )
 
         assert counts["pending_identities"] == len(pending)
         assert counts["short_circuit"] is False
@@ -1457,23 +1249,11 @@ def test_a_partial_pending_week_scopes_every_stage_to_the_pending_set() -> None:
             " sweden_company_enrichment.se_address_resolution_comparison_shadow"
             " where current_status = ''"
         ).fetchall() == [("typo",)]
-        assert promoted["rows"] == len(pending)
-        # The promotion decided three identities, so its own two outputs hold three rows --
-        # the hand-off the store append reads, and this local copy. Neither is the serving
-        # table any more; see the docstring.
-        assert connection.execute(
-            "select address_id from"
-            " sweden_company_enrichment.se_address_geocodes_current order by address_id"
-        ).fetchall() == [(address_id,) for address_id in sorted(pending)]
-        assert connection.execute(
-            "select address_id from"
-            " sweden_company_enrichment.se_address_geocodes_append order by address_id"
-        ).fetchall() == [(address_id,) for address_id in sorted(pending)]
 
         # ... and the invariant that pins the scope is real, not decorative. A pending set
         # computed against an address universe that has since been rebuilt names an
         # identity the query documents cannot produce, and the run must stop rather than
-        # promote a set that silently disagrees with what was asked for.
+        # resolve a set that silently disagrees with what was asked for.
         connection.execute(
             "insert into sweden_company_enrichment.se_address_pending_identities"
             " values ('vanished', 'no_outcome')"
@@ -1549,29 +1329,6 @@ def test_sweden_unmatched_diagnostics_explain_typo_and_osm_coverage() -> None:
             4,
             6,
         )
-
-
-def test_sweden_shadow_promotion_rejects_wrong_policy_version() -> None:
-    with duckdb.connect(":memory:") as connection:
-        _create_sweden_shadow_fixture(connection)
-        replace_sweden_address_resolution_shadow(
-            connection=connection,
-            evaluation_run_id="shadow-test-run",
-            evaluated_at=datetime(2026, 8, 17, tzinfo=UTC),
-            log=None,
-        )
-
-        try:
-            replace_current_geocodes_from_address_resolution_shadow(
-                connection=connection,
-                geocode_run_id="promotion-test-run",
-                matched_at=datetime(2026, 8, 17, 1, tzinfo=UTC),
-                expected_policy_version="wrong-policy",
-            )
-        except ValueError as error:
-            assert "wrong-policy" in str(error)
-        else:
-            raise AssertionError("Promotion must reject a stale policy version")
 
 
 def _create_sweden_shadow_fixture(

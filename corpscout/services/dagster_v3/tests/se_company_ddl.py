@@ -4,8 +4,6 @@ from functools import lru_cache
 from pathlib import Path
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
-ADDRESS_MIGRATION = "000307_corpscout_se_company_address.up.sql"
-ENVELOPE = ("company_id", "source_record_uid", "observed_at", "source_run_id", "evidence_hash")
 
 
 @lru_cache(maxsize=None)
@@ -101,28 +99,3 @@ def declared_columns(table: str) -> list[str]:
         elif column not in names:  # IF NOT EXISTS: a re-added column keeps its place
             names.insert(names.index(after) + 1 if after in names else len(names), column)
     return names
-
-
-def address_artifact_tables() -> list[str]:
-    """The address datatype's artifact tables (the final and the ledger are not artifacts)."""
-    sql = (MIGRATIONS_DIR / ADDRESS_MIGRATION).read_text(encoding="utf-8")
-    return sorted(set(re.findall(
-        r"CREATE TABLE IF NOT EXISTS corpscout\.(se_company_address_(?!correction)[a-z0-9_]+)\n", sql)))
-
-
-def projection_aliases(sql: str) -> list[str]:
-    """The ordered `AS <name>` aliases of an artifact SELECT constant's outermost
-    (trailing, unindented) projection -- the one that actually determines the
-    order `publish_with_stage` binds to the positional insert-column list, so a
-    swapped pair of same-typed columns here would insert transposed values with
-    an otherwise-green suite. Every SE_COMPANY_ADDRESS_*_SQL constant ends in a
-    top-level `SELECT ... FROM ...` (no leading indent) after its last CTE
-    closes; CTE-internal SELECTs are indented, so `\\nSELECT\\n` unambiguously
-    finds only the trailing one. That projection must alias every column
-    (`col AS col` where the name doesn't otherwise change) so this stays a
-    simple regex rather than a real SQL parser.
-    """
-    trailing_select = sql.rindex("\nSELECT\n")
-    projection_end = sql.index("\nFROM ", trailing_select)
-    projection = sql[trailing_select:projection_end]
-    return re.findall(r"AS (\w+)", projection)

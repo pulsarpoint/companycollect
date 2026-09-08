@@ -432,7 +432,7 @@ addresses AS (
         toFloat32(1) AS match_confidence, published.source_run_id, published.folded_at AS linked_at
     FROM (
         SELECT company_id, address_key, source_run_id, folded_at, member.1 AS source, member.2 AS slot
-        FROM {{ source('corpscout', 'se_company_address_v2') }} FINAL
+        FROM {{ source('corpscout', 'se_company_address') }} FINAL
         ARRAY JOIN arrayZip(arrayMap(x -> toString(x), sources), slots) AS member
         WHERE active = 1
     ) AS published

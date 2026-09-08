@@ -9,14 +9,17 @@ matched in bulk once per OSM extract and the fold pages hit the cache.
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from dagster_v3.defs.se_company.address import tables
 from dagster_v3.defs.se_company.address.geocode import GEOCODE_QUERY_SETTINGS, geocode_addresses
 from dagster_v3.defs.se_company.address.normalize_se import LOCATION_FIELDS, NormalizedAddress, location_key
 from dagster_v3.defs.sweden_company.geocode_serving_overlay import GEOCODE_FALLBACK_PROVIDER
-from dagster_v3.defs.sweden_company.geocode_store import GEOCODED_STATUSES
+from dagster_v3.defs.sweden_company.geocode_store import (
+    GEOCODED_STATUSES,
+    QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE,
+)
 
 # A 500,000-key chunk exhausted DuckDB's 97 GiB buffer pool on prod 2026-09-07; 150,000 ran
 # fourteen chunks at about 24 minutes each.
@@ -117,3 +120,37 @@ def warm_geocodes(
         if log is not None:
             log("warm: chunk %d/%d keys=%d hits=%d matched=%d", index, len(chunks), len(chunk), chunk_hits, len(chunk) - chunk_hits)
     return WarmCounts(keys=len(keys), chunks=len(chunks), cache_hits=cache_hits, matched=matched, geocoded=geocoded, fallback=fallback)
+
+
+# --- OSM snapshot freshness ----------------------------------------------------------------
+# Moved here from sweden_company/address_geocoding_assets.py in slice 4b. It hung off the
+# store-append asset, which retired with the demand chain; what writes the store now is
+# geocode_addresses, called from this warm step and from the fold, so this asset is the
+# honest host. Threshold, severity and message are unchanged: nine days is one weekly cycle
+# plus slack, and one missed OSM refresh is what it is meant to catch.
+MAX_OSM_SNAPSHOT_AGE = timedelta(days=9)
+
+# max(source_snapshot_at) over the WHOLE store rather than a versioned read: the store is
+# append-only, so the newest snapshot any outcome was computed against is the newest snapshot
+# the matcher has seen, and ranking every identity to learn it would cost a great deal to
+# answer the same question.
+SNAPSHOT_FRESHNESS_SQL = f"""SELECT max(source_snapshot_at)
+FROM {QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE}"""
+
+
+def fetch_osm_snapshot_freshness(client: Any) -> datetime | None:
+    """The newest OSM snapshot any stored outcome was computed against."""
+    [(snapshot_at,)] = client.execute(SNAPSHOT_FRESHNESS_SQL)
+    return snapshot_at
+
+
+def osm_snapshot_is_fresh(*, snapshot_at: datetime | None, now: datetime) -> bool:
+    """False for an empty store: no outcome has ever been computed, which is not fresh."""
+    if snapshot_at is None:
+        return False
+    normalized_snapshot_at = (
+        snapshot_at.replace(tzinfo=UTC)
+        if snapshot_at.tzinfo is None
+        else snapshot_at.astimezone(UTC)
+    )
+    return now.astimezone(UTC) - normalized_snapshot_at <= MAX_OSM_SNAPSHOT_AGE

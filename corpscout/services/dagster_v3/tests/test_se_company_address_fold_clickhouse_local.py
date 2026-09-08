@@ -112,6 +112,9 @@ def _schema_statements() -> list[str]:
     statements: list[str] = []
     for name in MIGRATIONS:
         text = (MIGRATIONS_DIR / name).read_text(encoding="utf-8")
+        # 000384 declares the main table under its build name; 000393 renames the deployed
+        # table without editing that file, so the local schema applies the rename here.
+        text = text.replace("corpscout.se_company_address_v2", tables.QUALIFIED_MAIN_TABLE)
         for raw in text.split(";"):
             statement = "\n".join(
                 line for line in raw.splitlines() if not line.strip().startswith("--")

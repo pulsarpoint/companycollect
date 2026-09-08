@@ -36,7 +36,7 @@ section_rows AS (
     -- address, keyed by address_key, folded_at as the observation instant.
     SELECT '{{ var("country_code") }}', company_id, 'addresses',
            toString(address_key), folded_at
-    FROM {{ source('corpscout', 'se_company_address_v2') }} FINAL
+    FROM {{ source('corpscout', 'se_company_address') }} FINAL
     WHERE active = 1
     UNION ALL
     SELECT country_code, company_id, 'sources', source_record_uid, linked_at
