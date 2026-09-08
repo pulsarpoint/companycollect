@@ -14,7 +14,7 @@ rebinding the shadow module globals, and a replacement ``expanded_street_suffix_
 module for the duration of the candidate run.
 
 Not a Dagster run, no store writes, SELECT-only against ClickHouse (only the control pull,
-which lives in geocode_workbench_experiment / the driver's --refresh-control path).
+this script's own --refresh-control path).
 """
 
 from __future__ import annotations
