@@ -387,10 +387,12 @@ fold page over the page's distinct keys.
 
 **Warm step** (amended 2026-09-07). `se_address_geocodes_warm` reads every distinct location
 key of the current `ok`/`partial` normalized rows and hands them to `geocode_addresses` in
-chunks of 500,000, so the matcher runs in bulk (the mode it is built for) and the fold pages
+chunks of 150,000, so the matcher runs in bulk (the mode it is built for) and the fold pages
 find their keys in the cache. It runs once before the first full fold and after every OSM
 extract refresh; the fold still geocodes in-page whatever the warm step did not cover, so
-nothing depends on it for correctness.
+nothing depends on it for correctness. The warm step is now part of
+`sweden_company_address_geocoding_weekly_job`, downstream of the `sweden_osm_addresses_duckdb`
+extract, so it runs every week without a manual trigger.
 
 The fold's bucket pool is the pool the OSM refresh asset takes, so an extract swap never
 races a fold. The matcher policy, the workbench scripts and the golden matcher corpus are

@@ -1616,6 +1616,7 @@ sweden_company_address_geocoding_weekly_job = dg.define_asset_job(
         ADDRESS_RESOLUTION_SHADOW_ASSET_KEY,
         ADDRESS_RESOLUTION_CURRENT_ASSET_KEY,
         GEOCODE_STORE_ASSET_KEY,
+        "se_address_geocodes_warm",
         COMPANIES_CURRENT_ASSET_KEY,
     ),
     tags={"country": "SE", "pipeline": "address_geocoding"},
@@ -1657,7 +1658,8 @@ sweden_company_address_geocoding_weekly = dg.ScheduleDefinition(
         "Weekly Sweden OSM snapshot and address index, then the address identities "
         "that are due are resolved and their outcomes appended to the versioned "
         "geocode store. Publishes no serving table: se_address_geocodes_current is a "
-        "refreshable materialized view over that store since migration 000320."
+        "refreshable materialized view over that store since migration 000320, then "
+        "warms the address entity's geocode cache for the new extract."
     ),
 )
 

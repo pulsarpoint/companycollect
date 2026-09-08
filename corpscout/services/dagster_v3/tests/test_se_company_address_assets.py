@@ -47,8 +47,15 @@ def test_the_warm_asset_carries_the_workbench_pool_and_resources() -> None:
     assert warm.group_names_by_key[warm.key] == assets.GROUP_NAME
 
 
+def test_the_warm_asset_depends_on_the_osm_extract() -> None:
+    warm = assets.se_address_geocodes_warm
+    assert {dep.asset_key for dep in warm.specs_by_key[warm.key].deps} == {
+        dg.AssetKey("sweden_osm_addresses_duckdb")
+    }
+
+
 def test_warm_config_defaults_and_bounds() -> None:
-    assert assets.AddressWarmConfig().chunk_size == assets.WARM_CHUNK_SIZE == 500_000
+    assert assets.AddressWarmConfig().chunk_size == assets.WARM_CHUNK_SIZE == 150_000
     assert assets.AddressWarmConfig().limit == 0
     with pytest.raises(ValueError):
         assets.AddressWarmConfig(chunk_size=1)

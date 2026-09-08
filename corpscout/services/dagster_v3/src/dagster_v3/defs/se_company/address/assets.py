@@ -272,6 +272,7 @@ class AddressWarmConfig(dg.Config):
     name="se_address_geocodes_warm",
     pool=osm_tables.DUCKDB_POOL,
     group_name=GROUP_NAME,
+    deps=[dg.AssetKey("sweden_osm_addresses_duckdb")],
     kinds={"clickhouse", "duckdb", "python"},
     metadata={"table": "corpscout.se_address_geocodes", "reads": tables.QUALIFIED_NORMALIZED_TABLE},
     description=(
