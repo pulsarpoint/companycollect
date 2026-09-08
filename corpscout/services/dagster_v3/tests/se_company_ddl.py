@@ -11,7 +11,7 @@ def _migration_for(table: str) -> str:
     """The migration file whose CREATE TABLE declares `table`.
 
     The se_company layer's tables live in several migrations (000297 declares the
-    observation table since slice 4 retired the info tables, 000307 the address ones), so
+    observation table since slice 4 retired the info tables, 000384 the address entity's), so
     the helpers below locate the creating file instead of reading a single constant --
     every existing caller keeps its signature.
     Exactly one migration may create a given table; two would mean a rename-swap, which

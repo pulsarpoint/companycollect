@@ -21,10 +21,11 @@
  *   matcher itself produced, no served-overlay fallback involved.
  * - "coarse": the precise matcher left this address unmatched/ambiguous/postal_box (the
  *   fallback-eligible statuses -- see FALLBACK_ELIGIBLE_STATUSES in
- *   geocode_serving_overlay.py), but corpscout.se_address_geocodes_served (the SE geocode
- *   SERVING OVERLAY, migration 000325, widened to cover postal_box by migration 000327)
+ *   se_company/address/constants.py), but the served overlay
+ *   (corpscout.se_address_geocodes_served, migrations 000325/000327, retired in slice 4c)
  *   filled it with a coarse postcode-or-city CENTROID coordinate instead
- *   (`geocode_provider = 'centroid_fallback'`). A usable coordinate, but never a precise
+ *   (`geocode_provider = 'centroid_fallback'`) -- the entity now stores the same coarse
+ *   outcome on the row. A usable coordinate, but never a precise
  *   one -- and NEVER the same state as "geocoded", even though the overlay's own
  *   `match_status` for such a row is literally `matched_area`, a status that otherwise
  *   means an exact hit.

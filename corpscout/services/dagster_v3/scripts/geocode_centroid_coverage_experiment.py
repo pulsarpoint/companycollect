@@ -67,8 +67,8 @@ import duckdb
 from dotenv import load_dotenv
 
 from dagster_v3.defs.sweden_address_osm import tables as osm_tables
-from dagster_v3.defs.sweden_company.address_canonicalization import ENRICHMENT_SCHEMA
 from dagster_v3.defs.sweden_company.geocode_store import (
+    ENRICHMENT_SCHEMA,
     GEOCODED_STATUSES,
     build_current_geocodes_sql,
 )
@@ -145,6 +145,7 @@ def _unmatched_pool_sql() -> str:
     what production considers "the current outcome for an identity".
     """
     servable = build_current_geocodes_sql(columns=["address_id", "match_status"])
+    # Input retired in slice 4c: corpscout.se_addresses_current is dropped; this pull no longer runs.
     return f"""
         SELECT
             toString(a.address_id) AS address_id,
@@ -184,6 +185,7 @@ def _matched_alt_sql() -> str:
     servable = build_current_geocodes_sql(
         columns=["address_id", "match_status", "latitude", "longitude"]
     )
+    # Input retired in slice 4c: corpscout.se_addresses_current is dropped; this pull no longer runs.
     return f"""
         SELECT
             toString(a.address_id) AS address_id,

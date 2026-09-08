@@ -11,7 +11,7 @@ import dagster as dg
 from dagster_v3.defs.se_company.address import assets, warm
 from dagster_v3.defs.se_company.address.geocode import GEOCODE_QUERY_SETTINGS, GeocodeOutcome
 from dagster_v3.defs.sweden_company.address_resolution_policy import SWEDEN_ADDRESS_RESOLUTION_POLICY
-from dagster_v3.defs.sweden_company.geocode_serving_overlay import GEOCODE_FALLBACK_PROVIDER
+from dagster_v3.defs.se_company.address.constants import GEOCODE_FALLBACK_PROVIDER
 from dagster_v3.defs.sweden_company.geocode_store import QUALIFIED_CLICKHOUSE_GEOCODE_STORE_TABLE
 
 POLICY = SWEDEN_ADDRESS_RESOLUTION_POLICY.version

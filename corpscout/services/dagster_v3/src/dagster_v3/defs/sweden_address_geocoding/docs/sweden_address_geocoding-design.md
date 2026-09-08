@@ -64,8 +64,9 @@ After the raw asset succeeds:
 
 1. build a Sweden-only DuckDB table by reading all municipal GeoPackages;
 2. transform EPSG 3006 address points to WGS84 latitude/longitude;
-3. normalize and match `corpscout.se_company_addresses_current` against the
-   official street, house-number, postcode, and locality fields;
+3. normalize and match `corpscout.se_company_address_normalized` against the
+   official street, house-number, postcode, and locality fields (the source table was
+   `se_company_addresses_current` until the address entity's slice-4 cutover);
 4. publish an auditable address-geocode lookup to ClickHouse; and
 5. join that lookup in the company serving model.
 

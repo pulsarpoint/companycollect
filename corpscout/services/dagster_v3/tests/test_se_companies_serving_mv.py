@@ -8,7 +8,7 @@ and spine fields absorbed from the retired `se_companies_translated` view.
 WHAT 000393 CHANGES (address slice 4b). `corpscout.se_company_address_v2` -- the address
 entity 000392 repointed the address half at -- is renamed to its final name,
 `corpscout.se_company_address`; the old final table of the 2026-08-24 model parks under
-`se_company_address_legacy` until slice 4c drops it. The view's definition is otherwise
+`se_company_address_legacy`, dropped by hand in slice 4c. The view's definition is otherwise
 UNCHANGED -- only the table name the address half reads changes -- so this is NOT a staged
 swap like 000391 and 000392. Those replaced the view's definition (build a second view, wait
 for its first refresh, atomically rename). 000393 changes only what name the existing

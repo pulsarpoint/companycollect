@@ -156,7 +156,7 @@ function CountsStrip({ counts }: { counts: SeCompanyGeocodingCounts }) {
  * The legend (Task 6): what each badge in the Geocode status column actually
  * means, spelled out once rather than left for a reader to guess from color
  * alone -- most pointedly for "Coarse", since its underlying `match_status`
- * (from the served overlay, corpscout.se_address_geocodes_served) is
+ * (from the address entity's stored geocode outcome) is
  * literally `matched_area`, the SAME status name a genuine building-precise
  * hit can carry. Without this line, an amber "Coarse: postcode" badge could
  * read as just a paler flavor of "Geocoded" instead of the distinct,

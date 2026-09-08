@@ -18,11 +18,10 @@ THE THREE THINGS THIS MODULE IS.
    exactly as stale as what it copied and is re-matched after the next extract like any
    other row.
 
-2. An ENGINE CALL for the misses. The same resolver the Sweden shadow evaluation runs
-   (`address_resolution_shadow.replace_sweden_address_resolution_shadow`), on the same
-   once-per-extract reference documents AND their fuzzy street postings, over per-run tables
-   named with the run id and dropped in a `finally`. Nothing in the engine, the policy or the
-   OSM assets changes here.
+2. An ENGINE CALL for the misses. The same resolver the retired Sweden shadow evaluation
+   ran, on the same once-per-extract reference documents AND their fuzzy street postings
+   (built by `address_resolution_shadow`), over per-run tables named with the run id and
+   dropped in a `finally`. Nothing in the engine, the policy or the OSM assets changes here.
 
    BOTH shared inputs are per-EXTRACT caches in the enrichment schema, not per-call work:
    `ensure_reference_postings` builds the documents (keyed on the extract md5) and the
@@ -36,8 +35,8 @@ THE THREE THINGS THIS MODULE IS.
 
 3. A FALLBACK OVERLAY on the way out, for `unmatched`/`ambiguous`/`postal_box`. The store
    keeps the matcher's RAW outcome; the coarse postcode-or-city centroid is applied on READ
-   and never written, exactly as `geocode_serving_overlay` does it for the shared-address
-   serving read (whose constants this module reuses rather than re-spelling). So an identity
+   and never written, exactly as the served overlay did it for the shared-address chain
+   (retired in slice 4c) (whose constants this module reuses rather than re-spelling). So an identity
    the matcher could not place is served a coarse coordinate today and takes a precise one
    the moment a later extract matches it -- with nothing to un-write.
 
@@ -67,9 +66,10 @@ from dagster_v3.defs.address_resolution.search_documents import (
     replace_address_search_documents,
     replace_address_street_variants,
 )
+from dagster_v3.defs.se_company.address import constants
 from dagster_v3.defs.se_company.address.normalize_se import NormalizedAddress
 from dagster_v3.defs.sweden_address_osm import tables as osm_tables
-from dagster_v3.defs.sweden_company import geocode_serving_overlay, geocode_store
+from dagster_v3.defs.sweden_company import geocode_store
 from dagster_v3.defs.sweden_company.address_resolution_policy import (
     SWEDEN_ADDRESS_RESOLUTION_POLICY,
     SWEDEN_SEPARATE_DEFINITE_EXPANSIONS,
@@ -116,7 +116,7 @@ GEOCODE_QUERY_SETTINGS = {"max_query_size": 1_048_576, "max_execution_time": 180
 # The extract's provenance, read exactly as the retired promotion step read it (its
 # `_replace_promotion_stage`'s `_sweden_address_resolution_osm_provenance`): one row,
 # `first(... order by source_record_id)` per column, off the same workbench table
-# `geocode_demand.fresh_reference_md5` takes the reference md5 from.
+# `address_resolution_shadow.fresh_reference_md5` takes the reference md5 from.
 EXTRACT_PROVENANCE_SQL = f"""select
     first(source_url order by source_record_id),
     first(source_object_key order by source_record_id),
@@ -264,15 +264,15 @@ def fallback_sql() -> str:
     Returns `key, tier, latitude, longitude, locality, point_count, spread_meters`, one row
     per key that lands on a tier; a key with no acceptable centroid is simply absent, so the
     caller leaves its raw outcome alone. The ladder, the 3,000 m postcode cap and the join
-    keys are `geocode_serving_overlay`'s, reused rather than restated: this is the same
+    keys are constants.py's, reused rather than restated: this is the same
     overlay, computed for keys held in memory instead of for a table of address ids.
 
     Nested rather than alias-reuse for the same reason the overlay nests -- `_tier` is read
     several times by the outer projection -- and every LEFT JOIN column that gates the tier
     is read through `ifNull`, so the answer does not depend on `join_use_nulls`.
     """
-    postcode = f"_tier = '{geocode_serving_overlay.POSTCODE_PRECISION}'"
-    city = f"_tier = '{geocode_serving_overlay.CITY_PRECISION}'"
+    postcode = f"_tier = '{constants.POSTCODE_PRECISION}'"
+    city = f"_tier = '{constants.CITY_PRECISION}'"
     keyed = (
         "SELECT\n"
         "        tupleElement(requested.row, 1) AS key,\n"
@@ -295,16 +295,16 @@ def fallback_sql() -> str:
         "        cc.spread_meters AS _cc_spread,\n"
         "        multiIf(\n"
         "            ifNull(pc.point_count, 0) > 0 AND ifNull(pc.spread_meters, 1e18) <= "
-        f"{geocode_serving_overlay.POSTCODE_SPREAD_MAX_METERS},"
-        f" '{geocode_serving_overlay.POSTCODE_PRECISION}',\n"
+        f"{constants.POSTCODE_SPREAD_MAX_METERS},"
+        f" '{constants.POSTCODE_PRECISION}',\n"
         "            ifNull(cc.point_count, 0) > 0,"
-        f" '{geocode_serving_overlay.CITY_PRECISION}',\n"
+        f" '{constants.CITY_PRECISION}',\n"
         "            ''\n"
         "        ) AS _tier\n"
         f"    FROM (\n    {keyed}\n    ) AS keyed\n"
-        f"    LEFT JOIN {geocode_serving_overlay.POSTCODE_CENTROIDS_TABLE} AS pc"
+        f"    LEFT JOIN {constants.POSTCODE_CENTROIDS_TABLE} AS pc"
         " ON pc.key = keyed._pc_key\n"
-        f"    LEFT JOIN {geocode_serving_overlay.CITY_CENTROIDS_TABLE} AS cc"
+        f"    LEFT JOIN {constants.CITY_CENTROIDS_TABLE} AS cc"
         " ON cc.key = keyed._city_key"
     )
     return (
@@ -817,7 +817,7 @@ def _apply_fallback(
     eligible = sorted(
         key
         for key, outcome in outcomes.items()
-        if outcome.match_status in geocode_serving_overlay.FALLBACK_ELIGIBLE_STATUSES
+        if outcome.match_status in constants.FALLBACK_ELIGIBLE_STATUSES
     )
     if not eligible:
         return 0
@@ -836,20 +836,18 @@ def _apply_fallback(
             clickhouse.execute(sql, {"rows": rows}, settings=GEOCODE_QUERY_SETTINGS)
         ):
             if tier not in (
-                geocode_serving_overlay.POSTCODE_PRECISION,
-                geocode_serving_overlay.CITY_PRECISION,
+                constants.POSTCODE_PRECISION,
+                constants.CITY_PRECISION,
             ):
                 continue
             outcomes[key] = dataclass_replace(
                 outcomes[key],
-                match_status=geocode_serving_overlay.GEOCODE_FALLBACK_STATUS,
+                match_status=constants.GEOCODE_FALLBACK_STATUS,
                 latitude=latitude,
                 longitude=longitude,
-                geocode_provider=geocode_serving_overlay.GEOCODE_FALLBACK_PROVIDER,
+                geocode_provider=constants.GEOCODE_FALLBACK_PROVIDER,
                 geocode_precision=tier,
-                coordinate_method=(
-                    geocode_serving_overlay.GEOCODE_FALLBACK_COORDINATE_METHOD
-                ),
+                coordinate_method=constants.GEOCODE_FALLBACK_COORDINATE_METHOD,
                 coordinate_locality=locality,
                 coordinate_supporting_point_count=int(point_count),
                 coordinate_spread_meters=spread,

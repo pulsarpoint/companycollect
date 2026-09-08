@@ -1,7 +1,7 @@
 """Migration 000330: the three SE person source views, pinned and executed.
 
-Part one is the drift pin (the `se_address_geocodes_served` pattern,
-tests/test_se_address_geocodes_served_view.py): each migration-embedded
+Part one is the drift pin (the same pattern the now-retired `se_address_geocodes_served`
+test used, dropped in slice 4c): each migration-embedded
 `CREATE OR REPLACE VIEW` statement is extracted, whitespace-normalized, and compared
 against a FRESH render of its builder in
 `dagster_v3.defs.company_people.source_views`. A hand-edit on either side goes red here
@@ -64,7 +64,7 @@ BUILDERS = {
 
 
 # ---------------------------------------------------------------------------
-# Shared statement-extraction helpers (mirrors test_se_address_geocodes_served_view.py).
+# Shared statement-extraction helpers (mirrors the now-retired served-view drift test).
 # ---------------------------------------------------------------------------
 
 

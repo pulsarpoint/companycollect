@@ -1,203 +1,82 @@
 from collections.abc import Callable
-from datetime import datetime
 from typing import Any
 
 from dagster_v3.defs.address_resolution.resolution import (
     _replace_fuzzy_street_postings,
-    replace_address_resolution_candidates,
-    replace_address_resolution_results,
-)
-from dagster_v3.defs.address_resolution.diagnostics import (
-    replace_unmatched_address_resolution_diagnostics,
 )
 from dagster_v3.defs.address_resolution.search_documents import (
     replace_address_search_documents,
-    replace_address_street_variants,
 )
 from dagster_v3.defs.sweden_address_osm import address_matching
 from dagster_v3.defs.sweden_address_osm import tables as osm_tables
-from dagster_v3.defs.sweden_company import (
-    address_canonicalization,
-    geocode_demand,
-    geocode_store,
-    shared_addresses,
-)
+from dagster_v3.defs.sweden_company import geocode_store
 from dagster_v3.defs.sweden_company.address_resolution_policy import (
     SWEDEN_ADDRESS_RESOLUTION_POLICY,
-    SWEDEN_SEPARATE_DEFINITE_EXPANSIONS,
-    SWEDEN_STREET_SUFFIX_EXACT_EXPANSIONS,
-    SWEDEN_STREET_SUFFIX_EXPANSIONS,
-    SWEDEN_STREET_VARIANT_LANGUAGES,
 )
 
-SHADOW_QUERY_DOCUMENTS_TABLE = "se_address_resolution_query_index_shadow"
-SHADOW_QUERY_STREET_VARIANTS_TABLE = (
-    "se_address_resolution_query_street_variants_shadow"
-)
 SHADOW_REFERENCE_DOCUMENTS_TABLE = "se_address_resolution_reference_index_shadow"
-SHADOW_CANDIDATES_TABLE = "se_address_resolution_candidates_shadow"
-SHADOW_RESULTS_TABLE = "se_address_resolution_results_shadow"
-SHADOW_COMPARISON_TABLE = "se_address_resolution_comparison_shadow"
-UNMATCHED_DIAGNOSTICS_TABLE = "se_address_resolution_unmatched_diagnostics"
 REFERENCE_MANIFEST_TABLE = "se_address_resolution_reference_manifest"
 REFERENCE_POSTINGS_TABLE = "se_address_resolution_reference_street_postings"
 REFERENCE_POSTINGS_MANIFEST_TABLE = (
     "se_address_resolution_reference_postings_manifest"
 )
 
-QUALIFIED_SHADOW_QUERY_DOCUMENTS_TABLE = (
-    f"{address_canonicalization.ENRICHMENT_SCHEMA}.{SHADOW_QUERY_DOCUMENTS_TABLE}"
-)
-QUALIFIED_SHADOW_QUERY_STREET_VARIANTS_TABLE = (
-    f"{address_canonicalization.ENRICHMENT_SCHEMA}.{SHADOW_QUERY_STREET_VARIANTS_TABLE}"
-)
 QUALIFIED_SHADOW_REFERENCE_DOCUMENTS_TABLE = (
-    f"{address_canonicalization.ENRICHMENT_SCHEMA}.{SHADOW_REFERENCE_DOCUMENTS_TABLE}"
-)
-QUALIFIED_SHADOW_CANDIDATES_TABLE = (
-    f"{address_canonicalization.ENRICHMENT_SCHEMA}.{SHADOW_CANDIDATES_TABLE}"
-)
-QUALIFIED_SHADOW_RESULTS_TABLE = (
-    f"{address_canonicalization.ENRICHMENT_SCHEMA}.{SHADOW_RESULTS_TABLE}"
-)
-QUALIFIED_SHADOW_COMPARISON_TABLE = (
-    f"{address_canonicalization.ENRICHMENT_SCHEMA}.{SHADOW_COMPARISON_TABLE}"
-)
-QUALIFIED_UNMATCHED_DIAGNOSTICS_TABLE = (
-    f"{address_canonicalization.ENRICHMENT_SCHEMA}.{UNMATCHED_DIAGNOSTICS_TABLE}"
+    f"{geocode_store.ENRICHMENT_SCHEMA}.{SHADOW_REFERENCE_DOCUMENTS_TABLE}"
 )
 QUALIFIED_REFERENCE_MANIFEST_TABLE = (
-    f"{address_canonicalization.ENRICHMENT_SCHEMA}.{REFERENCE_MANIFEST_TABLE}"
+    f"{geocode_store.ENRICHMENT_SCHEMA}.{REFERENCE_MANIFEST_TABLE}"
 )
 QUALIFIED_REFERENCE_POSTINGS_TABLE = (
-    f"{address_canonicalization.ENRICHMENT_SCHEMA}.{REFERENCE_POSTINGS_TABLE}"
+    f"{geocode_store.ENRICHMENT_SCHEMA}.{REFERENCE_POSTINGS_TABLE}"
 )
 QUALIFIED_REFERENCE_POSTINGS_MANIFEST_TABLE = (
-    f"{address_canonicalization.ENRICHMENT_SCHEMA}"
+    f"{geocode_store.ENRICHMENT_SCHEMA}"
     f".{REFERENCE_POSTINGS_MANIFEST_TABLE}"
 )
 
 INDEX_SCOPE = "SE-address-resolution-shadow-v2"
 
 
-def replace_sweden_address_resolution_shadow(
-    *,
-    connection: Any,
-    evaluation_run_id: str,
-    evaluated_at: datetime,
-    log: Callable[..., object] | None,
-) -> dict[str, object]:
-    """Build a non-serving Sweden resolution index, result, and comparison.
+def fresh_reference_md5(connection: Any) -> str:
+    """The OSM snapshot identity this run holds, read exactly as the promotion stamps it.
 
-    Scoped to the pending identities the demand scan selected. An unchanged week selects
-    none, and then this function does nothing at all -- which is the point of the whole
-    exercise, so the check comes before the first table is written.
+    Moved here from geocode_demand.py in slice 4c: the demand scan retired with the old
+    chain, and the reference-document builders below are the only remaining callers.
     """
-    connection.execute(
-        f"create schema if not exists {address_canonicalization.ENRICHMENT_SCHEMA}"
-    )
-    pending = geocode_demand.pending_identity_count(connection)
-    if pending == 0:
-        # Nothing to match: no query documents, no OSM building or street reference index,
-        # no candidate generation. The shadow tables keep the last matching run's contents,
-        # which is what they already do between runs -- they have never been a per-run
-        # artefact of a run that matched nothing.
-        _log(log, "Sweden address resolution: no pending identities, skipping matching")
-        return {
-            "pending_identities": 0,
-            "short_circuit": True,
-            "shadow_status_counts": {},
-            "largest_transitions": [],
-        }
-    _log(log, "Building Sweden address-resolution query search documents")
-    _replace_query_documents(connection)
-    _log(log, "Building Sweden address-resolution query street variants")
-    replace_address_street_variants(
-        connection,
-        document_table=QUALIFIED_SHADOW_QUERY_DOCUMENTS_TABLE,
-        variant_table=QUALIFIED_SHADOW_QUERY_STREET_VARIANTS_TABLE,
-        languages_by_country=SWEDEN_STREET_VARIANT_LANGUAGES,
-        suffix_expansions_by_country=SWEDEN_STREET_SUFFIX_EXPANSIONS,
-        exact_suffix_expansions_by_country=SWEDEN_STREET_SUFFIX_EXACT_EXPANSIONS,
-        separate_definite_by_country=SWEDEN_SEPARATE_DEFINITE_EXPANSIONS,
-    )
-    _log(log, "Building Sweden OSM building and street reference documents")
-    replace_reference_documents(connection, log=log)
-
-    _log(log, "Generating Sweden address-resolution shadow candidates")
-    replace_address_resolution_candidates(
-        connection,
-        query_table=QUALIFIED_SHADOW_QUERY_DOCUMENTS_TABLE,
-        query_street_variant_table=(QUALIFIED_SHADOW_QUERY_STREET_VARIANTS_TABLE),
-        reference_table=QUALIFIED_SHADOW_REFERENCE_DOCUMENTS_TABLE,
-        candidate_table=QUALIFIED_SHADOW_CANDIDATES_TABLE,
-        policy=SWEDEN_ADDRESS_RESOLUTION_POLICY,
-    )
-    _log(log, "Ranking Sweden address-resolution shadow candidates")
-    replace_address_resolution_results(
-        connection,
-        query_table=QUALIFIED_SHADOW_QUERY_DOCUMENTS_TABLE,
-        candidate_table=QUALIFIED_SHADOW_CANDIDATES_TABLE,
-        result_table="_sweden_address_resolution_results_next",
-        policy=SWEDEN_ADDRESS_RESOLUTION_POLICY,
-    )
-    connection.execute(
+    [(reference_md5,)] = connection.execute(
         f"""
-        create or replace table {QUALIFIED_SHADOW_RESULTS_TABLE} as
-        select
-            *,
-            ?::varchar as evaluation_run_id,
-            ?::timestamptz as evaluated_at
-        from _sweden_address_resolution_results_next
-        """,
-        [evaluation_run_id, evaluated_at],
-    )
-    _replace_comparison(connection)
-    _assert_shadow_invariants(connection)
-    return {
-        **_shadow_counts(connection),
-        "pending_identities": pending,
-        "short_circuit": False,
-    }
-
-
-def replace_sweden_address_resolution_unmatched_diagnostics(
-    *,
-    connection: Any,
-    diagnosed_at: datetime,
-) -> dict[str, object]:
-    return replace_unmatched_address_resolution_diagnostics(
-        connection,
-        query_table=QUALIFIED_SHADOW_QUERY_DOCUMENTS_TABLE,
-        query_street_variant_table=QUALIFIED_SHADOW_QUERY_STREET_VARIANTS_TABLE,
-        reference_table=QUALIFIED_SHADOW_REFERENCE_DOCUMENTS_TABLE,
-        result_table=QUALIFIED_SHADOW_RESULTS_TABLE,
-        diagnostic_table=QUALIFIED_UNMATCHED_DIAGNOSTICS_TABLE,
-        policy=SWEDEN_ADDRESS_RESOLUTION_POLICY,
-        diagnosed_at=diagnosed_at,
-    )
+        select coalesce(first(source_md5 order by source_record_id), '')
+        from {osm_tables.QUALIFIED_ADDRESS_TABLE}
+        """
+    ).fetchall()
+    if not str(reference_md5):
+        raise ValueError(
+            "The Sweden OSM reference table carries no snapshot MD5 -- refusing to "
+            "build address-resolution reference documents against an unidentifiable reference"
+        )
+    return str(reference_md5)
 
 
 def replace_reference_documents(
     connection: Any, *, log: Callable[..., object] | None = None
 ) -> str:
     """Build the building and street reference documents from the current OSM workbench
-    tables and record the extract they came from. The shadow evaluation and the address
-    entity's geocode function both read the result.
+    tables and record the extract they came from. The address entity's geocode function
+    reads the result.
 
     An OSM workbench with no identifiable snapshot (no row's ``source_md5``) still gets its
-    documents built -- that mirrors the shadow evaluation's pre-existing behaviour, which
-    never depended on ``source_md5`` to run matching. The manifest then honestly records ``''``
-    rather than raising, matching this codebase's convention for "no identifiable value" (see
-    `_replace_comparison`'s `coalesce(current.match_status, '')`); a missing reference identity
-    is instead where the promotion step already refused to publish, same as it did before this
-    manifest existed.
+    documents built -- that mirrors the retired shadow evaluation's behaviour, which never
+    depended on ``source_md5`` to run matching. The manifest then honestly records ``''``
+    rather than raising, which is this codebase's convention for "no identifiable value"; a
+    missing reference identity is instead where the promotion step already refused to
+    publish, same as it did before this manifest existed.
     """
     connection.execute(
-        f"create schema if not exists {address_canonicalization.ENRICHMENT_SCHEMA}"
+        f"create schema if not exists {geocode_store.ENRICHMENT_SCHEMA}"
     )
     try:
-        reference_md5 = geocode_demand.fresh_reference_md5(connection)
+        reference_md5 = fresh_reference_md5(connection)
     except ValueError:
         reference_md5 = ""
     _replace_building_reference_documents(connection)
@@ -230,7 +109,7 @@ def reference_documents_md5(connection: Any) -> str:
     [(exists,)] = connection.execute(
         "select count(*) from information_schema.tables"
         " where table_schema = ? and table_name = ?",
-        [address_canonicalization.ENRICHMENT_SCHEMA, REFERENCE_MANIFEST_TABLE],
+        [geocode_store.ENRICHMENT_SCHEMA, REFERENCE_MANIFEST_TABLE],
     ).fetchall()
     if not exists:
         return ""
@@ -243,17 +122,17 @@ def reference_documents_md5(connection: Any) -> str:
 def reference_documents_built_at(connection: Any) -> str:
     """The documents manifest's ``built_at`` as text, ``''`` when there is none to read.
 
-    The md5 alone does not say the documents are unchanged. `replace_sweden_address_resolution_shadow`
-    rebuilds them UNCONDITIONALLY on every shadow run, under the same extract md5, so a change
-    to the document builders or to `INDEX_SCOPE` produces different documents on the same md5.
-    Anything derived from the documents (the fuzzy postings) has to follow this stamp too.
+    The md5 alone does not say the documents are unchanged. `replace_reference_documents`
+    rebuilds them UNCONDITIONALLY whenever it is called, under the same extract md5, so a
+    change to the document builders or to `INDEX_SCOPE` produces different documents on the
+    same md5. Anything derived from the documents (the fuzzy postings) follows this stamp too.
     A manifest that predates the column -- or no manifest at all -- reads as ``''``, which
     matches nothing and so forces one rebuild rather than raising.
     """
     [(exists,)] = connection.execute(
         "select count(*) from information_schema.columns"
         " where table_schema = ? and table_name = ? and column_name = 'built_at'",
-        [address_canonicalization.ENRICHMENT_SCHEMA, REFERENCE_MANIFEST_TABLE],
+        [geocode_store.ENRICHMENT_SCHEMA, REFERENCE_MANIFEST_TABLE],
     ).fetchall()
     if not exists:
         return ""
@@ -272,7 +151,7 @@ def ensure_reference_documents(
 
     Returns the current reference md5 either way.
     """
-    current = geocode_demand.fresh_reference_md5(connection)
+    current = fresh_reference_md5(connection)
     if reference_documents_md5(connection) == current:
         return current
     return replace_reference_documents(connection, log=log)
@@ -296,7 +175,7 @@ def replace_reference_postings(
     enrichment schema so a later run on the same extract inherits it.
     """
     connection.execute(
-        f"create schema if not exists {address_canonicalization.ENRICHMENT_SCHEMA}"
+        f"create schema if not exists {geocode_store.ENRICHMENT_SCHEMA}"
     )
     _replace_fuzzy_street_postings(
         connection,
@@ -350,7 +229,7 @@ def reference_postings_key(connection: Any) -> tuple[str, str, str]:
         " where table_schema = ? and table_name = ?"
         " and column_name in ('reference_md5', 'policy_version', 'documents_built_at')",
         [
-            address_canonicalization.ENRICHMENT_SCHEMA,
+            geocode_store.ENRICHMENT_SCHEMA,
             REFERENCE_POSTINGS_MANIFEST_TABLE,
         ],
     ).fetchall()
@@ -359,7 +238,7 @@ def reference_postings_key(connection: Any) -> tuple[str, str, str]:
     [(postings,)] = connection.execute(
         "select count(*) from information_schema.tables"
         " where table_schema = ? and table_name = ?",
-        [address_canonicalization.ENRICHMENT_SCHEMA, REFERENCE_POSTINGS_TABLE],
+        [geocode_store.ENRICHMENT_SCHEMA, REFERENCE_POSTINGS_TABLE],
     ).fetchall()
     if not postings:
         return "", "", ""
@@ -383,8 +262,8 @@ def ensure_reference_postings(
     because the fuzzy posting rule is the policy's (`minimum_fuzzy_street_length`, the
     suffix_exact exclusion), so a policy bump on an unmoved extract must rebuild them. And the
     documents' own `built_at`, because the md5 identifies the OSM EXTRACT, not the documents:
-    the shadow run rebuilds the documents unconditionally under the same md5, and postings
-    left over from the previous build would describe documents that no longer exist.
+    `replace_reference_documents` rebuilds them unconditionally under the same md5, and
+    postings left over from the previous build would describe documents that no longer exist.
     """
     reference_md5 = ensure_reference_documents(connection, log=log)
     if reference_postings_key(connection) == (
@@ -395,46 +274,6 @@ def ensure_reference_postings(
         return reference_md5
     replace_reference_postings(connection, log=log)
     return reference_md5
-
-
-def _replace_query_documents(connection: Any) -> None:
-    replace_address_search_documents(
-        connection,
-        table_name=QUALIFIED_SHADOW_QUERY_DOCUMENTS_TABLE,
-        source_sql=f"""
-            select
-                '{INDEX_SCOPE}'::varchar as index_scope,
-                cast(address_id as varchar) as document_id,
-                country_code,
-                canonical_display_address as raw_address,
-                canonical_display_address as search_text,
-                street_name,
-                house_number,
-                unit,
-                postal_code,
-                post_town as locality,
-                case
-                    when address_kind = 'physical'
-                     and regexp_matches(
-                        street_address,
-                        '(?i)(^|[[:space:]])[0-9]+:[0-9]+($|[[:space:],])'
-                     ) then 'property_identifier'
-                    else address_kind
-                end as address_kind,
-                ''::varchar as reference_precision,
-                null::double as latitude,
-                null::double as longitude,
-                null::double as coordinate_spread_meters,
-                0::uinteger as supporting_record_count,
-                cast(address_id as varchar) as source_record_id,
-                ''::varchar as source_record_url
-            from {shared_addresses.QUALIFIED_SHARED_ADDRESSES_TABLE}
-            where cast(address_id as varchar) in (
-                select address_id
-                from {geocode_demand.QUALIFIED_DUCKDB_PENDING_IDENTITIES_TABLE}
-            )
-        """,
-    )
 
 
 def _replace_building_reference_documents(connection: Any) -> None:
@@ -781,154 +620,6 @@ def _replace_road_street_inputs(connection: Any) -> None:
     )
 
 
-def _replace_comparison(connection: Any) -> None:
-    """This run's answer against the one the store already held for the same identity.
-
-    The join is LEFT because a pending identity may have no previous resolver outcome at
-    all -- `no_outcome` is one of the four reasons it is here -- and an INNER join would
-    drop exactly the new identities a demand-driven run cares most about, breaking the
-    one-comparison-per-result invariant below. `''` is the honest current_status for "there
-    was nothing here before", and the transition report treats it as its own class.
-    """
-    connection.execute(
-        f"""
-        create or replace table {QUALIFIED_SHADOW_COMPARISON_TABLE} as
-        select
-            shadow.query_document_id as address_id,
-            coalesce(current.match_status, '') as current_status,
-            shadow.resolution_status as shadow_status,
-            shadow.geocode_precision as shadow_precision,
-            shadow.match_confidence as shadow_confidence,
-            shadow.match_strategy as shadow_strategy,
-            shadow.corrections,
-            shadow.matched_street_name,
-            shadow.matched_house_number,
-            shadow.matched_postal_code,
-            shadow.matched_locality,
-            shadow.candidate_record_count,
-            shadow.runner_up_score_margin,
-            shadow.policy_version,
-            shadow.evaluation_run_id,
-            shadow.evaluated_at
-        from {QUALIFIED_SHADOW_RESULTS_TABLE} shadow
-        left join {
-            geocode_store.QUALIFIED_DUCKDB_PREVIOUS_OUTCOMES_TABLE
-        } current
-            on current.address_id = shadow.query_document_id
-        """
-    )
-
-
-def _assert_shadow_invariants(connection: Any) -> None:
-    [(queries, distinct_queries)] = connection.execute(
-        f"""
-        select count(*), count(distinct document_id)
-        from {QUALIFIED_SHADOW_QUERY_DOCUMENTS_TABLE}
-        """
-    ).fetchall()
-    [(results, distinct_results)] = connection.execute(
-        f"""
-        select count(*), count(distinct query_document_id)
-        from {QUALIFIED_SHADOW_RESULTS_TABLE}
-        """
-    ).fetchall()
-    [(comparisons,)] = connection.execute(
-        f"select count(*) from {QUALIFIED_SHADOW_COMPARISON_TABLE}"
-    ).fetchall()
-    [(pending,)] = connection.execute(
-        f"select count(*) from {geocode_demand.QUALIFIED_DUCKDB_PENDING_IDENTITIES_TABLE}"
-    ).fetchall()
-    [(variant_documents, expected_variant_documents)] = connection.execute(
-        f"""
-        select
-            count(distinct variant.document_id),
-            count(distinct query.document_id)
-        from {QUALIFIED_SHADOW_QUERY_DOCUMENTS_TABLE} query
-        left join {QUALIFIED_SHADOW_QUERY_STREET_VARIANTS_TABLE} variant
-            on variant.document_id = query.document_id
-        where query.normalized_street != ''
-        """
-    ).fetchall()
-    if int(queries) != int(distinct_queries):
-        raise ValueError("Shadow query search-document IDs must be unique")
-    if int(queries) != int(pending):
-        raise ValueError(
-            "Shadow query documents must be exactly the pending Sweden identities"
-        )
-    if int(results) != int(distinct_results) or int(results) != int(queries):
-        raise ValueError("Every shadow query must have one resolution result")
-    if int(comparisons) != int(results):
-        raise ValueError("Every shadow result must compare with the previous outcome")
-    if int(variant_documents) != int(expected_variant_documents):
-        raise ValueError("Every parsed query street must have a search variant")
-
-
-def _shadow_counts(connection: Any) -> dict[str, object]:
-    status_rows = connection.execute(
-        f"""
-        select shadow_status, count(*)
-        from {QUALIFIED_SHADOW_COMPARISON_TABLE}
-        group by shadow_status
-        order by shadow_status
-        """
-    ).fetchall()
-    transition_rows = connection.execute(
-        f"""
-        select current_status, shadow_status, count(*) as address_count
-        from {QUALIFIED_SHADOW_COMPARISON_TABLE}
-        where current_status != shadow_status
-        group by current_status, shadow_status
-        order by address_count desc, current_status, shadow_status
-        limit 20
-        """
-    ).fetchall()
-    [(queries, query_variants, references, candidates, results, changed)] = (
-        connection.execute(
-            f"""
-        select
-            (select count(*) from {QUALIFIED_SHADOW_QUERY_DOCUMENTS_TABLE}),
-            (
-                select count(*)
-                from {QUALIFIED_SHADOW_QUERY_STREET_VARIANTS_TABLE}
-            ),
-            (select count(*) from {QUALIFIED_SHADOW_REFERENCE_DOCUMENTS_TABLE}),
-            (select count(*) from {QUALIFIED_SHADOW_CANDIDATES_TABLE}),
-            (select count(*) from {QUALIFIED_SHADOW_RESULTS_TABLE}),
-            (
-                select count(*)
-                from {QUALIFIED_SHADOW_COMPARISON_TABLE}
-                where current_status != shadow_status
-            )
-        """
-        ).fetchall()
-    )
-    return {
-        "query_documents": int(queries),
-        "query_street_variants": int(query_variants),
-        "reference_documents": int(references),
-        "candidates": int(candidates),
-        "results": int(results),
-        "changed_results": int(changed),
-        "shadow_status_counts": {
-            str(status): int(count) for status, count in status_rows
-        },
-        "largest_transitions": [
-            {
-                "current_status": str(current),
-                "shadow_status": str(shadow),
-                "address_count": int(count),
-            }
-            for current, shadow, count in transition_rows
-        ],
-        "query_table": QUALIFIED_SHADOW_QUERY_DOCUMENTS_TABLE,
-        "query_street_variant_table": (QUALIFIED_SHADOW_QUERY_STREET_VARIANTS_TABLE),
-        "reference_table": QUALIFIED_SHADOW_REFERENCE_DOCUMENTS_TABLE,
-        "candidate_table": QUALIFIED_SHADOW_CANDIDATES_TABLE,
-        "result_table": QUALIFIED_SHADOW_RESULTS_TABLE,
-        "comparison_table": QUALIFIED_SHADOW_COMPARISON_TABLE,
-    }
-
-
 def _spread_sql() -> str:
     return """
 2 * 6371000 * asin(least(1.0, sqrt(
@@ -938,10 +629,3 @@ def _spread_sql() -> str:
 )))::double
 """.strip()
 
-
-def _log(
-    log: Callable[..., object] | None,
-    message: str,
-) -> None:
-    if log is not None:
-        log(message)

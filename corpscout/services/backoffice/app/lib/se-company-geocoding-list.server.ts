@@ -116,16 +116,19 @@ export interface SeCompanyGeocodingListRow {
    * as the Address tab's own cards show it. For a coarse-centroid row this
    * stays 'unmatched'/'ambiguous'/'postal_box' (the precise matcher's own,
    * fallback-eligible outcome -- see FALLBACK_ELIGIBLE_STATUSES in
-   * geocode_serving_overlay.py), never 'matched_area';
-   * `geocode_precision`/`geocode_provider` carry the served overlay's own
-   * answer. Read off the view's `primary_geocode_status`. */
+   * se_company/address/constants.py), never 'matched_area';
+   * `geocode_precision`/`geocode_provider` carried the served overlay's
+   * (corpscout.se_address_geocodes_served, retired in slice 4c) answer while
+   * it existed. Read off the view's `primary_geocode_status`. */
   geocode_status: string;
-  /** '' unless the served overlay filled the primary address with a coarse
-   * centroid -- 'postcode' or 'city' when it did. Off `primary_geocode_precision`. */
+  /** '' unless the served overlay (retired in slice 4c) had filled the primary
+   * address with a coarse centroid -- 'postcode' or 'city' when it did. Off
+   * `primary_geocode_precision`. */
   geocode_precision: string;
-  /** '' for a primary the served overlay never touched; 'centroid_fallback'
-   * when it supplied a coarse centroid instead of a precise match -- the one
-   * value the view's 'coarse' class keys off. Off `primary_geocode_provider`. */
+  /** '' for a primary the served overlay (retired in slice 4c) never touched;
+   * 'centroid_fallback' when it had supplied a coarse centroid instead of a
+   * precise match -- the one value the view's 'coarse' class keys off. Off
+   * `primary_geocode_provider`. */
   geocode_provider: string;
   /** Which of the tab's five classes this row falls into, precomputed in the
    * view (`primary_geocode_class`) -- not re-derived here, so a status/provider

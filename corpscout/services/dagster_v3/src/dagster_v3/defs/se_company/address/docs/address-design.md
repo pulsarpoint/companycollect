@@ -11,7 +11,6 @@ everything past the modules below -- the backoffice Address tab, parity and the 
 | `normalize.py` | The normalize step's SQL (`changed_scope_sql`, `changed_rows_sql`, `all_scope_sql`, `all_rows_sql`, `normalized_insert_sql`) and the paging/write loop (`normalize_all`, `normalize_companies`) |
 | `assets.py` | The Dagster assets: `se_company_address_normalize`, `se_company_address_precedence_clickhouse`, `se_company_address_fold`, `se_company_address_fold_companies` |
 | `geocode.py` | `geocode_addresses`: one served outcome per location key -- the store as cache, the OSM workbench as matcher, the centroid overlay on read (slice 2a) |
-| `adoption.py` | `se_address_geocodes_adopt_keys`, the one-off that copies old identities' outcomes onto location keys (slice 2a) |
 | `warm.py` | `se_address_geocodes_warm`, the bulk warm step that hands every current location key to `geocode_addresses` in 150,000-key chunks so the matcher runs in the bulk mode it is built for (amended 2026-09-07) |
 | `precedence.py` | `ADDRESS_PRECEDENCE`/`precedence_rows`/`precedence_for` (`FIELD = 'text'`): the source order the fold's sort key uses to break a completeness tie, and per-company overrides read out of `se_company_address_precedence` |
 | `fold.py` | The pure per-company fold, `fold_company_addresses` (spec section 5): compatibility grouping into `_Candidate`s, hide/withdraw against a previous published set, `NormalizedRow`/`PublishedAddress`. No I/O, no clock -- the geocode block is attached afterwards by `PublishedAddress.with_geocode` |
@@ -176,7 +175,7 @@ tables and the QUERY-side postings the engine builds from them stay per call.
 pair this run computes with, or when its `policy_version` is `legacy_adopted_v1` -- the
 one-time import, which is on no resolver version at all and would be thrown away on the
 first run if a version mismatch re-matched it. Nothing else is a hit. In particular the
-`adopted:<old address_id>` run-id prefix the adoption asset stamps is provenance, not a
+`adopted:<old address_id>` run-id prefix on the imported rows is provenance, not a
 cache pin: an adopted row keeps the versions of the outcome it copied and is re-matched
 after the next policy bump or OSM extract like any other row.
 
@@ -196,21 +195,14 @@ the retired promotion step's `least(65535, ...)` clamped it.
 bind up to `CACHE_LOOKUP_CHUNK` (5,000) values that clickhouse-driver substitutes CLIENT
 side, so they land in the statement text: 341,333 and 461,740 bytes, past ClickHouse's
 262,144-byte default `max_query_size`. Both pass `GEOCODE_QUERY_SETTINGS`
-(`max_query_size` 1 MiB, `max_execution_time` 1800), and so do `adoption.py`'s two
-id-bound reads, which import the same constant.
+(`max_query_size` 1 MiB, `max_execution_time` 1800).
 
 ## Adoption (slice 2a, one-off)
 
-`se_address_geocodes_adopt_keys` walks `se_addresses_current` in keyset pages, normalizes
-each old identity with the same normalizer, computes its `location_key` and copies that
-identity's current store outcome onto the key -- `address_id`, `address_identity_run_id`
-(`adopted:<old id>`) and `geocode_run_id` overridden, every other column, `policy_version`
-/`reference_md5`/`matched_at` included, copied unchanged. An outcome is adopted when it is
-geocoded on any version, or on this run's current pair whatever its status; the rest are
-`skipped_stale`. Several identities on one key keep the first in `address_id` order
-(`collapsed`); a key the store already holds is `existing` and never re-inserted.
-`execute` defaults false and only counts. Metadata:
-`identities/normalized/collapsed/adoptable/existing/adopted/skipped_stale`.
+The one-off `se_address_geocodes_adopt_keys` (slice 2a) copied 2,019,120 outcomes from the
+old identities onto location keys on 2026-09-06 and was deleted in slice 4c with
+`se_addresses_current`, the table it read. The adopted rows stay in `se_address_geocodes`
+under the `legacy_adopted_v1` family.
 
 ## Warm step (amended 2026-09-07)
 

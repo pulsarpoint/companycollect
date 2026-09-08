@@ -14,7 +14,7 @@ rebinding the shadow module globals, and a replacement ``expanded_street_suffix_
 module for the duration of the candidate run.
 
 Not a Dagster run, no store writes, SELECT-only against ClickHouse (only the control pull,
-which lives in geocode_workbench_experiment / the driver's --refresh-control path).
+this script's own --refresh-control path).
 """
 
 from __future__ import annotations
@@ -46,13 +46,15 @@ from dagster_v3.defs.address_resolution.search_documents import (
     replace_address_street_variants,
 )
 from dagster_v3.defs.sweden_company import address_resolution_shadow as sm
-from dagster_v3.defs.sweden_company.address_canonicalization import ENRICHMENT_SCHEMA
 from dagster_v3.defs.sweden_company.address_resolution_policy import (
     SWEDEN_ADDRESS_RESOLUTION_POLICY,
     SWEDEN_STREET_SUFFIX_EXPANSIONS,
     SWEDEN_STREET_VARIANT_LANGUAGES,
 )
-from dagster_v3.defs.sweden_company.geocode_store import GEOCODED_STATUSES
+from dagster_v3.defs.sweden_company.geocode_store import (
+    ENRICHMENT_SCHEMA,
+    GEOCODED_STATUSES,
+)
 
 WORKBENCH_PATH = _SERVICE_ROOT / "data" / "geocode_workbench_local.duckdb"
 _GEO = ", ".join(f"'{s}'" for s in GEOCODED_STATUSES)
@@ -220,6 +222,7 @@ def refresh_control_pool(con: Any, *, sample_permille: int) -> int:
     servable = build_current_geocodes_sql(
         columns=["address_id", "match_status", "candidate_record_ids", "policy_version"]
     )
+    # Input retired in slice 4c: corpscout.se_addresses_current is dropped; this pull no longer runs.
     sql = f"""
         with g as (
             select address_id, match_status, candidate_record_ids, policy_version

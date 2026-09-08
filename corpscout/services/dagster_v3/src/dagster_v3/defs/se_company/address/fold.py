@@ -22,7 +22,7 @@ from dagster_v3.defs.se_company.address.normalize_se import (
     location_key,
 )
 from dagster_v3.defs.se_company.address.precedence import precedence_for
-from dagster_v3.defs.sweden_company.geocode_serving_overlay import GEOCODE_FALLBACK_PROVIDER
+from dagster_v3.defs.se_company.address.constants import GEOCODE_FALLBACK_PROVIDER
 
 FOLD_VERSION = "address-fold-v1"
 PUBLISHABLE_STATUSES: tuple[str, ...] = ("ok", "partial", "foreign")

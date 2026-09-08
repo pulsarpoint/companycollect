@@ -204,13 +204,9 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
         ("se_address_geocodes",),
         WEEKLY,
     ),
-    # NO LEAF FOR se_address_geocodes_current, and that is a deliberate gap rather than an
-    # oversight. Every leaf here hangs off a Dagster asset that publishes a table, and
-    # since migration 000320 nothing in Dagster publishes that one: it is a refreshable
-    # materialized view ClickHouse rebuilds hourly from se_address_geocodes. A freshness
-    # check needs materializations to measure and would never see one again. The leaf
-    # above, on the store the view reads, is what still watches this chain from Dagster --
-    # the view's own health lives in ClickHouse's system.view_refreshes.
+    # The refreshable view se_address_geocodes_current, which had no leaf because no asset
+    # published it, was dropped in slice 4c (2026-09-08). The leaf above, on the store the
+    # entity actually reads and writes, is the whole of this chain's freshness signal.
     # sweden_financial — reports/facts are scoped incremental exports. The
     # source-owned observation and other derived publishers are unscheduled
     # full rebuilds, so they receive row-count checks but no freshness check.

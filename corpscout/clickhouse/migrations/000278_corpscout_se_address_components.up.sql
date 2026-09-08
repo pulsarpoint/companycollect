@@ -1,28 +1,7 @@
+-- SE address slice 4c (2026-09-08): this migration's objects -- the retired old address
+-- chain (the register address history and its current snapshot, the canonical, members,
+-- shared-identity and link tables, the per-source address artifacts and the correction
+-- ledger, the legacy per-company geocode pair, the geocode serving view and overlay) --
+-- were dropped by hand on the server and their DDL left this file per the dev-phase ledger
+-- policy. The file stays for history.
 CREATE DATABASE IF NOT EXISTS corpscout;
-
-ALTER TABLE corpscout.se_company_addresses_canonical_current
-    ADD COLUMN IF NOT EXISTS street_name String AFTER street_address;
-
-ALTER TABLE corpscout.se_company_addresses_canonical_current
-    ADD COLUMN IF NOT EXISTS house_number String AFTER street_name;
-
-ALTER TABLE corpscout.se_company_addresses_canonical_current
-    ADD COLUMN IF NOT EXISTS unit String AFTER house_number;
-
-ALTER TABLE corpscout.se_company_address_members_current
-    ADD COLUMN IF NOT EXISTS street_name String AFTER street_address;
-
-ALTER TABLE corpscout.se_company_address_members_current
-    ADD COLUMN IF NOT EXISTS house_number String AFTER street_name;
-
-ALTER TABLE corpscout.se_company_address_members_current
-    ADD COLUMN IF NOT EXISTS unit String AFTER house_number;
-
-ALTER TABLE corpscout.se_addresses_current
-    ADD COLUMN IF NOT EXISTS street_name String AFTER street_address;
-
-ALTER TABLE corpscout.se_addresses_current
-    ADD COLUMN IF NOT EXISTS house_number String AFTER street_name;
-
-ALTER TABLE corpscout.se_addresses_current
-    ADD COLUMN IF NOT EXISTS unit String AFTER house_number;

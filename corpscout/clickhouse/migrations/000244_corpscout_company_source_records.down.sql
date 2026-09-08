@@ -15,8 +15,6 @@ ALTER TABLE corpscout.se_financial_reports
     DROP COLUMN IF EXISTS source_record_uid;
 ALTER TABLE corpscout.se_industries
     DROP COLUMN IF EXISTS source_record_uid;
-ALTER TABLE corpscout.se_company_addresses
-    DROP COLUMN IF EXISTS source_record_uid;
 ALTER TABLE corpscout.esef_document_company_information
     DROP COLUMN IF EXISTS source_record_uid;
 ALTER TABLE corpscout.esef_document_contact_candidates
