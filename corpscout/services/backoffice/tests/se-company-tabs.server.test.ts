@@ -128,7 +128,7 @@ describe("company area SQL", () => {
   // FINAL would be a full dedup pass for no change in the result.
   it("reads FINAL from every Replacing engine and from none of the snapshots", () => {
     for (const table of [
-      "corpscout.se_company_info AS i FINAL",
+      "corpscout.se_company_basic_info AS i FINAL",
       "corpscout.se_companies AS c FINAL",
       "corpscout.company_entity_types AS t FINAL",
     ]) {

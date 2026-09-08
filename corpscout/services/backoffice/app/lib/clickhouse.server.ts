@@ -137,19 +137,6 @@ export async function chInsertSeCompanyPersonCorrections<T extends object>(
   });
 }
 
-/** Append decided values to the Sweden company-info field-value store; the
- * newest row per (company_id, field) is what Dagster publishes. */
-export async function chInsertSeCompanyInfoFieldValues<T extends object>(
-  values: T[],
-): Promise<void> {
-  if (values.length === 0) return;
-  await getWriteClient().insert({
-    table: "se_company_info_field_value",
-    values,
-    format: "JSONEachRow",
-  });
-}
-
 /** Append a precedence rule (or its release) to the SE basic-info precedence
  * table; the fold reads the newest version per (company_id, field, source)
  * through FINAL. */

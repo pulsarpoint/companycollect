@@ -13,8 +13,6 @@ import {
   REPOSITORY_LOCATION_NAME,
   REPOSITORY_NAME,
   runStatus,
-  SE_COMPANY_INFO_SCHEDULE,
-  SE_COMPANY_INFO_SENSOR,
 } from "~/lib/dagster.server";
 
 const URL_OPTION = "http://dagster:3000/graphql";
@@ -425,7 +423,7 @@ describe("instigatorStates", () => {
 
     await expect(
       instigatorStates(
-        { names: [SE_COMPANY_INFO_SCHEDULE, SE_COMPANY_INFO_SENSOR] },
+        { names: ["se_company_info_weekly", "se_company_info_field_value_sensor"] },
         { fetchImpl: impl, url: URL_OPTION },
       ),
     ).resolves.toEqual({
