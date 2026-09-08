@@ -5,6 +5,7 @@ import {
   FR_FINANCIAL_METRICS_QUERY,
   FR_CONTRACT_SUMMARY_QUERY,
 } from "~/lib/detail-queries/fr";
+import { SE_COMPANY_ADDRESS_TABLE } from "~/lib/se-address-tables";
 
 export type CountryFeature =
   | "financials"
@@ -762,7 +763,7 @@ LIMIT 100`,
     industryJoinKeyExpr: "company_id",
     placeQuery: `SELECT toString(company_id) AS company_id,
             argMax(ifNull(city, ''), has(kinds, 'postal')) AS place
-     FROM corpscout.se_company_address FINAL
+     FROM ${SE_COMPANY_ADDRESS_TABLE} FINAL
      WHERE company_id IN {ids:Array(String)} AND active = 1
      GROUP BY company_id`,
     columns: [
@@ -1184,7 +1185,7 @@ LIMIT 100`,
   if(geocode_status = 'foreign', '', ifNull(postal_code, '')) AS geocode_postal_code,
   toString(country_code) AS address_country_code,
   toUInt8(geocode_status = 'foreign') AS address_is_foreign
-FROM corpscout.se_company_address FINAL
+FROM ${SE_COMPANY_ADDRESS_TABLE} FINAL
 WHERE company_id = {id:String}
   AND active = 1
 ORDER BY address_type
