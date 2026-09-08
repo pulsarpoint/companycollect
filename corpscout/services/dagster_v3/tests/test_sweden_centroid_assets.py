@@ -37,15 +37,13 @@ from dagster_v3.defs.sweden_company.centroid_assets import (
     POSTCODE_CENTROID_INVARIANTS_SQL,
     POSTCODE_CENTROIDS_TABLE,
     POSTCODE_CITY_MAP_SQL,
+    QUALIFIED_ADDRESS_NORMALIZED_TABLE,
     QUALIFIED_CITY_CENTROIDS_TABLE,
     QUALIFIED_POSTCODE_CENTROIDS_TABLE,
     centroid_fallback_lands_in_the_right_area,
     publish_sweden_geocode_centroids,
     sweden_geocode_centroid_area_sanity_check,
     sweden_geocode_centroids_clickhouse,
-)
-from dagster_v3.defs.sweden_company.shared_addresses import (
-    QUALIFIED_CLICKHOUSE_SHARED_ADDRESSES_TABLE,
 )
 
 _SNAPSHOT_AT = datetime(2026, 8, 20, 12, 0, 0)
@@ -294,15 +292,28 @@ def test_the_predicate_fails_when_the_mapping_matched_nothing() -> None:
 
 def test_the_postcode_city_map_groups_on_the_shared_join_keys() -> None:
     """The mapping is keyed identically to the derivation/serving side (centroid_keys.py),
-    grouped BEFORE the vote so two spellings of one postcode or city collapse first."""
-    assert QUALIFIED_CLICKHOUSE_SHARED_ADDRESSES_TABLE in POSTCODE_CITY_MAP_SQL
+    grouped BEFORE the vote so two spellings of one postcode or city collapse first.
+
+    Slice 4a (2026-09-08): the mapping reads the address entity's normalized layer
+    (`se_company_address_normalized`), not the retired `se_addresses_current` shared
+    table -- `parse_status IN ('ok', 'partial')` admits the postcode-only partial rows
+    normalizer v3 publishes alongside fully parsed ones, while `reviewer_draft` rows are
+    excluded from the vote exactly as the fold and the geocode warm-up exclude them: an
+    unactivated draft is nobody's accepted address and must not move a postcode's city.
+    """
+    assert QUALIFIED_ADDRESS_NORMALIZED_TABLE in POSTCODE_CITY_MAP_SQL
+    assert "se_addresses_current" not in POSTCODE_CITY_MAP_SQL
+    assert "FINAL" in POSTCODE_CITY_MAP_SQL
+    assert "parse_status IN ('ok', 'partial')" in POSTCODE_CITY_MAP_SQL
+    assert "source != 'reviewer_draft'" in POSTCODE_CITY_MAP_SQL
+    assert "postal_code IS NOT NULL" in POSTCODE_CITY_MAP_SQL
+    assert "city IS NOT NULL" in POSTCODE_CITY_MAP_SQL
     assert "argMax(city_key, n)" in POSTCODE_CITY_MAP_SQL
     assert "GROUP BY postcode_key, city_key" in POSTCODE_CITY_MAP_SQL
     assert "GROUP BY postcode_key" in POSTCODE_CITY_MAP_SQL
-    # The accent-preserving/digits-only key fragments, applied to the raw address columns.
+    # The accent-preserving/digits-only key fragments, applied to the normalized columns.
     assert "postal_code" in POSTCODE_CITY_MAP_SQL
-    assert "post_town" in POSTCODE_CITY_MAP_SQL
-    assert "upper(trim(coalesce(post_town" in POSTCODE_CITY_MAP_SQL
+    assert "upper(trim(coalesce(city" in POSTCODE_CITY_MAP_SQL
 
 
 def test_the_area_sanity_sample_joins_both_centroid_tables_through_the_map() -> None:

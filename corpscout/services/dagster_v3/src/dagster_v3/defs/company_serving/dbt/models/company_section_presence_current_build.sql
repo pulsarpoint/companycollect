@@ -30,15 +30,14 @@ section_rows AS (
     SELECT '{{ var("country_code") }}', company_id, 'industries', classification_code, resolved_at
     FROM {{ ref('se_company_industry_display_current_build') }}
     UNION ALL
-    -- se_company_address_display_current_build is retired (migration 000314). This reads
-    -- the source that model read, with its filter and its key (its address_key WAS
-    -- address_fingerprint), so presence is unchanged row for row. The one deliberate
-    -- change: latest_observed_at for this section is now the source observation instant
-    -- rather than the model's build instant.
+    -- se_company_addresses_current (itself standing in for the retired
+    -- se_company_address_display_current_build, migration 000314) is retired in favor of
+    -- the address entity table (slice 4a, 2026-09-08): one row per company and published
+    -- address, keyed by address_key, folded_at as the observation instant.
     SELECT '{{ var("country_code") }}', company_id, 'addresses',
-           toString(address_fingerprint), observed_at
-    FROM {{ source('corpscout', 'se_company_addresses_current') }}
-    WHERE has_address = 1 AND has_observation = 1
+           toString(address_key), folded_at
+    FROM {{ source('corpscout', 'se_company_address_v2') }} FINAL
+    WHERE active = 1
     UNION ALL
     SELECT country_code, company_id, 'sources', source_record_uid, linked_at
     FROM {{ ref('company_section_item_source_links_build') }}

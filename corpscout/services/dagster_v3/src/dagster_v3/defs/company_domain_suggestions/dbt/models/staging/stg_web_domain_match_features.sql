@@ -280,6 +280,12 @@ jsonld_address_parts AS (
     FROM jsonld_address_nodes
 ),
 
+-- SHARED CONTRACT with stg_se_company_match_features.sql's address_features CTE: both
+-- sides feed int_company_domain_address_matches.sql, which joins them by
+-- EXACT STRING EQUALITY on normalized_value (`USING (normalized_address)`). Both CTEs
+-- MUST call the same macro, `normalize_postal_address(street, postal, town, country)`,
+-- in the same argument order, or the join silently stops matching. Change one, change
+-- the other.
 jsonld_address_observations AS (
     SELECT
         crawl_id,

@@ -42,7 +42,7 @@ const qualityOptions: Array<{
   { value: "all", label: "All reviewable" },
   { value: "ambiguous", label: "Ambiguous" },
   { value: "unmatched", label: "Unmatched" },
-  { value: "invalid", label: "Invalid" },
+  { value: "invalid", label: "Invalid or property" },
   { value: "street_fallback", label: "Street fallback" },
   { value: "city_fallback", label: "City fallback" },
   { value: "low_confidence", label: "Low confidence" },
@@ -52,6 +52,7 @@ function qualityLabel(row: AddressQualityRow): string {
   if (row.geocodePrecision === "street") return "Street fallback";
   if (row.geocodePrecision === "city") return "City fallback";
   if (row.matchStatus === "invalid_address") return "Invalid address";
+  if (row.matchStatus === "property_identifier") return "Property identifier";
   if (row.matchStatus === "matched_exact" && row.matchConfidence < 0.8) {
     return "Low confidence";
   }
@@ -62,6 +63,7 @@ function qualityVariant(
   row: AddressQualityRow,
 ): "destructive" | "outline" | "secondary" {
   if (row.matchStatus === "invalid_address") return "destructive";
+  if (row.matchStatus === "property_identifier") return "destructive";
   if (row.matchStatus === "unmatched") return "outline";
   return "secondary";
 }
@@ -71,9 +73,19 @@ function columns(): ColumnDef<AddressQualityRow, unknown>[] {
     {
       id: "address",
       header: "Address identity",
+      // The entity publishes one row per company and address, so a queue row
+      // opens that company's Address tab with this address selected -- the
+      // page where the address can actually be corrected.
       cell: ({ row }) => (
         <div className="flex max-w-[28rem] flex-col gap-1">
-          <span className="font-medium">{row.original.displayAddress}</span>
+          <Link
+            to={`/admin/se/company/${encodeURIComponent(
+              row.original.companyId,
+            )}/address?address=${encodeURIComponent(row.original.addressId)}`}
+            className="font-medium underline-offset-2 hover:underline"
+          >
+            {row.original.displayAddress}
+          </Link>
           <span
             className="text-muted-foreground max-w-72 truncate font-mono text-xs"
             title={row.original.addressId}
@@ -146,12 +158,19 @@ function columns(): ColumnDef<AddressQualityRow, unknown>[] {
     },
     {
       id: "candidates",
+      // The address entity carries no OSM candidate list and no extract
+      // provenance, so every one of these fields answers 0 / [] / ''. A
+      // rendered "0 candidates" reads as a finding about the address rather
+      // than as a column with nothing to say, so a zero renders nothing and
+      // the cell comes out empty.
       header: "OSM evidence",
       cell: ({ row }) => (
         <div className="flex min-w-40 flex-col items-start gap-1.5">
-          <span className="text-sm tabular-nums">
-            {integer.format(row.original.candidateCount)} candidates
-          </span>
+          {row.original.candidateCount > 0 ? (
+            <span className="text-sm tabular-nums">
+              {integer.format(row.original.candidateCount)} candidates
+            </span>
+          ) : null}
           <div className="flex flex-wrap gap-1">
             {row.original.candidateRecordUrls.slice(0, 2).map((url, index) => (
               <Badge
@@ -297,9 +316,9 @@ export function AddressQualityReview({
           description="No exact OSM address candidate"
         />
         <QualityMetric
-          title="Invalid"
+          title="Invalid or property"
           value={result.stats.invalid}
-          description="Insufficient normalized address"
+          description="Unparseable line, or a cadastral property designation"
         />
         <QualityMetric
           title="Street fallback"

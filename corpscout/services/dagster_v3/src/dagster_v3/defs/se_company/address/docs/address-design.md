@@ -12,7 +12,7 @@ everything past the modules below -- the backoffice Address tab, parity and the 
 | `assets.py` | The Dagster assets: `se_company_address_normalize`, `se_company_address_precedence_clickhouse`, `se_company_address_fold`, `se_company_address_fold_companies` |
 | `geocode.py` | `geocode_addresses`: one served outcome per location key -- the store as cache, the OSM workbench as matcher, the centroid overlay on read (slice 2a) |
 | `adoption.py` | `se_address_geocodes_adopt_keys`, the one-off that copies old identities' outcomes onto location keys (slice 2a) |
-| `warm.py` | `se_address_geocodes_warm`, the bulk warm step that hands every current location key to `geocode_addresses` in 500,000-key chunks so the matcher runs in the bulk mode it is built for (amended 2026-09-07) |
+| `warm.py` | `se_address_geocodes_warm`, the bulk warm step that hands every current location key to `geocode_addresses` in 150,000-key chunks so the matcher runs in the bulk mode it is built for (amended 2026-09-07) |
 | `precedence.py` | `ADDRESS_PRECEDENCE`/`precedence_rows`/`precedence_for` (`FIELD = 'text'`): the source order the fold's sort key uses to break a completeness tie, and per-company overrides read out of `se_company_address_precedence` |
 | `fold.py` | The pure per-company fold, `fold_company_addresses` (spec section 5): compatibility grouping into `_Candidate`s, hide/withdraw against a previous published set, `NormalizedRow`/`PublishedAddress`. No I/O, no clock -- the geocode block is attached afterwards by `PublishedAddress.with_geocode` |
 | `batch.py` | The fold's SQL (`normalized_watermarks_sql`, `stale_companies_sql`, `current_normalized_sql`, `current_main_rows_sql`, `hidden_keys_sql`, `company_precedence_sql`, `main_insert_sql`, `history_insert_sql`) and the paging/write loop (`fold_bucket`, `fold_companies`): selection, in-page geocoding of the page's distinct location keys, history-then-main write |
@@ -60,11 +60,33 @@ re-normalizes every raw row regardless of any of this.
 - `partial` -- a street or box was found but the postcode or the city is missing.
 - `no_address` -- nothing usable was delivered, or the source marks the address unknown.
 - `foreign` -- the post town says `utlandet`, or the source's own `country_code` isn't `SE`.
+  Components stay NULL (the Swedish rules do not apply), but since 2026-09-08 the row still
+  carries a `normalized_address`: the delivered parts joined for display (care-of, street,
+  postcode, town, country). A published row with an empty line renders blank on the Address
+  tab and hides the detail page's Contact & location card altogether.
+
+Amended 2026-09-08: a valid postcode with a known town and no street or box is a `partial`
+address; the old chain published these 27,786 companies and the new one now does too,
+geocoded to the postcode centroid.
+
+## Parse rules (v3)
+
+`NORMALIZER_VERSION` is `se-address-normalizer-v3`, which is v2 plus that one rule: a row
+whose only usable content is a valid postcode and a known town (`SEB, STIFTELSER &
+FÖRETAG, 106 40 Stockholm` -- a big-company postal code) publishes as a `partial` carrying
+its care-of, postcode and city, noted `no street or box`. Everything else without a box or
+a street stays `no_address`. The fold never glues such a row onto a street candidate
+(`partial_compatible` requires a location line on both sides); two sources delivering the
+same postal point merge through the LOCATION-LESS rule (2026-09-08): a partial with no
+street and no box joins the first candidate that has neither either and agrees on country,
+postcode and city, with `_one_sided_ok` on house_number/unit/care_of -- so `c/o x, 106 40
+Stockholm` and a bare `106 40 Stockholm` are one address carrying the care-of, while two
+different care-ofs at one postal code stay two. The geocoder serves it the postcode centroid.
 
 ## Parse rules (v2)
 
-`NORMALIZER_VERSION` is `se-address-normalizer-v2`, adding four rules seen in the prod
-`parse_notes` readout on top of the v1 rules above: a box number may be written with a space
+v2 added four rules seen in the prod `parse_notes` readout on top of the v1 rules above:
+a box number may be written with a space
 (`Box 531 65` parses to box `53165`); a box found after a customer reference or a name
 (`NABO 118849 BOX 843`) is parsed as that box, with the prefix taken as `care_of` when none
 was delivered directly; `plan N`, the roman numerals `ii`/`iii`/`iv`, a bare four-digit
@@ -194,13 +216,16 @@ geocoded on any version, or on this run's current pair whatever its status; the 
 ## Warm step (amended 2026-09-07)
 
 `se_address_geocodes_warm` reads every distinct location key of the current `ok`/`partial`
-normalized rows and hands them to `geocode_addresses` in chunks of 500,000, so the matcher
+normalized rows and hands them to `geocode_addresses` in chunks of 150,000, so the matcher
 runs in bulk (the mode it is built for) and the fold pages find their keys in the cache. It
 runs once before the first full fold and after every OSM extract refresh; the fold still
 geocodes in-page whatever the warm step did not cover, so nothing depends on it for
 correctness. `AddressWarmConfig` (`chunk_size`, `limit`); pool `sweden_address_osm_duckdb`
 (`osm_tables.DUCKDB_POOL`), same as the fold's. Metadata:
-`keys/chunks/cache_hits/matched/geocoded/fallback`.
+`keys/chunks/cache_hits/matched/geocoded/fallback`. The asset also carries
+`deps=[dg.AssetKey("sweden_osm_addresses_duckdb")]` and rides in
+`sweden_company_address_geocoding_weekly_job` (`sweden_company/address_geocoding_assets.py`),
+so the weekly OSM refresh always warms the cache for the new extract.
 
 ## Backoffice (slice 3, 2026-09-07)
 
@@ -231,3 +256,39 @@ default releases the hide rule (`removed=1`). Fold now (`launchSeAddressFold`) l
 `se_company_address_fold_companies` for the one company id -- the targeted fold normalizes
 that company's raw rows first (Task 1's `targeted_fold`), so a draft saved a moment earlier
 parses before it folds.
+
+## Readers (slice 4a, 2026-09-08)
+
+The entity's four readers are the serving view (`sweden_company/companies_current.py`,
+migration 000392), the domain-suggestion match features
+(`company_domain_suggestions/.../stg_se_company_match_features.sql`), the reconciliation and
+centroid assets (`sweden_company/centroid_assets.py`), and the backoffice
+(`app/lib/se-company-address-entity.server.ts`, `address-quality.server.ts`,
+`address-companies.server.ts`). Two mapping rules bind them all: the published
+`normalized_address` is a DISPLAY line, so a reader that needs a street either strips the
+trailing `, NNN NN Town` (yielding `''` for a postcode-only line, which has no comma to cut
+at) or -- where the value is a JOIN KEY, as in the match features -- builds it from the row's
+own components (`Box N`, else street_name + house_number + unit) so a `c/o` prefix cannot
+enter the key. And a row without a street and without a box is location-less: it never takes
+the primary slot from a row that has one.
+
+### If a serving swap is interrupted
+
+Migration 000392 (like 000344/000347 before it) is a staged swap: `DROP TABLE IF EXISTS
+...serving_retired`, `SYSTEM STOP VIEW ...serving`, `CREATE MATERIALIZED VIEW
+...serving_next`, `SYSTEM WAIT VIEW ...serving_next`, then one `RENAME TABLE`. **If the
+migrate client drops during `SYSTEM WAIT VIEW`** -- a dropped ssh session, a client timeout --
+the server keeps building `_next`, but the ledger is left dirty with the STOP landed and the
+RENAME NOT landed: the live view is no longer refreshing and the new one is not serving.
+Finish it by hand:
+
+1. `SELECT view, status, last_success_time, exception FROM system.view_refreshes WHERE
+   database = 'corpscout'` -- wait until `se_companies_serving_next` reports a success.
+2. Run the `RENAME TABLE` statement verbatim from the bottom of the migration file (it swaps
+   `se_companies_serving` to `_retired` and `_next` to `se_companies_serving`).
+3. `migrate force <n>` with the migration's number (392 here), so the ledger records the
+   version the database is actually at. Do NOT re-run the up file: its `CREATE` would fail on
+   an existing `_next`, and its `DROP` would take out the view just parked under `_retired`.
+
+The old view's refresh stays stopped by design -- it is the rollback copy, and the down file
+restarts it.

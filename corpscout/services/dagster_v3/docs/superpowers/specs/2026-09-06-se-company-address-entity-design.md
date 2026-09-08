@@ -234,11 +234,15 @@ Steps, in order:
    when a postcode or a city is missing but a street or box exists; `no_address` when nothing
    usable was delivered; `foreign` as above.
 
+Amended 2026-09-08: a valid postcode with a known town and no street or box is a `partial`
+address; the old chain published these 27,786 companies and the new one now does too,
+geocoded to the postcode centroid.
+
 The normalizer never expands abbreviations, corrects spelling or guesses a house number: that
 is the matcher's work, with its own versioned variants and its zero-regression bar. A golden
 corpus (`tests/fixtures/se_addresses/*.jsonl`) drawn from real SCB, Bolagsverket and Ratsit
 rows covers boxes, care-of, floors, entrance letters, ranges, `utlandet`, empty and packed
-cases; `normalizer_version` (`se-address-normalizer-v2`) is bumped with every behaviour
+cases; `normalizer_version` (now `se-address-normalizer-v3`) is bumped with every behaviour
 change, and the bump is what re-normalizes stored rows.
 
 The normalize asset `se_company_address_normalize` reads the raw table FINAL, selects rows
@@ -387,10 +391,12 @@ fold page over the page's distinct keys.
 
 **Warm step** (amended 2026-09-07). `se_address_geocodes_warm` reads every distinct location
 key of the current `ok`/`partial` normalized rows and hands them to `geocode_addresses` in
-chunks of 500,000, so the matcher runs in bulk (the mode it is built for) and the fold pages
+chunks of 150,000, so the matcher runs in bulk (the mode it is built for) and the fold pages
 find their keys in the cache. It runs once before the first full fold and after every OSM
 extract refresh; the fold still geocodes in-page whatever the warm step did not cover, so
-nothing depends on it for correctness.
+nothing depends on it for correctness. The warm step is now part of
+`sweden_company_address_geocoding_weekly_job`, downstream of the `sweden_osm_addresses_duckdb`
+extract, so it runs every week without a manual trigger.
 
 The fold's bucket pool is the pool the OSM refresh asset takes, so an extract swap never
 races a fold. The matcher policy, the workbench scripts and the golden matcher corpus are

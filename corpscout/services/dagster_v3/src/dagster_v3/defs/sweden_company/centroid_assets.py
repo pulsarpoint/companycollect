@@ -30,8 +30,9 @@ published tables: it re-asserts the >=3-point invariant at the published grain (
 between derivation and publish could still land a thin centroid), and asserts each
 postcode centroid sits within a sane distance of its OWN city's centroid -- a postcode
 centroid far from the city that postcode belongs to is bad data, not a coarse-but-honest
-answer. There is no stored postcode->city mapping to join on, so it is derived from
-`se_addresses_current` (the postcode's most-common post_town), keyed identically to the
+answer. There is no stored postcode->city mapping to join on, so it is derived from the
+address entity's normalized layer (`corpscout.se_company_address_normalized`, slice 4a
+reader switch 2026-09-08; the postcode's most-common city), keyed identically to the
 derivation/serving side via `centroid_keys.py`.
 """
 
@@ -47,7 +48,7 @@ from dagster_v3.defs.clickhouse.resolved import (
     export_duckdb_connection_table_to_clickhouse,
 )
 from dagster_v3.defs.sweden_address_osm import tables as osm_tables
-from dagster_v3.defs.sweden_company import centroid_derivation, shared_addresses
+from dagster_v3.defs.sweden_company import centroid_derivation
 from dagster_v3.defs.sweden_company.centroid_keys import city_key_sql, postcode_key_sql
 
 GROUP_NAME = "sweden_company"
@@ -60,6 +61,13 @@ POSTCODE_CENTROIDS_TABLE = "se_postcode_centroids"
 CITY_CENTROIDS_TABLE = "se_city_centroids"
 QUALIFIED_POSTCODE_CENTROIDS_TABLE = f"{RESOLVED_DATABASE}.{POSTCODE_CENTROIDS_TABLE}"
 QUALIFIED_CITY_CENTROIDS_TABLE = f"{RESOLVED_DATABASE}.{CITY_CENTROIDS_TABLE}"
+
+# The address entity's normalized layer (migration 000383; see
+# se_company/address/tables.py NORMALIZED_TABLE for the writer's contract). Named locally
+# rather than imported -- this module stays independent of se_company.address, and the
+# slice 4b rename then touches one string per module (see the plan's self-review).
+ADDRESS_NORMALIZED_TABLE = "se_company_address_normalized"
+QUALIFIED_ADDRESS_NORMALIZED_TABLE = f"{RESOLVED_DATABASE}.{ADDRESS_NORMALIZED_TABLE}"
 
 # DuckDB staging inside the shared OSM workbench file. The derivation output
 # tables are named exactly like their ClickHouse targets so the publish helper
@@ -259,19 +267,26 @@ def _haversine_meters_sql(*, lat1: str, lon1: str, lat2: str, lon2: str) -> str:
 
 
 # There is no stored postcode->city mapping to join the two reference tables through, so
-# one is derived here from `se_addresses_current`: for each postcode KEY, the city KEY it
-# occurs with most often (`argMax(city_key, n)`). Grouping happens on the KEYS
-# (`postcode_key_sql`/`city_key_sql` -- the identical fragments the derivation and the
+# one is derived here from the address entity's normalized layer (slice 4a reader switch,
+# 2026-09-08; the retired se_addresses_current no longer feeds it): for each postcode KEY,
+# the city KEY it occurs with most often (`argMax(city_key, n)`). Grouping happens on the
+# KEYS (`postcode_key_sql`/`city_key_sql` -- the identical fragments the derivation and the
 # serving overlay use), not on the raw columns, so two spellings of the same postcode or
-# city collapse into one bucket before the vote is taken -- matching exactly what the
-# join below compares.
+# city collapse into one bucket before the vote is taken -- matching exactly what the join
+# below compares. `parse_status IN ('ok', 'partial')` admits the postcode-only partial rows
+# (normalizer v3) alongside fully parsed ones; both carry a trustworthy postal_code/city.
+# `source != 'reviewer_draft'` keeps UNACTIVATED reviewer drafts out of the vote, the same
+# exclusion the fold (EXCLUDED_SOURCES) and the geocode warm-up apply: a draft is a proposal
+# nobody has accepted, and a handful of them for one postcode could otherwise outvote the
+# delivered addresses and re-point a postcode at the wrong city.
 POSTCODE_CITY_MAP_SQL = f"""WITH by_key AS (
     SELECT
         {postcode_key_sql("postal_code")} AS postcode_key,
-        {city_key_sql("post_town")} AS city_key,
+        {city_key_sql("city")} AS city_key,
         count() AS n
-    FROM {shared_addresses.QUALIFIED_CLICKHOUSE_SHARED_ADDRESSES_TABLE}
-    WHERE postal_code != '' AND post_town != ''
+    FROM {QUALIFIED_ADDRESS_NORMALIZED_TABLE} FINAL
+    WHERE parse_status IN ('ok', 'partial') AND source != 'reviewer_draft'
+      AND postal_code IS NOT NULL AND city IS NOT NULL
     GROUP BY postcode_key, city_key
 )
 SELECT postcode_key, argMax(city_key, n) AS city_key

@@ -165,6 +165,20 @@ function approximateStreetLocationDescription(
   );
 }
 
+/**
+ * Every provider value that means "matched against the OpenStreetMap extract".
+ * The SE address entity publishes `osm`, and `centroid_fallback` for a postcode
+ * or city centroid derived from the same extract; the retired address chain
+ * wrote both `openstreetmap` and `osm`.
+ */
+export function isOpenStreetMapGeocode(provider: string | undefined): boolean {
+  return (
+    provider === "openstreetmap" ||
+    provider === "osm" ||
+    provider === "centroid_fallback"
+  );
+}
+
 export function addressGeocodeOutcomeCopy(
   address: AddressRow,
 ): AddressGeocodeOutcomeCopy | null {
@@ -224,10 +238,17 @@ export function addressGeocodeOutcomeCopy(
         badge: "PO box",
       };
     case "ambiguous": {
+      // The SE address entity carries no candidate count, so this reads 0 for
+      // every row it feeds. A count is shown only when there is one; without
+      // it the sentence still says what happened, and never claims that zero
+      // records matched an address the matcher called ambiguous.
       const candidates = address.geocode_candidate_count ?? 0;
       return {
         title: "Multiple possible building locations",
-        description: `${candidates} OpenStreetMap records match this address, so no coordinate was selected.`,
+        description:
+          candidates > 0
+            ? `${candidates} OpenStreetMap records match this address, so no coordinate was selected.`
+            : "Several OpenStreetMap records match this address, so no coordinate was selected.",
         badge: "Ambiguous",
       };
     }
@@ -304,7 +325,7 @@ export function AddressGeocodeOutcomeNotice({
         {snapshotDate ? (
           <p>Checked against the OpenStreetMap snapshot from {snapshotDate}.</p>
         ) : null}
-        {address.geocode_provider === "openstreetmap" ? (
+        {isOpenStreetMapGeocode(address.geocode_provider) ? (
           <p className="flex flex-wrap items-center gap-2">
             <span>Geocoding source: OpenStreetMap.</span>
             {evidenceLink ? (
@@ -539,8 +560,8 @@ export function ContactLocationCard({
   if (contacts.length === 0 && realAddresses.length === 0) return null;
   const coords = stored ?? fetcher.data?.coords ?? null;
   const approximateMapMarker =
-    (stored?.provider === "openstreetmap" &&
-      stored.precision !== undefined &&
+    (isOpenStreetMapGeocode(stored?.provider) &&
+      stored?.precision !== undefined &&
       stored.precision !== "building") ||
     (!stored && fetcher.data?.precision === "street");
 

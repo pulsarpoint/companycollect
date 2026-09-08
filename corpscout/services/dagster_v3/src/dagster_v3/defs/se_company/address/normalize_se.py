@@ -13,7 +13,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
-NORMALIZER_VERSION = "se-address-normalizer-v2"
+NORMALIZER_VERSION = "se-address-normalizer-v3"
 
 _UNKNOWN_TOWNS = {"okänd", "okand", "adress saknas"}
 _FOREIGN_TOWNS = {"utlandet"}
@@ -223,6 +223,20 @@ def _split_care_of_street(line: str, notes: list[str]) -> tuple[str | None, str]
     return care_of, street
 
 
+def _foreign_display_line(raw: RawAddress, country: str) -> str:
+    """What the source said, joined for display. A foreign address is never parsed -- every
+    component stays NULL, because the Swedish rules do not apply to it -- but the row is
+    still PUBLISHED, and a published row with an empty `normalized_address` renders as a
+    blank line on the Address tab and makes the detail card hide the company's Contact &
+    location section altogether (42,126 active foreign rows, 38,718 companies, 2026-09-08).
+    So the line is the delivered parts in delivered order and delivered casing, nothing
+    inferred and nothing folded.
+    """
+    parts = (_clean(raw.care_of), _clean(raw.street_address), _clean(raw.postal_code),
+             _clean(raw.post_town), country)
+    return ", ".join(part for part in parts if part)
+
+
 def normalize_se_address(raw: RawAddress) -> NormalizedAddress:
     notes: list[str] = []
     if raw.raw_address:
@@ -245,13 +259,18 @@ def normalize_se_address(raw: RawAddress) -> NormalizedAddress:
     country = (raw.country_code or "").strip().upper()
 
     if town in _FOREIGN_TOWNS:
-        return NormalizedAddress(None, None, None, None, None, None, None, country or "", "", "foreign", "post town marks the address as foreign")
+        return NormalizedAddress(None, None, None, None, None, None, None, country or "",
+                                 _foreign_display_line(raw, country), "foreign",
+                                 "post town marks the address as foreign")
     if country and country != "SE":
-        return NormalizedAddress(None, None, None, None, None, None, None, country, "", "foreign", f"country {country}")
+        return NormalizedAddress(None, None, None, None, None, None, None, country,
+                                 _foreign_display_line(raw, country), "foreign", f"country {country}")
     if town in _UNKNOWN_TOWNS or street_line in _UNKNOWN_STREETS:
         return NormalizedAddress(None, None, None, None, None, None, None, "SE", "", "no_address", "source marks the address as unknown")
-    if not street_line and not care_of:
-        return NormalizedAddress(None, None, None, None, None, None, None, "SE", "", "no_address", "")
+    # A row with neither a street line nor a care-of used to return `no_address` here. It
+    # falls through instead since v3, because a delivered postal part alone is now an
+    # address (see the `has_location` block below); with no usable postcode it still ends
+    # as `no_address` there, and with the same empty notes it carried when it exited here.
 
     if _CARE_OF_PREFIX.match(street_line) and not care_of:
         care_of, street_line = _split_care_of_street(street_line, notes)
@@ -269,6 +288,27 @@ def normalize_se_address(raw: RawAddress) -> NormalizedAddress:
 
     has_location = bool(box or street_name)
     if not has_location:
+        # v3 (2026-09-08): a valid postcode with a known town is a real address, coarse but
+        # real -- the big-company postal codes (`SEB, STIFTELSER & FÖRETAG, 106 40
+        # Stockholm`) that 27,786 companies deliver as their only address. The old chain
+        # published them and this one does too, as a `partial` the geocoder resolves to the
+        # postcode centroid. The care-of is kept (it is who receives the mail, and the
+        # identity key is what separates two tenants of one postcode); every other component
+        # stays NULL, which is also what stops the fold gluing the row onto a street
+        # candidate -- `partial_compatible` requires a location line on both sides.
+        # Anything else without a box or a street is `no_address`, as in v2.
+        if code and town:
+            notes.append("no street or box")
+            return NormalizedAddress(
+                care_of=care_of or None, box=None, street_name=None, house_number=None, unit=None,
+                postal_code=code, city=town, country_code="SE",
+                normalized_address=display_line(
+                    care_of=care_of or None, box=None, street_name=None, house_number=None, unit=None,
+                    postal_code=code, city=town,
+                    care_of_display=care_of_display or None, city_display=town_display or None,
+                ),
+                parse_status="partial", parse_notes="; ".join(notes),
+            )
         return NormalizedAddress(None, None, None, None, None, None, None, "SE", "", "no_address", "; ".join(notes))
     if code and town:
         status = "ok"

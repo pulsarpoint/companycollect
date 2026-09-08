@@ -119,6 +119,26 @@ lei_features AS (
       )
 ),
 
+-- Slice 4a (2026-09-08) reads the address entity instead of the retired
+-- se_company_addresses_current projection. The entity's normalized_address is a display
+-- line, not a matching string, so the street argument is built from the row's own
+-- COMPONENTS instead: the box (rendered `Box N`, the display convention) when there is
+-- one, otherwise street_name + house_number + unit. Building it from the display line
+-- would carry a `c/o Name` prefix into the join key, and the web side normalizes the
+-- STREET alone -- a care-of address would then never match a site that prints the same
+-- street. A postcode-only or otherwise location-less row (normalizer v3 publishes
+-- `100 11 Stockholm`, no street and no box) contributes an EMPTY street argument by
+-- construction, so its postal part is never normalized in twice; no separate guard for
+-- that shape is needed here. The macro itself applies ifNull/lowercasing/whitespace
+-- collapsing, but the components are NULL-guarded before the concat because
+-- concat_ws propagates a NULL argument.
+--
+-- SHARED CONTRACT with stg_web_domain_match_features.sql's jsonld_address_observations
+-- CTE: both sides feed int_company_domain_address_matches.sql, which joins them by
+-- EXACT STRING EQUALITY on normalized_value (`USING (normalized_address)`). Both CTEs
+-- MUST call the same macro, `normalize_postal_address(street, postal, town, country)`,
+-- in the same argument order, or the join silently stops matching. Change one, change
+-- the other.
 address_features AS (
     SELECT DISTINCT
         'SE' AS country_iso2,
@@ -126,23 +146,17 @@ address_features AS (
         companies.company_name,
         'address' AS feature_type,
         'postal' AS feature_subtype,
-        addresses.normalized_address AS normalized_value,
-        ifNull(
-            nullIf(trim(ifNull(addresses.raw_address, '')), ''),
-            arrayStringConcat(arrayFilter(component -> component != '', [
-                ifNull(addresses.street_address, ''),
-                trim(concat(
-                    ifNull(addresses.postal_code, ''),
-                    ' ',
-                    ifNull(addresses.post_town, '')
-                )),
-                ifNull(addresses.country_code, '')
-            ]), ', ')
-        ) AS raw_value,
-        concat(addresses.source, '.', addresses.address_type) AS source_field
-    FROM {{ source('corpscout', 'se_company_addresses_current') }} AS addresses
+        {{ normalize_postal_address(
+            "if(ifNull(addresses.box, '') != '', concat('Box ', ifNull(addresses.box, '')), trimBoth(concat_ws(' ', ifNull(addresses.street_name, ''), ifNull(addresses.house_number, ''), ifNull(addresses.unit, ''))))",
+            'addresses.postal_code',
+            'addresses.city',
+            'addresses.country_code'
+        ) }} AS normalized_value,
+        addresses.normalized_address AS raw_value,
+        concat(toString(addresses.text_source), '.', arrayStringConcat(arrayMap(x -> toString(x), addresses.kinds), '|')) AS source_field
+    FROM {{ source('corpscout', 'se_company_address_v2') }} AS addresses FINAL
     INNER JOIN companies USING (company_id)
-    WHERE addresses.has_address = 1
+    WHERE addresses.active = 1
       AND addresses.normalized_address != ''
 ),
 

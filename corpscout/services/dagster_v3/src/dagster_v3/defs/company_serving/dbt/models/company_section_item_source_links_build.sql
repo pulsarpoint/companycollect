@@ -420,14 +420,25 @@ descriptions AS (
     WHERE current.source_record_uid != ''
 ),
 addresses AS (
+    -- Slice 4a (2026-09-08): reads the address entity instead of the retired
+    -- se_company_addresses_current projection. A published address carries sources/slots
+    -- arrays (one per contributing raw suggestion); ARRAY JOIN unpacks each (source, slot)
+    -- pair and the inner join finds that raw suggestion's source_record_uid.
     SELECT
-        '{{ var("country_code") }}' AS country_code, company_id, 'addresses' AS section,
-        address_fingerprint AS item_key, source_record_uid,
+        '{{ var("country_code") }}' AS country_code, published.company_id, 'addresses' AS section,
+        toString(published.address_key) AS item_key, raw.source_record_uid,
         'registry_address' AS relationship_kind,
         'registry_company_record' AS match_method,
-        toFloat32(1) AS match_confidence, source_run_id, observed_at AS linked_at
-    FROM {{ source('corpscout', 'se_company_addresses_current') }}
-    WHERE has_address = 1 AND has_observation = 1 AND source_record_uid != ''
+        toFloat32(1) AS match_confidence, published.source_run_id, published.folded_at AS linked_at
+    FROM (
+        SELECT company_id, address_key, source_run_id, folded_at, member.1 AS source, member.2 AS slot
+        FROM {{ source('corpscout', 'se_company_address_v2') }} FINAL
+        ARRAY JOIN arrayZip(arrayMap(x -> toString(x), sources), slots) AS member
+        WHERE active = 1
+    ) AS published
+    INNER JOIN {{ source('corpscout', 'se_company_address_suggestion') }} AS raw FINAL
+        ON raw.company_id = published.company_id AND toString(raw.source) = published.source AND raw.slot = published.slot
+    WHERE raw.source_record_uid != ''
 ),
 industries AS (
     SELECT

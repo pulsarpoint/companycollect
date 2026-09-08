@@ -3,7 +3,7 @@
 The matcher engine scans the whole OSM reference several times per call, so its cost is
 mostly per call, not per query: the v7 rematch did 2.09M queries in one call in 3.2 h, while
 a fold page of 20,000 companies (about 22,000 keys) took 66 to 112 minutes. This asset hands
-every current location key to `geocode_addresses` in chunks of 500,000, so the population is
+every current location key to `geocode_addresses` in chunks of 150,000, so the population is
 matched in bulk once per OSM extract and the fold pages hit the cache.
 """
 
@@ -18,7 +18,9 @@ from dagster_v3.defs.se_company.address.normalize_se import LOCATION_FIELDS, Nor
 from dagster_v3.defs.sweden_company.geocode_serving_overlay import GEOCODE_FALLBACK_PROVIDER
 from dagster_v3.defs.sweden_company.geocode_store import GEOCODED_STATUSES
 
-CHUNK_SIZE = 500_000
+# A 500,000-key chunk exhausted DuckDB's 97 GiB buffer pool on prod 2026-09-07; 150,000 ran
+# fourteen chunks at about 24 minutes each.
+CHUNK_SIZE = 150_000
 WARM_STATUSES: tuple[str, ...] = ("ok", "partial")
 # The seven location fields in the normalizer's order, plus one display line per group.
 KEY_COLUMNS: tuple[str, ...] = LOCATION_FIELDS

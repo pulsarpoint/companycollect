@@ -140,6 +140,84 @@ def test_a_partial_with_a_postcode_but_no_city_joins_the_matching_candidate() ->
     assert result.rows[0].sources == ("scb", "ratsit")
 
 
+def _postcode_only(source: str, **overrides) -> NormalizedRow:
+    """A normalizer-v3 postcode-only partial: a valid postcode and a known town, no street
+    and no box (`SEB, STIFTELSER & FÖRETAG, 106 40 Stockholm`)."""
+    fields = dict(street_name=None, house_number=None, postal_code="10640", city="stockholm",
+                  parse_status="partial", normalized_address="106 40 Stockholm")
+    fields.update(overrides)
+    return row(source, **fields)
+
+
+def test_two_sources_with_the_same_postcode_only_address_publish_one_row() -> None:
+    """Not `partial_compatible`, which demands a location line on both sides: a postcode-only
+    row is placed by its postal point (the location-less merge), and an identical pair like
+    this one MUST end up on one row either way, or it would hash to one address_key twice in
+    one published set -- which the twin lookup behind the merge still guarantees."""
+    result = fold([_postcode_only("scb"), _postcode_only("bolagsverket", kind="registered")])
+    assert (result.published, result.hidden, result.withdrawn) == (1, 0, 0)
+    published = result.rows[0]
+    assert published.sources == ("bolagsverket", "scb")
+    assert (published.street_name, published.box) == (None, None)
+    assert (published.postal_code, published.city) == ("10640", "stockholm")
+    assert published.needs_geocode()
+    assert published.as_normalized_address().parse_status == "partial"
+
+
+def test_a_care_of_and_a_bare_postcode_only_row_merge_and_keep_the_care_of() -> None:
+    """The location-less merge (2026-09-08): SCB delivers `c/o x, 106 40 Stockholm` and
+    Bolagsverket the same postal point bare. Neither has a location line, so
+    `partial_compatible` can place neither and the twin lookup does not see them as twins
+    (their components differ by the care-of) -- before the rule they published as two
+    addresses at one postal point. The union keeps the care-of.
+
+    `sources` is `('scb', 'bolagsverket')`: `_sort_key` ranks completeness FIRST, and the
+    SCB row carries three components (care_of, postal_code, city) against the bare row's
+    two, so it leads and supplies the published text -- Bolagsverket's higher precedence
+    only breaks ties at equal completeness."""
+    result = fold([
+        _postcode_only("scb", care_of="x", normalized_address="c/o X, 106 40 Stockholm"),
+        _postcode_only("bolagsverket", kind="registered"),
+    ])
+    assert (result.published, result.hidden, result.withdrawn) == (1, 0, 0)
+    published = result.rows[0]
+    assert published.sources == ("scb", "bolagsverket")
+    assert published.care_of == "x"
+    assert published.kinds == ("postal", "registered")
+    assert (published.street_name, published.box) == (None, None)
+    assert (published.postal_code, published.city) == ("10640", "stockholm")
+    assert published.normalized_address == "c/o X, 106 40 Stockholm"
+    assert published.as_normalized_address().parse_status == "partial"
+
+
+def test_two_postcode_only_rows_with_different_care_ofs_stay_two_addresses() -> None:
+    """`_one_sided_ok` is the guard: a care-of present on BOTH sides must agree. Two
+    tenants sharing a big-company postal code are two registrations at one postal point,
+    not one address, so they never merge -- and their keys differ, so publishing both is
+    safe."""
+    result = fold([
+        _postcode_only("scb", care_of="x", normalized_address="c/o X, 106 40 Stockholm"),
+        _postcode_only("bolagsverket", care_of="y", normalized_address="c/o Y, 106 40 Stockholm"),
+    ])
+    assert result.published == 2
+    assert sorted(r.care_of for r in result.rows) == ["x", "y"]
+    assert len({r.address_key for r in result.rows}) == 2
+
+
+def test_a_postcode_only_partial_never_joins_a_street_candidate() -> None:
+    """`partial_compatible` demands the location line be PRESENT on both sides: a row with
+    no street and no box is nobody's neighbour, even when its postcode and town match, or
+    every big-company postal code would be glued onto whichever street shared its postcode."""
+    street = row("scb", postal_code="10640", normalized_address="Storgatan 5, 106 40 Stockholm")
+    result = fold([street, _postcode_only("ratsit")])
+    assert result.published == 2
+    alone = [r for r in result.rows if r.street_name is None][0]
+    assert alone.sources == ("ratsit",)
+    assert (alone.postal_code, alone.city) == ("10640", "stockholm")
+    assert alone.needs_geocode()
+    assert alone.as_normalized_address().parse_status == "partial"
+
+
 def test_a_foreign_row_publishes_alone_with_a_foreign_geocode_status_and_no_geocode_need() -> None:
     foreign = row("scb", street_name=None, house_number=None, postal_code=None, city=None, country_code="",
                   parse_status="foreign", normalized_address="")

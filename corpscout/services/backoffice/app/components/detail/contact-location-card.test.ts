@@ -9,6 +9,7 @@ import {
   canRequestInteractiveGeocode,
   foreignAddressBadgeText,
   geocodeCountryCodeForAddress,
+  isOpenStreetMapGeocode,
   storedAddressGeocode,
 } from "~/components/detail/contact-location-card";
 import type { AddressRow } from "~/lib/queries.server";
@@ -347,6 +348,23 @@ describe("address geocoding outcome explanations", () => {
     ).toContain("2 OpenStreetMap records");
   });
 
+  it("says an ambiguous match has several records when it cannot count them", () => {
+    // The SE address entity carries no candidate count, so this reader answers
+    // 0 for every row it feeds. "0 OpenStreetMap records match this address"
+    // reads as a finding about the address; the sentence must not claim it.
+    const description = addressGeocodeOutcomeCopy({
+      address_type: "visiting",
+      full_address: "Drottninggatan 5, 111 51 Stockholm",
+      geocode_status: "ambiguous",
+      geocode_candidate_count: 0,
+    })?.description;
+
+    expect(description).toBe(
+      "Several OpenStreetMap records match this address, so no coordinate was selected.",
+    );
+    expect(description).not.toContain("0 ");
+  });
+
   it("shows every candidate link for an ambiguous match", () => {
     const candidateUrls = [
       "https://www.openstreetmap.org/node/400",
@@ -410,5 +428,17 @@ describe("canonical address source evidence", () => {
     );
 
     expect(html).toContain("Source records (2)");
+  });
+});
+
+describe("geocode provider recognition", () => {
+  it("treats every OpenStreetMap-derived provider as OSM", () => {
+    // The entity's own values, then the retired chain's two spellings.
+    expect(isOpenStreetMapGeocode("osm")).toBe(true);
+    expect(isOpenStreetMapGeocode("centroid_fallback")).toBe(true);
+    expect(isOpenStreetMapGeocode("openstreetmap")).toBe(true);
+    expect(isOpenStreetMapGeocode("")).toBe(false);
+    expect(isOpenStreetMapGeocode(undefined)).toBe(false);
+    expect(isOpenStreetMapGeocode("nominatim")).toBe(false);
   });
 });

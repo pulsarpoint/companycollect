@@ -103,12 +103,17 @@ WITH_CARE_OF = _normalized(
     postal_code="11122",
     post_town="Stockholm",
 )
+# A normalizer-v3 postcode-only partial: a big-company postal code, no street and no box.
+POSTCODE_ONLY = _normalized(
+    care_of="SEB, Stiftelser & Företag", postal_code="10640", post_town="Stockholm"
+)
 
 CACHED_KEY = location_key(CACHED)
 STREET_KEY = location_key(STREET)
 BOX_KEY = location_key(BOX)
 MISSING_KEY = location_key(MISSING)
 DESIGNATION_KEY = location_key(DESIGNATION)
+POSTCODE_ONLY_KEY = location_key(POSTCODE_ONLY)
 
 PROVENANCE = geocode.ExtractProvenance(
     source_url=SOURCE_URL,
@@ -500,6 +505,39 @@ def test_an_unmatched_street_gets_the_postcode_centroid_when_tight(
     assert outcome.match_status == "matched_area"
     assert outcome.coordinate_spread_meters == 1200.0
     assert _inserted(client, MISSING_KEY)["match_status"] == "unmatched"
+
+
+def test_a_postcode_only_partial_is_matchable_and_gets_the_postcode_centroid(
+    workbench: duckdb.DuckDBPyConnection,
+) -> None:
+    """Normalizer v3 (2026-09-08): a valid postcode with a known town and no street is a
+    `partial`, so it reaches this function -- `_reject_unmatchable` only refuses `foreign`
+    and `no_address`. The engine has nothing to match (the input row's street is empty and
+    the search text is the postal part alone), so it is `unmatched`, and the overlay serves
+    the postcode centroid: exactly what the old chain published for these companies."""
+    assert POSTCODE_ONLY.parse_status == "partial"
+    assert (POSTCODE_ONLY.street_name, POSTCODE_ONLY.box) == (None, None)
+    assert geocode.address_kind(POSTCODE_ONLY) == "physical"
+    assert geocode.search_text(POSTCODE_ONLY) == "10640 stockholm"
+    street = SEARCH_DOCUMENT_INPUT_COLUMNS.index("street_name")
+    postal = SEARCH_DOCUMENT_INPUT_COLUMNS.index("postal_code")
+    locality = SEARCH_DOCUMENT_INPUT_COLUMNS.index("locality")
+    input_row = geocode._input_row(POSTCODE_ONLY_KEY, POSTCODE_ONLY)
+    assert (input_row[street], input_row[postal], input_row[locality]) == ("", "10640", "stockholm")
+
+    client = FakeClient(
+        fallback_rows=[(POSTCODE_ONLY_KEY, "postcode", 59.34, 18.06, "10640", 52, 900.0)]
+    )
+
+    outcome = _run(workbench, client, {POSTCODE_ONLY_KEY: POSTCODE_ONLY})[POSTCODE_ONLY_KEY]
+
+    assert outcome.match_status == "matched_area"
+    assert outcome.geocode_precision == "postcode"
+    assert outcome.geocode_provider == "centroid_fallback"
+    assert (outcome.latitude, outcome.longitude) == (59.34, 18.06)
+    assert _inserted(client, POSTCODE_ONLY_KEY)["match_status"] == "unmatched"
+    [(_, params)] = client.statements("se_postcode_centroids")
+    assert params["rows"] == [(POSTCODE_ONLY_KEY, "10640", "stockholm")]
 
 
 def test_a_cache_hit_is_overlaid_too(workbench: duckdb.DuckDBPyConnection) -> None:

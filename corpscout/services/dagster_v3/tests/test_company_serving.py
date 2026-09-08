@@ -102,6 +102,12 @@ def test_presence_reconciliation_uses_logical_item_keys() -> None:
         "SELECT DISTINCT company_id FROM stage_company_external_identifier_current"
         in sql
     )
+    # Slice 4a (2026-09-08): the addresses reconciliation reads the address entity
+    # (se_company_address_v2), not the retired se_company_addresses_current projection.
+    assert "se_company_addresses_current" not in sql
+    assert "countDistinct(tuple(addresses.company_id, addresses.address_key))" in sql
+    assert "FROM corpscout.se_company_address_v2 AS addresses FINAL" in sql
+    assert "WHERE addresses.active = 1" in sql
 
 
 def test_domain_stage_overlays_current_reviews_before_versioned_publish() -> None:
