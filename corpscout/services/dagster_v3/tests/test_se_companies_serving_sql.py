@@ -7,8 +7,8 @@ test over the builder output cannot prove any of that; a real engine ranking rea
 
 Runs through clickhouse-local (a local binary, else the pinned server image under Docker, else
 the module skips), twice -- once per `join_use_nulls` setting -- and must answer the same both
-times, because every LEFT JOIN this SELECT still makes (the spine, the translations, the
-aggregation) is guarded by `ifNull`/`coalesce`.
+times, because every LEFT JOIN this SELECT still makes (the register row, the two label
+dictionaries, the aggregation and the primary pick) is guarded by `ifNull`/`coalesce`.
 
 SINCE SLICE 4a the address half reads the ADDRESS ENTITY, `corpscout.se_company_address_v2`
 (migration 000384): one row per company and published address, `active = 1` for the published
@@ -17,7 +17,7 @@ itself. There is no served-overlay join any more; the `centroid_fallback` provid
 used to stamp is DERIVED from `geocode_status = 'matched_area'`, which is what the centroid
 overlay writes.
 
-The fixture is seven companies, each a different shape of the primary-class or ranking rule:
+The fixture is nine companies, each a different shape of the primary-class or ranking rule:
 
   COARSE      one address, geocode_status 'matched_area' with a city-precision centroid.
               primary_geocode_class must be 'coarse' -- the derived provider firing the
@@ -47,6 +47,10 @@ The fixture is seven companies, each a different shape of the primary-class or r
               no comma for the street expression to cut at. `street_address` must come out
               EMPTY (the strip alone would hand back the whole line as a street), while the
               postcode and city columns carry the location. Its centroid makes it 'coarse'.
+  LOCATIONLESS  two addresses: SCB's postcode-only `visiting_or_postal` row (no street, no
+              box) and Bolagsverket's `postal` row with a real street. The kind ranks alone
+              would serve the postcode-only row and print an EMPTY street; the has_location
+              rank runs first, so the street row is the primary.
 """
 
 import json
@@ -76,8 +80,18 @@ NOADDRESS = "5560000055"
 HIDDEN = "5560000066"
 VISITING = "5560000077"
 POSTCODE = "5560000088"
+LOCATIONLESS = "5560000099"
 
-ADDRESSED = (COARSE, PRECISE, UNGEOCODED, POSTAL_BOX, HIDDEN, VISITING, POSTCODE)
+ADDRESSED = (
+    COARSE,
+    PRECISE,
+    UNGEOCODED,
+    POSTAL_BOX,
+    HIDDEN,
+    VISITING,
+    POSTCODE,
+    LOCATIONLESS,
+)
 
 PRECISE_LAT, PRECISE_LON = 59.3300, 18.0600
 COARSE_LAT, COARSE_LON = 55.6050, 13.0000
@@ -85,6 +99,7 @@ POSTAL_BOX_LAT, POSTAL_BOX_LON = 55.3770, 13.1520
 HIDDEN_LAT, HIDDEN_LON = 57.7080, 11.9740
 VISITING_LAT, VISITING_LON = 63.8250, 20.2630
 POSTCODE_LAT, POSTCODE_LON = 59.3320, 18.0640
+LOCATIONLESS_STREET_LAT, LOCATIONLESS_STREET_LON = 59.3390, 18.0580
 
 # The entity's own keys ARE the serving JSON's address_id since slice 4a. Each is 64 chars,
 # the FixedString(64) width, and the leading letter fixes its sort position for the tiebreak.
@@ -101,6 +116,10 @@ HIDDEN_INACTIVE_KEY = "a" + "6" * 63
 VISITING_KEY = "v" + "7" * 63
 VISITING_POSTAL_KEY = "a" + "7" * 63
 POSTCODE_KEY = "k" + "8" * 63
+# The location-less row outranks the street row on BOTH kind ranks and on the key, so only
+# the has_location rank can keep the street row primary.
+LOCATIONLESS_EMPTY_KEY = "a" + "9" * 63
+LOCATIONLESS_STREET_KEY = "s" + "9" * 63
 
 
 BASIC_INFO_COLUMNS = (
@@ -155,8 +174,12 @@ def _record_uid(company_id: str) -> str:
 
 # The entity columns the serving SELECT reads, plus the provenance ones a published row always
 # carries. Everything omitted takes its type default -- the SELECT never touches it.
+# `street_name` and `box` are read ONLY by the has_location rank, but a fixture that left
+# them NULL on a street row would make that rank vacuous, so every row carries the components
+# its display line was built from.
 ADDRESS_COLUMNS = (
-    "company_id, address_key, box, postal_code, city, country_code, normalized_address, "
+    "company_id, address_key, box, street_name, house_number, unit, postal_code, city, "
+    "country_code, normalized_address, "
     "kinds, sources, slots, text_source, active, inactive_reason, latitude, longitude, "
     "geocode_status, geocode_precision, folded_at, fold_version, source_run_id"
 )
@@ -175,14 +198,21 @@ def _address_row(
     latitude: float | None = None,
     longitude: float | None = None,
     box: str | None = None,
+    street_name: str | None = None,
+    house_number: str | None = None,
+    unit: str | None = None,
+    source: str = "bolagsverket",
     active: int = 1,
     inactive_reason: str = "",
 ) -> str:
     kinds_sql = "[" + ", ".join(f"'{kind}'" for kind in kinds) + "]"
     return (
         f"('{company_id}', '{address_key}', {_literal(box) if box else 'NULL'}, "
-        f"'{postal_code}', '{city}', 'se', '{line}', {kinds_sql}, ['bolagsverket'], ['0'], "
-        f"'bolagsverket', {active}, '{inactive_reason}', "
+        f"{_literal(street_name) if street_name else 'NULL'}, "
+        f"{_literal(house_number) if house_number else 'NULL'}, "
+        f"{_literal(unit) if unit else 'NULL'}, "
+        f"'{postal_code}', '{city}', 'se', '{line}', {kinds_sql}, ['{source}'], ['0'], "
+        f"'{source}', {active}, '{inactive_reason}', "
         f"{'NULL' if latitude is None else latitude}, "
         f"{'NULL' if longitude is None else longitude}, "
         f"'{geocode_status}', '{geocode_precision}', {_literal(NOW)}, 'v1', 'run')"
@@ -196,6 +226,8 @@ ADDRESS_ROWS = (
         address_key=COARSE_KEY,
         kinds=("visiting_or_postal",),
         line="Storgatan 1, 231 39 Trelleborg",
+        street_name="Storgatan",
+        house_number="1",
         postal_code="231 39",
         city="Trelleborg",
         geocode_status="matched_area",
@@ -209,6 +241,8 @@ ADDRESS_ROWS = (
         address_key=PRECISE_PRIMARY_KEY,
         kinds=("visiting_or_postal",),
         line="Kungsgatan 2, 111 22 Stockholm",
+        street_name="Kungsgatan",
+        house_number="2",
         postal_code="111 22",
         city="Stockholm",
         geocode_status="matched_exact",
@@ -224,13 +258,15 @@ ADDRESS_ROWS = (
         postal_code="111 00",
         city="Stockholm",
         geocode_status="ambiguous",
-        box="Box 9",
+        box="9",
     ),
     _address_row(
         company_id=UNGEOCODED,
         address_key=UNGEOCODED_KEY,
         kinds=("visiting_or_postal",),
         line="Nygatan 4, 903 25 Umeå",
+        street_name="Nygatan",
+        house_number="4",
         postal_code="903 25",
         city="Umeå",
         geocode_status="unmatched",
@@ -246,7 +282,7 @@ ADDRESS_ROWS = (
         geocode_precision="postcode",
         latitude=POSTAL_BOX_LAT,
         longitude=POSTAL_BOX_LON,
-        box="Box 5305",
+        box="5305",
     ),
     # HIDDEN: the published row carries a care-of prefix -- the street expression strips the
     # trailing postcode and town off the line and keeps everything before it.
@@ -255,6 +291,8 @@ ADDRESS_ROWS = (
         address_key=HIDDEN_ACTIVE_KEY,
         kinds=("postal",),
         line="c/o Axfast AB, Vasagatan 7, 411 24 Göteborg",
+        street_name="Vasagatan",
+        house_number="7",
         postal_code="411 24",
         city="Göteborg",
         geocode_status="matched_exact",
@@ -267,6 +305,8 @@ ADDRESS_ROWS = (
         address_key=HIDDEN_INACTIVE_KEY,
         kinds=("visiting_or_postal",),
         line="Withdrawn Gatan 9, 411 25 Göteborg",
+        street_name="Withdrawn Gatan",
+        house_number="9",
         postal_code="411 25",
         city="Göteborg",
         geocode_status="unmatched",
@@ -279,6 +319,8 @@ ADDRESS_ROWS = (
         address_key=VISITING_KEY,
         kinds=("visiting",),
         line="Rådhusesplanaden 8, 903 28 Umeå",
+        street_name="Rådhusesplanaden",
+        house_number="8",
         postal_code="903 28",
         city="Umeå",
         geocode_status="matched_exact",
@@ -294,7 +336,7 @@ ADDRESS_ROWS = (
         postal_code="903 01",
         city="Umeå",
         geocode_status="unmatched",
-        box="Box 1",
+        box="1",
     ),
     # POSTCODE: normalizer v3's postcode-only shape -- the whole line IS the postal part,
     # with no comma in front of it, geocoded to the postcode centroid.
@@ -309,6 +351,37 @@ ADDRESS_ROWS = (
         geocode_precision="postcode",
         latitude=POSTCODE_LAT,
         longitude=POSTCODE_LON,
+    ),
+    # LOCATIONLESS: the real shape behind the has_location rank -- SCB delivers the company's
+    # visiting_or_postal address as a postcode-only line (no street, no box), Bolagsverket
+    # delivers a postal address with the actual street. The location-less row wins BOTH kind
+    # ranks and the key tiebreak, so only has_location can keep the street row primary.
+    _address_row(
+        company_id=LOCATIONLESS,
+        address_key=LOCATIONLESS_EMPTY_KEY,
+        kinds=("visiting_or_postal",),
+        line="111 60 Stockholm",
+        postal_code="111 60",
+        city="Stockholm",
+        geocode_status="matched_area",
+        geocode_precision="postcode",
+        latitude=POSTCODE_LAT,
+        longitude=POSTCODE_LON,
+        source="scb",
+    ),
+    _address_row(
+        company_id=LOCATIONLESS,
+        address_key=LOCATIONLESS_STREET_KEY,
+        kinds=("postal",),
+        line="Drottninggatan 5, 111 51 Stockholm",
+        street_name="Drottninggatan",
+        house_number="5",
+        postal_code="111 51",
+        city="Stockholm",
+        geocode_status="matched_exact",
+        geocode_precision="building",
+        latitude=LOCATIONLESS_STREET_LAT,
+        longitude=LOCATIONLESS_STREET_LON,
     ),
 )
 
@@ -368,6 +441,7 @@ def _script(*, join_use_nulls: int) -> str:
                 _basic_info_row(HIDDEN, "Hidden Row AB"),
                 _basic_info_row(VISITING, "Visiting AB"),
                 _basic_info_row(POSTCODE, "Postcode Only AB"),
+                _basic_info_row(LOCATIONLESS, "Locationless AB"),
             )
         )
         + ";",
@@ -668,6 +742,24 @@ def test_primary_pick_ranks_visiting_above_postal(rows: dict[str, dict]) -> None
     assert row["primary_street_address"] == "Rådhusesplanaden 8"
     assert row["primary_postal_code"] == "903 28"
     assert float(row["primary_latitude"]) == pytest.approx(VISITING_LAT)
+
+
+def test_primary_pick_prefers_a_row_that_has_a_location(rows: dict[str, dict]) -> None:
+    """LOCATIONLESS's `visiting_or_postal` row is SCB's postcode-only line: no street, no
+    box, and it beats the Bolagsverket street row on BOTH kind ranks and on the key. The
+    has_location rank runs first, so the STREET row is the primary -- otherwise the
+    companies and geocoding lists print an empty street for a company that has one, and
+    the badge reports the postcode centroid instead of the building match."""
+    row = rows[LOCATIONLESS]
+    assert row["address_count"] == 2
+    assert row["primary_street_address"] == "Drottninggatan 5"
+    assert row["primary_postal_code"] == "111 51"
+    assert row["primary_geocode_class"] == "geocoded"
+    assert row["primary_geocode_status"] == "matched_exact"
+    assert float(row["primary_latitude"]) == pytest.approx(LOCATIONLESS_STREET_LAT)
+    # Both rows still travel in the JSON -- the rank decides the primary, not the population.
+    assert set(_addresses(row)) == {LOCATIONLESS_EMPTY_KEY, LOCATIONLESS_STREET_KEY}
+    assert _addresses(row)[LOCATIONLESS_EMPTY_KEY]["street_address"] == ""
 
 
 def test_primary_class_falls_back_to_the_base_status_without_a_coordinate(

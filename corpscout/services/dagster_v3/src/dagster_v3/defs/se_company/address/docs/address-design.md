@@ -256,3 +256,39 @@ default releases the hide rule (`removed=1`). Fold now (`launchSeAddressFold`) l
 `se_company_address_fold_companies` for the one company id -- the targeted fold normalizes
 that company's raw rows first (Task 1's `targeted_fold`), so a draft saved a moment earlier
 parses before it folds.
+
+## Readers (slice 4a, 2026-09-08)
+
+The entity's four readers are the serving view (`sweden_company/companies_current.py`,
+migration 000392), the domain-suggestion match features
+(`company_domain_suggestions/.../stg_se_company_match_features.sql`), the reconciliation and
+centroid assets (`sweden_company/centroid_assets.py`), and the backoffice
+(`app/lib/se-company-address-entity.server.ts`, `address-quality.server.ts`,
+`address-companies.server.ts`). Two mapping rules bind them all: the published
+`normalized_address` is a DISPLAY line, so a reader that needs a street either strips the
+trailing `, NNN NN Town` (yielding `''` for a postcode-only line, which has no comma to cut
+at) or -- where the value is a JOIN KEY, as in the match features -- builds it from the row's
+own components (`Box N`, else street_name + house_number + unit) so a `c/o` prefix cannot
+enter the key. And a row without a street and without a box is location-less: it never takes
+the primary slot from a row that has one.
+
+### If a serving swap is interrupted
+
+Migration 000392 (like 000344/000347 before it) is a staged swap: `DROP TABLE IF EXISTS
+...serving_retired`, `SYSTEM STOP VIEW ...serving`, `CREATE MATERIALIZED VIEW
+...serving_next`, `SYSTEM WAIT VIEW ...serving_next`, then one `RENAME TABLE`. **If the
+migrate client drops during `SYSTEM WAIT VIEW`** -- a dropped ssh session, a client timeout --
+the server keeps building `_next`, but the ledger is left dirty with the STOP landed and the
+RENAME NOT landed: the live view is no longer refreshing and the new one is not serving.
+Finish it by hand:
+
+1. `SELECT view, status, last_success_time, exception FROM system.view_refreshes WHERE
+   database = 'corpscout'` -- wait until `se_companies_serving_next` reports a success.
+2. Run the `RENAME TABLE` statement verbatim from the bottom of the migration file (it swaps
+   `se_companies_serving` to `_retired` and `_next` to `se_companies_serving`).
+3. `migrate force <n>` with the migration's number (392 here), so the ledger records the
+   version the database is actually at. Do NOT re-run the up file: its `CREATE` would fail on
+   an existing `_next`, and its `DROP` would take out the view just parked under `_retired`.
+
+The old view's refresh stays stopped by design -- it is the rollback copy, and the down file
+restarts it.

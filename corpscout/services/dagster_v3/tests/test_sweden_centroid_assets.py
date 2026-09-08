@@ -297,12 +297,15 @@ def test_the_postcode_city_map_groups_on_the_shared_join_keys() -> None:
     Slice 4a (2026-09-08): the mapping reads the address entity's normalized layer
     (`se_company_address_normalized`), not the retired `se_addresses_current` shared
     table -- `parse_status IN ('ok', 'partial')` admits the postcode-only partial rows
-    normalizer v3 publishes alongside fully parsed ones.
+    normalizer v3 publishes alongside fully parsed ones, while `reviewer_draft` rows are
+    excluded from the vote exactly as the fold and the geocode warm-up exclude them: an
+    unactivated draft is nobody's accepted address and must not move a postcode's city.
     """
     assert QUALIFIED_ADDRESS_NORMALIZED_TABLE in POSTCODE_CITY_MAP_SQL
     assert "se_addresses_current" not in POSTCODE_CITY_MAP_SQL
     assert "FINAL" in POSTCODE_CITY_MAP_SQL
     assert "parse_status IN ('ok', 'partial')" in POSTCODE_CITY_MAP_SQL
+    assert "source != 'reviewer_draft'" in POSTCODE_CITY_MAP_SQL
     assert "postal_code IS NOT NULL" in POSTCODE_CITY_MAP_SQL
     assert "city IS NOT NULL" in POSTCODE_CITY_MAP_SQL
     assert "argMax(city_key, n)" in POSTCODE_CITY_MAP_SQL

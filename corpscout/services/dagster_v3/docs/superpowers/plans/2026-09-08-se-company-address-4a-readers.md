@@ -16,7 +16,7 @@
 - Backoffice commands from `corpscout/services/backoffice`: `npx vitest run <files>` and `npm run typecheck`.
 - The old chain keeps running throughout this slice: nothing here stops an asset, drops a table or renames one. `se_company_address_v2` keeps its name until slice 4b; every new reader names it through one constant so the rename is one edit per module.
 - New-table reads: `FINAL` and `active = 1` for published rows; `FixedString(64)` keys through `toString`; nullable components through `ifNull(..., '')`; kinds/sources are arrays.
-- The serving view migration is 000391 and follows the staged-swap recipe of migration 000377 exactly (SYSTEM STOP VIEW on the live view, CREATE `_next` with the 000366 hourly cadence, SYSTEM WAIT VIEW, one atomic RENAME, then drop the retired one in the down file only); the drift pin `tests/test_se_companies_serving_mv.py` is retargeted at 000391 and the executable suite `tests/test_se_companies_serving_sql.py` extended.
+- The serving view migration is 000392 (000391 went to the basic-info re-base that landed on main first) and follows the staged-swap recipe of migration 000377 exactly (SYSTEM STOP VIEW on the live view, CREATE `_next` with the 000366 hourly cadence, SYSTEM WAIT VIEW, one atomic RENAME; it also drops the `_retired` name 000391's own swap left occupied, which 000345/000348 each did as a follow-up migration); the drift pin `tests/test_se_companies_serving_mv.py` is retargeted at 000392 and the executable suite `tests/test_se_companies_serving_sql.py` extended.
 - Non-nullable String columns never receive None/null; every SELECT that binds a page of ids passes the module's query settings.
 - Commit by explicit path only; trailers in this order at the end of every commit message:
   `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`
@@ -74,7 +74,7 @@ Rules:
 ### Task 3: The served company view reads the new table
 
 **Files:**
-- Modify: `src/dagster_v3/defs/sweden_company/companies_current.py`; Create: `corpscout/clickhouse/migrations/000391_corpscout_se_companies_serving_address_entity.up.sql` and `.down.sql`; Modify: `tests/test_se_companies_serving_mv.py` (drift pin → 000391), `tests/test_se_companies_serving_sql.py` (executable suite: a fixture row in `se_company_address_v2` reaches `addresses`, `address_count`, `primary_*`; a hidden row does not), `tests/test_clickhouse_migrations.py` (`EXPECTED_MIGRATIONS`).
+- Modify: `src/dagster_v3/defs/sweden_company/companies_current.py`; Create: `corpscout/clickhouse/migrations/000392_corpscout_se_companies_serving_address_entity.up.sql` and `.down.sql`; Modify: `tests/test_se_companies_serving_mv.py` (drift pin → 000392), `tests/test_se_companies_serving_sql.py` (executable suite: a fixture row in `se_company_address_v2` reaches `addresses`, `address_count`, `primary_*`; a hidden row does not), `tests/test_clickhouse_migrations.py` (`EXPECTED_MIGRATIONS`).
 
 **Rules:**
 - `COMPANY_ADDRESS_TABLE = f"{CLICKHOUSE_DATABASE}.se_company_address_v2"`; delete `SERVED_GEOCODES_TABLE` and the LEFT JOIN. The `company_addresses` CTE becomes:
@@ -103,7 +103,7 @@ company_addresses AS (
 ```
 
 - `_PRIMARY_ORDER_BY` = `company_id, kind_visiting_or_postal DESC, kind_visiting DESC, address_key ASC`. `ADDRESS_ELEMENT_KEYS` unchanged (the backoffice geocoding list reads them), `address_id` now carries the address key. `_geocode_class_expr` unchanged: with the derived provider a `matched_area` row classifies `coarse`, exactly as the overlaid rows did.
-- Migration 000391: copy the structure of 000377's up file (the latest staged swap) and replace the SELECT with `build_se_companies_serving_sql()`'s output (the test pins the text); the down file recreates the 000377 definition the same way.
+- Migration 000392: copy the structure of 000377's up file (the latest staged swap) and replace the SELECT with `build_se_companies_serving_sql()`'s output (the test pins the text); the down file recreates the 000377 definition the same way.
 - `tests/test_se_companies_serving_sql.py`: add `se_company_address_v2` to the schema statements (migration 000384) and one company with one active street row (kinds `['postal']`, matched_exact, lat/lon) and one hidden row: assert `address_count = 1`, `primary_geocode_class = 'geocoded'`, the JSON element's `address_id` equals the key, and a `matched_area` row classifies `coarse`.
 
 - [ ] Steps: failing tests → implement → `pytest tests/test_se_companies_serving_mv.py tests/test_sweden_company_assets.py tests/test_clickhouse_migrations.py -q` and the clickhouse-local `tests/test_se_companies_serving_sql.py -m integration` → `dg check defs` → commit: `feat(dagster): se_companies_serving reads the address entity`.
@@ -167,7 +167,7 @@ addresses AS (
 2. [ ] `se_company_address_normalize` (`changed_only: true`): the v3 bump selects every raw row (about 30 min). Readout: `parse_status` per source; expect about 28,000 more `partial` rows and the same fewer `no_address`.
 3. [ ] Backfill `se_company_address_fold` bucket_00..bucket_63 (the normalizer bump selects every company): expect about 64 × 75 s plus the in-page matching of the roughly 28,000 new keys; readouts as in slice 2b; the postcode-only rows show `matched_area`/`postcode`.
 4. [ ] Parity (spec 9) with the comparison key `replaceRegexpAll(lower(line), '[^0-9a-zåäö]', '')` on both sides, the new side built without the unit and the care-of, the old side from `normalized_address` with the trailing `|se` dropped: report identical / new superset / old superset / different per company, the old-only breakdown by parse status, and a 30-company sample of `different` reviewed by hand with each difference traced to a spec rule (units kept, hyphens and abbreviation dots preserved, trailing village words dropped, care-of separated); record the numbers in spec section 9.
-5. [ ] Apply migration 000391 (`make -s -C <deploy-worktree>/corpscout clickhouse-migrate-up-one`), watch `system.view_refreshes` for the `_next` populate (the migrate client times out at about 35 s; verify, then `migrate force 391` if the ledger went dirty), confirm the backoffice companies and geocoding lists and the company detail addresses section render from the new data, and that the address-quality queue and same-building lookup work.
+5. [ ] Apply migration 000392 (`make -s -C <deploy-worktree>/corpscout clickhouse-migrate-up-one`), watch `system.view_refreshes` for the `_next` populate (the migrate client times out at about 35 s; verify, then `migrate force 392` if the ledger went dirty), confirm the backoffice companies and geocoding lists and the company detail addresses section render from the new data, and that the address-quality queue and same-building lookup work.
 6. [ ] Record in the ledger and spec section 9 (slice 4a shipped); archive the ledger; update memory; hand the retirement list to slice 4b.
 
 ## Self-review

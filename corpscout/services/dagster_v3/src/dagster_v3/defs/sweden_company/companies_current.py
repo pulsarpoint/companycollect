@@ -4,10 +4,9 @@ The companies/geocoding admin surfaces need a per-company row -- legal name, the
 published addresses as a JSON array, and a pre-computed geocode summary for the PRIMARY
 address -- without paying the FINAL merges on `se_company_address_v2`/`se_company_basic_info`
 and the per-company aggregation on every request. This module is the single source of truth
-for that SELECT; migration 000335 materializes it as a refreshable MV, the basic-info slice
-repoints its company spine at the folded basic-info row, the address slice repoints its
-address half at the entity, and the backoffice admin companies pages read the materialized
-table.
+for that SELECT; migration 000335 materializes it as a refreshable MV, 000391 repoints its
+company spine at the folded basic-info row, 000392 repoints its address half at the address
+entity, and the backoffice admin companies pages read the materialized table.
 
 WHAT IT AGGREGATES.
 
@@ -26,13 +25,16 @@ WHAT IT AGGREGATES.
 THE PRIMARY-ADDRESS SUMMARY. `primary_street_address`/`_postal_code`/`_city`/
 `primary_geocode_status`/`primary_geocode_class`/`_precision`/`_provider`/`_latitude`/
 `_longitude` describe the ONE address the geocoding list treats as the company's own, picked by
-the SAME rule that list uses (se-company-geocoding-list.server.ts): a physical
-`visiting_or_postal` outranks `visiting`, which outranks a postal-only row, with `address_key`
-as the deterministic final tiebreak -- expressed here as the identical `ORDER BY ... LIMIT 1 BY
-company_id` idiom rather than an aggregate, so the primary row's own coordinate (which may be
-NULL) is carried through verbatim. The entity keeps the kinds as an ARRAY on one row rather
-than a row per type, so the two rank terms are `has(kinds, ...)` membership tests instead of
-equality on a scalar `address_type`. The street/postcode/city/geocode_status columns are the
+the rule that list uses (se-company-geocoding-list.server.ts): a physical `visiting_or_postal`
+outranks `visiting`, which outranks a postal-only row, with `address_key` as the deterministic
+final tiebreak -- expressed here as the identical `ORDER BY ... LIMIT 1 BY company_id` idiom
+rather than an aggregate, so the primary row's own coordinate (which may be NULL) is carried
+through verbatim. The entity keeps the kinds as an ARRAY on one row rather than a row per
+type, so the kind rank terms are `has(kinds, ...)` membership tests instead of equality on a
+scalar `address_type`. AHEAD of them ranks `has_location` (`street_name IS NOT NULL OR box IS
+NOT NULL`): a postcode-only or otherwise location-less row must never take the primary slot --
+and so the printed street -- from a row that carries a street or a box, whatever its kind.
+The street/postcode/city/geocode_status columns are the
 primary row's own display fields carried out alongside the geocode summary: the backoffice
 geocoding list reads them straight off this table for its Company/Address columns and badge
 tooltip, so it never has to re-pick a primary out of the `addresses` JSON (which, being a plain
@@ -141,13 +143,21 @@ def _geocode_class_expr(status_column: str, provider_column: str) -> str:
     )
 
 
-# The primary-address pick, mirrored verbatim from se-company-geocoding-list.server.ts's
+# The primary-address pick, mirrored from se-company-geocoding-list.server.ts's
 # GEOCODING_PUBLISHED_ADDRESS_SQL: a physical visiting_or_postal outranks visiting outranks a
 # postal-only row, address_key the deterministic tiebreak. Applied as ORDER BY + LIMIT 1 BY.
-# The two rank terms are the CTE's `has(kinds, ...)` membership columns -- the entity carries
+# The two kind terms are the CTE's `has(kinds, ...)` membership columns -- the entity carries
 # every kind of one address on ONE row, so there is no scalar address_type to compare.
+#
+# A LOCATION LINE OUTRANKS EVERY KIND. Normalizer v3 publishes rows that carry no street and
+# no box -- a postcode-only `100 11 Stockholm`, a foreign or otherwise unparsed line -- and
+# such a row can perfectly well be the company's `visiting_or_postal` one while a Bolagsverket
+# `postal` row carries the actual street. Ranking `has_location` FIRST keeps `primary_street_
+# address`/`_city` (what the companies and geocoding lists print) on the row that HAS a
+# location, and only then applies the kind ranks among equals.
 _PRIMARY_ORDER_BY = (
     "company_id,\n"
+    "    has_location DESC,\n"
     "    kind_visiting_or_postal DESC,\n"
     "    kind_visiting DESC,\n"
     "    address_key ASC"
@@ -288,6 +298,7 @@ def build_se_companies_serving_sql() -> str:
     {_GEOCODE_PROVIDER_EXPR} AS geocode_provider,
     a.latitude AS latitude,
     a.longitude AS longitude,
+    (a.street_name IS NOT NULL OR a.box IS NOT NULL) AS has_location,
     has(a.kinds, 'visiting_or_postal') AS kind_visiting_or_postal,
     has(a.kinds, 'visiting') AS kind_visiting
   FROM {COMPANY_ADDRESS_TABLE} AS a FINAL

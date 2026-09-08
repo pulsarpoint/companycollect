@@ -275,13 +275,18 @@ def _haversine_meters_sql(*, lat1: str, lon1: str, lat2: str, lon2: str) -> str:
 # city collapse into one bucket before the vote is taken -- matching exactly what the join
 # below compares. `parse_status IN ('ok', 'partial')` admits the postcode-only partial rows
 # (normalizer v3) alongside fully parsed ones; both carry a trustworthy postal_code/city.
+# `source != 'reviewer_draft'` keeps UNACTIVATED reviewer drafts out of the vote, the same
+# exclusion the fold (EXCLUDED_SOURCES) and the geocode warm-up apply: a draft is a proposal
+# nobody has accepted, and a handful of them for one postcode could otherwise outvote the
+# delivered addresses and re-point a postcode at the wrong city.
 POSTCODE_CITY_MAP_SQL = f"""WITH by_key AS (
     SELECT
         {postcode_key_sql("postal_code")} AS postcode_key,
         {city_key_sql("city")} AS city_key,
         count() AS n
     FROM {QUALIFIED_ADDRESS_NORMALIZED_TABLE} FINAL
-    WHERE parse_status IN ('ok', 'partial') AND postal_code IS NOT NULL AND city IS NOT NULL
+    WHERE parse_status IN ('ok', 'partial') AND source != 'reviewer_draft'
+      AND postal_code IS NOT NULL AND city IS NOT NULL
     GROUP BY postcode_key, city_key
 )
 SELECT postcode_key, argMax(city_key, n) AS city_key

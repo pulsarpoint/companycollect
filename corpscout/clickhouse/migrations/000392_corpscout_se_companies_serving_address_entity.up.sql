@@ -8,7 +8,11 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 -- table and the se_address_geocodes_served overlay keep running until slice 4b retires them,
 -- so nothing here drops or renames either.
 --
--- FOUR SHAPE CHANGES INSIDE THE company_addresses CTE:
+-- THE COMPANY SPINE IS UNCHANGED from 000391 (basic-info slice 4): se_company_basic_info
+-- FINAL, the register fields from se_bolagsverket_companies, the labels from se_code_labels.
+-- This render is 000391's, re-rendered with the address half repointed.
+--
+-- FIVE SHAPE CHANGES INSIDE THE company_addresses CTE:
 --   * the served-overlay LEFT JOIN is gone -- latitude/longitude/geocode_precision come off
 --     the entity row, so the refresh loses a join over the whole address population
 --   * geocode_provider is DERIVED: `matched_area` (what the postcode/city centroid overlay
@@ -21,16 +25,28 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 --     tested for first and yields '' rather than the whole line
 --   * the primary pick ranks on has(kinds, 'visiting_or_postal') / has(kinds, 'visiting')
 --     instead of equality on a scalar address_type, same three ranks, same address_key
---     tiebreak. address_id in the addresses JSON is now the entity's address_key.
+--     tiebreak. address_id in the addresses JSON is now the entity's address_key
+--   * a `has_location` rank (street_name or box present) runs AHEAD of the kind ranks, so a
+--     postcode-only or otherwise location-less row never takes the primary slot -- and the
+--     printed street -- from a row that carries a street or a box.
 --
 -- Staged swap, 000347's pattern for 000320's reason: the serving name has LIVE readers, so
 -- the repointed view builds under _next, its first refresh is waited on, and ONE atomic
--- RENAME swaps both names. The retired view keeps its machinery for the down file, and
--- a follow-up drops it as 000345/000348 did.
+-- RENAME swaps both names. 000391's own swap left se_companies_serving_retired occupied, so
+-- the first statement frees that name -- the drop 000345 and 000348 each ran as a separate
+-- follow-up migration. The view this render replaces then parks there for the down file.
+--
+-- IF THE MIGRATE CLIENT DROPS DURING `SYSTEM WAIT VIEW`, the STOP VIEW has landed and the
+-- RENAME has not: the live view is stopped and _next is (probably) still filling. Recovery
+-- is by hand -- wait for _next's refresh to finish (system.view_refreshes), run the RENAME
+-- statement at the bottom of this file, then `migrate force 392`. See the address design
+-- doc's runbook section.
 --
 -- THE SELECT BELOW IS NOT HAND-WRITTEN AND MUST NOT BE HAND-EDITED -- exact rendering of
 -- companies_current.build_se_companies_serving_sql(), drift-pinned by dagster_v3
 -- tests/test_se_companies_serving_mv.py (now pointing at THIS migration).
+
+DROP TABLE IF EXISTS corpscout.se_companies_serving_retired;
 
 SYSTEM STOP VIEW corpscout.se_companies_serving;
 
@@ -55,6 +71,7 @@ AS WITH company_addresses AS (
     multiIf(a.geocode_status = 'matched_area', 'centroid_fallback', a.latitude IS NULL, '', 'osm') AS geocode_provider,
     a.latitude AS latitude,
     a.longitude AS longitude,
+    (a.street_name IS NOT NULL OR a.box IS NOT NULL) AS has_location,
     has(a.kinds, 'visiting_or_postal') AS kind_visiting_or_postal,
     has(a.kinds, 'visiting') AS kind_visiting
   FROM corpscout.se_company_address_v2 AS a FINAL
@@ -80,6 +97,7 @@ primary_address AS (
     longitude AS primary_longitude
   FROM company_addresses
   ORDER BY company_id,
+    has_location DESC,
     kind_visiting_or_postal DESC,
     kind_visiting DESC,
     address_key ASC
@@ -146,14 +164,14 @@ FROM (
     i.legal_name AS legal_name,
     toString(i.status) AS status,
     ifNull(i.legal_form_code, '') AS legal_form_code,
-    i.legal_form_label_en AS legal_form_label_en,
-    i.legal_form_label_sv AS legal_form_label_sv,
-    ifNull(c.activity_description, '') AS activity_description,
-    ifNull(act.translated_text, '') AS activity_description_en,
-    ifNull(c.status_reason, '') AS status_reason,
+    ifNull(lf.label_en, '') AS legal_form_label_en,
+    ifNull(lf.label_sv, '') AS legal_form_label_sv,
+    ifNull(i.description_sv, '') AS activity_description,
+    if(ifNull(i.description_language, '') = 'en', ifNull(i.description, ''), '') AS activity_description_en,
+    ifNull(b.deregistration_reason, '') AS status_reason,
     ifNull(sr.label_en, '') AS status_reason_label_en,
-    ifNull(c.bolagsverket_source_record_uid, '') AS bolagsverket_source_record_uid,
-    ifNull(c.updated_from_raw_at, toDateTime64(0, 3, 'UTC')) AS updated_from_raw_at,
+    if(ifNull(b.company_id, '') = '', '', ifNull(lower(hex(SHA256(concat('company-source-record-v1\nstructured\n', 'sweden_bolagsverket', '\nregistry_company\n', b.source_record_id, '\n', lowerUTF8(b.source_payload_hash))))), '')) AS bolagsverket_source_record_uid,
+    ifNull(b.observed_at, toDateTime64(0, 3, 'UTC')) AS updated_from_raw_at,
     toUInt8(i.description IS NOT NULL) AS has_description,
     toUInt8(ifNull(agg.address_count, 0) > 0) AS has_address,
     toUInt8(i.company_id IN (SELECT company_id FROM corpscout.se_bolagsverket_financial_metrics)) AS fin_bolagsverket,
@@ -166,10 +184,10 @@ FROM (
     toUInt8(i.company_id IN (SELECT company_id FROM corpscout.company_traded_symbols WHERE country_code = 'SE')) AS is_publicly_traded,
     toUInt8(i.company_id IN (SELECT company_id FROM corpscout.se_government_contracts)) AS has_government_contracts,
     toUInt8(i.company_id IN (SELECT company_id FROM corpscout.company_job_history WHERE country_code = 'SE')) AS has_job_ads,
-    toUInt8(has(i.description_sources, 'esef')) AS desc_esef,
+    toUInt8(i.description_source = 'esef') AS desc_esef,
     toUInt8(i.lei IS NOT NULL) AS has_lei,
     toUInt8(i.wikidata_id IS NOT NULL) AS has_wikidata,
-    toUInt8(has(i.description_sources, 'wikidata')) AS desc_wikidata,
+    toUInt8(i.description_source = 'wikidata') AS desc_wikidata,
     toUInt8(ifNull(agg.address_bolagsverket, 0)) AS address_bolagsverket,
     coalesce(nullIf(agg.addresses, ''), '[]') AS addresses,
     toUInt32(ifNull(agg.address_count, 0)) AS address_count,
@@ -182,23 +200,24 @@ FROM (
     ifNull(pa.primary_geocode_provider, '') AS primary_geocode_provider,
     pa.primary_latitude AS primary_latitude,
     pa.primary_longitude AS primary_longitude
-  FROM corpscout.se_company_info AS i FINAL
-  LEFT JOIN corpscout.se_companies AS c FINAL ON c.company_id = i.company_id
+  FROM corpscout.se_company_basic_info AS i FINAL
   LEFT JOIN (
-    SELECT source_text_hash, argMax(translated_text, version) AS translated_text
-    FROM corpscout.text_translations
-    WHERE source_table = 'corpscout.se_companies'
-      AND source_column = 'activity_description'
-      AND source_lang = 'sv'
-      AND target_lang = 'en'
-    GROUP BY source_text_hash
-  ) AS act ON act.source_text_hash = cityHash64(ifNull(c.activity_description, ''))
+    SELECT company_id, deregistration_reason, source_record_id, source_payload_hash, observed_at
+    FROM corpscout.se_bolagsverket_companies FINAL
+    WHERE has_company = 1
+  ) AS b ON b.company_id = i.company_id
+  LEFT JOIN (
+    SELECT code, argMax(label_en, version) AS label_en, argMax(label_sv, version) AS label_sv
+    FROM corpscout.se_code_labels
+    WHERE code_type = 'legal_form'
+    GROUP BY code
+  ) AS lf ON lf.code = ifNull(i.legal_form_code, '')
   LEFT JOIN (
     SELECT code, argMax(label_en, version) AS label_en
     FROM corpscout.se_code_labels
     WHERE code_type = 'status_reason'
     GROUP BY code
-  ) AS sr ON sr.code = ifNull(c.status_reason, '')
+  ) AS sr ON sr.code = ifNull(b.deregistration_reason, '')
   LEFT JOIN aggregated AS agg ON agg.company_id = i.company_id
   LEFT JOIN primary_address AS pa ON pa.company_id = i.company_id
 )
