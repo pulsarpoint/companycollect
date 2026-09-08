@@ -290,5 +290,32 @@ Finish it by hand:
    version the database is actually at. Do NOT re-run the up file: its `CREATE` would fail on
    an existing `_next`, and its `DROP` would take out the view just parked under `_retired`.
 
-The old view's refresh stays stopped by design -- it is the rollback copy, and the down file
-restarts it.
+### If the 000393 rename is interrupted
+
+Migration 000393 (below) is not a staged swap: `SYSTEM STOP VIEW`, one `RENAME TABLE`, `ALTER
+TABLE ... MODIFY QUERY`, `SYSTEM START VIEW`. **If the migrate client drops between the STOP
+and the START**, the view is left stopped and serving its last contents at full speed with
+nothing raising anywhere. Finish it by hand:
+
+1. `SELECT view, status, last_success_time, exception FROM system.view_refreshes WHERE
+   database = 'corpscout' AND view = 'se_companies_serving'` -- a stopped view still lists
+   here.
+2. If the RENAME landed but the MODIFY QUERY did not, run the `ALTER TABLE ... MODIFY QUERY`
+   statement verbatim from the migration file; if neither landed, re-running the whole up file
+   is safe once the view has been started again.
+3. `SYSTEM START VIEW corpscout.se_companies_serving`.
+4. `migrate force 393`.
+
+## Rename and retirement (slice 4b, 2026-09-08)
+
+Migration 000393 gives the address entity its final name: `corpscout.se_company_address_v2`
+becomes `corpscout.se_company_address`, and the old final table of the 2026-08-24 model --
+the one `se_company_address` named before this migration -- parks under
+`se_company_address_legacy` until slice 4c drops it by hand under the ledger policy. One
+`RENAME TABLE` moves both names at once, so there is no instant at which `se_company_address`
+resolves to nothing.
+
+This is NOT a staged swap like 000391/000392 (see above): the view's definition is otherwise
+unchanged, only the table name it reads changes, so 000393 stops the view, renames the
+tables, repoints the query in place with `ALTER TABLE ... MODIFY QUERY`, and starts the view
+again -- there is no `_next` view to build and no `SYSTEM WAIT VIEW` to sit through.

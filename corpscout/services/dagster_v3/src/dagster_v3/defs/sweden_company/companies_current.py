@@ -75,10 +75,9 @@ from dagster_v3.defs.sweden_company.geocode_store import (
     GEOCODED_STATUSES,
 )
 
-# The SE address entity (migration 000384), one row per company and published address. It
-# keeps the `_v2` name until slice 4b renames it, and this constant is the one edit that
-# rename costs here.
-COMPANY_ADDRESS_TABLE = f"{CLICKHOUSE_DATABASE}.se_company_address_v2"
+# The SE address entity (migration 000384, renamed to its final name by 000393). This
+# constant is the one place the view names it.
+COMPANY_ADDRESS_TABLE = f"{CLICKHOUSE_DATABASE}.se_company_address"
 # The company spine and its register/label joins (basic-info slice 4, migration 000391).
 BASIC_INFO_TABLE = f"{CLICKHOUSE_DATABASE}.se_company_basic_info"
 BOLAGSVERKET_TABLE = f"{CLICKHOUSE_DATABASE}.se_bolagsverket_companies"

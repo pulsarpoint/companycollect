@@ -393,7 +393,11 @@ def _script(*, join_use_nulls: int) -> str:
         table_block("se_company_basic_info"),
         table_block("se_bolagsverket_companies"),
         # The address entity itself (migration 000384) -- read FINAL, active rows only.
-        table_block("se_company_address_v2"),
+        # Migration 000384 declares the entity under its build name; 000393 renames the
+        # deployed table and never edits that file, so the local schema renames it here.
+        table_block("se_company_address_v2").replace(
+            "corpscout.se_company_address_v2", "corpscout.se_company_address"
+        ),
         # Stubs for the presence-set reads: only the columns the serving SELECT's
         # IN-subqueries touch. Seeds prove each arm independently.
         "CREATE TABLE corpscout.se_code_labels (code_type String, code String, label_en String, label_sv String, version UInt32) ENGINE = MergeTree ORDER BY code;",
@@ -445,7 +449,7 @@ def _script(*, join_use_nulls: int) -> str:
             )
         )
         + ";",
-        f"INSERT INTO corpscout.se_company_address_v2 ({ADDRESS_COLUMNS}) VALUES\n"
+        f"INSERT INTO corpscout.se_company_address ({ADDRESS_COLUMNS}) VALUES\n"
         + ",\n".join(ADDRESS_ROWS)
         + ";",
         f"SELECT * FROM (\n{build_se_companies_serving_sql()}\n) FORMAT JSONEachRow;",
