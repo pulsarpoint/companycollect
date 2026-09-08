@@ -106,6 +106,24 @@ const published: SeAddressPublished = {
   hideRule: null,
 };
 
+/** A second active address of the same company, geocoded no finer than its
+ * postcode -- two rows for the list's one map to carry. */
+const SECOND_KEY = "b".repeat(64);
+const secondPublished: SeAddressPublished = {
+  ...published,
+  row: {
+    ...row,
+    address_key: SECOND_KEY,
+    street_name: "Kungsgatan",
+    house_number: "12",
+    postal_code: "11143",
+    normalized_address: "kungsgatan 12|11143|stockholm|se",
+    latitude: 59.34,
+    longitude: 18.07,
+    geocode_precision: "postcode",
+  },
+};
+
 const detail: SeAddressDetail = {
   published: [published],
   drafts: [],
@@ -216,6 +234,27 @@ describe("SeAddressWorkspace", () => {
     for (const label of ["Edit", "Activate", "Discard"]) {
       expect(html).toContain(`>${label}</button>`);
     }
+  });
+
+  it("maps the active addresses once for the whole list, and links the selected one out to OpenStreetMap", () => {
+    const html = render(
+      <SeAddressWorkspace
+        companyId={COMPANY}
+        detail={{ ...detail, published: [published, secondPublished] }}
+        selectedKey={KEY}
+        result={null}
+      />,
+    );
+    // The map is client-only, so what renders here is its placeholder: one for
+    // the list -- not one per row -- and one for the panel's single point.
+    const placeholders = html.match(/bg-muted text-muted-foreground flex h-56/g) ?? [];
+    expect(placeholders).toHaveLength(2);
+    expect(html).toContain("Open in OpenStreetMap");
+    // Zoom 18: the selected row's geocode is exact. `&` is escaped in an
+    // attribute, so the href reads with `&amp;`.
+    expect(html).toContain(
+      "https://www.openstreetmap.org/?mlat=59.33&amp;mlon=18.06#map=18/59.33/18.06",
+    );
   });
 
   it("says what Remove did, in the wording of the row it acted on", () => {

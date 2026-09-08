@@ -1,6 +1,6 @@
 import { CheckCircle2Icon, MapPinIcon, TriangleAlertIcon } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Form, Link, useNavigation } from "react-router";
+import { Form, Link, useNavigate, useNavigation } from "react-router";
 import {
   Accordion,
   AccordionContent,
@@ -40,6 +40,7 @@ import {
   type SeAddressEditInitial,
   type SeAddressEditMode,
 } from "~/components/admin/se-address-edit-sheet";
+import { AddressMap, type AddressMapPoint } from "~/components/detail/address-map";
 import {
   addressKindLabel,
   addressSourceLabel,
@@ -124,6 +125,38 @@ function distinctSources(sources: readonly string[]): string[] {
 function activityLabel(row: SeAddressRow): string {
   if (row.active === 1) return "active";
   return row.inactive_reason === "" ? "inactive" : row.inactive_reason;
+}
+
+/** A geocode nobody should read as a doorstep: the street line or the area
+ * centroid, or a position the postcode or the city alone produced. */
+const APPROXIMATE_STATUSES = new Set(["matched_area", "matched_street"]);
+const APPROXIMATE_PRECISIONS = new Set(["postcode", "city"]);
+
+/** Where one published address goes on the map, or null when there is nothing
+ * to put there: no coordinates, a row no geocode run has touched (`''`), or a
+ * foreign address the Swedish reference set never places. Exported for the
+ * test -- the map itself never renders server-side. */
+export function mapPoint(row: SeAddressRow): AddressMapPoint | null {
+  if (row.latitude === null || row.longitude === null) return null;
+  if (row.geocode_status === "" || row.geocode_status === "foreign") return null;
+  return {
+    key: row.address_key,
+    lat: row.latitude,
+    lon: row.longitude,
+    label: [row.normalized_address, geocodeStatusLabel(row.geocode_status)]
+      .filter((part) => part !== "")
+      .join(" · "),
+    approximate:
+      APPROXIMATE_PRECISIONS.has(row.geocode_precision) ||
+      APPROXIMATE_STATUSES.has(row.geocode_status),
+  };
+}
+
+/** OpenStreetMap's marker permalink: close in on an exact position, further
+ * out on an approximate one, where the reviewer can judge the surroundings. */
+function openStreetMapUrl(point: AddressMapPoint): string {
+  const zoom = point.approximate ? 13 : 18;
+  return `https://www.openstreetmap.org/?mlat=${point.lat}&mlon=${point.lon}#map=${zoom}/${point.lat}/${point.lon}`;
 }
 
 /** The address the panel describes: the one the query string names, else the
@@ -369,11 +402,18 @@ function AddressesCard({
   busy: boolean;
   onCorrect: (entry: SeAddressPublished) => void;
 }) {
+  const navigate = useNavigate();
   const active = detail.published.filter((entry) => entry.row.active === 1);
   const inactive = detail.published.filter((entry) => entry.row.active !== 1);
   // A withdrawn or hidden address the panel is describing must be visible in
   // the list too: linking to one opens the group it hides in.
   const selectedIsInactive = inactive.some((entry) => entry.row.address_key === selectedKey);
+  // Only the active addresses are mapped -- a withdrawn or hidden one is not
+  // where this company is. Some of them have no usable geocode, so the map may
+  // hold fewer points than the list holds rows.
+  const activePoints = active
+    .map((entry) => mapPoint(entry.row))
+    .filter((point): point is AddressMapPoint => point !== null);
   return (
     <Card>
       <CardHeader>
@@ -398,6 +438,19 @@ function AddressesCard({
             </EmptyHeader>
           </Empty>
         ) : null}
+        {/* Nothing active, nothing to map -- not even the empty frame, which
+            would only repeat what the empty state above already says. */}
+        {active.length === 0 ? null : (
+          <div className="mb-3">
+            <AddressMap
+              points={activePoints}
+              selectedKey={selectedKey}
+              onSelect={(key) =>
+                navigate({ search: `?address=${key}` }, { preventScrollReset: true })
+              }
+            />
+          </div>
+        )}
         {/* A list of links, not a <dl>: an anchor may not wrap dt/dd pairs. */}
         <ul className="grid grid-cols-1 gap-y-1 text-sm">
           {active.map((entry) => (
@@ -780,6 +833,7 @@ function AddressPanel({
     entry !== null &&
     entry.members.length > 0 &&
     entry.members.every((member) => member.source === "reviewer");
+  const selectedPoint = entry === null ? null : mapPoint(entry.row);
   return (
     <Card>
       <CardHeader>
@@ -863,6 +917,26 @@ function AddressPanel({
                 ["Fold", text(entry.row.fold_version)],
               ]}
             />
+            {/* One point, so an ungeocoded address reads "No location" here
+                rather than showing the whole company's map again. Clicking it
+                selects what is already selected, so selection stays put. */}
+            <div className="mt-2">
+              <AddressMap
+                points={selectedPoint === null ? [] : [selectedPoint]}
+                selectedKey={selectedPoint?.key ?? null}
+                onSelect={() => {}}
+              />
+            </div>
+            {selectedPoint === null ? null : (
+              <a
+                className="text-muted-foreground mt-1 inline-block text-xs underline"
+                href={openStreetMapUrl(selectedPoint)}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Open in OpenStreetMap
+              </a>
+            )}
           </section>
 
           <section>
