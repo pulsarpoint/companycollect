@@ -560,7 +560,7 @@ git commit -m "chore(clickhouse): the se_companies spine's DDL leaves the ledger
 
 ### Task 7: Prod rollout (owner-named)
 
-- [ ] **Step 1:** dbt state: from `corpscout/services/dagster_v3`, run the two `dbt parse` commands for `finland_ytj` and `exchange_rates_v2` and `uv run --frozen --no-sync dg utils refresh-defs-state` (the company_serving and domain-suggestions component projects changed), then `uv run --frozen --no-sync dg check defs`.
+- [x] **Step 1:** dbt state: from `corpscout/services/dagster_v3`, run the two `dbt parse` commands for `finland_ytj` and `exchange_rates_v2` and `uv run --frozen --no-sync dg utils refresh-defs-state` (the company_serving and domain-suggestions component projects changed), then `uv run --frozen --no-sync dg check defs`.
 - [ ] **Step 2:** deploy: `cd ansible && ANSIBLE_BECOME_TIMEOUT=60 ansible-playbook -i inventory.ini light_sync.yml`; verify `sweden_company_companies_clickhouse` is gone from the code location.
 - [ ] **Step 3:** materialise the company_domain_suggestions staging dbt assets (recreates `stg_se_company_match_features`) and the company_serving publish job; both must finish green (the publish job's anchor checks now count the main table).
 - [ ] **Step 4:** smoke `http://localhost:5183/company/se/5020077862`, the SE address list, the domains review queue and the technologies page.
