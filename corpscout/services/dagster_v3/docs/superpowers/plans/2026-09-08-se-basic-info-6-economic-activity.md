@@ -80,7 +80,7 @@
 ## Task 7: Rollout (owner-run steps marked)
 
 - [x] **Step 1 (owner):** apply 000393 (other session's) then 000394: `make clickhouse-migrate-up-one` twice from `corpscout`.
-- [ ] **Step 2 (owner):** dbt-state refresh + light_sync deploy.
+- [x] **Step 2 (owner):** dbt-state refresh + light_sync deploy. (Deployed 20:17 UTC, host verified in sync, no dbt change so no refresh needed.)
 - [ ] **Step 3:** materialise `se_company_basic_info_precedence_clickhouse`.
 - [ ] **Step 4:** launch `se_basic_info_suggestions_scb` with `execute: true, since: "2000-01-01T00:00:00Z"`.
 - [ ] **Step 5:** backfill all 64 partitions of `se_company_basic_info_fold`.
