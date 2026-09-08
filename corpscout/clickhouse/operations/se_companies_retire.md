@@ -7,11 +7,12 @@ backoffice merge are live and smoke-tested.
 ## Gates
 
 ```sql
--- 1. No view or materialized view names the spine (stg_se_company_match_features is
---    rebuilt by dbt from se_company_basic_info before this runs).
+-- 1. No view or materialized view reads the spine (stg_se_company_match_features is
+--    rebuilt by dbt from se_company_basic_info before this runs). The match is on a
+--    FROM or JOIN, so a provenance string literal cannot hold the gate.
 SELECT count() = 0 AS no_readers FROM system.tables
 WHERE database = 'corpscout' AND engine IN ('View', 'MaterializedView')
-  AND match(create_table_query, 'se_companies([^_a-z]|$)');
+  AND match(create_table_query, '(FROM|JOIN)\\s+(corpscout\\.)?se_companies([^_a-z]|$)');
 
 -- 2. Row counts recorded.
 SELECT count() FROM corpscout.se_companies;

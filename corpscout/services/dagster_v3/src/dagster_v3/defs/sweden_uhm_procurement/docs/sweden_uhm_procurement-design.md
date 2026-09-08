@@ -13,7 +13,7 @@ Swedish company registry. `company_match_status` records whether the row is an
 
 Only rows marked `Kontrakterad` whose normalized supplier identity is exactly
 ten digits are eligible for company matching. Company-level evidence requires
-an exact join to `corpscout.se_companies.company_id`; 12-digit person-keyed IDs,
+an exact join to `corpscout.se_company_basic_info.company_id`; 12-digit person-keyed IDs,
 missing identifiers, and unmatched suppliers cannot turn the company signal
 green.
 

@@ -106,7 +106,7 @@ SELECT
 FROM gleif_normalized AS g
 -- BOTH sides normalised. Only GLEIF's side was, so a register storing its ids
 -- punctuated never matched: Finland went from 0 to 47,680 on this line alone.
--- Sweden was unaffected because se_companies.company_id is already bare digits,
+-- Sweden was unaffected because se_company_basic_info.company_id is already bare digits,
 -- which is exactly why it went unnoticed.
 INNER JOIN register_current AS r
     ON r.company_id_normalized = g.company_id_normalized

@@ -102,7 +102,7 @@ Swedish registry universe:
 Wikidata item with P6460
   -> corpscout.wikidata_company_identifiers (identifier_type = 'se_orgnr')
   -> remove non-digits from the organisation number
-  -> corpscout.se_companies.company_id
+  -> corpscout.se_company_basic_info.company_id
   -> corpscout.wikidata_companies via wikidata_id
   -> corpscout.se_company_info_wikidata
 ```
@@ -112,7 +112,7 @@ A second path matches a Wikidata LEI to the current Swedish LEI in
 `corpscout.se_companies`.
 
 For example, Wikidata item `Q1421630` carries `P6460 = 502007-7862`. The normalized
-identifier `5020077862` is matched to `corpscout.se_companies.company_id`.
+identifier `5020077862` is matched to `corpscout.se_company_basic_info.company_id`.
 
 ## 4. Raw snapshot and orchestration
 

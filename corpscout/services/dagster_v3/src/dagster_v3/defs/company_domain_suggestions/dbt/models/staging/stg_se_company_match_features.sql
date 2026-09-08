@@ -45,7 +45,7 @@ company_name_values AS (
         companies.company_id,
         companies.company_name,
         companies.company_name AS raw_value,
-        'se_companies.legal_name' AS source_field
+        'se_company_basic_info.legal_name' AS source_field
     FROM companies
     WHERE companies.company_name != ''
 

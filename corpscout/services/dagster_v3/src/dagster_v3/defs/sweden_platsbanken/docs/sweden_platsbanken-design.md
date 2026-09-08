@@ -21,7 +21,7 @@
   a content-derived `id` and carry the Platsbanken ad id in `original_id`; live
   JobStream records normally put that ad id in `id`.
 - **Company key**: normalized ten-digit employer organization number, exact join
-  to `corpscout.se_companies.company_id`. Employer-name matching is prohibited.
+  to `corpscout.se_company_basic_info.company_id`. Employer-name matching is prohibited.
 
 ## 2. Ingest mode — and why
 
