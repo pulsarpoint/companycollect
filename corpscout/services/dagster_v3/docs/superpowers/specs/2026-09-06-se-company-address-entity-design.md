@@ -573,6 +573,16 @@ The corrections queue page keeps reading the old ledger until the cutover retire
    2,019,120 adopted) and the hourly serving refresh takes 432 s. Re-running a folded
    bucket selects nothing.
 3. Backoffice: the Address tab on the new tables.
+   Shipped 2026-09-08 (plan `2026-09-07-se-company-address-3-backoffice.md`, main
+   af8c0ad1 and b10a624b): the tab of section 8 with its two client-safe modules, the
+   entity server module (reviewer rows under slot `r<17 digits>` with the extractors'
+   `suggestion_id` rule, hide rules, the targeted fold launch), the workspace and edit
+   sheet, the shared fold poller, and location maps on react-leaflet (an overview of the
+   active addresses and the selected address's point, centroids dashed). The targeted fold
+   normalizes the company's raw rows first. Rulings: Remove on a row with any non-reviewer
+   member writes the hide rule only (the key is union-derived), on a reviewer-only row it
+   tombstones the reviewer slots; a company with no rows still gets the tab; the old
+   address modules stay until the cutover. Owner smoke 2026-09-08: good.
 4. Cutover: parity, reader switch, retirement.
 
 **Parity**: per company, the set of active `normalized_address` lines in the new table
