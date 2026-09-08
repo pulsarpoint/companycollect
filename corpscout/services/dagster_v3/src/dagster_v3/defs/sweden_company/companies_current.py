@@ -2,7 +2,7 @@
 
 The companies/geocoding admin surfaces need a per-company row -- legal name, the company's
 published addresses as a JSON array, and a pre-computed geocode summary for the PRIMARY
-address -- without paying the FINAL merges on `se_company_address_v2`/`se_company_basic_info`
+address -- without paying the FINAL merges on `se_company_address`/`se_company_basic_info`
 and the per-company aggregation on every request. This module is the single source of truth
 for that SELECT; migration 000335 materializes it as a refreshable MV, 000391 repoints its
 company spine at the folded basic-info row, 000392 repoints its address half at the address
@@ -10,7 +10,7 @@ entity, and the backoffice admin companies pages read the materialized table.
 
 WHAT IT AGGREGATES.
 
-- One row per company. `se_company_address_v2` FINAL, `active = 1` only, is reduced to a
+- One row per company. `se_company_address` FINAL, `active = 1` only, is reduced to a
   per-company JSON array of its published addresses (companies carry 1-2), plus an
   `address_count`.
 - Each address element is a Map(String, String) -- every value stringified so `toJSONString`

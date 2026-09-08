@@ -20,9 +20,9 @@ import {
 const nf = new Intl.NumberFormat("en-US");
 
 /** One published address as a line a reader recognises: street, then "postal
- * code city". Mirrors se-company-address.tsx's own `displayAddress` (minus
- * care_of, which this list does not project) so the same address reads the
- * same way on both pages. */
+ * code city" (minus care_of, which this list does not project) -- the same
+ * convention the address pages use so an address reads the same way
+ * everywhere it appears. */
 function displayAddress(row: SeCompanyGeocodingListRow): string {
   const locality = [row.postal_code, row.city].filter((part) => part !== "").join(" ");
   return [row.street_address, locality].filter((part) => part !== "").join(", ") || "—";

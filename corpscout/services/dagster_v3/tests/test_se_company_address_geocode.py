@@ -14,8 +14,8 @@ Slice 2a, spec sections 3.7 (as amended for the location key) and 6. What this f
 4. A row on another policy version is a miss and is re-matched -- an `adopted:` row
    included: only the imported `legacy_adopted_v1` family is an unconditional hit.
 5. The per-run tables are dropped even when the engine raises.
-6. Every written row carries the OSM extract's five provenance columns (the live store
-   check `missing_provenance` gates on them) and a `candidate_count` clamped to `UInt16`.
+6. Every written row carries the OSM extract's five provenance columns (no stored row may
+   carry a NULL in one of them) and a `candidate_count` clamped to `UInt16`.
 7. Both id-bound reads render past ClickHouse's default `max_query_size` at a full chunk,
    and both pass the raised `GEOCODE_QUERY_SETTINGS`.
 8. The two shared matcher inputs are per-EXTRACT caches, not per-call work: one
@@ -72,8 +72,8 @@ STAMP = datetime(2026, 9, 6, 12, 0, tzinfo=UTC)
 CACHED_AT = datetime(2026, 8, 20, 9, 0, tzinfo=UTC)
 
 # The OSM extract's provenance, carried on every `address_points` row (000275) and copied
-# onto every store row this module writes -- the live store check `missing_provenance`
-# (sweden_company/address_geocoding_assets.py) gates on all five being non-NULL.
+# onto every store row this module writes -- no stored row may carry a NULL in one of
+# these five (see `ExtractProvenance`).
 SOURCE_URL = "https://download.geofabrik.de/europe/sweden-latest.osm.pbf"
 SOURCE_OBJECT_KEY = "raw/sweden-test.osm.pbf"
 SNAPSHOT_AT = datetime(2026, 8, 16, tzinfo=UTC)
@@ -908,9 +908,9 @@ def test_the_extract_provenance_is_stamped_on_every_written_row(
 ) -> None:
     """I3: no stored outcome may carry a NULL in one of these five -- the contract the
     retired store-completeness check asserted as `missing_provenance` -- so the entity's own
-    rows carry the OSM extract's provenance, read from the workbench exactly as
-    address_resolution_promotion.py reads it. `source_record_id`/`source_record_url` stay
-    NULL: they name one imported source record, which a resolver answer does not have."""
+    rows carry the OSM extract's provenance, read from the workbench exactly as the retired
+    promotion step read it. `source_record_id`/`source_record_url` stay NULL: they name one
+    imported source record, which a resolver answer does not have."""
     client = FakeClient()
 
     _run(workbench, client, {STREET_KEY: STREET})
@@ -973,7 +973,7 @@ def test_a_store_row_refuses_a_provenance_from_another_extract() -> None:
 def test_the_candidate_count_is_clamped_to_the_uint16_column() -> None:
     """`candidate_count` is `UInt16` (migration 000317). A common street in a big city can
     return more candidates than 65,535, and clickhouse-driver would reject the whole block.
-    Clamped, exactly as address_resolution_promotion.py's `least(65535, ...)` does it."""
+    Clamped, exactly as the retired promotion step's `least(65535, ...)` did it."""
     row = dict(
         zip(
             STORE_COLUMNS,

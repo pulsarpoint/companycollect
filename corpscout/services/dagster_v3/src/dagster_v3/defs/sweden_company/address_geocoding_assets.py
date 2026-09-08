@@ -24,7 +24,6 @@ from dagster_v3.defs.sweden_company.companies_current_asset import (
     sweden_companies_current_refresh_check,
 )
 
-GROUP_NAME = "sweden_company"
 WEEKLY_CRON_SCHEDULE = "5 4 * * 2"
 WEEKLY_EXECUTION_TIMEZONE = "Europe/Stockholm"
 

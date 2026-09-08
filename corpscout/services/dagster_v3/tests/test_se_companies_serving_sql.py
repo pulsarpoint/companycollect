@@ -10,9 +10,10 @@ the module skips), twice -- once per `join_use_nulls` setting -- and must answer
 times, because every LEFT JOIN this SELECT still makes (the register row, the two label
 dictionaries, the aggregation and the primary pick) is guarded by `ifNull`/`coalesce`.
 
-SINCE SLICE 4a the address half reads the ADDRESS ENTITY, `corpscout.se_company_address_v2`
-(migration 000384): one row per company and published address, `active = 1` for the published
-ones, `kinds` an array, and the geocode outcome -- status, precision, coordinate -- on the row
+SINCE SLICE 4a the address half reads the ADDRESS ENTITY, `corpscout.se_company_address`
+(migration 000384; renamed from `_v2` by 000393): one row per company and published address,
+`active = 1` for the published ones, `kinds` an array, and the geocode outcome -- status,
+precision, coordinate -- on the row
 itself. There is no served-overlay join any more; the `centroid_fallback` provider the overlay
 used to stamp is DERIVED from `geocode_status = 'matched_area'`, which is what the centroid
 overlay writes.

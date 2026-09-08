@@ -3,7 +3,7 @@ in chunks. A fake client records every statement; `geocode_addresses` is stubbed
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import dagster as dg
@@ -200,3 +200,15 @@ def test_the_freshness_check_reports_the_age_of_the_newest_stored_snapshot() -> 
 def test_an_empty_store_reports_no_snapshot_rather_than_raising() -> None:
     assert warm.fetch_osm_snapshot_freshness(SnapshotClient([(None,)])) is None
     assert not warm.osm_snapshot_is_fresh(snapshot_at=None, now=datetime.now(UTC))
+
+
+def test_a_snapshot_eight_days_old_is_fresh() -> None:
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    assert warm.osm_snapshot_is_fresh(snapshot_at=now - timedelta(days=8), now=now)
+
+
+def test_a_snapshot_past_the_maximum_age_by_a_minute_is_stale() -> None:
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    assert not warm.osm_snapshot_is_fresh(
+        snapshot_at=now - warm.MAX_OSM_SNAPSHOT_AGE - timedelta(minutes=1), now=now
+    )

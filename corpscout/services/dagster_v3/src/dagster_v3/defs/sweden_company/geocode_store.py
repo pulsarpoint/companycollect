@@ -118,9 +118,8 @@ STORE_COLUMNS = (
     "geocode_run_id",
     "matched_at",
 )
-# What se_address_geocodes_current holds: the store minus the two version columns. Equal to
-# shared_address_geocoding.ADDRESS_GEOCODE_COLUMNS, asserted rather than imported so this
-# module keeps no dependency on the matcher-era module.
+# What se_address_geocodes_current (the ClickHouse REFRESHABLE MATERIALIZED VIEW behind
+# migration 000320) holds: the store minus the two version columns.
 SERVING_COLUMNS = tuple(
     column
     for column in STORE_COLUMNS

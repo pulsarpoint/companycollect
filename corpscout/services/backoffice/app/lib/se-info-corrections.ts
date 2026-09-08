@@ -19,10 +19,9 @@ export const SE_INFO_CORRECTION_KINDS = [
 export type SeInfoCorrectionKind = (typeof SE_INFO_CORRECTION_KINDS)[number];
 
 /**
- * A correction ledger row's status relative to the published row, as the
- * corrections list computes it in SQL (`ADDRESS_CORRECTION_STATUS_EXPR` in
- * se-company-address-lists.server.ts).
- * Declared here (client-safe) rather than in those `.server` modules so the
+ * A correction ledger row's status relative to the published row, as a
+ * corrections list computes it in SQL.
+ * Declared here (client-safe) rather than in a `.server` module so a
  * list's `<Select>` filter can import the value set directly instead of
  * keeping a second copy.
  */

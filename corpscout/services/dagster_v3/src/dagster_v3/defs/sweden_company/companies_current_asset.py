@@ -1,10 +1,12 @@
 """Force-refresh `corpscout.se_companies_serving` at the end of the weekly geocoding run.
 
 Migration 000335 makes `se_companies_serving` a REFRESHABLE MATERIALIZED VIEW that ClickHouse
-rebuilds on its own EVERY 15 MINUTES, so nothing here computes its contents. What this asset does is
-tighten the timing: the weekly job has just republished the coarse centroids and warmed the
-address entity's geocode cache against the new OSM extract. Left to the hourly schedule, the view
-would keep serving the PREVIOUS week's join for up to 15 minutes after that data landed. Issuing
+rebuilds on its own; 000366 moved that cadence to HOURLY, OFFSET 45 MINUTE (restated by 000393's
+MODIFY QUERY, which carried the same schedule forward), so nothing here computes its contents.
+What this asset does is tighten the timing: the weekly job has just republished the coarse
+centroids and warmed the address entity's geocode cache against the new OSM extract. Left to the
+hourly schedule, the view would keep serving the PREVIOUS week's join for up to an hour after
+that data landed. Issuing
 `SYSTEM REFRESH VIEW` forces an immediate rebuild and `SYSTEM WAIT VIEW` blocks until it lands, so
 the admin surfaces read fresh rows the moment the run finishes rather than at the next auto-refresh.
 

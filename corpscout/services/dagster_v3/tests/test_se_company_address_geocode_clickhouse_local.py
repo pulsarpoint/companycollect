@@ -370,12 +370,11 @@ def test_the_insert_tuple_round_trips(sections: dict[str, list[list[str]]]) -> N
         "coordinate_method": "resolver",
         "coordinate_supporting_point_count": "1",
         # The two per-RECORD columns stay NULL: the resolver's answer names candidates, not
-        # one imported source record, and `missing_provenance` does not count them.
+        # one imported source record, and the provenance contract does not count them.
         "source_record_id": "\\N",
         "source_record_url": "\\N",
-        # The five per-EXTRACT columns the live store check `missing_provenance` gates on
-        # (sweden_company/address_geocoding_assets.py) come back non-NULL, and `source_md5`
-        # is the row's own `reference_md5`.
+        # The five per-EXTRACT columns the provenance contract requires come back non-NULL,
+        # and `source_md5` is the row's own `reference_md5`.
         "source_url": PROVENANCE.source_url,
         "source_object_key": PROVENANCE.source_object_key,
         "source_md5": REFERENCE,

@@ -113,8 +113,8 @@ CACHE_LOOKUP_CHUNK = 5_000
 # pool slot forever.
 GEOCODE_QUERY_SETTINGS = {"max_query_size": 1_048_576, "max_execution_time": 1800}
 
-# The extract's provenance, read exactly as address_resolution_promotion.py reads it
-# (`_replace_promotion_stage`'s `_sweden_address_resolution_osm_provenance`): one row,
+# The extract's provenance, read exactly as the retired promotion step read it (its
+# `_replace_promotion_stage`'s `_sweden_address_resolution_osm_provenance`): one row,
 # `first(... order by source_record_id)` per column, off the same workbench table
 # `geocode_demand.fresh_reference_md5` takes the reference md5 from.
 EXTRACT_PROVENANCE_SQL = f"""select
@@ -381,8 +381,8 @@ def store_row(
     `''` and never `None` (migration 000317); `coordinate_method` is Nullable and carries
     `NULL` when there is no coordinate to have a method for. The two per-RECORD `source_*`
     columns describe an IMPORTED row's one source record and stay NULL here; the five
-    per-EXTRACT ones carry `provenance`, because the live store check `missing_provenance`
-    gates on them (see ExtractProvenance).
+    per-EXTRACT ones carry `provenance`, which `ExtractProvenance` guarantees carries no
+    NULL in any of the five.
     """
     if provenance.source_md5 != reference_md5:
         raise ValueError(
@@ -401,7 +401,7 @@ def store_row(
         "match_status": result["resolution_status"],
         # UInt16 (migration 000317): a common street in a big city can return more than
         # 65,535 candidates, and clickhouse-driver would reject the whole block. Clamped
-        # exactly as address_resolution_promotion.py's `least(65535, ...)` clamps it.
+        # exactly as the retired promotion step's `least(65535, ...)` clamped it.
         "candidate_count": min(65535, int(result["candidate_record_count"])),
         "candidate_record_ids": list(result["candidate_record_ids"]),
         "candidate_record_urls": list(result["candidate_record_urls"]),

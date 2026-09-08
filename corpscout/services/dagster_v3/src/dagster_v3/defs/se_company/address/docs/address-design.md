@@ -184,13 +184,13 @@ after the next policy bump or OSM extract like any other row.
 `source_url`, `source_object_key`, `source_md5`, `source_snapshot_at`,
 `source_retrieved_at` -- read once per call by `extract_provenance` off
 `sweden_address_osm.address_points` with the same `first(... order by source_record_id)`
-projection `address_resolution_promotion.py` uses. The live store check
-`missing_provenance` (`sweden_company/address_geocoding_assets.py`) fails the store if any
-row has a NULL in one of them. `source_md5` is the row's own `reference_md5` (both are the
-same read) and `store_row` refuses any other pairing. The two per-RECORD columns,
-`source_record_id` and `source_record_url`, stay NULL and the check does not count them.
-`candidate_count` is clamped to 65,535, the `UInt16` column's ceiling, exactly as the
-promotion's `least(65535, ...)` clamps it.
+projection the retired promotion step used. No stored row may carry a NULL in one of them --
+the contract the retired store-completeness check used to assert (`missing_provenance`,
+deleted with the demand chain in slice 4b). `source_md5` is the row's own `reference_md5`
+(both are the same read) and `store_row` refuses any other pairing. The two per-RECORD
+columns, `source_record_id` and `source_record_url`, stay NULL and are not part of that
+contract. `candidate_count` is clamped to 65,535, the `UInt16` column's ceiling, exactly as
+the retired promotion step's `least(65535, ...)` clamped it.
 
 **Query settings.** Both id-bound reads -- the cache lookup and the centroid fallback --
 bind up to `CACHE_LOOKUP_CHUNK` (5,000) values that clickhouse-driver substitutes CLIENT
