@@ -8,8 +8,8 @@
 WITH companies AS (
     SELECT
         company_id,
-        ifNull(legal_name, '') AS company_name
-    FROM {{ source('corpscout', 'se_companies') }} FINAL
+        legal_name AS company_name
+    FROM {{ source('corpscout', 'se_company_basic_info') }} FINAL
     WHERE match(company_id, '^[0-9]{10}$')
 ),
 
@@ -45,7 +45,7 @@ company_name_values AS (
         companies.company_id,
         companies.company_name,
         companies.company_name AS raw_value,
-        'se_companies.legal_name' AS source_field
+        'se_company_basic_info.legal_name' AS source_field
     FROM companies
     WHERE companies.company_name != ''
 

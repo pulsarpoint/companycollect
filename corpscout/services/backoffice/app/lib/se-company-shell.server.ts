@@ -13,7 +13,7 @@ export interface SeCompanyShell {
    * What the code is called, both languages, from the curated
    * corpscout.se_code_labels dictionary. Read by code rather than off the
    * published row, exactly as `entity_type_label` is: the header renders for
-   * unpublished companies too (SHELL_REGISTER_SQL), and se_companies carries
+   * unpublished companies too (SHELL_REGISTER_SQL), and the fallback carries
    * the code only. '' when the dictionary does not name the code.
    */
   legal_form_label_en: string;
@@ -54,7 +54,7 @@ interface SeLegalFormLabelQueryRow {
 /**
  * Both shell queries project the same five columns under the same names, so
  * one row type covers either source. `FINAL` on both: se_company_basic_info and
- * se_companies are ReplacingMergeTrees, and the newest version is the only
+ * the fallback read the same ReplacingMergeTree, and the newest version is the only
  * one a reviewer may be shown. Nullable columns are collapsed with ifNull so
  * the header never has to distinguish "" from null.
  */
@@ -74,7 +74,7 @@ export const SHELL_REGISTER_SQL = `SELECT
   ifNull(c.legal_form_code, '') AS legal_form_code,
   toString(c.status) AS status,
   ifNull(toString(c.incorporation_date), '') AS incorporation_date
-FROM corpscout.se_companies AS c FINAL
+FROM corpscout.se_company_basic_info AS c FINAL
 WHERE c.company_id = {companyId:String}
 LIMIT 1`;
 

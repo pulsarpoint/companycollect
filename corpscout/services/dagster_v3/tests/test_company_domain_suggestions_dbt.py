@@ -88,7 +88,7 @@ def test_sweden_company_match_features_are_normalized_and_technology_independent
     ).read_text()
 
     for source in (
-        "se_companies",
+        "se_company_basic_info",
         "se_scb_companies",
         "se_bolagsverket_companies",
         "se_company_address",
@@ -428,7 +428,7 @@ class _DbtRunClickHouse:
             return []
         if "min(suggested_at)" in normalized_sql:
             return [(datetime(2026, 8, 9, tzinfo=UTC),)]
-        if "FROM corpscout.se_companies" in normalized_sql:
+        if "FROM corpscout.se_company_basic_info" in normalized_sql:
             return [(10,)]
         if (
             f"FROM {tables.QUALIFIED_DBT_ADDRESS_NACE_CANDIDATES_TABLE} AS address"

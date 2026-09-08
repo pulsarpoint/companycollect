@@ -5,7 +5,6 @@ from dagster_v3.defs.common.wikidata_registry_seed import WikidataRegistrySeedSp
 DLT_DATASET_NAME = "sweden_company"
 
 SWEDEN_DATABASE = "corpscout"
-COMPANIES_TABLE_CH = "se_companies"
 COMPANY_ADDRESSES_TABLE_CH = "se_company_addresses"
 COMPANY_ADDRESSES_CURRENT_TABLE_CH = "se_company_addresses_current"
 INDUSTRIES_TABLE_CH = "se_industries"
@@ -13,7 +12,6 @@ COMPANY_PROCEEDING_OBSERVATIONS_TABLE_CH = "se_company_proceeding_observations"
 COMPANY_PROCEEDINGS_CURRENT_TABLE_CH = "se_company_proceedings_current"
 COMPANY_INDUSTRY_OBSERVATIONS_TABLE_CH = "se_company_industry_observations"
 COMPANY_INDUSTRY_CURRENT_TABLE_CH = "se_company_industry_current"
-QUALIFIED_COMPANIES_TABLE = f"{SWEDEN_DATABASE}.{COMPANIES_TABLE_CH}"
 QUALIFIED_COMPANY_ADDRESSES_TABLE = f"{SWEDEN_DATABASE}.{COMPANY_ADDRESSES_TABLE_CH}"
 QUALIFIED_COMPANY_ADDRESSES_CURRENT_TABLE = (
     f"{SWEDEN_DATABASE}.{COMPANY_ADDRESSES_CURRENT_TABLE_CH}"
@@ -46,7 +44,7 @@ SWEDEN_COMPANY_DUCKDB_PATH = Path("data/sweden_company_source.duckdb")
 WIKIDATA_REGISTRY_SEED_SPEC = WikidataRegistrySeedSpec(
     property_id="P6460",
     country_iso2="SE",
-    spine_asset_key="sweden_company_companies_clickhouse",
+    spine_asset_key="se_company_basic_info_fold",
 )
 
 BOLAGSVERKET_SOURCE_COLUMNS = (
@@ -107,31 +105,6 @@ RAW_PROVENANCE_COLUMNS = (
     "source_payload_hash",
     "source_s3_key",
     "raw_record",
-)
-
-SE_COMPANIES_EXPORT_COLUMNS = (
-    "company_id",
-    "registration_number",
-    "bolagsverket_company_id_raw",
-    "scb_company_id_raw",
-    "legal_name",
-    "legal_name_raw",
-    "legal_name_registration_date",
-    "legal_form_code",
-    "status",
-    "status_source",
-    "status_observed_at",
-    "status_conflict",
-    "status_reason",
-    "incorporation_date",
-    "dissolution_date",
-    "activity_description",
-    "source_run_id",
-    "bolagsverket_source_record_id",
-    "scb_source_record_id",
-    "bolagsverket_source_payload_hash",
-    "scb_source_payload_hash",
-    "updated_from_raw_at",
 )
 
 # The whole SCB register record per company, in the DDL order of migration 000373. Bound

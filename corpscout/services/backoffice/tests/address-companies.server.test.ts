@@ -99,7 +99,7 @@ describe("getSwedenCompaniesAtSameBuilding", () => {
     expect(sql).not.toContain("ifNull(unit, '')");
     expect(sql).not.toContain("replaceRegexpAll");
     // The company asked about is never one of its own neighbours.
-    expect(sql).toContain("AND registration_number != {id:String}");
+    expect(sql).toContain("AND company_id != {id:String}");
   });
 
   it("maps the answer and flags a page it had to cut", async () => {

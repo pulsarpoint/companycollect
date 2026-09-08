@@ -43,7 +43,6 @@ def test_registry_covers_the_known_scheduled_leaves() -> None:
         "open_page_rank_domains_clickhouse",
         "slovakia_financials_metrics_clickhouse",
         "slovakia_rpo_clickhouse_companies",
-        "sweden_company_companies_clickhouse",
         "sweden_company_scb_companies_clickhouse",
         "sweden_company_bolagsverket_companies_clickhouse",
         "sweden_financial_backfill_reports_clickhouse",

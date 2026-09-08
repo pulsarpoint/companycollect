@@ -8,7 +8,7 @@ HAVING count() > 1
 {% test company_serving_sweden_anchor(model) %}
 SELECT serving.company_id
 FROM {{ model }} AS serving
-LEFT JOIN {{ source('corpscout', 'se_companies') }} AS company FINAL
+LEFT JOIN {{ source('corpscout', 'se_company_basic_info') }} AS company FINAL
     ON company.company_id = serving.company_id
 WHERE company.company_id = ''
 GROUP BY serving.company_id

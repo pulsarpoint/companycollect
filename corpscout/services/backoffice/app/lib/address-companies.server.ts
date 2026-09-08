@@ -59,13 +59,13 @@ const SWEDEN_SAME_BUILDING_QUERY = `WITH
       AND toString(country_code) = (SELECT country_code FROM target_address)
   )
 SELECT
-  toString(registration_number) AS company_id,
-  coalesce(legal_name, '') AS company_name,
+  company_id,
+  legal_name AS company_name,
   status AS status
-FROM corpscout.se_companies
+FROM corpscout.se_company_basic_info FINAL
 WHERE company_id IN matching_company_ids
-  AND registration_number != {id:String}
-ORDER BY lowerUTF8(company_name), registration_number
+  AND company_id != {id:String}
+ORDER BY lowerUTF8(company_name), company_id
 LIMIT 51`;
 
 export async function getSwedenCompaniesAtSameBuilding(

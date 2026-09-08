@@ -42,18 +42,18 @@ def test_company_identifier_column_contract() -> None:
 def test_sweden_rule_declares_scheme_register_and_normalization() -> None:
     assert _SE.country_code == "SE"
     assert _SE.issuer_scheme == "lei"
-    assert _SE.register_table == "se_companies"
+    assert _SE.register_table == "se_company_basic_info"
     assert _SE.identifier_length == 10
     assert _SE.min_expected_rows >= 100
 
 
 def test_sql_deduplicates_the_replacing_merge_tree_register() -> None:
-    """se_companies is a ReplacingMergeTree; a raw join fans out."""
+    """se_company_basic_info is a ReplacingMergeTree; a raw join fans out."""
     sql = build_company_identifier_insert_sql(_STAGE, _SE)
 
     assert "register_current AS" in sql
     assert "GROUP BY company_id" in sql
-    assert "INNER JOIN corpscout.se_companies AS r" not in sql
+    assert "INNER JOIN corpscout.se_company_basic_info AS r" not in sql
 
 
 def test_sql_requires_the_identifier_to_exist_in_the_register() -> None:

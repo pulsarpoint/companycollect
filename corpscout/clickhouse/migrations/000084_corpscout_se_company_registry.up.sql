@@ -1,32 +1,7 @@
 CREATE DATABASE IF NOT EXISTS corpscout;
 
-CREATE TABLE IF NOT EXISTS corpscout.se_companies
-(
-    company_id String,
-    registration_number String,
-    bolagsverket_company_id_raw Nullable(String),
-    scb_company_id_raw Nullable(String),
-    legal_name Nullable(String),
-    legal_name_raw Nullable(String),
-    legal_name_registration_date Nullable(Date32),
-    legal_form_code Nullable(String),
-    status LowCardinality(String),
-    status_source LowCardinality(Nullable(String)),
-    status_observed_at Nullable(DateTime64(3, 'UTC')),
-    status_conflict UInt8,
-    status_reason Nullable(String),
-    incorporation_date Nullable(Date32),
-    dissolution_date Nullable(Date32),
-    activity_description Nullable(String),
-    source_run_id String,
-    bolagsverket_source_record_id Nullable(String),
-    scb_source_record_id Nullable(String),
-    bolagsverket_source_payload_hash Nullable(String),
-    scb_source_payload_hash Nullable(String),
-    updated_from_raw_at DateTime64(3, 'UTC')
-)
-ENGINE = ReplacingMergeTree(updated_from_raw_at)
-ORDER BY (company_id);
+-- se_companies (the old Sweden company spine) was dropped by hand in basic-info slice 5
+-- (2026-09-08) and its DDL left this file per the dev-phase ledger policy.
 
 CREATE TABLE IF NOT EXISTS corpscout.se_company_addresses
 (

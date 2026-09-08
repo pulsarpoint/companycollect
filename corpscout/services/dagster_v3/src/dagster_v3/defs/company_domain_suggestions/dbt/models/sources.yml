@@ -4,7 +4,7 @@ sources:
   - name: corpscout
     schema: corpscout
     tables:
-      - name: se_companies
+      - name: se_company_basic_info
       - name: se_scb_companies
       - name: se_bolagsverket_companies
       - name: se_company_address

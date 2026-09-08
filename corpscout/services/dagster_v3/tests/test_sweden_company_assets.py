@@ -21,7 +21,6 @@ def test_sweden_company_refresh_job_and_schedule_registered() -> None:
         "sweden_company_raw_snapshot_s3",
         "sweden_company_raw_duckdb",
         "sweden_company_normalized_duckdb",
-        "sweden_company_companies_clickhouse",
         "sweden_company_scb_companies_clickhouse",
         "sweden_company_bolagsverket_companies_clickhouse",
         "sweden_company_profile_history_clickhouse",
@@ -39,7 +38,6 @@ def test_sweden_company_refresh_job_and_schedule_registered() -> None:
     normalized_node = asset_graph.get(dg.AssetKey("sweden_company_normalized_duckdb"))
     assert normalized_node.group_name == "sweden_company"
     for asset_key in (
-        "sweden_company_companies_clickhouse",
         "sweden_company_scb_companies_clickhouse",
         "sweden_company_bolagsverket_companies_clickhouse",
         "sweden_company_industries_clickhouse",
@@ -81,4 +79,4 @@ def test_identities_normalized_check_registered() -> None:
         for spec in checks_def.check_specs
     ]
     names = {(spec.asset_key.to_user_string(), spec.name) for spec in check_specs}
-    assert ("sweden_company_companies_clickhouse", "identities_normalized") in names
+    assert ("sweden_company_scb_companies_clickhouse", "identities_normalized") in names

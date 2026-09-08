@@ -133,7 +133,7 @@ def sweden_uhm_procurement_awards_duckdb(
     name="sweden_uhm_procurement_awards_clickhouse",
     deps=[
         dg.AssetKey("sweden_uhm_procurement_awards_duckdb"),
-        dg.AssetKey("sweden_company_companies_clickhouse"),
+        dg.AssetKey("se_company_basic_info_fold"),
     ],
     group_name=tables.GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse"},
@@ -141,7 +141,7 @@ def sweden_uhm_procurement_awards_duckdb(
     metadata={"table": tables.QUALIFIED_AWARDS_TABLE},
     description=(
         "Publishes every normalized UHM supplier-award observation for market "
-        "analysis and annotates exact ten-digit se_companies matches. Only exact "
+        "analysis and annotates exact ten-digit se_company_basic_info matches. Only exact "
         "matches can feed company-level government-contract evidence."
     ),
 )
@@ -159,11 +159,13 @@ def sweden_uhm_procurement_awards_clickhouse(
     return dg.MaterializeResult(metadata=counts)
 
 
+# The basic-info fold is a lineage dependency of the awards export (the export annotates
+# matches against the main table); the job must never plan the partitioned fold or its
+# extractors, so the fold's chain is subtracted from the upstream selection.
 sweden_uhm_procurement_job = dg.define_asset_job(
     "sweden_uhm_procurement_job",
-    selection=dg.AssetSelection.assets(
-        "sweden_uhm_procurement_awards_clickhouse"
-    ).upstream(),
+    selection=dg.AssetSelection.assets("sweden_uhm_procurement_awards_clickhouse").upstream()
+    - dg.AssetSelection.assets("se_company_basic_info_fold").upstream(),
 )
 
 sweden_uhm_procurement_schedule = dg.ScheduleDefinition(

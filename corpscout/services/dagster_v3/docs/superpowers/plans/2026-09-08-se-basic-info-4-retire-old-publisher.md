@@ -1048,7 +1048,7 @@ git checkout main && git merge --no-ff se-basic-info-4-retire-publisher -m "Merg
 
 ### Task 6: Prod rollout (each step owner-named)
 
-- [ ] **Step 1: Stop the old instigators** (ids read on 2026-09-08; re-read them if the code location was redeployed since):
+- [x] **Step 1: Stop the old instigators** (ids read on 2026-09-08; re-read them if the code location was redeployed since):
 
 ```bash
 curl -s -X POST http://dagster:3000/graphql -H 'Content-Type: application/json' --data '{"query":"mutation { stopRunningSchedule(id: \"bd4fbf83b45cfd7203191dc2fa631b95ad79d2b7::ea43949cc907c1b5b6e72d3051f5fd05d6ce799d\") { __typename ... on ScheduleStateResult { scheduleState { status } } ... on PythonError { message } } }"}'
@@ -1057,9 +1057,9 @@ curl -s -X POST http://dagster:3000/graphql -H 'Content-Type: application/json' 
 
 Expected: both report `STOPPED`.
 
-- [ ] **Step 2: Deploy dagster_v3.** The local defs-state was refreshed on 2026-09-08 at commit `956949b7e`. First run, from the repo root, `git log --oneline 956949b7e..HEAD -- 'corpscout/services/dagster_v3/src/dagster_v3/defs/*/dbt' 'corpscout/services/dagster_v3/src/dagster_v3/defs/*/*/dbt'`; if it lists anything, run the two `dbt parse` commands and `uv run --frozen --no-sync dg utils refresh-defs-state` first. Then from `ansible/`: `ANSIBLE_BECOME_TIMEOUT=60 ansible-playbook -i inventory.ini light_sync.yml`, capture the exit code. Verify: the GraphQL `assetOrError` for `se_company_info_clickhouse` returns `AssetNotFoundError`, and for `se_company_basic_info_fold` returns the asset.
+- [x] **Step 2: Deploy dagster_v3.** The local defs-state was refreshed on 2026-09-08 at commit `956949b7e`. First run, from the repo root, `git log --oneline 956949b7e..HEAD -- 'corpscout/services/dagster_v3/src/dagster_v3/defs/*/dbt' 'corpscout/services/dagster_v3/src/dagster_v3/defs/*/*/dbt'`; if it lists anything, run the two `dbt parse` commands and `uv run --frozen --no-sync dg utils refresh-defs-state` first. Then from `ansible/`: `ANSIBLE_BECOME_TIMEOUT=60 ansible-playbook -i inventory.ini light_sync.yml`, capture the exit code. Verify: the GraphQL `assetOrError` for `se_company_info_clickhouse` returns `AssetNotFoundError`, and for `se_company_basic_info_fold` returns the asset.
 
-- [ ] **Step 3: Apply 000391** from `corpscout/`: `make clickhouse-migrate-up-one` (one view rebuild, about three minutes). Verify:
+- [x] **Step 3: Apply 000391** from `corpscout/`: `make clickhouse-migrate-up-one` (one view rebuild, about three minutes). Verify:
 
 ```sql
 SELECT (SELECT count() FROM corpscout.se_companies_serving) AS served, (SELECT count() FROM corpscout.se_company_basic_info FINAL) AS main;
@@ -1068,4 +1068,12 @@ SELECT countIf(create_table_query LIKE '%se_company_basic_info%') AS rebased FRO
 
 Expected: `served = main` and `rebased = 1`. Then open `http://localhost:5183/admin/se/companies`, the geocoding list, and `http://localhost:5183/admin/se/company/5020077862/info`: list rows render with names and status, the header shows Handelsbanken with its legal form.
 
-- [ ] **Step 4: Run the drop script** (`corpscout/clickhouse/operations/se_company_info_retire.md`), gates first, then the DROPs. Record the row counts in the memory note.
+- [x] **Step 4: Run the drop script** (`corpscout/clickhouse/operations/se_company_info_retire.md`), gates first, then the DROPs. Record the row counts in the memory note.
+
+---
+
+Rollout record (2026-09-08): instigators stopped 10:05 UTC, deploy 10:0x UTC, 000391 applied by the
+owner; its `SYSTEM WAIT VIEW` outran the migrate driver's 300 s read timeout (the refresh took 27 min
+right after the full re-fold), so the RENAME was run by hand and the ledger forced to 391. Drops ran
+10:35 UTC: retired render, then se_company_info_field_value (2 rows), _wikidata (3,119), _esef (675),
+_scb (3,749,662), se_company_info (3,779,090). se_company_info_enrichment_observation kept (2,296 rows).

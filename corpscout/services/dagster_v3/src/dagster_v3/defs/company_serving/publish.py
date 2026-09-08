@@ -233,18 +233,18 @@ def _validate_stage(
     orphans = _scalar(
         client,
         f"SELECT count() FROM {stage} AS serving "
-        "LEFT JOIN corpscout.se_companies AS company FINAL "
+        "LEFT JOIN corpscout.se_company_basic_info AS company FINAL "
         "ON company.company_id = serving.company_id "
         "WHERE ifNull(company.company_id, '') = ''",
     )
     if orphans:
         raise ValueError(
-            f"Serving stage {contract.name} has {orphans} rows without se_companies anchor"
+            f"Serving stage {contract.name} has {orphans} rows without se_company_basic_info anchor"
         )
 
 
 def _validate_anchor_completeness(client: Any, identifier_stage: str) -> None:
-    anchors = _scalar(client, "SELECT count() FROM corpscout.se_companies FINAL")
+    anchors = _scalar(client, "SELECT count() FROM corpscout.se_company_basic_info FINAL")
     served = _scalar(
         client,
         f"SELECT countDistinct(company_id) FROM {identifier_stage} "
@@ -252,7 +252,7 @@ def _validate_anchor_completeness(client: Any, identifier_stage: str) -> None:
     )
     if anchors != served:
         raise ValueError(
-            f"Company anchor reconciliation failed: se_companies={anchors} serving={served}"
+            f"Company anchor reconciliation failed: se_company_basic_info={anchors} serving={served}"
         )
 
 

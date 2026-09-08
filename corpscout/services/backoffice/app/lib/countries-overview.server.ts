@@ -1,5 +1,5 @@
 import { chQuery } from "~/lib/clickhouse.server";
-import { COUNTRIES, getCountry } from "~/lib/countries";
+import { COUNTRIES, companiesFrom, getCountry } from "~/lib/countries";
 import { getAllCountryFinancialTotals } from "~/lib/financial-aggregates.server";
 
 export type CountryDirectoryRow = {
@@ -31,7 +31,7 @@ export async function getCountryDirectory(): Promise<CountryDirectoryRow[]> {
   // it — countries without a summary table report 0, which is the truth.
   const totalsSql = COUNTRIES.map(
     (c) =>
-      `SELECT '${c.code}' AS country_code, toUInt64(count()) AS total_companies FROM ${c.companiesTable}`,
+      `SELECT '${c.code}' AS country_code, toUInt64(count()) AS total_companies FROM ${companiesFrom(c)}`,
   ).join("\nUNION ALL\n");
   const financialsCountSql = COUNTRIES.filter((c) => c.financialsLatest)
     .map(

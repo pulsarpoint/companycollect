@@ -186,7 +186,6 @@ CLICKHOUSE_LEAVES: tuple[ClickhouseLeaf, ...] = (
     ClickhouseLeaf("slovakia_rpo_clickhouse_companies", ("sk_companies",), WEEKLY),
     ClickhouseLeaf("slovakia_rpo_clickhouse_industries", ("sk_industries",), WEEKLY),
     # sweden_company — weekly Mon
-    ClickhouseLeaf("sweden_company_companies_clickhouse", ("se_companies",), WEEKLY),
     ClickhouseLeaf(
         "sweden_company_scb_companies_clickhouse", ("se_scb_companies",), WEEKLY
     ),

@@ -34,14 +34,19 @@ Dagster gates, from the webserver: `se_company_info_weekly` and
 
 ## Drops
 
+The retired render goes FIRST: it is the one remaining reader of `se_company_info` (gate 2
+lists it until it is gone), and it exists only for a rollback of 000391. Drop it once the
+new view has served for a full refresh; if a rollback is still on the table, stop here.
+
 ```sql
+DROP VIEW IF EXISTS corpscout.se_companies_serving_retired;
 DROP TABLE IF EXISTS corpscout.se_company_info_field_value;
 DROP TABLE IF EXISTS corpscout.se_company_info_wikidata;
 DROP TABLE IF EXISTS corpscout.se_company_info_esef;
 DROP TABLE IF EXISTS corpscout.se_company_info_scb;
 DROP TABLE IF EXISTS corpscout.se_company_info;
-DROP VIEW IF EXISTS corpscout.se_companies_serving_retired;
 ```
 
-The last statement discards 000391's pre-swap render once the new view has served for a
-full refresh; leave it if a rollback is still on the table.
+Applied 2026-09-08: rows recorded before the drop were se_company_info 3,779,090,
+se_company_info_scb 3,749,662, se_company_info_esef 675, se_company_info_wikidata 3,119,
+se_company_info_field_value 2.

@@ -13,7 +13,7 @@ from dagster_v3.defs.company_identifier.rules import (
 
 COMPANY_IDENTIFIER_UPSTREAM_ASSET_KEYS = (
     "gleif_reference_clickhouse",
-    "sweden_company_companies_clickhouse",
+    "se_company_basic_info_fold",
 )
 
 _QUALITY_COLUMNS = (
@@ -106,7 +106,7 @@ SELECT
 FROM gleif_normalized AS g
 -- BOTH sides normalised. Only GLEIF's side was, so a register storing its ids
 -- punctuated never matched: Finland went from 0 to 47,680 on this line alone.
--- Sweden was unaffected because se_companies.company_id is already bare digits,
+-- Sweden was unaffected because se_company_basic_info.company_id is already bare digits,
 -- which is exactly why it went unnoticed.
 INNER JOIN register_current AS r
     ON r.company_id_normalized = g.company_id_normalized

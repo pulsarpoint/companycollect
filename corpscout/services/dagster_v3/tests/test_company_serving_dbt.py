@@ -56,9 +56,9 @@ def test_company_serving_dbt_project_parses() -> None:
 
 def test_shared_dbt_sources_are_dependency_only_specs(monkeypatch) -> None:
     base_spec = dg.AssetSpec(
-        key=["corpscout", "se_companies"],
+        key=["corpscout", "se_company_basic_info"],
         metadata={
-            "dagster/table_name": "corpscout.se_companies",
+            "dagster/table_name": "corpscout.se_company_basic_info",
             "dagster/code_references": "generated component path",
         },
     )
@@ -175,7 +175,7 @@ def test_serving_models_resolve_identity_and_evidence_offline() -> None:
         "se_company_industry_display_current_build.sql",
     ):
         model = (models / model_name).read_text()
-        assert "source('corpscout', 'se_companies')" in model
+        assert "source('corpscout', 'se_company_basic_info')" in model
         assert "INNER JOIN company_anchors AS anchors" in model
 
     combined_serving_sql = "\n".join(path.read_text() for path in models.glob("*.sql"))

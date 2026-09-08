@@ -1,5 +1,4 @@
-ALTER TABLE corpscout.se_companies
-    DROP COLUMN IF EXISTS status_conflict,
-    DROP COLUMN IF EXISTS status_observed_at,
-    DROP COLUMN IF EXISTS status_source,
-    DROP COLUMN IF EXISTS legal_name_registration_date;
+-- Basic-info slice 5 (2026-09-08): the se_companies spine these presentation fields
+-- belonged to was dropped by hand and their DDL left this file per the dev-phase ledger
+-- policy. The file stays for history.
+CREATE DATABASE IF NOT EXISTS corpscout;
