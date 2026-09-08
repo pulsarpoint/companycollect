@@ -7,7 +7,12 @@ and spine fields absorbed from the retired `se_companies_translated` view. Becau
 has live readers, every render since 000338 is 000320's staged swap -- build under _next,
 SYSTEM WAIT, one atomic RENAME -- not 000335's plain CREATE.
 
-WHAT 000391 CHANGES (slice 4a, task 3). The address half now reads
+THE SPINE, since 000391 (basic-info slice 4), is `se_company_basic_info`: legal name, status,
+legal form and the two descriptions come from the folded row, the register fields from
+`se_bolagsverket_companies`, the legal-form labels from `se_code_labels`. `se_company_info`,
+`se_companies` and `text_translations` are gone from the view.
+
+WHAT 000391 CHANGES (address slice 4a, task 3). The address half now reads
 `corpscout.se_company_address_v2` -- the address entity, one row per company and published
 address, `active = 1` -- instead of the old `se_company_address` final table LEFT-JOINed to
 the `se_address_geocodes_served` overlay. The coordinate, status, precision and the derived
@@ -18,7 +23,6 @@ used to stamp `centroid_fallback` on, and the derived provider keeps such a row 
 
 The drift pin couples the migration's embedded SELECT to a fresh render of
 companies_current.build_se_companies_serving_sql -- editing either half alone turns this red.
-Same anti-vacuous shape as the pins for 000320/000325/000326.
 """
 
 import re
@@ -99,9 +103,14 @@ def test_the_pin_is_not_vacuous() -> None:
     # The base is ALL of se_company_info, LEFT-joined to the address aggregation --
     # a company with no current address still gets a row.
     # The absorbed translation joins (the retired se_companies_translated's contract).
-    assert "text_translations" in embedded
+    assert "corpscout.se_company_basic_info AS i FINAL" in embedded
+    assert "corpscout.se_bolagsverket_companies" in embedded
+    assert "text_translations" not in embedded
+    assert "corpscout.se_company_info" not in embedded
+    assert "corpscout.se_companies AS" not in embedded
     assert "activity_description_en" in embedded
     assert "se_code_labels" in embedded
+    assert "code_type = 'legal_form'" in embedded
     assert "status_reason_label_en" in embedded
     assert "bolagsverket_source_record_uid" in embedded
     # The market flags (owner 2026-08-28).
@@ -113,7 +122,7 @@ def test_the_pin_is_not_vacuous() -> None:
     assert "company_job_history" in embedded
     assert "LEFT JOIN aggregated" in embedded
     assert "LEFT JOIN primary_address" in embedded
-    assert "INNER JOIN corpscout.se_company_info" not in embedded
+    assert "se_company_info" not in embedded
 
 
 def test_the_up_migration_is_a_staged_swap_waited_on_before_the_rename() -> None:

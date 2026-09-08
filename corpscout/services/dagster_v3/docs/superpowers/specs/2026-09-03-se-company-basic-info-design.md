@@ -132,7 +132,7 @@ In Python, `dagster_v3.defs.se_company.basic_info.precedence`:
 BASIC_INFO_PRECEDENCE: dict[str, dict[str, int]] = {
     "legal_name":         {"reviewer": 20000, "scb": 1000, "bolagsverket": 900, "ratsit": 300, "wikidata": 200},
     "legal_form_code":    {"reviewer": 20000, "scb": 1000, "bolagsverket": 900},
-    "status":             {"reviewer": 20000, "scb": 1000, "bolagsverket": 900, "ratsit": 300},
+    "status":             {"reviewer": 20000, "bolagsverket": 1000, "scb": 900, "ratsit": 300},
     "incorporation_date": {"reviewer": 20000, "scb": 1000, "bolagsverket": 900, "wikidata": 200},
     "lei":                {"reviewer": 20000, "esef": 1000},
     "wikidata_id":        {"reviewer": 20000, "wikidata": 1000},
@@ -140,6 +140,16 @@ BASIC_INFO_PRECEDENCE: dict[str, dict[str, int]] = {
     "description_sv":     {"reviewer": 20000, "llm": 2000, "bolagsverket": 400, "ratsit": 300},
 }
 ```
+
+Amended 2026-09-08 (owner decision): `status` puts Bolagsverket above SCB. Status is legal
+existence and Bolagsverket's deregistration date is authoritative for it; SCB's
+`Företagsstatus` (`source_status_code`) is an economic-activity flag -- registered for VAT,
+F-tax or as an employer, 0 never, 1 yes, 9 no longer -- and only decides for the ~668k
+companies Bolagsverket does not register. Measured before the change: 239,773 legally
+registered companies read inactive from SCB codes 0/9 and 40,468 deregistered companies read
+active from SCB code 1. The economic-activity flag becomes its own entity field in a later
+slice. A precedence change is not a per-company change, so it takes a full re-fold
+(`changed_only: false` over all 64 buckets) after the precedence export.
 
 The numbers are the owner's to adjust in review; gaps leave room for new sources. A source absent from a field's map cannot supply that field. `description_language` is not in the map: it follows the winning `description` row.
 

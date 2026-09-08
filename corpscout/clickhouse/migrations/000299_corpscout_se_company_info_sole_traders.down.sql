@@ -1,22 +1,4 @@
+-- Basic-info slice 4 (2026-09-08): this migration's objects (the retired se_company_info*
+-- tables or their columns) were dropped by hand on the server and their DDL left this
+-- file per the dev-phase ledger policy. The file stays for history.
 CREATE DATABASE IF NOT EXISTS corpscout;
-
-
-ALTER TABLE corpscout.se_company_info_scb
-    DROP CONSTRAINT has_company,
-    ADD CONSTRAINT has_company CHECK match(company_id, '^[0-9]{10}$');
-
-ALTER TABLE corpscout.se_company_info_esef
-    DROP CONSTRAINT has_company,
-    ADD CONSTRAINT has_company CHECK match(company_id, '^[0-9]{10}$');
-
-ALTER TABLE corpscout.se_company_info_wikidata
-    DROP CONSTRAINT has_company,
-    ADD CONSTRAINT has_company CHECK match(company_id, '^[0-9]{10}$');
-
-ALTER TABLE corpscout.se_company_info
-    DROP CONSTRAINT has_company,
-    ADD CONSTRAINT has_company CHECK match(company_id, '^[0-9]{10}$');
-
-ALTER TABLE corpscout.se_company_info_correction
-    DROP CONSTRAINT has_company,
-    ADD CONSTRAINT has_company CHECK match(company_id, '^[0-9]{10}$');

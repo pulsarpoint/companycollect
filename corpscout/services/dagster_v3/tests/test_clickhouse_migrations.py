@@ -403,12 +403,13 @@ EXPECTED_MIGRATIONS = (
     "000388_corpscout_technology_aliases",
     "000389_corpscout_technology_proposals",
     "000390_corpscout_se_source_translated_views",
+    "000391_corpscout_se_companies_serving_basic_info",
     "000391_corpscout_se_companies_serving_address_entity",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
 
-# Entries whose objects left the ledger on 2026-09-03. Development-phase policy: an unused
+# Entries whose objects left the ledger by hand (2026-09-03 and 2026-09-08). Development-phase policy: an unused
 # table is dropped by hand on the server and its DDL leaves the file, which stays for
 # history. Nothing is left for these four to declare, so the "creates something" and
 # "undoes something" assertions cannot apply -- the database statement is all that remains.
@@ -417,6 +418,16 @@ EMPTIED_MIGRATIONS = {
     "000111_corpscout_dns_axfr_observations",
     "000121_corpscout_commoncrawl_domain_hostname_axfr_sync",
     "000218_corpscout_no_contract_awards",
+    # Basic-info slice 4 (2026-09-08): the se_company_info* tables were dropped by hand and
+    # their DDL left these files. 000297 is not here: it still declares the observation
+    # cache table the LLM extractor keeps.
+    "000299_corpscout_se_company_info_sole_traders",
+    "000300_corpscout_se_company_info_scb_english",
+    "000301_corpscout_se_company_info_description_sv",
+    "000304_corpscout_se_company_info_llm_enhanced",
+    "000306_corpscout_se_company_info_legal_form_label",
+    "000365_corpscout_se_company_info_esef_enrichment",
+    "000371_corpscout_se_company_info_field_value",
     "000379_corpscout_se_company_basic_info_precedence",
 }
 
@@ -3945,24 +3956,6 @@ def test_jobtech_links_migration_owns_source_history_and_company_matches() -> No
     assert "company_job_history" not in up_sql
 
 
-def test_se_company_info_esef_enrichment_migration_is_additive() -> None:
-    up = (
-        MIGRATIONS_DIR / "000365_corpscout_se_company_info_esef_enrichment.up.sql"
-    ).read_text()
-    down = (
-        MIGRATIONS_DIR / "000365_corpscout_se_company_info_esef_enrichment.down.sql"
-    ).read_text()
-    for column in (
-        "customer_markets_json",
-        "operating_geographies_json",
-        "material_group_relationships_json",
-    ):
-        assert f"ADD COLUMN IF NOT EXISTS {column} String DEFAULT ''" in up
-        assert f"DROP COLUMN IF EXISTS {column}" in down
-    assert "MATERIALIZED" not in up  # evidence_hash untouched
-    assert "TRUNCATE" not in up
-
-
 def test_se_companies_serving_refresh_schedule_is_hourly_and_reversible() -> None:
     up = _normalize_sql(
         _migration_sql("000366_corpscout_se_companies_serving_hourly_refresh.up.sql")
@@ -4009,27 +4002,6 @@ def test_fi_taxonomy_dictionary_migration_covers_columns_and_is_reversible() -> 
 
     assert "DROP TABLE IF EXISTS corpscout.fi_taxonomy_concepts" in down
     assert "DROP TABLE IF EXISTS corpscout.fi_taxonomy_labels" in down
-
-
-def test_se_company_info_field_value_replaces_the_correction_ledger() -> None:
-    """2026-09-01: the ledger modelled decisions as kinds ranked by time with an undo
-    chain; the field's live value is just the latest row written for it. Prod check at
-    spec time found 0 of 3.5M published rows applied a correction and the ledger held
-    only 4 rows. The old table is retired by a gated direct-SQL step at deploy, never by
-    this ledger entry: a DROP that must wait for a deploy does not enter the sequential
-    ledger (2026-08-25 ruling), so this pins its absence."""
-    up = _migration_sql("000371_corpscout_se_company_info_field_value.up.sql")
-    down = _migration_sql("000371_corpscout_se_company_info_field_value.down.sql")
-
-    assert "CREATE TABLE IF NOT EXISTS corpscout.se_company_info_field_value" in up
-    for constraint in ("CONSTRAINT has_company", "CONSTRAINT known_field", "CONSTRAINT known_source"):
-        assert constraint in up
-    assert "ORDER BY (company_id, field, created_at, value_id)" in up
-    assert "GRANT INSERT ON corpscout.se_company_info_field_value" in up
-    assert "DROP TABLE IF EXISTS corpscout.se_company_info_correction" not in up
-
-    assert "DROP TABLE IF EXISTS corpscout.se_company_info_field_value" in down
-    assert "REVOKE INSERT" in down
 
 
 def _migration_sql(file_name: str) -> str:

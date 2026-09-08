@@ -45,9 +45,6 @@ import {
 export const REPOSITORY_LOCATION_NAME = "dagster_v3";
 export const REPOSITORY_NAME = "__repository__";
 
-export const SE_COMPANY_INFO_JOB = "se_company_info_job";
-export const SE_COMPANY_INFO_REVIEW_JOB = "se_company_info_review_job";
-export const SE_COMPANY_INFO_ASSET = "se_company_info_clickhouse";
 /** Dagster's implicit job for materializing assets by selection; what the
  * GraphQL launcher wants when no named job wraps the asset. */
 export const ASSET_JOB_NAME = "__ASSET_JOB";
@@ -58,18 +55,13 @@ export const SE_BASIC_INFO_FOLD_COMPANIES_ASSET = "se_company_basic_info_fold_co
  * the companies named in its config. Launched by the Address tab's Fold now. */
 export const SE_COMPANY_ADDRESS_FOLD_COMPANIES_ASSET = "se_company_address_fold_companies";
 
-/** The two instigators that drive THIS pipeline. The repository has 52 schedules
- * and 15 sensors; a page that renders all of them tells its reader nothing. */
-export const SE_COMPANY_INFO_SCHEDULE = "se_company_info_weekly";
-export const SE_COMPANY_INFO_SENSOR = "se_company_info_field_value_sensor";
-
 /**
  * SE People Experiment Task 5: the three backoffice-triggered people jobs
  * (spec §6.1 -- "the info-pilot / ESEF pattern verbatim"). None of the three
  * is ever scheduled or eager (dagster_v3's identity_eval.py/normalization.py/
  * merge.py module docstrings say so explicitly): there is no schedule or
- * sensor name to filter instigator queries to here, unlike SE_COMPANY_INFO's
- * pair above -- the people pipeline page simply never calls
+ * sensor name to filter instigator queries to here, unlike the address pipeline's
+ * schedule and sensor -- the people pipeline page simply never calls
  * `instigatorStates`, which is the "filter to exactly these jobs" lesson
  * applied to a pipeline that has none to filter to.
  */

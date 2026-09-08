@@ -4,24 +4,18 @@ from functools import lru_cache
 from pathlib import Path
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
-MIGRATION = "000297_corpscout_se_company_info.up.sql"
 ADDRESS_MIGRATION = "000307_corpscout_se_company_address.up.sql"
 ENVELOPE = ("company_id", "source_record_uid", "observed_at", "source_run_id", "evidence_hash")
-FINAL_PROVENANCE = ("source_record_uids", "evidence_hashes", "evidence_set_hash", "correction_ids",
-                    "suggestion_id", "model_provider", "model_name", "prompt_version", "source_run_id", "resolved_at")
-
-
-def _sql() -> str:
-    return (MIGRATIONS_DIR / MIGRATION).read_text(encoding="utf-8")
 
 
 @lru_cache(maxsize=None)
 def _migration_for(table: str) -> str:
     """The migration file whose CREATE TABLE declares `table`.
 
-    The se_company layer no longer lives in one migration (000297 declares the info
-    tables, 000307 the address ones), so the helpers below locate the creating file
-    instead of reading a single constant -- every existing caller keeps its signature.
+    The se_company layer's tables live in several migrations (000297 declares the
+    observation table since slice 4 retired the info tables, 000307 the address ones), so
+    the helpers below locate the creating file instead of reading a single constant --
+    every existing caller keeps its signature.
     Exactly one migration may create a given table; two would mean a rename-swap, which
     these helpers do not model and which would break the ALTER replay below.
     """
@@ -109,10 +103,6 @@ def declared_columns(table: str) -> list[str]:
     return names
 
 
-def artifact_tables() -> list[str]:
-    return sorted(set(re.findall(r"CREATE TABLE IF NOT EXISTS corpscout\.(se_company_info_(?!correction|enrichment)[a-z0-9_]+)\n", _sql())))
-
-
 def address_artifact_tables() -> list[str]:
     """The address datatype's artifact tables (the final and the ledger are not artifacts)."""
     sql = (MIGRATIONS_DIR / ADDRESS_MIGRATION).read_text(encoding="utf-8")
@@ -125,7 +115,7 @@ def projection_aliases(sql: str) -> list[str]:
     (trailing, unindented) projection -- the one that actually determines the
     order `publish_with_stage` binds to the positional insert-column list, so a
     swapped pair of same-typed columns here would insert transposed values with
-    an otherwise-green suite. Every SE_COMPANY_INFO_*_SQL constant ends in a
+    an otherwise-green suite. Every SE_COMPANY_ADDRESS_*_SQL constant ends in a
     top-level `SELECT ... FROM ...` (no leading indent) after its last CTE
     closes; CTE-internal SELECTs are indented, so `\\nSELECT\\n` unambiguously
     finds only the trailing one. That projection must alias every column

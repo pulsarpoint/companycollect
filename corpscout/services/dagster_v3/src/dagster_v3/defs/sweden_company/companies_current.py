@@ -2,10 +2,12 @@
 
 The companies/geocoding admin surfaces need a per-company row -- legal name, the company's
 published addresses as a JSON array, and a pre-computed geocode summary for the PRIMARY
-address -- without paying the FINAL merges on `se_company_address_v2`/`se_company_info` and
-the per-company aggregation on every request. This module is the single source of truth for
-that SELECT; migration 000335 materializes it as a refreshable MV, 000391 repoints it at the
-address entity, and the backoffice admin companies pages read the materialized table.
+address -- without paying the FINAL merges on `se_company_address_v2`/`se_company_basic_info`
+and the per-company aggregation on every request. This module is the single source of truth
+for that SELECT; migration 000335 materializes it as a refreshable MV, the basic-info slice
+repoints its company spine at the folded basic-info row, the address slice repoints its
+address half at the entity, and the backoffice admin companies pages read the materialized
+table.
 
 WHAT IT AGGREGATES.
 
@@ -17,8 +19,9 @@ WHAT IT AGGREGATES.
   fields (`geocode_status`, `geocode_precision`, `latitude`, `longitude`) sit ON the entity
   row, written by the address module's geocode step; `geocode_provider` is DERIVED from the
   status (see below) because the entity does not store one.
-- `legal_name` is INNER-JOINed from `se_company_info` FINAL (every addressed company has one --
-  0 orphans verified), matching the sibling company list's own name spine.
+- `legal_name`, `status`, the legal form and both descriptions come from `se_company_basic_info`
+  FINAL, the folded basic-info row (slice 4, 2026-09-08); the register fields (deregistration
+  reason, record identity, stamp) from `se_bolagsverket_companies`, the labels from `se_code_labels`.
 
 THE PRIMARY-ADDRESS SUMMARY. `primary_street_address`/`_postal_code`/`_city`/
 `primary_geocode_status`/`primary_geocode_class`/`_precision`/`_provider`/`_latitude`/
@@ -64,6 +67,7 @@ from datetime import UTC, datetime, timedelta
 from dagster_v3.defs.sweden_company.geocode_serving_overlay import (
     GEOCODE_FALLBACK_PROVIDER,
 )
+from dagster_v3.defs.se_company.common import bolagsverket_record_uid_sql
 from dagster_v3.defs.sweden_company.geocode_store import (
     CLICKHOUSE_DATABASE,
     GEOCODED_STATUSES,
@@ -73,7 +77,10 @@ from dagster_v3.defs.sweden_company.geocode_store import (
 # keeps the `_v2` name until slice 4b renames it, and this constant is the one edit that
 # rename costs here.
 COMPANY_ADDRESS_TABLE = f"{CLICKHOUSE_DATABASE}.se_company_address_v2"
-COMPANY_INFO_TABLE = f"{CLICKHOUSE_DATABASE}.se_company_info"
+# The company spine and its register/label joins (basic-info slice 4, migration 000391).
+BASIC_INFO_TABLE = f"{CLICKHOUSE_DATABASE}.se_company_basic_info"
+BOLAGSVERKET_TABLE = f"{CLICKHOUSE_DATABASE}.se_bolagsverket_companies"
+CODE_LABELS_TABLE = f"{CLICKHOUSE_DATABASE}.se_code_labels"
 
 # The street part of a published line: everything before a trailing `, NNN NN Town`, and ''
 # for a line that is ONLY a postal part (normalizer v3's postcode-only addresses, which carry
@@ -171,7 +178,7 @@ def _address_map_expression() -> str:
 # description flag), the datatype presence flags and per-register source flags that used to be
 # computed as IN-set subqueries on every backoffice page load (measured ~1.4s/page, owner
 # 2026-08-28), AND the address JSON + primary geocode summary se_companies_current carried.
-# Base changes from "companies with a current address" (INNER JOIN) to ALL of se_company_info
+# Base changes from "companies with a current address" (INNER JOIN) to ALL of se_company_basic_info
 # (LEFT JOIN): the info list shows every published company, addressed or not.
 #
 # The presence-set subqueries below are the single source of truth the backoffice's
@@ -225,26 +232,28 @@ JOB_ADS_SET = (
     "WHERE country_code = 'SE'"
 )
 
-# The registered-activity translation and the status-reason label, absorbed VERBATIM from the
-# retired corpscout.se_companies_translated view (migration 000252's rendering) -- migration
-# 000338 folds them into the serving view and the follow-up drops the view. The legal-form
-# label join is NOT carried over: se_company_info already ships label_en/label_sv (000306).
-SE_COMPANIES_TABLE = f"{CLICKHOUSE_DATABASE}.se_companies"
-ACTIVITY_TRANSLATION_JOIN = f"""LEFT JOIN (
-    SELECT source_text_hash, argMax(translated_text, version) AS translated_text
-    FROM {CLICKHOUSE_DATABASE}.text_translations
-    WHERE source_table = 'corpscout.se_companies'
-      AND source_column = 'activity_description'
-      AND source_lang = 'sv'
-      AND target_lang = 'en'
-    GROUP BY source_text_hash
-  ) AS act ON act.source_text_hash = cityHash64(ifNull(c.activity_description, ''))"""
+# The register row behind the main row: deregistration reason (the status-reason code),
+# the record identity the extractor hashes, and the register's own stamp. FINAL and the
+# has_company scope inside the subquery, so the outer LEFT JOIN sees one row per company.
+BOLAGSVERKET_JOIN = f"""LEFT JOIN (
+    SELECT company_id, deregistration_reason, source_record_id, source_payload_hash, observed_at
+    FROM {BOLAGSVERKET_TABLE} FINAL
+    WHERE has_company = 1
+  ) AS b ON b.company_id = i.company_id"""
+# The curated dictionaries (se_code_labels): what the legal-form code and the
+# deregistration reason are called. argMax(version) so a re-seeded label wins.
+LEGAL_FORM_LABEL_JOIN = f"""LEFT JOIN (
+    SELECT code, argMax(label_en, version) AS label_en, argMax(label_sv, version) AS label_sv
+    FROM {CODE_LABELS_TABLE}
+    WHERE code_type = 'legal_form'
+    GROUP BY code
+  ) AS lf ON lf.code = ifNull(i.legal_form_code, '')"""
 STATUS_REASON_LABEL_JOIN = f"""LEFT JOIN (
     SELECT code, argMax(label_en, version) AS label_en
-    FROM {CLICKHOUSE_DATABASE}.se_code_labels
+    FROM {CODE_LABELS_TABLE}
     WHERE code_type = 'status_reason'
     GROUP BY code
-  ) AS sr ON sr.code = ifNull(c.status_reason, '')"""
+  ) AS sr ON sr.code = ifNull(b.deregistration_reason, '')"""
 
 
 def build_se_companies_serving_sql() -> str:
@@ -350,14 +359,14 @@ FROM (
     i.legal_name AS legal_name,
     toString(i.status) AS status,
     ifNull(i.legal_form_code, '') AS legal_form_code,
-    i.legal_form_label_en AS legal_form_label_en,
-    i.legal_form_label_sv AS legal_form_label_sv,
-    ifNull(c.activity_description, '') AS activity_description,
-    ifNull(act.translated_text, '') AS activity_description_en,
-    ifNull(c.status_reason, '') AS status_reason,
+    ifNull(lf.label_en, '') AS legal_form_label_en,
+    ifNull(lf.label_sv, '') AS legal_form_label_sv,
+    ifNull(i.description_sv, '') AS activity_description,
+    if(ifNull(i.description_language, '') = 'en', ifNull(i.description, ''), '') AS activity_description_en,
+    ifNull(b.deregistration_reason, '') AS status_reason,
     ifNull(sr.label_en, '') AS status_reason_label_en,
-    ifNull(c.bolagsverket_source_record_uid, '') AS bolagsverket_source_record_uid,
-    ifNull(c.updated_from_raw_at, toDateTime64(0, 3, 'UTC')) AS updated_from_raw_at,
+    if(ifNull(b.company_id, '') = '', '', ifNull({bolagsverket_record_uid_sql('b')}, '')) AS bolagsverket_source_record_uid,
+    ifNull(b.observed_at, toDateTime64(0, 3, 'UTC')) AS updated_from_raw_at,
     toUInt8(i.description IS NOT NULL) AS has_description,
     toUInt8(ifNull(agg.address_count, 0) > 0) AS has_address,
     toUInt8(i.company_id IN ({BOLAGSVERKET_FINANCIAL_SET})) AS fin_bolagsverket,
@@ -370,10 +379,10 @@ FROM (
     toUInt8(i.company_id IN ({PUBLICLY_TRADED_SET})) AS is_publicly_traded,
     toUInt8(i.company_id IN ({GOVERNMENT_CONTRACTS_SET})) AS has_government_contracts,
     toUInt8(i.company_id IN ({JOB_ADS_SET})) AS has_job_ads,
-    toUInt8(has(i.description_sources, 'esef')) AS desc_esef,
+    toUInt8(i.description_source = 'esef') AS desc_esef,
     toUInt8(i.lei IS NOT NULL) AS has_lei,
     toUInt8(i.wikidata_id IS NOT NULL) AS has_wikidata,
-    toUInt8(has(i.description_sources, 'wikidata')) AS desc_wikidata,
+    toUInt8(i.description_source = 'wikidata') AS desc_wikidata,
     toUInt8(ifNull(agg.address_bolagsverket, 0)) AS address_bolagsverket,
     coalesce(nullIf(agg.addresses, ''), '[]') AS addresses,
     toUInt32(ifNull(agg.address_count, 0)) AS address_count,
@@ -386,9 +395,9 @@ FROM (
     ifNull(pa.primary_geocode_provider, '') AS primary_geocode_provider,
     pa.primary_latitude AS primary_latitude,
     pa.primary_longitude AS primary_longitude
-  FROM {COMPANY_INFO_TABLE} AS i FINAL
-  LEFT JOIN {SE_COMPANIES_TABLE} AS c FINAL ON c.company_id = i.company_id
-  {ACTIVITY_TRANSLATION_JOIN}
+  FROM {BASIC_INFO_TABLE} AS i FINAL
+  {BOLAGSVERKET_JOIN}
+  {LEGAL_FORM_LABEL_JOIN}
   {STATUS_REASON_LABEL_JOIN}
   LEFT JOIN aggregated AS agg ON agg.company_id = i.company_id
   LEFT JOIN primary_address AS pa ON pa.company_id = i.company_id

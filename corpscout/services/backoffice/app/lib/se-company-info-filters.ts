@@ -53,8 +53,8 @@ export const PROFILE_SOURCES = [
   // Bolagsverket is the registration authority: it carries the address the
   // register text comes from, the annual accounts and the role evidence.
   { value: "bolagsverket", letter: "B", label: "Bolagsverket" },
-  // SCB is the register base: se_company_info publishes nothing without an SCB
-  // row (info_rules.py returns None), so every listed company has this one.
+  // SCB is the register base: the basic-info fold publishes nothing without a
+  // register legal name, so every listed company has this one.
   { value: "scb", letter: "S", label: "SCB" },
   { value: "esef", letter: "E", label: "ESEF" },
   { value: "wikidata", letter: "W", label: "Wikidata" },
@@ -125,7 +125,7 @@ export function profileSourceLabel(value: string): string {
  * presence columns of `/admin/se/companies`: `key` is the list row's own
  * column (and therefore its `?sort=` value), `label` is the column header.
  *
- * Description is NOT here: it is a column of se_company_info itself, answered
+ * Description is NOT here: it is a column of se_company_basic_info itself, answered
  * by `has_description` without touching another table, and it predates this
  * catalog. These four each cost a set over their datatype's own final table,
  * which is why they are one list -- the server keys its presence SQL by these

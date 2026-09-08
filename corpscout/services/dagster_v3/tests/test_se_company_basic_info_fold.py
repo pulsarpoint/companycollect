@@ -218,13 +218,13 @@ def test_a_company_rule_replaces_the_global_number_for_that_source() -> None:
     scb = suggestion("scb", legal_name="X AB", status="active")
     bolagsverket = suggestion("bolagsverket", status="inactive")
     row = fold_basic_info(
-        "5560000000", [scb, bolagsverket], source_run_id="r", rules={"status": {"bolagsverket": 10000}}
+        "5560000000", [scb, bolagsverket], source_run_id="r", rules={"status": {"scb": 10000}}
     )
     assert row is not None
-    assert (row.status, row.status_source) == ("inactive", "bolagsverket")
-    # Without the rule the global map (scb 1000 > bolagsverket 900) decides.
+    assert (row.status, row.status_source) == ("active", "scb")
+    # Without the rule the global map (bolagsverket 1000 > scb 900 since 2026-09-08) decides.
     plain = fold_basic_info("5560000000", [scb, bolagsverket], source_run_id="r")
-    assert plain is not None and plain.status_source == "scb"
+    assert plain is not None and (plain.status, plain.status_source) == ("inactive", "bolagsverket")
 
 
 def test_a_company_rule_lets_an_unranked_source_supply_a_field() -> None:

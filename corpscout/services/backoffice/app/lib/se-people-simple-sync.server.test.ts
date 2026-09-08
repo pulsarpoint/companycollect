@@ -2,7 +2,7 @@
  * The Simple Sync preview: a SQL-shape pin on the hand-ported normalization.py
  * `_company_status_ctes`/`build_pending_companies_sql` (`source_count = 1`
  * branch) semantics, and a mapping test for `loadSimpleSyncPreview` over a
- * faked ClickHouse read -- mirrors se-company-info-pipeline.server.test.ts's
+ * faked ClickHouse read -- mirrors the retired info pipeline test's
  * `toContain` convention for pinning hand-ported SQL by name.
  */
 import { describe, expect, it, vi } from "vitest";
