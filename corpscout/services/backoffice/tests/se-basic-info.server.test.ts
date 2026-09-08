@@ -49,6 +49,8 @@ export const MAIN_ROW: SeBasicInfoRow = {
   legal_form_code_source: "bolagsverket",
   status: "inactive",
   status_source: "bolagsverket",
+  economic_activity: "",
+  economic_activity_source: "",
   incorporation_date: "1937-05-12",
   incorporation_date_source: "bolagsverket",
   lei: "",
@@ -74,6 +76,7 @@ export const BOLAGSVERKET_ROW: SeBasicInfoSuggestionRow = {
   legal_name: "Fastighetsföreningen Sportstugan nr 1 upa",
   legal_form_code: "51",
   status: "inactive",
+  economic_activity: "",
   incorporation_date: "1937-05-12",
   lei: "",
   wikidata_id: "",
@@ -97,6 +100,7 @@ export const DRAFT_ROW: SeBasicInfoSuggestionRow = {
   legal_name: "Sportstugan Draft AB",
   legal_form_code: "",
   status: "",
+  economic_activity: "",
   incorporation_date: "",
   lei: "",
   wikidata_id: "",
@@ -119,6 +123,7 @@ export const REVIEWER_ROW: SeBasicInfoSuggestionRow = {
   legal_name: "",
   legal_form_code: "",
   status: "active",
+  economic_activity: "",
   incorporation_date: "",
   lei: "",
   wikidata_id: "",
@@ -183,6 +188,11 @@ describe("se-basic-info.server", () => {
   it("pins the SQL to FINAL reads keyed on the company parameter", () => {
     expect(BASIC_INFO_SQL).toContain("FROM corpscout.se_company_basic_info AS b FINAL");
     expect(BASIC_INFO_SQL).toContain("WHERE b.company_id = {companyId:String}");
+    // Slice 6: the main row carries economic_activity and its source; a suggestion row
+    // reads NULL as ''.
+    expect(BASIC_INFO_SQL).toContain("toString(b.economic_activity) AS economic_activity");
+    expect(BASIC_INFO_SQL).toContain("toString(b.economic_activity_source) AS economic_activity_source");
+    expect(BASIC_INFO_SUGGESTIONS_SQL).toContain("ifNull(s.economic_activity, '') AS economic_activity");
     expect(BASIC_INFO_SUGGESTIONS_SQL).toContain("FROM corpscout.se_company_basic_info_suggestion AS s FINAL");
     expect(BASIC_INFO_SUGGESTIONS_SQL).toContain("WHERE s.company_id = {companyId:String}");
     expect(BASIC_INFO_HISTORY_SQL).toContain("FROM corpscout.se_company_basic_info_history AS h");
@@ -469,6 +479,7 @@ describe("se-basic-info.server", () => {
         legal_name: null,
         legal_form_code: null,
         status: null,
+        economic_activity: null,
         incorporation_date: null,
         lei: null,
         wikidata_id: null,
@@ -538,6 +549,7 @@ describe("se-basic-info.server", () => {
       legal_name: "New name",
       legal_form_code: null,
       status: null,
+      economic_activity: null,
       incorporation_date: null,
       lei: null,
       wikidata_id: null,
@@ -587,6 +599,7 @@ describe("se-basic-info.server", () => {
         legal_name: DRAFT_ROW.legal_name,
         legal_form_code: null,
         status: "active",
+        economic_activity: null,
         incorporation_date: null,
         lei: null,
         wikidata_id: null,
@@ -622,6 +635,7 @@ describe("se-basic-info.server", () => {
         legal_name: null,
         legal_form_code: null,
         status: null,
+        economic_activity: null,
         incorporation_date: null,
         lei: null,
         wikidata_id: null,
@@ -660,6 +674,7 @@ describe("se-basic-info.server", () => {
         legal_name: DRAFT_ROW.legal_name,
         legal_form_code: null,
         status: REVIEWER_ROW.status,
+        economic_activity: null,
         incorporation_date: null,
         lei: null,
         wikidata_id: null,
@@ -680,6 +695,7 @@ describe("se-basic-info.server", () => {
         legal_name: null,
         legal_form_code: null,
         status: null,
+        economic_activity: null,
         incorporation_date: null,
         lei: null,
         wikidata_id: null,
@@ -761,6 +777,7 @@ describe("se-basic-info.server", () => {
         legal_name: null,
         legal_form_code: null,
         status: null,
+        economic_activity: null,
         incorporation_date: null,
         lei: null,
         wikidata_id: null,

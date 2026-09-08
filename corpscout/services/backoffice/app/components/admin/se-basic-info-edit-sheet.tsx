@@ -11,7 +11,9 @@ import {
 } from "~/components/ui/sheet";
 import {
   BASIC_INFO_LANGUAGES,
+  BASIC_INFO_ECONOMIC_ACTIVITIES,
   BASIC_INFO_STATUSES,
+  economicActivityLabel,
   basicInfoFieldLabel,
   basicInfoSourceLabel,
   type SeBasicInfoField,
@@ -104,6 +106,22 @@ function ValueControl({
           {BASIC_INFO_STATUSES.map((status) => (
             <option key={status} value={status}>
               {status === "active" ? "Active" : "Inactive"}
+            </option>
+          ))}
+        </select>
+      );
+    case "economic_activity":
+      return (
+        <select
+          name="value"
+          defaultValue={defaultValue}
+          aria-label={label}
+          required
+          className={NATIVE_SELECT_CLASSNAME}
+        >
+          {BASIC_INFO_ECONOMIC_ACTIVITIES.map((value) => (
+            <option key={value} value={value}>
+              {economicActivityLabel(value)}
             </option>
           ))}
         </select>

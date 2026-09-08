@@ -1,5 +1,5 @@
 /**
- * The basic-info entity as the Info tab reads it: the eight decidable fields (description_language rides with description) in
+ * The basic-info entity as the Info tab reads it: the nine decidable fields (description_language rides with description) in
  * display order and the seven sources in the order the suggestions panel lists
  * them when the precedence table does not rank a source for a field.
  *
@@ -11,6 +11,7 @@ export const BASIC_INFO_FIELDS = [
   { name: "legal_name", label: "Legal name", kind: "text" },
   { name: "legal_form_code", label: "Legal form", kind: "code" },
   { name: "status", label: "Status", kind: "text" },
+  { name: "economic_activity", label: "Economic activity", kind: "text" },
   { name: "incorporation_date", label: "Incorporated", kind: "date" },
   { name: "lei", label: "LEI", kind: "identifier" },
   { name: "wikidata_id", label: "Wikidata", kind: "identifier" },
@@ -102,6 +103,21 @@ export function foldPending(
 /** The `status` field's only two legal values. */
 export const BASIC_INFO_STATUSES = ["active", "inactive"] as const;
 
+/** The `economic_activity` field's three legal values (slice 6): SCB's Företagsstatus
+ * 1 / 0 / 9 -- registered for VAT, F-tax or as an employer; never was; was, no longer. */
+export const BASIC_INFO_ECONOMIC_ACTIVITIES = ["active", "never", "ceased"] as const;
+
+const ECONOMIC_ACTIVITY_LABELS: Record<string, string> = {
+  active: "Active",
+  never: "Never registered",
+  ceased: "Ceased",
+};
+
+/** What a reader calls an economic-activity value; an unknown value reads as itself. */
+export function economicActivityLabel(value: string): string {
+  return ECONOMIC_ACTIVITY_LABELS[value] ?? value;
+}
+
 /** The `description` field's only two legal languages. */
 export const BASIC_INFO_LANGUAGES = ["en", "sv"] as const;
 
@@ -151,6 +167,13 @@ function validateLegalFormCode(trimmed: string, legalFormCodes: readonly string[
 function validateStatus(trimmed: string): SeBasicInfoValueResult {
   if (trimmed !== "active" && trimmed !== "inactive") {
     return fail("Status must be active or inactive.");
+  }
+  return ok(trimmed);
+}
+
+function validateEconomicActivity(trimmed: string): SeBasicInfoValueResult {
+  if (!(BASIC_INFO_ECONOMIC_ACTIVITIES as readonly string[]).includes(trimmed)) {
+    return fail("Economic activity must be active, never or ceased.");
   }
   return ok(trimmed);
 }
@@ -217,6 +240,8 @@ export function validateSeBasicInfoValue(
       return validateLegalFormCode(trimmed, options.legalFormCodes);
     case "status":
       return validateStatus(trimmed);
+    case "economic_activity":
+      return validateEconomicActivity(trimmed);
     case "incorporation_date":
       return validateIncorporationDate(trimmed, options.today);
     case "lei":
