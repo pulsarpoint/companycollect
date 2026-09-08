@@ -130,3 +130,27 @@ def test_evaluate_row_counts_fails_on_any_empty_table() -> None:
 
     ok = chk.fetch_row_counts(FakeClient({"lv_companies": 5}), ("lv_companies",))
     assert ok == {"lv_companies": 5}
+
+
+# Asset keys whose leaves retired with the SE address chain (slice 4b). A leaf whose asset
+# no longer exists produces a freshness check that can never go green again.
+RETIRED_LEAF_ASSET_KEYS = (
+    "se_company_address_clickhouse",
+    "se_company_address_scb_clickhouse",
+    "se_company_address_bolagsverket_clickhouse",
+)
+
+
+def test_no_leaf_names_a_retired_address_asset() -> None:
+    keys = {spec.asset_key for spec in chk.CLICKHOUSE_LEAVES}
+    for retired in RETIRED_LEAF_ASSET_KEYS:
+        assert retired not in keys, retired
+
+
+def test_every_leaf_hangs_off_an_asset_that_exists() -> None:
+    """A leaf is a promise that some asset publishes that table. When the asset goes and the
+    leaf stays, the freshness check keeps firing against a materialization that will never
+    happen again -- the failure mode this whole retirement is cleaning up."""
+    graph_keys = {key.path[-1] for key in _repo().asset_graph.get_all_asset_keys()}
+    for spec in chk.CLICKHOUSE_LEAVES:
+        assert spec.asset_key in graph_keys, spec.asset_key

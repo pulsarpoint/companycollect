@@ -1,8 +1,10 @@
 """Pure helpers the address rules share with the retired information merge.
 
 `merge_company_info`, the field values and the rest of the old publisher's rules went with
-basic-info slice 4 (2026-09-08); what stays is what address_rules.py and address_legacy.py
-import: the artifact row shape, the evidence-set hash and the text normaliser.
+basic-info slice 4 (2026-09-08); the address model that once imported these helpers
+(`address_rules.py`, `address_legacy.py`) retired in address slice 4b (2026-09-08). What
+stays is the artifact row shape, the evidence-set hash and the text normaliser, still used by
+`tests/test_se_company_info_rules.py`.
 """
 
 import hashlib
