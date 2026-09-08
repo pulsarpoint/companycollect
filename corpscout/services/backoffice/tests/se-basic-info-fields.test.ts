@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  BASIC_INFO_ECONOMIC_ACTIVITIES,
   BASIC_INFO_FIELDS,
   BASIC_INFO_LANGUAGES,
   BASIC_INFO_SOURCES,
   BASIC_INFO_STATUSES,
   basicInfoFieldLabel,
+  economicActivityLabel,
   basicInfoSourceLabel,
   DEFAULT_BASIC_INFO_FIELD,
   foldPending,
@@ -24,11 +26,12 @@ function options(overrides: Partial<{ legalFormCodes: readonly string[]; today: 
 }
 
 describe("basic-info field catalogue", () => {
-  it("lists the eight decidable fields in display order", () => {
+  it("lists the nine decidable fields in display order", () => {
     expect(BASIC_INFO_FIELDS.map((field) => field.name)).toEqual([
       "legal_name",
       "legal_form_code",
       "status",
+      "economic_activity",
       "incorporation_date",
       "lei",
       "wikidata_id",
@@ -70,6 +73,20 @@ describe("basic-info field catalogue", () => {
   it("names the two statuses and the two languages", () => {
     expect(BASIC_INFO_STATUSES).toEqual(["active", "inactive"]);
     expect(BASIC_INFO_LANGUAGES).toEqual(["en", "sv"]);
+  });
+
+  it("names the three economic activities and labels them for readers", () => {
+    // Slice 6: SCB's Företagsstatus 1 / 0 / 9 as its own field.
+    expect(BASIC_INFO_ECONOMIC_ACTIVITIES).toEqual(["active", "never", "ceased"]);
+    expect(economicActivityLabel("never")).toBe("Never registered");
+    expect(economicActivityLabel("ceased")).toBe("Ceased");
+    expect(economicActivityLabel("")).toBe("");
+    expect(basicInfoFieldLabel("economic_activity")).toBe("Economic activity");
+    expect(validateSeBasicInfoValue("economic_activity", "never", "", options())).toEqual({ ok: true, value: "never", language: "" });
+    expect(validateSeBasicInfoValue("economic_activity", "dormant", "", options())).toEqual({
+      ok: false,
+      error: "Economic activity must be active, never or ceased.",
+    });
   });
 
   it("reads the selected field from the URL and falls back to legal name", () => {

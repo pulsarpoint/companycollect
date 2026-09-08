@@ -256,6 +256,7 @@ describe("detail config", () => {
         expect(c.detail?.recordQuery).toContain("c.*");
       } else if (c.code === "se") {
         expect(c.detail?.companyShellQuery).toContain("FROM se_company_basic_info AS i FINAL");
+        expect(c.detail?.companyShellQuery).toContain("i.economic_activity AS economic_activity");
         expect(c.detail?.companyShellQuery).toContain("{id:String}");
         expect(c.detail?.companyShellQuery).toContain(
           "i.description_sv AS activity_description_original",

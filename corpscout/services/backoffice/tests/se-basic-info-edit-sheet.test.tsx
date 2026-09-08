@@ -27,6 +27,7 @@ const reviewerDraft: SeBasicInfoSuggestionRow = {
   legal_name: "Draft name AB",
   legal_form_code: "",
   status: "",
+  economic_activity: "",
   incorporation_date: "",
   lei: "",
   wikidata_id: "",
@@ -48,6 +49,8 @@ const detail: SeBasicInfoDetail = {
     legal_form_code_source: "scb",
     status: "active",
     status_source: "scb",
+    economic_activity: "",
+    economic_activity_source: "",
     incorporation_date: "1937-05-12",
     incorporation_date_source: "scb",
     lei: "",
@@ -80,6 +83,24 @@ function render(element: React.ReactElement): string {
 }
 
 describe("SeBasicInfoEditForm", () => {
+  it("renders a three-option select for economic_activity", () => {
+    // Slice 6: SCB's Företagsstatus as its own field, labelled for readers.
+    const html = render(
+      <SeBasicInfoEditForm
+        companyId={COMPANY}
+        field="economic_activity"
+        detail={detail}
+        busy={false}
+        onCancel={() => {}}
+      />,
+    );
+    expect((html.match(/<option/g) ?? []).length).toBe(3);
+    expect(html).toContain('value="never"');
+    expect(html).toContain("Never registered");
+    expect(html).toContain('value="ceased"');
+    expect(html).toContain("Ceased");
+  });
+
   it("renders a native select with every legal-form option for legal_form_code", () => {
     const html = render(
       <SeBasicInfoEditForm

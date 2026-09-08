@@ -36,6 +36,7 @@ class Suggestion:
     legal_name: str | None
     legal_form_code: str | None
     status: str | None
+    economic_activity: str | None
     incorporation_date: date | None
     lei: str | None
     wikidata_id: str | None
@@ -55,6 +56,8 @@ class BasicInfoRow:
     legal_form_code_source: str
     status: str
     status_source: str
+    economic_activity: str
+    economic_activity_source: str
     incorporation_date: date | None
     incorporation_date_source: str
     lei: str | None
@@ -77,7 +80,7 @@ class BasicInfoRow:
 
     def _value_and_source(self, field: str) -> tuple[Any, str]:
         value = getattr(self, field)
-        if field == "status" and value == "":
+        if field in tables.NON_NULLABLE_FIELDS and value == "":
             value = None
         return value, getattr(self, f"{field}_source")
 
@@ -162,7 +165,7 @@ def fold_basic_info(
     for field in tables.FOLDED_FIELDS:
         winner = _winner(field, suggestions, active_rules)
         if winner is None:
-            values[field] = "" if field == "status" else None
+            values[field] = "" if field in tables.NON_NULLABLE_FIELDS else None
             values[f"{field}_source"] = ""
         else:
             values[field] = getattr(winner, field)

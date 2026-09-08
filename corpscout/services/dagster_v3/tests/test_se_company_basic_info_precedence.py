@@ -35,6 +35,8 @@ def test_the_numbers_of_the_spec() -> None:
     assert BASIC_INFO_PRECEDENCE["status"] == {
         "reviewer": 20000, "bolagsverket": 1000, "scb": 900, "ratsit": 300,
     }
+    # Slice 6 (2026-09-08): the flag as its own field, SCB the only automated source.
+    assert BASIC_INFO_PRECEDENCE["economic_activity"] == {"reviewer": 20000, "scb": 1000}
     assert BASIC_INFO_PRECEDENCE["incorporation_date"] == {
         "reviewer": 20000, "scb": 1000, "bolagsverket": 900, "wikidata": 200,
     }
@@ -55,6 +57,8 @@ def test_the_numbers_of_the_spec() -> None:
         ("legal_name", "esef", None),
         ("description_sv", "llm", 2000),
         ("status", "wikidata", None),
+        ("economic_activity", "scb", 1000),
+        ("economic_activity", "bolagsverket", None),
         ("description_language", "scb", None),
     ],
 )

@@ -69,6 +69,7 @@ def wikidata_select_sql() -> str:
         "    nullIf(trim(ifNull(entity.official_name, '')), '') AS legal_name,\n"
         "    CAST(NULL AS Nullable(String)) AS legal_form_code,\n"
         "    CAST(NULL AS Nullable(String)) AS status,\n"
+        "    CAST(NULL AS Nullable(String)) AS economic_activity,\n"
         "    if(entity.inception_date > toDate('1970-01-01'), toDate32(entity.inception_date), NULL) AS incorporation_date,\n"
         "    CAST(NULL AS Nullable(String)) AS lei,\n"
         "    entity.wikidata_id AS wikidata_id,\n"

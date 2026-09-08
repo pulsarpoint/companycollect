@@ -27,6 +27,8 @@ export interface SeBasicInfoRow {
   legal_form_code_source: string;
   status: string;
   status_source: string;
+  economic_activity: string;
+  economic_activity_source: string;
   incorporation_date: string;
   incorporation_date_source: string;
   lei: string;
@@ -53,6 +55,7 @@ export interface SeBasicInfoSuggestionRow {
   legal_name: string;
   legal_form_code: string;
   status: string;
+  economic_activity: string;
   incorporation_date: string;
   lei: string;
   wikidata_id: string;
@@ -120,6 +123,7 @@ export interface SeBasicInfoDetail {
 const VALUE_COLUMNS_SQL = (alias: string) => `  ${alias}.legal_name AS legal_name,
   ifNull(${alias}.legal_form_code, '') AS legal_form_code,
   toString(${alias}.status) AS status,
+  toString(${alias}.economic_activity) AS economic_activity,
   ifNull(toString(${alias}.incorporation_date), '') AS incorporation_date,
   ifNull(${alias}.lei, '') AS lei,
   ifNull(${alias}.wikidata_id, '') AS wikidata_id,
@@ -130,6 +134,7 @@ const VALUE_COLUMNS_SQL = (alias: string) => `  ${alias}.legal_name AS legal_nam
 const SOURCE_COLUMNS_SQL = (alias: string) => `  toString(${alias}.legal_name_source) AS legal_name_source,
   toString(${alias}.legal_form_code_source) AS legal_form_code_source,
   toString(${alias}.status_source) AS status_source,
+  toString(${alias}.economic_activity_source) AS economic_activity_source,
   toString(${alias}.incorporation_date_source) AS incorporation_date_source,
   toString(${alias}.lei_source) AS lei_source,
   toString(${alias}.wikidata_id_source) AS wikidata_id_source,
@@ -153,7 +158,7 @@ export const BASIC_INFO_SUGGESTIONS_SQL = `SELECT
   s.source_record_uid AS source_record_uid,
   toString(s.observed_at) AS observed_at,
   toString(s.suggested_at) AS suggested_at,
-${VALUE_COLUMNS_SQL("s").replace("s.legal_name AS legal_name", "ifNull(s.legal_name, '') AS legal_name").replace("toString(s.status) AS status", "ifNull(s.status, '') AS status")},
+${VALUE_COLUMNS_SQL("s").replace("s.legal_name AS legal_name", "ifNull(s.legal_name, '') AS legal_name").replace("toString(s.status) AS status", "ifNull(s.status, '') AS status").replace("toString(s.economic_activity) AS economic_activity", "ifNull(s.economic_activity, '') AS economic_activity")},
   ifNull(s.decided_by, '') AS decided_by,
   ifNull(s.note, '') AS note,
   s.source_run_id AS source_run_id,
@@ -274,11 +279,12 @@ export function clickhouseStamp(date: Date): string {
   return date.toISOString().replace("T", " ").replace("Z", "");
 }
 
-/** The suggestion table's nine value columns, in insert-column order. */
+/** The suggestion table's ten value columns, in insert-column order. */
 const SUGGESTION_VALUE_FIELDS = [
   "legal_name",
   "legal_form_code",
   "status",
+  "economic_activity",
   "incorporation_date",
   "lei",
   "wikidata_id",
@@ -289,7 +295,7 @@ const SUGGESTION_VALUE_FIELDS = [
 
 export type SeBasicInfoValueField = (typeof SUGGESTION_VALUE_FIELDS)[number];
 
-/** One row for `chInsertSeBasicInfoSuggestions`: the nine value columns are
+/** One row for `chInsertSeBasicInfoSuggestions`: the ten value columns are
  * `Nullable` on the table, so every one of them is `string | null` here --
  * never `''` (spec 3.2's suggestion-row contract). */
 export interface SeBasicInfoSuggestionInsertRow {
@@ -300,6 +306,7 @@ export interface SeBasicInfoSuggestionInsertRow {
   legal_name: string | null;
   legal_form_code: string | null;
   status: string | null;
+  economic_activity: string | null;
   incorporation_date: string | null;
   lei: string | null;
   wikidata_id: string | null;

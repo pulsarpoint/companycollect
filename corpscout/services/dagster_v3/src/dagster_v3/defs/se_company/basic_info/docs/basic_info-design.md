@@ -49,8 +49,10 @@ per company, reading its own register table and stamping `observed_at` from the 
 grounds the row:
 
 - `scb` reads `se_scb_companies` FINAL: `legal_name`, `legal_form_code`, `status` (from
-  `source_status_code`), `incorporation_date` (`registration_date`); `observed_at` is the
-  register row's own `observed_at`.
+  `source_status_code`), `economic_activity` (the same code as its own field, slice 6:
+  1 active, 0 never, 9 ceased), `incorporation_date` (`registration_date`); `observed_at`
+  is the register row's own `observed_at`. Every other extractor emits NULL for
+  `economic_activity`: only SCB knows it.
 - `bolagsverket` reads `se_bolagsverket_companies` FINAL joined to `text_translations`:
   `legal_name`, `legal_form_code` (the organisationsform token mapped to SCB's juridisk
   form code by `legal_form.py`, so the entity carries one vocabulary whichever source

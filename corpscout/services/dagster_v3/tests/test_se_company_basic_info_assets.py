@@ -88,6 +88,18 @@ def test_assets_are_registered_with_pool_partitions_and_backfill_policy() -> Non
         assert "basic_info" not in sensor.name
 
 
+def test_ratsit_extractor_depends_on_the_normalized_ratsit_table() -> None:
+    # Basic info consumes Ratsit: the extractor's upstream is the real normalized table,
+    # not the multi-asset op name (a phantom key Dagster renders as an external node).
+    from dagster_v3.definitions import defs as load_defs
+
+    graph = load_defs().get_repository_def().asset_graph
+    extractor = graph.get(dg.AssetKey("se_basic_info_suggestions_ratsit"))
+    assert extractor.parent_keys == {dg.AssetKey("se_ratsit_company")}
+    assert graph.get(dg.AssetKey("se_ratsit_company")).is_executable
+
+
+
 class _FakePrecedenceClient:
     """Records every statement/params pair; the stale-count query always returns 0
     rows changed (nothing pre-existing to go stale in this test)."""
@@ -112,11 +124,12 @@ def test_export_precedence_inserts_every_pair_and_binds_a_utc_millisecond_string
     pairs, stale = export_precedence(client, exported_at)
 
     expected_rows = precedence_rows()
-    # 30 pairs as BASIC_INFO_PRECEDENCE stands today (not 33 -- counted directly from
-    # precedence_rows() below so this test tracks the dictionary rather than drifting
-    # from it if a source/field pair is added or removed).
-    assert len(expected_rows) == 30
-    assert pairs == len(expected_rows) == 30
+    # 32 pairs as BASIC_INFO_PRECEDENCE stands today (30 before slice 6 added
+    # economic_activity's reviewer and scb rows -- counted directly from precedence_rows()
+    # below so this test tracks the dictionary rather than drifting from it if a
+    # source/field pair is added or removed).
+    assert len(expected_rows) == 32
+    assert pairs == len(expected_rows) == 32
     assert stale == 0
 
     assert len(client.calls) == 2

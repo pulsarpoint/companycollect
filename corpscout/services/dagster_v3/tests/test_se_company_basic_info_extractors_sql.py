@@ -26,12 +26,20 @@ def test_scb_select_matches_the_contract() -> None:
     assert "'scb' AS source" in sql
     assert REGISTER_UID in sql and "'sweden_scb'" in sql
     assert "multiIf(source_status_code = '1', 'active', source_status_code IN ('0', '9'), 'inactive', NULL) AS status" in sql
+    # Slice 6: the same code as its own field, three values.
+    assert "multiIf(source_status_code = '1', 'active', source_status_code = '0', 'never', source_status_code = '9', 'ceased', NULL) AS economic_activity" in sql
+    assert scb.SCB_EXTRACTOR_VERSION == "scb-v2"
     assert "registration_date AS incorporation_date" in sql
     for column in ("lei", "wikidata_id", "description", "description_language", "description_sv"):
         assert f"CAST(NULL AS Nullable(String)) AS {column}" in sql, column
     assert scb.scb_current_sql() == (
         "SELECT company_id, observed_at FROM corpscout.se_scb_companies FINAL WHERE has_company = 1"
     )
+
+
+def test_only_scb_supplies_economic_activity() -> None:
+    for module_sql in (bolagsverket.bolagsverket_select_sql(), esef.esef_select_sql(), ratsit.ratsit_select_sql(), wikidata.wikidata_select_sql()):
+        assert "CAST(NULL AS Nullable(String)) AS economic_activity" in module_sql
 
 
 def test_bolagsverket_select_matches_the_contract() -> None:

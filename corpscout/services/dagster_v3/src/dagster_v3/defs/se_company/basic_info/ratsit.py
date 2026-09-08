@@ -53,6 +53,7 @@ def ratsit_select_sql() -> str:
         "    nullIf(trim(name), '') AS legal_name,\n"
         "    CAST(NULL AS Nullable(String)) AS legal_form_code,\n"
         "    multiIf(status IS NULL, NULL, startsWith(status, 'Aktiv'), 'active', 'inactive') AS status,\n"
+        "    CAST(NULL AS Nullable(String)) AS economic_activity,\n"
         "    CAST(NULL AS Nullable(Date32)) AS incorporation_date,\n"
         "    CAST(NULL AS Nullable(String)) AS lei,\n"
         "    CAST(NULL AS Nullable(String)) AS wikidata_id,\n"
@@ -72,7 +73,7 @@ se_basic_info_suggestions_ratsit = define_suggestion_asset(
     current_sql=ratsit_current_sql(),
     select_sql=ratsit_select_sql(),
     select_params=RATSIT_SELECT_PARAMS,
-    deps=[dg.AssetKey("se_ratsit_normalized")],
+    deps=[dg.AssetKey("se_ratsit_company")],
     description=(
         "One ratsit suggestion row per company from the newest normalized Ratsit report "
         "(se_ratsit_company_translated): name, active/inactive from the status text, the "

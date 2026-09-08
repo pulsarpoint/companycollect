@@ -1007,7 +1007,6 @@ def _require_aware_timestamp(value: datetime, *, label: str) -> None:
 
 
 @dg.asset(
-    deps=[dg.AssetKey("se_company_basic_info_fold")],
     group_name="sweden_ratsit",
     kinds={"python", "browser", "html", "json", "s3", "clickhouse", "ratsit"},
     tags={

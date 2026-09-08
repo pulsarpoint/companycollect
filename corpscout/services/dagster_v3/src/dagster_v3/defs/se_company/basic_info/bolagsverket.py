@@ -56,6 +56,7 @@ def bolagsverket_select_sql() -> str:
         "    nullIf(trim(ifNull(register.legal_name, '')), '') AS legal_name,\n"
         f"    {bolagsverket_legal_form_sql('register.legal_form_code')} AS legal_form_code,\n"
         "    if(register.deregistration_date IS NULL, 'active', 'inactive') AS status,\n"
+        "    CAST(NULL AS Nullable(String)) AS economic_activity,\n"
         "    register.registration_date AS incorporation_date,\n"
         "    CAST(NULL AS Nullable(String)) AS lei,\n"
         "    CAST(NULL AS Nullable(String)) AS wikidata_id,\n"
