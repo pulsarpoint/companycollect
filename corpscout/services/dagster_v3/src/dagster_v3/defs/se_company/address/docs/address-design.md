@@ -60,6 +60,10 @@ re-normalizes every raw row regardless of any of this.
 - `partial` -- a street or box was found but the postcode or the city is missing.
 - `no_address` -- nothing usable was delivered, or the source marks the address unknown.
 - `foreign` -- the post town says `utlandet`, or the source's own `country_code` isn't `SE`.
+  Components stay NULL (the Swedish rules do not apply), but since 2026-09-08 the row still
+  carries a `normalized_address`: the delivered parts joined for display (care-of, street,
+  postcode, town, country). A published row with an empty line renders blank on the Address
+  tab and hides the detail page's Contact & location card altogether.
 
 Amended 2026-09-08: a valid postcode with a known town and no street or box is a `partial`
 address; the old chain published these 27,786 companies and the new one now does too,
@@ -73,7 +77,11 @@ FÖRETAG, 106 40 Stockholm` -- a big-company postal code) publishes as a `partia
 its care-of, postcode and city, noted `no street or box`. Everything else without a box or
 a street stays `no_address`. The fold never glues such a row onto a street candidate
 (`partial_compatible` requires a location line on both sides); two sources delivering the
-same one merge through the twin join, and the geocoder serves it the postcode centroid.
+same postal point merge through the LOCATION-LESS rule (2026-09-08): a partial with no
+street and no box joins the first candidate that has neither either and agrees on country,
+postcode and city, with `_one_sided_ok` on house_number/unit/care_of -- so `c/o x, 106 40
+Stockholm` and a bare `106 40 Stockholm` are one address carrying the care-of, while two
+different care-ofs at one postal code stay two. The geocoder serves it the postcode centroid.
 
 ## Parse rules (v2)
 

@@ -278,7 +278,8 @@ class AddressWarmConfig(dg.Config):
     description=(
         "Geocodes every current address location key in bulk through the cache-then-matcher "
         "function, so the fold pages hit the cache. Run once before the first full fold and "
-        "after every OSM extract refresh. Manual."
+        "after every OSM extract refresh. Runs in the weekly geocoding job after the OSM "
+        "extract; also runnable by hand."
     ),
 )
 def se_address_geocodes_warm(

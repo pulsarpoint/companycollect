@@ -123,7 +123,10 @@ lei_features AS (
 -- se_company_addresses_current projection. The entity's normalized_address is a display
 -- line (not the old pre-normalized matching string), so normalized_value is computed here
 -- from the street part (the mapping table's replaceRegexpOne, which strips the trailing
--- ", postcode city" segment), postal_code, city and country_code.
+-- ", postcode city" segment), postal_code, city and country_code. A normalizer-v3
+-- postcode-only line ("100 11 Stockholm") carries no street at all and no comma to strip
+-- at, so that shape is tested for first and contributes an EMPTY street rather than the
+-- whole line -- otherwise its own postal part would be normalized in twice.
 --
 -- SHARED CONTRACT with stg_web_domain_match_features.sql's jsonld_address_observations
 -- CTE: both sides feed int_company_domain_address_matches.sql, which joins them by
@@ -139,7 +142,7 @@ address_features AS (
         'address' AS feature_type,
         'postal' AS feature_subtype,
         {{ normalize_postal_address(
-            "replaceRegexpOne(addresses.normalized_address, ',\\\\s*[0-9]{3} [0-9]{2}[^,]*$', '')",
+            "if(match(addresses.normalized_address, '^[0-9]{3} [0-9]{2}[^,]*$'), '', replaceRegexpOne(addresses.normalized_address, ',\\\\s*[0-9]{3} [0-9]{2}[^,]*$', ''))",
             'addresses.postal_code',
             'addresses.city',
             'addresses.country_code'

@@ -108,6 +108,39 @@ def test_v3_a_valid_postcode_with_a_known_town_and_no_street_is_partial() -> Non
     assert (no_code.parse_status, unknown_town.parse_status) == ("no_address", "no_address")
 
 
+def test_a_foreign_row_keeps_a_display_line_of_what_the_source_said() -> None:
+    """A foreign address is published with every component NULL -- the Swedish rules do not
+    apply to it -- but it is PUBLISHED, and an empty `normalized_address` renders as a blank
+    line on the Address tab and hides the detail page's Contact & location card entirely
+    (42,126 active foreign rows over 38,718 companies, 2026-09-08). The line is the
+    delivered parts in delivered order and casing: care-of, street, postcode, town, country
+    -- nothing folded, nothing inferred, whatever the source happened to send."""
+    by_town = normalize_se_address(
+        RawAddress(street_address="MELIORACIJAS 21-3 OZOLNIEKI LV-3018", postal_code="00000", post_town="UTLANDET")
+    )
+    assert by_town.parse_status == "foreign"
+    assert by_town.normalized_address == "MELIORACIJAS 21-3 OZOLNIEKI LV-3018, 00000, UTLANDET"
+    # The foreign-town branch has no country to name, and none is invented.
+    assert by_town.country_code == ""
+
+    by_country = normalize_se_address(
+        RawAddress(care_of="c/o Hans Mueller", street_address="Hauptstrasse 1", postal_code="10115",
+                   post_town="Berlin", country_code="DE")
+    )
+    assert by_country.normalized_address == "c/o Hans Mueller, Hauptstrasse 1, 10115, Berlin, DE"
+    assert (by_country.country_code, by_country.parse_status) == ("DE", "foreign")
+    # Components stay NULL: a foreign line is display text, never parsed into the identity.
+    assert (by_country.care_of, by_country.street_name, by_country.postal_code, by_country.city) == (None,) * 4
+
+    # A packed Bolagsverket string is split first, so the line is composed of its parts.
+    packed = normalize_se_address(RawAddress(raw_address="Storgatan 1$$LONDON$SW1A$GB-LAND"))
+    assert packed.normalized_address == "Storgatan 1, SW1A, LONDON, GB"
+
+    # A foreign row can no longer come out blank: reaching either branch takes a foreign
+    # town or a country code, and both of those are parts of the line.
+    assert normalize_se_address(RawAddress(post_town="UTLANDET")).normalized_address == "UTLANDET"
+
+
 def test_zero_width_space_is_stripped_before_folding() -> None:
     """M4: Unicode format characters (category Cf, e.g. zero-width space) must not survive
     into the folded text -- they would otherwise split a house number that reads identically

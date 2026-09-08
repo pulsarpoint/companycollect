@@ -101,6 +101,13 @@ def test_sweden_company_match_features_are_normalized_and_technology_independent
     assert "source('corpscout', 'se_company_addresses_current')" not in model_sql
     assert "addresses.active = 1" in model_sql
     assert "replaceRegexpOne(addresses.normalized_address" in model_sql
+    # A postcode-only line (normalizer v3: "100 11 Stockholm") has no comma to strip at, so
+    # the strip alone would feed the WHOLE line in as the street and normalize its postal
+    # part twice. That shape is tested for first and contributes an empty street.
+    assert (
+        "if(match(addresses.normalized_address, '^[0-9]{3} [0-9]{2}[^,]*$'), ''"
+        in model_sql
+    )
     assert "addresses.text_source" in model_sql
     # The address normalized_value MUST come from normalize_postal_address (the same macro
     # and argument order stg_web_domain_match_features.sql uses), not a bespoke expression

@@ -150,9 +150,10 @@ def _postcode_only(source: str, **overrides) -> NormalizedRow:
 
 
 def test_two_sources_with_the_same_postcode_only_address_publish_one_row() -> None:
-    """The twin join, not `partial_compatible`: a postcode-only row has no location line to
-    place it by, so two of them merge only because their components are identical -- and
-    they must, or the pair would hash to one address_key twice in one published set."""
+    """Not `partial_compatible`, which demands a location line on both sides: a postcode-only
+    row is placed by its postal point (the location-less merge), and an identical pair like
+    this one MUST end up on one row either way, or it would hash to one address_key twice in
+    one published set -- which the twin lookup behind the merge still guarantees."""
     result = fold([_postcode_only("scb"), _postcode_only("bolagsverket", kind="registered")])
     assert (result.published, result.hidden, result.withdrawn) == (1, 0, 0)
     published = result.rows[0]
@@ -161,6 +162,46 @@ def test_two_sources_with_the_same_postcode_only_address_publish_one_row() -> No
     assert (published.postal_code, published.city) == ("10640", "stockholm")
     assert published.needs_geocode()
     assert published.as_normalized_address().parse_status == "partial"
+
+
+def test_a_care_of_and_a_bare_postcode_only_row_merge_and_keep_the_care_of() -> None:
+    """The location-less merge (2026-09-08): SCB delivers `c/o x, 106 40 Stockholm` and
+    Bolagsverket the same postal point bare. Neither has a location line, so
+    `partial_compatible` can place neither and the twin lookup does not see them as twins
+    (their components differ by the care-of) -- before the rule they published as two
+    addresses at one postal point. The union keeps the care-of.
+
+    `sources` is `('scb', 'bolagsverket')`: `_sort_key` ranks completeness FIRST, and the
+    SCB row carries three components (care_of, postal_code, city) against the bare row's
+    two, so it leads and supplies the published text -- Bolagsverket's higher precedence
+    only breaks ties at equal completeness."""
+    result = fold([
+        _postcode_only("scb", care_of="x", normalized_address="c/o X, 106 40 Stockholm"),
+        _postcode_only("bolagsverket", kind="registered"),
+    ])
+    assert (result.published, result.hidden, result.withdrawn) == (1, 0, 0)
+    published = result.rows[0]
+    assert published.sources == ("scb", "bolagsverket")
+    assert published.care_of == "x"
+    assert published.kinds == ("postal", "registered")
+    assert (published.street_name, published.box) == (None, None)
+    assert (published.postal_code, published.city) == ("10640", "stockholm")
+    assert published.normalized_address == "c/o X, 106 40 Stockholm"
+    assert published.as_normalized_address().parse_status == "partial"
+
+
+def test_two_postcode_only_rows_with_different_care_ofs_stay_two_addresses() -> None:
+    """`_one_sided_ok` is the guard: a care-of present on BOTH sides must agree. Two
+    tenants sharing a big-company postal code are two registrations at one postal point,
+    not one address, so they never merge -- and their keys differ, so publishing both is
+    safe."""
+    result = fold([
+        _postcode_only("scb", care_of="x", normalized_address="c/o X, 106 40 Stockholm"),
+        _postcode_only("bolagsverket", care_of="y", normalized_address="c/o Y, 106 40 Stockholm"),
+    ])
+    assert result.published == 2
+    assert sorted(r.care_of for r in result.rows) == ["x", "y"]
+    assert len({r.address_key for r in result.rows}) == 2
 
 
 def test_a_postcode_only_partial_never_joins_a_street_candidate() -> None:

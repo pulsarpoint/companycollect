@@ -54,6 +54,17 @@ def test_the_warm_asset_depends_on_the_osm_extract() -> None:
     }
 
 
+def test_the_warm_asset_describes_itself_as_part_of_the_weekly_job() -> None:
+    """Slice 4a put the warm step INTO sweden_company_address_geocoding_weekly_job, after
+    the OSM extract it depends on. The description is what an operator reads in the UI, so
+    it may not still say the step is manual."""
+    warm = assets.se_address_geocodes_warm
+    description = warm.specs_by_key[warm.key].description or ""
+    assert description.endswith(
+        "Runs in the weekly geocoding job after the OSM extract; also runnable by hand."
+    )
+
+
 def test_warm_config_defaults_and_bounds() -> None:
     assert assets.AddressWarmConfig().chunk_size == assets.WARM_CHUNK_SIZE == 150_000
     assert assets.AddressWarmConfig().limit == 0

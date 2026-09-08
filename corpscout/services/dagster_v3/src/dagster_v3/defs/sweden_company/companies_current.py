@@ -52,7 +52,11 @@ repointed this view at the entity.
 STREET FROM THE PUBLISHED LINE. The entity has no `street_address` column: `normalized_address`
 is the display line, `street[, postcode city]`. `_STREET_PART_EXPR` strips the trailing
 `, NNN NN Town` and keeps everything before it, so a `c/o` prefix survives -- the mapping
-rule every slice-4a reader applies to the entity's line.
+rule every slice-4a reader applies to the entity's line. Normalizer v3's postcode-only lines
+(`100 11 Stockholm`) have no comma before the postal part, so the strip alone would keep the
+WHOLE line as the street; the expression tests for that shape first and yields '' instead. A
+care-of-only line (`c/o AxFast AB, 164 87 Stockholm`) does have a comma and keeps `c/o AxFast
+AB` as its street part, by design.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -71,11 +75,14 @@ from dagster_v3.defs.sweden_company.geocode_store import (
 COMPANY_ADDRESS_TABLE = f"{CLICKHOUSE_DATABASE}.se_company_address_v2"
 COMPANY_INFO_TABLE = f"{CLICKHOUSE_DATABASE}.se_company_info"
 
-# The street part of a published line: everything before a trailing `, NNN NN Town`. Written
-# as a raw string so the doubled backslash reaches ClickHouse, whose string-literal parser
-# unescapes it back to the regex's `\s`.
+# The street part of a published line: everything before a trailing `, NNN NN Town`, and ''
+# for a line that is ONLY a postal part (normalizer v3's postcode-only addresses, which carry
+# no street and no box -- the strip alone would hand back the whole `100 11 Stockholm` line as
+# a street). Written as a raw string so the doubled backslash reaches ClickHouse, whose
+# string-literal parser unescapes it back to the regex's `\s`.
 _STREET_PART_EXPR = (
-    r"replaceRegexpOne(a.normalized_address, ',\\s*[0-9]{3} [0-9]{2}[^,]*$', '')"
+    r"if(match(a.normalized_address, '^[0-9]{3} [0-9]{2}[^,]*$'), '', "
+    r"replaceRegexpOne(a.normalized_address, ',\\s*[0-9]{3} [0-9]{2}[^,]*$', ''))"
 )
 
 # The entity carries no geocode_provider column; the class expression needs one. `matched_area`

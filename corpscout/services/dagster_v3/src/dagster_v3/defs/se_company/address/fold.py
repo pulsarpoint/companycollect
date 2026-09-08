@@ -235,6 +235,28 @@ class _Candidate:
             and _one_sided_ok(c, self.union)
         )
 
+    def locationless_compatible(self, row: NormalizedRow) -> bool:
+        """A postcode-only partial -- no street AND no box -- has no location line to be
+        placed by, so `partial_compatible` (which demands one on both sides) can never
+        find it a home. It belongs with a candidate that has no location line either and
+        agrees on country, postcode and city: the same postal point, described twice. The
+        care-of stays one-sided, so `c/o AxFast AB, 164 87 Stockholm` and a bare
+        `164 87 Stockholm` merge and the union keeps the care-of, while two postcode-only
+        rows naming DIFFERENT care-ofs stay apart -- they are two registrations at one
+        postal point, not one address.
+        """
+        c = row.components()
+        return (
+            c["street_name"] is None
+            and c["box"] is None
+            and self.union["street_name"] is None
+            and self.union["box"] is None
+            and row.country_code == self.country_code
+            and c["postal_code"] == self.union["postal_code"]
+            and c["city"] == self.union["city"]
+            and _one_sided_ok(c, self.union)
+        )
+
     def add(self, row: NormalizedRow) -> None:
         self.members.append(row)
         for name, value in row.components().items():
@@ -312,6 +334,17 @@ def fold_company_addresses(
         matching = [c for c in candidates if c.partial_compatible(row)]
         if len(matching) == 1:
             matching[0].add(row)
+            continue
+        # A postcode-only row (no street, no box) is never `partial_compatible` with
+        # anything, so it is placed by the postal point instead: the first candidate that
+        # is location-less too and agrees on country, postcode and city. This is what makes
+        # SCB's `c/o x, 106 40 Stockholm` and Bolagsverket's bare `106 40 Stockholm` one
+        # address whose union carries the care-of, rather than two rows a reviewer has to
+        # reconcile. It runs BEFORE the twin lookup, which only ever caught the subset of
+        # these pairs whose components were identical.
+        home = next((c for c in candidates if c.locationless_compatible(row)), None)
+        if home is not None:
+            home.add(row)
             continue
         # No home, or too many to choose between: the row publishes on its own -- unless an
         # earlier row already started a candidate with exactly its components, which would

@@ -223,6 +223,20 @@ def _split_care_of_street(line: str, notes: list[str]) -> tuple[str | None, str]
     return care_of, street
 
 
+def _foreign_display_line(raw: RawAddress, country: str) -> str:
+    """What the source said, joined for display. A foreign address is never parsed -- every
+    component stays NULL, because the Swedish rules do not apply to it -- but the row is
+    still PUBLISHED, and a published row with an empty `normalized_address` renders as a
+    blank line on the Address tab and makes the detail card hide the company's Contact &
+    location section altogether (42,126 active foreign rows, 38,718 companies, 2026-09-08).
+    So the line is the delivered parts in delivered order and delivered casing, nothing
+    inferred and nothing folded.
+    """
+    parts = (_clean(raw.care_of), _clean(raw.street_address), _clean(raw.postal_code),
+             _clean(raw.post_town), country)
+    return ", ".join(part for part in parts if part)
+
+
 def normalize_se_address(raw: RawAddress) -> NormalizedAddress:
     notes: list[str] = []
     if raw.raw_address:
@@ -245,9 +259,12 @@ def normalize_se_address(raw: RawAddress) -> NormalizedAddress:
     country = (raw.country_code or "").strip().upper()
 
     if town in _FOREIGN_TOWNS:
-        return NormalizedAddress(None, None, None, None, None, None, None, country or "", "", "foreign", "post town marks the address as foreign")
+        return NormalizedAddress(None, None, None, None, None, None, None, country or "",
+                                 _foreign_display_line(raw, country), "foreign",
+                                 "post town marks the address as foreign")
     if country and country != "SE":
-        return NormalizedAddress(None, None, None, None, None, None, None, country, "", "foreign", f"country {country}")
+        return NormalizedAddress(None, None, None, None, None, None, None, country,
+                                 _foreign_display_line(raw, country), "foreign", f"country {country}")
     if town in _UNKNOWN_TOWNS or street_line in _UNKNOWN_STREETS:
         return NormalizedAddress(None, None, None, None, None, None, None, "SE", "", "no_address", "source marks the address as unknown")
     # A row with neither a street line nor a care-of used to return `no_address` here. It

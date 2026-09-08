@@ -42,6 +42,11 @@ The fixture is seven companies, each a different shape of the primary-class or r
               reach the serving row: address_count == 1, class 'geocoded', and the JSON element
               carries the active row's key as its address_id.
   NOADDRESS   no address row at all -- still one serving row, with an empty address summary.
+  POSTCODE    one POSTCODE-ONLY address: normalizer v3 publishes `100 11 Stockholm` -- a
+              valid postcode and a town, no street and no box -- and the line therefore has
+              no comma for the street expression to cut at. `street_address` must come out
+              EMPTY (the strip alone would hand back the whole line as a street), while the
+              postcode and city columns carry the location. Its centroid makes it 'coarse'.
 """
 
 import json
@@ -70,14 +75,16 @@ POSTAL_BOX = "5560000044"
 NOADDRESS = "5560000055"
 HIDDEN = "5560000066"
 VISITING = "5560000077"
+POSTCODE = "5560000088"
 
-ADDRESSED = (COARSE, PRECISE, UNGEOCODED, POSTAL_BOX, HIDDEN, VISITING)
+ADDRESSED = (COARSE, PRECISE, UNGEOCODED, POSTAL_BOX, HIDDEN, VISITING, POSTCODE)
 
 PRECISE_LAT, PRECISE_LON = 59.3300, 18.0600
 COARSE_LAT, COARSE_LON = 55.6050, 13.0000
 POSTAL_BOX_LAT, POSTAL_BOX_LON = 55.3770, 13.1520
 HIDDEN_LAT, HIDDEN_LON = 57.7080, 11.9740
 VISITING_LAT, VISITING_LON = 63.8250, 20.2630
+POSTCODE_LAT, POSTCODE_LON = 59.3320, 18.0640
 
 # The entity's own keys ARE the serving JSON's address_id since slice 4a. Each is 64 chars,
 # the FixedString(64) width, and the leading letter fixes its sort position for the tiebreak.
@@ -93,6 +100,7 @@ HIDDEN_INACTIVE_KEY = "a" + "6" * 63
 # The postal row sorts BEFORE the visiting one: the kind rank, not the key, must decide.
 VISITING_KEY = "v" + "7" * 63
 VISITING_POSTAL_KEY = "a" + "7" * 63
+POSTCODE_KEY = "k" + "8" * 63
 
 
 def _info_row(company_id: str, legal_name: str) -> str:
@@ -255,6 +263,20 @@ ADDRESS_ROWS = (
         geocode_status="unmatched",
         box="Box 1",
     ),
+    # POSTCODE: normalizer v3's postcode-only shape -- the whole line IS the postal part,
+    # with no comma in front of it, geocoded to the postcode centroid.
+    _address_row(
+        company_id=POSTCODE,
+        address_key=POSTCODE_KEY,
+        kinds=("postal",),
+        line="100 11 Stockholm",
+        postal_code="100 11",
+        city="Stockholm",
+        geocode_status="matched_area",
+        geocode_precision="postcode",
+        latitude=POSTCODE_LAT,
+        longitude=POSTCODE_LON,
+    ),
 )
 
 
@@ -313,6 +335,7 @@ def _script(*, join_use_nulls: int) -> str:
                 _info_row(NOADDRESS, "Addressless AB"),
                 _info_row(HIDDEN, "Hidden Row AB"),
                 _info_row(VISITING, "Visiting AB"),
+                _info_row(POSTCODE, "Postcode Only AB"),
             )
         )
         + ";",
@@ -443,6 +466,7 @@ def test_legal_name_comes_from_company_info(rows: dict[str, dict]) -> None:
     assert rows[NOADDRESS]["legal_name"] == "Addressless AB"
     assert rows[HIDDEN]["legal_name"] == "Hidden Row AB"
     assert rows[VISITING]["legal_name"] == "Visiting AB"
+    assert rows[POSTCODE]["legal_name"] == "Postcode Only AB"
 
 
 def test_address_count_matches_the_published_addresses(rows: dict[str, dict]) -> None:
@@ -486,6 +510,25 @@ def test_the_street_element_is_the_line_without_its_postcode_and_town(
         == "c/o Axfast AB, Vasagatan 7"
     )
     assert rows[HIDDEN]["primary_street_address"] == "c/o Axfast AB, Vasagatan 7"
+
+
+def test_a_postcode_only_line_has_an_empty_street_and_keeps_its_location(
+    rows: dict[str, dict],
+) -> None:
+    """POSTCODE's published line is `100 11 Stockholm` -- normalizer v3's postcode-only
+    shape, no street and no box, and so no comma for the strip to cut at. The street part
+    must be EMPTY: the bare `replaceRegexpOne` matched nothing on such a line and handed
+    back the whole thing, which put `100 11 Stockholm` in the companies list's street
+    column and in the address JSON's `street_address`. The postcode and town still travel
+    in their own columns, and the centroid still classifies the row 'coarse'."""
+    element = _addresses(rows[POSTCODE])[POSTCODE_KEY]
+    assert element["street_address"] == ""
+    assert (element["postal_code"], element["city"]) == ("100 11", "Stockholm")
+    row = rows[POSTCODE]
+    assert row["primary_street_address"] == ""
+    assert (row["primary_postal_code"], row["primary_city"]) == ("100 11", "Stockholm")
+    assert row["primary_geocode_class"] == "coarse"
+    assert row["address_count"] == 1
 
 
 def test_addresses_json_carries_the_rows_own_geocode_block(

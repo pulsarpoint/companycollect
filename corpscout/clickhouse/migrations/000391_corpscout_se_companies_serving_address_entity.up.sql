@@ -16,7 +16,9 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 --     to 'osm'. That keeps a centroid row classifying 'coarse' exactly as the overlaid rows
 --     did, so primary_geocode_class is unchanged for every existing row
 --   * street_address is the published line minus its trailing `, NNN NN Town` (a `c/o`
---     prefix survives) -- the entity has no street_address column
+--     prefix survives) -- the entity has no street_address column. A normalizer-v3
+--     postcode-only line (`100 11 Stockholm`) has no comma to strip at, so that shape is
+--     tested for first and yields '' rather than the whole line
 --   * the primary pick ranks on has(kinds, 'visiting_or_postal') / has(kinds, 'visiting')
 --     instead of equality on a scalar address_type, same three ranks, same address_key
 --     tiebreak. address_id in the addresses JSON is now the entity's address_key.
@@ -44,7 +46,7 @@ AS WITH company_addresses AS (
     toString(a.address_key) AS address_key,
     arrayStringConcat(arrayMap(x -> toString(x), a.kinds), ',') AS address_type,
     toUInt8(has(a.sources, 'bolagsverket')) AS from_bolagsverket,
-    replaceRegexpOne(a.normalized_address, ',\\s*[0-9]{3} [0-9]{2}[^,]*$', '') AS street_address,
+    if(match(a.normalized_address, '^[0-9]{3} [0-9]{2}[^,]*$'), '', replaceRegexpOne(a.normalized_address, ',\\s*[0-9]{3} [0-9]{2}[^,]*$', '')) AS street_address,
     ifNull(a.postal_code, '') AS postal_code,
     ifNull(a.city, '') AS city,
     toString(a.address_key) AS address_id,
