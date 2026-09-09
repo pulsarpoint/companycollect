@@ -1193,15 +1193,9 @@ def _list(value: Any, *, name: str) -> list[Any]:
     return value
 
 
-_SOURCE_DOCUMENT_DEPENDENCIES = [
-    dg.AssetDep(dg.AssetKey("esef_filings_index_duckdb")),
-    dg.AssetDep(dg.AssetKey("esef_entity_registry_map_clickhouse")),
-]
-
-
 @dg.asset(
     name="esef_document_extraction_manifest_s3",
-    deps=_SOURCE_DOCUMENT_DEPENDENCIES,
+    deps=[dg.AssetDep(dg.AssetKey("esef_filings_index_duckdb"))],
     group_name=GROUP_NAME,
     kinds={"python", "s3", "duckdb"},
     partitions_def=ESEF_PROCESSED_WEEK_PARTITIONS,

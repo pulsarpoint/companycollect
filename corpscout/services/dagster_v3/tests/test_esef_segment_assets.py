@@ -1,3 +1,5 @@
+from dagster import AssetKey
+
 from dagster_v3.defs.esef_filings import segment_assets
 
 
@@ -14,3 +16,10 @@ def test_manifest_and_parse_rows_never_stamp_a_company() -> None:
     )
     assert "country_iso2" not in common and "company_id" not in common
     assert common["lei"] == "LEI"
+
+
+def test_manifest_asset_no_longer_depends_on_the_entity_registry_map() -> None:
+    manifest_asset = segment_assets.esef_document_extraction_manifest_s3
+    assert AssetKey("esef_entity_registry_map_clickhouse") not in (
+        manifest_asset.dependency_keys
+    )

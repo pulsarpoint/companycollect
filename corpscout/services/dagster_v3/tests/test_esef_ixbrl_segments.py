@@ -1126,7 +1126,6 @@ def test_document_assets_use_processed_week_partitions_and_share_source_deps() -
     partition_keys = ESEF_PROCESSED_WEEK_PARTITIONS.get_partition_keys()
     manifest_dependencies = {
         AssetKey("esef_filings_index_duckdb"),
-        AssetKey("esef_entity_registry_map_clickhouse"),
     }
     artifact_dependency = {AssetKey("esef_document_artifacts_s3")}
 
