@@ -740,16 +740,26 @@ git commit -m "docs(esef): country-agnostic products, the se_esef_* views and th
 - [ ] **Step 1:** `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run pytest -q -m "not integration" --deselect tests/test_schedule_cron_contracts.py::test_every_schedule_fires_on_a_unique_minute_hour_pair -p no:cacheprovider -p no:warnings --color=no -rf 2>&1 | rg "^FAILED|passed"`. Expected: only the four failures already on main (`test_backfill_policy_contracts`, `test_duckdb_bulk_loading_contract`, `test_nace_categories`, `test_sweden_address_geocoding::test_lantmateriet_credentials_are_documented_without_values`).
 - [ ] **Step 2:** `uv run pytest tests/test_company_domain_suggestions_dbt.py tests/test_se_company_basic_info_extractors_clickhouse_local.py -q` (docker). Expected: PASS.
 - [ ] **Step 3:** backoffice `npm run typecheck && npx vitest run 2>&1 | rg "Tests |×"`. Expected: only the known live-DB timeouts, the ESEF tab "renders every section" test and the address-casing test from the address workstream. The Swedish ESEF live tests will fail with "unknown table se_esef_*" until 000395 is applied: that is expected before Task 9 step 1, so run this step again after it.
-- [ ] **Step 4:** Merge AFTER Task 9 step 1 (the dev server runs main and the ESEF tab would query views that do not exist yet): `git checkout main && git merge --no-ff esef-1-country-agnostic-products -m "Merge branch 'esef-1-country-agnostic-products'"` (footer).
+- [ ] **Step 4:** Merge is Task 9 Step 5, not immediately after 000395 alone. Between 000395 being applied and the map plus the three projections being materialised and verified (Task 9 steps 1-4), the `se_esef_*` views and the three model-output tables read empty or stale data; merging into main before then would let the dev server (which runs main) query them in that state. See Task 9's ordering and its STOPPED-jobs note.
 
 ---
 
 ## Task 9: Rollout (owner-run steps marked)
 
 - [ ] **Step 1 (owner):** `cd corpscout && make clickhouse-migrate-up-one` (000395: the map column, the three renames and creates, the eight views, the person view). Verify: `SELECT name FROM system.tables WHERE database = 'corpscout' AND name LIKE 'se_esef_%'` lists eight rows and the ledger reads 395.
-- [ ] **Step 2:** merge (Task 8 step 4); backoffice smoke of the ESEF tab (`/admin/se/company/5020077862/esef`) and the public page.
-- [ ] **Step 3 (owner):** dbt-state refresh (the company_serving project changed) + light_sync deploy; verify on the host that `.local_defs_state/DbtProjectComponent__dbt____company-serving/project/models/company_domains_build.sql` names `se_esef_document_contact_candidates`.
-- [ ] **Step 4:** materialise `esef_entity_registry_map_clickhouse`; verify `SELECT link_status, count() FROM corpscout.esef_entity_registry_map FINAL WHERE country_iso2 = 'SE' GROUP BY 1` gives 403 register_verified and 1 unverified (Rizzo).
-- [ ] **Step 5:** materialise `esef_document_people_clickhouse`, `esef_document_business_items_clickhouse`, `esef_document_group_relationships_clickhouse` (refill the new tables); verify `SELECT count() FROM corpscout.se_esef_document_people` is close to the 9,634 Swedish rows minus Rizzo's 24.
+- [ ] **Step 2 (owner):** dbt-state refresh (the company_serving project changed) + light_sync deploy **from this checkout** (the branch's tree -- main does not yet have the `se_esef_*` dbt sources or the map dependency, and step 1 already made the views main's dbt project cannot see). Verify on the host that `.local_defs_state/DbtProjectComponent__dbt____company-serving/project/models/company_domains_build.sql` names `se_esef_document_contact_candidates`.
+- [ ] **Step 3:** materialise `esef_entity_registry_map_clickhouse`; verify `SELECT link_status, count() FROM corpscout.esef_entity_registry_map FINAL WHERE country_iso2 = 'SE' GROUP BY 1` reads 403 register_verified and 1 unverified (Rizzo).
+- [ ] **Step 4:** materialise `esef_document_people_clickhouse`, `esef_document_business_items_clickhouse`, `esef_document_group_relationships_clickhouse` (refill the new tables); verify `se_esef_document_people` is near 9,634 rows minus Rizzo's 24 (`SELECT count() FROM corpscout.se_esef_document_people`).
+- [ ] **Step 5:** merge `--no-ff` into main (`git checkout main && git merge --no-ff esef-1-country-agnostic-products -m "Merge branch 'esef-1-country-agnostic-products'"`, footer); backoffice smoke of the ESEF tab (`/admin/se/company/5020077862/esef`) and the public page.
 - [ ] **Step 6:** run the company_serving dbt build plus `company_serving_current` for SE (the same 15-asset selection as run 3144bbe9). Expected: green, no anchor failure.
 - [ ] **Step 7 (owner):** run `corpscout/clickhouse/operations/esef_stamps_retire.md`.
+
+**Between steps 1 and 4**, every `se_esef_*` view and the three model-output tables
+(`esef_document_people`, `esef_document_business_items`, `esef_document_group_relationships`)
+are empty: the views join to a map that has not been rebuilt with `link_status` yet, and the
+three model-output tables were just recreated empty by 000395 (their `_legacy` originals are
+not read by anything live). `se_company_basic_info_weekly` and the people jobs must therefore
+stay **STOPPED** across this whole window (steps 1-4), and the next weekly ESEF parse must run
+only after step 2's deploy completes -- it ships the phone-region fix (Important 1) along with
+the country-agnostic products, so running it earlier both reads from an incomplete map and
+loses the phone-region hint.
