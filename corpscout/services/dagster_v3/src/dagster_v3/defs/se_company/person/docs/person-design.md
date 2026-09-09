@@ -43,7 +43,9 @@ degrades to the empty object rather than failing a page's insert; between the de
 coercion, the constraint only ever fires on a hand-written row that explicitly supplies
 something other than an object (proved by `test_se_company_person_normalize_clickhouse_local.py`,
 `Code: 469`, `[1,2]`). `data` is an ordinary `String`, so this entity's read/write is the address
-entity's -- no native-JSON insert path, no `toJSONString`.
+entity's -- no native-JSON insert path. The extractors are the only place that BUILDS an
+object, and they do it with `toJSONString(map(...))` over all-String values, never by
+concatenating source text, so the constraint holds by construction.
 
 ## The `role_key` column
 
@@ -52,7 +54,8 @@ ESEF role phrase, ...); `role_key` is that source's own machine code beside it -
 Bolagsverket's `role_kind`, Wikidata's property id, ESEF's `role_category`. The `roles.py`
 per-source maps key on `role_key` first, falling back to `role_original`, since a code
 outlives label rewordings that a human label does not. Slice 1's extractors fill `role_key`
-out of each raw row's `data`; a source with no key still normalizes via `role_original`.
+straight from the source's own code column -- Bolagsverket's `role_kind`, ESEF's
+`role_category`, Wikidata's `role_property` -- and never out of `data`.
 
 ## Interrupted-migration runbook (000396)
 
@@ -69,3 +72,32 @@ never landed, run it from 000396's `.up.sql`; then `migrate force 396` to match 
 `changed_only` (default `true`; `false` re-normalizes every row, e.g. after a version bump),
 `company_ids` (default `[]` = every company, scanned into a scratch table and paged; named
 ids page in memory with no scan), and `page_size` (default `PAGE_SIZE` = 20,000, max 50,000).
+
+## Extractors (slice 1)
+
+`se_company_person_suggestions_<source>` (`bolagsverket`, `esef`, `wikidata`), on the same
+basic-info extract helper (`suggestions.py::define_person_suggestion_asset`), each write one
+raw suggestion row per (company, slot):
+
+| module | source | slot | notes |
+| --- | --- | --- | --- |
+| `bolagsverket.py` | `se_financial_report_signatories` | report `source_record_uid` + `signatory_uid` | split name, `role_kind` as `role_key`, fiscal year as the role year, `data` = signatory kind, statement key, person seq |
+| `esef.py` | `se_esef_document_people` (a view -- never `FINAL` after it) | `source_document_id` + `candidate_uid` | full name, `role_category` as `role_key`, document fiscal year, `data` = organization, status, confidence, evidence ids, model, prompt |
+| `wikidata.py` | `wikidata_company_people` + `wikidata_persons`, linked by orgnr or LEI | `Q<company>:P<property>:Q<person>` | full name, birth year, QID, property id as `role_key`, the role span, `data` = description, image, url, normalized name, is_current |
+
+The universe is `se_company_basic_info`: every extractor joins the folded company and drops
+everything else. The change scan is a per-company state hash, not a timestamp -- a sha256
+over what the source delivers now against the company's stored live rows; a company is
+visited only when the two sides differ, so the scan converges after one pass (a timestamp
+does not work here: Bolagsverket's source table is rebuilt whole on every run, so "newer
+than last time" is either everything or nothing). Tombstones are per slot, not per company:
+a `LEFT ANTI JOIN` of the stored live slots against the same `live` CTE, writing every
+person column NULL and `data` `{}`. `suggestion_id` and `suggested_at` both come from one
+`WITH (SELECT now64(3, 'UTC')) AS stamp` bound once per statement, so the two always agree.
+The suggestion table stores neither `source_run_id` nor `extractor_version`. `execute:
+false` (the default) previews the count without writing.
+
+`se_company_person_extract_job` (`jobs.py`) selects the three extractors and
+`se_company_person_normalize` (which now `deps` on them); `se_company_person_weekly`
+schedules it Mondays 07:25 UTC (`25 7 * * 1`) with `execute: true`, `page_size: 10000` per
+extractor and `changed_only: true` on the normalize asset, registered STOPPED.
