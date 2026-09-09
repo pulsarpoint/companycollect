@@ -4,7 +4,7 @@
  * module must not drag ClickHouse into the client bundle.
  */
 
-export const ADDRESS_SOURCES = ["scb", "bolagsverket", "ratsit", "reviewer", "reviewer_draft"] as const;
+export const ADDRESS_SOURCES = ["scb", "bolagsverket", "ratsit", "esef", "reviewer", "reviewer_draft"] as const;
 export const ADDRESS_KINDS = ["postal", "visiting", "visiting_or_postal", "registered", "workplace", "unknown"] as const;
 export const REVIEWER_KINDS = ["postal", "visiting", "visiting_or_postal", "registered"] as const;
 export type SeAddressSource = (typeof ADDRESS_SOURCES)[number];
@@ -33,7 +33,7 @@ export function isAddressKey(value: string): boolean {
 }
 
 const SOURCE_LABELS: Record<SeAddressSource, string> = {
-  scb: "SCB", bolagsverket: "Bolagsverket", ratsit: "Ratsit", reviewer: "Reviewer", reviewer_draft: "Reviewer draft",
+  scb: "SCB", bolagsverket: "Bolagsverket", ratsit: "Ratsit", esef: "ESEF", reviewer: "Reviewer", reviewer_draft: "Reviewer draft",
 };
 export function addressSourceLabel(source: string): string {
   return isAddressSource(source) ? SOURCE_LABELS[source] : source;

@@ -8,13 +8,14 @@ const KEY = "a".repeat(64);
 const base = { careOf: "", streetLine: "Storgatan 5", postalCode: "111 22", city: "Stockholm", country: "SE", kind: "postal", note: "" };
 
 describe("address catalogue", () => {
-  it("names the five sources and six kinds of the entity", () => {
-    expect([...ADDRESS_SOURCES]).toEqual(["scb", "bolagsverket", "ratsit", "reviewer", "reviewer_draft"]);
+  it("names the six sources and six kinds of the entity", () => {
+    expect([...ADDRESS_SOURCES]).toEqual(["scb", "bolagsverket", "ratsit", "esef", "reviewer", "reviewer_draft"]);
     expect([...ADDRESS_KINDS]).toEqual(["postal", "visiting", "visiting_or_postal", "registered", "workplace", "unknown"]);
     expect([...REVIEWER_KINDS]).toEqual(["postal", "visiting", "visiting_or_postal", "registered"]);
     expect(isAddressSource("ratsit") && !isAddressSource("llm")).toBe(true);
     expect(isAddressKind("registered") && !isAddressKind("home")).toBe(true);
     expect(addressSourceLabel("bolagsverket")).toBe("Bolagsverket");
+    expect(addressSourceLabel("esef")).toBe("ESEF");
     expect(addressSourceLabel("reviewer_draft")).toBe("Reviewer draft");
     expect(addressKindLabel("visiting_or_postal")).toBe("Visiting or postal");
     expect(geocodeStatusLabel("matched_area")).toBe("Area (centroid)");
