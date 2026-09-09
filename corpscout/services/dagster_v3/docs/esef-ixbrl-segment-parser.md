@@ -138,19 +138,26 @@ Artifacts use this content-addressed key layout:
 esef_filings/ixbrl_segments/schema=v5/parser=arelle-<version>/candidates=v3/package_sha256=<hash>/artifact.json
 ```
 
+The artifact's `source` object contains the LEI (Issuer Legal Entity Identifier)
+and document metadata (package hash, URL, parser versions, quality counts); it does
+not carry `country` or `company_id` — those belong in the identity registry. The
+artifact is country-agnostic and content-addressed. Country-specific views and
+consumers resolve identity by joining the `esef_entity_registry_map` on LEI.
+
 ## Extract company enrichment with DeepSeek
 
 Materialize `esef_document_company_information_clickhouse` after the four
-parsing outputs. It selects each company's latest report from canonical
-`esef_disclosures`, joins document-scoped concept labels, and reconstructs the
-bounded evidence input directly from ClickHouse. It uses the existing `DEEPSEEK_URL`,
-`DEEPSEEK_MODEL`, and `DEEPSEEK_API_KEY` environment variables. This paid asset is
-unpartitioned and is never included in the routine refresh or backfill. It reads the
-final ClickHouse disclosure state and selects the newest report for each resolved
-`(country_iso2, company_id)`. Schema-v5 rows include both selected tagged facts and
-visible sections. Migrated legacy disclosure rows remain queryable but do not become
-model inputs until their processed-week partition is rebuilt from the existing parsed
-artifact, because the legacy table did not retain semantic segment references.
+parsing outputs. The model stage selects each company's latest report per LEI
+(resolved through `esef_entity_registry_map`), joins document-scoped concept labels,
+and reconstructs the bounded evidence input directly from ClickHouse. It uses the
+existing `DEEPSEEK_URL`, `DEEPSEEK_MODEL`, and `DEEPSEEK_API_KEY` environment
+variables. This paid asset is unpartitioned and is never included in the routine
+refresh or backfill. It reads the final ClickHouse disclosure state and selects the
+newest report for each LEI with `link_status` and `country_iso2` resolved through
+the map. Schema-v5 rows include both selected tagged facts and visible sections.
+Migrated legacy disclosure rows remain queryable but do not become model inputs until
+their processed-week partition is rebuilt from the existing parsed artifact, because
+the legacy table did not retain semantic segment references.
 For example,
 this configuration processes the latest eligible report for selected Swedish companies:
 
