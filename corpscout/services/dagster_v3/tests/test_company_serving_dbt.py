@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import dagster as dg
@@ -185,7 +186,9 @@ def test_serving_models_resolve_identity_and_evidence_offline() -> None:
     # would be a ClickHouse error.
     for model in ("company_contact_current_build", "company_description_current_build", "company_management_current_build", "company_section_item_source_links_build", "company_domains_build"):
         text = (models / f"{model}.sql").read_text()
-        assert "esef_document_" not in text.replace("se_esef_document_", "")  # only the views remain
+        # Only the se_esef_document_* views remain: any esef_document_* NOT preceded by
+        # "se_" is the country-agnostic product itself, read directly.
+        assert re.search(r"(?<!se_)esef_document_", text) is None
         assert "esef_entity_registry_map" not in text
         assert "se_esef_document_people FINAL" not in text
 

@@ -508,7 +508,7 @@ def run_esef_llm_enrichment(
             len(documents) - len(processed_documents) - failed_document_count
         ),
         "selected_lei_count": len(
-            {str(document["lei"]) for document in documents}
+            {str(document["lei"]) for document in processed_documents}
         ),
         "information_row_count": len(information_rows),
         "enriched_document_count": enriched_count,

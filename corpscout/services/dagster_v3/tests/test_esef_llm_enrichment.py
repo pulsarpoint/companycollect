@@ -840,6 +840,44 @@ def test_company_id_selector_requires_one_country_identity_boundary() -> None:
         )
 
 
+def test_link_statuses_must_not_be_empty() -> None:
+    with pytest.raises(ValueError, match="link_statuses must not be empty"):
+        run_esef_llm_enrichment(
+            clickhouse=None,  # type: ignore[arg-type]
+            object_store=None,
+            client=None,  # type: ignore[arg-type]
+            model="deepseek-v4-flash",
+            source_run_id="llm-run",
+            country_iso2s=[],
+            company_ids=[],
+            source_document_ids=[],
+            max_documents=None,
+            refresh_existing=False,
+            max_evidence_chars=64_000,
+            log_info=lambda *_args: None,
+            link_statuses=[],
+        )
+
+
+def test_link_statuses_must_be_one_of_the_three_known_values() -> None:
+    with pytest.raises(ValueError, match="link_statuses must be a subset of"):
+        run_esef_llm_enrichment(
+            clickhouse=None,  # type: ignore[arg-type]
+            object_store=None,
+            client=None,  # type: ignore[arg-type]
+            model="deepseek-v4-flash",
+            source_run_id="llm-run",
+            country_iso2s=[],
+            company_ids=[],
+            source_document_ids=[],
+            max_documents=None,
+            refresh_existing=False,
+            max_evidence_chars=64_000,
+            log_info=lambda *_args: None,
+            link_statuses=["not_a_real_status"],
+        )
+
+
 def test_llm_reprocessing_modes_are_mutually_exclusive() -> None:
     with pytest.raises(ValueError, match="cannot both be enabled"):
         run_esef_llm_enrichment(

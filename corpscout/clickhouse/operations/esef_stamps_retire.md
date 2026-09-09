@@ -4,6 +4,12 @@ Owner-run on the companycollect ClickHouse AFTER 000395 is applied, dagster_v3 i
 the map is rebuilt, the three projections have refilled their new tables, and the
 company_serving publish is green.
 
+**This is a point of no return for 000395.** Its down migration renames
+`esef_document_people_legacy` / `esef_document_business_items_legacy` /
+`esef_document_group_relationships_legacy` back onto the live table names; once the drops
+below run, those `_legacy` tables are gone and 000395 can no longer be reverted with
+`migrate down` -- only forward, by a new migration.
+
 ## Gates
 
 ```sql

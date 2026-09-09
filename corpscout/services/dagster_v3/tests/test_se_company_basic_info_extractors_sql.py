@@ -3,6 +3,8 @@ order, binds %(company_ids)s, reads FINAL rows, and maps codes the way the spec 
 
 import re
 
+from dagster import AssetKey
+
 from dagster_v3.defs.se_company.basic_info import bolagsverket, esef, ratsit, scb, wikidata
 from dagster_v3.defs.se_company.basic_info.extract import SUGGESTION_SELECT_COLUMNS
 from dagster_v3.defs.sweden_ratsit.normalization import RATSIT_NORMALIZER_VERSION
@@ -106,6 +108,19 @@ def test_esef_select_takes_the_newest_filing_per_company() -> None:
     assert "max(toDateTime64(resolved_at, 3, 'UTC')) AS observed_at" in current and "GROUP BY company_id" in current
     assert "FROM corpscout.se_esef_document_company_information" in current
     assert "country_iso2" not in current
+
+
+def test_esef_suggestion_asset_depends_on_the_entity_registry_map() -> None:
+    # The view has no asset of its own: se_basic_info_suggestions_esef stays on the product
+    # asset that fills esef_document_company_information, and also needs the entity-registry
+    # map asset that fills the register-verified link se_esef_document_company_information
+    # joins through.
+    assert AssetKey("esef_document_company_information_clickhouse") in (
+        esef.se_basic_info_suggestions_esef.dependency_keys
+    )
+    assert AssetKey("esef_entity_registry_map_clickhouse") in (
+        esef.se_basic_info_suggestions_esef.dependency_keys
+    )
 
 
 def test_wikidata_select_links_entities_through_orgnr_or_lei() -> None:

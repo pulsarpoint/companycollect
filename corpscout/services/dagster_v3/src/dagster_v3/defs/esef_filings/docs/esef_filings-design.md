@@ -108,17 +108,21 @@ The `esef_entity_registry_map` carries `link_status` (`register_verified`,
 `COUNTRY_IDENTITY_RULES`. Resolved `company_id`, `country_iso2`, and
 `link_status` live in that map; products read them on-demand per LEI.
 
-For Sweden, eight country-specific views (`se_esef_facts`, `se_esef_disclosures`,
-`se_esef_document_people`, `se_esef_document_business_items`,
-`se_esef_document_group_relationships`, `se_esef_document_contact_candidates`,
-`se_esef_document_company_information`, `se_esef_document_concept_labels`)
+For Sweden, eight country-specific views (`se_esef_filings`, `se_esef_facts`,
+`se_esef_disclosures`, `se_esef_document_contact_candidates`,
+`se_esef_document_company_information`, `se_esef_document_people`,
+`se_esef_document_business_items`, `se_esef_document_group_relationships`)
 expose `company_id` by joining the map. These views are the surface for Swedish
 consumers; the country-agnostic products remain the ClickHouse tables of record.
 
-A consumer that reads a country-specific view must never write `FINAL` or other
-downstream artifacts marked for production reuse. Views are projections; their
-readers inherit the view's transformation logic and must not claim authority
-over the canonical products.
+A consumer never writes `FINAL` after a view name: the view already reads its
+underlying ReplacingMergeTree product `FINAL` (`se_esef_filings`, `se_esef_facts`,
+`se_esef_document_people`, `se_esef_document_business_items`, and
+`se_esef_document_group_relationships` are FINAL reads inside the view;
+`se_esef_disclosures`, `se_esef_document_contact_candidates`, and
+`se_esef_document_company_information` are plain MergeTree products and need
+none). Writing `FINAL` a second time after the view name is redundant at best
+and a ClickHouse error at worst.
 
 ## Operational sequence
 

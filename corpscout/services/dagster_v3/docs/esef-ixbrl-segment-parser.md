@@ -165,7 +165,8 @@ this configuration processes the latest eligible report for selected Swedish com
 ops:
   esef_document_company_information_clickhouse:
     config:
-      country_iso2: "SE"
+      link_statuses: ["register_verified"]
+      country_iso2s: ["SE"]
       company_ids: ["5566692850", "5565200028"]
       source_document_ids: []
       max_documents: 5
@@ -174,13 +175,14 @@ ops:
       timeout_seconds: 180
 ```
 
-With no filters, the asset processes the latest unprocessed report for every linked
-company. `country_iso2`, `company_ids`, `source_document_ids`, and `max_documents` are
-optional operational bounds. `company_ids` requires `country_iso2`, because company
-identity is country-scoped. A `source_document_ids` filter is applied after latest-report
-ranking, so it cannot accidentally select an older filing for a company. A document is
-skipped when the current model and prompt already processed the same canonical request,
-unless `refresh_existing` is true.
+With no filters, the asset processes the latest unprocessed report for every LEI admitted
+through the map at `link_statuses` (`register_verified` by default). `link_statuses`,
+`country_iso2s`, `company_ids`, `source_document_ids`, and `max_documents` are optional
+operational bounds. `company_ids` requires exactly one `country_iso2s` entry, because
+company identity is country-scoped. A `source_document_ids` filter is applied after
+latest-report ranking, so it cannot accidentally select an older filing for a company. A
+document is skipped when the current model and prompt already processed the same canonical
+request, unless `refresh_existing` is true.
 
 The model stage extracts these candidate fields:
 

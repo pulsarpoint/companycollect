@@ -192,6 +192,9 @@ esef_sources AS (
             lowerUTF8(filings.package_sha256)
         )))) AS source_record_uid,
         'annual_report_subject' AS relationship_kind,
+        -- 'gleif_registered_as' mirrors MATCH_SOURCE_GLEIF_REGISTERED_AS in
+        -- esef_filings/publish.py: the same literal the entity-registry map's own
+        -- match_source column carries for this bridge.
         'gleif_registered_as' AS match_method,
         toFloat32(1) AS match_confidence,
         filings.source_run_id,
