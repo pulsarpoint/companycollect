@@ -746,7 +746,7 @@ git commit -m "docs(esef): country-agnostic products, the se_esef_* views and th
 
 ## Task 9: Rollout (owner-run steps marked)
 
-- [ ] **Step 1 (owner):** `cd corpscout && make clickhouse-migrate-up-one` (000395: the map column, the three renames and creates, the eight views, the person view). Verify: `SELECT name FROM system.tables WHERE database = 'corpscout' AND name LIKE 'se_esef_%'` lists eight rows and the ledger reads 395.
+- [x] **Step 1 (owner):** `cd corpscout && make clickhouse-migrate-up-one` (000395: the map column, the three renames and creates, the eight views, the person view). Verify: `SELECT name FROM system.tables WHERE database = 'corpscout' AND name LIKE 'se_esef_%'` lists eight rows and the ledger reads 395.
 - [ ] **Step 2 (owner):** dbt-state refresh (the company_serving project changed) + light_sync deploy **from this checkout** (the branch's tree -- main does not yet have the `se_esef_*` dbt sources or the map dependency, and step 1 already made the views main's dbt project cannot see). Verify on the host that `.local_defs_state/DbtProjectComponent__dbt____company-serving/project/models/company_domains_build.sql` names `se_esef_document_contact_candidates`.
 - [ ] **Step 3:** materialise `esef_entity_registry_map_clickhouse`; verify `SELECT link_status, count() FROM corpscout.esef_entity_registry_map FINAL WHERE country_iso2 = 'SE' GROUP BY 1` reads 403 register_verified and 1 unverified (Rizzo).
 - [ ] **Step 4:** materialise `esef_document_people_clickhouse`, `esef_document_business_items_clickhouse`, `esef_document_group_relationships_clickhouse` (refill the new tables); verify `se_esef_document_people` is near 9,634 rows minus Rizzo's 24 (`SELECT count() FROM corpscout.se_esef_document_people`).
