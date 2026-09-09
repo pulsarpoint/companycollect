@@ -72,7 +72,6 @@ def test_presence_is_published_after_every_backing_table() -> None:
     assert set(tables.VALID_SECTIONS) == {
         "gleif",
         "wikidata",
-        "management",
         "descriptions",
         "domains",
         "contracts",
@@ -82,6 +81,14 @@ def test_presence_is_published_after_every_backing_table() -> None:
         "sources",
         "technology",
     }
+
+
+def test_the_management_contract_is_gone() -> None:
+    """company_management_current lost its dbt model and its reader in person slice 0; the
+    table is on the owner-run drop list, so nothing may still promise to publish it."""
+    assert "management" not in tables.VALID_SECTIONS
+    assert all(contract.name != "company_management_current" for contract in tables.CURRENT_TABLES)
+    assert "company_management_current" not in tables.HISTORY_TABLES
 
 
 def test_presence_reconciliation_uses_logical_item_keys() -> None:

@@ -44,17 +44,6 @@ models:
       - name: wikidata_id
         data_tests: [not_null]
 
-  - name: company_management_current_build
-    data_tests:
-      - company_serving_unique_key:
-          key_columns: [country_code, company_id, is_current, role_kind, management_id]
-      - company_serving_sweden_anchor
-    columns:
-      - name: company_id
-        data_tests: [not_null]
-      - name: management_id
-        data_tests: [not_null]
-
   - name: company_description_current_build
     data_tests:
       - company_serving_unique_key:

@@ -19,17 +19,11 @@ sources:
       - name: wikidata_company_listings
       - name: wikidata_company_websites
       - name: wikidata_company_domains
-      - name: wikidata_company_people
       - name: wikidata_persons
-      - name: se_financial_report_signatories
       - name: esef_document_company_information
         meta:
           dagster:
             asset_key: [esef_document_company_information_clickhouse]
-      - name: esef_document_people
-        meta:
-          dagster:
-            asset_key: [esef_document_people_clickhouse]
       - name: esef_document_contact_candidates
         meta:
           dagster:

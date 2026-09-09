@@ -41,7 +41,6 @@ def test_company_serving_dbt_project_parses() -> None:
         "company_gleif_current_build",
         "company_gleif_relationship_current_build",
         "company_wikidata_current_build",
-        "company_management_current_build",
         "company_description_current_build",
         "company_contact_current_build",
         "company_domains_build",
@@ -123,18 +122,12 @@ def test_serving_models_resolve_identity_and_evidence_offline() -> None:
     ).read_text()
     gleif = (models / "company_gleif_current_build.sql").read_text()
     wikidata = (models / "company_wikidata_current_build.sql").read_text()
-    management = (models / "company_management_current_build.sql").read_text()
     source_links = (models / "company_section_item_source_links_build.sql").read_text()
     presence = (models / "company_section_presence_current_build.sql").read_text()
 
     assert "ref('company_external_identifier_current_build')" in gleif
     assert "ref('company_external_identifier_current_build')" in wikidata
-    assert "country_person_match" not in management
     assert "country_person_match" not in source_links
-    assert "GROUP BY country_code, company_id, identity_person_id" in management
-    assert "'' AS person_id" in management
-    assert "'registry-person|'" in management
-    assert "observed_name_normalized" not in management
     assert "company_section_item_source_links" not in source_links
     assert "ref('company_section_item_source_links_build')" in presence
     assert "FROM evidence_links AS links" in source_links
@@ -146,8 +139,8 @@ def test_serving_models_resolve_identity_and_evidence_offline() -> None:
     assert "has(current.source_names, 'wikidata')" in source_links
     assert "has(current.source_names, 'esef_filing')" in source_links
     assert "annual_report_website" in source_links
-    assert "annual_report_signature" in source_links
-    assert "public_knowledge_graph_company_role" in source_links
+    assert "'management'" not in source_links
+    assert "ref('company_management_current_build')" not in source_links
     company_domains = (models / "company_domains_build.sql").read_text()
     assert "source('corpscout', 'wikidata_company_domains')" in company_domains
     assert "source('corpscout', 'esef_document_contact_candidates')" in company_domains
@@ -201,5 +194,5 @@ def test_serving_project_declares_integrity_tests() -> None:
     schema = (DBT_DIR / "models" / "schema.yml").read_text()
     assert "test company_serving_unique_key" in generic_tests
     assert "test company_serving_sweden_anchor" in generic_tests
-    assert schema.count("company_serving_unique_key:") == 13
-    assert schema.count("company_serving_sweden_anchor") == 13
+    assert schema.count("company_serving_unique_key:") == 12
+    assert schema.count("company_serving_sweden_anchor") == 12

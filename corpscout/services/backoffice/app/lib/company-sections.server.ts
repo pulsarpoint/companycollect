@@ -6,23 +6,19 @@ import type {
   CompanySourceRecord,
   ContractSummaryRow,
   DomainRow,
-  EsefPersonObservation,
   EvidenceRef,
   GleifEntityRow,
   GleifRelationshipRow,
   IndustryDetailRow,
-  OfficerRow,
   PublicContractRow,
   SourceContactObservation,
   WikidataCompanyRow,
-  WikidataPersonRow,
 } from "~/lib/queries.server";
 import { SE_COMPANY_ADDRESS_TABLE } from "~/lib/se-address-tables";
 
 export const COMPANY_SECTION_NAMES = [
   "gleif",
   "wikidata",
-  "management",
   "descriptions",
   "domains",
   "contracts",
@@ -141,12 +137,6 @@ export type CompanySectionData =
       relationships: GleifRelationshipRow[];
     }
   | { section: "wikidata"; wikidata: WikidataCompanyRow | null }
-  | {
-      section: "management";
-      officers: OfficerRow[];
-      wikidataPeople: WikidataPersonRow[];
-      esefPeople: EsefPersonObservation[];
-    }
   | { section: "descriptions"; descriptions: CompanyDescriptionObservation[] }
   | {
       section: "domains";
@@ -180,8 +170,6 @@ export async function getCompanySection(
       return getGleifSection(country, companyId);
     case "wikidata":
       return getWikidataSection(country, companyId);
-    case "management":
-      return getManagementSection(country, companyId);
     case "descriptions":
       return getDescriptionsSection(country, companyId);
     case "domains":
@@ -254,106 +242,6 @@ async function getWikidataSection(
   const wikidata = rows[0] ?? null;
   if (wikidata) wikidata.evidence = evidence.get(wikidata.wikidata_id) ?? [];
   return { section: "wikidata", wikidata };
-}
-
-interface ManagementServingRow {
-  management_id: string;
-  person_id: string;
-  person_profile_available: number;
-  external_person_scheme: string;
-  external_person_value: string;
-  display_name: string;
-  first_name: string;
-  last_name: string;
-  person_description: string;
-  birth_year: number | null;
-  image_url: string;
-  external_url: string;
-  role_kind: string;
-  role_label: string;
-  signatory_kind: string;
-  start_date: string;
-  end_date: string;
-  latest_fiscal_year: number | null;
-  is_current: number;
-  source_systems: string[];
-}
-
-async function getManagementSection(
-  country: string,
-  id: string,
-): Promise<Extract<CompanySectionData, { section: "management" }>> {
-  const [rows, evidence] = await Promise.all([
-    chQuery<ManagementServingRow>(
-      `SELECT current.management_id,
-         ifNull(toString(current.person_id), lower(hex(SHA256(concat(
-           'legacy-management-person|', current.country_code, '|', current.company_id, '|',
-           lowerUTF8(trim(current.display_name))
-         ))))) AS person_id,
-         toUInt8(isNotNull(current.person_id)) AS person_profile_available,
-         external_person_scheme, external_person_value, display_name, first_name,
-         last_name, person_description, birth_year, image_url, external_url,
-         role_kind, role_label, signatory_kind,
-         ifNull(toString(start_date), '') AS start_date,
-         ifNull(toString(end_date), '') AS end_date,
-         latest_fiscal_year, is_current, source_systems
-       FROM corpscout.company_management_current AS current
-       PREWHERE current.country_code = {country:String} AND current.company_id = {id:String}
-       ORDER BY is_current DESC, role_kind, display_name`,
-      { country, id },
-    ),
-    getSectionEvidence(country, id, "management"),
-  ]);
-  const officers: OfficerRow[] = [];
-  const wikidataPeople: WikidataPersonRow[] = [];
-  const esefPeople: EsefPersonObservation[] = [];
-  for (const row of rows) {
-    const rowEvidence = evidence.get(row.management_id) ?? [];
-    if (row.source_systems.includes("se_xbrl_signatures")) {
-      officers.push({
-        country_iso2: country,
-        person_id: row.person_id,
-        person_profile_available: Boolean(row.person_profile_available),
-        first_name: row.first_name,
-        last_name: row.last_name,
-        role_original: row.role_label,
-        role_kind: row.role_kind,
-        signatory_kind: row.signatory_kind,
-        fiscal_year: row.latest_fiscal_year ?? 0,
-        evidence: rowEvidence,
-      });
-    } else if (row.source_systems.includes("wikidata")) {
-      wikidataPeople.push({
-        person_wikidata_id: row.external_person_value,
-        name: row.display_name,
-        description: row.person_description,
-        birth_year: row.birth_year,
-        image_url: row.image_url,
-        wikidata_url: row.external_url,
-        role_label: row.role_label,
-        is_current: row.is_current,
-        start_date: row.start_date,
-        end_date: row.end_date,
-        evidence: rowEvidence,
-      });
-    } else {
-      esefPeople.push({
-        candidateUid: row.management_id,
-        sourceRecordUid: rowEvidence[0]?.sourceRecordUid ?? "",
-        sourceDocumentId: "",
-        fiscalYear: row.latest_fiscal_year ?? 0,
-        name: row.display_name,
-        role: row.role_label,
-        roleCategory: row.role_kind,
-        organization: row.person_description,
-        status: row.is_current ? "current" : "former",
-        effectiveFrom: row.start_date,
-        effectiveTo: row.end_date,
-        evidence: rowEvidence,
-      });
-    }
-  }
-  return { section: "management", officers, wikidataPeople, esefPeople };
 }
 
 async function getDescriptionsSection(

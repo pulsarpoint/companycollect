@@ -13,8 +13,6 @@ section_rows AS (
     UNION ALL
     SELECT country_code, company_id, 'wikidata', wikidata_id, resolved_at FROM {{ ref('company_wikidata_current_build') }}
     UNION ALL
-    SELECT country_code, company_id, 'management', management_id, resolved_at FROM {{ ref('company_management_current_build') }}
-    UNION ALL
     SELECT country_code, company_id, 'descriptions', description_id, extracted_at FROM {{ ref('company_description_current_build') }}
     UNION ALL
     SELECT country_code, company_id, 'domains', concat('domain:', root_domain), resolved_at FROM {{ ref('company_domain_current_build') }}
