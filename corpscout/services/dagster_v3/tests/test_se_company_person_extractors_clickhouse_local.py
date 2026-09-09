@@ -23,8 +23,10 @@ from pathlib import Path
 
 import pytest
 
+from dagster_v3.defs.esef_filings import tables as esef_tables
+from dagster_v3.defs.esef_filings.country_views import build_se_esef_view_sql
 from dagster_v3.defs.se_company.basic_info.extract import insert_page_sql
-from dagster_v3.defs.se_company.person import bolagsverket, tables
+from dagster_v3.defs.se_company.person import bolagsverket, esef, tables
 from dagster_v3.defs.se_company.person.normalize import (
     RAW_ROW_COLUMNS,
     changed_rows_sql,
@@ -33,6 +35,17 @@ from dagster_v3.defs.se_company.person.normalize import (
 from dagster_v3.defs.se_company.person.normalize_se import NORMALIZER_VERSION
 from dagster_v3.defs.se_company.person.suggestions import PERSON_SELECT_COLUMNS, PERSON_TARGET
 from tests.clickhouse_local import clickhouse_local_command, render
+
+ESEF_PEOPLE_VIEW = next(
+    view for view in esef_tables.SE_ESEF_VIEWS if view.table == "esef_document_people"
+)
+LEI = "1FOLRR5RWTWWI397R131"
+DOCUMENT_ID = f"{LEI}-2023-12-31-ESEF-SE-0"
+ESEF_DATA = (
+    '{"organization":"Exempel AB","status":"current","confidence":"0.95",'
+    '"evidence_ids":"E0006","model_provider":"glm","model_name":"z-ai\\\\/glm",'
+    '"prompt_version":"esef-people-v1"}'
+)
 
 pytestmark = pytest.mark.integration
 
@@ -96,6 +109,7 @@ def _schema() -> list[str]:
         schema += found
     for fixture in ("se_basic_info_source_tables.sql", "se_company_person_source_tables.sql"):
         schema += [s.strip() for s in (FIXTURES_DIR / fixture).read_text(encoding="utf-8").split(";") if s.strip()]
+    schema.append(build_se_esef_view_sql(ESEF_PEOPLE_VIEW).rstrip(";"))
     return schema
 
 
@@ -171,6 +185,11 @@ def _script_statements() -> list[str]:
         bolagsverket.bolagsverket_select_sql(), [COMPANY_BV],
         extractor_version=bolagsverket.BOLAGSVERKET_PERSON_EXTRACTOR_VERSION,
     )
+    esef_scope = _scope(esef.esef_changed_scope_sql(), "esef")
+    esef_insert = _insert(
+        esef.esef_select_sql(), [COMPANY_BV],
+        extractor_version=esef.ESEF_PERSON_EXTRACTOR_VERSION,
+    )
     changed_rows = _ordered(
         render(changed_rows_sql(), {"company_ids": [COMPANY_BV], "normalizer_version": NORMALIZER_VERSION}),
         "company_id, source, slot",
@@ -179,12 +198,28 @@ def _script_statements() -> list[str]:
         *_schema(),
         # The universe: COMPANY_OUTSIDE deliberately has no basic-info row.
         f"INSERT INTO corpscout.se_company_basic_info (company_id) VALUES ('{COMPANY_BV}')",
+        "INSERT INTO corpscout.esef_entity_registry_map (lei, country_iso2, registry_id_raw, "
+        f"registry_id, match_source, link_status) VALUES ('{LEI}', 'SE', '{COMPANY_BV}', "
+        f"'{COMPANY_BV}', 'gleif', 'register_verified')",
+        "INSERT INTO corpscout.esef_document_people (candidate_uid, source_record_uid, "
+        "source_document_id, lei, fiscal_year, name, role, role_category, organization, status, "
+        "effective_from, effective_to, confidence, evidence_ids, model_provider, model_name, "
+        "prompt_version, source_run_id, extracted_at) VALUES "
+        f"('{'c' * 64}', '{'r' * 64}', '{DOCUMENT_ID}', '{LEI}', 2023, 'Öberg, Håkan', "
+        "'Verkställande direktör', 'chief_executive', 'Exempel AB', 'current', "
+        "toDate32('2021-07-16'), NULL, 0.95, ['E0006'], 'glm', 'z-ai/glm', 'esef-people-v1', "
+        "'run-0', toDateTime64('2026-09-02 00:00:00', 3, 'UTC'))",
+        "SELECT '@@esef_scope_1'",
+        esef_scope,
+        esef_insert,
+        "SELECT '@@esef_scope_2'",
+        esef_scope,
         _register_row(COMPANY_BV, "2026-09-01 00:00:00", 1),
         _signatory_insert((BOARD_ROW, CERT_ROW, OUTSIDE_ROW)),
         "SELECT '@@bv_scope_1'",
         bv_scope,
         bv_insert,
-        "SELECT '@@bv_rows_1'",
+        "SELECT '@@raw_rows_1'",
         RAW_ROWS_SQL,
         "SELECT '@@identity_check'",
         IDENTITY_CHECK_SQL,
@@ -202,7 +237,7 @@ def _script_statements() -> list[str]:
         "SELECT '@@bv_scope_3'",
         bv_scope,
         bv_insert,
-        "SELECT '@@bv_rows_2'",
+        "SELECT '@@raw_rows_2'",
         RAW_ROWS_SQL,
         "SELECT '@@bv_scope_4'",
         bv_scope,
@@ -218,7 +253,7 @@ def _script_statements() -> list[str]:
         "SELECT '@@bv_scope_5'",
         bv_scope,
         bv_insert,
-        "SELECT '@@bv_rows_3'",
+        "SELECT '@@raw_rows_3'",
         RAW_ROWS_SQL,
         "SELECT '@@bv_scope_6'",
         bv_scope,
@@ -250,7 +285,7 @@ def test_the_scope_selects_the_company_then_converges(sections) -> None:
 
 
 def test_both_signature_lines_land_as_their_own_slot(sections) -> None:
-    rows = _rows(sections, "bv_rows_1")
+    rows = [r for r in _rows(sections, "raw_rows_1") if r["source"] == "bolagsverket"]
     assert len(rows) == 2
     assert {row["data"] for row in rows} == {BOARD_DATA, CERT_DATA}
     assert len({row["slot"] for row in rows}) == 2
@@ -282,8 +317,10 @@ def test_a_company_outside_the_basic_info_universe_is_never_written(sections) ->
 
 def test_a_vanished_signature_line_is_tombstoned_and_the_scope_reconverges(sections) -> None:
     assert sections["bv_scope_3"] == [[COMPANY_BV]]
-    before = {row["slot"]: row for row in _rows(sections, "bv_rows_1")}
-    rows = _rows(sections, "bv_rows_2")
+    before = {
+        row["slot"]: row for row in _rows(sections, "raw_rows_1") if row["source"] == "bolagsverket"
+    }
+    rows = [r for r in _rows(sections, "raw_rows_2") if r["source"] == "bolagsverket"]
     assert len(rows) == 2
     tombstones = [row for row in rows if row["data"] == "{}"]
     assert len(tombstones) == 1
@@ -306,10 +343,14 @@ def test_a_deregistered_company_has_its_remaining_slots_tombstoned(sections) -> 
     signature lines leave the live branch, and the slot still live is retired -- while the slot
     already tombstoned is left exactly as it was, which is what makes the scope converge."""
     assert sections["bv_scope_5"] == [[COMPANY_BV]]
-    before = {row["slot"]: row for row in _rows(sections, "bv_rows_2")}
+    before = {
+        row["slot"]: row for row in _rows(sections, "raw_rows_2") if row["source"] == "bolagsverket"
+    }
     board_slot = next(slot for slot, row in before.items() if row["data"] != "{}")
     cert_slot = next(slot for slot, row in before.items() if row["data"] == "{}")
-    rows = {row["slot"]: row for row in _rows(sections, "bv_rows_3")}
+    rows = {
+        row["slot"]: row for row in _rows(sections, "raw_rows_3") if row["source"] == "bolagsverket"
+    }
     assert set(rows) == {board_slot, cert_slot}
     for slot, row in rows.items():
         assert row["data"] == "{}", slot
@@ -322,6 +363,22 @@ def test_a_deregistered_company_has_its_remaining_slots_tombstoned(sections) -> 
     assert sections["data_check_3"] == [["0"]]
 
 
+def test_the_esef_row_keeps_the_delivered_full_name_dates_and_extras(sections) -> None:
+    assert sections["esef_scope_1"] == [[COMPANY_BV]]
+    assert sections["esef_scope_2"] == []
+    [row] = [r for r in _rows(sections, "raw_rows_1") if r["source"] == "esef"]
+    assert row["slot"] == f"{DOCUMENT_ID}:{'c' * 64}"
+    assert row["source_record_id"] == "r" * 64
+    assert row["full_name"] == "Öberg, Håkan"
+    assert row["first_name"] == row["last_name"] == "\\N"
+    assert row["role_original"] == "Verkställande direktör"
+    assert row["role_key"] == "chief_executive"
+    assert row["fiscal_year"] == "2023"
+    assert row["role_from"] == "2021-07-16" and row["role_to"] == "\\N"
+    assert row["document_ref"] == DOCUMENT_ID
+    assert row["data"] == ESEF_DATA
+
+
 def test_the_normalize_hand_off_gives_the_expected_parse_statuses(sections) -> None:
     rows = [normalized_row(_as_row(fields), None) for fields in sections["changed_rows"]]
     status = tables.NORMALIZED_COLUMNS.index("parse_status")
@@ -332,4 +389,8 @@ def test_the_normalize_hand_off_gives_the_expected_parse_statuses(sections) -> N
     assert by_status == [
         ("no_person", "", None, ("empty name",)),
         ("ok", "Anna Svensson", "board_member", ()),
+        # normalize_se_person records the comma form of spec rule 4.1 ("Last, First") as a
+        # parse note -- verified directly against normalize_se_person(RawPerson(source="esef",
+        # full_name="Öberg, Håkan", ...)), which returns parse_notes=("comma form",).
+        ("ok", "Håkan Öberg", "chief_executive_officer", ("comma form",)),
     ]

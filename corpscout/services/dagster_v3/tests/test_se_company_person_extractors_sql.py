@@ -7,7 +7,7 @@ tests/test_se_company_person_extractors_clickhouse_local.py."""
 import dagster as dg
 
 from dagster_v3.defs.se_company.basic_info.extract import insert_page_sql
-from dagster_v3.defs.se_company.person import assets, bolagsverket, tables
+from dagster_v3.defs.se_company.person import assets, bolagsverket, esef, tables
 from dagster_v3.defs.se_company.person.normalize import SCRATCH_SCOPE_PREFIX
 from dagster_v3.defs.se_company.person.suggestions import (
     LIVE_ROW_PREDICATE,
@@ -26,6 +26,13 @@ EXTRACTORS = {
         bolagsverket.bolagsverket_select_sql(),
         bolagsverket.bolagsverket_changed_scope_sql(),
         bolagsverket.se_company_person_suggestions_bolagsverket,
+    ),
+    "esef": (
+        esef.ESEF_COLUMN_SQL,
+        esef.esef_live_sql(scoped=True),
+        esef.esef_select_sql(),
+        esef.esef_changed_scope_sql(),
+        esef.se_company_person_suggestions_esef,
     ),
 }
 
@@ -156,6 +163,29 @@ def test_the_current_sql_is_only_the_since_escape_hatch() -> None:
     assert current.endswith("GROUP BY s.company_id")
     assert "max(s.resolved_at) AS observed_at" in current
     assert "%(company_ids)s" not in current
+
+
+def test_esef_slot_is_the_document_and_the_extractions_candidate_uid() -> None:
+    columns = esef.ESEF_COLUMN_SQL
+    assert columns["slot"] == "concat(e.source_document_id, ':', toString(e.candidate_uid))"
+    assert columns["source_record_id"] == "toString(e.source_record_uid)"
+    assert columns["full_name"] == "nullIf(trim(e.name), '')"
+    assert columns["first_name"] == NULL_SQL["first_name"]
+    assert columns["last_name"] == NULL_SQL["last_name"]
+    assert columns["role_original"] == "nullIf(trim(e.role), '')"
+    assert columns["role_key"] == "nullIf(trim(toString(e.role_category)), '')"
+    assert columns["role_from"] == "accurateCastOrNull(e.effective_from, 'Date')"
+    assert columns["role_to"] == "accurateCastOrNull(e.effective_to, 'Date')"
+    assert columns["document_ref"] == "nullIf(e.source_document_id, '')"
+    assert "'evidence_ids', arrayStringConcat(e.evidence_ids, ',')" in columns["data"]
+    assert columns["data"].startswith("toJSONString(map(")
+    live = esef.esef_live_sql()
+    assert "FROM corpscout.se_esef_document_people AS e" in live
+    # The view already reads its product FINAL (esef_filings/country_views.py): a consumer
+    # that adds another FINAL after a view name is a bug.
+    assert "se_esef_document_people AS e FINAL" not in live
+    assert "WHERE trim(e.name) != ''" in live
+    assert esef.ESEF_PERSON_EXTRACTOR_VERSION == "esef-person-v1"
 
 
 def test_assets_are_named_grouped_and_declared() -> None:
