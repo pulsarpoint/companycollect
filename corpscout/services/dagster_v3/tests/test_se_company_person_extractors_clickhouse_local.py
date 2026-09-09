@@ -11,8 +11,10 @@ Claims a fake client cannot settle:
    after the page is written (it converges), selects it again when the rebuilt source drops
    one of its rows, and converges again once the tombstone is written -- under
    join_use_nulls 0 and 1, which the scope's two aggregations exist to be immune to.
-5. A company outside se_company_basic_info never reaches the suggestion table.
-6. The normalize hand-off (`changed_rows_sql()` + `normalized_row()`) reads what these
+5. A company the register flags has_company = 0 has every remaining slot tombstoned even
+   though the signatory table still holds its rows (spec section 6), and converges too.
+6. A company outside se_company_basic_info never reaches the suggestion table.
+7. The normalize hand-off (`changed_rows_sql()` + `normalized_row()`) reads what these
    extractors wrote and gives the expected parse statuses, the tombstone included.
 """
 
@@ -43,6 +45,7 @@ WANTED_CREATES = (
     ("000396_corpscout_se_company_person_entity.up.sql", "CREATE TABLE IF NOT EXISTS corpscout.se_company_person_suggestion\n"),
     ("000396_corpscout_se_company_person_entity.up.sql", "CREATE TABLE IF NOT EXISTS corpscout.se_company_person_normalized\n"),
     ("000377_corpscout_se_company_basic_info.up.sql", "CREATE TABLE IF NOT EXISTS corpscout.se_company_basic_info\n"),
+    ("000374_corpscout_se_bolagsverket_companies.up.sql", "CREATE TABLE IF NOT EXISTS corpscout.se_bolagsverket_companies\n"),
     ("000395_corpscout_esef_country_agnostic_products.up.sql", "CREATE TABLE IF NOT EXISTS corpscout.esef_document_people\n"),
 )
 
@@ -153,6 +156,15 @@ def _signatory_insert(rows: tuple[str, ...]) -> str:
     )
 
 
+def _register_row(company_id: str, observed_at: str, has_company: int) -> str:
+    """One se_bolagsverket_companies row. The table is ReplacingMergeTree(observed_at) ordered
+    by company_id, so a later row with has_company = 0 is the register's own tombstone."""
+    return (
+        "INSERT INTO corpscout.se_bolagsverket_companies (company_id, observed_at, has_company) "
+        f"VALUES ('{company_id}', toDateTime64('{observed_at}', 3, 'UTC'), {has_company})"
+    )
+
+
 def _script_statements() -> list[str]:
     bv_scope = _scope(bolagsverket.bolagsverket_changed_scope_sql(), "bolagsverket")
     bv_insert = _insert(
@@ -167,6 +179,7 @@ def _script_statements() -> list[str]:
         *_schema(),
         # The universe: COMPANY_OUTSIDE deliberately has no basic-info row.
         f"INSERT INTO corpscout.se_company_basic_info (company_id) VALUES ('{COMPANY_BV}')",
+        _register_row(COMPANY_BV, "2026-09-01 00:00:00", 1),
         _signatory_insert((BOARD_ROW, CERT_ROW, OUTSIDE_ROW)),
         "SELECT '@@bv_scope_1'",
         bv_scope,
@@ -197,6 +210,20 @@ def _script_statements() -> list[str]:
         DATA_CHECK_SQL,
         "SELECT '@@changed_rows'",
         changed_rows,
+        # The register deregisters the company (spec section 6). The signatory table still
+        # holds its board signature line -- reports are never deleted -- so only the
+        # has_company flag can retire the slot.
+        "SELECT sleep(0.01) FORMAT Null",
+        _register_row(COMPANY_BV, "2026-09-02 00:00:00", 0),
+        "SELECT '@@bv_scope_5'",
+        bv_scope,
+        bv_insert,
+        "SELECT '@@bv_rows_3'",
+        RAW_ROWS_SQL,
+        "SELECT '@@bv_scope_6'",
+        bv_scope,
+        "SELECT '@@data_check_3'",
+        DATA_CHECK_SQL,
     ]
 
 
@@ -272,6 +299,27 @@ def test_a_vanished_signature_line_is_tombstoned_and_the_scope_reconverges(secti
     assert survivor["data"] == BOARD_DATA
     assert survivor["suggested_at"] > before[survivor["slot"]]["suggested_at"]
     assert sections["bv_scope_4"] == []
+
+
+def test_a_deregistered_company_has_its_remaining_slots_tombstoned(sections) -> None:
+    """Spec section 6: tombstones on has_company = 0. The register flips, the company's
+    signature lines leave the live branch, and the slot still live is retired -- while the slot
+    already tombstoned is left exactly as it was, which is what makes the scope converge."""
+    assert sections["bv_scope_5"] == [[COMPANY_BV]]
+    before = {row["slot"]: row for row in _rows(sections, "bv_rows_2")}
+    board_slot = next(slot for slot, row in before.items() if row["data"] != "{}")
+    cert_slot = next(slot for slot, row in before.items() if row["data"] == "{}")
+    rows = {row["slot"]: row for row in _rows(sections, "bv_rows_3")}
+    assert set(rows) == {board_slot, cert_slot}
+    for slot, row in rows.items():
+        assert row["data"] == "{}", slot
+        assert row["first_name"] == row["last_name"] == row["role_key"] == "\\N", slot
+        assert row["source_record_id"] == "", slot
+    assert rows[board_slot]["suggested_at"] > before[board_slot]["suggested_at"]
+    # Already a tombstone, so the page did not rewrite it.
+    assert rows[cert_slot]["suggested_at"] == before[cert_slot]["suggested_at"]
+    assert sections["bv_scope_6"] == []
+    assert sections["data_check_3"] == [["0"]]
 
 
 def test_the_normalize_hand_off_gives_the_expected_parse_statuses(sections) -> None:

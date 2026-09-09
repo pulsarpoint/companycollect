@@ -32,6 +32,24 @@ UNIVERSE_JOIN_SQL = (
     "    ON universe.company_id = s.company_id"
 )
 
+# TOMBSTONES ON has_company = 0 (spec section 6). A company Bolagsverket stops registering keeps
+# its register row with has_company = 0 -- the loader's own tombstone (migration 000374: "readers
+# take FINAL rows WHERE has_company = 1"). Its signature lines leave the live branch here, so the
+# shared tombstone branch retires their slots and the state-hash scope selects the company once;
+# the reports themselves are never deleted from se_financial_report_signatories, so without this
+# a deregistered company would keep publishing people forever.
+#
+# ANTI JOIN ON THE FLAGGED SET, NOT INNER JOIN ON has_company = 1: a company with no register row
+# at all never left the register, so it keeps its signatures. 472 of the 577,901 in-universe
+# signatory companies had no se_bolagsverket_companies row on 2026-09-09 (and none carried
+# has_company = 0); requiring a register row would retire all 472 as though they had been
+# deregistered. It is also the cheaper side to build: the flagged set is small, the live one is 1.5M.
+REGISTER_TOMBSTONE_ANTI_JOIN_SQL = (
+    "LEFT ANTI JOIN (\n"
+    "    SELECT company_id FROM corpscout.se_bolagsverket_companies FINAL WHERE has_company = 0\n"
+    ") AS deregistered ON deregistered.company_id = s.company_id"
+)
+
 BOLAGSVERKET_COLUMN_SQL: dict[str, str] = {
     "company_id": "s.company_id",
     "source": f"'{PERSON_SOURCE}'",
@@ -68,7 +86,10 @@ def bolagsverket_live_sql(*, scoped: bool = False) -> str:
         where_sql += "\n    AND s.company_id IN %(company_ids)s"
     return live_select_sql(
         columns=BOLAGSVERKET_COLUMN_SQL,
-        from_sql=f"FROM corpscout.se_financial_report_signatories AS s\n{UNIVERSE_JOIN_SQL}",
+        from_sql=(
+            "FROM corpscout.se_financial_report_signatories AS s\n"
+            f"{UNIVERSE_JOIN_SQL}\n{REGISTER_TOMBSTONE_ANTI_JOIN_SQL}"
+        ),
         where_sql=where_sql,
     )
 
@@ -102,10 +123,14 @@ se_company_person_suggestions_bolagsverket = define_person_suggestion_asset(
     deps=[
         dg.AssetKey("se_financial_report_signatories_clickhouse"),
         dg.AssetKey("se_company_basic_info_fold"),
+        # The register carries the has_company flag the live branch reads (the address
+        # extractor names the same key).
+        dg.AssetKey("sweden_company_bolagsverket_companies_clickhouse"),
     ],
     description=(
         "Every Swedish annual-report signature line as a raw person suggestion in "
         "se_company_person_suggestion (slot = report record uid + signatory uid); a line the "
-        "rebuilt source no longer delivers is tombstoned. execute=false previews."
+        "rebuilt source no longer delivers, and every line of a company the register flags "
+        "has_company = 0, is tombstoned. execute=false previews."
     ),
 )

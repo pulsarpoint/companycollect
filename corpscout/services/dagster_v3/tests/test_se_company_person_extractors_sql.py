@@ -136,6 +136,21 @@ def test_bolagsverket_slot_is_the_report_record_uid_and_the_signatory_uid() -> N
     assert bolagsverket.BOLAGSVERKET_PERSON_EXTRACTOR_VERSION == "bolagsverket-person-v1"
 
 
+def test_a_company_the_register_deregistered_leaves_the_live_branch() -> None:
+    """Spec section 6: `tombstones on has_company = 0`. The flagged companies leave `live`, so
+    the shared tombstone branch retires their slots and the state hash reselects them once. A
+    company with no register row at all never left the register and keeps its signatures."""
+    live = bolagsverket.bolagsverket_live_sql()
+    assert (
+        "LEFT ANTI JOIN (\n"
+        "    SELECT company_id FROM corpscout.se_bolagsverket_companies FINAL WHERE has_company = 0\n"
+        ") AS deregistered ON deregistered.company_id = s.company_id"
+    ) in live
+    # The scope reads the same live text, so both sides of the state hash agree on who is live.
+    assert "has_company = 0" in bolagsverket.bolagsverket_changed_scope_sql()
+    assert "has_company = 0" in bolagsverket.bolagsverket_select_sql()
+
+
 def test_the_current_sql_is_only_the_since_escape_hatch() -> None:
     current = bolagsverket.bolagsverket_current_sql()
     assert current.endswith("GROUP BY s.company_id")
