@@ -38,6 +38,9 @@ LLM_PROVENANCE_MIGRATION_FILE = (
 PARTITIONED_PARSING_MIGRATION_FILE = (
     MIGRATIONS_DIR / "000309_corpscout_esef_parsing_v2.up.sql"
 )
+COUNTRY_AGNOSTIC_MIGRATION_FILE = (
+    MIGRATIONS_DIR / "000395_corpscout_esef_country_agnostic_products.up.sql"
+)
 assert MIGRATION_FILE.exists(), (
     f"migration file not found at {MIGRATION_FILE} — check the parents[] depth "
     "(tests/ -> dagster_v3 -> services -> corpscout -> clickhouse/migrations)"
@@ -515,6 +518,11 @@ def test_export_columns_match_migration_000149_column_order() -> None:
         "personnel_expenses_amount_original",
         "personnel_expenses_amount_usd",
     }
+    # link_status was likewise added to esef_entity_registry_map by a later
+    # ALTER TABLE (migration 000395, ESEF slice 1 Task 2), so 000149's
+    # original CREATE TABLE never had it either -- excluded here and checked
+    # separately below.
+    entity_map_altered_columns = {"link_status"}
 
     for table_name, export_columns in expected_by_table.items():
         migration_columns = _migration_table_columns(sql, table_name)
@@ -530,10 +538,31 @@ def test_export_columns_match_migration_000149_column_order() -> None:
                 for column in export_columns
                 if column not in financial_metrics_altered_columns
             )
+        elif table_name == tables.ESEF_ENTITY_REGISTRY_MAP_TABLE:
+            export_columns = tuple(
+                column
+                for column in export_columns
+                if column not in entity_map_altered_columns
+            )
         assert tuple(migration_columns[:-1]) == export_columns, (
             f"{table_name}: export columns {export_columns} do not match "
             f"migration column order {migration_columns[:-1]}"
         )
+
+    # link_status itself: added right after match_source (matches the ALTER's
+    # own `AFTER match_source` placement) and by the migration we expect.
+    assert (
+        tables.ESEF_ENTITY_MAP_EXPORT_COLUMNS.index("link_status")
+        == tables.ESEF_ENTITY_MAP_EXPORT_COLUMNS.index("match_source") + 1
+    )
+    assert COUNTRY_AGNOSTIC_MIGRATION_FILE.exists(), (
+        f"migration file not found at {COUNTRY_AGNOSTIC_MIGRATION_FILE}"
+    )
+    country_agnostic_sql = COUNTRY_AGNOSTIC_MIGRATION_FILE.read_text(encoding="utf-8")
+    assert (
+        "ADD COLUMN IF NOT EXISTS link_status LowCardinality(String) "
+        "DEFAULT 'gleif' AFTER match_source"
+    ) in country_agnostic_sql
 
 
 def test_document_export_columns_match_migration_000243_column_order() -> None:

@@ -21,14 +21,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             arguments.package,
             source=EsefArtifactSource(
                 fxo_id=arguments.fxo_id,
-                country=arguments.country,
                 source_url=arguments.source_url,
                 object_key=arguments.object_key,
-                company_id=arguments.company_id,
                 source_run_id=arguments.source_run_id,
                 expected_package_sha256=arguments.expected_package_sha256,
             ),
             validate_esef=not arguments.skip_esef_validation,
+            phone_region=arguments.country,
         )
         output_bytes = artifact_json_bytes(artifact)
         arguments.output.parent.mkdir(parents=True, exist_ok=True)
@@ -88,7 +87,6 @@ def _argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--source-url", default="")
     parser.add_argument("--object-key", default="")
-    parser.add_argument("--company-id", default="")
     parser.add_argument("--source-run-id", default="")
     parser.add_argument("--expected-package-sha256", default="")
     parser.add_argument(

@@ -25,9 +25,17 @@ describe("SQL contracts", () => {
     ]) {
       expect(sql).toContain("company_id = {companyId:String}");
     }
-    // contact candidates use country_iso2, people/items use country_code
-    expect(ESEF_TAB_CONTACTS_SQL).toContain("country_iso2 = 'SE'");
-    expect(ESEF_TAB_PEOPLE_SQL).toContain("country_code = 'SE'");
+    // The register-verified se_esef_* views already scope every row to
+    // Sweden and expose company_id first, so the queries no longer carry
+    // their own country predicate or FINAL.
+    expect(ESEF_TAB_CONTACTS_SQL).toContain(
+      "FROM corpscout.se_esef_document_contact_candidates",
+    );
+    expect(ESEF_TAB_PEOPLE_SQL).toContain(
+      "FROM corpscout.se_esef_document_people",
+    );
+    expect(ESEF_TAB_PEOPLE_SQL).not.toContain("FINAL");
+    expect(ESEF_TAB_PEOPLE_SQL).not.toContain("country_code");
     expect(ESEF_TAB_FILINGS_SQL).toContain("issuer_scheme = 'lei'");
     // esef_facts is joined via a per-company IN-subquery scoped to this
     // company's LEI(s) (kills duplicate-identifier fan-out and keeps the

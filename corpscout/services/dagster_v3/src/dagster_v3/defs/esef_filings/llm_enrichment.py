@@ -53,8 +53,6 @@ class EsefEnrichmentSource(BaseModel):
     package_sha256: str
     segment_artifact_schema_version: int
     fxo_id: str
-    company_id: str
-    country: str
     source_url: str
     source_object_key: str
     report_period_end: str
@@ -353,8 +351,6 @@ def build_enrichment_evidence(
             package_sha256=package_sha256,
             segment_artifact_schema_version=schema_version,
             fxo_id=_optional_string(source.get("fxo_id")),
-            company_id=_optional_string(source.get("company_id")),
-            country=_optional_string(source.get("country")),
             source_url=_optional_string(source.get("source_url")),
             source_object_key=_optional_string(source.get("object_key")),
             report_period_end=_report_period_end(

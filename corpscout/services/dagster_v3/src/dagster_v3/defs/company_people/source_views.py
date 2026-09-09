@@ -87,7 +87,10 @@ SE_COMPANY_PERSON_ESEF_VIEW = f"{DATABASE}.se_company_person_esef"
 SE_COMPANY_PERSON_WIKIDATA_VIEW = f"{DATABASE}.se_company_person_wikidata"
 
 SE_FINANCIAL_REPORT_SIGNATORIES_TABLE = f"{DATABASE}.se_financial_report_signatories"
-ESEF_DOCUMENT_PEOPLE_TABLE = f"{DATABASE}.esef_document_people"
+# Migration 000395 (ESEF slice 1, Task 1) already reads esef_document_people FINAL, joined to
+# the register-verified Swedish link, and projects Swedish company_id -- this module's esef
+# view reads that Swedish view read-contract instead of the multi-country product directly.
+SE_ESEF_DOCUMENT_PEOPLE_VIEW = f"{DATABASE}.se_esef_document_people"
 WIKIDATA_COMPANY_PEOPLE_TABLE = f"{DATABASE}.wikidata_company_people"
 WIKIDATA_PERSONS_TABLE = f"{DATABASE}.wikidata_persons"
 WIKIDATA_COMPANY_IDENTIFIERS_TABLE = f"{DATABASE}.wikidata_company_identifiers"
@@ -163,11 +166,16 @@ def build_se_company_person_bolagsverket_view_sql() -> str:
 
 
 def build_se_company_person_esef_view_sql() -> str:
-    """The ESEF LLM-extracted people read, filtered to Sweden.
+    """The ESEF LLM-extracted people read, over the Swedish, register-verified view.
 
-    ``esef_document_people`` is multi-country and ``ReplacingMergeTree(extracted_at)`` --
-    FINAL dedupes a re-enrichment in place, and ``country_code = 'SE'`` is the only country
-    filter this experiment ever applies (never copied out of the source table, per spec 3.1).
+    ``se_esef_document_people`` (migration 000395, ESEF slice 1 Task 1) is itself a plain view
+    over ``esef_document_people``: it already reads the multi-country
+    ``ReplacingMergeTree(extracted_at)`` product FINAL, joins the register-verified
+    entity-registry link, and projects only Swedish, register-verified rows with
+    ``company_id`` swapped in for the registry id. This view therefore needs neither its own
+    FINAL (the upstream view already dedupes) nor its own country filter (the upstream view
+    already restricts to Sweden) -- both would be redundant, and a `FROM ... FINAL` on a view
+    that is itself a FINAL read is a ClickHouse error.
     """
     columns = (
         "company_id",
@@ -193,8 +201,7 @@ def build_se_company_person_esef_view_sql() -> str:
     return (
         f"CREATE OR REPLACE VIEW {SE_COMPANY_PERSON_ESEF_VIEW} AS\n"
         f"SELECT\n    {_projection(columns)}\n"
-        f"FROM {ESEF_DOCUMENT_PEOPLE_TABLE} FINAL\n"
-        "WHERE country_code = 'SE'"
+        f"FROM {SE_ESEF_DOCUMENT_PEOPLE_VIEW}"
     )
 
 

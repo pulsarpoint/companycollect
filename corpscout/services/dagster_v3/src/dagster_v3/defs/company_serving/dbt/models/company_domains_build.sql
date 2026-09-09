@@ -65,7 +65,7 @@ wikidata_sources AS (
 
 esef_sources AS (
     SELECT
-        candidates.country_iso2 AS country_code,
+        '{{ var("country_code") }}' AS country_code,
         candidates.company_id AS company_id,
         candidates.registrable_domain AS root_domain,
         concat('https://', candidates.registrable_domain) AS website_url,
@@ -100,14 +100,12 @@ esef_sources AS (
         ) AS confidence_basis,
         toUInt8(0) AS source_suggested_primary,
         candidates.resolved_at AS observed_at
-    FROM {{ source('corpscout', 'esef_document_contact_candidates') }} AS candidates
+    FROM {{ source('corpscout', 'se_esef_document_contact_candidates') }} AS candidates
     INNER JOIN companies
         ON companies.company_id = candidates.company_id
-    LEFT ANY JOIN {{ source('corpscout', 'esef_filings') }} AS filings
+    LEFT ANY JOIN {{ source('corpscout', 'se_esef_filings') }} AS filings
         ON filings.fxo_id = candidates.source_document_id
-    WHERE candidates.country_iso2 = '{{ var("country_code") }}'
-      AND candidates.candidate_kind = 'website'
-      AND candidates.company_id != ''
+    WHERE candidates.candidate_kind = 'website'
       AND candidates.registrable_domain != ''
 ),
 

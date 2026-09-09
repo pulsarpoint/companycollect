@@ -2536,8 +2536,8 @@ SELECT
   model_name,
   prompt_version,
   toString(extracted_at) AS extracted_at
-FROM corpscout.esef_document_people FINAL
-WHERE country_code = {country:String} AND company_id = {id:String}
+FROM corpscout.se_esef_document_people
+WHERE company_id = {id:String}
 ORDER BY fiscal_year DESC, status = 'current' DESC, role_category, name`;
 
 export const ESEF_DOCUMENT_BUSINESS_ITEMS_QUERY = `
@@ -2554,8 +2554,8 @@ SELECT
   model_name,
   prompt_version,
   toString(extracted_at) AS extracted_at
-FROM corpscout.esef_document_business_items FINAL
-WHERE country_code = {country:String} AND company_id = {id:String}
+FROM corpscout.se_esef_document_business_items
+WHERE company_id = {id:String}
 ORDER BY fiscal_year DESC, item_kind, name`;
 
 export const ESEF_DOCUMENT_RELATIONSHIPS_QUERY = `
@@ -2573,8 +2573,8 @@ SELECT
   model_name,
   prompt_version,
   toString(extracted_at) AS extracted_at
-FROM corpscout.esef_document_group_relationships FINAL
-WHERE country_code = {country:String} AND company_id = {id:String}
+FROM corpscout.se_esef_document_group_relationships
+WHERE company_id = {id:String}
 ORDER BY fiscal_year DESC, relationship_type, related_company_name`;
 
 export const ESEF_DOCUMENT_CONTACTS_QUERY = `
@@ -2586,8 +2586,8 @@ SELECT
   normalized_value,
   registrable_domain,
   extracted_at
-FROM corpscout.esef_document_contact_candidates
-WHERE country_iso2 = {country:String} AND company_id = {id:String}
+FROM corpscout.se_esef_document_contact_candidates
+WHERE company_id = {id:String}
 ORDER BY fiscal_year DESC, candidate_kind, normalized_value`;
 
 function buildEvidenceRefs(rows: CompanySourceRecordQueryRow[]): {
@@ -3256,35 +3256,40 @@ export async function getCompanyDetail(
         evidenceParams,
       ),
   );
-  const esefPeopleRowsPromise = evidenceQueryWhenReady(
-    evidenceSchemaReadyPromise,
-    () =>
-      chQuery<EsefPersonQueryRow>(ESEF_DOCUMENT_PEOPLE_QUERY, evidenceParams),
-  );
-  const businessItemRowsPromise = evidenceQueryWhenReady(
-    evidenceSchemaReadyPromise,
-    () =>
-      chQuery<BusinessItemQueryRow>(
-        ESEF_DOCUMENT_BUSINESS_ITEMS_QUERY,
-        evidenceParams,
-      ),
-  );
-  const sourceRelationshipRowsPromise = evidenceQueryWhenReady(
-    evidenceSchemaReadyPromise,
-    () =>
-      chQuery<SourceRelationshipQueryRow>(
-        ESEF_DOCUMENT_RELATIONSHIPS_QUERY,
-        evidenceParams,
-      ),
-  );
-  const sourceContactRowsPromise = evidenceQueryWhenReady(
-    evidenceSchemaReadyPromise,
-    () =>
-      chQuery<SourceContactQueryRow>(
-        ESEF_DOCUMENT_CONTACTS_QUERY,
-        evidenceParams,
-      ),
-  );
+  // The se_esef_* views are the Swedish register-verified link table's
+  // views: a non-Swedish company_id could collide with a Swedish one (see
+  // CLAUDE.md), so these four only ever run for Sweden.
+  const esefPeopleRowsPromise =
+    country.code === "se"
+      ? evidenceQueryWhenReady(evidenceSchemaReadyPromise, () =>
+          chQuery<EsefPersonQueryRow>(ESEF_DOCUMENT_PEOPLE_QUERY, { id }),
+        )
+      : Promise.resolve([]);
+  const businessItemRowsPromise =
+    country.code === "se"
+      ? evidenceQueryWhenReady(evidenceSchemaReadyPromise, () =>
+          chQuery<BusinessItemQueryRow>(ESEF_DOCUMENT_BUSINESS_ITEMS_QUERY, {
+            id,
+          }),
+        )
+      : Promise.resolve([]);
+  const sourceRelationshipRowsPromise =
+    country.code === "se"
+      ? evidenceQueryWhenReady(evidenceSchemaReadyPromise, () =>
+          chQuery<SourceRelationshipQueryRow>(
+            ESEF_DOCUMENT_RELATIONSHIPS_QUERY,
+            { id },
+          ),
+        )
+      : Promise.resolve([]);
+  const sourceContactRowsPromise =
+    country.code === "se"
+      ? evidenceQueryWhenReady(evidenceSchemaReadyPromise, () =>
+          chQuery<SourceContactQueryRow>(ESEF_DOCUMENT_CONTACTS_QUERY, {
+            id,
+          }),
+        )
+      : Promise.resolve([]);
   // No-op guards close the unhandled-rejection window between promise
   // construction and the `await` below — the await still surfaces real errors.
   sectionsPromise.catch(() => {});
