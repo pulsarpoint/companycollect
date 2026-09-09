@@ -254,7 +254,15 @@ def _escape_clickhouse_string_literal(value: str) -> str:
 
 def _register_verification_sql() -> tuple[str, str]:
     """(joins, link_status expression): one LEFT JOIN per rule country on the digits-only
-    id, the way company_identifier verifies, and the three-valued status."""
+    `digits` column, the way company_identifier verifies, and the three-valued status.
+
+    Both the join predicates and the ``multiIf`` guard read ``country_iso2``
+    (the ``mapped`` subquery's ``coalesce(primary_country_iso2, '')``), never
+    the raw nullable ``primary_country_iso2`` -- a NULL source country is
+    neither ``NOT IN (...)`` nor `` = '<code>'`` true, which would otherwise
+    fall through to ``unverified`` instead of the correct ``gleif`` (no
+    register covers an unknown/missing country).
+    """
     joins = []
     hits = []
     for code, rule in sorted(COUNTRY_IDENTITY_RULES.items()):
@@ -262,12 +270,12 @@ def _register_verification_sql() -> tuple[str, str]:
         joins.append(
             f"LEFT JOIN (SELECT DISTINCT replaceRegexpAll({rule.id_column}, '[^0-9]', '') AS id "
             f"FROM corpscout.{rule.register_table}) AS {alias} "
-            f"ON {alias}.id = digits AND primary_country_iso2 = '{code}'"
+            f"ON {alias}.id = digits AND country_iso2 = '{code}'"
         )
         hits.append(f"{alias}.id != ''")
     countries = ", ".join(f"'{code}'" for code in sorted(COUNTRY_IDENTITY_RULES))
     status = (
-        f"multiIf(primary_country_iso2 NOT IN ({countries}), '{LINK_STATUS_GLEIF}', "
+        f"multiIf(country_iso2 NOT IN ({countries}), '{LINK_STATUS_GLEIF}', "
         f"{' OR '.join(hits)}, '{LINK_STATUS_REGISTER_VERIFIED}', '{LINK_STATUS_UNVERIFIED}') AS link_status"
     )
     return "\n        ".join(joins), status
@@ -294,11 +302,12 @@ def build_esef_entity_registry_map_select(source_run_id: str) -> str:
     that table is already one-row-per-lei post-merge (ORDER BY (lei)).
 
     `link_status` (see `_register_verification_sql`): for a country with a
-    `COUNTRY_IDENTITY_RULES` entry, the normalized `registry_id` is checked
-    against that country's own register (digits-only both sides, mirroring
-    `company_identifier`) and marked `register_verified` or `unverified`;
-    every other country is `gleif` (GLEIF's word only, no register to check
-    against).
+    `COUNTRY_IDENTITY_RULES` entry, the digits-only `digits` column (not
+    `registry_id`, which carries per-country display formatting like FI's
+    dash) is checked against that country's own register, digits-only on
+    both sides mirroring `company_identifier`, and marked `register_verified`
+    or `unverified`; every other country is `gleif` (GLEIF's word only, no
+    register to check against).
     """
     run_id_literal = _escape_clickhouse_string_literal(source_run_id)
     joins, status = _register_verification_sql()
@@ -315,7 +324,6 @@ def build_esef_entity_registry_map_select(source_run_id: str) -> str:
             SELECT
                 lei,
                 coalesce(primary_country_iso2, '') AS country_iso2,
-                primary_country_iso2,
                 coalesce(registered_as, '') AS registry_id_raw,
                 multiIf(
                     primary_country_iso2 = 'FI',

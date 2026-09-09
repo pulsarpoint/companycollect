@@ -710,9 +710,9 @@ def test_build_esef_entity_registry_map_select_verifies_rule_countries_against_t
         "LEFT JOIN (SELECT DISTINCT replaceRegexpAll(org_number, '[^0-9]', '') AS id "
         "FROM corpscout.no_companies) AS reg_no" in sql
     )
-    assert "ON reg_se.id = digits AND primary_country_iso2 = 'SE'" in sql
+    assert "ON reg_se.id = digits AND country_iso2 = 'SE'" in sql
     assert (
-        "multiIf(primary_country_iso2 NOT IN ('FI', 'FR', 'NO', 'SE'), 'gleif', "
+        "multiIf(country_iso2 NOT IN ('FI', 'FR', 'NO', 'SE'), 'gleif', "
         "reg_fi.id != '' OR reg_fr.id != '' OR reg_no.id != '' OR reg_se.id != '', "
         "'register_verified', 'unverified') AS link_status"
     ) in sql
@@ -721,6 +721,18 @@ def test_build_esef_entity_registry_map_select_verifies_rule_countries_against_t
         < sql.index("AS link_status")
         < sql.index("AS source_run_id")
     )
+    # The join ON clauses and the multiIf guard must read the coalesced
+    # country_iso2, never the raw Nullable(String) primary_country_iso2 --
+    # otherwise a NULL source country falls through to 'unverified' instead
+    # of 'gleif' (neither `NULL NOT IN (...)` nor `NULL = '<code>'` is true).
+    # primary_country_iso2 legitimately still appears INSIDE the `mapped`
+    # subquery (coalesce's first argument, and the pre-existing FI/SE
+    # registry_id normalizer, which already falls through to the "other
+    # countries" branch on NULL) -- so scope the check to everything outside it.
+    subquery_start = sql.index("FROM (")
+    subquery_end = sql.index(") AS mapped") + len(") AS mapped")
+    outside_subquery = sql[:subquery_start] + sql[subquery_end:]
+    assert "primary_country_iso2" not in outside_subquery
 
 
 def test_build_esef_entity_registry_map_select_escapes_run_id() -> None:
