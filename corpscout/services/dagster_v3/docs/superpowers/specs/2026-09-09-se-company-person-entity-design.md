@@ -61,7 +61,7 @@ fiscal_year           Nullable(UInt16)         -- Bolagsverket and ESEF
 role_from             Nullable(Date)           -- Wikidata
 role_to               Nullable(Date)
 document_ref          Nullable(String)         -- report / document identifier for the evidence link
-data                  String                   -- a JSON object, the source's extras (3.1.2)
+data                  String DEFAULT '{}'      -- a JSON object, the source's extras (3.1.2)
 ENGINE ReplacingMergeTree(suggested_at) ORDER BY (company_id, source, slot)
 ```
 
@@ -72,8 +72,8 @@ person's index in the extraction. Wikidata: the QID plus the company link id. Re
 
 3.1.2 `data`. Everything the source knows about the person beyond the named columns, as a JSON
 object stored as text (the pinned ClickHouse Python driver cannot read or insert the native JSON
-type; a later migration may switch the column once it can; writers validate the text as an
-object): Wikidata's description, occupations, nationality, image; ESEF's title or position text and
+type; a later migration may switch the column once it can; the column defaults to `{}` and a
+CHECK constraint refuses anything but an object): Wikidata's description, occupations, nationality, image; ESEF's title or position text and
 the section it came from; Bolagsverket's signatory kind. Extractors fill it; nothing is dropped
 at the raw layer.
 
@@ -104,7 +104,7 @@ role_key              Nullable(String)         -- passed through
 role_year             Nullable(UInt16)
 role_from             Nullable(Date)
 role_to               Nullable(Date)
-data                  String                   -- passed through
+data                  String DEFAULT '{}'      -- passed through
 normalized_at         DateTime64(3, 'UTC')
 ENGINE ReplacingMergeTree(normalized_at) ORDER BY (company_id, source, slot)
 ```
@@ -139,7 +139,7 @@ current_roles         Array(String)
 first_year            Nullable(UInt16)
 last_year             Nullable(UInt16)
 text_source           LowCardinality(String)   -- whose spelling won
-data                  String                   -- a JSON object, the merged object (5.5)
+data                  String DEFAULT '{}'      -- a JSON object, the merged object (5.5)
 active                UInt8
 inactive_reason       LowCardinality(String)   -- '' | hidden | withdrawn
 folded_at             DateTime64(3, 'UTC')
