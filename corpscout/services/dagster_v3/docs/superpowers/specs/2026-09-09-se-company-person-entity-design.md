@@ -56,11 +56,12 @@ last_name             Nullable(String)
 birth_year            Nullable(UInt16)
 wikidata_id           Nullable(String)
 role_original         Nullable(String)         -- the source's role label, untouched
+role_key              Nullable(String)         -- the source's own role code when it has one
 fiscal_year           Nullable(UInt16)         -- Bolagsverket and ESEF
 role_from             Nullable(Date)           -- Wikidata
 role_to               Nullable(Date)
 document_ref          Nullable(String)         -- report / document identifier for the evidence link
-data                  JSON                     -- the source's extras (3.1.2)
+data                  String                   -- a JSON object, the source's extras (3.1.2)
 ENGINE ReplacingMergeTree(suggested_at) ORDER BY (company_id, source, slot)
 ```
 
@@ -70,7 +71,9 @@ person's index in the extraction. Wikidata: the QID plus the company link id. Re
 17 digits, as for addresses. A slot is stable across runs; a changed observation rewrites its slot.
 
 3.1.2 `data`. Everything the source knows about the person beyond the named columns, as a JSON
-object: Wikidata's description, occupations, nationality, image; ESEF's title or position text and
+object stored as text (the pinned ClickHouse Python driver cannot read or insert the native JSON
+type; a later migration may switch the column once it can; writers validate the text as an
+object): Wikidata's description, occupations, nationality, image; ESEF's title or position text and
 the section it came from; Bolagsverket's signatory kind. Extractors fill it; nothing is dropped
 at the raw layer.
 
@@ -97,10 +100,11 @@ display_name          String
 birth_year            Nullable(UInt16)
 wikidata_id           Nullable(String)
 role_code             Nullable(String)         -- catalog code or the original label (4.3)
+role_key              Nullable(String)         -- passed through
 role_year             Nullable(UInt16)
 role_from             Nullable(Date)
 role_to               Nullable(Date)
-data                  JSON                     -- passed through
+data                  String                   -- passed through
 normalized_at         DateTime64(3, 'UTC')
 ENGINE ReplacingMergeTree(normalized_at) ORDER BY (company_id, source, slot)
 ```
@@ -135,7 +139,7 @@ current_roles         Array(String)
 first_year            Nullable(UInt16)
 last_year             Nullable(UInt16)
 text_source           LowCardinality(String)   -- whose spelling won
-data                  JSON                     -- the merged object (5.5)
+data                  String                   -- a JSON object, the merged object (5.5)
 active                UInt8
 inactive_reason       LowCardinality(String)   -- '' | hidden | withdrawn
 folded_at             DateTime64(3, 'UTC')
@@ -331,8 +335,9 @@ Retired in slice 0, before anything new runs: the `defs/company_people/` package
 tests, and the person writer functions in `clickhouse.server.ts`; the public Management section
 (`management-section.tsx`, the management part of `company-sections.server.ts`, the dbt models
 `company_management_current_build.sql` and the people half of
-`company_section_item_source_links_build.sql`, with `company_management_current` on the drop
-list); the tables `se_company_person`, `se_company_person_role`, `se_company_person_role_draft`,
+`company_section_item_source_links_build.sql`, with `company_management_current` and the
+orphaned `company_management_observations` on the drop list; the section component and the
+French officers chain that shares it stay, only the Swedish loader and section go); the tables `se_company_person`, `se_company_person_role`, `se_company_person_role_draft`,
 `se_company_person_correction`, `se_company_person_enrichment_observation`,
 `se_company_person_collision_candidate`, `se_company_person_v1_role_baseline` if present, the
 views `se_company_person_bolagsverket`, `se_company_person_esef`, `se_company_person_wikidata`
