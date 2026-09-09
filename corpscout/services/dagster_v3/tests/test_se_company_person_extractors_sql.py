@@ -7,7 +7,7 @@ tests/test_se_company_person_extractors_clickhouse_local.py."""
 import dagster as dg
 
 from dagster_v3.defs.se_company.basic_info.extract import insert_page_sql
-from dagster_v3.defs.se_company.person import assets, bolagsverket, esef, tables
+from dagster_v3.defs.se_company.person import assets, bolagsverket, esef, tables, wikidata
 from dagster_v3.defs.se_company.person.normalize import SCRATCH_SCOPE_PREFIX
 from dagster_v3.defs.se_company.person.suggestions import (
     LIVE_ROW_PREDICATE,
@@ -33,6 +33,13 @@ EXTRACTORS = {
         esef.esef_select_sql(),
         esef.esef_changed_scope_sql(),
         esef.se_company_person_suggestions_esef,
+    ),
+    "wikidata": (
+        wikidata.WIKIDATA_COLUMN_SQL,
+        wikidata.wikidata_live_sql(scoped=True),
+        wikidata.wikidata_select_sql(),
+        wikidata.wikidata_changed_scope_sql(),
+        wikidata.se_company_person_suggestions_wikidata,
     ),
 }
 
@@ -196,3 +203,32 @@ def test_assets_are_named_grouped_and_declared() -> None:
     for source, (_, _, _, _, asset) in EXTRACTORS.items():
         assert asset.key == dg.AssetKey(f"se_company_person_suggestions_{source}")
         assert asset.group_names_by_key[asset.key] == "se_company_person"
+
+
+def test_wikidata_slot_is_the_link_record_id_and_the_link_is_orgnr_or_lei() -> None:
+    columns = wikidata.WIKIDATA_COLUMN_SQL
+    assert columns["slot"] == "link.source_record_id"
+    assert columns["source_record_id"] == "person.source_record_uid"
+    assert columns["full_name"] == "nullIf(trim(person.name), '')"
+    assert columns["birth_year"] == "person.birth_year"
+    assert columns["wikidata_id"] == "nullIf(link.person_wikidata_id, '')"
+    assert columns["role_original"] == "nullIf(trim(toString(link.role_label)), '')"
+    assert columns["role_key"] == "nullIf(trim(toString(link.role_property)), '')"
+    assert columns["fiscal_year"] == NULL_SQL["fiscal_year"]
+    assert columns["role_from"] == "link.start_date" and columns["role_to"] == "link.end_date"
+    assert columns["document_ref"] == NULL_SQL["document_ref"]
+    for key in ("'description'", "'image_url'", "'wikidata_url'", "'name_normalized'", "'is_current'"):
+        assert key in columns["data"], key
+
+    live = wikidata.wikidata_live_sql()
+    assert live.startswith("WITH universe AS (")
+    assert "SELECT company_id FROM corpscout.se_company_basic_info FINAL" in live
+    assert "identifiers.identifier_type = 'se_orgnr'" in live
+    assert "identifiers.issuer_scheme = 'lei' AND identifiers.is_current = 1" in live
+    assert "INNER JOIN corpscout.wikidata_company_people AS link FINAL" in live
+    assert "INNER JOIN corpscout.wikidata_persons AS person FINAL" in live
+    # Wikidata blank nodes (.well-known/genid/...) are not people and carry a URL as a name.
+    assert "WHERE match(link.person_wikidata_id, '^Q[0-9]+$') AND trim(person.name) != ''" in live
+    assert "%(company_ids)s" not in live
+    assert wikidata.wikidata_live_sql(scoped=True).count("%(company_ids)s") == 1
+    assert wikidata.WIKIDATA_PERSON_EXTRACTOR_VERSION == "wikidata-person-v1"

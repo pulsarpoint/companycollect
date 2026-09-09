@@ -26,7 +26,7 @@ import pytest
 from dagster_v3.defs.esef_filings import tables as esef_tables
 from dagster_v3.defs.esef_filings.country_views import build_se_esef_view_sql
 from dagster_v3.defs.se_company.basic_info.extract import insert_page_sql
-from dagster_v3.defs.se_company.person import bolagsverket, esef, tables
+from dagster_v3.defs.se_company.person import bolagsverket, esef, tables, wikidata
 from dagster_v3.defs.se_company.person.normalize import (
     RAW_ROW_COLUMNS,
     changed_rows_sql,
@@ -63,6 +63,7 @@ WANTED_CREATES = (
 )
 
 COMPANY_BV = "5561552760"
+COMPANY_WD = "5560125220"
 COMPANY_OUTSIDE = "5569999999"
 STATEMENT_KEY = "st1"
 BOARD_DATA = '{"signatory_kind":"board_signature","statement_key":"st1","person_seq":"1"}'
@@ -190,14 +191,23 @@ def _script_statements() -> list[str]:
         esef.esef_select_sql(), [COMPANY_BV],
         extractor_version=esef.ESEF_PERSON_EXTRACTOR_VERSION,
     )
+    wd_scope = _scope(wikidata.wikidata_changed_scope_sql(), "wikidata")
+    wd_insert = _insert(
+        wikidata.wikidata_select_sql(), [COMPANY_WD],
+        extractor_version=wikidata.WIKIDATA_PERSON_EXTRACTOR_VERSION,
+    )
     changed_rows = _ordered(
-        render(changed_rows_sql(), {"company_ids": [COMPANY_BV], "normalizer_version": NORMALIZER_VERSION}),
+        render(
+            changed_rows_sql(),
+            {"company_ids": [COMPANY_BV, COMPANY_WD], "normalizer_version": NORMALIZER_VERSION},
+        ),
         "company_id, source, slot",
     )
     return [
         *_schema(),
         # The universe: COMPANY_OUTSIDE deliberately has no basic-info row.
         f"INSERT INTO corpscout.se_company_basic_info (company_id) VALUES ('{COMPANY_BV}')",
+        f"INSERT INTO corpscout.se_company_basic_info (company_id) VALUES ('{COMPANY_WD}')",
         "INSERT INTO corpscout.esef_entity_registry_map (lei, country_iso2, registry_id_raw, "
         f"registry_id, match_source, link_status) VALUES ('{LEI}', 'SE', '{COMPANY_BV}', "
         f"'{COMPANY_BV}', 'gleif', 'register_verified')",
@@ -214,6 +224,34 @@ def _script_statements() -> list[str]:
         esef_insert,
         "SELECT '@@esef_scope_2'",
         esef_scope,
+        "INSERT INTO corpscout.wikidata_company_identifiers (wikidata_id, identifier_type, "
+        "wikidata_property_id, identifier_value, is_primary, source_system, source_run_id, "
+        "source_record_id, source_payload_hash, retrieved_at, resolved_at) VALUES "
+        f"('Q9', 'se_orgnr', 'P6460', '556012-5220', 1, 'wikidata', 'run-0', 'i1', '{'0' * 64}', "
+        "toDateTime64('2026-09-03 00:00:00', 3, 'UTC'), toDateTime64('2026-09-03 00:00:00', 3, 'UTC'))",
+        "INSERT INTO corpscout.wikidata_persons (person_wikidata_id, name, name_normalized, "
+        "description, birth_year, image_url, wikidata_url, source_system, source_run_id, "
+        "source_record_id, source_payload_hash, retrieved_at, resolved_at) VALUES "
+        "('Q404522', 'Jens Fischer', 'jens fischer', 'Swedish cinematographer', 1946, NULL, "
+        f"'http://www.wikidata.org/entity/Q404522', 'wikidata', 'run-0', 'p1', '{'0' * 64}', "
+        "toDateTime64('2026-09-03 00:00:00', 3, 'UTC'), toDateTime64('2026-09-03 00:00:00', 3, 'UTC')), "
+        "('_blank1', 'http://www.wikidata.org/.well-known/genid/abc', 'genid', NULL, NULL, NULL, "
+        f"NULL, 'wikidata', 'run-0', 'p2', '{'0' * 64}', "
+        "toDateTime64('2026-09-03 00:00:00', 3, 'UTC'), toDateTime64('2026-09-03 00:00:00', 3, 'UTC'))",
+        "INSERT INTO corpscout.wikidata_company_people (company_wikidata_id, person_wikidata_id, "
+        "role_property, role_label, start_date, end_date, is_current, source_system, source_run_id, "
+        "source_record_id, source_payload_hash, retrieved_at, resolved_at) VALUES "
+        "('Q9', 'Q404522', 'P169', 'chief executive officer', toDate('2021-07-16'), NULL, 1, "
+        f"'wikidata', 'run-0', 'Q9:P169:Q404522', '{'0' * 64}', "
+        "toDateTime64('2026-09-03 00:00:00', 3, 'UTC'), toDateTime64('2026-09-03 00:00:00', 3, 'UTC')), "
+        "('Q9', '_blank1', 'P112', 'founder', NULL, NULL, 1, "
+        f"'wikidata', 'run-0', 'Q9:P112:_blank1', '{'0' * 64}', "
+        "toDateTime64('2026-09-03 00:00:00', 3, 'UTC'), toDateTime64('2026-09-03 00:00:00', 3, 'UTC'))",
+        "SELECT '@@wd_scope_1'",
+        wd_scope,
+        wd_insert,
+        "SELECT '@@wd_scope_2'",
+        wd_scope,
         _register_row(COMPANY_BV, "2026-09-01 00:00:00", 1),
         _signatory_insert((BOARD_ROW, CERT_ROW, OUTSIDE_ROW)),
         "SELECT '@@bv_scope_1'",
@@ -379,6 +417,33 @@ def test_the_esef_row_keeps_the_delivered_full_name_dates_and_extras(sections) -
     assert row["data"] == ESEF_DATA
 
 
+WIKIDATA_DATA = (
+    '{"description":"Swedish cinematographer","image_url":"",'
+    '"wikidata_url":"http:\\\\/\\\\/www.wikidata.org\\\\/entity\\\\/Q404522",'
+    '"name_normalized":"jens fischer","is_current":"1"}'
+)
+
+
+def test_the_wikidata_row_carries_the_qid_birth_year_span_and_description(sections) -> None:
+    assert sections["wd_scope_1"] == [[COMPANY_WD]]
+    assert sections["wd_scope_2"] == []
+    rows = [r for r in _rows(sections, "raw_rows_1") if r["source"] == "wikidata"]
+    # The blank-node statement is not a person and never lands.
+    assert len(rows) == 1
+    [row] = rows
+    assert row["company_id"] == COMPANY_WD
+    assert row["slot"] == "Q9:P169:Q404522"
+    assert row["full_name"] == "Jens Fischer"
+    assert row["birth_year"] == "1946"
+    assert row["wikidata_id"] == "Q404522"
+    assert row["role_original"] == "chief executive officer"
+    assert row["role_key"] == "P169"
+    assert row["fiscal_year"] == "\\N"
+    assert row["role_from"] == "2021-07-16" and row["role_to"] == "\\N"
+    assert row["document_ref"] == "\\N"
+    assert row["data"] == WIKIDATA_DATA
+
+
 def test_the_normalize_hand_off_gives_the_expected_parse_statuses(sections) -> None:
     rows = [normalized_row(_as_row(fields), None) for fields in sections["changed_rows"]]
     status = tables.NORMALIZED_COLUMNS.index("parse_status")
@@ -393,4 +458,5 @@ def test_the_normalize_hand_off_gives_the_expected_parse_statuses(sections) -> N
         # parse note -- verified directly against normalize_se_person(RawPerson(source="esef",
         # full_name="Öberg, Håkan", ...)), which returns parse_notes=("comma form",).
         ("ok", "Håkan Öberg", "chief_executive_officer", ("comma form",)),
+        ("ok", "Jens Fischer", "chief_executive_officer", ()),
     ]
