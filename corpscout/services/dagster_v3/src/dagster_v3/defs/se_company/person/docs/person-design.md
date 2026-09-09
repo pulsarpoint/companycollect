@@ -35,12 +35,14 @@ re-normalizes every raw row regardless.
 
 `data` is a `String` holding a JSON object -- never the native ClickHouse `JSON` type (owner
 ruling 2026-09-09). Every table carrying it declares
-`CONSTRAINT valid_data CHECK JSONType(data) = 'Object'`. `normalize.py`'s read (`_raw_select`)
-coerces anything that is not a JSON object to `'{}'` --
-`if(JSONType(r.data) = 'Object', r.data, '{}') AS data` -- so a malformed row degrades to the
-empty object rather than failing a page's insert; the constraint then only ever fires on a
-hand-written row (proved by `test_se_company_person_normalize_clickhouse_local.py`, `Code:
-469`, `[1,2]`). `data` is an ordinary `String`, so this entity's read/write is the address
+`CONSTRAINT valid_data CHECK JSONType(data) = 'Object'` and `DEFAULT '{}'` (controller ruling
+2026-09-09), so an insert that omits `data` passes the constraint instead of tripping it on an
+empty string. `normalize.py`'s read (`_raw_select`) coerces anything that is not a JSON object
+to `'{}'` -- `if(JSONType(r.data) = 'Object', r.data, '{}') AS data` -- so a malformed row
+degrades to the empty object rather than failing a page's insert; between the default and that
+coercion, the constraint only ever fires on a hand-written row that explicitly supplies
+something other than an object (proved by `test_se_company_person_normalize_clickhouse_local.py`,
+`Code: 469`, `[1,2]`). `data` is an ordinary `String`, so this entity's read/write is the address
 entity's -- no native-JSON insert path, no `toJSONString`.
 
 ## The `role_key` column
@@ -63,7 +65,7 @@ never landed, run it from 000396's `.up.sql`; then `migrate force 396` to match 
 
 ## Running the asset
 
-`se_company_person_normalize` (pool/group `se_company_person`) takes `PersonNormalizeConfig`:
+`se_company_person_normalize` (pool `se_company_person_normalize`, group `se_company_person`) takes `PersonNormalizeConfig`:
 `changed_only` (default `true`; `false` re-normalizes every row, e.g. after a version bump),
 `company_ids` (default `[]` = every company, scanned into a scratch table and paged; named
 ids page in memory with no scan), and `page_size` (default `PAGE_SIZE` = 20,000, max 50,000).

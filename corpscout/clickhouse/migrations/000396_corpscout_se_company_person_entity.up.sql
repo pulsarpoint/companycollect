@@ -31,9 +31,11 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 -- data IS A String HOLDING A JSON OBJECT, not the native JSON type (owner ruling
 -- 2026-09-09). It reads and writes like any other String, so nothing about this entity's
 -- assets differs from the address entity's, and the CONSTRAINT valid_data on each table
--- carrying one is what keeps an array or a scalar out. The normalize step coerces anything
--- else to the empty object before it inserts, so the constraint only ever fires on a
--- hand-written row. See se_company/person/docs/person-design.md.
+-- carrying one is what keeps an array or a scalar out. DEFAULT '{}' (controller ruling
+-- 2026-09-09) covers any insert that omits data, so together with the normalize step's own
+-- coercion of anything else to the empty object, the constraint only ever fires on a
+-- hand-written row that explicitly supplies something other than an object. See
+-- se_company/person/docs/person-design.md.
 --
 -- THE SELECT AT THE END IS NOT HAND-WRITTEN AND MUST NOT BE HAND-EDITED -- exact rendering
 -- of companies_current.build_se_companies_serving_sql(), drift-pinned by dagster_v3
@@ -63,7 +65,7 @@ CREATE TABLE IF NOT EXISTS corpscout.se_company_person_suggestion
     role_from Nullable(Date),
     role_to Nullable(Date),
     document_ref Nullable(String),
-    data String,
+    data String DEFAULT '{}',
     CONSTRAINT valid_company_id CHECK match(company_id, '^([0-9]{10}|[0-9]{12})$'),
     CONSTRAINT valid_data CHECK JSONType(data) = 'Object'
 )
@@ -97,7 +99,7 @@ CREATE TABLE IF NOT EXISTS corpscout.se_company_person_normalized
     role_year Nullable(UInt16),
     role_from Nullable(Date),
     role_to Nullable(Date),
-    data String,
+    data String DEFAULT '{}',
     normalized_at DateTime64(3, 'UTC'),
     CONSTRAINT valid_company_id CHECK match(company_id, '^([0-9]{10}|[0-9]{12})$'),
     CONSTRAINT valid_data CHECK JSONType(data) = 'Object'
@@ -133,7 +135,7 @@ CREATE TABLE IF NOT EXISTS corpscout.se_company_person_v2
     first_year Nullable(UInt16),
     last_year Nullable(UInt16),
     text_source LowCardinality(String),
-    data String,
+    data String DEFAULT '{}',
     active UInt8,
     inactive_reason LowCardinality(String),
     folded_at DateTime64(3, 'UTC'),
@@ -173,7 +175,7 @@ CREATE TABLE IF NOT EXISTS corpscout.se_company_person_history
     first_year Nullable(UInt16),
     last_year Nullable(UInt16),
     text_source LowCardinality(String),
-    data String,
+    data String DEFAULT '{}',
     active UInt8,
     inactive_reason LowCardinality(String),
     folded_at DateTime64(3, 'UTC'),

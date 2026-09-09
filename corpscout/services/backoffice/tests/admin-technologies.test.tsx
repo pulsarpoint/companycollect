@@ -160,7 +160,7 @@ describe("admin sidebar", () => {
   }
 
   it("links Technologies in the Workspace section", () => {
-    const html = sidebarAt("/admin/se/people");
+    const html = sidebarAt("/admin/se/companies");
     expect(html).toContain('href="/admin/technologies"');
     expect(html).toContain(">Technologies<");
   });

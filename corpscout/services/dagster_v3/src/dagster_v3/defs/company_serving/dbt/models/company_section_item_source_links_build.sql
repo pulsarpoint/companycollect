@@ -59,14 +59,6 @@ source_records_raw AS (
     WHERE wikidata_id != '' AND source_payload_hash != ''
     UNION ALL
     SELECT
-        source_record_uid, 'wikidata_person_item', lowerUTF8(toString(source_payload_hash)),
-        retrieved_at, retrieved_at, 'wikidata', person_wikidata_id,
-        ifNull(wikidata_url, ''), '', lowerUTF8(toString(source_payload_hash)),
-        retrieved_at, source_run_id
-    FROM {{ source('corpscout', 'wikidata_persons') }} FINAL
-    WHERE source_record_uid != '' AND source_payload_hash != ''
-    UNION ALL
-    SELECT
         lower(hex(SHA256(concat(
             'company-source-record-v1\nstructured\ngleif\ngleif_lei_record\n',
             lei, '\n', lower(hex(SHA256(concat(

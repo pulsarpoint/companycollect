@@ -7,7 +7,8 @@ Claims a fake client cannot settle:
    -- including the tombstone shape (`data` '{}', every person column NULL).
 2. The `valid_data` constraint (`CHECK JSONType(data) = 'Object'`) actually bites: a row
    whose `data` is a JSON array is rejected with `Code: 469`, which is what the read's
-   coercion in `normalize.py` exists to keep from ever happening on a normal page.
+   coercion in `normalize.py` exists to keep from ever happening on a normal page -- an
+   omitted `data` is covered separately by the column's own `DEFAULT '{}'`.
 3. `changed_scope_sql()`/`changed_rows_sql()` select exactly the raw rows that have never
    been normalized, whose normalized row is on a different `suggestion_id`, or whose
    normalized row is on an older `normalizer_version` -- and `all_scope_sql()`/`all_rows_sql()`

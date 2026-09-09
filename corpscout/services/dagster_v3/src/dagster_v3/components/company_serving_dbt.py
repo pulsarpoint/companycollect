@@ -18,7 +18,6 @@ _ESEF_ENTITY_REGISTRY_MAP_KEY = dg.AssetKey("esef_entity_registry_map_clickhouse
 _ESEF_MODELS_READING_THE_MAP_THROUGH_A_VIEW = {
     "company_contact_current_build",
     "company_description_current_build",
-    "company_management_current_build",
     "company_section_item_source_links_build",
     "company_domains_build",
 }

@@ -24,9 +24,9 @@ import {
 // from the weekly rollup ("not computed yet" while the rollup is empty), and
 // the adoption section's two tabs -- Domains (weekly technology_top_domains,
 // ordered by harmonic centrality) and Companies (weekly technology_companies,
-// country-filterable). Tab, country filter and paging are search params
-// (mirrors /admin/se/people), and only the ACTIVE tab's rollup is queried per
-// request. Every follow-up read needs the technology's exact detector NAME
+// country-filterable). Tab, country filter and paging are search params, and
+// only the ACTIVE tab's rollup is queried per request. Every follow-up read
+// needs the technology's exact detector NAME
 // (rollups store the name, not the slug), so the catalog row resolves first
 // and an unknown slug 404s before anything else runs.
 

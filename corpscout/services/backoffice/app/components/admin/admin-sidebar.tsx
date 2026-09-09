@@ -42,7 +42,7 @@ const COUNTRY_NAVIGATION = [
     items: [
       {
         // One entry for the whole tabbed list area (Info · Geocoding ·
-        // Financial · People). exact:false so it stays active on every tab.
+        // Financial · Ratsit). exact:false so it stays active on every tab.
         title: "Companies",
         to: "/admin/se/companies",
         icon: Building2Icon,
@@ -76,7 +76,11 @@ export function AdminSidebar() {
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton size="lg" tooltip="CompanyCollect admin">
+            <SidebarMenuButton
+              size="lg"
+              tooltip="CompanyCollect admin"
+              render={<Link to="/admin" />}
+            >
               <span className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
                 <BotIcon />
               </span>

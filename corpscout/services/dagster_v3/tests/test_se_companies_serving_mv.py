@@ -120,7 +120,8 @@ def test_the_down_migration_restores_000393s_render_then_drops_the_six_tables() 
     assert statements[0] == "CREATE DATABASE IF NOT EXISTS corpscout"
     assert _body(statements[1]) == f"SYSTEM STOP VIEW {VIEW}"
     assert _body(statements[3]) == f"SYSTEM START VIEW {VIEW}"
-    # The restored query is 000393's, character for character.
+    # The restored query is 000393's, modulo whitespace (_normalized collapses runs of
+    # whitespace before comparing, so this is not a character-for-character check).
     assert _normalized(_modify_query_body(_sql("down"))) == _normalized(
         _modify_query_body(_sql_of(PREVIOUS_MIGRATION, "up"))
     )

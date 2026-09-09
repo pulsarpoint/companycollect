@@ -25,7 +25,7 @@ def test_suggestion_table_is_one_current_row_per_company_source_and_slot() -> No
     assert "    role_original Nullable(String)," in block
     assert "    role_key Nullable(String)," in block
     assert "    role_from Nullable(Date)," in block
-    assert "    data String," in block
+    assert "    data String DEFAULT '{}'," in block
     assert DATA_CHECK in block
     assert "MATERIALIZED" not in block
 
@@ -44,7 +44,7 @@ def test_normalized_table_has_the_same_key_and_its_own_version() -> None:
     for column in ("first_tokens", "middle_tokens", "last_tokens"):
         assert f"    {column} Array(String)," in block, column
     assert "    role_key Nullable(String)," in block
-    assert "    data String," in block
+    assert "    data String DEFAULT '{}'," in block
     assert DATA_CHECK in block
     # The normalized row carries no suggested_at: suggestion_id already names the raw
     # version it was computed from, and that is what the change scan compares.
@@ -64,7 +64,7 @@ def test_main_table_is_one_row_per_company_and_person() -> None:
     assert "    member_data Array(String)," in block
     assert "    role_sources Array(Array(String))," in block
     assert "    active UInt8," in block
-    assert "    data String," in block
+    assert "    data String DEFAULT '{}'," in block
     assert DATA_CHECK in block
     for column in tables.MEMBER_COLUMNS:
         assert f"    {column} Array(" in block, column
@@ -77,7 +77,7 @@ def test_history_is_the_main_row_plus_the_change_block() -> None:
     # Append-only, written only by the fold from rows the main table already validated:
     # neither constraint is repeated here.
     assert "CONSTRAINT" not in block
-    assert "    data String," in block
+    assert "    data String DEFAULT '{}'," in block
     assert "ENGINE = MergeTree" in block
     assert "ORDER BY (company_id, person_key, changed_at)" in block
     assert "    change_kind LowCardinality(String)," in block
