@@ -669,6 +669,26 @@ The corrections queue page keeps reading the old ledger until the cutover retire
    `se_address_geocodes_adopt_keys` (it reads `se_addresses_current`), the migration-file
    edits and the fixture cleanup under the ledger policy, and `geocode_serving_overlay`'s
    retirement once the served view is gone.
+   Slice 4c shipped 2026-09-09 (plan `2026-09-08-se-company-address-4c-drops.md`, main
+   3c186879): the last readers went (the one-off `se_address_geocodes_adopt_keys`, the
+   served-overlay builder with its centroid-fallback constants moved to
+   `se_company/address/constants.py`, the library modules `geocode_demand`,
+   `shared_addresses`, `address_canonicalization`, `address_parsing`, `clickhouse_streaming`,
+   the shadow driver inside `address_resolution_shadow.py` (the reference-document and
+   posting builders and `fresh_reference_md5` stay), eight store-side helpers, the workbench
+   experiment driver); sixteen historical migration files were emptied and two narrowed under
+   the ledger policy (files only: the prod ledger is forward-only, at 394); three owner-run
+   scripts in `corpscout/clickhouse/operations/` (precheck, drops, postcheck) with a test that
+   pins the drop order and the kept list. Prod 2026-09-09 05:06 UTC: precheck clean (no view
+   read any of the twelve; 11.4 GiB across them), the twelve dropped in six seconds on the
+   owner's word, postcheck all dropped with the nine kept objects present, `system.tables`
+   448 to 436; the address tab, both admin lists, the quality queue, the generic pages, the
+   addresses section and the same-building lookup render as before. Three of the twelve (the
+   two refreshable views and the plain served view) cannot be UNDROPped; their DDL lives in
+   git history (000320 and 000327 at 65c9c4f1, 000391 and 000392 in the tree). Left for the
+   owner: `scripts/geocode_v7_exploration.py` and `scripts/geocode_centroid_coverage_experiment.py`
+   still read `se_addresses_current` and are marked as retired inputs. With this the
+   2026-08-24 address model is gone from the repository and the database.
 
 **Parity**: per company, the set of active `normalized_address` lines in the new table
 against the current `se_company_address` (`is_current = 1`) lines, classified as identical,
