@@ -173,3 +173,62 @@ CREATE TABLE IF NOT EXISTS corpscout.wikidata_company_identifiers (
     `retrieved_at` DateTime64(3, 'UTC'),
     `resolved_at` DateTime64(3, 'UTC')
 ) ENGINE = ReplacingMergeTree(resolved_at) ORDER BY (identifier_type, identifier_value, wikidata_id);
+
+-- Production SHOW CREATE TABLE snapshot (2026-09-09), CODECs and index_granularity stripped.
+
+CREATE TABLE corpscout.esef_filings
+(
+    `lei` String,
+    `entity_name` String,
+    `fxo_id` String,
+    `country` LowCardinality(String),
+    `period_end` Date32,
+    `date_added` Date32,
+    `processed_at` Nullable(DateTime64(6)),
+    `json_url` String,
+    `package_url` String,
+    `report_url` String,
+    `viewer_url` String,
+    `package_sha256` String,
+    `error_count` UInt32,
+    `warning_count` UInt32,
+    `inconsistency_count` UInt32,
+    `has_json_facts` UInt8,
+    `source_url` String,
+    `source_run_id` String,
+    `resolved_at` DateTime64(3) DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(resolved_at)
+ORDER BY (lei, period_end, fxo_id)
+SETTINGS index_granularity = 8192
+;
+
+CREATE TABLE corpscout.esef_facts
+(
+    `lei` String,
+    `fxo_id` String,
+    `period_end` Date32,
+    `fact_id` String,
+    `concept_qname` String,
+    `concept_namespace` LowCardinality(String),
+    `concept_local_name` String,
+    `period_start` Nullable(Date32),
+    `period_instant` Nullable(Date32),
+    `period_duration_end` Nullable(Date32),
+    `unit` LowCardinality(String),
+    `currency` LowCardinality(String),
+    `value_kind` LowCardinality(String),
+    `raw_value` String,
+    `amount_original` Nullable(Decimal(38, 2)),
+    `decimals` Nullable(Int32),
+    `dimensions` String,
+    `language` LowCardinality(String),
+    `source_run_id` String,
+    `processed_week` Date,
+    `resolved_at` DateTime64(3) DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(resolved_at)
+PARTITION BY processed_week
+ORDER BY (processed_week, lei, period_end, fxo_id, fact_id)
+SETTINGS index_granularity = 8192
+;

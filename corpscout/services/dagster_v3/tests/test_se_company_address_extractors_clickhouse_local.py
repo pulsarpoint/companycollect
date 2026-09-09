@@ -1,9 +1,9 @@
-"""The three address extractors' SQL on a real ClickHouse (spec 2026-09-06 section 7): each
-source's scope converges, its SELECT produces the expected wide raw row, the suggestion_id
-stamp matches the hash formula, a tombstoned register row writes a NULL raw row and
-re-selects, and the normalize hand-off (`changed_rows_sql()`/`normalized_row()`) turns the
-three raw rows -- one of them freshly tombstoned -- into the expected parse statuses. Runs
-under join_use_nulls 0 and 1."""
+"""The four address extractors' SQL on a real ClickHouse (spec 2026-09-06 section 7, esef
+extractor per spec 2026-09-09 section 3): each source's scope converges, its SELECT produces
+the expected wide raw row, the suggestion_id stamp matches the hash formula, a tombstoned
+register row writes a NULL raw row and re-selects, and the normalize hand-off
+(`changed_rows_sql()`/`normalized_row()`) turns the raw rows -- one of them freshly
+tombstoned -- into the expected parse statuses. Runs under join_use_nulls 0 and 1."""
 
 import subprocess
 from datetime import UTC, datetime
@@ -11,7 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from dagster_v3.defs.se_company.address import bolagsverket, ratsit, scb, tables
+from dagster_v3.defs.esef_filings import tables as esef_tables
+from dagster_v3.defs.esef_filings.country_views import build_se_esef_view_sql
+from dagster_v3.defs.se_company.address import bolagsverket, esef, ratsit, scb, tables
 from dagster_v3.defs.se_company.address.normalize import RAW_ROW_COLUMNS, changed_rows_sql, normalized_row
 from dagster_v3.defs.se_company.address.normalize_se import NORMALIZER_VERSION
 from dagster_v3.defs.se_company.address.suggestions import ADDRESS_TARGET
@@ -28,10 +30,15 @@ MIGRATIONS = (
     "000374_corpscout_se_bolagsverket_companies.up.sql",
     "000382_corpscout_se_company_address_suggestion.up.sql",
     "000383_corpscout_se_company_address_normalized.up.sql",
+    "000390_corpscout_se_source_translated_views.up.sql",
 )
-# se_ratsit_company is not created by any of the four migrations above (its own migration,
+# se_ratsit_company is not created by any of the five migrations above (its own migration,
 # 000343, is out of scope here), so the fixture supplies it with no risk of colliding with a
-# CREATE TABLE the migrations already issued for one of these four.
+# CREATE TABLE the migrations already issued for one of these five. 000390's two views
+# (se_bolagsverket_companies_translated, se_ratsit_company_translated -- basic-info's ratsit
+# extractor, reused here unchanged, reads the latter) need only se_bolagsverket_companies
+# (000374), se_ratsit_company and text_translations (both already in the fixture); its two
+# INSERT INTO ... SELECT statements are data moves the schema replay skips.
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "se_basic_info_source_tables.sql"
 
 COMPANY_SCB_BV = "5561552760"
@@ -66,7 +73,8 @@ SCB_AFTER_TOMBSTONE_SQL = (
 
 
 def _schema() -> list[str]:
-    statements = []
+    tables_sql: list[str] = []
+    views_sql: list[str] = []
     for name in MIGRATIONS:
         text = (MIGRATIONS_DIR / name).read_text(encoding="utf-8")
         for raw in text.split(";"):
@@ -74,9 +82,21 @@ def _schema() -> list[str]:
                 line for line in raw.splitlines() if not line.strip().startswith("--")
             ).strip()
             if statement.upper().startswith(("CREATE DATABASE", "CREATE TABLE")):
-                statements.append(statement)
-    statements += [s.strip() for s in FIXTURE.read_text(encoding="utf-8").split(";") if s.strip()]
-    return statements
+                tables_sql.append(statement)
+            elif statement.upper().startswith(("CREATE OR REPLACE VIEW", "CREATE VIEW")):
+                # 000390's two INSERT INTO ... SELECT statements (data moves, not schema) are
+                # excluded by construction -- they start with neither prefix above.
+                views_sql.append(statement)
+    fixture = [s.strip() for s in FIXTURE.read_text(encoding="utf-8").split(";") if s.strip()]
+    esef_views = [
+        build_se_esef_view_sql(view)
+        for view in esef_tables.SE_ESEF_VIEWS
+        if view.table in ("esef_facts", "esef_filings")
+    ]
+    # Views last: 000390's views read se_bolagsverket_companies/se_ratsit_company (created
+    # above) and text_translations (fixture); the esef views read the fixture's esef_facts,
+    # esef_filings and esef_entity_registry_map tables.
+    return tables_sql + fixture + esef_views + views_sql
 
 
 def _run(statements: list[str], *, join_use_nulls: int) -> list[str]:
