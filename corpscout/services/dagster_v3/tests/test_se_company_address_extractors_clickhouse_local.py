@@ -46,6 +46,35 @@ COMPANY_RATSIT = "5560125220"
 RATSIT_RESULT_SHA256 = "d" * 64
 STAMP = datetime(2026, 9, 6, 12, 0, 0, tzinfo=UTC)
 
+# company_id, lei, raw_value, expected raw_address, street_address, post_town, country_code
+# (spec 2026-09-09 section 3's five regex cases). The first two reuse COMPANY_RATSIT and
+# COMPANY_SCB_BV on purpose -- one company can carry both a ratsit/scb-family row and an esef
+# row (different source, same company_id), and the suggestion table's key is (company_id,
+# source, slot).
+ESEF_CASES: tuple[tuple[str, str, str, str | None, str | None, str | None, str | None], ...] = (
+    (
+        COMPANY_RATSIT, "ESEFLEI0000000000001", "Kungsträdgårdsgatan 2, 106 70 Stockholm",
+        "Kungsträdgårdsgatan 2$$Stockholm$10670$", None, None, None,
+    ),
+    (
+        COMPANY_SCB_BV, "ESEFLEI0000000000002", "Regeringsgatan 25, 111 53 Stockholm, Sverige",
+        "Regeringsgatan 25$$Stockholm$11153$SE", None, None, "SE",
+    ),
+    (
+        "5562434182", "ESEFLEI0000000000003", "<div>Kungsgatan 17</div><div>111 43 Stockholm</div>",
+        "Kungsgatan 17$$Stockholm$11143$", None, None, None,
+    ),
+    (
+        "5563333333", "ESEFLEI0000000000004", "Ideongatan 1, Lund.",
+        None, "Ideongatan 1", "Lund", None,
+    ),
+    (
+        "5564444444", "ESEFLEI0000000000005", "Lands vägen 57, Box 1264, 172 25 Sundbyberg",
+        "Lands vägen 57, Box 1264$$Sundbyberg$17225$", None, None, None,
+    ),
+)
+ESEF_COMPANY_IDS: tuple[str, ...] = tuple(case[0] for case in ESEF_CASES)
+
 RAW_ROW_CHECK_COLUMNS = (
     "company_id", "source", "slot", "kind", "raw_address", "care_of", "street_address",
     "postal_code", "post_town", "county", "extractor_version", "decided_by", "note",
@@ -69,6 +98,14 @@ SCB_AFTER_TOMBSTONE_SQL = (
     "SELECT street_address, postal_code, post_town, care_of, toString(suggested_at) "
     f"FROM {tables.QUALIFIED_SUGGESTION_TABLE} FINAL "
     f"WHERE company_id = '{COMPANY_SCB_BV}' AND source = 'scb' AND slot = ''"
+)
+# ifNull(toString(...), 'NULL') instead of relying on the TSV \N marker: raw_address's packed
+# rows and the components row's street_address/post_town are Nullable(String), and this way
+# a missing value always prints the literal 'NULL' regardless of join_use_nulls.
+ESEF_RAW_ROWS_SQL = (
+    "SELECT company_id, ifNull(toString(raw_address), 'NULL'), ifNull(toString(street_address), 'NULL'), "
+    "ifNull(toString(post_town), 'NULL'), ifNull(toString(country_code), 'NULL') "
+    f"FROM {tables.QUALIFIED_SUGGESTION_TABLE} FINAL WHERE source = 'esef' ORDER BY company_id"
 )
 
 
@@ -141,6 +178,34 @@ def _as_row(fields: list[str]) -> tuple[str | None, ...]:
     return tuple(None if field == "\\N" else field for field in fields)
 
 
+def _esef_seed_statements() -> list[str]:
+    """One register-verified esef_entity_registry_map row (so the se_esef_* views expose the
+    fact/filing under that company_id), one esef_filings row and one esef_facts row (concept
+    AddressOfRegisteredOfficeOfEntity) per ESEF_CASES entry."""
+    statements: list[str] = []
+    for i, (company_id, lei, raw_value, *_expected) in enumerate(ESEF_CASES, start=1):
+        fxo_id = f"fxo-{i}"
+        package_sha256 = str(i) * 64
+        statements.append(
+            "INSERT INTO corpscout.esef_entity_registry_map "
+            "(lei, country_iso2, registry_id_raw, registry_id, match_source, link_status, source_run_id) VALUES "
+            f"('{lei}', 'SE', '{company_id}', '{company_id}', 'gleif_registered_as', 'register_verified', 'r')"
+        )
+        statements.append(
+            "INSERT INTO corpscout.esef_filings (lei, entity_name, fxo_id, country, period_end, processed_at, "
+            "package_sha256) VALUES "
+            f"('{lei}', 'Esef Case {i} AB', '{fxo_id}', 'SE', toDate32('2025-12-31'), "
+            f"toDateTime64('2026-09-0{i} 00:00:00', 6, 'UTC'), '{package_sha256}')"
+        )
+        statements.append(
+            "INSERT INTO corpscout.esef_facts (lei, fxo_id, period_end, fact_id, concept_local_name, raw_value, "
+            "language, processed_week) VALUES "
+            f"('{lei}', '{fxo_id}', toDate32('2025-12-31'), 'fact-{i}', 'AddressOfRegisteredOfficeOfEntity', "
+            f"'{raw_value}', 'sv', toDate('2026-09-01'))"
+        )
+    return statements
+
+
 def _sections(lines: list[str]) -> dict[str, list[list[str]]]:
     """Split _run()'s flat line list on the `SELECT '@@name'` markers in the script."""
     result: dict[str, list[list[str]]] = {}
@@ -195,6 +260,10 @@ def _statements() -> list[str]:
         _bind(changed_rows_sql(), company_ids=[COMPANY_SCB_BV, COMPANY_RATSIT], normalizer_version=NORMALIZER_VERSION),
         "company_id, source, slot",
     )
+    esef_changed_rows = _ordered(
+        _bind(changed_rows_sql(), company_ids=list(ESEF_COMPANY_IDS), normalizer_version=NORMALIZER_VERSION),
+        "company_id, source, slot",
+    )
     return [
         *_schema(),
         scb_insert_1,
@@ -233,6 +302,21 @@ def _statements() -> list[str]:
         SCB_AFTER_TOMBSTONE_SQL,
         "SELECT '@@changed_rows'",
         changed_rows,
+        # The esef seed + insert run AFTER the changed_rows section above, on purpose: two of
+        # its five company_ids alias COMPANY_SCB_BV/COMPANY_RATSIT, and changed_rows_sql()
+        # filters on company_id alone (not source) -- seeding esef data any earlier would pull
+        # esef rows into that section's company_ids=[COMPANY_SCB_BV, COMPANY_RATSIT] result and
+        # break its len(rows) == 3 assertion.
+        *_esef_seed_statements(),
+        "SELECT '@@esef_scope_before_insert'",
+        _scope(esef.esef_current_sql(), "esef"),
+        _insert(esef.esef_select_sql(), list(ESEF_COMPANY_IDS), extractor_version=esef.ESEF_ADDRESS_EXTRACTOR_VERSION),
+        "SELECT '@@esef_scope_after_insert'",
+        _scope(esef.esef_current_sql(), "esef"),
+        "SELECT '@@esef_raw_rows'",
+        ESEF_RAW_ROWS_SQL,
+        "SELECT '@@esef_changed_rows'",
+        esef_changed_rows,
     ]
 
 
@@ -290,8 +374,14 @@ def test_suggestion_id_matches_the_stamp_hash_for_every_row(sections: dict[str, 
     assert sections["identity_check"] == [["0"]]
 
 
-def test_all_three_scopes_converge_after_insert(sections: dict[str, list[list[str]]]) -> None:
+def test_all_four_scopes_converge_after_insert(sections: dict[str, list[list[str]]]) -> None:
+    # scb/bolagsverket/ratsit converge through the shared `reconverged` UNION ALL (computed
+    # right after their own inserts); esef converges on its own scope_before/scope_after pair,
+    # computed later in the script (after the pre-existing changed_rows section -- see the
+    # comment in _statements() for why).
     assert sections["reconverged"] == []
+    assert sections["esef_scope_before_insert"] == [[company_id] for company_id in sorted(ESEF_COMPANY_IDS)]
+    assert sections["esef_scope_after_insert"] == []
 
 
 def test_scb_tombstone_reselects_and_writes_a_null_raw_row(sections: dict[str, list[list[str]]]) -> None:
@@ -332,3 +422,31 @@ def test_normalize_hand_off_gives_the_expected_parse_statuses(sections: dict[str
     assert ratsit_result["care_of"] == "anna svensson"
     assert ratsit_result["street_name"] == "storgatan"
     assert ratsit_result["house_number"] == "5"
+
+
+def test_esef_raw_rows_hold_the_cleaned_and_repacked_address(sections: dict[str, list[list[str]]]) -> None:
+    rows = {fields[0]: tuple(fields[1:]) for fields in sections["esef_raw_rows"]}
+    assert len(rows) == len(ESEF_CASES)
+    for company_id, _lei, _raw_value, raw_address, street_address, post_town, country_code in ESEF_CASES:
+        expected = tuple(value if value is not None else "NULL" for value in (raw_address, street_address, post_town, country_code))
+        assert rows[company_id] == expected, company_id
+
+
+def test_esef_normalize_hand_off_gives_the_expected_parse_statuses(sections: dict[str, list[list[str]]]) -> None:
+    rows = [_as_row(fields) for fields in sections["esef_changed_rows"]]
+    # esef_changed_rows's company_ids alias COMPANY_RATSIT/COMPANY_SCB_BV (see ESEF_CASES), so
+    # this also carries their pre-existing ratsit/scb/bolagsverket rows -- filtered out here.
+    by_company = {row[0]: row for row in rows if row[1] == "esef"}
+    assert len(by_company) == len(ESEF_CASES)
+
+    for company_id, *_rest in ESEF_CASES:
+        result = dict(zip(tables.NORMALIZED_COLUMNS, normalized_row(by_company[company_id], STAMP), strict=True))
+        if company_id == "5563333333":
+            # "Ideongatan 1, Lund." carries no postcode, so ESEF_PACKED_ADDRESS_SQL delivers
+            # bare components (street_address, post_town) instead of a packed raw_address;
+            # normalize_se_address finds a street but no postcode and returns `partial` (its
+            # "missing postcode" branch), not `no_address` -- a street/town pair is a real,
+            # if coarse, address.
+            assert result["parse_status"] == "partial"
+        else:
+            assert result["parse_status"] == "ok"
