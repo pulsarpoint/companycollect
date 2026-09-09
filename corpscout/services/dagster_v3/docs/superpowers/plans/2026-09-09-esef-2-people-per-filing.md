@@ -18,8 +18,8 @@
 - **The enrichment stays as it is for its own consumers:** `esef_document_company_information` keeps `people_json` as an artifact; `esef_document_people_sql()` no longer reads it. The defaults of every generalised helper reproduce today's enrichment behaviour exactly: the enrichment's existing tests keep passing without edits to their expectations (the only edits are the projection, orchestration and ledger pins named below).
 - **`candidate_uid` (verbatim from the spec):** the company-source-record observation hash over `source_record_uid`, `esef_person`, prompt version, the normalised name and the role category:
   `lower(hex(SHA256(concat('company-source-record-v1\nobservation\n', toString(info.source_record_uid), '\nesef_person\n', info.prompt_version, '\n', lowerUTF8(trim(replaceRegexpAll(JSONExtractString(item_json, 'name'), '\\s+', ' '))), '\n', JSONExtractString(item_json, 'role_category')))))` (`\n` written as `\\n` inside the Python string that renders SQL).
-- **`esef_document_people` DDL is unchanged:** 000395 already keys it `ORDER BY (lei, fiscal_year, source_record_uid, candidate_uid)` (a document has one LEI, so the spec's `(source_record_uid, fiscal_year, candidate_uid)` identity holds inside it). No migration touches it. Its `se_esef_document_people` view and `se_company_person_esef` are unchanged.
-- **Migration 000396** creates only `esef_document_people_extraction` (`MergeTree`, `ORDER BY (source_document_id, model_provider, model_name, prompt_version)`, `source_record_uid` DEFAULT expression on one line, `resolved_at DateTime64(3) DEFAULT now64(3)`); the down file drops it. Add it to `EXPECTED_MIGRATIONS`. Check main and the prod ledger for a 000396 collision before merging (the ledger is at 395).
+- **`esef_document_people` DDL is unchanged:** 000395 already keys it `ORDER BY (lei, fiscal_year, source_record_uid, candidate_uid)` (a document has one LEI, so the spec's `(source_record_uid, fiscal_year, candidate_uid)` identity holds inside it). No migration touches it. Its `se_esef_document_people` view is unchanged. The `se_company_person_esef` read view no longer exists: SE person slice 0 (merged 2026-09-09, migration 000396) dropped it by hand and reads ESEF people through the person entity's own source views — before Task 4 check `rg -n "se_esef_document_people" src/dagster_v3/defs/se_company` for the reader that the projection's replace semantics must keep satisfied, and name it in the rollout.
+- **Migration 000397** creates only `esef_document_people_extraction` (`MergeTree`, `ORDER BY (source_document_id, model_provider, model_name, prompt_version)`, `source_record_uid` DEFAULT expression on one line, `resolved_at DateTime64(3) DEFAULT now64(3)`); the down file drops it. Add it to `EXPECTED_MIGRATIONS` after the person entity's `000396_corpscout_se_company_person_entity`. Check main and the prod ledger for a 000397 collision before merging (the ledger read 396 on 2026-09-09 evening).
 - **Failure recording** as the enrichment: a failed model call is logged and counted; no row is written and any existing row for that document survives the replace.
 - **Backoffice:** no change. The ESEF LLM page keeps reading the enrichment record; the people pass is launched through Dagster (GraphQL or UI) in the rollout.
 - **Commit footer** on every commit:
@@ -34,7 +34,7 @@
 
 | File | Change |
 |---|---|
-| `corpscout/clickhouse/migrations/000396_corpscout_esef_document_people_extraction.up.sql` / `.down.sql` (new) | the extraction table |
+| `corpscout/clickhouse/migrations/000397_corpscout_esef_document_people_extraction.up.sql` / `.down.sql` (new) | the extraction table |
 | `corpscout/services/dagster_v3/src/dagster_v3/defs/esef_filings/tables.py` | table name constants + `ESEF_DOCUMENT_PEOPLE_EXTRACTION_EXPORT_COLUMNS` |
 | `.../esef_filings/llm_enrichment.py` | evidence builder takes `evidence_segments` / `visible_section_types`; people model, prompt, request, response reader, artifact, object keys; citation normaliser factored per candidate list; completion reader factored |
 | `.../esef_filings/llm_enrichment_assets.py` | `_selection_query` / `_load_latest_source_documents` take `latest_per_lei`, `existing_table`, `evidence_segments`, `visible_section_types`; `_request_enrichments` / `_request_prepared_enrichment` take `request`; `_replace_information_rows_clickhouse` takes `table`, `columns`; `_openai_client(...)` factored out of `build_esef_llm_client` |
@@ -49,7 +49,7 @@
 ## Task 1: The table and its contracts
 
 **Files:**
-- Create: `corpscout/clickhouse/migrations/000396_corpscout_esef_document_people_extraction.up.sql`, `.down.sql`
+- Create: `corpscout/clickhouse/migrations/000397_corpscout_esef_document_people_extraction.up.sql`, `.down.sql`
 - Modify: `corpscout/services/dagster_v3/src/dagster_v3/defs/esef_filings/tables.py` (after the company-information constants)
 - Test: `tests/test_esef_filings_client.py`, `tests/test_clickhouse_migrations.py`
 
@@ -59,10 +59,10 @@
 
 - [ ] **Step 1: Write the failing tests**
 
-In `tests/test_esef_filings_client.py` add beside `COUNTRY_AGNOSTIC_MIGRATION_FILE`: `PEOPLE_EXTRACTION_MIGRATION_FILE = MIGRATIONS_DIR / "000396_corpscout_esef_document_people_extraction.up.sql"` and:
+In `tests/test_esef_filings_client.py` add beside `COUNTRY_AGNOSTIC_MIGRATION_FILE`: `PEOPLE_EXTRACTION_MIGRATION_FILE = MIGRATIONS_DIR / "000397_corpscout_esef_document_people_extraction.up.sql"` and:
 
 ```python
-def test_people_extraction_export_columns_match_migration_000396_column_order() -> None:
+def test_people_extraction_export_columns_match_migration_000397_column_order() -> None:
     sql = PEOPLE_EXTRACTION_MIGRATION_FILE.read_text(encoding="utf-8")
     migration_columns = _migration_table_columns(sql, tables.ESEF_DOCUMENT_PEOPLE_EXTRACTION_TABLE)
     assert [c for c in migration_columns if c not in ("source_record_uid", "resolved_at")] == list(
@@ -74,13 +74,13 @@ def test_people_extraction_export_columns_match_migration_000396_column_order() 
     assert "extracted_at DateTime64(3, 'UTC')" in sql
 ```
 
-In `tests/test_clickhouse_migrations.py` append `"000396_corpscout_esef_document_people_extraction"` after the 000395 entry of `EXPECTED_MIGRATIONS`.
+In `tests/test_clickhouse_migrations.py` append `"000397_corpscout_esef_document_people_extraction"` after the `000396_corpscout_se_company_person_entity` entry of `EXPECTED_MIGRATIONS`.
 
 - [ ] **Step 2: Run to verify they fail**: `cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/dagster_v3 && uv run pytest tests/test_esef_filings_client.py tests/test_clickhouse_migrations.py -q -p no:warnings`. Expected: FAIL (attribute missing, file missing).
 
 - [ ] **Step 3: Write the migration and the constants**
 
-`000396_..._people_extraction.up.sql`:
+`000397_..._people_extraction.up.sql`:
 
 ```sql
 -- ESEF people per filing (spec 2026-09-08 revised 2026-09-09, section 2): one row per
@@ -122,7 +122,7 @@ ORDER BY (source_document_id, model_provider, model_name, prompt_version);
 `tables.py`: the three constants from the Interfaces block, placed after `QUALIFIED_ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE` and after `ESEF_DOCUMENT_COMPANY_INFORMATION_EXPORT_COLUMNS` respectively, with a comment that `source_record_uid` and `resolved_at` are ClickHouse defaults and never in the insert tuple.
 
 - [ ] **Step 4: Run the tests**: same command. Expected: PASS.
-- [ ] **Step 5: Commit**: `git add corpscout/clickhouse/migrations/000396_corpscout_esef_document_people_extraction.up.sql corpscout/clickhouse/migrations/000396_corpscout_esef_document_people_extraction.down.sql corpscout/services/dagster_v3/src/dagster_v3/defs/esef_filings/tables.py corpscout/services/dagster_v3/tests/test_esef_filings_client.py corpscout/services/dagster_v3/tests/test_clickhouse_migrations.py && git commit -m "feat(clickhouse): esef_document_people_extraction, one row per filing and people pass"`.
+- [ ] **Step 5: Commit**: `git add corpscout/clickhouse/migrations/000397_corpscout_esef_document_people_extraction.up.sql corpscout/clickhouse/migrations/000397_corpscout_esef_document_people_extraction.down.sql corpscout/services/dagster_v3/src/dagster_v3/defs/esef_filings/tables.py corpscout/services/dagster_v3/tests/test_esef_filings_client.py corpscout/services/dagster_v3/tests/test_clickhouse_migrations.py && git commit -m "feat(clickhouse): esef_document_people_extraction, one row per filing and people pass"`.
 
 ---
 
@@ -466,13 +466,13 @@ The asset `esef_document_people_clickhouse`: `deps=[dg.AssetKey("esef_document_p
 
 - [ ] **Step 1:** Document the people pass in the ESEF module doc that describes the enrichment stage (find it with `rg -l "esef_document_company_information_job" src/dagster_v3/defs/esef_filings/docs`): the asset, job, config, table, prefixes, statuses, the projection's replace semantics and identity, and that `people_json` on the enrichment is an artifact only. In the spec's section 2, note the ruling that `esef_document_people` keeps its 000395 key and that the extraction table has no Swedish view (no consumer). Commit: `docs(esef): the people pass`.
 - [ ] **Step 2:** `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run pytest -q -m "not integration" --deselect tests/test_schedule_cron_contracts.py::test_every_schedule_fires_on_a_unique_minute_hour_pair -p no:cacheprovider -p no:warnings --color=no -rf 2>&1 | rg "^FAILED|passed"`. Expected: only the four failures already on main (`test_backfill_policy_contracts`, `test_duckdb_bulk_loading_contract`, `test_nace_categories`, `test_sweden_address_geocoding` credentials).
-- [ ] **Step 3:** Collision check: `ls corpscout/clickhouse/migrations | rg 000396` on main shows only this slice's files, and the prod ledger reads 395. Merge `--no-ff` into main with the footer; the migration is applied by the owner after the merge (Task 6).
+- [ ] **Step 3:** Collision check: `ls corpscout/clickhouse/migrations | rg 000396` on main shows only this slice's files (000396 is the person entity's, merged 2026-09-09), and the prod ledger reads 396. Merge `--no-ff` into main with the footer; the migration is applied by the owner after the merge (Task 6).
 
 ---
 
 ## Task 6: Rollout (owner-run steps marked)
 
-- [ ] **Step 1 (owner):** `cd corpscout && make clickhouse-migrate-up-one` → ledger 396; verify `EXISTS corpscout.esef_document_people_extraction`.
+- [ ] **Step 1 (owner):** `cd corpscout && make clickhouse-migrate-up-one` → ledger 397; verify `EXISTS corpscout.esef_document_people_extraction`.
 - [ ] **Step 2 (owner):** light_sync deploy from main (no dbt change, no defs-state refresh needed); verify the host has `people_extraction_assets.py`.
 - [ ] **Step 3:** confirm `DEEPSEEK_API_KEY` is in the dagster host's environment (the enrichment ran 172 documents on DeepSeek with it). Smoke: launch `esef_document_people_job` with `{provider: "deepseek", model: "deepseek-v4-flash", country_iso2s: ["SE"], concurrency: 4, max_documents: 20}`; inspect `SELECT extraction_status, count(), sum(prompt_tokens), sum(completion_tokens) FROM corpscout.esef_document_people_extraction GROUP BY 1` and a few `people_json`; the projection in the same run replaces `esef_document_people` with those 20 documents' people (the ESEF tab shows fewer people until the full run).
 - [ ] **Step 4:** full run: the same config without `max_documents` (about 1,064 documents, roughly 11M input tokens); the reuse rule skips the 20 smoke documents. Verify `SELECT count() FROM corpscout.esef_document_people FINAL` and `SELECT count() FROM corpscout.se_esef_document_people`, and Handelsbanken's ESEF tab lists people for each of its four filings.
