@@ -209,6 +209,7 @@ SELECT
     m.registry_id AS company_id,
     t.candidate_id,
     t.source_document_id,
+    t.source_record_uid,
     t.package_sha256,
     t.lei,
     t.period_end,
@@ -234,6 +235,7 @@ CREATE OR REPLACE VIEW corpscout.se_esef_document_company_information AS
 SELECT
     m.registry_id AS company_id,
     t.source_document_id,
+    t.source_record_uid,
     t.package_sha256,
     t.lei,
     t.period_end,

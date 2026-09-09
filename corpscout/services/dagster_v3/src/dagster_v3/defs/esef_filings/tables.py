@@ -387,12 +387,32 @@ _ESEF_FACTS_COLUMNS = (
     "language", "source_run_id", "processed_week", "resolved_at",
 )
 
+# esef_document_contact_candidates and esef_document_company_information both carry
+# source_record_uid as a DEFAULT-expression column (migration 000311) that is never part of
+# the INSERT, so it is absent from their *_EXPORT_COLUMNS tuples (those drive INSERTs). The
+# views read it like every other consumer, so it is spliced in here -- right after
+# source_document_id, matching its live position -- without touching the export tuples.
+_ESEF_DOCUMENT_CONTACT_CANDIDATES_VIEW_COLUMNS = (
+    ESEF_DOCUMENT_CONTACT_CANDIDATES_EXPORT_COLUMNS[0],
+    ESEF_DOCUMENT_CONTACT_CANDIDATES_EXPORT_COLUMNS[1],
+    "source_record_uid",
+    *ESEF_DOCUMENT_CONTACT_CANDIDATES_EXPORT_COLUMNS[2:],
+    "processed_week",
+    "resolved_at",
+)
+_ESEF_DOCUMENT_COMPANY_INFORMATION_VIEW_COLUMNS = (
+    ESEF_DOCUMENT_COMPANY_INFORMATION_EXPORT_COLUMNS[0],
+    "source_record_uid",
+    *ESEF_DOCUMENT_COMPANY_INFORMATION_EXPORT_COLUMNS[1:],
+    "resolved_at",
+)
+
 SE_ESEF_VIEWS: tuple[SeEsefView, ...] = (
     SeEsefView("esef_filings", _ESEF_FILINGS_COLUMNS, final=True),
     SeEsefView("esef_facts", _ESEF_FACTS_COLUMNS, final=True),
     SeEsefView("esef_disclosures", (*ESEF_DISCLOSURES_EXPORT_COLUMNS, "processed_week", "resolved_at"), final=False),
-    SeEsefView("esef_document_contact_candidates", (*ESEF_DOCUMENT_CONTACT_CANDIDATES_EXPORT_COLUMNS, "processed_week", "resolved_at"), final=False),
-    SeEsefView("esef_document_company_information", (*ESEF_DOCUMENT_COMPANY_INFORMATION_EXPORT_COLUMNS, "resolved_at"), final=False),
+    SeEsefView("esef_document_contact_candidates", _ESEF_DOCUMENT_CONTACT_CANDIDATES_VIEW_COLUMNS, final=False),
+    SeEsefView("esef_document_company_information", _ESEF_DOCUMENT_COMPANY_INFORMATION_VIEW_COLUMNS, final=False),
     SeEsefView("esef_document_people", (*ESEF_DOCUMENT_PEOPLE_COLUMNS, "person_profile_hash", "person_role_hash"), final=True),
     SeEsefView("esef_document_business_items", ESEF_DOCUMENT_BUSINESS_ITEM_COLUMNS, final=True),
     SeEsefView("esef_document_group_relationships", ESEF_DOCUMENT_GROUP_RELATIONSHIP_COLUMNS, final=True),

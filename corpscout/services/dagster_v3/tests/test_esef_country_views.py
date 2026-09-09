@@ -27,6 +27,13 @@ def test_eight_views_one_per_swedish_consumer() -> None:
         assert view.view == f"se_{view.table}"  # se_ + esef_<table>
         assert "country_iso2" not in view.columns and "company_id" not in view.columns
         assert "lei" in view.columns
+    # esef_document_contact_candidates and esef_document_company_information carry
+    # source_record_uid as a DEFAULT-expression column (migration 000311) that never made it
+    # into their *_EXPORT_COLUMNS tuples (those drive INSERTs, not the view). The company_serving
+    # dbt legs and the backoffice's evidence linking both read it off these two views.
+    for table in ("esef_document_contact_candidates", "esef_document_company_information"):
+        view = next(v for v in tables.SE_ESEF_VIEWS if v.table == table)
+        assert "source_record_uid" in view.columns, table
 
 
 def test_view_sql_joins_the_verified_swedish_link_and_reads_replacing_tables_final() -> None:
