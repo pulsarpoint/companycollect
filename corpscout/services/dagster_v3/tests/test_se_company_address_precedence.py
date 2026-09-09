@@ -16,7 +16,7 @@ from dagster_v3.defs.se_company.address.precedence import (
 
 def test_the_global_order_is_the_spec_order() -> None:
     assert FIELD == "text"
-    assert ADDRESS_PRECEDENCE == {"reviewer": 20000, "bolagsverket": 1000, "scb": 900, "ratsit": 300}
+    assert ADDRESS_PRECEDENCE == {"reviewer": 20000, "bolagsverket": 1000, "scb": 900, "esef": 500, "ratsit": 300}
 
 
 def test_an_unranked_source_gets_zero_not_none() -> None:
@@ -34,6 +34,7 @@ def test_rows_are_highest_first_with_the_field_name() -> None:
         ("text", "reviewer", 20000),
         ("text", "bolagsverket", 1000),
         ("text", "scb", 900),
+        ("text", "esef", 500),
         ("text", "ratsit", 300),
     ]
 
@@ -54,7 +55,7 @@ def test_export_inserts_global_rows_and_counts_stale_pairs() -> None:
     client = FakeClient(stale=2)
     exported_at = datetime(2026, 9, 7, 8, 0, 0, 123000, tzinfo=UTC)
     pairs, stale = export_precedence(client, exported_at)
-    assert (pairs, stale) == (4, 2)
+    assert (pairs, stale) == (5, 2)
     insert_sql, rows = client.calls[0]
     assert insert_sql == (
         f"INSERT INTO {tables.QUALIFIED_PRECEDENCE_TABLE} ({', '.join(tables.PRECEDENCE_COLUMNS)}) VALUES"

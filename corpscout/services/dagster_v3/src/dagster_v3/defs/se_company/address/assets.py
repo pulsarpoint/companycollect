@@ -36,7 +36,7 @@ from dagster_v3.defs.sweden_address_osm import tables as osm_tables
 GROUP_NAME = "se_company_address"
 NORMALIZE_POOL = "se_company_address_normalize"
 
-EXTRACTOR_SOURCES: tuple[str, ...] = ("scb", "bolagsverket", "ratsit")
+EXTRACTOR_SOURCES: tuple[str, ...] = ("scb", "bolagsverket", "ratsit", "esef")
 EXTRACTOR_ASSET_NAMES: tuple[str, ...] = tuple(f"se_company_address_suggestions_{source}" for source in EXTRACTOR_SOURCES)
 
 

@@ -92,7 +92,7 @@ def test_column_tuples_agree_with_each_other() -> None:
     assert tables.QUALIFIED_HISTORY_TABLE == "corpscout.se_company_address_history"
     assert tables.QUALIFIED_RULE_TABLE == "corpscout.se_company_address_rule"
     assert tables.QUALIFIED_PRECEDENCE_TABLE == "corpscout.se_company_address_precedence"
-    assert tables.SOURCES == ("scb", "bolagsverket", "ratsit", "reviewer", "reviewer_draft")
+    assert tables.SOURCES == ("scb", "bolagsverket", "ratsit", "esef", "reviewer", "reviewer_draft")
     assert tables.PARSE_STATUSES == ("ok", "partial", "no_address", "foreign")
     assert tables.KINDS == ("postal", "visiting", "visiting_or_postal", "registered", "workplace", "unknown")
     for column in tables.COMPONENT_COLUMNS:
