@@ -27,6 +27,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 expected_package_sha256=arguments.expected_package_sha256,
             ),
             validate_esef=not arguments.skip_esef_validation,
+            phone_region=arguments.country,
         )
         output_bytes = artifact_json_bytes(artifact)
         arguments.output.parent.mkdir(parents=True, exist_ok=True)
@@ -79,6 +80,11 @@ def _argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("package", type=Path, help="Local ESEF report-package ZIP")
     parser.add_argument("output", type=Path, help="Destination artifact JSON path")
     parser.add_argument("--fxo-id", required=True, help="filings.xbrl.org filing ID")
+    parser.add_argument(
+        "--country",
+        default="",
+        help="ISO alpha-2 filing country used to normalize local phone numbers",
+    )
     parser.add_argument("--source-url", default="")
     parser.add_argument("--object-key", default="")
     parser.add_argument("--source-run-id", default="")

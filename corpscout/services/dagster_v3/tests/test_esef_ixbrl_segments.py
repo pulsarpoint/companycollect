@@ -493,6 +493,48 @@ def test_contact_candidates_join_text_split_by_empty_layout_spans(
     assert by_value["+4631660000"].suggested_roles == ["general"]
 
 
+def test_parse_report_package_threads_the_phone_region_hint_to_contact_extraction(
+    tmp_path: Path,
+) -> None:
+    # Regression (2026-09-09): EsefArtifactSource lost its `country` field
+    # when the parse products stopped carrying a country stamp, and the
+    # `default_region=source.country` argument to extract_contact_candidates
+    # was dropped with it -- silently switching every national-format phone
+    # candidate (37% of prod candidates) to +-only parsing. The parse entry
+    # point now takes a `phone_region` hint instead, threaded through
+    # without ever being written into the artifact's source or a product row.
+    package_path = _write_sample_report_package(
+        tmp_path,
+        additional_contact_html="<p>Tel: 08-123 45 67</p>",
+    )
+
+    with_region_hint = parse_esef_report_package(
+        package_path,
+        source=EsefArtifactSource(fxo_id="SAMPLE-2024"),
+        validate_esef=False,
+        phone_region="SE",
+    )
+    without_region_hint = parse_esef_report_package(
+        package_path,
+        source=EsefArtifactSource(fxo_id="SAMPLE-2024"),
+        validate_esef=False,
+    )
+
+    def phone_candidates(artifact: object) -> set[str]:
+        return {
+            candidate.normalized_value
+            for candidate in artifact.contact_candidates
+            if candidate.kind == "phone"
+        }
+
+    with_region_phones = phone_candidates(with_region_hint)
+    without_region_phones = phone_candidates(without_region_hint)
+    assert "+4681234567" in with_region_phones
+    assert "+4681234567" not in without_region_phones
+    assert "country" not in vars(with_region_hint.source)
+    assert "company_id" not in vars(with_region_hint.source)
+
+
 def test_artifact_json_is_deterministic(tmp_path: Path) -> None:
     package_path = _write_sample_report_package(tmp_path)
     source = EsefArtifactSource(fxo_id="SAMPLE-2024")
@@ -1300,6 +1342,7 @@ def _write_sample_report_package(
     report_member: str = "sample/reports/sample.xhtml",
     backslash_metadata_and_taxonomy_paths: bool = False,
     deflate64_ancillary_pdf: bool = False,
+    additional_contact_html: str = "",
 ) -> Path:
     package_path = tmp_path / "sample-report-package.zip"
     package_root = "sample"
@@ -1338,7 +1381,7 @@ def _write_sample_report_package(
         )
         package.writestr(
             report_member,
-            _REPORT_XHTML,
+            _REPORT_XHTML.format(additional_contact_html=additional_contact_html),
         )
         if deflate64_ancillary_pdf:
             package.writestr(
@@ -1517,6 +1560,7 @@ _REPORT_XHTML = """<?xml version="1.0" encoding="UTF-8"?>
         <a href="https://www.linkedin.com/company/sample-oils/">LinkedIn</a>
       </p>
       <script>hidden@do-not-use.se +46 40 999 99 99</script>
+      {additional_contact_html}
     </section>
     <section id="board">
       <h2>Board of Directors</h2>

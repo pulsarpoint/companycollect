@@ -98,6 +98,10 @@ class _DocumentParseTask:
     artifact_path: str
     source: EsefArtifactSource
     validate_esef: bool
+    # The filing's OAM country from the filings.xbrl.org index (not the
+    # register-verified company link): a phone-normalization hint only, never
+    # written into the artifact's source or any product row.
+    phone_region: str = ""
 
 
 @dataclass(frozen=True)
@@ -141,6 +145,7 @@ def _parse_document_package_worker(task: _DocumentParseTask) -> _DocumentParseRe
         task.package_path,
         source=task.source,
         validate_esef=task.validate_esef,
+        phone_region=task.phone_region,
     )
     parse_seconds = perf_counter() - parse_started
 
@@ -579,6 +584,7 @@ def run_esef_document_artifacts_partition(
                                 expected_package_sha256=digest,
                             ),
                             validate_esef=validate_esef,
+                            phone_region=str(representative["country_iso2"]).upper(),
                         ),
                     )
                     pending[future] = _ScheduledDocumentParse(

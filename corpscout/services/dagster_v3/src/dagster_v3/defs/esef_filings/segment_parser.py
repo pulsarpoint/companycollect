@@ -335,8 +335,17 @@ def parse_esef_report_package(
     *,
     source: EsefArtifactSource,
     validate_esef: bool = True,
+    phone_region: str = "",
 ) -> EsefSegmentArtifact:
-    """Parse one ESEF report package into a deterministic enrichment artifact."""
+    """Parse one ESEF report package into a deterministic enrichment artifact.
+
+    ``phone_region`` is a phone-normalization hint only (the filing's OAM
+    country from the filings.xbrl.org index, not the register-verified
+    company link): it is never written into the artifact's ``source`` or any
+    product row, only threaded to contact extraction so national-format
+    numbers (e.g. Swedish "08-123 45 67") can be parsed without a leading
+    "+".
+    """
     resolved_package_path = Path(package_path).resolve(strict=True)
     package_sha256 = sha256(resolved_package_path.read_bytes()).hexdigest()
     if (
@@ -416,6 +425,7 @@ def parse_esef_report_package(
                 )
                 for report_member, concept_local_name, value in tagged_facts
             ),
+            default_region=phone_region,
         )
         website_candidates = extract_website_candidates(
             report_paths,
