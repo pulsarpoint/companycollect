@@ -33,6 +33,8 @@ MIGRATIONS = (
     "000377_corpscout_se_company_basic_info.up.sql",
     "000378_corpscout_se_company_basic_info_history.up.sql",
     "000381_corpscout_se_company_basic_info_precedence_rules.up.sql",
+    # Slice 6 (2026-09-08): economic_activity joins the three entity tables by ALTER.
+    "000394_corpscout_se_company_basic_info_economic_activity.up.sql",
 )
 
 
@@ -45,6 +47,9 @@ def _schema_statements() -> list[str]:
                 line for line in raw.splitlines() if not line.strip().startswith("--")
             ).strip()
             if statement.upper().startswith(("CREATE DATABASE", "CREATE TABLE")):
+                statements.append(statement)
+            elif statement.upper().startswith("ALTER TABLE"):
+                # 000394 alters tables this harness created (the ledger lists CREATE first).
                 statements.append(statement)
     return statements
 
@@ -149,7 +154,7 @@ def test_null_and_empty_are_different_opinions_on_read() -> None:
 @pytest.mark.parametrize("join_use_nulls", [0, 1], ids=["join_use_nulls_off", "join_use_nulls_on"])
 def test_main_and_history_inserts_accept_the_batch_row_shape(join_use_nulls: int) -> None:
     main_values = (
-        "('5560000000', 'X AB', 'scb', NULL, '', 'active', 'scb', toDate32('1990-01-02'), 'scb', "
+        "('5560000000', 'X AB', 'scb', NULL, '', 'active', 'scb', 'never', 'scb', toDate32('1990-01-02'), 'scb', "
         "NULL, '', NULL, '', NULL, '', NULL, NULL, '', toDateTime64('2026-09-03 12:00:00', 3, 'UTC'), 'fold-v1', 'run-1')"
     )
     script = _schema_statements() + [
@@ -160,7 +165,7 @@ def test_main_and_history_inserts_accept_the_batch_row_shape(join_use_nulls: int
         f"SELECT company_id, changed_fields FROM {tables.QUALIFIED_HISTORY_TABLE}",
     ]
     lines = _run(script, join_use_nulls=join_use_nulls)
-    assert lines[0].startswith("5560000000\tX AB\tscb\t\\N\t\tactive\tscb\t1990-01-02\tscb")
+    assert lines[0].startswith("5560000000\tX AB\tscb\t\\N\t\tactive\tscb\tnever\tscb\t1990-01-02\tscb")
     assert lines[1] == "5560000000\t2026-09-03 12:00:00.000"
     assert lines[2] == "5560000000\t['legal_name','status','incorporation_date']"
 

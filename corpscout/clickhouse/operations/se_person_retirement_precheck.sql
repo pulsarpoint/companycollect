@@ -56,7 +56,7 @@ SELECT count() AS se_company_person_esef_rows FROM corpscout.se_company_person_e
 SELECT count() AS se_company_person_wikidata_rows FROM corpscout.se_company_person_wikidata;
 
 -- Gate 3: the serving view already reads the new entity, and it is healthy at its last
--- refresh. If has_new_person_table is 0, migration 000395 has not been applied here and the
+-- refresh. If has_new_person_table is 0, migration 000396 has not been applied here and the
 -- drops must not run: se_companies_serving would start failing on its next refresh.
 SELECT
     countIf(position(create_table_query, 'se_company_person_v2') > 0) > 0 AS has_new_person_table,

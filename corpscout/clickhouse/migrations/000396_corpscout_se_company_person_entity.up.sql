@@ -25,7 +25,7 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 -- IF THE MIGRATE CLIENT DROPS between the STOP and the START, the view is left stopped and
 -- serving its last contents at full speed with nothing raising anywhere. Recovery is by
 -- hand: check corpscout.se_companies_serving in system.view_refreshes, run SYSTEM START VIEW
--- corpscout.se_companies_serving, then migrate force 395 so the ledger records where the
+-- corpscout.se_companies_serving, then migrate force 396 so the ledger records where the
 -- database actually is. The person design doc's runbook section has the full sequence.
 --
 -- data IS A String HOLDING A JSON OBJECT, not the native JSON type (owner ruling

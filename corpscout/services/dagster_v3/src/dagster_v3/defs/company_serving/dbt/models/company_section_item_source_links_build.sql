@@ -44,7 +44,7 @@ source_records_raw AS (
         toDateTime64(resolved_at, 3, 'UTC'), toDateTime64(resolved_at, 3, 'UTC'),
         'esef_filings', fxo_id, package_url, '', lowerUTF8(package_sha256),
         toDateTime64(resolved_at, 3, 'UTC'), source_run_id
-    FROM {{ source('corpscout', 'esef_filings') }} FINAL
+    FROM {{ source('corpscout', 'se_esef_filings') }}
     WHERE package_sha256 != ''
     UNION ALL
     SELECT
@@ -180,7 +180,7 @@ financial_sources AS (
 ),
 esef_sources AS (
     SELECT
-        mappings.country_iso2 AS country_code,
+        '{{ var("country_code") }}' AS country_code,
         companies.company_id,
         'sources' AS section,
         lower(hex(SHA256(concat(
@@ -192,17 +192,17 @@ esef_sources AS (
             lowerUTF8(filings.package_sha256)
         )))) AS source_record_uid,
         'annual_report_subject' AS relationship_kind,
-        mappings.match_source AS match_method,
+        -- 'gleif_registered_as' mirrors MATCH_SOURCE_GLEIF_REGISTERED_AS in
+        -- esef_filings/publish.py: the same literal the entity-registry map's own
+        -- match_source column carries for this bridge.
+        'gleif_registered_as' AS match_method,
         toFloat32(1) AS match_confidence,
         filings.source_run_id,
         toDateTime64(filings.resolved_at, 3, 'UTC') AS linked_at
-    FROM {{ source('corpscout', 'esef_entity_registry_map') }} AS mappings FINAL
+    FROM {{ source('corpscout', 'se_esef_filings') }} AS filings
     INNER JOIN {{ source('corpscout', 'se_company_basic_info') }} AS companies FINAL
-        ON companies.company_id = mappings.registry_id
-    INNER JOIN {{ source('corpscout', 'esef_filings') }} AS filings FINAL
-        ON filings.lei = mappings.lei
-    WHERE mappings.country_iso2 = '{{ var("country_code") }}'
-      AND filings.package_sha256 != ''
+        ON companies.company_id = filings.company_id
+    WHERE filings.package_sha256 != ''
 ),
 gleif AS (
     SELECT
@@ -312,9 +312,8 @@ esef_domains AS (
         arrayElement(current.source_confidences, indexOf(current.source_names, 'esef_filing')) AS match_confidence,
         candidates.source_run_id, candidates.resolved_at AS linked_at
     FROM {{ ref('company_domains_build') }} AS current
-    INNER JOIN {{ source('corpscout', 'esef_document_contact_candidates') }} AS candidates
-        ON candidates.country_iso2 = current.country_code
-       AND candidates.company_id = current.company_id
+    INNER JOIN {{ source('corpscout', 'se_esef_document_contact_candidates') }} AS candidates
+        ON candidates.company_id = current.company_id
        AND candidates.registrable_domain = current.root_domain
        AND candidates.candidate_kind = 'website'
     WHERE has(current.source_names, 'esef_filing')
@@ -329,7 +328,7 @@ contacts AS (
         current.confidence AS match_confidence, candidates.source_run_id,
         candidates.resolved_at AS linked_at
     FROM {{ ref('company_contact_current_build') }} AS current
-    INNER JOIN {{ source('corpscout', 'esef_document_contact_candidates') }} AS candidates
+    INNER JOIN {{ source('corpscout', 'se_esef_document_contact_candidates') }} AS candidates
         ON candidates.candidate_id = current.contact_id
     WHERE candidates.source_record_uid != ''
 ),

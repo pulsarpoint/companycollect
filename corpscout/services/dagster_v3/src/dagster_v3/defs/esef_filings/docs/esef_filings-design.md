@@ -97,6 +97,33 @@ there is no enrichment DuckDB or second ClickHouse publisher.
 - The four parsing serving tables are partitioned by `processed_week`.
 - Downstream consumers read ClickHouse, never parser-local DuckDB files.
 
+## Country-agnostic products (2026-09-09)
+
+ESEF products are country-agnostic and keyed by LEI and document only. Tables
+do not carry `country_iso2`, `country_code`, or `company_id`; those belong in
+the identity registry layer.
+
+The `esef_entity_registry_map` carries `link_status` (`register_verified`,
+`unverified`, or `gleif`) reflecting verification against the registers of
+`COUNTRY_IDENTITY_RULES`. Resolved `company_id`, `country_iso2`, and
+`link_status` live in that map; products read them on-demand per LEI.
+
+For Sweden, eight country-specific views (`se_esef_filings`, `se_esef_facts`,
+`se_esef_disclosures`, `se_esef_document_contact_candidates`,
+`se_esef_document_company_information`, `se_esef_document_people`,
+`se_esef_document_business_items`, `se_esef_document_group_relationships`)
+expose `company_id` by joining the map. These views are the surface for Swedish
+consumers; the country-agnostic products remain the ClickHouse tables of record.
+
+A consumer never writes `FINAL` after a view name: the view already reads its
+underlying ReplacingMergeTree product `FINAL` (`se_esef_filings`, `se_esef_facts`,
+`se_esef_document_people`, `se_esef_document_business_items`, and
+`se_esef_document_group_relationships` are FINAL reads inside the view;
+`se_esef_disclosures`, `se_esef_document_contact_candidates`, and
+`se_esef_document_company_information` are plain MergeTree products and need
+none). Writing `FINAL` a second time after the view name is redundant at best
+and a ClickHouse error at worst.
+
 ## Operational sequence
 
 Apply ClickHouse migrations before deploying code that targets the resulting

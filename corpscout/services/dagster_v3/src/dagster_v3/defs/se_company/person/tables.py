@@ -1,4 +1,4 @@
-"""Table names and column tuples of the person entity, pinned against migration 000395.
+"""Table names and column tuples of the person entity, pinned against migration 000396.
 
 The main table is se_company_person_v2 for slices 0 to 3; slice 4 renames it to
 se_company_person, which is why MAIN_TABLE is the one place the name appears.

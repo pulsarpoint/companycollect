@@ -1,5 +1,12 @@
 """ESEF filing extraction -> basic-info suggestion: the LEI and the newest filing's
-description (spec 3.2: a source with several records contributes its newest)."""
+description (spec 3.2: a source with several records contributes its newest).
+
+Reads `se_esef_document_company_information` (migration 000395, ESEF slice 1 Task 1): a
+Swedish, register-verified view over the country-agnostic `esef_document_company_information`
+product, already restricted to Sweden and already stamped with company_id from the
+register-verified entity-registry link. No `country_iso2` filter here any more -- the view
+applies it upstream.
+"""
 
 import dagster as dg
 
@@ -9,8 +16,7 @@ from dagster_v3.defs.se_company.common import SE_COMPANY_ID_PATTERN
 ESEF_EXTRACTOR_VERSION = "esef-v1"
 
 _FILTER = (
-    "WHERE country_iso2 = 'SE'\n"
-    f"  AND match(company_id, '{SE_COMPANY_ID_PATTERN}')\n"
+    f"WHERE match(company_id, '{SE_COMPANY_ID_PATTERN}')\n"
     "  AND trim(company_description) != ''"
 )
 
@@ -18,7 +24,7 @@ _FILTER = (
 def esef_current_sql() -> str:
     return (
         "SELECT company_id, max(toDateTime64(resolved_at, 3, 'UTC')) AS observed_at\n"
-        "FROM corpscout.esef_document_company_information\n"
+        "FROM corpscout.se_esef_document_company_information\n"
         f"{_FILTER}\n"
         "GROUP BY company_id"
     )
@@ -41,7 +47,7 @@ def esef_select_sql() -> str:
         "    trim(company_description) AS description,\n"
         "    if(toString(description_language) = '', 'en', toString(description_language)) AS description_language,\n"
         "    CAST(NULL AS Nullable(String)) AS description_sv\n"
-        "FROM corpscout.esef_document_company_information\n"
+        "FROM corpscout.se_esef_document_company_information\n"
         f"{_FILTER}\n"
         "  AND company_id IN %(company_ids)s\n"
         # source_record_uid DEFAULTs to a hash over package_sha256, so two extractions of
@@ -57,7 +63,13 @@ se_basic_info_suggestions_esef = define_suggestion_asset(
     extractor_version=ESEF_EXTRACTOR_VERSION,
     current_sql=esef_current_sql(),
     select_sql=esef_select_sql(),
-    deps=[dg.AssetKey("esef_document_company_information_clickhouse")],
+    # The view has no asset of its own: deps stay on the product asset that fills
+    # esef_document_company_information, and gain the entity-registry map asset that fills
+    # the register-verified link the view joins through.
+    deps=[
+        dg.AssetKey("esef_document_company_information_clickhouse"),
+        dg.AssetKey("esef_entity_registry_map_clickhouse"),
+    ],
     description=(
         "One esef suggestion row per company from the newest ESEF filing extraction: the "
         "LEI and the filing's company description with its language. execute=false previews."

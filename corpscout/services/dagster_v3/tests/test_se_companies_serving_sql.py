@@ -403,7 +403,7 @@ def _script(*, join_use_nulls: int) -> str:
         "CREATE TABLE corpscout.company_identifier (company_id String, issuer_scheme String, country_code String, is_current UInt8, issuer_id String) ENGINE = MergeTree ORDER BY company_id;",
         "CREATE TABLE corpscout.esef_financial_metrics (lei String) ENGINE = MergeTree ORDER BY lei;",
         "CREATE TABLE corpscout.se_financial_reports (company_id String) ENGINE = MergeTree ORDER BY company_id;",
-        # The person entity's main table (migration 000395) -- read FINAL, active rows only.
+        # The person entity's main table (migration 000396) -- read FINAL, active rows only.
         # Only the three columns the serving SELECT's IN-subqueries touch. ReplacingMergeTree
         # (not plain MergeTree, which this ClickHouse rejects with ILLEGAL_FINAL) so the
         # stub accepts the same FINAL modifier the real table's engine does.

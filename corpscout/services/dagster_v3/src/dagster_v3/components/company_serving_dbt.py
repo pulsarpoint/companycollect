@@ -10,6 +10,19 @@ _ALL_PARTITIONS_SOURCE_KEYS = {
     dg.AssetKey("esef_document_contact_candidates_clickhouse"),
 }
 
+_ESEF_ENTITY_REGISTRY_MAP_KEY = dg.AssetKey("esef_entity_registry_map_clickhouse")
+# ESEF slice 1 (2026-09-09): sources.yml no longer declares esef_entity_registry_map -- these
+# models read a se_esef_* view instead, which resolves company_id by joining the map INSIDE
+# ClickHouse, invisible to dbt's ref()/source() graph. Add the map back explicitly so
+# company_serving's lineage still reaches it now that no model's SQL names it directly.
+_ESEF_MODELS_READING_THE_MAP_THROUGH_A_VIEW = {
+    "company_contact_current_build",
+    "company_description_current_build",
+    "company_management_current_build",
+    "company_section_item_source_links_build",
+    "company_domains_build",
+}
+
 
 class CompanyServingDbtComponent(DbtProjectComponent):
     """Build one country's company-serving projections."""
@@ -26,18 +39,24 @@ class CompanyServingDbtComponent(DbtProjectComponent):
             # Generated source-file references differ by component state path, so
             # leave source ownership metadata to the canonical asset definition.
             return spec.replace_attributes(metadata={})
-        return spec.replace_attributes(
-            deps=[
-                dg.AssetDep(
-                    dependency.asset_key,
-                    partition_mapping=dg.AllPartitionMapping(),
-                    metadata=dependency.metadata,
-                )
-                if dependency.asset_key in _ALL_PARTITIONS_SOURCE_KEYS
-                else dependency
-                for dependency in spec.deps
-            ]
-        )
+        deps = [
+            dg.AssetDep(
+                dependency.asset_key,
+                partition_mapping=dg.AllPartitionMapping(),
+                metadata=dependency.metadata,
+            )
+            if dependency.asset_key in _ALL_PARTITIONS_SOURCE_KEYS
+            else dependency
+            for dependency in spec.deps
+        ]
+        model_name = unique_id.rsplit(".", 1)[-1]
+        if (
+            model_name in _ESEF_MODELS_READING_THE_MAP_THROUGH_A_VIEW
+            and _ESEF_ENTITY_REGISTRY_MAP_KEY
+            not in {dependency.asset_key for dependency in deps}
+        ):
+            deps.append(dg.AssetDep(_ESEF_ENTITY_REGISTRY_MAP_KEY))
+        return spec.replace_attributes(deps=deps)
 
     @property
     def defs_state_config(self) -> DefsStateConfig:

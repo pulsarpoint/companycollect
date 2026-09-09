@@ -6,7 +6,7 @@ everything past the modules below -- the fold, the extractors and the backoffice
 
 | Module | Responsibility |
 | --- | --- |
-| `tables.py` | Table names/column tuples, pinned against migration 000395; main table built as `se_company_person_v2`, renamed in the last slice |
+| `tables.py` | Table names/column tuples, pinned against migration 000396; main table built as `se_company_person_v2`, renamed in the last slice |
 | `roles.py` | Per-source role maps (`role_code_for`), moved verbatim from `sweden_financial`/`esef_filings`/`wikidata`'s own `roles.py`; an unmapped label publishes as itself, lowercased and trimmed |
 | `normalize_se.py` | `normalize_se_person`: pure Swedish parser -- splits, folds and classifies a delivered name and role; never guesses a missing half |
 | `normalize.py` | The normalize SQL (`changed_scope_sql`, `changed_rows_sql`, `all_scope_sql`, `all_rows_sql`, `normalized_insert_sql`) and the paging/write loop (`normalize_all`, `normalize_companies`) |
@@ -52,14 +52,14 @@ per-source maps key on `role_key` first, falling back to `role_original`, since 
 outlives label rewordings that a human label does not. Slice 1's extractors fill `role_key`
 out of each raw row's `data`; a source with no key still normalizes via `role_original`.
 
-## Interrupted-migration runbook (000395)
+## Interrupted-migration runbook (000396)
 
-000395 stops `corpscout.se_companies_serving`, creates the six tables above, re-points the
+000396 stops `corpscout.se_companies_serving`, creates the six tables above, re-points the
 view's query with `ALTER TABLE ... MODIFY QUERY`, then restarts the view. If the migrate
 client drops between the STOP and the re-point landing, the view is left stopped, serving
 stale contents with nothing alerting on it. Recovery by hand: check `system.view_refreshes`
 for the view's status; run `SYSTEM START VIEW corpscout.se_companies_serving`; if the ALTER
-never landed, run it from 000395's `.up.sql`; then `migrate force 395` to match reality.
+never landed, run it from 000396's `.up.sql`; then `migrate force 396` to match reality.
 
 ## Running the asset
 

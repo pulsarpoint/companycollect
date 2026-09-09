@@ -69,7 +69,6 @@ def test_parse_report_package_resolves_continuations_and_selects_segments(
         package_path,
         source=EsefArtifactSource(
             fxo_id="SAMPLE-2024",
-            country="SE",
             source_url="https://example.test/sample.zip",
             object_key="raw/sample.zip",
         ),
@@ -494,6 +493,48 @@ def test_contact_candidates_join_text_split_by_empty_layout_spans(
     assert by_value["+4631660000"].suggested_roles == ["general"]
 
 
+def test_parse_report_package_threads_the_phone_region_hint_to_contact_extraction(
+    tmp_path: Path,
+) -> None:
+    # Regression (2026-09-09): EsefArtifactSource lost its `country` field
+    # when the parse products stopped carrying a country stamp, and the
+    # `default_region=source.country` argument to extract_contact_candidates
+    # was dropped with it -- silently switching every national-format phone
+    # candidate (37% of prod candidates) to +-only parsing. The parse entry
+    # point now takes a `phone_region` hint instead, threaded through
+    # without ever being written into the artifact's source or a product row.
+    package_path = _write_sample_report_package(
+        tmp_path,
+        additional_contact_html="<p>Tel: 08-123 45 67</p>",
+    )
+
+    with_region_hint = parse_esef_report_package(
+        package_path,
+        source=EsefArtifactSource(fxo_id="SAMPLE-2024"),
+        validate_esef=False,
+        phone_region="SE",
+    )
+    without_region_hint = parse_esef_report_package(
+        package_path,
+        source=EsefArtifactSource(fxo_id="SAMPLE-2024"),
+        validate_esef=False,
+    )
+
+    def phone_candidates(artifact: object) -> set[str]:
+        return {
+            candidate.normalized_value
+            for candidate in artifact.contact_candidates
+            if candidate.kind == "phone"
+        }
+
+    with_region_phones = phone_candidates(with_region_hint)
+    without_region_phones = phone_candidates(without_region_hint)
+    assert "+4681234567" in with_region_phones
+    assert "+4681234567" not in without_region_phones
+    assert "country" not in vars(with_region_hint.source)
+    assert "company_id" not in vars(with_region_hint.source)
+
+
 def test_artifact_json_is_deterministic(tmp_path: Path) -> None:
     package_path = _write_sample_report_package(tmp_path)
     source = EsefArtifactSource(fxo_id="SAMPLE-2024")
@@ -728,10 +769,6 @@ def test_cli_writes_reviewable_artifact(
             str(output_path),
             "--fxo-id",
             "SAMPLE-2024",
-            "--company-id",
-            "556600-0000",
-            "--country",
-            "SE",
             "--skip-esef-validation",
         ]
     )
@@ -739,8 +776,7 @@ def test_cli_writes_reviewable_artifact(
     assert exit_code == 0
     output = json.loads(output_path.read_text(encoding="utf-8"))
     assert output["source"]["fxo_id"] == "SAMPLE-2024"
-    assert output["source"]["company_id"] == "556600-0000"
-    assert output["source"]["country"] == "SE"
+    assert "company_id" not in output["source"] and "country" not in output["source"]
     assert output["quality"]["fact_count"] == 4
     summary = json.loads(capsys.readouterr().out)
     assert summary["fact_count"] == 4
@@ -787,7 +823,7 @@ def test_document_asset_archives_parses_and_stores_source_linked_rows(
     )
     artifact_key = artifact_object_key(package_sha256)
     artifact = json.loads(object_store.objects[(ESEF_DOCUMENT_BUCKET, artifact_key)])
-    assert artifact["source"]["company_id"] == "5566000000"
+    assert "company_id" not in artifact["source"] and "country" not in artifact["source"]
     assert artifact["source"]["source_run_id"] == "parse-run"
 
     compatible_v4_key = artifact_key.replace("/schema=v5/", "/schema=v4/")
@@ -1132,7 +1168,6 @@ def test_document_assets_use_processed_week_partitions_and_share_source_deps() -
     partition_keys = ESEF_PROCESSED_WEEK_PARTITIONS.get_partition_keys()
     manifest_dependencies = {
         AssetKey("esef_filings_index_duckdb"),
-        AssetKey("esef_entity_registry_map_clickhouse"),
     }
     artifact_dependency = {AssetKey("esef_document_artifacts_s3")}
 
@@ -1283,7 +1318,6 @@ def _run_document_artifact_stages(
     run_esef_document_manifest_partition(
         esef_filings_duckdb=database,
         object_store=object_store,
-        company_links={"549300SAMPLE000000001": ("SE", "5566000000")},
         partition_key=partition_key,
         source_run_id=source_run_id,
         source_document_ids=source_document_ids,
@@ -1308,6 +1342,7 @@ def _write_sample_report_package(
     report_member: str = "sample/reports/sample.xhtml",
     backslash_metadata_and_taxonomy_paths: bool = False,
     deflate64_ancillary_pdf: bool = False,
+    additional_contact_html: str = "",
 ) -> Path:
     package_path = tmp_path / "sample-report-package.zip"
     package_root = "sample"
@@ -1346,7 +1381,7 @@ def _write_sample_report_package(
         )
         package.writestr(
             report_member,
-            _REPORT_XHTML,
+            _REPORT_XHTML.format(additional_contact_html=additional_contact_html),
         )
         if deflate64_ancillary_pdf:
             package.writestr(
@@ -1525,6 +1560,7 @@ _REPORT_XHTML = """<?xml version="1.0" encoding="UTF-8"?>
         <a href="https://www.linkedin.com/company/sample-oils/">LinkedIn</a>
       </p>
       <script>hidden@do-not-use.se +46 40 999 99 99</script>
+      {additional_contact_html}
     </section>
     <section id="board">
       <h2>Board of Directors</h2>

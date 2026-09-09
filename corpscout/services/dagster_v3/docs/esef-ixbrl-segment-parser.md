@@ -138,19 +138,26 @@ Artifacts use this content-addressed key layout:
 esef_filings/ixbrl_segments/schema=v5/parser=arelle-<version>/candidates=v3/package_sha256=<hash>/artifact.json
 ```
 
+The artifact's `source` object contains the LEI (Issuer Legal Entity Identifier)
+and document metadata (package hash, URL, parser versions, quality counts); it does
+not carry `country` or `company_id` — those belong in the identity registry. The
+artifact is country-agnostic and content-addressed. Country-specific views and
+consumers resolve identity by joining the `esef_entity_registry_map` on LEI.
+
 ## Extract company enrichment with DeepSeek
 
 Materialize `esef_document_company_information_clickhouse` after the four
-parsing outputs. It selects each company's latest report from canonical
-`esef_disclosures`, joins document-scoped concept labels, and reconstructs the
-bounded evidence input directly from ClickHouse. It uses the existing `DEEPSEEK_URL`,
-`DEEPSEEK_MODEL`, and `DEEPSEEK_API_KEY` environment variables. This paid asset is
-unpartitioned and is never included in the routine refresh or backfill. It reads the
-final ClickHouse disclosure state and selects the newest report for each resolved
-`(country_iso2, company_id)`. Schema-v5 rows include both selected tagged facts and
-visible sections. Migrated legacy disclosure rows remain queryable but do not become
-model inputs until their processed-week partition is rebuilt from the existing parsed
-artifact, because the legacy table did not retain semantic segment references.
+parsing outputs. The model stage selects each company's latest report per LEI
+(resolved through `esef_entity_registry_map`), joins document-scoped concept labels,
+and reconstructs the bounded evidence input directly from ClickHouse. It uses the
+existing `DEEPSEEK_URL`, `DEEPSEEK_MODEL`, and `DEEPSEEK_API_KEY` environment
+variables. This paid asset is unpartitioned and is never included in the routine
+refresh or backfill. It reads the final ClickHouse disclosure state and selects the
+newest report for each LEI with `link_status` and `country_iso2` resolved through
+the map. Schema-v5 rows include both selected tagged facts and visible sections.
+Migrated legacy disclosure rows remain queryable but do not become model inputs until
+their processed-week partition is rebuilt from the existing parsed artifact, because
+the legacy table did not retain semantic segment references.
 For example,
 this configuration processes the latest eligible report for selected Swedish companies:
 
@@ -158,7 +165,8 @@ this configuration processes the latest eligible report for selected Swedish com
 ops:
   esef_document_company_information_clickhouse:
     config:
-      country_iso2: "SE"
+      link_statuses: ["register_verified"]
+      country_iso2s: ["SE"]
       company_ids: ["5566692850", "5565200028"]
       source_document_ids: []
       max_documents: 5
@@ -167,13 +175,14 @@ ops:
       timeout_seconds: 180
 ```
 
-With no filters, the asset processes the latest unprocessed report for every linked
-company. `country_iso2`, `company_ids`, `source_document_ids`, and `max_documents` are
-optional operational bounds. `company_ids` requires `country_iso2`, because company
-identity is country-scoped. A `source_document_ids` filter is applied after latest-report
-ranking, so it cannot accidentally select an older filing for a company. A document is
-skipped when the current model and prompt already processed the same canonical request,
-unless `refresh_existing` is true.
+With no filters, the asset processes the latest unprocessed report for every LEI admitted
+through the map at `link_statuses` (`register_verified` by default). `link_statuses`,
+`country_iso2s`, `company_ids`, `source_document_ids`, and `max_documents` are optional
+operational bounds. `company_ids` requires exactly one `country_iso2s` entry, because
+company identity is country-scoped. A `source_document_ids` filter is applied after
+latest-report ranking, so it cannot accidentally select an older filing for a company. A
+document is skipped when the current model and prompt already processed the same canonical
+request, unless `refresh_existing` is true.
 
 The model stage extracts these candidate fields:
 

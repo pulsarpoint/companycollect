@@ -89,13 +89,18 @@ ORDER BY (
     observation_uid
 );
 
+-- 2026-09-09 (migration 000395): these three tables dropped country_code/company_id in
+-- favor of lei (the ESEF products carry no country or company id -- see 000395's own
+-- comment). This historical file is edited in place per the development-phase ledger policy
+-- (an already-applied migration's DDL is corrected here rather than rewound) -- the
+-- MATERIALIZED person_profile_hash/person_role_hash columns on esef_document_people are
+-- still added by 000289, unaffected by this edit.
 CREATE TABLE IF NOT EXISTS corpscout.esef_document_people
 (
     candidate_uid FixedString(64),
     source_record_uid FixedString(64),
     source_document_id String,
-    country_code LowCardinality(String),
-    company_id String,
+    lei String,
     fiscal_year UInt16,
     name String,
     role String,
@@ -113,15 +118,14 @@ CREATE TABLE IF NOT EXISTS corpscout.esef_document_people
     extracted_at DateTime64(3, 'UTC')
 )
 ENGINE = ReplacingMergeTree(extracted_at)
-ORDER BY (country_code, company_id, fiscal_year, source_record_uid, candidate_uid);
+ORDER BY (lei, fiscal_year, source_record_uid, candidate_uid);
 
 CREATE TABLE IF NOT EXISTS corpscout.esef_document_business_items
 (
     candidate_uid FixedString(64),
     source_record_uid FixedString(64),
     source_document_id String,
-    country_code LowCardinality(String),
-    company_id String,
+    lei String,
     fiscal_year UInt16,
     item_kind LowCardinality(String),
     name String,
@@ -135,22 +139,14 @@ CREATE TABLE IF NOT EXISTS corpscout.esef_document_business_items
     extracted_at DateTime64(3, 'UTC')
 )
 ENGINE = ReplacingMergeTree(extracted_at)
-ORDER BY (
-    country_code,
-    company_id,
-    item_kind,
-    fiscal_year,
-    source_record_uid,
-    candidate_uid
-);
+ORDER BY (lei, item_kind, fiscal_year, source_record_uid, candidate_uid);
 
 CREATE TABLE IF NOT EXISTS corpscout.esef_document_group_relationships
 (
     candidate_uid FixedString(64),
     source_record_uid FixedString(64),
     source_document_id String,
-    country_code LowCardinality(String),
-    company_id String,
+    lei String,
     fiscal_year UInt16,
     related_company_name String,
     relationship_type LowCardinality(String),
@@ -165,14 +161,7 @@ CREATE TABLE IF NOT EXISTS corpscout.esef_document_group_relationships
     extracted_at DateTime64(3, 'UTC')
 )
 ENGINE = ReplacingMergeTree(extracted_at)
-ORDER BY (
-    country_code,
-    company_id,
-    relationship_type,
-    fiscal_year,
-    source_record_uid,
-    candidate_uid
-);
+ORDER BY (lei, relationship_type, fiscal_year, source_record_uid, candidate_uid);
 
 ALTER TABLE corpscout.esef_source_documents
     ADD COLUMN IF NOT EXISTS source_record_uid String DEFAULT lower(hex(SHA256(concat(

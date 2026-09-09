@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import dagster as dg
@@ -143,7 +144,7 @@ def test_serving_models_resolve_identity_and_evidence_offline() -> None:
     assert "ref('company_management_current_build')" not in source_links
     company_domains = (models / "company_domains_build.sql").read_text()
     assert "source('corpscout', 'wikidata_company_domains')" in company_domains
-    assert "source('corpscout', 'esef_document_contact_candidates')" in company_domains
+    assert "source('corpscout', 'se_esef_document_contact_candidates')" in company_domains
     assert "source('corpscout', 'company_domain_suggestions_active')" in company_domains
     assert "reviewed_evidence_fingerprint" in company_domains
     assert "domains_without_current_source" in company_domains
@@ -170,6 +171,19 @@ def test_serving_models_resolve_identity_and_evidence_offline() -> None:
         model = (models / model_name).read_text()
         assert "source('corpscout', 'se_company_basic_info')" in model
         assert "INNER JOIN company_anchors AS anchors" in model
+
+    # ESEF slice 1 Task 5: every Swedish ESEF leg reads a se_esef_* view -- never the
+    # country-agnostic esef_document_* product directly, and never the retired
+    # esef_entity_registry_map join the views now do themselves. A view is already a FINAL
+    # read of its ReplacingMergeTree product, so re-adding FINAL after se_esef_document_people
+    # would be a ClickHouse error.
+    for model in ("company_contact_current_build", "company_description_current_build", "company_management_current_build", "company_section_item_source_links_build", "company_domains_build"):
+        text = (models / f"{model}.sql").read_text()
+        # Only the se_esef_document_* views remain: any esef_document_* NOT preceded by
+        # "se_" is the country-agnostic product itself, read directly.
+        assert re.search(r"(?<!se_)esef_document_", text) is None
+        assert "esef_entity_registry_map" not in text
+        assert "se_esef_document_people FINAL" not in text
 
     combined_serving_sql = "\n".join(path.read_text() for path in models.glob("*.sql"))
     for retired_table in (

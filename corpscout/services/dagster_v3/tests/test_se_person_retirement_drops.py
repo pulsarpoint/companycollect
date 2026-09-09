@@ -133,7 +133,7 @@ def test_the_precheck_counts_the_three_plain_views_itself() -> None:
 
 
 def test_the_precheck_gates_on_the_serving_view_being_repointed() -> None:
-    """The one reader that must be off the old tables before they go. Migration 000395 does
+    """The one reader that must be off the old tables before they go. Migration 000396 does
     that; this gate proves it landed."""
     sql = PRECHECK.read_text(encoding="utf-8")
     assert "se_company_person_v2" in sql

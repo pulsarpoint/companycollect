@@ -31,7 +31,7 @@ registry_descriptions AS (
 ),
 esef_descriptions AS (
     SELECT
-        info.country_iso2 AS country_code,
+        '{{ var("country_code") }}' AS country_code,
         info.company_id,
         'annual_report_profile' AS description_kind,
         info.source_record_uid,
@@ -42,14 +42,13 @@ esef_descriptions AS (
         'llm_extraction' AS extraction_method,
         toFloat32(info.description_confidence) AS confidence,
         JSONExtract(info.description_evidence_ids_json, 'Array(String)') AS evidence_ids,
-        concat('esef_document_company_information:', info.source_document_id) AS source_field,
+        concat('se_esef_document_company_information:', info.source_document_id) AS source_field,
         info.model_provider,
         info.model_name,
         info.prompt_version,
         coalesce(parseDateTime64BestEffortOrNull(info.extracted_at), info.resolved_at) AS extracted_at
-    FROM {{ source('corpscout', 'esef_document_company_information') }} AS info
-    WHERE info.country_iso2 = '{{ var("country_code") }}'
-      AND info.extraction_status IN ('enriched', 'reused')
+    FROM {{ source('corpscout', 'se_esef_document_company_information') }} AS info
+    WHERE info.extraction_status IN ('enriched', 'reused')
       AND info.company_description != ''
       AND info.source_record_uid != ''
     QUALIFY row_number() OVER (

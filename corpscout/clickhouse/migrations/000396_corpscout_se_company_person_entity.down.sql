@@ -1,6 +1,6 @@
 CREATE DATABASE IF NOT EXISTS corpscout;
 
--- Reverses 000395. The serving view goes back to 000393's render (the old
+-- Reverses 000396. The serving view goes back to 000393's render (the old
 -- se_company_person / se_company_person_role reads) BEFORE the tables go, so the view never
 -- names a table that no longer exists. Rolling back does not restore the old people tables:
 -- they are dropped by hand in this same slice and nothing recreates them.

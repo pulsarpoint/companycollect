@@ -1,5 +1,5 @@
 -- SE person slice 0: the 2026-08-19 people model leaves ClickHouse. OWNER-RUN, by hand,
--- after the slice-0 dagster deploy is live, migration 000395 is applied, and
+-- after the slice-0 dagster deploy is live, migration 000396 is applied, and
 -- se_person_retirement_precheck.sql is clean. Nothing in this repo executes this file
 -- (dev-phase ledger policy, owner ruling 2026-08-25: a drop whose gate cannot be checked at
 -- write time never goes in the ledger).

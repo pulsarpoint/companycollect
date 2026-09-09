@@ -1,4 +1,4 @@
-"""Migration 000395: the SE person entity is created and the serving view's people flags
+"""Migration 000396: the SE person entity is created and the serving view's people flags
 move onto it.
 
 `corpscout.se_companies_serving` is the ONE wide per-company row every admin companies list
@@ -6,7 +6,7 @@ page reads: the info-list columns, the presence and source flags, the address JS
 geocode summary, and (since 000338) the registered-activity translation, status-reason label
 and spine fields absorbed from the retired `se_companies_translated` view.
 
-WHAT 000395 CHANGES (person slice 0). `has_people`, `people_bolagsverket` and `people_esef`
+WHAT 000396 CHANGES (person slice 0). `has_people`, `people_bolagsverket` and `people_esef`
 stop reading `corpscout.se_company_person` and `corpscout.se_company_person_role` -- the
 2026-08-19 model, dropped by hand in this same slice -- and read the active rows of the new
 `corpscout.se_company_person_v2` instead. The definition is otherwise UNCHANGED, so this is
@@ -132,4 +132,4 @@ def test_the_down_migration_restores_000393s_render_then_drops_the_six_tables() 
 def test_the_up_migration_documents_the_interrupted_repoint_recovery() -> None:
     up = _sql("up")
     assert "SYSTEM START VIEW" in up
-    assert "migrate force 395" in up
+    assert "migrate force 396" in up

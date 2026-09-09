@@ -1,7 +1,7 @@
 """The person entity's normalize SQL against a real ClickHouse (spec 2026-09-09 section 4).
 
 Claims a fake client cannot settle:
-1. Migration 000395 applies (its six `se_company_person_*` tables, filtered out of the same
+1. Migration 000396 applies (its six `se_company_person_*` tables, filtered out of the same
    file that also carries the serving view's stopped/re-pointed ALTER, which this fixture
    does not build) and the raw/normalized tables accept the row shapes `normalize.py` sends
    -- including the tombstone shape (`data` '{}', every person column NULL).
@@ -85,7 +85,7 @@ SUGGESTION_ID_INDEX = tables.NORMALIZED_COLUMNS.index("suggestion_id")
 
 def _schema_statements() -> list[str]:
     """`CREATE DATABASE` plus every `CREATE TABLE IF NOT EXISTS corpscout.se_company_person_`
-    statement in 000395 -- never the `SYSTEM STOP/START VIEW` or `ALTER TABLE ... MODIFY
+    statement in 000396 -- never the `SYSTEM STOP/START VIEW` or `ALTER TABLE ... MODIFY
     QUERY` statements, which name `se_companies_serving`, a table this fixture does not
     build."""
     text = (MIGRATIONS_DIR / MIGRATION_FILE).read_text(encoding="utf-8")
