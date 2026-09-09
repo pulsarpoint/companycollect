@@ -352,6 +352,31 @@ flags read empty tables until the first fold.
 0. Tables, normalizer, retirement: the six tables and the serving re-point in one migration; the
    normalizer with its golden corpus and the normalize asset; the deletions of section 8 and the
    owner-run drops.
+   Shipped 2026-09-09 (plan `2026-09-09-se-company-person-0-tables-normalizer-retirement.md`,
+   main 49ef7ed2): migration 000396 (renumbered from 000395 at merge because the ESEF slice took
+   it) created the six tables with `data String DEFAULT '{}'` under a `JSONType(data) = 'Object'`
+   CHECK and re-pointed the serving view's people flags at `se_company_person_v2` in place;
+   `se_company/person/` holds `tables.py`, `roles.py` (the three per-source role maps moved in),
+   `normalize_se.py` (`se-person-normalizer-v1`, 55-case golden corpus), `normalize.py` and the
+   `se_company_person_normalize` asset (clickhouse-local proof under both `join_use_nulls`
+   settings). Deleted: the `company_people` package with nine jobs, the correction sensor, its
+   leaves and tests (19 files, 13,355 lines), the three old role-map modules, the backoffice
+   People area (four admin pages, the company People tab, seven components, fifteen libs, the
+   person writer and job constants, nav and breadcrumbs), the Swedish Management section's
+   loader, section entry, dbt model, the people half of the source-links model and the
+   `company_serving` MANAGEMENT contract (the component and the French officers chain stay);
+   twenty-four historical migration files emptied or narrowed under the ledger policy with two
+   guards. Prod: deployed, 000396 applied in seconds (ledger 396 clean), the 19:45 UTC serving
+   refresh succeeded with `has_people` at 0 (13.8 min); precheck clean (no view read any of the
+   thirteen); the owner's word ("do it") and the thirteen drops ran in two seconds (about 4.5
+   GiB: `company_management_current` and its build twin 5.6M rows each, `_observations` 19.5M,
+   the role drafts 3.5M, the collision candidates, the empty person, role, correction and
+   enrichment tables, the three views; `se_company_person_v1_role_baseline` never existed);
+   postcheck all dropped with the twelve kept objects present, `system.tables` 453 to 441; the
+   admin companies list, the company area without a People tab, the Address tab, the deleted
+   routes (404) and the SE and FR public detail pages render as expected. Rulings on the way:
+   `data` is JSON text (the pinned driver cannot read the native type), `role_key` is a real
+   column, the orphaned dbt build target joined the drops, the Management removal is Sweden-only.
 1. Extractors: Bolagsverket, ESEF, Wikidata; the extract job and the stopped weekly; a prod run
    with the `parse_status` distribution per source and a spot check of twenty Bolagsverket rows.
 2. Fold: precedence, fold, batch, the two fold assets; the first full fold over 64 buckets;
