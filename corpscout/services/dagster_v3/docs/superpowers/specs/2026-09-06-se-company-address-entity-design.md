@@ -436,6 +436,10 @@ paging, `execute: false` preview, `max_companies` cap.
 - `ratsit`: `se_ratsit_company` FINAL, newest normalized report per company:
   `address_street`, `address_postal_code`, `address_locality`, `address_county`; kind
   `postal`, slot `company`; `observed_at` the report's `normalized_at`.
+- `esef` (slice 3 of the 2026-09-08 ESEF design): `se_esef_facts` joined to `se_esef_filings`,
+  the `AddressOfRegisteredOfficeOfEntity` fact of the newest filing, cleaned and re-packed into
+  the Bolagsverket form when a Swedish postcode is found, else street and town components; kind
+  `registered`, slot `''`; `observed_at` the filing's processed time.
 - Reviewer rows come only from the backoffice (section 8).
 
 `se_company_address_extract_job` selects the four extractors and the normalize asset;

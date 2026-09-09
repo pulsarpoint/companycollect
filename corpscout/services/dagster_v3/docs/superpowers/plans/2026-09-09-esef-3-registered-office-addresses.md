@@ -54,7 +54,7 @@
 - Consumes: `define_address_suggestion_asset(source=, extractor_version=, current_sql=, select_sql=, deps=, description=)` from `address/suggestions.py` (the same helper `bolagsverket.py` and `ratsit.py` use).
 - Produces: `esef.ESEF_ADDRESS_EXTRACTOR_VERSION = "esef-address-v1"`, `esef.ESEF_PACKED_ADDRESS_SQL` (the packing expression, exported for the harness test), `esef.esef_current_sql() -> str`, `esef.esef_select_sql() -> str`, asset `se_company_address_suggestions_esef`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/test_se_company_address_extractors_sql.py` (it already imports `bolagsverket`, `ratsit`, `scb`, `assets`, `ADDRESS_SELECT_COLUMNS` and has `_aliases(select_sql)`; import `esef` beside them):
 
@@ -87,12 +87,12 @@ def test_esef_takes_the_registered_office_of_the_newest_filing_and_repacks_it() 
 
 and change the existing pin `assert assets.EXTRACTOR_SOURCES == ("scb", "bolagsverket", "ratsit")` to `("scb", "bolagsverket", "ratsit", "esef")`. In `test_se_company_address_tables.py` line 95: `tables.SOURCES == ("scb", "bolagsverket", "ratsit", "esef", "reviewer", "reviewer_draft")`. In `test_se_company_address_precedence.py`: the map gains `"esef": 500` and `precedence_rows()` gains `("text", "esef", 500)` between `scb` and `ratsit`.
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/dagster_v3 && uv run pytest tests/test_se_company_address_extractors_sql.py tests/test_se_company_address_tables.py tests/test_se_company_address_precedence.py -q -p no:warnings`
 Expected: FAIL (`esef` module missing, pins differ).
 
-- [ ] **Step 3: Write `esef.py`**
+- [x] **Step 3: Write `esef.py`**
 
 ```python
 """ESEF registered office -> raw address suggestion (spec 2026-09-09, section 3): the tagged
@@ -198,12 +198,12 @@ se_company_address_suggestions_esef = define_address_suggestion_asset(
 
 The test for the SQL text also asserts the no-postcode split: `assert esef._NO_CODE_TOWN_SQL in sql` is not needed (private); instead assert `"AS post_town" in sql` and that `"[^,]+)$'" in sql` (the last-comma town regex is present).
 
-- [ ] **Step 4: Run the tests and the definitions check**
+- [x] **Step 4: Run the tests and the definitions check**
 
 Run: `uv run pytest tests/test_se_company_address_extractors_sql.py tests/test_se_company_address_tables.py tests/test_se_company_address_precedence.py tests/test_se_company_address_assets.py tests/test_se_company_address_jobs.py -q -p no:warnings` and `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run dg check defs`.
 Expected: PASS; definitions load with the new asset in group `se_company_address`, and the extract job's selection includes it.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add corpscout/services/dagster_v3/src/dagster_v3/defs/se_company/address/esef.py corpscout/services/dagster_v3/src/dagster_v3/defs/se_company/address/tables.py corpscout/services/dagster_v3/src/dagster_v3/defs/se_company/address/assets.py corpscout/services/dagster_v3/src/dagster_v3/defs/se_company/address/precedence.py corpscout/services/dagster_v3/tests/test_se_company_address_extractors_sql.py corpscout/services/dagster_v3/tests/test_se_company_address_tables.py corpscout/services/dagster_v3/tests/test_se_company_address_precedence.py
@@ -221,7 +221,7 @@ git commit -m "feat(se): the address entity takes the ESEF registered office as 
 **Interfaces:**
 - Consumes: `esef.esef_current_sql()`, `esef.esef_select_sql()`, `ESEF_ADDRESS_EXTRACTOR_VERSION`; `dagster_v3.defs.esef_filings.country_views.build_se_esef_view_sql` and `tables.SE_ESEF_VIEWS` (slice 1) to render `se_esef_facts` and `se_esef_filings`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add fixture tables (column names and types as the live tables: read them with `DESCRIBE` on `http://companycollect:8123/?database=corpscout`, user `default`, password from `corpscout/services/backoffice/.env`, never printed; only the columns the view lists are needed, but the view selects every product column so declare them all):
 
@@ -253,14 +253,14 @@ and a new test module section: seed one map row (`lei 'ESEFLEI0000000000001'`, `
 
 Add the esef case to the existing scope-convergence test (`test_all_three_scopes_converge_after_insert` becomes four scopes).
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `uv run pytest tests/test_se_company_address_extractors_clickhouse_local.py -q -p no:warnings` (docker).
 Expected: FAIL (unknown table `se_esef_facts`).
 
-- [ ] **Step 3: Implement the harness changes**, then run the same command. Expected: PASS, every test in the module.
+- [x] **Step 3: Implement the harness changes**, then run the same command. Expected: PASS, every test in the module.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add corpscout/services/dagster_v3/tests/fixtures/se_basic_info_source_tables.sql corpscout/services/dagster_v3/tests/test_se_company_address_extractors_clickhouse_local.py
@@ -275,24 +275,24 @@ git commit -m "test(se): the address extractors harness runs the esef registered
 - Modify: `corpscout/services/backoffice/app/lib/se-address-fields.ts:7,35-36`
 - Test: `corpscout/services/backoffice/tests/se-address-fields.test.ts:12`
 
-- [ ] **Step 1:** Re-pin: `expect([...ADDRESS_SOURCES]).toEqual(["scb", "bolagsverket", "ratsit", "esef", "reviewer", "reviewer_draft"])` and `expect(addressSourceLabel("esef")).toBe("ESEF")`. Run `cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/backoffice && npx vitest run tests/se-address-fields.test.ts`: FAIL.
-- [ ] **Step 2:** `ADDRESS_SOURCES = ["scb", "bolagsverket", "ratsit", "esef", "reviewer", "reviewer_draft"] as const;` and `esef: "ESEF"` in `SOURCE_LABELS`. Run `npm run typecheck && npx vitest run tests/se-address-fields.test.ts`: PASS. Grep `app/` for any exhaustive `switch` or `Record<SeAddressSource, ...>` the type widening breaks (`npm run typecheck` reports them) and add the `esef` entry there too.
-- [ ] **Step 3:** Commit: `git add corpscout/services/backoffice/app/lib/se-address-fields.ts corpscout/services/backoffice/tests/se-address-fields.test.ts && git commit -m "feat(backoffice): the address tab labels the esef source"`.
+- [x] **Step 1:** Re-pin: `expect([...ADDRESS_SOURCES]).toEqual(["scb", "bolagsverket", "ratsit", "esef", "reviewer", "reviewer_draft"])` and `expect(addressSourceLabel("esef")).toBe("ESEF")`. Run `cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/backoffice && npx vitest run tests/se-address-fields.test.ts`: FAIL.
+- [x] **Step 2:** `ADDRESS_SOURCES = ["scb", "bolagsverket", "ratsit", "esef", "reviewer", "reviewer_draft"] as const;` and `esef: "ESEF"` in `SOURCE_LABELS`. Run `npm run typecheck && npx vitest run tests/se-address-fields.test.ts`: PASS. Grep `app/` for any exhaustive `switch` or `Record<SeAddressSource, ...>` the type widening breaks (`npm run typecheck` reports them) and add the `esef` entry there too.
+- [x] **Step 3:** Commit: `git add corpscout/services/backoffice/app/lib/se-address-fields.ts corpscout/services/backoffice/tests/se-address-fields.test.ts && git commit -m "feat(backoffice): the address tab labels the esef source"`.
 
 ---
 
 ## Task 4: Docs
 
-- [ ] **Step 1:** `address/docs/address-design.md`, section "Extractors (slice 1)": a fourth bullet for `esef` (reads `se_esef_facts` joined to `se_esef_filings`, the `AddressOfRegisteredOfficeOfEntity` fact of the newest filing, cleaned and re-packed into the Bolagsverket format when a Swedish postcode is found, otherwise street and town components split at the last comma; kind `registered`, slot `''`; source record uid = the filing package's uid; precedence `esef: 500`). `docs/superpowers/specs/2026-09-06-se-company-address-entity-design.md`: line 41 lists ESEF as a source since slice 3 of the 2026-09-08 ESEF design, line 54 drops "ESEF address extraction" from the out-of-scope list. `docs/superpowers/specs/2026-09-08-esef-entity-link-people-addresses-design.md` section 3, first bullet: after "`raw_address` = the `AddressOfRegisteredOfficeOfEntity` fact" add the sentence "The normaliser's `raw_address` path parses only the Bolagsverket packed form, so the extractor cleans the fact (tags, whitespace, trailing punctuation and country word) and re-packs it when a Swedish postcode is found; a fact without one is delivered as street and town components with `raw_address` NULL." and replace "The normaliser parses the string; ..." with "A trailing "Sverige"/"Sweden" resolves to `SE`."
-- [ ] **Step 2:** Commit: `git add corpscout/services/dagster_v3/src/dagster_v3/defs/se_company/address/docs/address-design.md corpscout/services/dagster_v3/docs/superpowers/specs/2026-09-06-se-company-address-entity-design.md && git commit -m "docs(se): the address entity's esef extractor"`.
+- [x] **Step 1:** `address/docs/address-design.md`, section "Extractors (slice 1)": a fourth bullet for `esef` (reads `se_esef_facts` joined to `se_esef_filings`, the `AddressOfRegisteredOfficeOfEntity` fact of the newest filing, cleaned and re-packed into the Bolagsverket format when a Swedish postcode is found, otherwise street and town components split at the last comma; kind `registered`, slot `''`; source record uid = the filing package's uid; precedence `esef: 500`). `docs/superpowers/specs/2026-09-06-se-company-address-entity-design.md`: line 41 lists ESEF as a source since slice 3 of the 2026-09-08 ESEF design, line 54 drops "ESEF address extraction" from the out-of-scope list. `docs/superpowers/specs/2026-09-08-esef-entity-link-people-addresses-design.md` section 3, first bullet: after "`raw_address` = the `AddressOfRegisteredOfficeOfEntity` fact" add the sentence "The normaliser's `raw_address` path parses only the Bolagsverket packed form, so the extractor cleans the fact (tags, whitespace, trailing punctuation and country word) and re-packs it when a Swedish postcode is found; a fact without one is delivered as street and town components with `raw_address` NULL." and replace "The normaliser parses the string; ..." with "A trailing "Sverige"/"Sweden" resolves to `SE`."
+- [x] **Step 2:** Commit: `git add corpscout/services/dagster_v3/src/dagster_v3/defs/se_company/address/docs/address-design.md corpscout/services/dagster_v3/docs/superpowers/specs/2026-09-06-se-company-address-entity-design.md && git commit -m "docs(se): the address entity's esef extractor"`.
 
 ---
 
 ## Task 5: Verify and merge
 
-- [ ] **Step 1:** `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run pytest -q -m "not integration" --deselect tests/test_schedule_cron_contracts.py::test_every_schedule_fires_on_a_unique_minute_hour_pair -p no:cacheprovider -p no:warnings --color=no -rf 2>&1 | rg "^FAILED|passed"`. Expected: only the four failures already on main.
-- [ ] **Step 2:** backoffice `npm run typecheck && npx vitest run tests/se-address-fields.test.ts tests/se-company-tabs.server.test.ts`. Expected: PASS.
-- [ ] **Step 3:** No migration: merge `--no-ff` into main right away (footer).
+- [x] **Step 1:** `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run pytest -q -m "not integration" --deselect tests/test_schedule_cron_contracts.py::test_every_schedule_fires_on_a_unique_minute_hour_pair -p no:cacheprovider -p no:warnings --color=no -rf 2>&1 | rg "^FAILED|passed"`. Expected: only the four failures already on main.
+- [x] **Step 2:** backoffice `npm run typecheck && npx vitest run tests/se-address-fields.test.ts tests/se-company-tabs.server.test.ts`. Expected: PASS.
+- [x] **Step 3:** No migration: merge `--no-ff` into main right away (footer).
 
 ---
 
