@@ -69,7 +69,6 @@ def test_parse_report_package_resolves_continuations_and_selects_segments(
         package_path,
         source=EsefArtifactSource(
             fxo_id="SAMPLE-2024",
-            country="SE",
             source_url="https://example.test/sample.zip",
             object_key="raw/sample.zip",
         ),
@@ -728,10 +727,6 @@ def test_cli_writes_reviewable_artifact(
             str(output_path),
             "--fxo-id",
             "SAMPLE-2024",
-            "--company-id",
-            "556600-0000",
-            "--country",
-            "SE",
             "--skip-esef-validation",
         ]
     )
@@ -739,8 +734,7 @@ def test_cli_writes_reviewable_artifact(
     assert exit_code == 0
     output = json.loads(output_path.read_text(encoding="utf-8"))
     assert output["source"]["fxo_id"] == "SAMPLE-2024"
-    assert output["source"]["company_id"] == "556600-0000"
-    assert output["source"]["country"] == "SE"
+    assert "company_id" not in output["source"] and "country" not in output["source"]
     assert output["quality"]["fact_count"] == 4
     summary = json.loads(capsys.readouterr().out)
     assert summary["fact_count"] == 4
@@ -787,7 +781,7 @@ def test_document_asset_archives_parses_and_stores_source_linked_rows(
     )
     artifact_key = artifact_object_key(package_sha256)
     artifact = json.loads(object_store.objects[(ESEF_DOCUMENT_BUCKET, artifact_key)])
-    assert artifact["source"]["company_id"] == "5566000000"
+    assert "company_id" not in artifact["source"] and "country" not in artifact["source"]
     assert artifact["source"]["source_run_id"] == "parse-run"
 
     compatible_v4_key = artifact_key.replace("/schema=v5/", "/schema=v4/")
@@ -1283,7 +1277,6 @@ def _run_document_artifact_stages(
     run_esef_document_manifest_partition(
         esef_filings_duckdb=database,
         object_store=object_store,
-        company_links={"549300SAMPLE000000001": ("SE", "5566000000")},
         partition_key=partition_key,
         source_run_id=source_run_id,
         source_document_ids=source_document_ids,

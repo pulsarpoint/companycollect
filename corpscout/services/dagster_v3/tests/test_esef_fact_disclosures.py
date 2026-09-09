@@ -82,8 +82,6 @@ def test_disclosure_row_is_deterministic_and_source_preserving() -> None:
         "package_sha256": "a" * 64,
         "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
         "lei": "549300SAMPLE000000001",
-        "country_iso2": "SE",
-        "company_id": "5566000000",
         "period_end": "2024-12-31",
         "fiscal_year": 2024,
         "source_fact_id": "fact-42",
@@ -124,6 +122,37 @@ def test_disclosure_row_is_deterministic_and_source_preserving() -> None:
     ]
     assert first["plain_text"] == "Oljor och fetter"
     assert first["source_run_id"] == "run-1"
+    assert "country_iso2" not in first and "company_id" not in first
+
+
+def test_disclosure_rows_carry_no_country_and_no_company_id() -> None:
+    source = {
+        "source_document_id": "SAMPLE-2024-0",
+        "package_sha256": "a" * 64,
+        "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
+        "lei": "549300SAMPLE000000001",
+        "period_end": "2024-12-31",
+        "fiscal_year": 2024,
+        "source_fact_id": "fact-42",
+        "source_fact_key": "fact-key-42",
+        "concept_qname": "ifrs:DisclosureOfRevenueExplanatory",
+        "concept_local_name": "DisclosureOfRevenueExplanatory",
+        "language": "sv",
+        "segment": "business_profile",
+        "selection_reason": "concept:DisclosureOfRevenueExplanatory",
+        "report_member": "report.xhtml",
+        "period": {"start": "2024-01-01", "end": "2024-12-31"},
+        "raw_value": "<p>Oljor och fetter</p>",
+    }
+
+    row = disclosure_row(
+        source,
+        source_run_id="run-1",
+        extracted_at="2026-08-03T08:00:00Z",
+    )
+
+    assert "country_iso2" not in row and "company_id" not in row
+    assert row["lei"] == source["lei"]
 
 
 def test_processed_week_pipeline_parses_artifacts_directly(tmp_path: Path) -> None:
@@ -190,8 +219,6 @@ def test_processed_week_pipeline_parses_artifacts_directly(tmp_path: Path) -> No
                 "source_document_id": "sample-2024",
                 "package_sha256": package_sha256,
                 "lei": "549300SAMPLE000000001",
-                "country_iso2": "SE",
-                "company_id": "5566000000",
                 "period_end": "2024-12-31",
                 "fiscal_year": 2024,
                 "extraction_status": "parsed",

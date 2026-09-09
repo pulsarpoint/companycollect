@@ -795,8 +795,6 @@ def _empty_disclosure_artifact(
         "package_sha256": str(document["package_sha256"]),
         "source": {
             "fxo_id": source_document_id,
-            "country": str(document["country_iso2"]),
-            "company_id": str(document["company_id"]),
             "source_url": str(document["package_url"]),
             "object_key": _disclosure_input_key(source_document_id),
         },

@@ -43,7 +43,7 @@ def test_build_enrichment_evidence_decodes_text_blocks_and_excludes_numbers() ->
         max_evidence_chars=20_000,
     )
 
-    assert evidence_input.source.company_id == "5566692850"
+    assert evidence_input.source.fxo_id == "AAK-2024"
     assert evidence_input.source.report_period_end == "2024-12-31"
     assert [item.segment for item in evidence_input.evidence] == [
         "identity",

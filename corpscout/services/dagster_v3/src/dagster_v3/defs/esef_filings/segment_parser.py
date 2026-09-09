@@ -195,10 +195,8 @@ _SEGMENT_CONCEPTS: dict[str, frozenset[str]] = {
 @dataclass(frozen=True)
 class EsefArtifactSource:
     fxo_id: str
-    country: str = ""
     source_url: str = ""
     object_key: str = ""
-    company_id: str = ""
     source_run_id: str = ""
     expected_package_sha256: str = ""
 
@@ -418,7 +416,6 @@ def parse_esef_report_package(
                 )
                 for report_member, concept_local_name, value in tagged_facts
             ),
-            default_region=source.country,
         )
         website_candidates = extract_website_candidates(
             report_paths,

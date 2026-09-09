@@ -70,8 +70,6 @@ class _DisclosureDocumentTask:
     source_document_id: str
     package_sha256: str
     lei: str
-    country_iso2: str
-    company_id: str
     period_end: str
     fiscal_year: int
     source_run_id: str
@@ -274,8 +272,6 @@ def build_disclosures_partition_database(
                         source_document_id=source_document_id,
                         package_sha256=str(document.get("package_sha256", "")),
                         lei=str(document.get("lei", "")),
-                        country_iso2=str(document.get("country_iso2", "")),
-                        company_id=str(document.get("company_id", "")),
                         period_end=str(document.get("period_end", "")),
                         fiscal_year=int(document.get("fiscal_year", 0)),
                         source_run_id=source_run_id,
@@ -351,8 +347,6 @@ def _parse_disclosure_document(
         "package_sha256": task.package_sha256,
         "artifact_schema_version": artifact_schema_version,
         "lei": task.lei,
-        "country_iso2": task.country_iso2,
-        "company_id": task.company_id,
         "period_end": task.period_end,
         "fiscal_year": task.fiscal_year,
     }

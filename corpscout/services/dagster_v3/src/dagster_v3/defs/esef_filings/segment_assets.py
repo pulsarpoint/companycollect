@@ -2,7 +2,8 @@
 
 Each filings.xbrl.org report package is preserved once by content hash. The
 queryable rows retain the upstream ``fxo_id`` so they join directly to
-``esef_facts`` and, through the ESEF entity map, to ``(country, company_id)``.
+``esef_facts``; the register-verified ``(country, company_id)`` link lives in
+the ESEF entity map and its country-specific views, not on these rows.
 
 No ``from __future__ import annotations``: Dagster inspects asset annotations.
 """
@@ -22,7 +23,6 @@ from typing import Any, TextIO
 
 import dagster as dg
 import ijson
-from dagster_clickhouse import ClickhouseResource
 from dagster_duckdb import DuckDBResource
 from pydantic import Field
 
@@ -223,27 +223,10 @@ def _write_jsonl_array(result: TextIO, rows_path: Path) -> None:
     result.write("]")
 
 
-def load_esef_company_links(
-    clickhouse: ClickhouseResource,
-) -> dict[str, tuple[str, str]]:
-    """Load the current LEI -> (country, registry company id) relation."""
-    with clickhouse.get_connection() as client:
-        rows = client.execute(
-            "SELECT lei, country_iso2, registry_id "
-            f"FROM {tables.QUALIFIED_ESEF_ENTITY_REGISTRY_MAP_TABLE} FINAL "
-            "WHERE registry_id != ''"
-        )
-    return {
-        str(lei): (str(country_iso2).upper(), str(company_id))
-        for lei, country_iso2, company_id in rows
-    }
-
-
 def run_esef_document_manifest_partition(
     *,
     esef_filings_duckdb: DuckDBResource,
     object_store: Any,
-    company_links: Mapping[str, tuple[str, str]],
     partition_key: str,
     source_run_id: str,
     source_document_ids: Sequence[str],
@@ -262,13 +245,7 @@ def run_esef_document_manifest_partition(
         max_documents=max_documents,
     )
     object_store.ensure_bucket(ESEF_DOCUMENT_BUCKET)
-    documents = [
-        {
-            **index_row,
-            "company_id": _company_id_for_index_row(index_row, company_links),
-        }
-        for index_row in index_rows
-    ]
+    documents = [dict(index_row) for index_row in index_rows]
     manifest = {
         "schema_version": _DOCUMENT_MANIFEST_SCHEMA_VERSION,
         "processed_week": partition_key,
@@ -378,7 +355,6 @@ def run_esef_document_artifacts_partition(
             document_spool.append(
                 _unavailable_document_row(
                     document,
-                    company_id=str(document["company_id"]),
                     fiscal_year=int(document["fiscal_year"]),
                     source_run_id=source_run_id,
                     extracted_at=extracted_at,
@@ -421,12 +397,10 @@ def run_esef_document_artifacts_partition(
             nonlocal website_candidate_count
 
             for document in artifact_documents:
-                company_id = str(document["company_id"])
                 document_spool.append(
                     _document_row(
                         document,
                         artifact=artifact,
-                        company_id=company_id,
                         fiscal_year=int(document["fiscal_year"]),
                         package_object_key=package_object_key,
                         package_size_bytes=package_size_bytes,
@@ -441,7 +415,6 @@ def run_esef_document_artifacts_partition(
                 for candidate_row in _contact_candidate_rows(
                     document,
                     artifact=artifact,
-                    company_id=company_id,
                     fiscal_year=int(document["fiscal_year"]),
                     source_run_id=source_run_id,
                     extracted_at=extracted_at,
@@ -455,7 +428,6 @@ def run_esef_document_artifacts_partition(
                 for concept_label_row in _concept_label_rows(
                     document,
                     artifact=artifact,
-                    company_id=company_id,
                     fiscal_year=int(document["fiscal_year"]),
                     source_run_id=source_run_id,
                     extracted_at=extracted_at,
@@ -599,12 +571,10 @@ def run_esef_document_artifacts_partition(
                             artifact_path=str(artifact_path),
                             source=EsefArtifactSource(
                                 fxo_id=str(representative["source_document_id"]),
-                                country=str(representative["country_iso2"]),
                                 source_url=str(representative["package_url"]),
                                 object_key=(
                                     f"s3://{ESEF_DOCUMENT_BUCKET}/{package_key}"
                                 ),
-                                company_id=str(representative["company_id"]),
                                 source_run_id=source_run_id,
                                 expected_package_sha256=digest,
                             ),
@@ -861,23 +831,9 @@ def _load_filing_index_rows(
         return [dict(zip(columns, row, strict=True)) for row in result.fetchall()]
 
 
-def _company_id_for_index_row(
-    index_row: Mapping[str, object],
-    company_links: Mapping[str, tuple[str, str]],
-) -> str:
-    lei = str(index_row["lei"])
-    if lei not in company_links:
-        return ""
-    mapped_country, company_id = company_links[lei]
-    return (
-        company_id if mapped_country == str(index_row["country_iso2"]).upper() else ""
-    )
-
-
 def _unavailable_document_row(
     index_row: Mapping[str, object],
     *,
-    company_id: str,
     fiscal_year: int,
     source_run_id: str,
     extracted_at: str,
@@ -888,7 +844,6 @@ def _unavailable_document_row(
     return {
         **_document_identity_fields(
             index_row,
-            company_id=company_id,
             fiscal_year=fiscal_year,
         ),
         "package_object_key": "",
@@ -915,7 +870,6 @@ def _document_row(
     index_row: Mapping[str, object],
     *,
     artifact: Mapping[str, Any],
-    company_id: str,
     fiscal_year: int,
     package_object_key: str,
     package_size_bytes: int,
@@ -936,7 +890,6 @@ def _document_row(
     return {
         **_document_identity_fields(
             index_row,
-            company_id=company_id,
             fiscal_year=fiscal_year,
         ),
         "package_object_key": package_object_key,
@@ -962,7 +915,6 @@ def _document_row(
 def _document_identity_fields(
     index_row: Mapping[str, object],
     *,
-    company_id: str,
     fiscal_year: int,
 ) -> dict[str, object]:
     return {
@@ -970,8 +922,6 @@ def _document_identity_fields(
         "document_type": "esef_report_package",
         "lei": str(index_row["lei"]),
         "entity_name": str(index_row["entity_name"]),
-        "country_iso2": str(index_row["country_iso2"]).upper(),
-        "company_id": company_id,
         "period_end": str(index_row["period_end"]),
         "fiscal_year": fiscal_year,
         "package_url": str(index_row["package_url"]),
@@ -982,11 +932,28 @@ def _document_identity_fields(
     }
 
 
+def _contact_candidate_common(
+    index_row: Mapping[str, object],
+    *,
+    fiscal_year: int,
+    source_run_id: str,
+    extracted_at: str,
+) -> dict[str, object]:
+    return {
+        "source_document_id": str(index_row["source_document_id"]),
+        "package_sha256": str(index_row["package_sha256"]).lower(),
+        "lei": str(index_row["lei"]),
+        "period_end": str(index_row["period_end"]),
+        "fiscal_year": fiscal_year,
+        "source_run_id": source_run_id,
+        "extracted_at": extracted_at,
+    }
+
+
 def _contact_candidate_rows(
     index_row: Mapping[str, object],
     *,
     artifact: Mapping[str, Any],
-    company_id: str,
     fiscal_year: int,
     source_run_id: str,
     extracted_at: str,
@@ -997,16 +964,13 @@ def _contact_candidate_rows(
         name="candidate_extractor_versions",
     )
     common = {
-        "source_document_id": str(index_row["source_document_id"]),
-        "package_sha256": str(index_row["package_sha256"]).lower(),
-        "lei": str(index_row["lei"]),
-        "country_iso2": str(index_row["country_iso2"]).upper(),
-        "company_id": company_id,
-        "period_end": str(index_row["period_end"]),
-        "fiscal_year": fiscal_year,
+        **_contact_candidate_common(
+            index_row,
+            fiscal_year=fiscal_year,
+            source_run_id=source_run_id,
+            extracted_at=extracted_at,
+        ),
         "extractor_versions_json": _json_text(extractor_versions),
-        "source_run_id": source_run_id,
-        "extracted_at": extracted_at,
     }
     for value in _list(artifact.get("contact_candidates"), name="contact_candidates"):
         candidate = _mapping(value, name="contact candidate")
@@ -1055,7 +1019,6 @@ def _concept_label_rows(
     index_row: Mapping[str, object],
     *,
     artifact: Mapping[str, Any],
-    company_id: str,
     fiscal_year: int,
     source_run_id: str,
     extracted_at: str,
@@ -1067,17 +1030,12 @@ def _concept_label_rows(
         if str(language).strip() != ""
     }
     concepts = _mapping(artifact.get("concepts"), name="concepts")
-    common = {
-        "source_document_id": str(index_row["source_document_id"]),
-        "package_sha256": str(index_row["package_sha256"]).lower(),
-        "lei": str(index_row["lei"]),
-        "country_iso2": str(index_row["country_iso2"]).upper(),
-        "company_id": company_id,
-        "period_end": str(index_row["period_end"]),
-        "fiscal_year": fiscal_year,
-        "source_run_id": source_run_id,
-        "extracted_at": extracted_at,
-    }
+    common = _contact_candidate_common(
+        index_row,
+        fiscal_year=fiscal_year,
+        source_run_id=source_run_id,
+        extracted_at=extracted_at,
+    )
     for concept_qname, concept_value in sorted(concepts.items()):
         if str(concept_qname) == "xbrl:note":
             continue
@@ -1259,12 +1217,10 @@ def esef_document_extraction_manifest_s3(
     config: EsefDocumentManifestConfig,
     esef_filings_duckdb: DuckDBResource,
     object_store: ObjectStoreResource,
-    clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
     metadata = run_esef_document_manifest_partition(
         esef_filings_duckdb=esef_filings_duckdb,
         object_store=object_store,
-        company_links=load_esef_company_links(clickhouse),
         partition_key=context.partition_key,
         source_run_id=context.run_id,
         source_document_ids=config.source_document_ids,
