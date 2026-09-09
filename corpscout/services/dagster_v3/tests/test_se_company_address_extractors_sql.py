@@ -1,4 +1,4 @@
-"""Text pins of the three address extractors (spec section 7): the thirteen raw columns in
+"""Text pins of the four address extractors (spec section 7): the thirteen raw columns in
 order, FINAL reads, id binding, tombstones, and the INSERT that stamps suggestion_id."""
 
 import dagster as dg
@@ -168,7 +168,8 @@ def test_esef_takes_the_registered_office_of_the_newest_filing_and_repacks_it() 
     assert "[^,]+)$'" in sql
     assert esef.ESEF_ADDRESS_EXTRACTOR_VERSION == "esef-address-v1"
     assert esef.esef_current_sql() == (
-        "SELECT facts.company_id AS company_id, max(toDateTime64(filings.processed_at, 3, 'UTC')) AS observed_at\n"
+        "SELECT facts.company_id AS company_id, argMax(toDateTime64(filings.processed_at, 3, 'UTC'), "
+        "(filings.period_end, toDateTime64(filings.processed_at, 3, 'UTC'))) AS observed_at\n"
         "FROM corpscout.se_esef_facts AS facts\n"
         "INNER JOIN corpscout.se_esef_filings AS filings ON filings.fxo_id = facts.fxo_id\n"
         "WHERE facts.concept_local_name = 'AddressOfRegisteredOfficeOfEntity' AND filings.processed_at IS NOT NULL\n"

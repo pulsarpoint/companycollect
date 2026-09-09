@@ -47,10 +47,10 @@ RATSIT_RESULT_SHA256 = "d" * 64
 STAMP = datetime(2026, 9, 6, 12, 0, 0, tzinfo=UTC)
 
 # company_id, lei, raw_value, expected raw_address, street_address, post_town, country_code
-# (spec 2026-09-09 section 3's five regex cases). The first two reuse COMPANY_RATSIT and
-# COMPANY_SCB_BV on purpose -- one company can carry both a ratsit/scb-family row and an esef
-# row (different source, same company_id), and the suggestion table's key is (company_id,
-# source, slot).
+# (spec 2026-09-09 section 3's regex cases, extended by the review's town-bound/NBSP fixes).
+# The first two reuse COMPANY_RATSIT and COMPANY_SCB_BV on purpose -- one company can carry
+# both a ratsit/scb-family row and an esef row (different source, same company_id), and the
+# suggestion table's key is (company_id, source, slot).
 ESEF_CASES: tuple[tuple[str, str, str, str | None, str | None, str | None, str | None], ...] = (
     (
         COMPANY_RATSIT, "ESEFLEI0000000000001", "Kungsträdgårdsgatan 2, 106 70 Stockholm",
@@ -72,8 +72,41 @@ ESEF_CASES: tuple[tuple[str, str, str, str | None, str | None, str | None, str |
         "5564444444", "ESEFLEI0000000000005", "Lands vägen 57, Box 1264, 172 25 Sundbyberg",
         "Lands vägen 57, Box 1264$$Sundbyberg$17225$", None, None, None,
     ),
+    (
+        # A digit-led "town" would otherwise let the postcode land inside this glued digit
+        # run (postcode 45103, city "62 stockholm"); the bounded town group instead finds
+        # the postcode at "103 62" and stops the town at the letter-led "Stockholm".
+        "5565555555", "ESEFLEI0000000000006", "Box 3145103 62 Stockholm",
+        "Box 3145$$Stockholm$10362$", None, None, None,
+    ),
+    (
+        # Trailing text after the town (a visiting-address clause) must not be swallowed into
+        # the city.
+        "5566666666", "ESEFLEI0000000000007", "Box 2269, 403 14 Göteborg Besöksadress: Östra Hamngatan 16",
+        "Box 2269$$Göteborg$40314$", None, None, None,
+    ),
+    (
+        # NBSP (U+00A0) between the postcode groups -- \s is ASCII-only in RE2, so this must
+        # collapse to a plain space before the postcode regex runs.
+        "5567777777", "ESEFLEI0000000000008", "Ingmar Bergmans Gata 4, 7 tr, 114\xa034 Stockholm",
+        "Ingmar Bergmans Gata 4, 7 tr$$Stockholm$11434$", None, None, None,
+    ),
 )
 ESEF_COMPANY_IDS: tuple[str, ...] = tuple(case[0] for case in ESEF_CASES)
+
+# A company with two filings where the OLDER period_end carries the NEWER processed_at
+# (finding 2 of the slice-3 review): proves esef_current_sql()'s argMax(processed_at,
+# (period_end, processed_at)) stamps the same processed_at that esef_select_sql() picks for
+# its chosen (newest period_end, then newest processed_at) filing. Under the old max(processed_at)
+# formula the scan would see 2026-01-15 (the older filing's) while the select stamped
+# 2025-05-10 (the newer filing's, the one actually chosen) -- an eternal mismatch that
+# re-triggers this company on every run.
+COMPANY_ESEF_REORDER = "5568888888"
+ESEF_REORDER_LEI = "ESEFLEI0000000000009"
+ESEF_REORDER_OLDER_ADDRESS = "Gamla vägen 1, 111 11 Stockholm"
+ESEF_REORDER_NEWER_ADDRESS = "Nya vägen 2, 222 22 Göteborg"
+ESEF_REORDER_EXPECTED_RAW_ADDRESS = "Nya vägen 2$$Göteborg$22222$"
+ESEF_REORDER_EXPECTED_OBSERVED_AT = "2025-05-10 00:00:00.000"
 
 RAW_ROW_CHECK_COLUMNS = (
     "company_id", "source", "slot", "kind", "raw_address", "care_of", "street_address",
@@ -106,6 +139,11 @@ ESEF_RAW_ROWS_SQL = (
     "SELECT company_id, ifNull(toString(raw_address), 'NULL'), ifNull(toString(street_address), 'NULL'), "
     "ifNull(toString(post_town), 'NULL'), ifNull(toString(country_code), 'NULL') "
     f"FROM {tables.QUALIFIED_SUGGESTION_TABLE} FINAL WHERE source = 'esef' ORDER BY company_id"
+)
+ESEF_REORDER_ROW_SQL = (
+    "SELECT raw_address, toString(observed_at) "
+    f"FROM {tables.QUALIFIED_SUGGESTION_TABLE} FINAL "
+    f"WHERE company_id = '{COMPANY_ESEF_REORDER}' AND source = 'esef' AND slot = ''"
 )
 
 
@@ -204,6 +242,35 @@ def _esef_seed_statements() -> list[str]:
             f"'{raw_value}', 'sv', toDate('2026-09-01'))"
         )
     return statements
+
+
+def _esef_reorder_seed_statements() -> list[str]:
+    """COMPANY_ESEF_REORDER's two filings: the older period_end (2023-12-31) stamped with the
+    NEWER processed_at (2026-01-15), the newer period_end (2024-12-31, the one esef_select_sql
+    picks) stamped with the OLDER processed_at (2025-05-10) -- the inverted-clock case finding
+    2 of the slice-3 review requires."""
+    return [
+        "INSERT INTO corpscout.esef_entity_registry_map "
+        "(lei, country_iso2, registry_id_raw, registry_id, match_source, link_status, source_run_id) VALUES "
+        f"('{ESEF_REORDER_LEI}', 'SE', '{COMPANY_ESEF_REORDER}', '{COMPANY_ESEF_REORDER}', "
+        "'gleif_registered_as', 'register_verified', 'r')",
+        "INSERT INTO corpscout.esef_filings (lei, entity_name, fxo_id, country, period_end, processed_at, "
+        "package_sha256) VALUES "
+        f"('{ESEF_REORDER_LEI}', 'Esef Reorder AB', 'fxo-reorder-older', 'SE', toDate32('2023-12-31'), "
+        f"toDateTime64('2026-01-15 00:00:00', 6, 'UTC'), '{'b' * 64}')",
+        "INSERT INTO corpscout.esef_filings (lei, entity_name, fxo_id, country, period_end, processed_at, "
+        "package_sha256) VALUES "
+        f"('{ESEF_REORDER_LEI}', 'Esef Reorder AB', 'fxo-reorder-newer', 'SE', toDate32('2024-12-31'), "
+        f"toDateTime64('2025-05-10 00:00:00', 6, 'UTC'), '{'c' * 64}')",
+        "INSERT INTO corpscout.esef_facts (lei, fxo_id, period_end, fact_id, concept_local_name, raw_value, "
+        "language, processed_week) VALUES "
+        f"('{ESEF_REORDER_LEI}', 'fxo-reorder-older', toDate32('2023-12-31'), 'fact-reorder-older', "
+        f"'AddressOfRegisteredOfficeOfEntity', '{ESEF_REORDER_OLDER_ADDRESS}', 'sv', toDate('2026-09-01'))",
+        "INSERT INTO corpscout.esef_facts (lei, fxo_id, period_end, fact_id, concept_local_name, raw_value, "
+        "language, processed_week) VALUES "
+        f"('{ESEF_REORDER_LEI}', 'fxo-reorder-newer', toDate32('2024-12-31'), 'fact-reorder-newer', "
+        f"'AddressOfRegisteredOfficeOfEntity', '{ESEF_REORDER_NEWER_ADDRESS}', 'sv', toDate('2026-09-01'))",
+    ]
 
 
 def _sections(lines: list[str]) -> dict[str, list[list[str]]]:
@@ -308,13 +375,21 @@ def _statements() -> list[str]:
         # esef rows into that section's company_ids=[COMPANY_SCB_BV, COMPANY_RATSIT] result and
         # break its len(rows) == 3 assertion.
         *_esef_seed_statements(),
+        # COMPANY_ESEF_REORDER's two filings seed alongside the ESEF_CASES ones so it shows up
+        # in the same before/after scope pair -- finding 2's argMax fix.
+        *_esef_reorder_seed_statements(),
         "SELECT '@@esef_scope_before_insert'",
         _scope(esef.esef_current_sql(), "esef"),
-        _insert(esef.esef_select_sql(), list(ESEF_COMPANY_IDS), extractor_version=esef.ESEF_ADDRESS_EXTRACTOR_VERSION),
+        _insert(
+            esef.esef_select_sql(), [*ESEF_COMPANY_IDS, COMPANY_ESEF_REORDER],
+            extractor_version=esef.ESEF_ADDRESS_EXTRACTOR_VERSION,
+        ),
         "SELECT '@@esef_scope_after_insert'",
         _scope(esef.esef_current_sql(), "esef"),
         "SELECT '@@esef_raw_rows'",
         ESEF_RAW_ROWS_SQL,
+        "SELECT '@@esef_reorder_row'",
+        ESEF_REORDER_ROW_SQL,
         "SELECT '@@esef_changed_rows'",
         esef_changed_rows,
     ]
@@ -378,10 +453,27 @@ def test_all_four_scopes_converge_after_insert(sections: dict[str, list[list[str
     # scb/bolagsverket/ratsit converge through the shared `reconverged` UNION ALL (computed
     # right after their own inserts); esef converges on its own scope_before/scope_after pair,
     # computed later in the script (after the pre-existing changed_rows section -- see the
-    # comment in _statements() for why).
+    # comment in _statements() for why). COMPANY_ESEF_REORDER is seeded alongside the
+    # ESEF_CASES companies (see _esef_reorder_seed_statements()), so it is expected in both.
     assert sections["reconverged"] == []
-    assert sections["esef_scope_before_insert"] == [[company_id] for company_id in sorted(ESEF_COMPANY_IDS)]
+    assert sections["esef_scope_before_insert"] == [
+        [company_id] for company_id in sorted((*ESEF_COMPANY_IDS, COMPANY_ESEF_REORDER))
+    ]
     assert sections["esef_scope_after_insert"] == []
+
+
+def test_esef_reorder_company_stamps_the_selected_filings_observed_at(
+    sections: dict[str, list[list[str]]],
+) -> None:
+    """Finding 2: esef_current_sql()'s argMax(processed_at, (period_end, processed_at)) must
+    equal esef_select_sql()'s stamped observed_at for the CHOSEN (newest period_end) filing,
+    even when that filing's own processed_at is not the largest of the company's filings.
+    test_all_four_scopes_converge_after_insert already proves the company drops out of scope
+    after the insert (the two stamps agree); this proves which filing's content won."""
+    assert len(sections["esef_reorder_row"]) == 1
+    raw_address, observed_at = sections["esef_reorder_row"][0]
+    assert raw_address == ESEF_REORDER_EXPECTED_RAW_ADDRESS
+    assert observed_at == ESEF_REORDER_EXPECTED_OBSERVED_AT
 
 
 def test_scb_tombstone_reselects_and_writes_a_null_raw_row(sections: dict[str, list[list[str]]]) -> None:
@@ -425,8 +517,11 @@ def test_normalize_hand_off_gives_the_expected_parse_statuses(sections: dict[str
 
 
 def test_esef_raw_rows_hold_the_cleaned_and_repacked_address(sections: dict[str, list[list[str]]]) -> None:
+    # source = 'esef' also carries COMPANY_ESEF_REORDER's row (checked separately by
+    # test_esef_reorder_company_stamps_the_selected_filings_observed_at), so this counts and
+    # indexes only the ESEF_CASES ids.
     rows = {fields[0]: tuple(fields[1:]) for fields in sections["esef_raw_rows"]}
-    assert len(rows) == len(ESEF_CASES)
+    assert len(rows) == len(ESEF_CASES) + 1
     for company_id, _lei, _raw_value, raw_address, street_address, post_town, country_code in ESEF_CASES:
         expected = tuple(value if value is not None else "NULL" for value in (raw_address, street_address, post_town, country_code))
         assert rows[company_id] == expected, company_id

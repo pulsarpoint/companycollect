@@ -18,20 +18,31 @@ ESEF_RECORD_UID_SQL = (
     "lowerUTF8(filings.package_sha256)))))"
 )
 
-# Tags out, whitespace collapsed, trailing dots/spaces off, then the trailing country word.
+# Tags out, whitespace (ASCII plus NBSP/narrow-NBSP, which occur in prod facts) collapsed,
+# trailing dots/spaces off, then the trailing country word.
 _CLEANED_SQL = (
     "trim(replaceRegexpAll(replaceRegexpAll(replaceRegexpAll(facts.raw_value, '<[^>]+>', ' '), "
-    "'\\\\s+', ' '), '[\\\\s.,]+$', ''))"
+    "'[\\\\s\\\\x{00A0}\\\\x{202F}]+', ' '), '[\\\\s.,]+$', ''))"
 )
 _SWEDISH_COUNTRY_SQL = f"match({_CLEANED_SQL}, '(?i)[,\\\\s]+(sverige|sweden)$')"
 _BODY_SQL = f"replaceRegexpOne({_CLEANED_SQL}, '(?i)[,\\\\s]+(sverige|sweden)$', '')"
-# street part | postcode 3 | postcode 2 | town: the first Swedish postcode splits the line.
-_PARTS_SQL = f"extractGroups({_BODY_SQL}, '^(.*?)[,\\\\s]*(?:SE-)?([0-9]{{3}})\\\\s?([0-9]{{2}})\\\\s+(.+)$')"
+# street part | postcode 3 | postcode 2 | town: the first Swedish postcode, followed by a
+# letter-led town, splits the line. The town group is bounded, not greedy to end-of-line: it
+# starts with a non-digit/non-separator character (so a glued digit run after the postcode
+# never gets read as part of the town) and stops at the first `,`/`.`/`:` or before a
+# visiting-address / phone / country word, with the remainder discarded as trailing text.
+_PARTS_SQL = (
+    f"extractGroups({_BODY_SQL}, '^(.*?)[,\\\\s]*(?i:SE-)?([0-9]{{3}})\\\\s?([0-9]{{2}})\\\\s+"
+    "([^0-9,.:\\\\s][^,.:]*?)(?:\\\\s*[,.:].*|\\\\s+(?i:besöksadress\\\\w*|och|med|tel|sverige|sweden)\\\\b.*)?$')"
+)
 # No postcode: the part after the last comma is the town ("Ideongatan 1, Lund").
 _NO_CODE_PARTS_SQL = f"extractGroups({_BODY_SQL}, '^(.*),\\\\s*([^,]+)$')"
 
+# The street and town parts are attacker/data controlled free text; replace any literal `$`
+# so the five-part packed string can never be shifted by one embedded in a fact.
 ESEF_PACKED_ADDRESS_SQL = (
-    f"if(length({_PARTS_SQL}) = 4, concat(trim({_PARTS_SQL}[1]), '$$', trim({_PARTS_SQL}[4]), '$', "
+    f"if(length({_PARTS_SQL}) = 4, concat(replaceAll(trim({_PARTS_SQL}[1]), '$', ' '), '$$', "
+    f"replaceAll(trim({_PARTS_SQL}[4]), '$', ' '), '$', "
     f"{_PARTS_SQL}[2], {_PARTS_SQL}[3], '$', if({_SWEDISH_COUNTRY_SQL}, 'SE', '')), "
     "CAST(NULL AS Nullable(String)))"
 )
@@ -47,7 +58,8 @@ _NO_CODE_TOWN_SQL = (
 
 def esef_current_sql() -> str:
     return (
-        "SELECT facts.company_id AS company_id, max(toDateTime64(filings.processed_at, 3, 'UTC')) AS observed_at\n"
+        "SELECT facts.company_id AS company_id, argMax(toDateTime64(filings.processed_at, 3, 'UTC'), "
+        "(filings.period_end, toDateTime64(filings.processed_at, 3, 'UTC'))) AS observed_at\n"
         "FROM corpscout.se_esef_facts AS facts\n"
         "INNER JOIN corpscout.se_esef_filings AS filings ON filings.fxo_id = facts.fxo_id\n"
         "WHERE facts.concept_local_name = 'AddressOfRegisteredOfficeOfEntity' AND filings.processed_at IS NOT NULL\n"
