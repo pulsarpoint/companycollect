@@ -76,6 +76,12 @@ from dagster_v3.defs.sweden_company.geocode_store import (
 # The SE address entity (migration 000384, renamed to its final name by 000393). This
 # constant is the one place the view names it.
 COMPANY_ADDRESS_TABLE = f"{CLICKHOUSE_DATABASE}.se_company_address"
+# The SE person entity (migration 000395). This constant is the one place the view names
+# it. The table is empty until slice 2's first fold, so the three people flags below read
+# 0 for every company between this migration and that fold -- deliberately (spec section
+# 8: "the flags read empty tables until the first fold"). It is se_company_person_v2 for
+# slices 0 to 3; slice 4 renames it and edits this one line.
+COMPANY_PERSON_TABLE = f"{CLICKHOUSE_DATABASE}.se_company_person_v2"
 # The company spine and its register/label joins (basic-info slice 4, migration 000391).
 BASIC_INFO_TABLE = f"{CLICKHOUSE_DATABASE}.se_company_basic_info"
 BOLAGSVERKET_TABLE = f"{CLICKHOUSE_DATABASE}.se_bolagsverket_companies"
@@ -205,14 +211,16 @@ ESEF_FINANCIAL_SET = (
 FINANCIAL_REPORTS_SET = (
     f"SELECT company_id FROM {CLICKHOUSE_DATABASE}.se_financial_reports"
 )
-PEOPLE_SET = f"SELECT company_id FROM {CLICKHOUSE_DATABASE}.se_company_person"
+# Active published persons only, read FINAL (ReplacingMergeTree(folded_at)): a person the
+# reviewer hid or whose observations all became tombstones must not keep the flag lit.
+PEOPLE_SET = f"SELECT company_id FROM {COMPANY_PERSON_TABLE} FINAL WHERE active = 1"
 PEOPLE_BOLAGSVERKET_SET = (
-    f"SELECT company_id FROM {CLICKHOUSE_DATABASE}.se_company_person_role "
-    "WHERE has(sources, 'bolagsverket')"
+    f"SELECT company_id FROM {COMPANY_PERSON_TABLE} FINAL "
+    "WHERE active = 1 AND has(sources, 'bolagsverket')"
 )
 PEOPLE_ESEF_SET = (
-    f"SELECT company_id FROM {CLICKHOUSE_DATABASE}.se_company_person_role "
-    "WHERE has(sources, 'esef')"
+    f"SELECT company_id FROM {COMPANY_PERSON_TABLE} FINAL "
+    "WHERE active = 1 AND has(sources, 'esef')"
 )
 DOMAINS_SET = (
     f"SELECT company_id FROM {CLICKHOUSE_DATABASE}.company_domains "
