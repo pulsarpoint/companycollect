@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from dagster_v3.defs.esef_filings import tables as esef_tables
+from dagster_v3.defs.esef_filings.country_views import build_se_esef_view_sql
 from dagster_v3.defs.se_company.basic_info import bolagsverket, esef, ratsit, scb, wikidata
 from dagster_v3.defs.se_company.basic_info import tables
 from dagster_v3.defs.se_company.basic_info.extract import changed_scope_sql, insert_page_sql, since_scope_sql
@@ -48,9 +50,17 @@ def _schema() -> list[str]:
                 if any(f"CREATE TABLE IF NOT EXISTS {target}\n" in t for t in tables):
                     alters.append(statement)
     fixture = [s.strip() for s in FIXTURE.read_text(encoding="utf-8").split(";") if s.strip()]
+    # The esef extractor now reads se_esef_document_company_information (migration 000395,
+    # ESEF slice 1 Task 5) instead of the raw product -- 000395 is not in MIGRATIONS (it would
+    # try to create views over other esef_* tables this harness does not have), so its one
+    # view this suite needs is rendered from the same builder the migration embeds, over the
+    # fixture's esef_document_company_information + esef_entity_registry_map tables.
+    esef_company_information_view = build_se_esef_view_sql(
+        next(v for v in esef_tables.SE_ESEF_VIEWS if v.table == "esef_document_company_information")
+    )
     # Views last: 000390's read se_ratsit_company and text_translations, which the fixture
     # creates. Its INSERT ... SELECT statements are data moves and are not replayed.
-    return tables + alters + fixture + views
+    return tables + alters + fixture + [esef_company_information_view] + views
 
 
 def _run(statements: list[str], *, join_use_nulls: int) -> list[str]:
@@ -214,13 +224,23 @@ def test_bolagsverket_legal_form_maps_trims_and_passes_unknown_tokens_through() 
 
 
 def test_esef_takes_the_newest_filing_and_upper_cases_the_lei() -> None:
-    esef_rows = (
-        "INSERT INTO corpscout.esef_document_company_information (source_document_id, package_sha256, lei, country_iso2, company_id, period_end, fiscal_year, extraction_status, company_description, description_language, model_provider, model_name, prompt_version, source_run_id, extracted_at, resolved_at) VALUES "
-        "('doc-1', 'p1', '5493001kjtiigc8y1r12', 'SE', '5560000000', '2024-12-31', 2024, 'ok', 'Old filing text', 'en', 'p', 'm', 'v', 'r', '', toDateTime64('2026-08-01 00:00:00', 3)), "
-        "('doc-2', 'p2', '5493001kjtiigc8y1r12', 'SE', '5560000000', '2025-12-31', 2025, 'ok', 'New filing text', '', 'p', 'm', 'v', 'r', '', toDateTime64('2026-09-01 00:00:00', 3)), "
-        "('doc-3', 'p3', 'X', 'FI', '5560000000', '2025-12-31', 2025, 'ok', 'Finnish', 'en', 'p', 'm', 'v', 'r', '', toDateTime64('2026-09-02 00:00:00', 3))"
+    # The register-verified link the se_esef_document_company_information view joins
+    # through (migration 000395): its own lei must match esef_document_company_information's
+    # lei column byte-for-byte (the view's join is `t.lei = m.lei`, no case-folding), so this
+    # is inserted in the same lowercase the rows below carry.
+    esef_map_row = (
+        "INSERT INTO corpscout.esef_entity_registry_map (lei, country_iso2, registry_id_raw, registry_id, match_source, link_status, source_run_id) VALUES "
+        "('5493001kjtiigc8y1r12', 'SE', '5560000000', '5560000000', 'gleif_registered_as', 'register_verified', 'r')"
     )
-    script = _schema() + [esef_rows, _scope(esef.esef_current_sql(), "esef"), _insert(esef.esef_select_sql(), ["5560000000"]),
+    esef_rows = (
+        "INSERT INTO corpscout.esef_document_company_information (source_document_id, package_sha256, lei, period_end, fiscal_year, extraction_status, company_description, description_language, model_provider, model_name, prompt_version, source_run_id, extracted_at, resolved_at) VALUES "
+        "('doc-1', 'p1', '5493001kjtiigc8y1r12', '2024-12-31', 2024, 'ok', 'Old filing text', 'en', 'p', 'm', 'v', 'r', '', toDateTime64('2026-08-01 00:00:00', 3)), "
+        "('doc-2', 'p2', '5493001kjtiigc8y1r12', '2025-12-31', 2025, 'ok', 'New filing text', '', 'p', 'm', 'v', 'r', '', toDateTime64('2026-09-01 00:00:00', 3)), "
+        # doc-3 carries a different lei that never appears in the map, so it never joins into
+        # the Swedish view -- the same exclusion the old country_iso2 = 'FI' predicate gave.
+        "('doc-3', 'p3', 'X', '2025-12-31', 2025, 'ok', 'Finnish', 'en', 'p', 'm', 'v', 'r', '', toDateTime64('2026-09-02 00:00:00', 3))"
+    )
+    script = _schema() + [esef_map_row, esef_rows, _scope(esef.esef_current_sql(), "esef"), _insert(esef.esef_select_sql(), ["5560000000"]),
                           f"SELECT lei, description, description_language, toString(observed_at) FROM {tables.QUALIFIED_SUGGESTION_TABLE} FINAL"]
     lines = _run(script, join_use_nulls=0)
     assert lines == ["5560000000", "5493001KJTIIGC8Y1R12\tNew filing text\ten\t2026-09-01 00:00:00.000"]

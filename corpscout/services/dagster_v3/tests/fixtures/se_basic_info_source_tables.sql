@@ -21,13 +21,22 @@ CREATE TABLE IF NOT EXISTS corpscout.company_identifier (
     `resolved_at` DateTime64(3, 'UTC')
 ) ENGINE = MergeTree ORDER BY (issuer_scheme, issuer_id, country_code, company_id);
 
+CREATE TABLE IF NOT EXISTS corpscout.esef_entity_registry_map (
+    `lei` String,
+    `country_iso2` LowCardinality(String),
+    `registry_id_raw` String,
+    `registry_id` String,
+    `match_source` LowCardinality(String),
+    `link_status` LowCardinality(String),
+    `source_run_id` String,
+    `resolved_at` DateTime64(3) DEFAULT now64(3)
+) ENGINE = ReplacingMergeTree(resolved_at) ORDER BY (country_iso2, registry_id, lei);
+
 CREATE TABLE IF NOT EXISTS corpscout.esef_document_company_information (
     `source_document_id` String,
     `source_record_uid` String DEFAULT lower(hex(SHA256(concat('company-source-record-v1\nfile\nesef_report_package\n', lowerUTF8(toString(package_sha256)))))),
     `package_sha256` String,
     `lei` String,
-    `country_iso2` LowCardinality(String),
-    `company_id` String,
     `period_end` String,
     `fiscal_year` UInt16,
     `extraction_status` LowCardinality(String),
