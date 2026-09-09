@@ -13,6 +13,7 @@ from dagster_v3.defs.esef_filings.artifact_contract import ARTIFACT_SCHEMA_VERSI
 from dagster_v3.defs.esef_filings.disclosure_parser import parse_esef_disclosure
 from dagster_v3.defs.esef_filings.llm_enrichment import (
     EsefCompanyEnrichment,
+    PROMPT_VERSION,
     SUPPORTED_ENRICHMENT_ARTIFACT_SCHEMA_VERSIONS,
     build_company_enrichment_request,
     build_enrichment_evidence,
@@ -521,6 +522,7 @@ def test_esef_runtime_profile_uses_only_host_api_key(
         "prompt_version": "esef-company-enrichment-v2",
         "concurrency": 3,
         "country_iso2s": [],
+        "link_statuses": ["register_verified"],
         "company_ids": ["5566692850"],
         "source_document_ids": ["AAK-2024"],
         "max_documents": 1,
@@ -537,6 +539,33 @@ def test_esef_runtime_profile_uses_only_host_api_key(
     monkeypatch.delenv("OPENROUTER_API")
     with pytest.raises(ValueError, match="OPENROUTER_API"):
         build_esef_llm_client(config)
+
+
+def test_selection_is_per_lei_and_admits_leis_through_the_map() -> None:
+    from dagster_v3.defs.esef_filings.llm_enrichment_assets import _selection_query
+
+    sql, params = _selection_query(
+        provider="deepseek",
+        model="deepseek-v4-flash",
+        prompt_version=PROMPT_VERSION,
+        link_statuses={"register_verified"},
+        country_iso2s={"SE"},
+        company_ids={"5020077862"},
+        source_document_ids=set(),
+    )
+    assert "PARTITION BY lei" in sql
+    assert "disclosures.company_id" not in sql and "disclosures.country_iso2" not in sql
+    assert (
+        "disclosures.lei IN (SELECT lei FROM corpscout.esef_entity_registry_map FINAL "
+        "WHERE link_status IN %(link_statuses)s AND country_iso2 IN %(country_iso2s)s "
+        "AND registry_id IN %(company_ids)s)"
+    ) in sql
+    assert params["link_statuses"] == ("register_verified",)
+
+
+def test_config_admits_register_verified_leis_by_default() -> None:
+    config = EsefLlmEnrichmentConfig(provider="deepseek", model="deepseek-v4-flash")
+    assert config.link_statuses == ["register_verified"]
 
 
 def test_esef_enrichment_config_requires_explicit_provider_and_model() -> None:
@@ -700,12 +729,13 @@ def test_llm_enrichment_asset_depends_on_final_clickhouse_documents() -> None:
     assert retry_policy.max_retries == 3
 
 
-def test_latest_document_selector_uses_one_final_xbrl_per_company() -> None:
+def test_latest_document_selector_uses_one_final_xbrl_per_lei() -> None:
     clickhouse = _FakeClickHouse([[_source_document_clickhouse_row()]])
 
     documents = _load_latest_source_documents(
         clickhouse,
         model="deepseek-v4-flash",
+        link_statuses={"register_verified"},
         country_iso2s={"SE", "FI"},
         company_ids={"5566692850"},
         source_document_ids=set(),
@@ -715,8 +745,8 @@ def test_latest_document_selector_uses_one_final_xbrl_per_company() -> None:
     assert [document["source_document_id"] for document in documents] == ["AAK-2024"]
     sql, parameters = clickhouse.client.calls[0]
     assert "row_number() OVER" in sql
-    assert "PARTITION BY country_iso2, company_id" in sql
-    assert "latest_company_report_rank = 1" in sql
+    assert "PARTITION BY lei" in sql
+    assert "latest_lei_report_rank = 1" in sql
     assert "corpscout.esef_filings AS filings FINAL" in sql
     assert "FROM corpscout.esef_disclosures AS disclosures" in sql
     assert "corpscout.esef_disclosures AS disclosures FINAL" not in sql
@@ -727,19 +757,25 @@ def test_latest_document_selector_uses_one_final_xbrl_per_company() -> None:
     assert parameters["model_name"] == "deepseek-v4-flash"
     assert parameters["model_provider"] == "deepseek"
     assert parameters["prompt_version"] == "esef-company-enrichment-v2"
-    assert "disclosures.country_iso2 IN %(country_iso2s)s" in sql
+    assert (
+        "disclosures.lei IN (SELECT lei FROM corpscout.esef_entity_registry_map FINAL "
+        "WHERE link_status IN %(link_statuses)s AND country_iso2 IN %(country_iso2s)s "
+        "AND registry_id IN %(company_ids)s)"
+    ) in sql
+    assert parameters["link_statuses"] == ("register_verified",)
     assert parameters["country_iso2s"] == ("FI", "SE")
     assert parameters["company_ids"] == ("5566692850",)
     assert documents[0]["artifact_schema_version"] == ARTIFACT_SCHEMA_VERSION
 
 
-def test_latest_document_selector_requires_resolved_company_links() -> None:
+def test_latest_document_selector_requires_admission_through_the_map() -> None:
     clickhouse = _FakeClickHouse([[]])
 
     assert (
         _load_latest_source_documents(
             clickhouse,
             model="deepseek-v4-flash",
+            link_statuses={"register_verified"},
             country_iso2s=set(),
             company_ids=set(),
             source_document_ids=set(),
@@ -747,9 +783,13 @@ def test_latest_document_selector_requires_resolved_company_links() -> None:
         )
         == []
     )
-    sql, _parameters = clickhouse.client.calls[0]
-    assert "disclosures.company_id != ''" in sql
-    assert "disclosures.country_iso2 != ''" in sql
+    sql, parameters = clickhouse.client.calls[0]
+    assert "disclosures.company_id" not in sql and "disclosures.country_iso2" not in sql
+    assert (
+        "disclosures.lei IN (SELECT lei FROM corpscout.esef_entity_registry_map FINAL "
+        "WHERE link_status IN %(link_statuses)s)"
+    ) in sql
+    assert parameters["link_statuses"] == ("register_verified",)
 
 
 def test_clickhouse_disclosures_reconstruct_llm_evidence() -> None:
@@ -868,7 +908,7 @@ def test_llm_asset_reads_disclosures_and_writes_clickhouse_directly() -> None:
     assert metadata["failed_document_count"] == 0
     assert metadata["rate_limited_document_count"] == 0
     assert metadata["information_row_count"] == 1
-    assert metadata["selected_company_count"] == 1
+    assert metadata["selected_lei_count"] == 1
     assert metadata["llm_provider"] == "deepseek"
     assert metadata["llm_temperature"] == 0
     assert "llm_max_tokens" not in metadata
@@ -919,8 +959,6 @@ def _source_document_clickhouse_row() -> tuple[object, ...]:
         "AAK-2024",
         "a" * 64,
         "549300GK4LGIDDWJWL07",
-        "SE",
-        "5566692850",
         "2024-12-31",
         2024,
         "https://example.test/aak.zip",
@@ -936,8 +974,6 @@ def _source_document_mapping() -> dict[str, object]:
         "source_document_id",
         "package_sha256",
         "lei",
-        "country_iso2",
-        "company_id",
         "period_end",
         "fiscal_year",
         "package_url",

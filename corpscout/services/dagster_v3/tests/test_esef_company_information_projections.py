@@ -36,6 +36,16 @@ def test_esef_company_information_has_one_sql_projection_per_serving_table() -> 
     )
 
 
+def test_projections_write_lei_and_no_stamps() -> None:
+    for sql in (
+        esef_document_people_sql(),
+        esef_document_business_items_sql(),
+        esef_document_group_relationships_sql(),
+    ):
+        assert "info.lei," in sql
+        assert "info.country_iso2" not in sql and "info.company_id" not in sql
+
+
 def test_esef_company_information_projections_are_separate_esef_assets() -> None:
     from dagster_v3.definitions import defs as load_defs
 

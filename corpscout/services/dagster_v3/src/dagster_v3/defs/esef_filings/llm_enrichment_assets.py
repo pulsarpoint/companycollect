@@ -43,8 +43,17 @@ from dagster_v3.defs.esef_filings.llm_enrichment import (
     enrichment_request_object_key,
     request_company_enrichment,
 )
+from dagster_v3.defs.esef_filings.publish import (
+    LINK_STATUS_GLEIF,
+    LINK_STATUS_REGISTER_VERIFIED,
+    LINK_STATUS_UNVERIFIED,
+)
 from dagster_v3.defs.esef_filings.segment_assets import (
     ESEF_DOCUMENT_BUCKET,
+)
+
+_LINK_STATUSES = frozenset(
+    {LINK_STATUS_REGISTER_VERIFIED, LINK_STATUS_UNVERIFIED, LINK_STATUS_GLEIF}
 )
 
 GROUP_NAME = "esef"
@@ -88,6 +97,9 @@ class EsefLlmEnrichmentConfig(dg.Config):
     )
     concurrency: int = Field(default=1, ge=1, le=8)
     country_iso2s: list[str] = Field(default_factory=list)
+    link_statuses: list[str] = Field(
+        default_factory=lambda: [LINK_STATUS_REGISTER_VERIFIED]
+    )
     company_ids: list[str] = Field(default_factory=list)
     source_document_ids: list[str] = Field(default_factory=list)
     max_documents: int | None = Field(default=None, ge=1, le=100_000)
@@ -168,6 +180,7 @@ def run_esef_llm_enrichment(
     temperature: float = 0,
     prompt_version: str = PROMPT_VERSION,
     concurrency: int = 1,
+    link_statuses: Sequence[str] = (LINK_STATUS_REGISTER_VERIFIED,),
 ) -> dict[str, object]:
     """Extract company information from each company's latest final CH document."""
     _validate_prompt_version(prompt_version)
@@ -201,12 +214,21 @@ def run_esef_llm_enrichment(
             "ESEF LLM company_ids require exactly one country_iso2 because "
             "company identity is country-scoped"
         )
+    selected_link_statuses = {value.strip() for value in link_statuses if value.strip()}
+    if not selected_link_statuses:
+        raise ValueError("ESEF LLM link_statuses must not be empty")
+    if not selected_link_statuses <= _LINK_STATUSES:
+        raise ValueError(
+            "ESEF LLM link_statuses must be a subset of "
+            f"{sorted(_LINK_STATUSES)}"
+        )
     selected_ids = {value.strip() for value in source_document_ids if value.strip()}
     documents = _load_latest_source_documents(
         clickhouse,
         provider=clean_provider,
         model=model,
         prompt_version=prompt_version,
+        link_statuses=selected_link_statuses,
         country_iso2s=selected_country_iso2s,
         company_ids=selected_company_ids,
         source_document_ids=selected_ids,
@@ -468,8 +490,7 @@ def run_esef_llm_enrichment(
         rows=information_rows,
     )
     return {
-        "selection_method": "latest_xbrl_per_company",
-        "selection_country_iso2s": sorted(selected_country_iso2s),
+        "selection_method": "latest_xbrl_per_lei",
         "llm_provider": clean_provider,
         "llm_model": model,
         "llm_base_url": base_url.rstrip("/"),
@@ -486,11 +507,8 @@ def run_esef_llm_enrichment(
         "unchanged_document_count": (
             len(documents) - len(processed_documents) - failed_document_count
         ),
-        "selected_company_count": len(
-            {
-                (str(document["country_iso2"]), str(document["company_id"]))
-                for document in processed_documents
-            }
+        "selected_lei_count": len(
+            {str(document["lei"]) for document in documents}
         ),
         "information_row_count": len(information_rows),
         "enriched_document_count": enriched_count,
@@ -582,32 +600,37 @@ def _request_prepared_enrichment(
     return _EnrichmentRequestOutcome(work=work, result=result)
 
 
-def _load_latest_source_documents(
-    clickhouse: ClickhouseResource,
+_LATEST_DOCUMENT_SELECTION_COLUMNS = (
+    "source_document_id",
+    "package_sha256",
+    "lei",
+    "period_end",
+    "fiscal_year",
+    "package_url",
+    "artifact_schema_version",
+)
+
+
+def _selection_query(
     *,
     model: str,
     provider: str = "deepseek",
     prompt_version: str = PROMPT_VERSION,
+    link_statuses: set[str],
     country_iso2s: set[str],
     company_ids: set[str],
     source_document_ids: set[str],
-    max_documents: int | None,
-) -> list[dict[str, object]]:
-    columns = (
-        "source_document_id",
-        "package_sha256",
-        "lei",
-        "country_iso2",
-        "company_id",
-        "period_end",
-        "fiscal_year",
-        "package_url",
-        "artifact_schema_version",
-    )
+) -> tuple[str, dict[str, object]]:
+    """Build the (pure) SQL and parameters selecting the latest document per LEI.
+
+    Only LEIs admitted through ``esef_entity_registry_map`` are eligible: the
+    membership filter joins on ``link_status`` (and, when given, the map's
+    ``country_iso2``/``registry_id``) rather than any stamp on the disclosure
+    itself.
+    """
+    columns = _LATEST_DOCUMENT_SELECTION_COLUMNS
     document_filters = [
         "disclosures.package_sha256 != ''",
-        "disclosures.company_id != ''",
-        "disclosures.country_iso2 != ''",
         "((disclosures.disclosure_kind = 'tagged_fact' AND disclosures.segment IN "
         "%(evidence_segments)s) OR "
         "(disclosures.disclosure_kind = 'visible_section' AND "
@@ -620,14 +643,21 @@ def _load_latest_source_documents(
         "evidence_segments": ENRICHMENT_EVIDENCE_SEGMENTS,
         "visible_section_types": ENRICHMENT_VISIBLE_SECTION_TYPES,
     }
+    link_filters = ["link_status IN %(link_statuses)s"]
+    parameters["link_statuses"] = tuple(sorted(link_statuses))
     if country_iso2s:
-        document_filters.append("disclosures.country_iso2 IN %(country_iso2s)s")
+        link_filters.append("country_iso2 IN %(country_iso2s)s")
         parameters["country_iso2s"] = tuple(sorted(country_iso2s))
     if company_ids:
-        document_filters.append("disclosures.company_id IN %(company_ids)s")
+        link_filters.append("registry_id IN %(company_ids)s")
         parameters["company_ids"] = tuple(sorted(company_ids))
+    document_filters.append(
+        "disclosures.lei IN (SELECT lei FROM "
+        f"{tables.QUALIFIED_ESEF_ENTITY_REGISTRY_MAP_TABLE} FINAL "
+        f"WHERE {' AND '.join(link_filters)})"
+    )
 
-    outer_filters = ["documents.latest_company_report_rank = 1"]
+    outer_filters = ["documents.latest_lei_report_rank = 1"]
     if source_document_ids:
         outer_filters.append("documents.source_document_id IN %(source_document_ids)s")
         parameters["source_document_ids"] = tuple(sorted(source_document_ids))
@@ -642,19 +672,16 @@ FROM
     SELECT
         {", ".join(columns)},
         row_number() OVER (
-            PARTITION BY country_iso2, company_id
+            PARTITION BY lei
             ORDER BY period_end DESC, fiscal_year DESC,
                 source_processed_at DESC, source_document_id DESC
-        ) AS latest_company_report_rank
+        ) AS latest_lei_report_rank
     FROM (
         SELECT
             disclosures.source_document_id AS source_document_id,
             argMax(disclosures.package_sha256, disclosures.resolved_at)
                 AS package_sha256,
             argMax(disclosures.lei, disclosures.resolved_at) AS lei,
-            argMax(disclosures.country_iso2, disclosures.resolved_at)
-                AS country_iso2,
-            argMax(disclosures.company_id, disclosures.resolved_at) AS company_id,
             argMax(toString(disclosures.period_end), disclosures.resolved_at)
                 AS period_end,
             argMax(disclosures.fiscal_year, disclosures.resolved_at)
@@ -682,9 +709,33 @@ LEFT JOIN
     GROUP BY source_document_id
 ) AS existing USING (source_document_id)
 WHERE {" AND ".join(outer_filters)}
-ORDER BY documents.country_iso2, documents.company_id,
-    documents.source_document_id
+ORDER BY documents.lei, documents.source_document_id
 """
+    return query, parameters
+
+
+def _load_latest_source_documents(
+    clickhouse: ClickhouseResource,
+    *,
+    model: str,
+    provider: str = "deepseek",
+    prompt_version: str = PROMPT_VERSION,
+    link_statuses: set[str],
+    country_iso2s: set[str],
+    company_ids: set[str],
+    source_document_ids: set[str],
+    max_documents: int | None,
+) -> list[dict[str, object]]:
+    query, parameters = _selection_query(
+        model=model,
+        provider=provider,
+        prompt_version=prompt_version,
+        link_statuses=link_statuses,
+        country_iso2s=country_iso2s,
+        company_ids=company_ids,
+        source_document_ids=source_document_ids,
+    )
+    columns = _LATEST_DOCUMENT_SELECTION_COLUMNS
     with clickhouse.get_connection() as client:
         rows = client.execute(query, parameters)
     documents = [
@@ -1034,8 +1085,6 @@ def _information_identity(document: Mapping[str, object]) -> dict[str, object]:
         "source_document_id": str(document["source_document_id"]),
         "package_sha256": str(document["package_sha256"]),
         "lei": str(document["lei"]),
-        "country_iso2": str(document["country_iso2"]),
-        "company_id": str(document["company_id"]),
         "period_end": str(document["period_end"]),
         "fiscal_year": int(document["fiscal_year"]),
     }
@@ -1156,6 +1205,7 @@ def esef_document_company_information_clickhouse(
         concurrency=config.concurrency,
         source_run_id=context.run_id,
         country_iso2s=config.country_iso2s,
+        link_statuses=config.link_statuses,
         company_ids=config.company_ids,
         source_document_ids=config.source_document_ids,
         max_documents=config.max_documents,
