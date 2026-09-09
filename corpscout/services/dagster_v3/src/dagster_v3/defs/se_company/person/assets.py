@@ -14,6 +14,10 @@ from dagster_v3.defs.se_company.person.normalize import PAGE_SIZE, normalize_all
 
 GROUP_NAME = "se_company_person"
 NORMALIZE_POOL = "se_company_person_normalize"
+EXTRACTOR_SOURCES: tuple[str, ...] = ("bolagsverket", "esef", "wikidata")
+EXTRACTOR_ASSET_NAMES: tuple[str, ...] = tuple(
+    f"se_company_person_suggestions_{source}" for source in EXTRACTOR_SOURCES
+)
 
 
 class PersonNormalizeConfig(dg.Config):
