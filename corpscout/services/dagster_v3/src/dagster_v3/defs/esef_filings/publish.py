@@ -53,6 +53,7 @@ from dagster_v3.defs.clickhouse.resolved import (
     assert_clickhouse_tables_exist,
     export_duckdb_connection_table_to_clickhouse,
 )
+from dagster_v3.defs.company_identifier.rules import COUNTRY_IDENTITY_RULES
 from dagster_v3.defs.esef_filings import tables
 from dagster_v3.defs.gleif.tables import GLEIF_LEI_RECORDS_TABLE
 from dagster_v3.defs.sweden_financial.clickhouse import (
@@ -242,9 +243,34 @@ def export_esef_facts_clickhouse(
 
 MATCH_SOURCE_GLEIF_REGISTERED_AS = "gleif_registered_as"
 
+LINK_STATUS_REGISTER_VERIFIED = "register_verified"
+LINK_STATUS_UNVERIFIED = "unverified"
+LINK_STATUS_GLEIF = "gleif"
+
 
 def _escape_clickhouse_string_literal(value: str) -> str:
     return value.replace("\\", "\\\\").replace("'", "\\'")
+
+
+def _register_verification_sql() -> tuple[str, str]:
+    """(joins, link_status expression): one LEFT JOIN per rule country on the digits-only
+    id, the way company_identifier verifies, and the three-valued status."""
+    joins = []
+    hits = []
+    for code, rule in sorted(COUNTRY_IDENTITY_RULES.items()):
+        alias = f"reg_{code.lower()}"
+        joins.append(
+            f"LEFT JOIN (SELECT DISTINCT replaceRegexpAll({rule.id_column}, '[^0-9]', '') AS id "
+            f"FROM corpscout.{rule.register_table}) AS {alias} "
+            f"ON {alias}.id = digits AND primary_country_iso2 = '{code}'"
+        )
+        hits.append(f"{alias}.id != ''")
+    countries = ", ".join(f"'{code}'" for code in sorted(COUNTRY_IDENTITY_RULES))
+    status = (
+        f"multiIf(primary_country_iso2 NOT IN ({countries}), '{LINK_STATUS_GLEIF}', "
+        f"{' OR '.join(hits)}, '{LINK_STATUS_REGISTER_VERIFIED}', '{LINK_STATUS_UNVERIFIED}') AS link_status"
+    )
+    return "\n        ".join(joins), status
 
 
 def build_esef_entity_registry_map_select(source_run_id: str) -> str:
@@ -266,35 +292,54 @@ def build_esef_entity_registry_map_select(source_run_id: str) -> str:
     `ORDER BY lei, resolved_at DESC` + `LIMIT 1 BY lei` guards against
     un-merged ReplacingMergeTree duplicates in gleif_lei_records, even though
     that table is already one-row-per-lei post-merge (ORDER BY (lei)).
+
+    `link_status` (see `_register_verification_sql`): for a country with a
+    `COUNTRY_IDENTITY_RULES` entry, the normalized `registry_id` is checked
+    against that country's own register (digits-only both sides, mirroring
+    `company_identifier`) and marked `register_verified` or `unverified`;
+    every other country is `gleif` (GLEIF's word only, no register to check
+    against).
     """
     run_id_literal = _escape_clickhouse_string_literal(source_run_id)
+    joins, status = _register_verification_sql()
     return f"""
         SELECT
             lei,
-            coalesce(primary_country_iso2, '') AS country_iso2,
-            coalesce(registered_as, '') AS registry_id_raw,
-            multiIf(
-                primary_country_iso2 = 'FI',
-                if(
-                    match(replaceAll(lowerUTF8(trim(registered_as)), ' ', ''), '^[0-9]{{8}}$'),
-                    concat(
-                        substring(replaceAll(lowerUTF8(trim(registered_as)), ' ', ''), 1, 7),
-                        '-',
-                        substring(replaceAll(lowerUTF8(trim(registered_as)), ' ', ''), 8, 1)
-                    ),
-                    replaceAll(lowerUTF8(trim(registered_as)), ' ', '')
-                ),
-                primary_country_iso2 = 'SE',
-                replaceRegexpAll(registered_as, '[^0-9]', ''),
-                trim(registered_as)
-            ) AS registry_id,
+            country_iso2,
+            registry_id_raw,
+            registry_id,
             '{MATCH_SOURCE_GLEIF_REGISTERED_AS}' AS match_source,
+            {status},
             '{run_id_literal}' AS source_run_id
-        FROM {GLEIF_LEI_RECORDS_QUALIFIED_TABLE}
-        WHERE registered_as != ''
-          AND lei IN (SELECT DISTINCT lei FROM {tables.QUALIFIED_ESEF_FILINGS_TABLE})
-        ORDER BY lei, resolved_at DESC
-        LIMIT 1 BY lei
+        FROM (
+            SELECT
+                lei,
+                coalesce(primary_country_iso2, '') AS country_iso2,
+                primary_country_iso2,
+                coalesce(registered_as, '') AS registry_id_raw,
+                multiIf(
+                    primary_country_iso2 = 'FI',
+                    if(
+                        match(replaceAll(lowerUTF8(trim(registered_as)), ' ', ''), '^[0-9]{{8}}$'),
+                        concat(
+                            substring(replaceAll(lowerUTF8(trim(registered_as)), ' ', ''), 1, 7),
+                            '-',
+                            substring(replaceAll(lowerUTF8(trim(registered_as)), ' ', ''), 8, 1)
+                        ),
+                        replaceAll(lowerUTF8(trim(registered_as)), ' ', '')
+                    ),
+                    primary_country_iso2 = 'SE',
+                    replaceRegexpAll(registered_as, '[^0-9]', ''),
+                    trim(registered_as)
+                ) AS registry_id,
+                replaceRegexpAll(registered_as, '[^0-9]', '') AS digits
+            FROM {GLEIF_LEI_RECORDS_QUALIFIED_TABLE}
+            WHERE registered_as != ''
+              AND lei IN (SELECT DISTINCT lei FROM {tables.QUALIFIED_ESEF_FILINGS_TABLE})
+            ORDER BY lei, resolved_at DESC
+            LIMIT 1 BY lei
+        ) AS mapped
+        {joins}
     """
 
 

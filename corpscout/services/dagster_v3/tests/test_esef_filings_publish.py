@@ -697,6 +697,32 @@ def test_build_esef_entity_registry_map_select_scope_and_normalizers() -> None:
     assert "LIMIT 1 BY lei" in sql
 
 
+def test_build_esef_entity_registry_map_select_verifies_rule_countries_against_their_registers() -> (
+    None
+):
+    sql = build_esef_entity_registry_map_select("run-1")
+    # One LEFT JOIN per COUNTRY_IDENTITY_RULES country, both sides digits-only.
+    assert (
+        "LEFT JOIN (SELECT DISTINCT replaceRegexpAll(company_id, '[^0-9]', '') AS id "
+        "FROM corpscout.se_company_basic_info) AS reg_se" in sql
+    )
+    assert (
+        "LEFT JOIN (SELECT DISTINCT replaceRegexpAll(org_number, '[^0-9]', '') AS id "
+        "FROM corpscout.no_companies) AS reg_no" in sql
+    )
+    assert "ON reg_se.id = digits AND primary_country_iso2 = 'SE'" in sql
+    assert (
+        "multiIf(primary_country_iso2 NOT IN ('FI', 'FR', 'NO', 'SE'), 'gleif', "
+        "reg_fi.id != '' OR reg_fr.id != '' OR reg_no.id != '' OR reg_se.id != '', "
+        "'register_verified', 'unverified') AS link_status"
+    ) in sql
+    assert (
+        sql.index("AS match_source")
+        < sql.index("AS link_status")
+        < sql.index("AS source_run_id")
+    )
+
+
 def test_build_esef_entity_registry_map_select_escapes_run_id() -> None:
     sql = build_esef_entity_registry_map_select("o'brien's-run")
     assert "'o\\'brien\\'s-run' AS source_run_id" in sql
@@ -754,11 +780,15 @@ def test_replace_esef_entity_registry_map_clickhouse_refuses_on_zero_rows() -> N
 
 def test_esef_entity_map_export_columns_match_migration_order() -> None:
     # tables.ESEF_ENTITY_MAP_EXPORT_COLUMNS is asserted (elsewhere) to match
-    # migration 000149's column order; the SELECT built here must project
-    # exactly those columns, in order, under those aliases. Anchors are
-    # chosen to be non-overlapping substrings (e.g. "AS registry_id_raw" is a
-    # prefix of "AS registry_id", so the real registry_id anchor includes the
-    # closing paren that precedes it).
+    # migration 000149's column order (link_status excluded there -- it
+    # arrived by a later ALTER, see test_esef_filings_client.py); the outer
+    # SELECT built here must project exactly those columns, in order, under
+    # those aliases. The register-verification joins moved the per-country
+    # normalizer aliases (country_iso2/registry_id_raw/registry_id) into an
+    # inner subquery the outer SELECT merely passes through unaliased, so the
+    # anchors below target the OUTER projection (the bare column references,
+    # which -- since the outer SELECT precedes the subquery in the text --
+    # `str.index` finds before any same-named alias inside the subquery).
     sql = build_esef_entity_registry_map_select("run-1")
     assert (
         "lei",
@@ -766,14 +796,16 @@ def test_esef_entity_map_export_columns_match_migration_order() -> None:
         "registry_id_raw",
         "registry_id",
         "match_source",
+        "link_status",
         "source_run_id",
     ) == (tables.ESEF_ENTITY_MAP_EXPORT_COLUMNS)
     anchors = [
         "lei,",
-        "AS country_iso2",
-        "AS registry_id_raw",
-        ") AS registry_id,",
+        "country_iso2,",
+        "registry_id_raw,",
+        "registry_id,",
         "AS match_source",
+        "AS link_status",
         "AS source_run_id",
     ]
     positions = [sql.index(anchor) for anchor in anchors]
