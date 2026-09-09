@@ -24,7 +24,7 @@ from dagster_v3.defs.sweden_company.companies_current import (
 )
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
-MIGRATION = "000395_corpscout_se_company_person_entity"
+MIGRATION = "000396_corpscout_se_company_person_entity"
 PREVIOUS_MIGRATION = "000393_corpscout_se_company_address_rename"
 VIEW = "corpscout.se_companies_serving"
 ENTITY = "corpscout.se_company_person_v2"

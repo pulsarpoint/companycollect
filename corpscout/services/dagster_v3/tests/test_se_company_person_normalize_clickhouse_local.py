@@ -50,7 +50,7 @@ from tests.test_se_company_person_normalize import RAW_BV, RAW_ESEF, RAW_TOMBSTO
 pytestmark = pytest.mark.integration
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
-MIGRATION_FILE = "000395_corpscout_se_company_person_entity.up.sql"
+MIGRATION_FILE = "000396_corpscout_se_company_person_entity.up.sql"
 
 COMPANY_1 = RAW_BV[0]  # "5561552760" -- also RAW_ESEF's company
 COMPANY_2 = RAW_TOMBSTONE[0]  # "5560125220"

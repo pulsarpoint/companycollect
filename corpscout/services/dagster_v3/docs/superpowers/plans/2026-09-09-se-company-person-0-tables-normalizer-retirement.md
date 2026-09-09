@@ -38,7 +38,7 @@
 
 | file | change |
 | --- | --- |
-| `corpscout/clickhouse/migrations/000395_corpscout_se_company_person_entity.{up,down}.sql` | **create** — the six tables and the serving re-point |
+| `corpscout/clickhouse/migrations/000396_corpscout_se_company_person_entity.{up,down}.sql` | **create** — the six tables and the serving re-point |
 | `src/dagster_v3/defs/se_company/person/__init__.py` | **create** — package docstring pointing at the spec |
 | `.../person/tables.py` | **create** — names, qualified names, column tuples, sources, parse statuses |
 | `.../person/roles.py` | **create** — the three per-source maps, moved, plus `role_code_for` |
@@ -65,7 +65,7 @@
 ### Task 1: Migration 000395 — the six tables and the serving re-point
 
 **Files:**
-- Create: `corpscout/clickhouse/migrations/000395_corpscout_se_company_person_entity.up.sql`, `...down.sql`
+- Create: `corpscout/clickhouse/migrations/000396_corpscout_se_company_person_entity.up.sql`, `...down.sql`
 - Create: `src/dagster_v3/defs/se_company/person/__init__.py`, `src/dagster_v3/defs/se_company/person/tables.py`
 - Modify: `src/dagster_v3/defs/sweden_company/companies_current.py` (the `COMPANY_PERSON_TABLE` constant and `PEOPLE_SET` / `PEOPLE_BOLAGSVERKET_SET` / `PEOPLE_ESEF_SET`)
 - Modify: `tests/test_clickhouse_migrations.py` (`EXPECTED_MIGRATIONS`, one name after `"000394_corpscout_se_company_basic_info_economic_activity"`)
@@ -279,7 +279,7 @@ grep -c "se_company_person_role" /tmp/serving_person_old.sql       # 2
 
 - [ ] **Step 5: Write the up migration**
 
-`corpscout/clickhouse/migrations/000395_corpscout_se_company_person_entity.up.sql` — the header comment below, then exactly ten statements: `CREATE DATABASE`, the six `CREATE TABLE`s in spec order, `SYSTEM STOP VIEW`, `ALTER TABLE ... MODIFY QUERY` (paste `/tmp/serving_person_new.sql` where marked, do not hand-edit it), `SYSTEM START VIEW`.
+`corpscout/clickhouse/migrations/000396_corpscout_se_company_person_entity.up.sql` — the header comment below, then exactly ten statements: `CREATE DATABASE`, the six `CREATE TABLE`s in spec order, `SYSTEM STOP VIEW`, `ALTER TABLE ... MODIFY QUERY` (paste `/tmp/serving_person_new.sql` where marked, do not hand-edit it), `SYSTEM START VIEW`.
 
 ```sql
 CREATE DATABASE IF NOT EXISTS corpscout;
@@ -517,7 +517,7 @@ SYSTEM START VIEW corpscout.se_companies_serving;
 
 - [ ] **Step 6: Write the down migration**
 
-`000395_corpscout_se_company_person_entity.down.sql` — `CREATE DATABASE`, `SYSTEM STOP VIEW`, `ALTER TABLE ... MODIFY QUERY` with `/tmp/serving_person_old.sql` (000393's body, character for character), `SYSTEM START VIEW`, then the six `DROP TABLE IF EXISTS` in reverse creation order:
+`000396_corpscout_se_company_person_entity.down.sql` — `CREATE DATABASE`, `SYSTEM STOP VIEW`, `ALTER TABLE ... MODIFY QUERY` with `/tmp/serving_person_old.sql` (000393's body, character for character), `SYSTEM START VIEW`, then the six `DROP TABLE IF EXISTS` in reverse creation order:
 
 ```sql
 CREATE DATABASE IF NOT EXISTS corpscout;
@@ -652,7 +652,7 @@ companies_current.build_se_companies_serving_sql -- editing either half alone tu
 """
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
-MIGRATION = "000395_corpscout_se_company_person_entity"
+MIGRATION = "000396_corpscout_se_company_person_entity"
 PREVIOUS_MIGRATION = "000393_corpscout_se_company_address_rename"
 VIEW = "corpscout.se_companies_serving"
 ENTITY = "corpscout.se_company_person_v2"
@@ -748,7 +748,7 @@ In `tests/test_se_companies_serving_sql.py`, replace the two stub `CREATE TABLE`
 In `tests/test_clickhouse_migrations.py`, append to `EXPECTED_MIGRATIONS`, right after `"000394_corpscout_se_company_basic_info_economic_activity",`:
 
 ```python
-    "000395_corpscout_se_company_person_entity",
+    "000396_corpscout_se_company_person_entity",
 ```
 
 - [ ] **Step 11: Run the tests**
@@ -766,8 +766,8 @@ Expected: all PASS, `All definitions loaded successfully.` `tests/test_se_compan
 - [ ] **Step 12: Commit**
 
 ```bash
-git add corpscout/clickhouse/migrations/000395_corpscout_se_company_person_entity.up.sql \
-  corpscout/clickhouse/migrations/000395_corpscout_se_company_person_entity.down.sql \
+git add corpscout/clickhouse/migrations/000396_corpscout_se_company_person_entity.up.sql \
+  corpscout/clickhouse/migrations/000396_corpscout_se_company_person_entity.down.sql \
   corpscout/services/dagster_v3/src/dagster_v3/defs/se_company/person/__init__.py \
   corpscout/services/dagster_v3/src/dagster_v3/defs/se_company/person/tables.py \
   corpscout/services/dagster_v3/src/dagster_v3/defs/sweden_company/companies_current.py \
@@ -1903,7 +1903,7 @@ Check how `assert_clickhouse_tables_exist` is called in `se_company/address/asse
 
 `tests/test_se_company_person_normalize_clickhouse_local.py`, marked `pytestmark = pytest.mark.integration`, built the way `tests/test_se_company_address_normalize_clickhouse_local.py` is — read that file first and copy its structure rather than inventing a new one. During this task it still imports `_clickhouse_local_command` from `tests.test_se_company_person_clickhouse_local`; Task 4 re-points it.
 
-1. Build the schema: read `000395_corpscout_se_company_person_entity.up.sql`, split on `;`, and keep the `CREATE DATABASE` statement plus every statement containing `CREATE TABLE IF NOT EXISTS corpscout.se_company_person_`. The `SYSTEM STOP/START VIEW` and `ALTER TABLE ... MODIFY QUERY` statements name `se_companies_serving`, which this fixture does not build, so they must be dropped — assert in the test that exactly six CREATE TABLE statements survive the filter.
+1. Build the schema: read `000396_corpscout_se_company_person_entity.up.sql`, split on `;`, and keep the `CREATE DATABASE` statement plus every statement containing `CREATE TABLE IF NOT EXISTS corpscout.se_company_person_`. The `SYSTEM STOP/START VIEW` and `ALTER TABLE ... MODIFY QUERY` statements name `se_companies_serving`, which this fixture does not build, so they must be dropped — assert in the test that exactly six CREATE TABLE statements survive the filter.
 2. Insert the three raw rows of Task 3's `RAW_BV` / `RAW_ESEF` / `RAW_TOMBSTONE` shapes as one `INSERT INTO corpscout.se_company_person_suggestion (...) VALUES ...`, with `suggested_at` `2026-09-01`, `2026-09-02`, `2026-09-03`, `source_record_id ''`, `document_ref NULL` and `data` as the JSON object text each shape carries. Then insert a fourth row whose `data` is `'{}'` and whose `role_key` is NULL, to prove the tombstone shape passes the `valid_data` constraint.
 3. Assert the constraint bites: an `INSERT ... VALUES` whose `data` is `'[1,2]'` raises `Code: 469` (`VIOLATED_CONSTRAINT`). Use `pytest.raises`-style handling on the subprocess result, not a bare run — this is the assertion that keeps `data` an object.
 4. For each of `join_use_nulls = 0` and `1`: run `changed_scope_sql()` with `normalizer_version = 'se-person-normalizer-v1'` and assert both company ids come back; run `changed_rows_sql()` for those ids and assert the rows come back in `(company_id, source, slot)` order with `data` already coerced (the fourth row's `'{}'` survives, and a row seeded with `'[1,2]'` cannot exist to be coerced, which is the point of step 3).
