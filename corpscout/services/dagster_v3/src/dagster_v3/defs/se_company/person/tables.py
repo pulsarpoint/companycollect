@@ -38,7 +38,7 @@ NORMALIZED_COLUMNS: tuple[str, ...] = (
     "company_id", "source", "slot", "suggestion_id", "normalized_id", "normalizer_version",
     "parse_status", "parse_notes", "first_tokens", "middle_tokens", "last_tokens",
     "display_first", "display_last", "display_name", "birth_year", "wikidata_id",
-    "role_key", "role_code", "role_year", "role_from", "role_to", "data", "normalized_at",
+    "role_code", "role_key", "role_year", "role_from", "role_to", "data", "normalized_at",
 )
 MEMBER_COLUMNS: tuple[str, ...] = (
     "member_sources", "member_slots", "member_names", "member_birth_years",
