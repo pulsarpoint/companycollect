@@ -174,7 +174,7 @@ CREATE TABLE IF NOT EXISTS corpscout.wikidata_company_identifiers (
     `resolved_at` DateTime64(3, 'UTC')
 ) ENGINE = ReplacingMergeTree(resolved_at) ORDER BY (identifier_type, identifier_value, wikidata_id);
 
--- Production SHOW CREATE TABLE snapshot (2026-09-09), CODECs and index_granularity stripped.
+-- Production SHOW CREATE TABLE snapshot (2026-09-09), CODECs stripped.
 
 CREATE TABLE corpscout.esef_filings
 (

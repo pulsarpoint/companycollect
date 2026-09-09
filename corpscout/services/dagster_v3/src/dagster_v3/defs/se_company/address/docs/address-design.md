@@ -141,7 +141,7 @@ Change rule: the shared helper's -- a company is visited when its source table's
 newer than the company's current suggestion row from that source, or it has never been
 suggested by that source; `execute: false` (default) previews the count without writing.
 
-`se_company_address_extract_job` (`jobs.py`) selects the three extractors and
+`se_company_address_extract_job` (`jobs.py`) selects the four extractors and
 `se_company_address_normalize` (which now `deps` on them); `se_company_address_weekly`
 schedules it Mondays 07:05 UTC (`5 7 * * 1`) with `execute: true`, `page_size: 20000` per
 extractor and `changed_only: true` on the normalize asset, registered STOPPED. It took the

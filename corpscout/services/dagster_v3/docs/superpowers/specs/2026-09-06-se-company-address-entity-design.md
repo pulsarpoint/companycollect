@@ -438,7 +438,7 @@ paging, `execute: false` preview, `max_companies` cap.
   `postal`, slot `company`; `observed_at` the report's `normalized_at`.
 - Reviewer rows come only from the backoffice (section 8).
 
-`se_company_address_extract_job` selects the three extractors and the normalize asset;
+`se_company_address_extract_job` selects the four extractors and the normalize asset;
 `se_company_address_v2_weekly` is registered stopped (an interim name: the old model's
 `address_legacy.py` registers `se_company_address_weekly` until the cutover, which renames
 the new one).

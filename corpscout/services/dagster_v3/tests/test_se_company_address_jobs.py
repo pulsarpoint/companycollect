@@ -1,5 +1,5 @@
 """The address extract job and its STOPPED weekly (spec section 7), plus the normalize
-asset's dependence on the three extractors."""
+asset's dependence on the four extractors."""
 
 import dagster as dg
 
