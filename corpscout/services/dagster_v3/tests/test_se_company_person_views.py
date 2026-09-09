@@ -10,14 +10,20 @@ before it ever reaches a real database.
 Part two runs the actual migration file (schema-relevant statements only) plus hand-built
 upstream fixture tables -- assembled directly from the CURRENT column set of
 `se_financial_report_signatories` (migrations 000143 + 000244 + 000289),
-`esef_document_people` (000244 + 000289), `wikidata_company_people` +
-`wikidata_persons` (000152 + 000244 + 000268 + 000289), `wikidata_company_identifiers`
+`esef_document_people` (000395, lei-shaped, hash formulas unchanged since 000289) plus its
+register-verified link `esef_entity_registry_map` (000149 + 000395), `wikidata_company_people`
++ `wikidata_persons` (000152 + 000244 + 000268 + 000289), `wikidata_company_identifiers`
 (000013 + 000018), and `company_identifier` (000174) -- through `clickhouse-local`, exactly
 as tests/test_se_company_person_clickhouse_local.py does for the older draft pipeline. The
-fixture rows cover the three cases the plan calls out: a Wikidata row bridging via LEI, an
-invalid-orgnr Wikidata row that must be filtered out, and an ESEF row in a non-SE country
-that must be excluded. The script runs twice, once per `join_use_nulls` setting, and must
-answer identically both times.
+`se_esef_document_people` view sits between `esef_document_people` and
+`se_company_person_esef`: it is rendered fresh from
+`dagster_v3.defs.esef_filings.country_views.build_se_esef_view_sql` on the matching
+`tables.SE_ESEF_VIEWS` entry, the same call migration 000395 embeds. The fixture rows cover
+the three cases the plan calls out: a Wikidata row bridging via LEI, an invalid-orgnr
+Wikidata row that must be filtered out, and two ESEF rows that must be excluded -- one whose
+LEI is mapped but `link_status = 'unverified'`, one whose LEI has no map row at all. The
+script runs twice, once per `join_use_nulls` setting, and must answer identically both
+times.
 
 000331 (Task 3) widened all three views with one more column, `source_observed_at` --
 following the `se_address_geocodes_served` precedent (000327 widening 000325 in place), it
@@ -48,6 +54,8 @@ from dagster_v3.defs.company_people.source_views import (
     build_se_company_person_esef_view_sql,
     build_se_company_person_wikidata_view_sql,
 )
+from dagster_v3.defs.esef_filings import tables as esef_tables
+from dagster_v3.defs.esef_filings.country_views import build_se_esef_view_sql
 
 # Only the executed clickhouse-local tests at the bottom of this module need the
 # `integration` marker (they shell out to a real engine, possibly via Docker); the drift
@@ -305,25 +313,36 @@ CREATE TABLE corpscout.se_financial_report_signatories
 ENGINE = MergeTree
 ORDER BY (company_id, fiscal_year, statement_key, signatory_kind, person_seq);
 
+-- Lei-shaped since migration 000395 (ESEF slice 1, Task 1): the country/company stamps are
+-- gone, `lei` heads the sorting key, and the two MATERIALIZED hashes moved to the end of the
+-- column list -- the formulas themselves are unchanged since 000289.
 CREATE TABLE corpscout.esef_document_people
 (
     candidate_uid FixedString(64),
     source_record_uid FixedString(64),
     source_document_id String,
-    country_code LowCardinality(String),
-    company_id String,
+    lei String,
     fiscal_year UInt16,
     name String,
+    role String,
+    role_category LowCardinality(String),
+    organization String,
+    status LowCardinality(String),
+    effective_from Nullable(Date32),
+    effective_to Nullable(Date32),
+    confidence Float32,
+    evidence_ids Array(String),
+    model_provider LowCardinality(String),
+    model_name String,
+    prompt_version String,
+    source_run_id String,
+    extracted_at DateTime64(3, 'UTC'),
     person_profile_hash FixedString(64) MATERIALIZED
         lower(hex(SHA256(concat(
             'company-person-profile-v1\n',
             toString(length(lowerUTF8(trim(name)))), ':', lowerUTF8(trim(name)), '\n',
             '0:'
         )))),
-    role String,
-    role_category LowCardinality(String),
-    organization String,
-    status LowCardinality(String),
     person_role_hash FixedString(64) MATERIALIZED
         lower(hex(SHA256(concat(
             'company-person-role-v1\n',
@@ -336,19 +355,26 @@ CREATE TABLE corpscout.esef_document_people
             ifNull(toString(effective_from), ''), '\n',
             ifNull(toString(effective_to), ''), '\n',
             toString(fiscal_year)
-        )))),
-    effective_from Nullable(Date32),
-    effective_to Nullable(Date32),
-    confidence Float32,
-    evidence_ids Array(String),
-    model_provider LowCardinality(String),
-    model_name String,
-    prompt_version String,
-    source_run_id String,
-    extracted_at DateTime64(3, 'UTC')
+        ))))
 )
 ENGINE = ReplacingMergeTree(extracted_at)
-ORDER BY (country_code, company_id, fiscal_year, source_record_uid, candidate_uid);
+ORDER BY (lei, fiscal_year, source_record_uid, candidate_uid);
+
+-- The register-verified link (000149 + 000395's link_status column) esef_document_people
+-- joins through to reach a Swedish company_id -- see build_se_esef_view_sql.
+CREATE TABLE corpscout.esef_entity_registry_map
+(
+    lei String,
+    country_iso2 LowCardinality(String),
+    registry_id_raw String,
+    registry_id String,
+    match_source LowCardinality(String),
+    link_status LowCardinality(String) DEFAULT 'gleif',
+    source_run_id String,
+    resolved_at DateTime64(3) DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(resolved_at)
+ORDER BY (country_iso2, registry_id, lei);
 
 CREATE TABLE corpscout.wikidata_company_identifiers
 (
@@ -463,6 +489,11 @@ PENDING_A = "5560000001"  # bolagsverket + esef + wikidata se_orgnr bridge
 LEI_COMPANY_B = "5560000002"  # wikidata LEI bridge only
 INVALID_ORGNR = "123"  # too short: must never reach a view row
 
+# esef_entity_registry_map LEIs: only the register-verified one may reach the SE person view.
+LEI_REGISTER_VERIFIED = "LEI0000000000REGVER01"  # -> PENDING_A, link_status='register_verified'
+LEI_UNVERIFIED = "LEI0000000000UNVER002"  # mapped, but link_status='unverified'
+LEI_UNMAPPED = "LEI0000000000UNMAP003"  # no esef_entity_registry_map row at all
+
 
 _FIXTURE_SQL = f"""
 INSERT INTO corpscout.se_financial_report_signatories
@@ -474,19 +505,33 @@ VALUES
      toDateTime64('2026-08-01 00:00:00', 3, 'UTC'));
 
 INSERT INTO corpscout.esef_document_people
-    (candidate_uid, source_record_uid, source_document_id, country_code, company_id,
+    (candidate_uid, source_record_uid, source_document_id, lei,
      fiscal_year, name, role, role_category, organization, status, effective_from,
      effective_to, confidence, evidence_ids, model_provider, model_name, prompt_version,
      source_run_id, extracted_at)
 VALUES
-    ('{_hex64("esefcand1")}', '{_hex64("esefsrc1")}', 'doc-1', 'SE', '{PENDING_A}', 2024,
+    ('{_hex64("esefcand1")}', '{_hex64("esefsrc1")}', 'doc-1', '{LEI_REGISTER_VERIFIED}', 2024,
      'Anna Karlsson', 'CEO', 'executive', 'Acme AB', 'active', '2020-01-01', NULL, 0.9,
      [], 'openai', 'gpt', 'v1', 'run-esef-1',
      toDateTime64('2026-08-01 00:00:00', 3, 'UTC')),
-    ('{_hex64("esefcand2")}', '{_hex64("esefsrc2")}', 'doc-2', 'DK', 'DK12345678', 2024,
+    ('{_hex64("esefcand2")}', '{_hex64("esefsrc2")}', 'doc-2', '{LEI_UNVERIFIED}', 2024,
      'Lars Hansen', 'Chairman', 'board', 'Acme DK', 'active', NULL, NULL, 0.8,
      [], 'openai', 'gpt', 'v1', 'run-esef-2',
+     toDateTime64('2026-08-01 00:00:00', 3, 'UTC')),
+    ('{_hex64("esefcand3")}', '{_hex64("esefsrc3")}', 'doc-3', '{LEI_UNMAPPED}', 2024,
+     'Nora Nilsson', 'CFO', 'executive', 'Acme XX', 'active', NULL, NULL, 0.7,
+     [], 'openai', 'gpt', 'v1', 'run-esef-3',
      toDateTime64('2026-08-01 00:00:00', 3, 'UTC'));
+
+INSERT INTO corpscout.esef_entity_registry_map
+    (lei, country_iso2, registry_id_raw, registry_id, match_source, link_status,
+     source_run_id, resolved_at)
+VALUES
+    ('{LEI_REGISTER_VERIFIED}', 'SE', '{PENDING_A}', '{PENDING_A}', 'gleif_registered_as',
+     'register_verified', 'run-map-1', toDateTime64('2026-08-01 00:00:00', 3, 'UTC')),
+    ('{LEI_UNVERIFIED}', 'SE', '5560000099', '5560000099', 'gleif_registered_as',
+     'unverified', 'run-map-1', toDateTime64('2026-08-01 00:00:00', 3, 'UTC'));
+-- LEI_UNMAPPED intentionally has no row: a LEI absent from the map must also be excluded.
 
 INSERT INTO corpscout.company_identifier
     (issuer_scheme, issuer_id, country_code, company_id, match_method, match_confidence,
@@ -575,14 +620,24 @@ def _clickhouse_local_command() -> list[str]:
 
 
 def _view_creation_statements() -> list[str]:
-    """The CREATE OR REPLACE VIEW statements straight out of the migration file, so the
-    executed test proves the actual migration -- not just the builder in isolation -- runs
-    against a real engine."""
-    up_sql = _sql("up")
-    return [
-        _create_view_statement(up_sql, view)
-        for view in (BOLAGSVERKET_VIEW, ESEF_VIEW, WIKIDATA_VIEW)
+    """The CREATE OR REPLACE VIEW statements straight out of the migration file that CURRENTLY
+    owns each view's rendering (VIEW_MIGRATIONS), so the executed test proves the actual
+    migrations -- not just the builders in isolation -- run against a real engine. The esef
+    branch additionally needs `se_esef_document_people` (rendered fresh from
+    country_views.build_se_esef_view_sql, the same call 000395 embeds) created first, since
+    `se_company_person_esef` reads it, not `esef_document_people` directly."""
+    esef_document_people_view = next(
+        view
+        for view in esef_tables.SE_ESEF_VIEWS
+        if view.table == "esef_document_people"
+    )
+    statements = [
+        _create_view_statement(_sql("up", migration=VIEW_MIGRATIONS[BOLAGSVERKET_VIEW]), BOLAGSVERKET_VIEW),
+        _create_view_statement(_sql("up", migration=VIEW_MIGRATIONS[WIKIDATA_VIEW]), WIKIDATA_VIEW),
+        build_se_esef_view_sql(esef_document_people_view),
+        _create_view_statement(_sql("up", migration=VIEW_MIGRATIONS[ESEF_VIEW]), ESEF_VIEW),
     ]
+    return statements
 
 
 def _script(*, join_use_nulls: int) -> str:
@@ -665,19 +720,21 @@ def test_bolagsverket_view_projects_split_names_and_concatenated_full_name(
 
 
 @pytest.mark.integration
-def test_esef_view_excludes_non_se_country(
+def test_esef_view_excludes_unverified_and_unmapped_leis(
     sections: dict[str, list[list[str]]],
 ) -> None:
-    """The required fixture case: a DK row must never reach the view."""
+    """The required fixture cases: a LEI mapped with link_status='unverified' and a LEI
+    absent from esef_entity_registry_map altogether must both never reach the view -- only
+    the register-verified LEI's person does."""
     assert len(sections["esef"]) == 1
     row = sections["esef"][0]
     assert row[0] == PENDING_A
     assert row[1] == "Anna Karlsson"
     assert row[2] == "CEO"
     assert row[10] == "2026-08-01 00:00:00.000"  # extracted_at AS source_observed_at
-    # No row carries the DK company or the Danish person's name.
-    assert all(r[0] != "DK12345678" for r in sections["esef"])
+    # Neither the unverified-link person nor the unmapped-LEI person reaches the view.
     assert all("Hansen" not in r[1] for r in sections["esef"])
+    assert all("Nilsson" not in r[1] for r in sections["esef"])
 
 
 @pytest.mark.integration

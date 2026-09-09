@@ -20,6 +20,17 @@ SETTLED_COMPANY -- the same 2-source-pending / 1-source-settled shape the origin
 untouched by Task 3 -- those rows are still hand-inserted with arbitrary UUIDs, since
 `build_role_assignments_insert_sql` joins on whatever `person_draft_id`/`draft_ids` it finds
 there and never recomputes them.
+
+ESEF SLICE 1 (2026-09-09): `esef_document_people` is lei-shaped since migration 000395 (no
+country/company stamps), reached through the register-verified `esef_entity_registry_map` and
+the `se_esef_document_people` view. 000330/000331's own `CREATE OR REPLACE VIEW
+se_company_person_esef` text (still replayed here for the bolagsverket/wikidata views it
+shares a file with) is therefore STALE for the esef branch -- referencing columns the
+lei-shaped table no longer has -- so `_schema_statements()` drops that one statement and
+`_script()` re-issues the current rendering afterward: `se_esef_document_people` (rendered
+fresh from `country_views.build_se_esef_view_sql`, the same call 000395 embeds) then
+`se_company_person_esef` (`source_views.build_se_company_person_esef_view_sql()`, the same
+builder 000395's text is pinned against in `test_se_company_person_views.py`).
 """
 
 import functools
@@ -44,8 +55,11 @@ from dagster_v3.defs.company_people.roles import (
     build_stale_role_corrections_sql,
 )
 from dagster_v3.defs.company_people.source_views import (
+    build_se_company_person_esef_view_sql,
     build_se_company_person_source_observations_sql,
 )
+from dagster_v3.defs.esef_filings import tables as esef_tables
+from dagster_v3.defs.esef_filings.country_views import build_se_esef_view_sql
 
 pytestmark = pytest.mark.integration
 
@@ -72,6 +86,7 @@ APPLIED_PREFIXES = (
 
 PENDING_COMPANY = "5565200028"
 SETTLED_COMPANY = "5560125220"
+PENDING_COMPANY_LEI = "LEI0000000000PENDING1"  # register-verified -> PENDING_COMPANY
 STAGE_TABLE = "`corpscout`.`stage_roles`"
 NOW = datetime(2026, 8, 22, 9, tzinfo=UTC)
 
@@ -123,25 +138,36 @@ CREATE TABLE corpscout.se_financial_report_signatories
 ENGINE = MergeTree
 ORDER BY (company_id, fiscal_year, statement_key, signatory_kind, person_seq);
 
+-- Lei-shaped since migration 000395 (ESEF slice 1, Task 1): the country/company stamps are
+-- gone, `lei` heads the sorting key, and the two MATERIALIZED hashes moved to the end of the
+-- column list -- the formulas themselves are unchanged since 000289.
 CREATE TABLE corpscout.esef_document_people
 (
     candidate_uid FixedString(64),
     source_record_uid FixedString(64),
     source_document_id String,
-    country_code LowCardinality(String),
-    company_id String,
+    lei String,
     fiscal_year UInt16,
     name String,
+    role String,
+    role_category LowCardinality(String),
+    organization String,
+    status LowCardinality(String),
+    effective_from Nullable(Date32),
+    effective_to Nullable(Date32),
+    confidence Float32,
+    evidence_ids Array(String),
+    model_provider LowCardinality(String),
+    model_name String,
+    prompt_version String,
+    source_run_id String,
+    extracted_at DateTime64(3, 'UTC'),
     person_profile_hash FixedString(64) MATERIALIZED
         lower(hex(SHA256(concat(
             'company-person-profile-v1\n',
             toString(length(lowerUTF8(trim(name)))), ':', lowerUTF8(trim(name)), '\n',
             '0:'
         )))),
-    role String,
-    role_category LowCardinality(String),
-    organization String,
-    status LowCardinality(String),
     person_role_hash FixedString(64) MATERIALIZED
         lower(hex(SHA256(concat(
             'company-person-role-v1\n',
@@ -154,19 +180,26 @@ CREATE TABLE corpscout.esef_document_people
             ifNull(toString(effective_from), ''), '\n',
             ifNull(toString(effective_to), ''), '\n',
             toString(fiscal_year)
-        )))),
-    effective_from Nullable(Date32),
-    effective_to Nullable(Date32),
-    confidence Float32,
-    evidence_ids Array(String),
-    model_provider LowCardinality(String),
-    model_name String,
-    prompt_version String,
-    source_run_id String,
-    extracted_at DateTime64(3, 'UTC')
+        ))))
 )
 ENGINE = ReplacingMergeTree(extracted_at)
-ORDER BY (country_code, company_id, fiscal_year, source_record_uid, candidate_uid);
+ORDER BY (lei, fiscal_year, source_record_uid, candidate_uid);
+
+-- The register-verified link (000149 + 000395's link_status column) esef_document_people
+-- joins through to reach a Swedish company_id -- see build_se_esef_view_sql.
+CREATE TABLE corpscout.esef_entity_registry_map
+(
+    lei String,
+    country_iso2 LowCardinality(String),
+    registry_id_raw String,
+    registry_id String,
+    match_source LowCardinality(String),
+    link_status LowCardinality(String) DEFAULT 'gleif',
+    source_run_id String,
+    resolved_at DateTime64(3) DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(resolved_at)
+ORDER BY (country_iso2, registry_id, lei);
 
 CREATE TABLE corpscout.wikidata_company_identifiers
 (
@@ -280,14 +313,22 @@ VALUES
      toDateTime64('2026-08-01 00:00:00', 3, 'UTC'));
 
 INSERT INTO corpscout.esef_document_people
-    (candidate_uid, source_record_uid, source_document_id, country_code, company_id,
+    (candidate_uid, source_record_uid, source_document_id, lei,
      fiscal_year, name, role, role_category, organization, status, effective_from,
      effective_to, confidence, evidence_ids, model_provider, model_name, prompt_version,
      source_run_id, extracted_at)
 VALUES
-    ('{"e" * 64}', '{"f" * 64}', 'doc-pending-1', 'SE', '{PENDING_COMPANY}', 2024,
+    ('{"e" * 64}', '{"f" * 64}', 'doc-pending-1', '{PENDING_COMPANY_LEI}', 2024,
      'David Mindus', 'board', 'board', 'Acme AB', 'active', NULL, NULL, 0.9,
      [], 'openai', 'gpt', 'v1', 'run-esef-1',
+     toDateTime64('2026-08-01 00:00:00', 3, 'UTC'));
+
+INSERT INTO corpscout.esef_entity_registry_map
+    (lei, country_iso2, registry_id_raw, registry_id, match_source, link_status,
+     source_run_id, resolved_at)
+VALUES
+    ('{PENDING_COMPANY_LEI}', 'SE', '{PENDING_COMPANY}', '{PENDING_COMPANY}',
+     'gleif_registered_as', 'register_verified', 'run-map-1',
      toDateTime64('2026-08-01 00:00:00', 3, 'UTC'));
 """
 
@@ -381,7 +422,14 @@ def _settled_company_draft_id() -> str:
     return draft_id
 
 
+_STALE_ESEF_VIEW_PREFIX = "CREATE OR REPLACE VIEW corpscout.se_company_person_esef"
+
+
 def _schema_statements() -> list[str]:
+    """000330/000331's own `se_company_person_esef` text is STALE for the lei-shaped
+    esef_document_people this fixture now builds (see module docstring) -- it is dropped here
+    and the current rendering (`se_esef_document_people` then `se_company_person_esef`, both
+    from their Python builders) is appended once, after every other replayed statement."""
     statements: list[str] = []
     for name in MIGRATIONS:
         text = (MIGRATIONS_DIR / name).read_text(encoding="utf-8")
@@ -389,8 +437,18 @@ def _schema_statements() -> list[str]:
             statement = "\n".join(
                 line for line in raw.splitlines() if not line.strip().startswith("--")
             ).strip()
-            if statement.upper().startswith(APPLIED_PREFIXES):
-                statements.append(statement)
+            if not statement.upper().startswith(APPLIED_PREFIXES):
+                continue
+            if statement.startswith(_STALE_ESEF_VIEW_PREFIX):
+                continue
+            statements.append(statement)
+    esef_document_people_view = next(
+        view
+        for view in esef_tables.SE_ESEF_VIEWS
+        if view.table == "esef_document_people"
+    )
+    statements.append(build_se_esef_view_sql(esef_document_people_view))
+    statements.append(build_se_company_person_esef_view_sql())
     return statements
 
 
