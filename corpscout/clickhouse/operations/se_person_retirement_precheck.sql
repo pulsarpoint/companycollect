@@ -3,9 +3,10 @@
 --
 -- Gate 1: nothing left in ClickHouse reads any of these. The match is on a FROM or a JOIN,
 -- so a provenance string literal in a view body cannot hold the gate open, and the trailing
--- character class stops corpscout.se_company_person_v2 and the entity's five other tables
--- from matching the se_company_person alternative -- the alternatives are ordered
--- longest-first for the same reason.
+-- boundary class ([^_a-zA-Z0-9]|$) is what stops corpscout.se_company_person_v2 and the
+-- entity's five other tables from matching the se_company_person alternative on a prefix
+-- hit -- it rules out a prefix match regardless of which alternative matches first, so the
+-- order the alternatives are listed in below is irrelevant.
 SELECT count() = 0 AS no_readers, groupArray(name) AS readers
 FROM system.tables
 WHERE database = 'corpscout'
@@ -13,18 +14,21 @@ WHERE database = 'corpscout'
   AND name NOT IN (
       'se_company_person_bolagsverket', 'se_company_person_esef',
       'se_company_person_wikidata', 'company_management_current',
-      'company_management_observations', 'se_company_person_collision_candidate',
+      'company_management_current_build', 'company_management_observations',
+      'se_company_person_collision_candidate',
       'se_company_person_enrichment_observation', 'se_company_person_correction',
       'se_company_person_role_draft', 'se_company_person_role',
       'se_company_person_v1_role_baseline', 'se_company_person'
   )
   AND match(create_table_query,
-      '(FROM|JOIN)\\s+(corpscout\\.)?(se_company_person_enrichment_observation|se_company_person_collision_candidate|company_management_observations|se_company_person_v1_role_baseline|se_company_person_bolagsverket|se_company_person_role_draft|se_company_person_correction|se_company_person_wikidata|company_management_current|se_company_person_esef|se_company_person_role|se_company_person)([^_a-zA-Z0-9]|$)');
+      '(FROM|JOIN)\\s+(corpscout\\.)?(se_company_person_enrichment_observation|se_company_person_collision_candidate|company_management_current_build|company_management_observations|se_company_person_v1_role_baseline|se_company_person_bolagsverket|se_company_person_role_draft|se_company_person_correction|se_company_person_wikidata|company_management_current|se_company_person_esef|se_company_person_role|se_company_person)([^_a-zA-Z0-9]|$)');
 
 -- Gate 2: engine and size of every object about to go. se_company_person_v1_role_baseline
 -- was created by an asset, not a migration, and may simply not exist -- a missing row here
--- is expected and the DROP is written IF EXISTS. total_rows is NULL for the three plain
--- Views, which is correct and is why Gate 2b exists.
+-- is expected and the DROP is written IF EXISTS. company_management_current_build is dbt's
+-- build target for company_management_current, likewise created by dbt rather than a
+-- migration, and is orphaned the same way (controller ruling 2026-09-09). total_rows is
+-- NULL for the three plain Views, which is correct and is why Gate 2b exists.
 SELECT
     name,
     engine,
@@ -35,7 +39,8 @@ WHERE database = 'corpscout'
   AND name IN (
       'se_company_person_bolagsverket', 'se_company_person_esef',
       'se_company_person_wikidata', 'company_management_current',
-      'company_management_observations', 'se_company_person_collision_candidate',
+      'company_management_current_build', 'company_management_observations',
+      'se_company_person_collision_candidate',
       'se_company_person_enrichment_observation', 'se_company_person_correction',
       'se_company_person_role_draft', 'se_company_person_role',
       'se_company_person_v1_role_baseline', 'se_company_person'

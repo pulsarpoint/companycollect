@@ -21,7 +21,10 @@ POSTCHECK = SCRIPTS / "se_person_retirement_postcheck.sql"
 # reads it. The three source views read se_financial_report_signatories, esef_document_people
 # and the wikidata tables -- all KEPT -- so they only have to precede nothing in particular,
 # but they go first because the retired assets read THEM. company_management_current is a
-# dbt-built table whose model went in Task 6, and company_management_observations is its
+# dbt-built table whose model went in Task 6; company_management_current_build is its dbt
+# build target, orphaned the same way Task 6 left the model without a writer (controller
+# ruling 2026-09-09: nothing in the ledger names it, since dbt created it, not a migration),
+# and follows it immediately. company_management_observations is company_management_current's
 # history twin, which the same contract wrote and which nothing has read since (controller
 # ruling 2026-09-09: it joins the list rather than being left an orphan). se_company_person
 # is last: the role, draft, correction, observation and collision tables all key off it.
@@ -30,6 +33,7 @@ DROP_ORDER = (
     ("VIEW", "se_company_person_esef"),
     ("VIEW", "se_company_person_wikidata"),
     ("TABLE", "company_management_current"),
+    ("TABLE", "company_management_current_build"),
     ("TABLE", "company_management_observations"),
     ("TABLE", "se_company_person_collision_candidate"),
     ("TABLE", "se_company_person_enrichment_observation"),

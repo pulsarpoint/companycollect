@@ -9,7 +9,8 @@ WHERE database = 'corpscout'
   AND name IN (
       'se_company_person_bolagsverket', 'se_company_person_esef',
       'se_company_person_wikidata', 'company_management_current',
-      'company_management_observations', 'se_company_person_collision_candidate',
+      'company_management_current_build', 'company_management_observations',
+      'se_company_person_collision_candidate',
       'se_company_person_enrichment_observation', 'se_company_person_correction',
       'se_company_person_role_draft', 'se_company_person_role',
       'se_company_person_v1_role_baseline', 'se_company_person'
