@@ -3,11 +3,13 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import dagster as dg
 import pytest
 from dagster_clickhouse import ClickhouseResource
 
+import dagster_v3.defs
 from dagster_v3.defs.se_company.common import (
     EPOCH,
     SE_COMPANY_ID_PATTERN,
@@ -39,8 +41,9 @@ SOLE_TRADER = "196408233412"  # a 12-digit personnummer-based enskild firma id
 def test_company_ids_accept_sole_traders() -> None:
     """se_companies carries 12-digit personnummer-based ids for enskild firma, and the
     se_company finals' has_company CHECK admits them -- so a scoped run must too.
-    company_people.source_views.normalized_company_ids validates 10 digits only, which
-    is why this exists rather than being reused from there."""
+    The retired people chain had its own 10-digit-only validator; this one accepts both
+    widths the se_company tables publish, which is why the sole traders survive a scoped
+    run."""
     assert normalized_se_company_ids([SOLE_TRADER, COMPANY]) == (SOLE_TRADER, COMPANY)
     assert SE_COMPANY_ID_PATTERN == "^([0-9]{10}|[0-9]{12})$"
     for bad in ("55652000", "5565200028X", "55652000281", "", "556-520-0028"):
@@ -284,8 +287,8 @@ def test_ledger_sensor_with_a_custom_id_column_uses_it_end_to_end() -> None:
 
 class _FakeLedgerClient:
     """In-memory ledger client answering `ledger_sensor`'s two queries
-    (`build_ledger_cursor_sql` / `build_touched_companies_sql`). Mirrors
-    `_FakeCorrectionLedgerClient` in `test_se_company_person_corrections.py`
+    (`build_ledger_cursor_sql` / `build_touched_companies_sql`). Same
+    scripted-client technique as `tests/test_se_company_basic_info_batch.py`
     so the boundary behaviour under test isn't reimplemented differently here.
     """
 
@@ -447,3 +450,17 @@ def test_ledger_sensor_advances_cursor_without_a_run_request_when_nothing_is_tou
 
     assert execution_data.cursor == f"2:{_LEDGER_ID_A}:{_LEDGER_CREATED_AT_1}"
     assert execution_data.run_requests == []
+
+
+def test_the_retired_people_chain_is_gone_from_the_source_tree() -> None:
+    """Slice 0 deleted the 2026-08-19 people model whole. A module left behind here would
+    be dead code whose ClickHouse tables no longer exist -- every one of them is on the
+    owner-run drop list."""
+    defs_root = Path(dagster_v3.defs.__file__).resolve().parent
+    assert not (defs_root / "company_people").exists()
+    for module in ("sweden_financial/roles.py", "esef_filings/roles.py", "wikidata/roles.py"):
+        assert not (defs_root / module).exists(), module
+    # The maps themselves live on, in the person package.
+    from dagster_v3.defs.se_company.person.roles import SOURCE_ROLE_MAPPINGS
+
+    assert set(SOURCE_ROLE_MAPPINGS) == {"bolagsverket", "esef", "wikidata"}

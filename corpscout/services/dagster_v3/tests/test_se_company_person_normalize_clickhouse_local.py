@@ -44,7 +44,7 @@ from dagster_v3.defs.se_company.person.normalize import (
     normalized_row,
 )
 from dagster_v3.defs.se_company.person.normalize_se import NORMALIZER_VERSION
-from tests.test_se_company_person_clickhouse_local import _clickhouse_local_command
+from tests.clickhouse_local import clickhouse_local_command
 from tests.test_se_company_person_normalize import RAW_BV, RAW_ESEF, RAW_TOMBSTONE, STAMP
 
 pytestmark = pytest.mark.integration
@@ -254,7 +254,7 @@ def sections(request: pytest.FixtureRequest) -> dict[str, list[list[str]]]:
     script = f"SET join_use_nulls = {request.param};\n" + ";\n".join(_statements()) + ";\n"
     try:
         completed = subprocess.run(
-            _clickhouse_local_command(), input=script, capture_output=True, text=True, timeout=900
+            clickhouse_local_command(), input=script, capture_output=True, text=True, timeout=900
         )
     except (OSError, subprocess.TimeoutExpired) as exc:  # pragma: no cover - env
         pytest.skip(f"clickhouse-local is unusable here: {exc}")
@@ -338,7 +338,7 @@ def test_the_valid_data_constraint_rejects_a_non_object() -> None:
     ) + ";\n"
     try:
         completed = subprocess.run(
-            _clickhouse_local_command(), input=script, capture_output=True, text=True, timeout=900
+            clickhouse_local_command(), input=script, capture_output=True, text=True, timeout=900
         )
     except (OSError, subprocess.TimeoutExpired) as exc:  # pragma: no cover - env
         pytest.skip(f"clickhouse-local is unusable here: {exc}")

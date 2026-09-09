@@ -35,7 +35,7 @@ from dagster_v3.defs.sweden_company.clickhouse import (
     sweden_company_source_tombstone_insert_sql,
 )
 from dagster_v3.defs.sweden_company.normalized_duckdb import _date32_bounded_sql
-from tests.test_se_company_person_clickhouse_local import _clickhouse_local_command
+from tests.clickhouse_local import clickhouse_local_command
 
 pytestmark = pytest.mark.integration
 
@@ -63,7 +63,7 @@ def _schema_statements() -> list[str]:
 def _run(script_statements: list[str]) -> list[str]:
     script = ";\n".join(script_statements) + ";\n"
     completed = subprocess.run(
-        _clickhouse_local_command(),
+        clickhouse_local_command(),
         input=script,
         capture_output=True,
         text=True,

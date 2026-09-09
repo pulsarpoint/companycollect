@@ -14,13 +14,13 @@ Swedish annual reports carry two audit-related iXBRL fact families:
   over both concepts has no deterministic winner for those 608 groups,
   relying on undocumented ClickHouse row-scan order. ``audit_firm`` is
   therefore resolved with ``argMaxIf`` and an explicit tuple comparator key,
-  ``(concept_local_name = 'ValtRevisionsbolagsnamn', fact_ordinal)`` -- the
-  same boolean-guard-plus-ordinal tiebreak pattern as
-  ``company_people/tables.py``'s ``_SE_XBRL_SIGNATURES_SELECT``
-  (``argMax(x, (role_kind != 'unknown', statement_key))``): deterministic
-  preference is ``ValtRevisionsbolagsnamn`` (the newer-taxonomy spelling)
-  first, then the highest ``fact_ordinal`` (the latest fact in document
-  order) breaks ties within one spelling.
+  ``(concept_local_name = 'ValtRevisionsbolagsnamn', fact_ordinal)`` -- a
+  boolean-guard-plus-ordinal tiebreak. The people model that consumed this
+  projection was retired on 2026-09-09; the signatories table is now read by
+  the person entity's extractor (slice 1). Deterministic preference is
+  ``ValtRevisionsbolagsnamn`` (the newer-taxonomy spelling) first, then the
+  highest ``fact_ordinal`` (the latest fact in document order) breaks ties
+  within one spelling.
 * ``RevisorspateckningRevisionsberattelseEnligtStandardutformning`` /
   ``RevisorspateckningRevisionsberattelseAvvikerStandardutformning`` --
   boolean-ish "signed" facts marking whether the auditor's report follows

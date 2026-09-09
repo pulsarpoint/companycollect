@@ -63,11 +63,8 @@ import pytest
 from dagster_v3.defs.sweden_company.companies_current import (
     build_se_companies_serving_sql,
 )
+from tests.clickhouse_local import clickhouse_local_command, literal
 from tests.se_company_ddl import table_block
-from tests.test_se_company_person_clickhouse_local import (
-    _clickhouse_local_command,
-    _literal,
-)
 
 pytestmark = pytest.mark.integration
 
@@ -144,7 +141,7 @@ def _basic_info_row(
     return (
         f"('{company_id}', '{legal_name}', 'scb', {legal_form_code}, 'scb', 'active', 'bolagsverket', "
         f"NULL, '', NULL, '', NULL, '', {description}, {source}, {description_language}, "
-        f"{description_sv}, {source}, {_literal(NOW)}, 'fold-v1', 'run')"
+        f"{description_sv}, {source}, {literal(NOW)}, 'fold-v1', 'run')"
     )
 
 
@@ -157,7 +154,7 @@ BOLAGSVERKET_COLUMNS = (
 def _bolagsverket_row(company_id: str, *, reason: str = "NULL") -> str:
     return (
         f"('{company_id}', '{company_id}$X', 'Register AB', {reason}, 'run', "
-        f"'rec-{company_id}', 'HASH-{company_id}', {_literal(NOW)})"
+        f"'rec-{company_id}', 'HASH-{company_id}', {literal(NOW)})"
     )
 
 
@@ -208,15 +205,15 @@ def _address_row(
 ) -> str:
     kinds_sql = "[" + ", ".join(f"'{kind}'" for kind in kinds) + "]"
     return (
-        f"('{company_id}', '{address_key}', {_literal(box) if box else 'NULL'}, "
-        f"{_literal(street_name) if street_name else 'NULL'}, "
-        f"{_literal(house_number) if house_number else 'NULL'}, "
-        f"{_literal(unit) if unit else 'NULL'}, "
+        f"('{company_id}', '{address_key}', {literal(box) if box else 'NULL'}, "
+        f"{literal(street_name) if street_name else 'NULL'}, "
+        f"{literal(house_number) if house_number else 'NULL'}, "
+        f"{literal(unit) if unit else 'NULL'}, "
         f"'{postal_code}', '{city}', 'se', '{line}', {kinds_sql}, ['{source}'], ['0'], "
         f"'{source}', {active}, '{inactive_reason}', "
         f"{'NULL' if latitude is None else latitude}, "
         f"{'NULL' if longitude is None else longitude}, "
-        f"'{geocode_status}', '{geocode_precision}', {_literal(NOW)}, 'v1', 'run')"
+        f"'{geocode_status}', '{geocode_precision}', {literal(NOW)}, 'v1', 'run')"
     )
 
 
@@ -466,7 +463,7 @@ def _script(*, join_use_nulls: int) -> str:
     ids=("join_use_nulls_off", "join_use_nulls_on"),
 )
 def rows(request: pytest.FixtureRequest) -> dict[str, dict]:
-    command = _clickhouse_local_command()
+    command = clickhouse_local_command()
     try:
         completed = subprocess.run(
             command,

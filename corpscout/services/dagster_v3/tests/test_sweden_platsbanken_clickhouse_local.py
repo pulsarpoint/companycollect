@@ -10,7 +10,7 @@ from dagster_v3.defs.sweden_platsbanken.clickhouse import (
     append_stage_insert_sql,
     company_history_insert_sql,
 )
-from tests.test_se_company_person_clickhouse_local import _clickhouse_local_command
+from tests.clickhouse_local import clickhouse_local_command
 
 
 pytestmark = pytest.mark.integration
@@ -54,7 +54,7 @@ def test_generated_final_alias_queries_execute_in_clickhouse() -> None:
 
     try:
         completed = subprocess.run(
-            _clickhouse_local_command(),
+            clickhouse_local_command(),
             input=script,
             capture_output=True,
             text=True,

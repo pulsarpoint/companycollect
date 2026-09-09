@@ -12,8 +12,8 @@ from dagster_v3.defs.se_company.basic_info import tables
 from dagster_v3.defs.se_company.basic_info.extract import changed_scope_sql, insert_page_sql, since_scope_sql
 from dagster_v3.defs.se_company.basic_info.llm import llm_scope_sql
 from dagster_v3.defs.sweden_ratsit.normalization import RATSIT_NORMALIZER_VERSION
+from tests.clickhouse_local import clickhouse_local_command
 from tests.test_se_company_basic_info_clickhouse_local import _bind
-from tests.test_se_company_person_clickhouse_local import _clickhouse_local_command
 
 pytestmark = pytest.mark.integration
 
@@ -55,7 +55,7 @@ def _schema() -> list[str]:
 
 def _run(statements: list[str], *, join_use_nulls: int) -> list[str]:
     script = f"SET join_use_nulls = {join_use_nulls};\n" + ";\n".join(statements) + ";\n"
-    completed = subprocess.run(_clickhouse_local_command(), input=script, capture_output=True, text=True, timeout=900)
+    completed = subprocess.run(clickhouse_local_command(), input=script, capture_output=True, text=True, timeout=900)
     assert completed.returncode == 0, completed.stderr or completed.stdout
     return [line for line in completed.stdout.splitlines() if line.strip()]
 
