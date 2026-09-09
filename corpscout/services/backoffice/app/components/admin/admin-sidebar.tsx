@@ -8,13 +8,10 @@ import {
   ChevronRightIcon,
   DatabaseZapIcon,
   FlagIcon,
-  PlayIcon,
   SearchIcon,
   Settings2Icon,
   SlidersHorizontalIcon,
   TagsIcon,
-  TriangleAlertIcon,
-  UsersRoundIcon,
 } from "lucide-react";
 import {
   Collapsible,
@@ -43,24 +40,6 @@ const COUNTRY_NAVIGATION = [
     code: "SE",
     icon: FlagIcon,
     items: [
-      {
-        title: "People",
-        to: "/admin/se/people",
-        icon: UsersRoundIcon,
-        exact: true,
-      },
-      {
-        title: "Stale corrections",
-        to: "/admin/se/people/stale-corrections",
-        icon: TriangleAlertIcon,
-        exact: true,
-      },
-      {
-        title: "People pipeline",
-        to: "/admin/se/people/pipeline",
-        icon: PlayIcon,
-        exact: true,
-      },
       {
         // One entry for the whole tabbed list area (Info · Geocoding ·
         // Financial · People). exact:false so it stays active on every tab.
@@ -97,11 +76,7 @@ export function AdminSidebar() {
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton
-              size="lg"
-              tooltip="CompanyCollect admin"
-              render={<Link to="/admin/se/people" />}
-            >
+            <SidebarMenuButton size="lg" tooltip="CompanyCollect admin">
               <span className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
                 <BotIcon />
               </span>

@@ -115,16 +115,6 @@ export default [
     route("general/roles", "routes/admin-general-roles.tsx"),
     route("settings/llms", "routes/admin-settings-llms.tsx"),
     route("settings/llms/local", "routes/admin-settings-llms-local.tsx"),
-    route("se/people", "routes/admin-se-people.tsx"),
-    route(
-      "se/people/person/:companyId/:personId",
-      "routes/admin-se-people-person.tsx",
-    ),
-    // Backoffice-triggered runs for the ClickHouse company-person model
-    // (identity evaluation, resolution, merge suggestions) -- SE People
-    // Experiment Task 5, mirroring se/companies/pipeline's confirm-then-launch
-    // pattern. A real page, not a sheet: see the route's own docstring.
-    route("se/people/pipeline", "routes/admin-se-people-pipeline.tsx"),
     // One company, nine tabs. The layout owns the header and the sub-menu; a
     // bare /admin/se/company/:companyId redirects to Info.
     route("se/company/:companyId", "routes/admin-se-company-layout.tsx", [
@@ -145,7 +135,6 @@ export default [
         ),
         route(":documentId/llm", "routes/admin-se-company-esef-llm.tsx"),
       ]),
-      route("people", "routes/admin-se-company-people.tsx"),
       route("domains", "routes/admin-se-company-domains.tsx"),
       // The whole public technology area, inside the admin panel: the same
       // sub-tabs as /company/:country/:id/technology, nested the same way,
@@ -192,10 +181,6 @@ export default [
     route(
       "se/company-info/geocoding",
       "routes/admin-se-company-info-geocoding-redirect.ts",
-    ),
-    route(
-      "se/people/stale-corrections",
-      "routes/admin-se-people-stale-corrections.tsx",
     ),
   ]),
 ] satisfies RouteConfig;

@@ -19,7 +19,6 @@ import { SeCompanyContractsTab } from "~/components/admin/se-company-contracts";
 import { SeCompanyDomainsTab } from "~/components/admin/se-company-domains";
 import { formatAdText, SeCompanyJobsTab } from "~/components/admin/se-company-jobs";
 import { SeCompanyListedTab } from "~/components/admin/se-company-listed";
-import { SeCompanyPeopleTab } from "~/components/admin/se-company-people";
 import { SeFinancialsView } from "~/components/financials/se-financials-view";
 import AdminSwedenCompanyTechnology from "~/routes/admin-se-company-technology";
 import AdminSwedenCompanyTechnologyLayout from "~/routes/admin-se-company-technology-layout";
@@ -42,13 +41,11 @@ import type {
 } from "~/lib/se-company-jobs.server";
 import type { SeCompanyListed } from "~/lib/se-company-listed.server";
 import type { SeCompanyDomainRow } from "~/lib/se-company-domains.server";
-import type { SeCompanyPersonRow } from "~/lib/se-company-people.server";
 import type { SeCompanyShell } from "~/lib/se-company-shell.server";
 import {
   SE_COMPANY_TABS,
   seCompanyTabFromPath,
   seCompanyTabPath,
-  type SeCompanyTab,
 } from "~/lib/se-company-tabs";
 
 const COMPANY_ID = "5560125220";
@@ -325,112 +322,6 @@ describe("financial tab", () => {
       seCompanyTabPath(COMPANY_ID, "financial"),
     );
     expect(html).toContain("Annual report not submitted.");
-  });
-});
-
-const people: SeCompanyPersonRow[] = [
-  {
-    person_id: "43234b7d-0184-16b5-de47-dc086a2b0ed9",
-    name: "Jens Lapidus",
-    description: "",
-    draft_count: 7,
-    correction_count: 0,
-    merged_into_person_id: "",
-    updated_at: "2026-08-19 21:59:49.204",
-    roles: [
-      {
-        person_id: "43234b7d-0184-16b5-de47-dc086a2b0ed9",
-        role_code: "chief_executive_officer",
-        role_label: "Chief executive officer",
-        role_group: "executive",
-        fiscal_year: "2025",
-        sources: ["bolagsverket"],
-        source_count: 1,
-        is_current: 1,
-        first_observed_at: "2026-08-18 12:46:49.000",
-        last_observed_at: "2026-08-18 12:46:49.000",
-      },
-    ],
-  },
-  {
-    person_id: "9b59d268-821c-acd8-1db7-166c6579cb02",
-    name: "Thomas Kullman",
-    description: "",
-    draft_count: 6,
-    correction_count: 0,
-    merged_into_person_id: "",
-    updated_at: "2026-08-19 21:59:49.204",
-    roles: [],
-  },
-];
-
-describe("people tab", () => {
-  it("links every person to the existing per-company person review page", () => {
-    const html = render(
-      <SeCompanyPeopleTab companyId={COMPANY_ID} people={people} evidence={[]} />,
-      seCompanyTabPath(COMPANY_ID, "people"),
-    );
-    expect(html).toContain("Jens Lapidus");
-    expect(html).toContain(
-      `href="/admin/se/people/person/${COMPANY_ID}/43234b7d-0184-16b5-de47-dc086a2b0ed9"`,
-    );
-    // The catalog's wording, the year it was observed for and who observed it.
-    expect(html).toContain("Chief executive officer 2025 · bolagsverket");
-    expect(html).toContain("2 people · 1 without a role");
-  });
-
-  it("says so when neither sources nor Dagster know any people", () => {
-    const html = render(
-      <SeCompanyPeopleTab companyId={COMPANY_ID} people={[]} evidence={[]} />,
-      seCompanyTabPath(COMPANY_ID, "people"),
-    );
-    expect(html).toContain("No people recorded");
-  });
-
-  it("shows verbatim source evidence with original roles even before any publish", () => {
-    const html = render(
-      <SeCompanyPeopleTab
-        companyId={COMPANY_ID}
-        people={[]}
-        evidence={[
-          {
-            full_name: "Jens Lapidus",
-            sources: ["bolagsverket", "esef"],
-            entries: [
-              {
-                source: "bolagsverket",
-                full_name: "Jens Lapidus",
-                role: "Verkställande direktör",
-                source_role_code: "ceo",
-                mapped_role_label: "Chief executive officer",
-                period: "2024",
-              },
-              {
-                source: "esef",
-                full_name: "Jens Lapidus",
-                role: "Member of the Audit Committee",
-                source_role_code: "other",
-                mapped_role_label: "",
-                period: "",
-              },
-            ],
-          },
-        ]}
-      />,
-      seCompanyTabPath(COMPANY_ID, "people"),
-    );
-    expect(html).toContain("1 person found in sources");
-    expect(html).toContain("2 observations");
-    // The source's own wording stays verbatim...
-    expect(html).toContain("Verkställande direktör");
-    expect(html).toContain("Member of the Audit Committee");
-    // ...with our canonical mapping beside it when the static maps know the
-    // source role code, and an em dash when they do not.
-    expect(html).toContain("Chief executive officer");
-    expect(html).toContain("2024");
-    expect(html).toContain("seen by 2 sources");
-    expect(html).toContain("bolagsverket");
-    expect(html).toContain("esef");
   });
 });
 
@@ -1231,27 +1122,6 @@ describe("the Sources strip every tab opens with", () => {
   // The Financial tab has no strip since it became the shared public
   // financials view: the source switcher already names each register.
 
-  it("names the registers behind the people's ROLES, and says nothing when no role resolved", () => {
-    const html = render(
-      <SeCompanyPeopleTab companyId={COMPANY_ID} people={people} evidence={[]} />,
-      seCompanyTabPath(COMPANY_ID, "people"),
-    );
-    expect(html).toContain('data-source-strip="Bolagsverket"');
-
-    // se_company_person carries no source column of its own: a company whose
-    // published people have no resolved role has nothing to name, and says so
-    // with the em dash rather than inventing a register.
-    const roleless = render(
-      <SeCompanyPeopleTab
-        companyId={COMPANY_ID}
-        people={people.map((person) => ({ ...person, roles: [] }))}
-        evidence={[]}
-      />,
-      seCompanyTabPath(COMPANY_ID, "people"),
-    );
-    expect(roleless).toContain('data-source-strip=""');
-  });
-
   it("folds the domain register's own spelling onto the catalog's name", () => {
     const html = render(
       <SeCompanyDomainsTab
@@ -1273,32 +1143,22 @@ describe("the Sources strip every tab opens with", () => {
 });
 
 describe("tab labels", () => {
-  it("is exactly Info, Address, Financial, ESEF, People, Domains, Technology, Contracts, Jobs, Listed, in that order", () => {
+  it("is exactly Info, Address, Financial, ESEF, Domains, Technology, Contracts, Jobs, Listed, in that order", () => {
     expect(SE_COMPANY_TABS.map((tab) => tab.label)).toEqual([
       "Info",
       "Address",
       "Financial",
       "ESEF",
-      "People",
       "Domains",
       "Technology",
       "Contracts",
       "Jobs",
       "Publicly traded",
     ]);
-    const values: SeCompanyTab[] = SE_COMPANY_TABS.map((tab) => tab.value);
-    expect(values).toEqual([
-      "info",
-      "address",
-      "financial",
-      "esef",
-      "people",
-      "domains",
-      "technology",
-      "contracts",
-      "jobs",
-      "listed",
-    ]);
+  });
+
+  it("has no People tab: the 2026-08-19 people model was retired and slice 3 adds the new one", () => {
+    expect(SE_COMPANY_TABS.map((tab) => tab.value)).not.toContain("people");
   });
 });
 

@@ -81,7 +81,7 @@ ${TECHNOLOGY_ADOPTION_JOIN_SQL}`;
 const TECHNOLOGY_LIST_ORDER_SQL =
   "ORDER BY adoption.domain_count DESC, catalog.technology ASC";
 
-/** Mirrors se-people-sources.server.ts's buildSourceWhere: a filter is
+/** Mirrors se-company-info-lists.server.ts's filter-building: a filter is
  * appended only when present, never as a SQL no-op, values always as named
  * params. */
 function buildListWhere(filters: TechnologyListFilters): {

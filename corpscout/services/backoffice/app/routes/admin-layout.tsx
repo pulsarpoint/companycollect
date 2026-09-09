@@ -179,9 +179,7 @@ function AdminBreadcrumbs() {
       <Breadcrumb>
         <BreadcrumbList>
           <BreadcrumbItem className="hidden sm:block">
-            <BreadcrumbLink render={<Link to="/admin/se/people" />}>
-              Admin
-            </BreadcrumbLink>
+            <BreadcrumbLink render={<Link to="/admin" />}>Admin</BreadcrumbLink>
           </BreadcrumbItem>
           <BreadcrumbSeparator className="hidden sm:block" />
           <BreadcrumbItem className="hidden sm:block">
@@ -215,9 +213,7 @@ function AdminBreadcrumbs() {
       <Breadcrumb>
         <BreadcrumbList>
           <BreadcrumbItem className="hidden md:block">
-            <BreadcrumbLink render={<Link to="/admin/se/people" />}>
-              Admin
-            </BreadcrumbLink>
+            <BreadcrumbLink render={<Link to="/admin" />}>Admin</BreadcrumbLink>
           </BreadcrumbItem>
           <BreadcrumbSeparator className="hidden md:block" />
           <BreadcrumbItem className="hidden md:block">
@@ -257,9 +253,7 @@ function AdminBreadcrumbs() {
       <Breadcrumb>
         <BreadcrumbList>
           <BreadcrumbItem className="hidden sm:block">
-            <BreadcrumbLink render={<Link to="/admin/se/people" />}>
-              Admin
-            </BreadcrumbLink>
+            <BreadcrumbLink render={<Link to="/admin" />}>Admin</BreadcrumbLink>
           </BreadcrumbItem>
           <BreadcrumbSeparator className="hidden sm:block" />
           <BreadcrumbItem>
@@ -279,9 +273,7 @@ function AdminBreadcrumbs() {
       <Breadcrumb>
         <BreadcrumbList>
           <BreadcrumbItem className="hidden sm:block">
-            <BreadcrumbLink render={<Link to="/admin/se/people" />}>
-              Admin
-            </BreadcrumbLink>
+            <BreadcrumbLink render={<Link to="/admin" />}>Admin</BreadcrumbLink>
           </BreadcrumbItem>
           <BreadcrumbSeparator className="hidden sm:block" />
           <BreadcrumbItem>
@@ -299,20 +291,8 @@ function AdminBreadcrumbs() {
   return (
     <Breadcrumb>
       <BreadcrumbList>
-        <BreadcrumbItem className="hidden md:block">
-          <BreadcrumbLink render={<Link to="/admin/se/people" />}>
-            Admin
-          </BreadcrumbLink>
-        </BreadcrumbItem>
-        <BreadcrumbSeparator className="hidden md:block" />
-        <BreadcrumbItem className="hidden sm:block">
-          <BreadcrumbLink render={<Link to="/admin/se/people" />}>
-            Sweden
-          </BreadcrumbLink>
-        </BreadcrumbItem>
-        <BreadcrumbSeparator className="hidden sm:block" />
         <BreadcrumbItem>
-          <BreadcrumbPage>People</BreadcrumbPage>
+          <BreadcrumbPage>Admin</BreadcrumbPage>
         </BreadcrumbItem>
       </BreadcrumbList>
     </Breadcrumb>

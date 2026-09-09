@@ -138,7 +138,8 @@ export interface SeCompanyInfoListRow {
    * by principle.
    */
   has_financial: number;
-  /** 0 | 1 -- has a published row in corpscout.se_company_person. */
+  /** 0 | 1 -- has an active row in the person entity's main table (migration
+   * 000395); empty until slice 2's first fold. */
   has_people: number;
   /** 0 | 1 -- has a Swedish row in the unified corpscout.company_domains. */
   has_domains: number;

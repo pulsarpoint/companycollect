@@ -405,7 +405,7 @@ describe("instigatorStates", () => {
           __typename: "Sensors",
           results: [
             {
-              name: "se_company_person_correction_sensor",
+              name: "wikidata_company_people_sensor",
               sensorState: { status: "RUNNING" },
             },
             {
