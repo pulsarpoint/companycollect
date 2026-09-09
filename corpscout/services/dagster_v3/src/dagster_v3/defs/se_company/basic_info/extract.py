@@ -227,13 +227,16 @@ def scope_pages(
 
 def _scan_pages(
     client: Any, *, source: str, current_sql: str, config: ExtractConfig, select_params: dict[str, Any],
-    target: SuggestionTarget,
+    target: SuggestionTarget, changed_scope_override: str | None = None,
 ) -> Iterator[list[str]]:
-    scope_sql = (
-        since_scope_sql(current_sql=current_sql)
-        if config.since
-        else changed_scope_sql(current_sql=current_sql, target=target)
-    )
+    if config.since:
+        scope_sql = since_scope_sql(current_sql=current_sql)
+    elif changed_scope_override is not None:
+        # A caller whose suggestion table has no observed_at watermark builds its own scope
+        # (the person entity's per-company state hash, spec 2026-09-09 section 6).
+        scope_sql = changed_scope_override
+    else:
+        scope_sql = changed_scope_sql(current_sql=current_sql, target=target)
     params = {**select_params, "source": source}
     if config.since:
         params["since"] = config.since
@@ -255,6 +258,7 @@ def run_extractor(
     config: ExtractConfig,
     log: Callable[..., object] | None = None,
     target: SuggestionTarget = BASIC_INFO_TARGET,
+    changed_scope_override: str | None = None,
 ) -> ExtractCounts:
     """Visit the companies in scope page by page; count the rows the source would write
     and, in execute mode, insert them with this run's stamps."""
@@ -265,7 +269,8 @@ def run_extractor(
         )
     else:
         pages = _scan_pages(
-            client, source=source, current_sql=current_sql, config=config, select_params=extra, target=target
+            client, source=source, current_sql=current_sql, config=config, select_params=extra, target=target,
+            changed_scope_override=changed_scope_override,
         )
     companies = page_count = candidates = inserted = 0
     stopped = False
@@ -307,6 +312,7 @@ def define_suggestion_asset(
     deps: Sequence[dg.AssetKey] = (),
     description: str,
     target: SuggestionTarget = BASIC_INFO_TARGET,
+    changed_scope_override: str | None = None,
 ) -> dg.AssetsDefinition:
     """One asset per SQL source, all writing the suggestion table; `source` in the metadata
     tells them apart."""
@@ -326,6 +332,7 @@ def define_suggestion_asset(
                 client, source=source, extractor_version=extractor_version, current_sql=current_sql,
                 select_sql=select_sql, select_params=select_params, source_run_id=context.run_id,
                 config=config, log=context.log.info, target=target,
+                changed_scope_override=changed_scope_override,
             )
         return dg.MaterializeResult(
             metadata={**counts.as_metadata(), "source": source, "table": target.qualified_table}

@@ -273,3 +273,46 @@ def test_another_target_renames_the_table_the_columns_the_asset_and_the_scratch_
     )
     created = next(s for s, _, _ in client.statements if s.startswith("CREATE TABLE"))
     assert created.split()[2].startswith("corpscout._tmp_other_scope_")
+
+
+def test_the_default_change_scope_is_still_the_helpers_own() -> None:
+    client = FakeClient(candidates=0, scope_pages=[["5560125220"]])
+    run_extractor(
+        client, source="scb", extractor_version="v", current_sql="SELECT 1 AS company_id, 2 AS observed_at",
+        select_sql="SELECT 1", select_params=None, source_run_id="r", config=ExtractConfig(),
+    )
+    scope_insert = next(sql for sql, _, _ in client.statements if sql.startswith("INSERT INTO corpscout._tmp_"))
+    assert changed_scope_sql(current_sql="SELECT 1 AS company_id, 2 AS observed_at") in scope_insert
+
+
+def test_a_changed_scope_override_replaces_the_helpers_scan_but_not_since() -> None:
+    override = "SELECT company_id FROM corpscout.some_scope WHERE source = %(source)s"
+    client = FakeClient(candidates=0, scope_pages=[["5560125220"]])
+    run_extractor(
+        client, source="scb", extractor_version="v", current_sql="SELECT 1 AS company_id, 2 AS observed_at",
+        select_sql="SELECT 1", select_params=None, source_run_id="r", config=ExtractConfig(),
+        changed_scope_override=override,
+    )
+    scope_insert = next(sql for sql, _, _ in client.statements if sql.startswith("INSERT INTO corpscout._tmp_"))
+    assert override in scope_insert
+    assert "argMax(observed_at, suggested_at)" not in scope_insert
+
+    # `since` still wins: it is the deliberate "ignore what is stored" escape hatch.
+    since_client = FakeClient(candidates=0, scope_pages=[["5560125220"]])
+    run_extractor(
+        since_client, source="scb", extractor_version="v",
+        current_sql="SELECT 1 AS company_id, 2 AS observed_at", select_sql="SELECT 1",
+        select_params=None, source_run_id="r",
+        config=ExtractConfig(since="2026-09-01T00:00:00Z"), changed_scope_override=override,
+    )
+    since_insert = next(sql for sql, _, _ in since_client.statements if sql.startswith("INSERT INTO corpscout._tmp_"))
+    assert "parseDateTime64BestEffort(%(since)s, 3, 'UTC')" in since_insert
+    assert override not in since_insert
+
+
+def test_define_suggestion_asset_forwards_the_override() -> None:
+    asset = define_suggestion_asset(
+        source="scb", extractor_version="v", current_sql="SELECT 1", select_sql="SELECT 1",
+        description="d", changed_scope_override="SELECT company_id FROM corpscout.some_scope",
+    )
+    assert asset.key == dg.AssetKey("se_basic_info_suggestions_scb")
