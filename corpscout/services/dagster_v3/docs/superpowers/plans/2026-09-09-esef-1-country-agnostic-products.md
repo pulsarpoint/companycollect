@@ -751,7 +751,7 @@ git commit -m "docs(esef): country-agnostic products, the se_esef_* views and th
 - [x] **Step 3:** materialise `esef_entity_registry_map_clickhouse`; verify `SELECT link_status, count() FROM corpscout.esef_entity_registry_map FINAL WHERE country_iso2 = 'SE' GROUP BY 1` reads 403 register_verified and 1 unverified (Rizzo).
 - [x] **Step 4:** materialise `esef_document_people_clickhouse`, `esef_document_business_items_clickhouse`, `esef_document_group_relationships_clickhouse` (refill the new tables); verify `se_esef_document_people` is near 9,634 rows minus Rizzo's 24 (`SELECT count() FROM corpscout.se_esef_document_people`).
 - [x] **Step 5:** merge `--no-ff` into main (`git checkout main && git merge --no-ff esef-1-country-agnostic-products -m "Merge branch 'esef-1-country-agnostic-products'"`, footer); backoffice smoke of the ESEF tab (`/admin/se/company/5020077862/esef`) and the public page.
-- [ ] **Step 6:** run the company_serving dbt build plus `company_serving_current` for SE (the same 15-asset selection as run 3144bbe9). Expected: green, no anchor failure.
+- [x] **Step 6:** run the company_serving dbt build plus `company_serving_current` for SE (the same 15-asset selection as run 3144bbe9). Expected: green, no anchor failure.
 - [ ] **Step 7 (owner):** run `corpscout/clickhouse/operations/esef_stamps_retire.md`.
 
 **Between steps 1 and 4**, every `se_esef_*` view and the three model-output tables
@@ -763,3 +763,21 @@ stay **STOPPED** across this whole window (steps 1-4), and the next weekly ESEF 
 only after step 2's deploy completes -- it ships the phone-region fix (Important 1) along with
 the country-agnostic products, so running it earlier both reads from an incomplete map and
 loses the phone-region hint.
+
+## Rollout record (2026-09-09, UTC)
+
+- 000395 applied by the owner (ledger 395; eight `se_esef_*` views; `link_status`; three `_legacy` tables).
+- Defs state refreshed on the branch; deployed 15:02 from the branch checkout; host verified identical, the
+  company_serving state copy names `se_esef_document_contact_candidates`, the manifest depends only on the
+  filings index.
+- Run `6f4aaa9e` map rebuild: SE 403 register_verified / 1 unverified (Rizzo); all countries 1,069 verified,
+  33 unverified, 2,805 gleif.
+- Run `acf90051` projections: people 9,754, business items 15,290, group relationships 6,311;
+  `se_esef_document_people` 9,610 (= 9,634 - Rizzo's 24), `se_esef_filings` 1,385,
+  `se_esef_document_contact_candidates` 17,919.
+- Merged `f81f21152`; smoke: ESEF tab (Handelsbanken 40 people / 22 contacts / 4 filings through the views),
+  public page, Info tab all 200.
+- Run `2d923e78` company_serving build + publish: SUCCESS after about 2.5 h (the source-links model alone
+  about 40 min, peak 15 GiB); the anchor tests that failed on 2026-09-08 pass; the publish landed.
+- Slice-6 leftover fixed on main (`34ef90d2b`): the basic-info fold harness replays 000394.
+- Step 7 (owner): `corpscout/clickhouse/operations/esef_stamps_retire.md`.
