@@ -86,8 +86,11 @@ def test_bolagsverket_select_matches_the_contract() -> None:
 def test_esef_select_takes_the_newest_filing_per_company() -> None:
     sql = esef.esef_select_sql()
     assert _aliases(sql) == list(SUGGESTION_SELECT_COLUMNS)
-    assert "FROM corpscout.esef_document_company_information" in sql
-    assert "country_iso2 = 'SE'" in sql and "trim(company_description) != ''" in sql
+    # se_esef_document_company_information (migration 000395) already restricts to Sweden
+    # and stamps company_id from the register-verified link -- no country_iso2 filter here.
+    assert "FROM corpscout.se_esef_document_company_information" in sql
+    assert "country_iso2" not in sql
+    assert "trim(company_description) != ''" in sql
     assert "company_id IN %(company_ids)s" in sql
     assert "toDateTime64(resolved_at, 3, 'UTC') AS observed_at" in sql
     assert "nullIf(upperUTF8(trim(lei)), '') AS lei" in sql
@@ -101,6 +104,8 @@ def test_esef_select_takes_the_newest_filing_per_company() -> None:
     )
     current = esef.esef_current_sql()
     assert "max(toDateTime64(resolved_at, 3, 'UTC')) AS observed_at" in current and "GROUP BY company_id" in current
+    assert "FROM corpscout.se_esef_document_company_information" in current
+    assert "country_iso2" not in current
 
 
 def test_wikidata_select_links_entities_through_orgnr_or_lei() -> None:

@@ -120,7 +120,7 @@ wikidata AS (
 ),
 esef AS (
     SELECT
-        country_code,
+        '{{ var("country_code") }}' AS country_code,
         company_id,
         candidate_uid AS management_id,
         '' AS person_id,
@@ -143,8 +143,7 @@ esef AS (
         confidence,
         ['esef'] AS source_systems,
         now64(3, 'UTC') AS resolved_at
-    FROM {{ source('corpscout', 'esef_document_people') }} FINAL
-    WHERE country_code = '{{ var("country_code") }}'
+    FROM {{ source('corpscout', 'se_esef_document_people') }}
 )
 SELECT * FROM registry
 UNION ALL

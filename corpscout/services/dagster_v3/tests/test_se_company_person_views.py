@@ -25,6 +25,13 @@ is a SEPARATE migration that re-issues `CREATE OR REPLACE VIEW`, not a hand-edit
 already-committed rendering. The drift pin below therefore targets 000331 (the CURRENT
 definition); 000330 still creates the views and the collision-candidate table, and is
 exercised by the down-migration-parity test instead.
+
+000395 (ESEF slice 1, Task 5) re-issues `CREATE OR REPLACE VIEW se_company_person_esef` a
+second time, moving its `FROM` off the multi-country `esef_document_people` product onto the
+new Swedish, register-verified `se_esef_document_people` view (Task 1) -- dropping this
+view's own FINAL and country filter, since the upstream view already applies both. Only the
+esef drift pin moves to 000395; the bolagsverket and wikidata views are untouched by ESEF
+slice 1 and stay pinned to 000331.
 """
 
 from __future__ import annotations
@@ -49,6 +56,9 @@ from dagster_v3.defs.company_people.source_views import (
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
 MIGRATION = "000331_corpscout_se_company_person_views_observed_at"
 PRIOR_MIGRATION = "000330_corpscout_se_company_person_views"
+# ESEF slice 1 Task 5 re-issued CREATE OR REPLACE VIEW se_company_person_esef a second time --
+# only this view's drift pin moves here; bolagsverket and wikidata stay on 000331 (untouched).
+ESEF_MIGRATION = "000395_corpscout_esef_country_agnostic_products"
 CLICKHOUSE_IMAGE = "clickhouse/clickhouse-server:26.5"
 
 BOLAGSVERKET_VIEW = "corpscout.se_company_person_bolagsverket"
@@ -60,6 +70,15 @@ BUILDERS = {
     BOLAGSVERKET_VIEW: build_se_company_person_bolagsverket_view_sql,
     ESEF_VIEW: build_se_company_person_esef_view_sql,
     WIKIDATA_VIEW: build_se_company_person_wikidata_view_sql,
+}
+
+# Which migration file currently owns each view's CREATE OR REPLACE VIEW rendering, for the
+# drift pin and the not-vacuous checks -- the esef view moved to 000395, the other two views
+# are unaffected by ESEF slice 1 and stay on 000331.
+VIEW_MIGRATIONS = {
+    BOLAGSVERKET_VIEW: MIGRATION,
+    ESEF_VIEW: ESEF_MIGRATION,
+    WIKIDATA_VIEW: MIGRATION,
 }
 
 
@@ -118,7 +137,7 @@ def test_the_view_has_not_drifted_from_its_builder(view: str) -> None:
     To fix it, do NOT edit the SQL file by hand to match -- write the next migration that
     replaces the view with the new rendering, and point this pin at it.
     """
-    embedded = _normalized(_create_view_statement(_sql("up"), view))
+    embedded = _normalized(_create_view_statement(_sql("up", migration=VIEW_MIGRATIONS[view]), view))
     rendered = _normalized(BUILDERS[view]())
     assert embedded == rendered
 
@@ -128,7 +147,7 @@ def test_the_pins_are_not_vacuous() -> None:
     table it reads, so a broken extractor cannot make the pin pass on two empty strings."""
     up_sql = _sql("up")
     bolagsverket = _normalized(_create_view_statement(up_sql, BOLAGSVERKET_VIEW))
-    esef = _normalized(_create_view_statement(up_sql, ESEF_VIEW))
+    esef = _normalized(_create_view_statement(_sql("up", migration=ESEF_MIGRATION), ESEF_VIEW))
     wikidata = _normalized(_create_view_statement(up_sql, WIKIDATA_VIEW))
 
     assert len(bolagsverket) > 100
@@ -138,8 +157,9 @@ def test_the_pins_are_not_vacuous() -> None:
     assert "signatory_uid" in bolagsverket  # row-level draft_id disambiguator
 
     assert len(esef) > 100
-    assert "esef_document_people FINAL" in esef
-    assert "country_code = 'SE'" in esef
+    assert "FROM corpscout.se_esef_document_people" in esef
+    assert "FINAL" not in esef
+    assert "WHERE country_code" not in esef
     assert "extracted_at AS source_observed_at" in esef
     assert "candidate_uid" in esef  # row-level draft_id disambiguator
 
