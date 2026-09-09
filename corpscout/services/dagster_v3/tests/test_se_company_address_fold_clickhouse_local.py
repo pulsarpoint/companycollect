@@ -37,7 +37,7 @@ from dagster_v3.defs.se_company.address.fold import FOLD_VERSION, PublishedAddre
 from dagster_v3.defs.se_company.address.normalize_se import NORMALIZER_VERSION
 from dagster_v3.defs.sweden_company.address_resolution_policy import SWEDEN_ADDRESS_RESOLUTION_POLICY
 from dagster_v3.defs.sweden_company.geocode_store import LEGACY_ADOPTED_POLICY_VERSION
-from tests.test_se_company_person_clickhouse_local import _clickhouse_local_command
+from tests.clickhouse_local import clickhouse_local_command
 
 pytestmark = pytest.mark.integration
 
@@ -127,7 +127,7 @@ def _schema_statements() -> list[str]:
 def _run(statements: list[str]) -> list[str]:
     script = ";\n".join(statements) + ";\n"
     completed = subprocess.run(
-        _clickhouse_local_command(), input=script, capture_output=True, text=True, timeout=900
+        clickhouse_local_command(), input=script, capture_output=True, text=True, timeout=900
     )
     assert completed.returncode == 0, completed.stderr or completed.stdout
     return [line for line in completed.stdout.splitlines() if line.strip()]

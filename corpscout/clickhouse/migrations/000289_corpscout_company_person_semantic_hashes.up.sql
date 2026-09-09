@@ -4,6 +4,10 @@
 -- source-record version ids.
 CREATE DATABASE IF NOT EXISTS corpscout;
 
+-- The wikidata_person_id column this migration also added to se_company_person_draft was
+-- dropped by hand with that table in SE person slice 0 (2026-09-09) and its DDL left this
+-- file per the dev-phase ledger policy. The four source-table hash columns below stay.
+
 ALTER TABLE corpscout.wikidata_persons
     ADD COLUMN IF NOT EXISTS person_profile_hash FixedString(64) MATERIALIZED
         lower(hex(SHA256(concat(
@@ -73,9 +77,3 @@ ALTER TABLE corpscout.se_financial_report_signatories
             lowerUTF8(trim(signatory_kind)), '\n',
             toString(fiscal_year)
         )))) AFTER role_kind;
-
--- Keep the stable Wikidata entity id separately from source_record_uid, whose
--- value represents a particular raw payload version.
-ALTER TABLE corpscout.se_company_person_draft
-    ADD COLUMN IF NOT EXISTS wikidata_person_id Nullable(String)
-        AFTER wikidata_source_record_uids;

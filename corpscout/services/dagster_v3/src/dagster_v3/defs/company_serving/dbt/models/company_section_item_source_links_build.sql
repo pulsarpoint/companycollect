@@ -59,14 +59,6 @@ source_records_raw AS (
     WHERE wikidata_id != '' AND source_payload_hash != ''
     UNION ALL
     SELECT
-        source_record_uid, 'wikidata_person_item', lowerUTF8(toString(source_payload_hash)),
-        retrieved_at, retrieved_at, 'wikidata', person_wikidata_id,
-        ifNull(wikidata_url, ''), '', lowerUTF8(toString(source_payload_hash)),
-        retrieved_at, source_run_id
-    FROM {{ source('corpscout', 'wikidata_persons') }} FINAL
-    WHERE source_record_uid != '' AND source_payload_hash != ''
-    UNION ALL
-    SELECT
         lower(hex(SHA256(concat(
             'company-source-record-v1\nstructured\ngleif\ngleif_lei_record\n',
             lei, '\n', lower(hex(SHA256(concat(
@@ -332,77 +324,6 @@ contacts AS (
         ON candidates.candidate_id = current.contact_id
     WHERE candidates.source_record_uid != ''
 ),
-registry_observations AS (
-    SELECT
-        '{{ var("country_code") }}' AS country_code,
-        company_id,
-        reinterpretAsUUID(unhex(substring(hex(SHA256(concat(
-            'country_person_observation|SE|se_xbrl_signatures|',
-            statement_key, '|', signatory_kind, '|', toString(person_seq)
-        ))), 1, 32))) AS observation_id,
-        source_record_uid
-    FROM {{ source('corpscout', 'se_financial_report_signatories') }}
-),
-registry_management AS (
-    -- Mirrors company_management_current_build's management_id hash. No
-    -- country_person identity resolution remains (country_people group
-    -- retired), so the observation id -- the same one that model now uses
-    -- directly as its grouping key -- is hashed straight through with no
-    -- join required to keep this evidence link's item_key aligned with
-    -- that model's management_id.
-    SELECT
-        observations.country_code,
-        observations.company_id,
-        lower(hex(SHA256(concat(
-            'registry-person|', observations.country_code, '|', observations.company_id, '|',
-            toString(observations.observation_id)
-        )))) AS item_key,
-        observations.source_record_uid
-    FROM registry_observations AS observations
-    GROUP BY observations.country_code, observations.company_id, item_key, observations.source_record_uid
-),
-management_candidates AS (
-    SELECT
-        current.country_code AS country_code,
-        current.company_id AS company_id,
-        'management' AS section,
-        current.management_id AS item_key,
-        if(
-            has(current.source_systems, 'se_xbrl_signatures'), registry_rows.source_record_uid,
-            if(has(current.source_systems, 'wikidata'), people.source_record_uid, esef.source_record_uid)
-        ) AS selected_source_record_uid,
-        multiIf(
-            has(current.source_systems, 'se_xbrl_signatures'), 'annual_report_signature',
-            has(current.source_systems, 'wikidata'), 'public_knowledge_graph_company_role',
-            'annual_report_narrative_role'
-        ) AS relationship_kind,
-        multiIf(
-            has(current.source_systems, 'se_xbrl_signatures'), 'annual_report_signatory_observation',
-            has(current.source_systems, 'wikidata'), 'wikidata_company_claim',
-            'annual_report_extraction'
-        ) AS match_method,
-        current.confidence AS match_confidence,
-        '{{ var("source_run_id") }}' AS source_run_id,
-        now64(3, 'UTC') AS linked_at
-    FROM {{ ref('company_management_current_build') }} AS current
-    LEFT JOIN registry_management AS registry_rows
-        ON registry_rows.country_code = current.country_code
-       AND registry_rows.company_id = current.company_id
-       AND registry_rows.item_key = current.management_id
-    LEFT JOIN {{ source('corpscout', 'wikidata_persons') }} AS people FINAL
-        ON people.person_wikidata_id = current.external_person_value
-       AND current.external_person_scheme = 'wikidata'
-    LEFT JOIN {{ source('corpscout', 'se_esef_document_people') }} AS esef
-        ON esef.candidate_uid = current.management_id
-),
-management AS (
-    SELECT
-        country_code, company_id, section, item_key,
-        selected_source_record_uid AS source_record_uid,
-        relationship_kind, match_method, match_confidence, source_run_id, linked_at
-    FROM management_candidates
-    WHERE selected_source_record_uid != ''
-),
 descriptions AS (
     SELECT
         current.country_code AS country_code,
@@ -475,7 +396,6 @@ evidence_links AS (
     UNION ALL SELECT * FROM wikidata_domains
     UNION ALL SELECT * FROM esef_domains
     UNION ALL SELECT * FROM contacts
-    UNION ALL SELECT * FROM management
     UNION ALL SELECT * FROM descriptions
     UNION ALL SELECT * FROM addresses
     UNION ALL SELECT * FROM industries

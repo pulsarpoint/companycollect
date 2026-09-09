@@ -55,58 +55,6 @@ export const SE_BASIC_INFO_FOLD_COMPANIES_ASSET = "se_company_basic_info_fold_co
  * the companies named in its config. Launched by the Address tab's Fold now. */
 export const SE_COMPANY_ADDRESS_FOLD_COMPANIES_ASSET = "se_company_address_fold_companies";
 
-/**
- * SE People Experiment Task 5: the three backoffice-triggered people jobs
- * (spec §6.1 -- "the info-pilot / ESEF pattern verbatim"). None of the three
- * is ever scheduled or eager (dagster_v3's identity_eval.py/normalization.py/
- * merge.py module docstrings say so explicitly): there is no schedule or
- * sensor name to filter instigator queries to here, unlike the address pipeline's
- * schedule and sensor -- the people pipeline page simply never calls
- * `instigatorStates`, which is the "filter to exactly these jobs" lesson
- * applied to a pipeline that has none to filter to.
- */
-export const SE_COMPANY_PERSON_IDENTITY_EVALUATION_JOB =
-  "se_company_person_identity_evaluation_job";
-export const SE_COMPANY_PERSON_IDENTITY_EVALUATION_ASSET =
-  "se_company_person_identity_evaluation";
-/** The combined role_draft+person+role chain -- unused by the Pipeline page's own
- * three resolution launches below (each is a single-asset job, "1:1"), but this
- * IS what the People page's Simple Sync sheet launches (se-people-actions.tsx /
- * se-company-person-pipeline.server.ts's buildSimpleSyncRunConfig): a single
- * unscoped click needs to publish both people and their role assignments, not
- * just se_company_person alone. */
-export const SE_COMPANY_PERSON_JOB = "se_company_person_job";
-export const SE_COMPANY_PERSON_ROLE_DRAFT_ASSET = "se_company_person_role_draft_clickhouse";
-export const SE_COMPANY_PERSON_ASSET = "se_company_person_clickhouse";
-export const SE_COMPANY_PERSON_ROLE_ASSET = "se_company_person_role_clickhouse";
-/**
- * Three-asset split (dagster_v3 company_people/normalization.py's module docstring):
- * se_company_person_clickhouse is CLEAN COPY ONLY (single-source companies, no LLM
- * config at all). se_company_person_llm_suggestions resolves multi-source companies
- * with the model but writes ONLY to se_company_person_enrichment_observation --
- * never the final table. se_company_person_promotion is the separate, model-free
- * asset that copies an eligible suggestion into se_company_person. Each gets its
- * own single-asset job so the Pipeline page's three resolution launches map 1:1.
- */
-export const SE_COMPANY_PERSON_PUBLISH_JOB = "se_company_person_publish_job";
-export const SE_COMPANY_PERSON_LLM_SUGGESTIONS_JOB = "se_company_person_llm_suggestions_job";
-export const SE_COMPANY_PERSON_LLM_SUGGESTIONS_ASSET = "se_company_person_llm_suggestions";
-export const SE_COMPANY_PERSON_PROMOTION_JOB = "se_company_person_promotion_job";
-export const SE_COMPANY_PERSON_PROMOTION_ASSET = "se_company_person_promotion";
-export const SE_COMPANY_PERSON_MERGE_JOB = "se_company_person_merge_job";
-export const SE_COMPANY_PERSON_MERGE_ASSET = "se_company_person_merge_suggestions";
-/**
- * The People Tasks tab's remaining two jobs (`company_people/roles.py` /
- * `corrections.py`), neither triggered from this page's own launch forms
- * above -- `roles.py`'s combined draft+publish chain runs after clean copy or
- * promotion elsewhere, and `corrections.py`'s review job is the ONE
- * eager/sensor-driven job in this whole group (`se_company_person_correction_sensor`,
- * `default_status=RUNNING`) -- unlike every job above, which is "never
- * scheduled, never eager" per their own module docstrings.
- */
-export const SE_COMPANY_PERSON_ROLE_JOB = "se_company_person_role_job";
-export const SE_COMPANY_PERSON_REVIEW_JOB = "se_company_person_review_job";
-
 export class DagsterError extends Error {
   constructor(message: string) {
     super(message);

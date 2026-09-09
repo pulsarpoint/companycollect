@@ -7,7 +7,6 @@ import { Skeleton } from "~/components/ui/skeleton";
 import { ContactLocationCard } from "~/components/detail/contact-location-card";
 import { GleifGroupSection } from "~/components/detail/gleif-group-section";
 import { IndustriesSection } from "~/components/detail/industries-section";
-import { ManagementSection } from "~/components/detail/management-section";
 import { PublicContractsSection } from "~/components/detail/public-contracts-section";
 import {
   ContactsDomainsSection,
@@ -117,16 +116,6 @@ function CompanySection({
       );
     case "wikidata":
       return <WikidataSection wikidata={data.wikidata} />;
-    case "management":
-      return (
-        <ManagementSection
-          officers={data.officers}
-          peopleMatches={[]}
-          audit={null}
-          wikidataPeople={data.wikidataPeople}
-          esefPeople={data.esefPeople}
-        />
-      );
     case "descriptions":
       return <DescriptionsSection descriptions={data.descriptions} />;
     case "domains":

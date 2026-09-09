@@ -125,18 +125,6 @@ export async function chInsertTechnologyReview(value: object): Promise<void> {
   await getWriteClient().insert({ table: "technology_proposal_reviews", values: [value], format: "JSONEachRow" });
 }
 
-/** Append reviewed decisions to the Sweden company-person correction ledger. */
-export async function chInsertSeCompanyPersonCorrections<T extends object>(
-  values: T[],
-): Promise<void> {
-  if (values.length === 0) return;
-  await getWriteClient().insert({
-    table: "se_company_person_correction",
-    values,
-    format: "JSONEachRow",
-  });
-}
-
 /** Append a precedence rule (or its release) to the SE basic-info precedence
  * table; the fold reads the newest version per (company_id, field, source)
  * through FINAL. */

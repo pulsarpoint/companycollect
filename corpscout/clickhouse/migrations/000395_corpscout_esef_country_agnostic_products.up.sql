@@ -317,6 +317,11 @@ SELECT
 FROM corpscout.esef_document_business_items AS t FINAL
 INNER JOIN (SELECT lei, registry_id FROM corpscout.esef_entity_registry_map FINAL WHERE country_iso2 = 'SE' AND link_status = 'register_verified') AS m ON m.lei = t.lei;
 
+-- The se_company_person_esef read view was dropped by hand in SE person slice 0
+-- (2026-09-09) and its DDL left this file per the dev-phase ledger policy. This migration's
+-- ESEF products -- esef_document_people_legacy and the country-scoped se_esef_document_people
+-- view -- are untouched.
+
 CREATE OR REPLACE VIEW corpscout.se_esef_document_group_relationships AS
 SELECT
     m.registry_id AS company_id,
@@ -339,23 +344,3 @@ SELECT
 FROM corpscout.esef_document_group_relationships AS t FINAL
 INNER JOIN (SELECT lei, registry_id FROM corpscout.esef_entity_registry_map FINAL WHERE country_iso2 = 'SE' AND link_status = 'register_verified') AS m ON m.lei = t.lei;
 
--- 4. The Swedish person source view reads its country slice instead of filtering itself
---    (it was CREATE OR REPLACEd by 000331, re-issued here with the new FROM).
-CREATE OR REPLACE VIEW corpscout.se_company_person_esef AS
-SELECT
-    company_id,
-    source_record_uid,
-    person_profile_hash,
-    person_role_hash,
-    name AS full_name,
-    role,
-    role_category,
-    organization,
-    status,
-    effective_from,
-    effective_to,
-    confidence,
-    fiscal_year,
-    extracted_at AS source_observed_at,
-    candidate_uid
-FROM corpscout.se_esef_document_people;

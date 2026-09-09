@@ -80,7 +80,6 @@ export default function CompanyDetail({
       "descriptions",
       "wikidata",
       "financials",
-      "management",
       "domains",
       "industries",
       "gleif",

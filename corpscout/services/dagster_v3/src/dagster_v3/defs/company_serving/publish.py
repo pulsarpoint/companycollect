@@ -296,10 +296,6 @@ def _validate_presence_counts(
             "SELECT countDistinct(tuple(company_id, wikidata_id)) "
             f"FROM {stages[tables.WIKIDATA.name]}"
         ),
-        "management": (
-            "SELECT countDistinct(tuple(company_id, management_id)) "
-            f"FROM {stages[tables.MANAGEMENT.name]}"
-        ),
         "descriptions": (
             "SELECT countDistinct(tuple(company_id, description_id)) "
             f"FROM {stages[tables.DESCRIPTIONS.name]}"

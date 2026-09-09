@@ -34,13 +34,10 @@ _SE_COMPANY_ID_RE = re.compile(SE_COMPANY_ID_PATTERN)
 def normalized_se_company_ids(company_ids: Sequence[str]) -> tuple[str, ...]:
     """Sorted, de-duplicated, validated Swedish company ids.
 
-    Accepts both widths the se_company tables publish: a 10-digit organisationsnummer and
-    a 12-digit personnummer-based sole-trader id (the has_company CHECK, migration 000299).
-    company_people.source_views.normalized_company_ids (relocated there in Task 6 from the
-    now-removed company_people/draft.py) predates the sole traders and validates 10 digits
-    only -- it is deliberately not reused here, and se_company.info was moved onto this
-    helper because validating a scoped run's ids at 10 digits rejected the sole traders
-    that final publishes.
+    A 10-digit organisationsnummer and a 12-digit personnummer-based sole-trader id (the
+    has_company CHECK, migration 000299). The retired people chain had its own
+    10-digit-only validator; this one accepts both widths the se_company tables publish,
+    which is why the sole traders survive a scoped run.
     """
     normalized = tuple(sorted({company_id.strip() for company_id in company_ids}))
     invalid = [company_id for company_id in normalized if _SE_COMPANY_ID_RE.fullmatch(company_id) is None]

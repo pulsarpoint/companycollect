@@ -4,7 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const clickhouse = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock("~/lib/clickhouse.server", () => ({ chQuery: clickhouse.query }));
 
-import { getCompanySection } from "~/lib/company-sections.server";
+import {
+  COMPANY_SECTION_NAMES,
+  getCompanySection,
+} from "~/lib/company-sections.server";
 import { getCountry } from "~/lib/countries";
 
 const sectionServer = readFileSync(
@@ -312,5 +315,11 @@ describe("Sweden addresses section", () => {
         source_observed_at: "",
       },
     ]);
+  });
+});
+
+describe("company sections after the people retirement", () => {
+  it("has no management section: the public Management block was retired with the people chain", () => {
+    expect(COMPANY_SECTION_NAMES).not.toContain("management");
   });
 });

@@ -13,11 +13,6 @@ import {
   loadSeCompanyDomains,
 } from "~/lib/se-company-domains.server";
 import {
-  PEOPLE_ROLES_SQL,
-  PEOPLE_SQL,
-  loadSeCompanyPeople,
-} from "~/lib/se-company-people.server";
-import {
   SHELL_ENTITY_TYPE_SQL,
   SHELL_INFO_SQL,
   SHELL_LEGAL_FORM_LABEL_SQL,
@@ -57,8 +52,6 @@ const ALL_SQL: Array<[string, string]> = [
   ["SHELL_REGISTER_SQL", SHELL_REGISTER_SQL],
   ["SHELL_ENTITY_TYPE_SQL", SHELL_ENTITY_TYPE_SQL],
   ["SHELL_LEGAL_FORM_LABEL_SQL", SHELL_LEGAL_FORM_LABEL_SQL],
-  ["PEOPLE_SQL", PEOPLE_SQL],
-  ["PEOPLE_ROLES_SQL", PEOPLE_ROLES_SQL],
   ["COMPANY_DOMAINS_SQL", COMPANY_DOMAINS_SQL],
   ["COMPANY_JOBS_SQL", COMPANY_JOBS_SQL],
   ["COMPANY_JOBS_CURRENT_SQL", COMPANY_JOBS_CURRENT_SQL],
@@ -113,11 +106,6 @@ describe("company area SQL", () => {
       expect([SHELL_INFO_SQL, SHELL_REGISTER_SQL, SHELL_ENTITY_TYPE_SQL].join("\n"))
         .toContain(table);
     }
-    expect(PEOPLE_SQL).toContain("corpscout.se_company_person AS p FINAL");
-    expect(PEOPLE_ROLES_SQL).toContain("corpscout.se_company_person_role FINAL");
-    expect(PEOPLE_ROLES_SQL).toContain(
-      "corpscout.company_person_role_type AS t FINAL",
-    );
     expect(COMPANY_DOMAINS_SQL).toContain("corpscout.company_domains AS d FINAL");
     // eodhd_eod_prices is a ReplacingMergeTree on retrieved_at: a re-fetched
     // trading day must show once, in its newest state.
@@ -163,14 +151,6 @@ describe("company area SQL", () => {
     expect(COMPANY_TRADED_SYMBOLS_SQL).toContain(
       "corpscout.eodhd_symbols AS es FINAL",
     );
-  });
-
-  it("filters the role join in a subquery, not in an outer WHERE", () => {
-    // ClickHouse 26.5 loses `company_id` from the block when FINAL sits on the
-    // left of a LEFT JOIN and the predicate is pushed down
-    // (NOT_FOUND_COLUMN_IN_BLOCK), so the filter has to happen first.
-    const beforeJoin = PEOPLE_ROLES_SQL.split("LEFT JOIN")[0];
-    expect(beforeJoin).toContain("WHERE company_id = {companyId:String}");
   });
 });
 
@@ -288,24 +268,6 @@ describe("tab loaders", () => {
     expect(clickhouse.query).toHaveBeenCalledWith(COMPANY_DOMAINS_SQL, {
       companyId: COMPANY,
     });
-  });
-
-  it("hangs each person's roles off that person, and leaves roleless ones empty", async () => {
-    clickhouse.query.mockImplementation(async (sql: string) => {
-      if (sql === PEOPLE_SQL) {
-        return [
-          { person_id: "p1", name: "Anna", description: "", draft_count: 3, correction_count: 0, merged_into_person_id: "", updated_at: "2026-08-19 00:00:00.000" },
-          { person_id: "p2", name: "Bo", description: "", draft_count: 1, correction_count: 0, merged_into_person_id: "", updated_at: "2026-08-19 00:00:00.000" },
-        ];
-      }
-      return [
-        { person_id: "p1", role_code: "board_chair", role_label: "Board chair", role_group: "governance", fiscal_year: "2024", sources: ["esef"], source_count: 1, is_current: 1, first_observed_at: "", last_observed_at: "" },
-        { person_id: "p1", role_code: "board_member", role_label: "Board member", role_group: "governance", fiscal_year: "2023", sources: ["esef"], source_count: 1, is_current: 0, first_observed_at: "", last_observed_at: "" },
-      ];
-    });
-    const people = await loadSeCompanyPeople(COMPANY);
-    expect(people.map((person) => person.roles.length)).toEqual([2, 0]);
-    expect(people[0].roles[0].role_label).toBe("Board chair");
   });
 
   /**

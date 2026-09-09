@@ -2,9 +2,10 @@
  * The URL-facing state of `/admin/technologies` (the catalog browser's
  * `?q=&category=&page=&pageSize=`) and of `/admin/technologies/:slug`'s
  * adoption tabs (`?tab=&country=&page=&pageSize=`). Mirrors
- * `se-people-sources.ts`: applied values are always strings ('' when absent,
- * never `undefined`), links are built from the CURRENT params plus a patch,
- * and any filter/tab/pageSize change resets `page`.
+ * `se-company-info-lists.server.ts`'s filter shapes: applied values are
+ * always strings ('' when absent, never `undefined`), links are built from
+ * the CURRENT params plus a patch, and any filter/tab/pageSize change resets
+ * `page`.
  *
  * Client-safe (no ClickHouse import): the route loader, the table component
  * and `technologies.server.ts`'s query builders all share these shapes.
@@ -96,7 +97,7 @@ export function technologyDetailPath(slug: string): string {
  * `technology_companies` rollup, filterable by country). One tab is a route
  * (this page), not two -- the active tab, the Companies country filter and
  * the paging all live in the detail route's `?tab=&country=&page=&pageSize=`
- * search params, mirroring `se-people-sources.ts`'s tab catalog.
+ * search params, mirroring `se-companies-tabs.ts`'s tab catalog.
  */
 export const TECHNOLOGY_DETAIL_TABS = [
   { value: "domains", label: "Domains" },

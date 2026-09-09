@@ -40,7 +40,7 @@ from dagster_v3.defs.sweden_company.geocode_store import (
     LEGACY_ADOPTED_POLICY_VERSION,
     STORE_COLUMNS,
 )
-from tests.test_se_company_person_clickhouse_local import _clickhouse_local_command
+from tests.clickhouse_local import clickhouse_local_command
 
 pytestmark = pytest.mark.integration
 
@@ -306,7 +306,7 @@ def _statements() -> list[str]:
 def _run(statements: list[str], *, join_use_nulls: int) -> list[str]:
     script = f"SET join_use_nulls = {join_use_nulls};\n" + ";\n".join(statements) + ";\n"
     completed = subprocess.run(
-        _clickhouse_local_command(),
+        clickhouse_local_command(),
         input=script,
         capture_output=True,
         text=True,
