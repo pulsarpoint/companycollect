@@ -7,8 +7,6 @@ CREATE TABLE IF NOT EXISTS corpscout.esef_document_concept_labels
     source_record_uid      FixedString(64) DEFAULT lower(hex(SHA256(concat('company-source-record-v1\nfile\nesef_report_package\n', lowerUTF8(package_sha256))))),
     package_sha256         FixedString(64),
     lei                    String,
-    country_iso2           LowCardinality(String),
-    company_id             String,
     period_end             String,
     fiscal_year            UInt16,
     concept_qname          String,

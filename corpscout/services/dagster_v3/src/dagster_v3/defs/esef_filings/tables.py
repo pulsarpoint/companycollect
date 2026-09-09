@@ -13,6 +13,8 @@ IFRS metrics table built entirely in ClickHouse by
 selection rules.
 """
 
+from dataclasses import dataclass
+
 SOURCE_SLUG = "esef_filings"
 DLT_DATASET_NAME = "esef_filings"
 
@@ -115,6 +117,7 @@ ESEF_ENTITY_MAP_EXPORT_COLUMNS = (
     "registry_id_raw",
     "registry_id",
     "match_source",
+    "link_status",
     "source_run_id",
 )
 
@@ -165,8 +168,6 @@ ESEF_DOCUMENT_CONTACT_CANDIDATES_EXPORT_COLUMNS = (
     "source_document_id",
     "package_sha256",
     "lei",
-    "country_iso2",
-    "company_id",
     "period_end",
     "fiscal_year",
     "candidate_kind",
@@ -191,8 +192,6 @@ ESEF_DOCUMENT_CONCEPT_LABELS_EXPORT_COLUMNS = (
     "source_document_id",
     "package_sha256",
     "lei",
-    "country_iso2",
-    "company_id",
     "period_end",
     "fiscal_year",
     "concept_qname",
@@ -212,8 +211,6 @@ ESEF_DOCUMENT_COMPANY_INFORMATION_EXPORT_COLUMNS = (
     "source_document_id",
     "package_sha256",
     "lei",
-    "country_iso2",
-    "company_id",
     "period_end",
     "fiscal_year",
     "extraction_status",
@@ -249,8 +246,7 @@ ESEF_DOCUMENT_PEOPLE_COLUMNS = (
     "candidate_uid",
     "source_record_uid",
     "source_document_id",
-    "country_code",
-    "company_id",
+    "lei",
     "fiscal_year",
     "name",
     "role",
@@ -272,8 +268,7 @@ ESEF_DOCUMENT_BUSINESS_ITEM_COLUMNS = (
     "candidate_uid",
     "source_record_uid",
     "source_document_id",
-    "country_code",
-    "company_id",
+    "lei",
     "fiscal_year",
     "item_kind",
     "name",
@@ -291,8 +286,7 @@ ESEF_DOCUMENT_GROUP_RELATIONSHIP_COLUMNS = (
     "candidate_uid",
     "source_record_uid",
     "source_document_id",
-    "country_code",
-    "company_id",
+    "lei",
     "fiscal_year",
     "related_company_name",
     "relationship_type",
@@ -320,8 +314,6 @@ ESEF_DISCLOSURES_EXPORT_COLUMNS = (
     "package_sha256",
     "artifact_schema_version",
     "lei",
-    "country_iso2",
-    "company_id",
     "period_end",
     "fiscal_year",
     "concept_qname",
@@ -363,4 +355,45 @@ ESEF_DOCUMENT_CONCEPT_LABELS_PARTITION_EXPORT_COLUMNS = (
 ESEF_DISCLOSURES_PARTITION_EXPORT_COLUMNS = (
     *ESEF_DISCLOSURES_EXPORT_COLUMNS,
     "processed_week",
+)
+
+
+@dataclass(frozen=True)
+class SeEsefView:
+    """One Swedish view over an ESEF product: the product's columns behind a company_id
+    resolved through the register-verified link (spec 2026-09-09, section 1)."""
+
+    table: str
+    columns: tuple[str, ...]
+    final: bool  # ReplacingMergeTree products are read FINAL inside the view
+
+    @property
+    def view(self) -> str:
+        return f"se_{self.table}"
+
+
+# esef_filings and esef_facts are not exported through a tuple here, so their column lists
+# are spelled out from the DDL (000149).
+_ESEF_FILINGS_COLUMNS = (
+    "lei", "entity_name", "fxo_id", "country", "period_end", "date_added", "processed_at",
+    "json_url", "package_url", "report_url", "viewer_url", "package_sha256", "error_count",
+    "warning_count", "inconsistency_count", "has_json_facts", "source_url", "source_run_id",
+    "resolved_at",
+)
+_ESEF_FACTS_COLUMNS = (
+    "lei", "fxo_id", "period_end", "fact_id", "concept_qname", "concept_namespace",
+    "concept_local_name", "period_start", "period_instant", "period_duration_end", "unit",
+    "currency", "value_kind", "raw_value", "amount_original", "decimals", "dimensions",
+    "language", "source_run_id", "processed_week", "resolved_at",
+)
+
+SE_ESEF_VIEWS: tuple[SeEsefView, ...] = (
+    SeEsefView("esef_filings", _ESEF_FILINGS_COLUMNS, final=True),
+    SeEsefView("esef_facts", _ESEF_FACTS_COLUMNS, final=True),
+    SeEsefView("esef_disclosures", (*ESEF_DISCLOSURES_EXPORT_COLUMNS, "processed_week", "resolved_at"), final=False),
+    SeEsefView("esef_document_contact_candidates", (*ESEF_DOCUMENT_CONTACT_CANDIDATES_EXPORT_COLUMNS, "processed_week", "resolved_at"), final=False),
+    SeEsefView("esef_document_company_information", (*ESEF_DOCUMENT_COMPANY_INFORMATION_EXPORT_COLUMNS, "resolved_at"), final=False),
+    SeEsefView("esef_document_people", (*ESEF_DOCUMENT_PEOPLE_COLUMNS, "person_profile_hash", "person_role_hash"), final=True),
+    SeEsefView("esef_document_business_items", ESEF_DOCUMENT_BUSINESS_ITEM_COLUMNS, final=True),
+    SeEsefView("esef_document_group_relationships", ESEF_DOCUMENT_GROUP_RELATIONSHIP_COLUMNS, final=True),
 )
