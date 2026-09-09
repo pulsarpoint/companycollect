@@ -49,8 +49,8 @@ SELECT
   operating_geographies_json,
   business_segments_json,
   material_group_relationships_json
-FROM corpscout.esef_document_company_information
-WHERE country_iso2 = 'SE' AND company_id = {companyId:String}
+FROM corpscout.se_esef_document_company_information
+WHERE company_id = {companyId:String}
 ORDER BY fiscal_year DESC, extracted_at DESC
 LIMIT 1 BY source_document_id`;
 
@@ -58,23 +58,23 @@ export const ESEF_TAB_PEOPLE_SQL = `
 SELECT
   fiscal_year, name, role, role_category, organization, status,
   toFloat64(confidence) AS confidence
-FROM corpscout.esef_document_people FINAL
-WHERE country_code = 'SE' AND company_id = {companyId:String}
+FROM corpscout.se_esef_document_people
+WHERE company_id = {companyId:String}
 ORDER BY fiscal_year DESC, name, role`;
 
 export const ESEF_TAB_BUSINESS_ITEMS_SQL = `
 SELECT
   fiscal_year, item_kind, name, geography_type,
   toFloat64(confidence) AS confidence
-FROM corpscout.esef_document_business_items FINAL
-WHERE country_code = 'SE' AND company_id = {companyId:String}
+FROM corpscout.se_esef_document_business_items
+WHERE company_id = {companyId:String}
 ORDER BY fiscal_year DESC, item_kind, name`;
 
 export const ESEF_TAB_CONTACTS_SQL = `
 SELECT
   fiscal_year, candidate_kind, normalized_value, registrable_domain
-FROM corpscout.esef_document_contact_candidates
-WHERE country_iso2 = 'SE' AND company_id = {companyId:String}
+FROM corpscout.se_esef_document_contact_candidates
+WHERE company_id = {companyId:String}
 ORDER BY fiscal_year DESC, candidate_kind, normalized_value`;
 
 export const ESEF_TAB_RELATIONSHIPS_SQL = `
@@ -82,8 +82,8 @@ SELECT
   fiscal_year, related_company_name, relationship_type,
   toString(ownership_percentage) AS ownership_percentage, jurisdiction,
   toFloat64(confidence) AS confidence
-FROM corpscout.esef_document_group_relationships FINAL
-WHERE country_code = 'SE' AND company_id = {companyId:String}
+FROM corpscout.se_esef_document_group_relationships
+WHERE company_id = {companyId:String}
 ORDER BY fiscal_year DESC, related_company_name`;
 
 // Query row types (snake_case, matching SQL aliases)

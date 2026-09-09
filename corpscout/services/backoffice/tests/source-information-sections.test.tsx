@@ -157,13 +157,28 @@ describe("source-preserving company information", () => {
     expect(COMPANY_DESCRIPTION_OBSERVATIONS_QUERY).toContain(
       "company_description_current",
     );
-    expect(ESEF_DOCUMENT_PEOPLE_QUERY).toContain("esef_document_people FINAL");
+    // These four read the register-verified se_esef_* views (company_id
+    // first, Sweden-only already), so no FINAL and no country predicate.
+    expect(ESEF_DOCUMENT_PEOPLE_QUERY).toContain(
+      "FROM corpscout.se_esef_document_people",
+    );
     expect(ESEF_DOCUMENT_BUSINESS_ITEMS_QUERY).toContain(
-      "esef_document_business_items FINAL",
+      "FROM corpscout.se_esef_document_business_items",
     );
     expect(ESEF_DOCUMENT_RELATIONSHIPS_QUERY).toContain(
-      "esef_document_group_relationships FINAL",
+      "FROM corpscout.se_esef_document_group_relationships",
     );
-    expect(ESEF_DOCUMENT_CONTACTS_QUERY).toContain("esef_document_contact_candidates");
+    expect(ESEF_DOCUMENT_CONTACTS_QUERY).toContain(
+      "FROM corpscout.se_esef_document_contact_candidates",
+    );
+    for (const sql of [
+      ESEF_DOCUMENT_PEOPLE_QUERY,
+      ESEF_DOCUMENT_BUSINESS_ITEMS_QUERY,
+      ESEF_DOCUMENT_RELATIONSHIPS_QUERY,
+      ESEF_DOCUMENT_CONTACTS_QUERY,
+    ]) {
+      expect(sql).not.toContain("FINAL");
+      expect(sql).not.toContain("country_code = {country:String}");
+    }
   });
 });
