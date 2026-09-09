@@ -414,7 +414,7 @@ EXPECTED_MIGRATIONS = (
 
 NOOP_MIGRATIONS = {"000276_noop"}
 
-# Entries whose objects left the ledger by hand (2026-09-03 and 2026-09-08). Development-phase policy: an unused
+# Entries whose objects left the ledger by hand (2026-09-03, 2026-09-08 and 2026-09-09). Development-phase policy: an unused
 # table is dropped by hand on the server and its DDL leaves the file, which stays for
 # history. Nothing is left for these migrations to declare, so the "creates something" and
 # "undoes something" assertions cannot apply -- the database statement is all that remains.
@@ -458,6 +458,21 @@ EMPTIED_MIGRATIONS = {
     "000320_corpscout_se_address_geocodes_current_mv",
     "000325_corpscout_se_address_geocodes_served_view",
     "000327_corpscout_se_address_geocodes_served_postal_box_fallback",
+    # SE person slice 0 (2026-09-09): the 2026-08-19 people model was dropped by hand and
+    # its DDL left these files. 000296 is the writer-grant migration -- its two grants named
+    # tables that are gone, so it is emptied even though access migrations usually keep a
+    # dangling grant (000241 and 000298 both do). 000267, 000289 and 000290 are NOT here --
+    # each still declares something that stays (the other seventeen serving tables, the four
+    # source-table hash columns, company_person_role_type) and only lost the statements that
+    # named a dropped object.
+    "000288_corpscout_se_company_person_draft",
+    "000291_corpscout_se_company_person",
+    "000292_corpscout_se_company_person_roles",
+    "000293_corpscout_se_company_person_roles_by_year",
+    "000295_corpscout_se_company_person_corrections",
+    "000296_corpscout_se_company_person_correction_writer_grants",
+    "000330_corpscout_se_company_person_views",
+    "000331_corpscout_se_company_person_views_observed_at",
 }
 
 EXPECTED_ACCESS_MIGRATIONS = (
@@ -806,6 +821,10 @@ def test_clickhouse_migrations_create_databases_and_tables() -> None:
         # DROP-only up migrations (e.g. removing orphaned tables) are allowed.
         assert (
             "CREATE TABLE IF NOT EXISTS" in sql
+            # 000290 and 000293 create with the bare form (a CREATE ... AS SELECT seed and a
+            # recreate-after-DROP). 000290 only reached this list through its RENAME before
+            # SE person slice 0 took the draft half of the file away.
+            or "CREATE TABLE corpscout." in sql
             or "ALTER TABLE" in sql
             or "CREATE VIEW IF NOT EXISTS" in sql
             or "CREATE OR REPLACE VIEW" in sql
@@ -3490,28 +3509,6 @@ def test_sweden_financial_report_signatories_renames_the_existing_table() -> Non
     assert "TO corpscout.se_company_officers" in down_sql
 
 
-def test_sweden_company_person_draft_and_roles_are_migrated() -> None:
-    sql = _migration_sql("000288_corpscout_se_company_person_draft.up.sql")
-    down_sql = _migration_sql("000288_corpscout_se_company_person_draft.down.sql")
-
-    assert "CREATE TABLE IF NOT EXISTS corpscout.se_company_person_draft" in sql
-    assert "CREATE TABLE IF NOT EXISTS corpscout.company_person_role" in sql
-    assert sql.count("ENGINE = ReplacingMergeTree(updated_at)") == 2
-    assert "ORDER BY (company_id, person_id)" in sql
-    assert "ORDER BY (country_code, company_id, person_id, role_id)" in sql
-
-    for source in ("bolagsverket", "esef", "wikidata"):
-        assert f"{source}_source_record_uids Array(String)" in sql
-        assert f"{source}_profile_hash Nullable(FixedString(64))" in sql
-        assert f"{source}_role_hash Nullable(FixedString(64))" in sql
-
-    assert "source_count UInt8 MATERIALIZED" in sql
-    assert "profile_update_method LowCardinality(String)" in sql
-    assert "review_status LowCardinality(String)" in sql
-    assert "DROP TABLE IF EXISTS corpscout.company_person_role" in down_sql
-    assert "DROP TABLE IF EXISTS corpscout.se_company_person_draft" in down_sql
-
-
 def test_company_person_source_semantic_hashes_are_migrated() -> None:
     sql = _migration_sql("000289_corpscout_company_person_semantic_hashes.up.sql")
     down_sql = _migration_sql(
@@ -3523,46 +3520,22 @@ def test_company_person_source_semantic_hashes_are_migrated() -> None:
         "wikidata_company_people",
         "esef_document_people",
         "se_financial_report_signatories",
-        "se_company_person_draft",
     ):
         assert f"ALTER TABLE corpscout.{table_name}" in sql
 
     assert "person_profile_hash FixedString(64) MATERIALIZED" in sql
     assert "person_role_hash FixedString(64) MATERIALIZED" in sql
     assert "signatory_uid FixedString(64) MATERIALIZED" in sql
-    assert "wikidata_person_id Nullable(String)" in sql
     assert "'company-source-record-v1" not in sql
     assert "lowerUTF8(source_payload_hash)" not in sql
+    assert "corpscout.se_company_person_draft" not in sql
 
     for column_name in (
-        "wikidata_person_id",
         "signatory_uid",
         "person_profile_hash",
         "person_role_hash",
     ):
         assert f"DROP COLUMN IF EXISTS {column_name}" in down_sql
-
-
-def test_company_person_draft_is_reshaped_into_source_observations() -> None:
-    sql = _migration_sql(
-        "000290_corpscout_company_person_source_observations_and_role_types.up.sql"
-    )
-    down_sql = _migration_sql(
-        "000290_corpscout_company_person_source_observations_and_role_types.down.sql"
-    )
-
-    assert "TO corpscout.se_company_person_draft_legacy" in sql
-    assert "CREATE TABLE corpscout.se_company_person_draft" in sql
-    assert "draft_id UUID" in sql
-    assert "source_value_json String" in sql
-    assert "ENGINE = ReplacingMergeTree(created_at)" in sql
-    assert "ORDER BY (company_id, source, draft_id)" in sql
-    assert "person_id UUID" not in sql
-    assert "match_method" not in sql
-    assert "review_status" not in sql
-
-    assert "DROP TABLE IF EXISTS corpscout.se_company_person_draft" in down_sql
-    assert "TO corpscout.se_company_person_draft" in down_sql
 
 
 def test_canonical_company_person_role_types_are_seeded() -> None:
@@ -3606,38 +3579,6 @@ def test_employee_board_representative_role_is_added() -> None:
     assert "'governance'" in up_sql
     assert "representing the workforce" in up_sql
     assert "DELETE WHERE role_code = 'employee_board_representative'" in down_sql
-
-
-def test_normalized_sweden_company_people_table_is_migrated() -> None:
-    sql = _migration_sql("000291_corpscout_se_company_person.up.sql")
-    down_sql = _migration_sql("000291_corpscout_se_company_person.down.sql")
-
-    assert "CREATE TABLE IF NOT EXISTS corpscout.se_company_person" in sql
-    for column in (
-        "person_id UUID",
-        "company_id String",
-        "name String",
-        "description Nullable(String)",
-        "draft_ids Array(UUID)",
-        "model_provider LowCardinality(String)",
-        "model_name String",
-        "prompt_version String",
-        "source_run_id String",
-        "created_at DateTime64(3, 'UTC')",
-        "updated_at DateTime64(3, 'UTC')",
-    ):
-        assert column in sql
-
-    assert "draft_set_hash FixedString(64) MATERIALIZED" in sql
-    assert "arraySort(draft_ids)" in sql
-    assert "profile_hash FixedString(64) MATERIALIZED" in sql
-    assert "CONSTRAINT has_source_observation CHECK notEmpty(draft_ids)" in sql
-    assert "CONSTRAINT has_person_name CHECK trim(name) != ''" in sql
-    assert "ENGINE = ReplacingMergeTree(updated_at)" in sql
-    assert "ORDER BY (company_id, person_id)" in sql
-    assert "role_code" not in sql
-    assert "role_name" not in sql
-    assert "DROP TABLE IF EXISTS corpscout.se_company_person" in down_sql
 
 
 def test_ratsit_sole_trader_id_migration_repairs_applied_constraints() -> None:
@@ -4302,3 +4243,88 @@ def test_no_new_migration_drops_a_slice_4c_retirement() -> None:
     for path in up_files:
         found = pattern.search(path.read_text(encoding="utf-8"))
         assert found is None, f"{path.name} drops {found.group(1)}"
+
+
+SLICE_0_EMPTIED = (
+    "000288_corpscout_se_company_person_draft",
+    "000291_corpscout_se_company_person",
+    "000292_corpscout_se_company_person_roles",
+    "000293_corpscout_se_company_person_roles_by_year",
+    "000295_corpscout_se_company_person_corrections",
+    "000296_corpscout_se_company_person_correction_writer_grants",
+    "000330_corpscout_se_company_person_views",
+    "000331_corpscout_se_company_person_views_observed_at",
+)
+
+# Every name whose DDL leaves the ledger in person slice 0: the twelve the owner-run script
+# drops, plus se_company_person_draft, se_company_person_draft_legacy and company_person_role,
+# dropped by migrations back in August and only losing their DDL now. WHOLE-NAME matching
+# only: se_company_person prefixes the six tables the entity KEEPS, and company_person_role
+# prefixes company_person_role_type, the catalog that stays.
+SLICE_0_DROPPED_OBJECTS = (
+    "se_company_person",
+    "se_company_person_role",
+    "se_company_person_role_draft",
+    "se_company_person_correction",
+    "se_company_person_enrichment_observation",
+    "se_company_person_collision_candidate",
+    "se_company_person_v1_role_baseline",
+    "se_company_person_bolagsverket",
+    "se_company_person_esef",
+    "se_company_person_wikidata",
+    "se_company_person_draft",
+    "se_company_person_draft_legacy",
+    "company_person_role",
+    "company_management_current",
+    "company_management_observations",
+)
+
+SLICE_0_KEPT_OBJECTS = (
+    "se_company_person_suggestion",
+    "se_company_person_normalized",
+    "se_company_person_v2",
+    "se_company_person_history",
+    "se_company_person_rule",
+    "se_company_person_precedence",
+    "company_person_role_type",
+)
+
+
+def test_the_slice_0_migrations_are_emptied_and_registered() -> None:
+    """Dev-phase ledger policy: an object dropped by hand loses its DDL from the file that
+    declared it, and the file stays for history with the database statement alone."""
+    for migration in SLICE_0_EMPTIED:
+        assert migration in EMPTIED_MIGRATIONS, migration
+        for suffix in (".up.sql", ".down.sql"):
+            sql = _migration_sql(f"{migration}{suffix}")
+            assert _statement_lines(sql) == ["CREATE DATABASE IF NOT EXISTS corpscout;"], (
+                f"{migration}{suffix}"
+            )
+            assert "dropped by hand" in sql, f"{migration}{suffix} lost its removal comment"
+
+
+def test_no_up_migration_declares_a_slice_0_dropped_object() -> None:
+    """No CREATE and no later ALTER may still build one of them on the way UP.
+
+    UP FILES ONLY, deliberately: 000328's and 000332's DOWN files recreate the draft tables
+    they dropped, which is the history of those drops and is left alone. A DROP is history of
+    a drop, not a declaration, so 000292's, 000328's and 000332's up files pass by
+    construction -- the pattern matches only declarations.
+
+    Whole names: `company_person_role_type` must NOT trip on `company_person_role`, and the
+    entity's own six tables must not trip on `se_company_person`. The regex's `(\\w+)` group
+    captures the full identifier, so the comparison below is already whole-name; the kept
+    list is asserted alongside to keep it that way if anyone rewrites the pattern.
+    """
+    pattern = re.compile(
+        r"(CREATE TABLE IF NOT EXISTS|CREATE TABLE|CREATE OR REPLACE VIEW"
+        r"|CREATE VIEW IF NOT EXISTS|CREATE MATERIALIZED VIEW|ALTER TABLE)\s+(?:corpscout\.)?(\w+)",
+        re.IGNORECASE,
+    )
+    declared: set[str] = set()
+    for path in sorted(MIGRATIONS_DIR.glob("*.up.sql")):
+        for _, name in pattern.findall(path.read_text(encoding="utf-8")):
+            assert name not in SLICE_0_DROPPED_OBJECTS, f"{path.name} declares {name}"
+            declared.add(name)
+    for kept in SLICE_0_KEPT_OBJECTS:
+        assert kept in declared, f"no migration declares the kept object {kept}"

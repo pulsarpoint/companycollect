@@ -108,35 +108,9 @@ ENGINE = MergeTree
 PARTITION BY country_code
 ORDER BY (country_code, company_id, is_primary, wikidata_id);
 
-CREATE TABLE IF NOT EXISTS corpscout.company_management_current
-(
-    country_code LowCardinality(String),
-    company_id String,
-    management_id FixedString(64),
-    person_id Nullable(UUID),
-    external_person_scheme LowCardinality(String),
-    external_person_value String,
-    display_name String,
-    first_name String,
-    last_name String,
-    person_description String,
-    birth_year Nullable(UInt16),
-    image_url String,
-    external_url String,
-    role_kind LowCardinality(String),
-    role_label String,
-    signatory_kind LowCardinality(String),
-    start_date Nullable(Date),
-    end_date Nullable(Date),
-    latest_fiscal_year Nullable(UInt16),
-    is_current UInt8,
-    confidence Float32,
-    source_systems Array(String),
-    resolved_at DateTime64(3, 'UTC')
-)
-ENGINE = MergeTree
-PARTITION BY country_code
-ORDER BY (country_code, company_id, is_current, role_kind, management_id);
+-- company_management_current and company_management_observations were dropped by hand in SE
+-- person slice 0 (2026-09-09) and their DDL left this file per the dev-phase ledger policy.
+-- Every other serving table this migration creates stays.
 
 CREATE TABLE IF NOT EXISTS corpscout.company_description_current
 (
@@ -454,47 +428,6 @@ ORDER BY (
     country_code,
     company_id,
     wikidata_id,
-    observed_at,
-    observation_fingerprint
-);
-
-CREATE TABLE IF NOT EXISTS corpscout.company_management_observations
-(
-    country_code LowCardinality(String),
-    company_id String,
-    management_id FixedString(64),
-    person_id Nullable(UUID),
-    external_person_scheme LowCardinality(String),
-    external_person_value String,
-    display_name String,
-    first_name String,
-    last_name String,
-    person_description String,
-    birth_year Nullable(UInt16),
-    image_url String,
-    external_url String,
-    role_kind LowCardinality(String),
-    role_label String,
-    signatory_kind LowCardinality(String),
-    start_date Nullable(Date),
-    end_date Nullable(Date),
-    latest_fiscal_year Nullable(UInt16),
-    is_current UInt8,
-    confidence Float32,
-    source_systems Array(String),
-    resolved_at DateTime64(3, 'UTC'),
-    state_fingerprint FixedString(64),
-    observation_fingerprint FixedString(64),
-    has_observation UInt8,
-    source_run_id String,
-    observed_at DateTime64(3, 'UTC')
-)
-ENGINE = ReplacingMergeTree(observed_at)
-PARTITION BY (country_code, toYear(observed_at))
-ORDER BY (
-    country_code,
-    company_id,
-    management_id,
     observed_at,
     observation_fingerprint
 );

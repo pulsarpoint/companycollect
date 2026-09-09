@@ -1,31 +1,8 @@
 CREATE DATABASE IF NOT EXISTS corpscout;
 
--- Preserve the pre-normalized draft rows while the new source-observation
--- pipeline is introduced. They are derived data and are not copied into the
--- new inbox because they already merge several sources.
-RENAME TABLE corpscout.se_company_person_draft
-TO corpscout.se_company_person_draft_legacy;
-
--- Immutable inbox for person observations copied from source tables. A new
--- semantic source version gets a new draft_id. An existing draft_id is never
--- updated by the collector.
-CREATE TABLE corpscout.se_company_person_draft
-(
-    draft_id UUID,
-    company_id String,
-    source LowCardinality(String),
-    source_entity_id String,
-    source_record_uid String,
-    person_profile_hash FixedString(64),
-    person_role_hash FixedString(64),
-    source_value_json String,
-    fiscal_year Nullable(UInt16),
-    source_observed_at DateTime64(3, 'UTC'),
-    source_run_id String,
-    created_at DateTime64(3, 'UTC')
-)
-ENGINE = ReplacingMergeTree(created_at)
-ORDER BY (company_id, source, draft_id);
+-- The source-observation draft table this migration also created was dropped by migration
+-- 000332 on 2026-08-27, and its DDL left this file in SE person slice 0 (2026-09-09) per the
+-- dev-phase ledger policy. The role catalog below stays -- Serbia seeds into it too.
 
 -- This table is the controlled role vocabulary. The LLM-facing schema will
 -- expose active role_code values as its enum. NEW_ROLE_REQUIRED remains an

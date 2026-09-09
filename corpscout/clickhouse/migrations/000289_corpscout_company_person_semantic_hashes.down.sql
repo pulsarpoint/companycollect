@@ -1,6 +1,3 @@
-ALTER TABLE corpscout.se_company_person_draft
-    DROP COLUMN IF EXISTS wikidata_person_id;
-
 ALTER TABLE corpscout.se_financial_report_signatories
     DROP COLUMN IF EXISTS person_role_hash,
     DROP COLUMN IF EXISTS person_profile_hash,
