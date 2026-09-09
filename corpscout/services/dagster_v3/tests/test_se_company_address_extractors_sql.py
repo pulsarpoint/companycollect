@@ -1,9 +1,9 @@
-"""Text pins of the three address extractors (spec section 7): the thirteen raw columns in
+"""Text pins of the four address extractors (spec section 7): the thirteen raw columns in
 order, FINAL reads, id binding, tombstones, and the INSERT that stamps suggestion_id."""
 
 import dagster as dg
 
-from dagster_v3.defs.se_company.address import assets, bolagsverket, ratsit, scb, tables
+from dagster_v3.defs.se_company.address import assets, bolagsverket, esef, ratsit, scb, tables
 from dagster_v3.defs.se_company.address.normalize import SCRATCH_SCOPE_PREFIX
 from dagster_v3.defs.se_company.address.suggestions import (
     ADDRESS_SELECT_COLUMNS,
@@ -138,11 +138,40 @@ def test_ratsit_takes_the_newest_report_into_the_company_slot() -> None:
 
 
 def test_assets_are_named_grouped_and_declared() -> None:
-    assert assets.EXTRACTOR_SOURCES == ("scb", "bolagsverket", "ratsit")
+    assert assets.EXTRACTOR_SOURCES == ("scb", "bolagsverket", "ratsit", "esef")
     assert assets.EXTRACTOR_ASSET_NAMES == tuple(f"se_company_address_suggestions_{s}" for s in assets.EXTRACTOR_SOURCES)
     for source, (_, _, asset) in EXTRACTORS.items():
         assert asset.key == dg.AssetKey(f"se_company_address_suggestions_{source}")
         assert asset.group_names_by_key[asset.key] == "se_company_address"
     assert "FROM corpscout.se_company_address_suggestion WHERE source = %(source)s" in changed_scope_sql(
         current_sql=scb.scb_current_sql(), target=ADDRESS_TARGET,
+    )
+
+
+def test_esef_takes_the_registered_office_of_the_newest_filing_and_repacks_it() -> None:
+    sql = esef.esef_select_sql()
+    assert _aliases(sql) == list(ADDRESS_SELECT_COLUMNS)
+    assert "FROM corpscout.se_esef_facts AS facts" in sql
+    assert "INNER JOIN corpscout.se_esef_filings AS filings ON filings.fxo_id = facts.fxo_id" in sql
+    assert "FINAL" not in sql
+    assert "facts.concept_local_name = 'AddressOfRegisteredOfficeOfEntity'" in sql
+    assert "'esef' AS source" in sql and "'' AS slot" in sql and "'registered' AS kind" in sql
+    assert "'company-source-record-v1\\nfile\\nesef_report_package\\n', lowerUTF8(filings.package_sha256)" in sql
+    assert "toDateTime64(filings.processed_at, 3, 'UTC') AS observed_at" in sql
+    assert "ORDER BY filings.period_end DESC, filings.processed_at DESC, facts.language DESC, facts.fact_id\nLIMIT 1 BY facts.company_id" in sql
+    assert "company_id IN %(company_ids)s" in sql
+    # The packed form the normaliser parses; the unparsed remainder goes to street_address.
+    assert esef.ESEF_PACKED_ADDRESS_SQL in sql
+    assert "AS raw_address" in sql and "AS street_address" in sql
+    assert "CAST(NULL AS Nullable(String)) AS care_of" in sql
+    assert "AS post_town" in sql
+    assert "[^,]+)$'" in sql
+    assert esef.ESEF_ADDRESS_EXTRACTOR_VERSION == "esef-address-v1"
+    assert esef.esef_current_sql() == (
+        "SELECT facts.company_id AS company_id, argMax(toDateTime64(filings.processed_at, 3, 'UTC'), "
+        "(filings.period_end, toDateTime64(filings.processed_at, 3, 'UTC'))) AS observed_at\n"
+        "FROM corpscout.se_esef_facts AS facts\n"
+        "INNER JOIN corpscout.se_esef_filings AS filings ON filings.fxo_id = facts.fxo_id\n"
+        "WHERE facts.concept_local_name = 'AddressOfRegisteredOfficeOfEntity' AND filings.processed_at IS NOT NULL\n"
+        "GROUP BY facts.company_id"
     )

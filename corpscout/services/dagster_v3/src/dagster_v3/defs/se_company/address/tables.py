@@ -16,7 +16,7 @@ QUALIFIED_HISTORY_TABLE = f"{DATABASE}.{HISTORY_TABLE}"
 QUALIFIED_RULE_TABLE = f"{DATABASE}.{RULE_TABLE}"
 QUALIFIED_PRECEDENCE_TABLE = f"{DATABASE}.{PRECEDENCE_TABLE}"
 
-SOURCES: tuple[str, ...] = ("scb", "bolagsverket", "ratsit", "reviewer", "reviewer_draft")
+SOURCES: tuple[str, ...] = ("scb", "bolagsverket", "ratsit", "esef", "reviewer", "reviewer_draft")
 KINDS: tuple[str, ...] = ("postal", "visiting", "visiting_or_postal", "registered", "workplace", "unknown")
 PARSE_STATUSES: tuple[str, ...] = ("ok", "partial", "no_address", "foreign")
 

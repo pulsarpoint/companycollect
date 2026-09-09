@@ -16,6 +16,7 @@ ADDRESS_PRECEDENCE: dict[str, int] = {
     "reviewer": 20000,
     "bolagsverket": 1000,
     "scb": 900,
+    "esef": 500,
     "ratsit": 300,
 }
 

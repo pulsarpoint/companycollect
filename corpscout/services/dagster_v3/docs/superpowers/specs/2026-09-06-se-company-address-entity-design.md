@@ -39,7 +39,8 @@ Owner decisions, 2026-09-05 and 2026-09-06:
 - The reviewer can add, correct and remove addresses. Removal is a per-company rule keyed by
   the address; correction is a removal plus a reviewer address written together.
 - Sources in the first cut: SCB, Bolagsverket, Ratsit's company address, the reviewer. ESEF
-  has no address columns in our tables (a separate extraction would be needed); Ratsit's
+  joined as a source in slice 3 of the 2026-09-08 ESEF design
+  (`2026-09-08-esef-entity-link-people-addresses-design.md`), kind `registered`; Ratsit's
   establishments come later as kind `workplace`.
 - Build beside the current model, prove parity, switch readers, retire the old chain in an
   owner-gated step.
@@ -51,10 +52,10 @@ extractors, the fold with compatibility grouping, rules, set replacement, histor
 in-page geocoding, the geocode cache adoption, the precedence export, the backoffice Address
 tab with its five actions, parity, the reader switch and the retirement list.
 
-Out of scope: the workplace extractor, ESEF address extraction, other countries' normalizers
-(the normalizer is one function per country; only Sweden is written), any change to the
-matcher, the workbench scripts, the centroid tables or the OSM refresh, and the sensor
-(manual folds first, as for basic info).
+Out of scope: the workplace extractor, other countries' normalizers (the normalizer is one
+function per country; only Sweden is written), any change to the matcher, the workbench
+scripts, the centroid tables or the OSM refresh, and the sensor (manual folds first, as for
+basic info).
 
 ## 3. Tables
 
@@ -435,9 +436,13 @@ paging, `execute: false` preview, `max_companies` cap.
 - `ratsit`: `se_ratsit_company` FINAL, newest normalized report per company:
   `address_street`, `address_postal_code`, `address_locality`, `address_county`; kind
   `postal`, slot `company`; `observed_at` the report's `normalized_at`.
+- `esef` (slice 3 of the 2026-09-08 ESEF design): `se_esef_facts` joined to `se_esef_filings`,
+  the `AddressOfRegisteredOfficeOfEntity` fact of the newest filing, cleaned and re-packed into
+  the Bolagsverket form when a Swedish postcode is found, else street and town components; kind
+  `registered`, slot `''`; `observed_at` the filing's processed time.
 - Reviewer rows come only from the backoffice (section 8).
 
-`se_company_address_extract_job` selects the three extractors and the normalize asset;
+`se_company_address_extract_job` selects the four extractors and the normalize asset;
 `se_company_address_v2_weekly` is registered stopped (an interim name: the old model's
 `address_legacy.py` registers `se_company_address_weekly` until the cutover, which renames
 the new one).
