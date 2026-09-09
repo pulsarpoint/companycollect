@@ -158,7 +158,10 @@ country." The views are named `se_esef_<table>`.
   `AddressOfRegisteredOfficeOfEntity` fact of the company's latest filing in `se_esef_facts`,
   `observed_at` = the filing's processed time, `source_record_uid` = the filing package's
   record uid (the `esef_report_package` hash every `esef_document_*` row carries). The
-  normaliser parses the string; "Sverige" resolves to `SE` as any other country word does.
+  normaliser's `raw_address` path parses only the Bolagsverket packed form, so the extractor
+  cleans the fact (tags, whitespace, trailing punctuation and country word) and re-packs it
+  when a Swedish postcode is found; a fact without one is delivered as street and town
+  components with `raw_address` NULL. A trailing "Sverige"/"Sweden" resolves to `SE`.
 - The extractor list becomes scb, bolagsverket, ratsit, esef; address precedence gains
   `esef: 500` (display order only). No table changes on the address entity.
 - Head office and principal place of business from the `company_contact` sections are a

@@ -113,9 +113,9 @@ company) targets specific companies and pages them in memory instead of scanning
 
 ## Extractors (slice 1)
 
-`se_company_address_suggestions_<source>` (`scb`, `bolagsverket`, `ratsit`), on the same
-basic-info extract helper (`suggestions.py::define_address_suggestion_asset`), each write
-one raw suggestion row per company per source:
+`se_company_address_suggestions_<source>` (`scb`, `bolagsverket`, `ratsit`, `esef`), on the
+same basic-info extract helper (`suggestions.py::define_address_suggestion_asset`), each
+write one raw suggestion row per company per source:
 
 - `scb` reads `se_scb_companies` FINAL: `care_of`, `street_address`, `postal_code`,
   `post_town` as delivered, kind `visiting_or_postal`, slot `''`.
@@ -124,6 +124,12 @@ one raw suggestion row per company per source:
 - `ratsit` reads `se_ratsit_company` FINAL, newest normalized report per company:
   `address_street`, `address_postal_code`, `address_locality`, `address_county`, kind
   `postal`, slot `company`.
+- `esef` reads `se_esef_facts` joined to `se_esef_filings`: the
+  `AddressOfRegisteredOfficeOfEntity` fact of the company's newest filing, cleaned (tags,
+  whitespace, trailing punctuation) and re-packed into the Bolagsverket packed format when a
+  Swedish postcode is found, otherwise delivered as street and town components split at the
+  last comma; kind `registered`, slot `''`. `source_record_uid` is the filing package's uid;
+  address precedence carries `esef: 500` (display order only).
 
 A company a source stops delivering writes a tombstone: a NULL row, not a deleted one.
 `suggestion_id` is stamped from a `WITH (SELECT now64(3, 'UTC')) AS stamp` scalar subquery

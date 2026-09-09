@@ -39,7 +39,8 @@ Owner decisions, 2026-09-05 and 2026-09-06:
 - The reviewer can add, correct and remove addresses. Removal is a per-company rule keyed by
   the address; correction is a removal plus a reviewer address written together.
 - Sources in the first cut: SCB, Bolagsverket, Ratsit's company address, the reviewer. ESEF
-  has no address columns in our tables (a separate extraction would be needed); Ratsit's
+  joined as a source in slice 3 of the 2026-09-08 ESEF design
+  (`2026-09-08-esef-entity-link-people-addresses-design.md`), kind `registered`; Ratsit's
   establishments come later as kind `workplace`.
 - Build beside the current model, prove parity, switch readers, retire the old chain in an
   owner-gated step.
@@ -51,10 +52,10 @@ extractors, the fold with compatibility grouping, rules, set replacement, histor
 in-page geocoding, the geocode cache adoption, the precedence export, the backoffice Address
 tab with its five actions, parity, the reader switch and the retirement list.
 
-Out of scope: the workplace extractor, ESEF address extraction, other countries' normalizers
-(the normalizer is one function per country; only Sweden is written), any change to the
-matcher, the workbench scripts, the centroid tables or the OSM refresh, and the sensor
-(manual folds first, as for basic info).
+Out of scope: the workplace extractor, other countries' normalizers (the normalizer is one
+function per country; only Sweden is written), any change to the matcher, the workbench
+scripts, the centroid tables or the OSM refresh, and the sensor (manual folds first, as for
+basic info).
 
 ## 3. Tables
 
