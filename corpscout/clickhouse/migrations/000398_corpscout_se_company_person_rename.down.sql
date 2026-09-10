@@ -5,7 +5,10 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 -- MODIFY-QUERY step here for the same reason it runs after it in the up file: the query
 -- must never be set to a name that does not exist yet. Nothing else comes back -- the
 -- 2026-08-19 table that used to hold the name was dropped by hand in slice 0 and is not
--- this migration's business.
+-- this migration's business. Running this down migration restores the database only: the
+-- deployed dagster code (companies_current.py, person/tables.py) and the backoffice
+-- constant must be rolled back to se_company_person_v2 too, or they will read a table that
+-- no longer exists.
 
 SYSTEM STOP VIEW corpscout.se_companies_serving;
 

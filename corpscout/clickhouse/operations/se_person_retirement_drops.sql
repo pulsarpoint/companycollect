@@ -5,6 +5,8 @@
 -- now the person entity's live main table. Re-running this script would drop it and destroy
 -- every published person.
 
+SELECT throwIf(1, 'spent: this script ran on 2026-09-09 and must not run again');
+
 -- SE person slice 0: the 2026-08-19 people model leaves ClickHouse. OWNER-RUN, by hand,
 -- after the slice-0 dagster deploy is live, migration 000396 is applied, and
 -- se_person_retirement_precheck.sql is clean. Nothing in this repo executes this file
