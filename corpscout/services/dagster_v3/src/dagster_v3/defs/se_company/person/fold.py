@@ -13,7 +13,7 @@ section 2). person_key therefore hashes the company id together with the canonic
 
 import hashlib
 import json
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields, replace
 from datetime import date, datetime
@@ -29,6 +29,10 @@ FOLDABLE_STATUS = "ok"
 EXCLUDED_SOURCES: tuple[str, ...] = ("reviewer_draft",)
 REVIEWER_SOURCE = "reviewer"
 MERGE, SPLIT, HIDE = "merge", "split", "hide"
+# Every kind the fold implements, which is every kind tables.RULE_KINDS allows. A rule
+# carrying anything else is a bad row in the rule table -- a bug, not a stale rule --
+# so `apply_rules` refuses it instead of dropping it without a trace.
+RULE_KINDS: frozenset[str] = frozenset((MERGE, SPLIT, HIDE))
 HIDDEN, WITHDRAWN = "hidden", "withdrawn"
 CREATED, UPDATED, REACTIVATED = "created", "updated", "reactivated"
 # Everything a fold compares to decide whether a person CHANGED. The three excluded columns
@@ -122,7 +126,7 @@ def _middles_match(
     left, right = frozenset(a.middle_tokens), frozenset(b.middle_tokens)
     if left == right:
         return True
-    candidates = middles_by_name[_name_key(a)]
+    candidates = middles_by_name.get(_name_key(a), ())
     if left < right:
         return _unique_minimal_superset(left, candidates) == right
     if right < left:
@@ -227,14 +231,23 @@ def identity_sets_before_split(
     return tuple(tuple(grouped[root]) for root in sorted(grouped))
 
 
+def _split_sets(
+    closed: Sequence[Sequence[NormalizedRow]], middles_by_name
+) -> tuple[tuple[NormalizedRow, ...], ...]:
+    """The birth-year split applied to an already computed closure. Split out so that
+    `fold_company_persons` can take the closure ONCE and derive both the sets it publishes
+    and the `sets_split_by_birth_year` metric from it: the closure is the fold's dominant
+    cost and it used to run twice per company."""
+    sets: list[tuple[NormalizedRow, ...]] = []
+    for members in closed:
+        sets.extend(_split_by_birth_year(members, middles_by_name))
+    return tuple(sets)
+
+
 def identity_sets(rows: Sequence[NormalizedRow]) -> tuple[tuple[NormalizedRow, ...], ...]:
     """The company's persons as sets of observations: the closure, then the birth-year
     split of any set that still holds two years (spec 5.1)."""
-    middles_by_name = _middles_by_name(rows)
-    sets: list[tuple[NormalizedRow, ...]] = []
-    for members in identity_sets_before_split(rows):
-        sets.extend(_split_by_birth_year(members, middles_by_name))
-    return tuple(sets)
+    return _split_sets(identity_sets_before_split(rows), _middles_by_name(rows))
 
 
 def canonical_tokens(members: Sequence[NormalizedRow]) -> tuple[str, ...]:
@@ -259,6 +272,19 @@ def person_key(company_id: str, canonical: Sequence[str], discriminator: str = "
     return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
 
 
+def _smallest_member_id(members: Sequence[NormalizedRow]) -> str:
+    """The set's smallest "source:slot". Sets are disjoint, so this separates any two of
+    one company -- which is what makes it the last-resort discriminator."""
+    return min(f"{member.source}:{member.slot}" for member in members)
+
+
+def _discriminator(members: Sequence[NormalizedRow]) -> str:
+    """A colliding set's first discriminator: its birth year (a set never holds two, and a
+    year does not move when slots come and go), else its smallest member id."""
+    years = {member.birth_year for member in members if member.birth_year is not None}
+    return str(min(years)) if years else _smallest_member_id(members)
+
+
 def assign_keys(
     company_id: str, sets: Sequence[Sequence[NormalizedRow]]
 ) -> list[tuple[tuple[NormalizedRow, ...], str]]:
@@ -272,19 +298,25 @@ def assign_keys(
     appears) takes a discriminator: its birth year when it has one (a set never holds two,
     and a year does not move when slots come and go), else the smallest "source:slot" of
     its members (the split-rule case). A set alone under its name keeps the plain key,
-    which is what makes keys stable across folds."""
+    which is what makes keys stable across folds.
+
+    THE COLLISION UNIT IS (canonical name, discriminator), NOT the name alone. A split rule
+    over a set whose members all carry the SAME birth year leaves two sets sharing both, and
+    a year-only discriminator would hand the reviewer's two people one key again -- which
+    ReplacingMergeTree ORDER BY (company_id, person_key) collapses back into one. Any set
+    still sharing its pair therefore falls back to "<year>:<smallest source:slot>": the sets
+    are disjoint, so a member id always separates them (controller ruling 2026-09-10)."""
     canonical = [tuple(canonical_tokens(members)) for members in sets]
-    shared = {name for name in canonical if canonical.count(name) > 1}
+    names = Counter(canonical)
+    discriminators = [
+        _discriminator(members) if names[name] > 1 else ""
+        for members, name in zip(sets, canonical, strict=True)
+    ]
+    pairs = Counter(zip(canonical, discriminators, strict=True))
     assigned: list[tuple[tuple[NormalizedRow, ...], str]] = []
-    for members, name in zip(sets, canonical, strict=True):
-        discriminator = ""
-        if name in shared:
-            years = {member.birth_year for member in members if member.birth_year is not None}
-            discriminator = (
-                str(min(years))
-                if years
-                else min(f"{member.source}:{member.slot}" for member in members)
-            )
+    for members, name, discriminator in zip(sets, canonical, discriminators, strict=True):
+        if pairs[(name, discriminator)] > 1:
+            discriminator = f"{discriminator}:{_smallest_member_id(members)}"
         assigned.append((tuple(members), person_key(company_id, name, discriminator)))
     return assigned
 
@@ -324,7 +356,13 @@ def _apply_merge(
 def _apply_split(
     sets: list[list[NormalizedRow]], rule: PersonRule
 ) -> tuple[list[list[NormalizedRow]], bool]:
-    """The rule's slots leave their sets and form one set of their own (spec 5.2)."""
+    """The rule's slots leave their sets and form ONE set of their own (spec 5.2).
+
+    Including when they came from two different sets: a rule naming slots that currently sit
+    under two persons pulls exactly those slots out and joins them, leaving the rest of both
+    sets behind. That is how a reviewer moves two observations the fold kept apart into one
+    person without also merging everything else the two sets held (a merge rule is the tool
+    for that). The backoffice writes one rule per intended person."""
     wanted = set(rule.slots)
     moved = [row for group in sets for row in group if row.slot in wanted]
     if not moved:
@@ -341,6 +379,9 @@ def apply_rules(
     """Merge rules then split rules, each kind ordered by rule_id, and the count of rules
     with at least one key or slot that resolved to nothing. Hide rules are a flag on the
     finished row, not a regrouping, and are applied by `fold_company_persons`."""
+    for rule in rules:
+        if rule.kind not in RULE_KINDS:
+            raise ValueError(f"rule {rule.rule_id!r}: unknown kind {rule.kind!r}")
     working = [list(members) for members in sets]
     stale = 0
     for kind in (MERGE, SPLIT):
@@ -635,11 +676,18 @@ def fold_company_persons(
             )
         if row.source in EXCLUDED_SOURCES:
             raise ValueError(f"{row.source}/{row.slot}: source never folds")
+    for rule in rules:
+        if rule.company_id != company_id:
+            raise ValueError(
+                f"rule {rule.rule_id!r} company_id {rule.company_id!r} is not {company_id!r}"
+            )
 
-    grouped = identity_sets(rows)
+    # One closure per company: the published sets and the split metric both come off it.
+    closed = identity_sets_before_split(rows)
+    grouped = _split_sets(closed, _middles_by_name(rows))
     sets_split = sum(
         1
-        for members in identity_sets_before_split(rows)
+        for members in closed
         if len({member.birth_year for member in members if member.birth_year is not None}) > 1
     )
     previous_members = {

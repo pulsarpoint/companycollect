@@ -184,6 +184,37 @@ def test_two_persons_with_the_same_canonical_name_never_share_a_key() -> None:
     assert person_key(C, ("anna", "svensson"), "1980") in keys
 
 
+def test_two_sets_sharing_a_name_and_a_birth_year_still_get_two_keys() -> None:
+    """A split rule over a set whose members all carry the SAME birth year leaves two sets
+    sharing the canonical name AND the year, which the year alone cannot separate. The
+    collision unit is therefore (canonical name, discriminator): a pair that is still shared
+    falls back to "<year>:<smallest source:slot>", the sets being disjoint. Without it
+    ReplacingMergeTree ORDER BY (company_id, person_key) collapses the two people the
+    reviewer just separated back into one."""
+    result = fold(
+        [row("bolagsverket", "s1", birth_year=1970), row("esef", "e1", birth_year=1970)],
+        rules=[PersonRule(C, "r" * 64, "split", (), ("e1",))],
+    )
+    assert len(result.rows) == 2
+    keys = {person.person_key for person in result.rows}
+    assert keys == {
+        person_key(C, ("anna", "svensson"), "1970:bolagsverket:s1"),
+        person_key(C, ("anna", "svensson"), "1970:esef:e1"),
+    }
+    assert person_key(C, ("anna", "svensson")) not in keys
+    assert person_key(C, ("anna", "svensson"), "1970") not in keys
+    # Two DIFFERENT years keep the plain year: the pair only degrades when it has to, so a
+    # birth-year discriminator still does not move when a slot comes or goes.
+    two_years = fold([
+        row("bolagsverket", "s1", birth_year=1970),
+        row("bolagsverket", "s2", birth_year=1980),
+    ])
+    assert {person.person_key for person in two_years.rows} == {
+        person_key(C, ("anna", "svensson"), "1970"),
+        person_key(C, ("anna", "svensson"), "1980"),
+    }
+
+
 def test_a_merge_rule_joins_the_sets_behind_its_keys_and_re_keys_the_result() -> None:
     first = fold([
         row("bolagsverket", "s1", middles=("maria",)),
@@ -223,6 +254,24 @@ def test_a_split_rule_moves_its_slots_into_a_set_of_their_own() -> None:
     assert result.stale_rules == 0
 
 
+def test_a_split_rule_whose_slots_come_from_two_sets_joins_them() -> None:
+    """The rule's slots form ONE new set even when they sat under two different persons:
+    exactly those slots are pulled out and joined and the rest of both sets stays behind,
+    which is how a reviewer moves two observations into one person without also merging
+    everything else the two sets held."""
+    result = fold(
+        [
+            row("bolagsverket", "s1"),
+            row("esef", "e1"),
+            row("esef", "e2", first="hakan", last="oberg"),
+        ],
+        rules=[PersonRule(C, "r" * 64, "split", (), ("e1", "e2"))],
+    )
+    assert {person.member_slots for person in result.rows} == {("s1",), ("e1", "e2")}
+    assert len({person.person_key for person in result.rows}) == 2
+    assert result.stale_rules == 0
+
+
 def test_a_split_rule_whose_slots_are_gone_is_counted_stale() -> None:
     result = fold([row("bolagsverket", "s1")], rules=[PersonRule(C, "r" * 64, "split", (), ("gone",))])
     assert len(result.rows) == 1 and result.stale_rules == 1
@@ -248,6 +297,26 @@ def test_rules_apply_in_kind_order_merge_then_split() -> None:
     )
     assert [person.member_slots for person in live] == [("e1",), ("s1",)]
     assert result.stale_rules == 0
+
+
+def test_a_rule_for_another_company_is_refused() -> None:
+    """`PersonRule` carries a company_id and the fold checks it: a mis-scoped rule SELECT
+    would otherwise silently regroup another company's people."""
+    with pytest.raises(ValueError):
+        fold(
+            [row("bolagsverket", "s1")],
+            rules=[PersonRule(OTHER, "r" * 64, "hide", ("f" * 64,), ())],
+        )
+
+
+def test_an_unknown_rule_kind_is_refused_and_named() -> None:
+    """A kind the fold does not implement is a bad row in the rule table -- a bug, not a
+    rule that resolved to nothing -- so it fails loudly instead of disappearing."""
+    with pytest.raises(ValueError, match="unmerge"):
+        fold(
+            [row("bolagsverket", "s1")],
+            rules=[PersonRule(C, "r" * 64, "unmerge", (), ("s1",))],
+        )
 
 
 def test_bad_input_is_refused() -> None:
