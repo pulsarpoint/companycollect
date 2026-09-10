@@ -114,8 +114,9 @@ def test_people_response_without_people_key_is_an_error() -> None:
             evidence_input=evidence,
             request_payload=request,
         )
-    except EsefLlmResponseError:
-        pass
+    except EsefLlmResponseError as error:
+        assert "people extraction" in str(error)
+        assert "company enrichment" not in str(error)
     else:
         raise AssertionError("a response without the people list must be refused")
 

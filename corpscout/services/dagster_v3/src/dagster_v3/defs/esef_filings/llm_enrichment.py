@@ -571,29 +571,29 @@ def _fair_character_allocations(
     return allocations
 
 
-def build_company_enrichment_request(
-    evidence_input: EsefEnrichmentInput,
+def _chat_request(
     *,
+    system_prompt: str,
+    evidence_input: EsefEnrichmentInput,
     model: str,
-    temperature: float = 0,
-    provider: str = "deepseek",
-    prompt_version: str = PROMPT_VERSION,
+    temperature: float,
+    provider: str,
 ) -> dict[str, Any]:
-    """Build the complete request body sent to the OpenAI-compatible API."""
+    """Build the request body shared by both OpenAI-compatible chat passes.
+
+    Each public builder validates and pins its own prompt version (with its
+    own error text) before calling this; this is only the model/temperature
+    validation and request-dict shape the two passes share verbatim.
+    """
     clean_model = model.strip()
     if clean_model == "":
         raise ValueError("LLM model name must not be empty")
     if not 0 <= temperature <= 2:
         raise ValueError("LLM temperature must be between 0 and 2")
-    if prompt_version != PROMPT_VERSION:
-        raise ValueError(
-            f"Unsupported ESEF prompt version: {prompt_version!r}; "
-            f"expected {PROMPT_VERSION!r}"
-        )
     request: dict[str, Any] = {
         "model": clean_model,
         "messages": [
-            {"role": "system", "content": _system_prompt()},
+            {"role": "system", "content": system_prompt},
             {
                 "role": "user",
                 "content": json.dumps(
@@ -609,6 +609,29 @@ def build_company_enrichment_request(
     if provider.strip().casefold() == "deepseek":
         request["extra_body"] = {"thinking": {"type": "disabled"}}
     return request
+
+
+def build_company_enrichment_request(
+    evidence_input: EsefEnrichmentInput,
+    *,
+    model: str,
+    temperature: float = 0,
+    provider: str = "deepseek",
+    prompt_version: str = PROMPT_VERSION,
+) -> dict[str, Any]:
+    """Build the complete request body sent to the OpenAI-compatible API."""
+    if prompt_version != PROMPT_VERSION:
+        raise ValueError(
+            f"Unsupported ESEF prompt version: {prompt_version!r}; "
+            f"expected {PROMPT_VERSION!r}"
+        )
+    return _chat_request(
+        system_prompt=_system_prompt(),
+        evidence_input=evidence_input,
+        model=model,
+        temperature=temperature,
+        provider=provider,
+    )
 
 
 def build_people_extraction_request(
@@ -620,35 +643,18 @@ def build_people_extraction_request(
     prompt_version: str = PEOPLE_PROMPT_VERSION,
 ) -> dict[str, Any]:
     """Build the complete people-extraction request body sent to the API."""
-    clean_model = model.strip()
-    if clean_model == "":
-        raise ValueError("LLM model name must not be empty")
-    if not 0 <= temperature <= 2:
-        raise ValueError("LLM temperature must be between 0 and 2")
     if prompt_version != PEOPLE_PROMPT_VERSION:
         raise ValueError(
             f"Unsupported ESEF people prompt version: {prompt_version!r}; "
             f"expected {PEOPLE_PROMPT_VERSION!r}"
         )
-    request: dict[str, Any] = {
-        "model": clean_model,
-        "messages": [
-            {"role": "system", "content": _people_system_prompt()},
-            {
-                "role": "user",
-                "content": json.dumps(
-                    evidence_input.model_dump(mode="json"),
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                ),
-            },
-        ],
-        "temperature": temperature,
-        "response_format": {"type": "json_object"},
-    }
-    if provider.strip().casefold() == "deepseek":
-        request["extra_body"] = {"thinking": {"type": "disabled"}}
-    return request
+    return _chat_request(
+        system_prompt=_people_system_prompt(),
+        evidence_input=evidence_input,
+        model=model,
+        temperature=temperature,
+        provider=provider,
+    )
 
 
 def enrichment_request_json_bytes(request_payload: Mapping[str, Any]) -> bytes:
@@ -760,7 +766,7 @@ def request_people_extraction(
         raw_extraction = EsefPeopleExtraction.model_validate_json(completion.json_text)
     except ValidationError as exc:
         raise EsefLlmResponseError(
-            "ESEF company enrichment returned invalid structured JSON "
+            "ESEF people extraction returned invalid structured JSON "
             f"(finish_reason={completion.finish_reason or 'unknown'}, "
             f"completion_tokens={completion.completion_tokens})"
         ) from exc
