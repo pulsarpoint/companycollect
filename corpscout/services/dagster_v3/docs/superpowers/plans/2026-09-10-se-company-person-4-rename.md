@@ -112,7 +112,7 @@
 - Consumes: `companies_current.build_se_companies_serving_sql() -> str`, `tests/se_company_ddl.py::table_block`/`declared_columns`.
 - Produces: `000398_corpscout_se_company_person_rename`; `COMPANY_PERSON_TABLE == "corpscout.se_company_person"`; `tables.MAIN_TABLE == "se_company_person"`, `tables.QUALIFIED_MAIN_TABLE == "corpscout.se_company_person"` — the string Task 2's TypeScript constant must equal.
 
-- [ ] **Step 1: Point the serving builder at the final name**
+- [x] **Step 1: Point the serving builder at the final name**
 
 In `src/dagster_v3/defs/sweden_company/companies_current.py`, replace the `COMPANY_PERSON_TABLE` constant and the four comment lines above it (they currently end "It is se_company_person_v2 for slices 0 to 3; slice 4 renames it and edits this one line."):
 
@@ -126,7 +126,7 @@ COMPANY_PERSON_TABLE = f"{CLICKHOUSE_DATABASE}.se_company_person"
 
 `PEOPLE_SET`, `PEOPLE_BOLAGSVERKET_SET` and `PEOPLE_ESEF_SET` (lines 216-224) interpolate that constant and need no edit.
 
-- [ ] **Step 2: Render both MODIFY QUERY bodies into scratch files**
+- [x] **Step 2: Render both MODIFY QUERY bodies into scratch files**
 
 The new body — run this AFTER Step 1's edit, so the render already carries the new name:
 
@@ -174,7 +174,7 @@ The three lines that differ are the whole difference between the two files:
 
 The trailing `SETTINGS join_algorithm = 'grace_hash,hash', … max_memory_usage = 12884901888` block is PART of the body and must be pasted with it: a `MODIFY QUERY` that dropped it would leave the hourly refresh running without the grace-hash join and the external-sort budget, which is what OOM'd the server in August (memory `se-companies-serving-view`).
 
-- [ ] **Step 3: Write the up migration**
+- [x] **Step 3: Write the up migration**
 
 `corpscout/clickhouse/migrations/000398_corpscout_se_company_person_rename.up.sql` — exactly five statements. Paste `/tmp/serving_new.sql` where the body is marked, byte for byte; do not hand-edit a character of it.
 
@@ -228,7 +228,7 @@ MODIFY QUERY
 SYSTEM START VIEW corpscout.se_companies_serving;
 ```
 
-- [ ] **Step 4: Write the down migration**
+- [x] **Step 4: Write the down migration**
 
 `corpscout/clickhouse/migrations/000398_corpscout_se_company_person_rename.down.sql` — the same shape reversed, so the RENAME lands before the query that needs the `_v2` name. Paste `/tmp/serving_old.sql` verbatim.
 
@@ -253,7 +253,7 @@ MODIFY QUERY
 SYSTEM START VIEW corpscout.se_companies_serving;
 ```
 
-- [ ] **Step 5: Rewrite the drift pin**
+- [x] **Step 5: Rewrite the drift pin**
 
 `tests/test_se_companies_serving_mv.py` — keep `MIGRATIONS_DIR`, `_sql_of`, `_sql`, `_statements`, `_body`, `_normalized`, `_executable` and `_modify_query_body` exactly as they are; replace the module docstring, the constants and the four tests below them. `PREVIOUS_MIGRATION` is how the pin finds the render the down file must restore: 000396 installed its body with the SAME `ALTER TABLE … MODIFY QUERY` shape, so `_modify_query_body` reads both files and no `_previous_view_body` helper is needed (000393 needed one only because 000392 embedded its SELECT in a `CREATE MATERIALIZED VIEW`).
 
@@ -367,7 +367,7 @@ def test_the_up_migration_documents_the_interrupted_repoint_recovery() -> None:
     assert "migrate force 398" in up
 ```
 
-- [ ] **Step 6: Run the drift pin and watch it fail for the right reason**
+- [x] **Step 6: Run the drift pin and watch it fail for the right reason**
 
 ```bash
 cd corpscout/services/dagster_v3
@@ -377,7 +377,7 @@ WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run --f
 
 Expected at this point: PASS if Steps 1-4 pasted the bodies correctly. If `test_the_view_body_is_the_builder_render_and_has_not_drifted_from_it` fails, the up file's body is not the render — re-paste it, never patch it by hand. If `test_the_down_migration_renames_back_and_restores_000396s_render` fails, the down body is not 000396's — re-run the extraction command in Step 2.
 
-- [ ] **Step 7: Point the package's own constant at the final name**
+- [x] **Step 7: Point the package's own constant at the final name**
 
 `src/dagster_v3/defs/se_company/person/tables.py` — the docstring's second paragraph and `MAIN_TABLE`:
 
@@ -397,7 +397,7 @@ MAIN_TABLE = "se_company_person"
 
 Nothing else in the package changes: `batch.py` and `assets.py` read `tables.QUALIFIED_MAIN_TABLE`.
 
-- [ ] **Step 8: Fix the one description string that spells the table by hand**
+- [x] **Step 8: Fix the one description string that spells the table by hand**
 
 `src/dagster_v3/defs/se_company/person/assets.py:277`, inside the `se_company_person_fold` asset's `description`:
 
@@ -414,7 +414,7 @@ rg -n "se_company_person_v2" src/
 
 Expected: no output.
 
-- [ ] **Step 9: Replay the rename in the two DDL-reading tests**
+- [x] **Step 9: Replay the rename in the two DDL-reading tests**
 
 `tests/test_se_company_person_tables.py` — the DDL still lives under the build name, exactly as `tests/test_se_company_address_tables.py` does it. Add the constant under `DATA_CHECK`:
 
@@ -483,7 +483,7 @@ def _schema_statements() -> list[str]:
 
 `tables` is already imported in that module (`from dagster_v3.defs.se_company.person import batch, tables`).
 
-- [ ] **Step 10: Rename the person stub in the executable serving suite**
+- [x] **Step 10: Rename the person stub in the executable serving suite**
 
 `tests/test_se_companies_serving_sql.py` — the stub is hand-written (not `table_block`), so it is a straight rename of the literal in two places. The comment above the CREATE (line ~405) and the CREATE itself:
 
@@ -502,7 +502,7 @@ and the seed (line ~423):
         f"INSERT INTO corpscout.se_company_person VALUES ('{PRECISE}', ['esef'], 1);",
 ```
 
-- [ ] **Step 11: Register 000398 in the ledger contract and correct the slice-0 comments**
+- [x] **Step 11: Register 000398 in the ledger contract and correct the slice-0 comments**
 
 `tests/test_clickhouse_migrations.py` — append to `EXPECTED_MIGRATIONS`, after `"000397_corpscout_esef_document_people_extraction",`:
 
@@ -533,7 +533,7 @@ The comment above `SLICE_0_DROPPED_OBJECTS` (line ~4261) gains the name-reuse pa
 # the deployed table is se_company_person since 000398, which renames rather than declares.
 ```
 
-- [ ] **Step 12: Move the never-droppable list onto the live name**
+- [x] **Step 12: Move the never-droppable list onto the live name**
 
 `tests/test_se_person_retirement_drops.py` — the drop script is spent history (it ran on prod 2026-09-09) and `DROP_ORDER` is unchanged. What changes is the never-droppable set and the one name that is on BOTH lists:
 
@@ -616,7 +616,7 @@ def test_the_precheck_gates_on_the_serving_view_being_repointed() -> None:
     assert "system.view_refreshes" in sql
 ```
 
-- [ ] **Step 13: Run every dagster suite this task touches**
+- [x] **Step 13: Run every dagster suite this task touches**
 
 ```bash
 cd corpscout/services/dagster_v3
@@ -644,7 +644,7 @@ rg -n "se_company_person_v2" corpscout/services/dagster_v3/src corpscout/service
 
 Expected hits, and only these: `tests/test_se_company_person_tables.py` (`MAIN_DDL_TABLE` and its comment), `tests/test_se_company_person_fold_clickhouse_local.py` (the replay), `tests/test_se_companies_serving_mv.py` (`ENTITY_V2`), `tests/test_clickhouse_migrations.py` (`SLICE_0_KEPT_OBJECTS` and its comment), `tests/test_se_person_retirement_drops.py` (the two guards above). No hit in `src/`.
 
-- [ ] **Step 14: Commit**
+- [x] **Step 14: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect
@@ -682,7 +682,7 @@ Claude-Session: https://claude.ai/code/session_01RY2W9FTCX9YxUcXtSBaEJ5"
 
 **The prefix trap, restated because it bites here twice.** `corpscout.se_company_person` is a prefix of `corpscout.se_company_person_suggestion`, `_normalized`, `_history`, `_rule` and `_precedence`. `tests/se-company-person-entity.server.test.ts:200` dispatches a fake ClickHouse client on `sql.includes("FROM corpscout.se_company_person_v2 AS m FINAL")` and falls through to five more branches keyed on those sibling tables — written as the bare new name, the FIRST branch would answer every one of the six reads with the published persons. `tests/se-people-list.server.test.ts` dispatches on the bare `se_company_person_v2` in three places; those become the aliased form too, even though the list module happens to query no sibling table today.
 
-- [ ] **Step 1: Write the failing test edits**
+- [x] **Step 1: Write the failing test edits**
 
 `tests/se-people-list.server.test.ts` — the SQL pin in `it("reads the main table through FINAL, sorted by company then name, paged by parameter")` (line 32) gains the new name and a never-contains half:
 
@@ -721,7 +721,7 @@ and the three dispatch/lookup predicates in `it("pages the persons under the res
     expect(PERSON_MAIN_SQL).not.toContain("se_company_person_v2");
 ```
 
-- [ ] **Step 2: Run them and watch them fail**
+- [x] **Step 2: Run them and watch them fail**
 
 ```bash
 cd corpscout/services/backoffice
@@ -730,7 +730,7 @@ npx vitest run tests/se-people-list.server.test.ts tests/se-company-person-entit
 
 Expected: FAIL. `se-people-list.server.test.ts` fails on the `toContain` pin (the module still renders `se_company_person_v2`); `se-company-person-entity.server.test.ts` fails in the fake client with `unexpected SQL: SELECT …` because no branch matches the main read any more.
 
-- [ ] **Step 3: Point the constant at the final name**
+- [x] **Step 3: Point the constant at the final name**
 
 `app/lib/se-person-tables.ts`, whole file:
 
@@ -748,7 +748,7 @@ Expected: FAIL. `se-people-list.server.test.ts` fails on the `toContain` pin (th
 export const SE_COMPANY_PERSON_TABLE = "corpscout.se_company_person";
 ```
 
-- [ ] **Step 4: Fix the two doc comments that spell the table by hand**
+- [x] **Step 4: Fix the two doc comments that spell the table by hand**
 
 `app/lib/se-company-person-entity.server.ts:61` — the interface comment above `SePersonRow`:
 
@@ -763,7 +763,7 @@ export const SE_COMPANY_PERSON_TABLE = "corpscout.se_company_person";
  * `se_company_person`, read through FINAL, filtered, counted and paged server-side.
 ```
 
-- [ ] **Step 5: Run the tests and the type check**
+- [x] **Step 5: Run the tests and the type check**
 
 ```bash
 cd corpscout/services/backoffice
@@ -773,7 +773,7 @@ npm run typecheck
 
 Expected: both suites pass; `typecheck` clean.
 
-- [ ] **Step 6: Prove no other backoffice module spells the table**
+- [x] **Step 6: Prove no other backoffice module spells the table**
 
 ```bash
 cd corpscout/services/backoffice
@@ -783,7 +783,7 @@ rg -n "corpscout\.se_company_person([^_a-zA-Z0-9]|$)" app
 
 Expected: the first command prints nothing at all. The second prints exactly one line, `app/lib/se-person-tables.ts:12` (the constant) — every other module interpolates `${SE_COMPANY_PERSON_TABLE}`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect
@@ -811,7 +811,7 @@ Claude-Session: https://claude.ai/code/session_01RY2W9FTCX9YxUcXtSBaEJ5"
 
 There is no test to write here — these are two Markdown files. The verification is a grep and a read-through, and the two spec edits must leave the file's own conventions intact (section 3.3 is a table definition with a fenced column block; section 10 is one running paragraph of names).
 
-- [ ] **Step 1: Retitle the package doc and correct the `tables.py` row**
+- [x] **Step 1: Retitle the package doc and correct the `tables.py` row**
 
 `src/dagster_v3/defs/se_company/person/docs/person-design.md`, line 1:
 
@@ -825,7 +825,7 @@ line 9, the `tables.py` row of the module table — one sentence of `_v2` histor
 | `tables.py` | Table names/column tuples, pinned against migration 000396; main table `se_company_person` since migration 000398 (built as `se_company_person_v2`, because the 2026-08-19 table held the final name until slice 0 dropped it) |
 ```
 
-- [ ] **Step 2: Extend the runbook section to cover 000398**
+- [x] **Step 2: Extend the runbook section to cover 000398**
 
 In the same file, replace the `## Interrupted-migration runbook (000396)` heading and add the rename's own paragraph under it. The section's existing 000396 paragraph stays exactly as it is; this appends after it:
 
@@ -858,7 +858,7 @@ staged-swap failure mode that left the ledger dirty at 391: for that one see
 client's `read_timeout=300` against a 27-minute `SYSTEM WAIT VIEW`).
 ```
 
-- [ ] **Step 3: Give spec section 3.3 the plain name and keep the history in one sentence**
+- [x] **Step 3: Give spec section 3.3 the plain name and keep the history in one sentence**
 
 `docs/superpowers/specs/2026-09-09-se-company-person-entity-design.md`, line 117 (the heading) and lines 119-121 (the paragraph under it):
 
@@ -876,7 +876,7 @@ historical migration file is history.
 
 The fenced column block below it does not change.
 
-- [ ] **Step 4: Give spec section 10 the plain name**
+- [x] **Step 4: Give spec section 10 the plain name**
 
 Lines 561-563 of the same file lose the parenthetical:
 
@@ -888,7 +888,7 @@ catalog `company_person_role_type` (kept). Package
 
 The rest of the paragraph (the package, asset, job, schedule and backoffice names) is unchanged: none of them carries `_v2`.
 
-- [ ] **Step 5: Verify the docs**
+- [x] **Step 5: Verify the docs**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect
@@ -898,7 +898,7 @@ rg -n "se_company_person_v2" corpscout/services/dagster_v3/src/dagster_v3/defs/s
 
 Expected: exactly three hits, all of them deliberate history — the `tables.py` row of the package doc, the runbook's `RENAME TABLE` line, and section 3.3's "BUILT as" sentence. Section 10, section 8 and the section 9 records must not mention `_v2` as a current name. Read section 9's items 0 to 3 once: they are shipped records and their `_v2` mentions are historical statements of what those slices did, so they stay.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect
@@ -916,7 +916,7 @@ Claude-Session: https://claude.ai/code/session_01RY2W9FTCX9YxUcXtSBaEJ5"
 
 No new code. The migration lands right after the merge and outside the :45 refresh window, and the dagster deploy lands AFTER the migration (controller ruling 2026-09-10 over this plan's first draft: the deployed code then never names a table that does not exist, and the owner's backoffice on the main checkout reads the new name only in the minutes between the merge and the migration). The backoffice runs locally from the main checkout (memory `backoffice-runs-locally`), so its "deploy" is the merge.
 
-1. [ ] **Whole-branch review, then merge to main.** The main checkout is on `main` today. If main has taken 000398 in the meantime, renumber FIRST — both migration files, `EXPECTED_MIGRATIONS`, `MIGRATION` in `tests/test_se_companies_serving_mv.py`, the `migrate force 398` line in the up file's header, and the `000398` mentions in `person-design.md` and spec sections 3.3 and 10 — then re-run:
+1. [x] **Whole-branch review, then merge to main.** The main checkout is on `main` today. If main has taken 000398 in the meantime, renumber FIRST — both migration files, `EXPECTED_MIGRATIONS`, `MIGRATION` in `tests/test_se_companies_serving_mv.py`, the `migrate force 398` line in the up file's header, and the `000398` mentions in `person-design.md` and spec sections 3.3 and 10 — then re-run:
 
    ```bash
    cd corpscout/services/dagster_v3
@@ -924,7 +924,7 @@ No new code. The migration lands right after the merge and outside the :45 refre
      pytest tests/test_clickhouse_migrations.py tests/test_se_companies_serving_mv.py -q
    ```
 
-2. [ ] **Apply the migration, outside the refresh window.** Move the deploy worktree to the merge commit first (`git -C <scratch>/deploy-worktree checkout --detach <merge-commit>`) so the Makefile runs the merged ledger. Wait for a :45 refresh to finish (13-15 min, so start about :00 and no later than :30):
+2. [x] **Apply the migration, outside the refresh window.** Move the deploy worktree to the merge commit first (`git -C <scratch>/deploy-worktree checkout --detach <merge-commit>`) so the Makefile runs the merged ledger. Wait for a :45 refresh to finish (13-15 min, so start about :00 and no later than :30):
 
    ```sql
    SELECT view, status, last_success_time, exception
@@ -940,7 +940,7 @@ No new code. The migration lands right after the merge and outside the :45 refre
 
    This should return in seconds: there is no `SYSTEM WAIT VIEW` here, which is the statement that outlived the migrate client's `read_timeout=300` at 000391 (memory `se-companies-serving-view`). **If the client drops anyway**, follow the runbook Task 3 put in `person-design.md`: read `system.view_refreshes`; check `SELECT name FROM system.tables WHERE database='corpscout' AND name LIKE 'se_company_person%'` to see whether the RENAME landed; run the `ALTER TABLE ... MODIFY QUERY` from the up file if it did not; `SYSTEM START VIEW corpscout.se_companies_serving`; then `make -s -C <scratch>/deploy-worktree/corpscout clickhouse-migrate-force VERSION=398`.
 
-3. [ ] **Deploy the dagster host from a pristine deploy worktree at the merge commit** (memory `se-worktree-deploy-recipe`; the constant changes what `build_se_companies_serving_sql` renders and what `batch.py` writes to, so the host must carry it before the table moves):
+3. [x] **Deploy the dagster host from a pristine deploy worktree at the merge commit** (memory `se-worktree-deploy-recipe`; the constant changes what `build_se_companies_serving_sql` renders and what `batch.py` writes to, so the host must carry it before the table moves):
 
    ```bash
    git worktree add <scratch>/deploy-worktree <merge-commit>
@@ -958,7 +958,7 @@ No new code. The migration lands right after the merge and outside the :45 refre
 
    **This step runs after the migration.** Between the merge (step 1) and the migration (step 2) the owner's backoffice on the main checkout names `corpscout.se_company_person` while the database still holds `_v2`; keep that window to minutes and do not open the People tab in it. Nothing scheduled reads the main table: `se_company_person_weekly` is STOPPED and both fold assets are manual.
 
-4. [ ] **Read out the rename.** Record the row count from BEFORE the migration (1,126,408 at 2026-09-10 19:05 UTC; take a fresh one just before step 3 in case the slice-3 smoke company was re-folded) and require it unchanged:
+4. [x] **Read out the rename.** Record the row count from BEFORE the migration (1,126,408 at 2026-09-10 19:05 UTC; take a fresh one just before step 3 in case the slice-3 smoke company was re-folded) and require it unchanged:
 
    ```sql
    SELECT name, engine, total_rows FROM system.tables
@@ -974,7 +974,7 @@ No new code. The migration lands right after the merge and outside the :45 refre
 
    Expected: six `se_company_person*` tables, all under their final names, no `_v2`; `rows` equal to the pre-migration count; `companies` 578,289. A `RENAME TABLE` moves the parts on disk without touching them, so any difference here means something else wrote to the table.
 
-5. [ ] **Read out the view.** The stored query must name the new table and nothing else:
+5. [x] **Read out the view.** The stored query must name the new table and nothing else:
 
    ```sql
    SELECT position(create_table_query, 'corpscout.se_company_person FINAL') AS repointed,
@@ -999,7 +999,7 @@ No new code. The migration lands right after the merge and outside the :45 refre
 
    Expected: `has_people` 578,289 (± whatever the slice-3 smoke on 5592501521 left, i.e. at most one company), `rows` around 3.5M, and `system.view_refreshes` showing a fresh `last_success_time` with an empty `exception`. **This is the gate:** a re-point that named a table wrongly shows up here as a failed refresh, not as an error at migrate time.
 
-6. [ ] **Backoffice smoke on the main checkout's dev server** (`npm run dev`, `http://localhost:5183`). The reads go through `SE_COMPANY_PERSON_TABLE`, so the proof is that the pages answer and that the pinned literal is the new name:
+6. [x] **Backoffice smoke on the main checkout's dev server** (`npm run dev`, `http://localhost:5183`). The reads go through `SE_COMPANY_PERSON_TABLE`, so the proof is that the pages answer and that the pinned literal is the new name:
 
    ```bash
    cd corpscout/services/backoffice
@@ -1010,7 +1010,7 @@ No new code. The migration lands right after the merge and outside the :45 refre
 
    Expected: both suites green (they pin `FROM corpscout.se_company_person AS p FINAL` and `… AS m FINAL`), both curls `200`. Then open both pages in a browser: the People list's counts strip must read the same `persons` / `companies` numbers step 4 measured, and the company's People tab must render its persons, members, roles, `data`, history and raw evidence.
 
-7. [ ] **Prove the write path.** Launch `se_company_person_fold_companies` from the Dagster UI with config
+7. [x] **Prove the write path.** Launch `se_company_person_fold_companies` from the Dagster UI with config
 
    ```yaml
    ops:
@@ -1032,7 +1032,7 @@ No new code. The migration lands right after the merge and outside the :45 refre
 
    Expected: the persons back with a fresh `folded_at`, and 0 new history rows.
 
-8. [ ] **Record and archive.**
+8. [x] **Record and archive.**
    - Append the slice-4 shipped record to spec section 9 item 4: migration 000398 (the number it actually got), the one-pair `RENAME TABLE`, the in-place `MODIFY QUERY`, the three constants, the tests that replay the rename over 000396's DDL, the readouts of steps 4 to 7, and the ruling that `se_company_person` now appears BOTH on slice 0's dropped list and as the live entity (the drop scripts are spent and must never be re-run).
    - Note in the ledger that `tests/test_se_companies_serving_mv.py` now pins **000398** as the migration carrying the serving definition — the next reader of that view must re-point it again.
    - Archive the ledger under `.superpowers/sdd/person-entity/`.

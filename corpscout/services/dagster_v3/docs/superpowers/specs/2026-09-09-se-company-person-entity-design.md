@@ -554,6 +554,26 @@ flags read empty tables until the first fold.
    is still deferred.
 4. Rename and docs: `se_company_person_v2` to `se_company_person` with the serving re-point,
    the design doc under the package, memory.
+   Shipped 2026-09-10 (plan `2026-09-10-se-company-person-4-rename.md`, main 6e4494f8):
+   migration 000398 gave the entity its final name — `SYSTEM STOP VIEW`, `RENAME TABLE
+   corpscout.se_company_person_v2 TO corpscout.se_company_person`, `ALTER TABLE
+   se_companies_serving MODIFY QUERY` with the builder's rendering (byte-identical to
+   `build_se_companies_serving_sql()`, differing from 000396's body in the three people-flag
+   lines only), `SYSTEM START VIEW` — the 000393 recipe; `companies_current.py`'s
+   `COMPANY_PERSON_TABLE` and `person/tables.py`'s `MAIN_TABLE` follow, the serving-view drift
+   pin points at 000398, every dagster and backoffice pin matches the whole qualified name,
+   the fold's clickhouse-local fixture replays the rename after its prefix filter, the
+   backoffice reads the entity through `SE_COMPANY_PERSON_TABLE`, and the spent slice-0 drop
+   script carries a SPENT banner plus a `SELECT throwIf(1, 'spent')` first statement because
+   its last statement names the now-live table. Rulings: the migration ran right after the
+   merge and outside the :45 refresh window, the dagster deploy after it; the historical
+   000396 file is untouched (ledger policy); the never-droppable list carries the reused name
+   explicitly. Prod: merged 21:08 UTC, 000398 applied in 2.7 s (ledger 398 clean, no
+   `SYSTEM WAIT VIEW` so the migrate client never waits); the old name is gone and the new
+   table holds the same 1,126,408 rows; the serving view kept its rows through the STOP/START
+   (`has_people` 578,289 before and after), its stored query names the new table and the
+   first hourly refresh under it (21:45 UTC) succeeded in 14.7 min with no exception and the same 578,289 `has_people` rows; the owner's dev server on the main checkout served the People tab and the list
+   from the new name within a minute of the merge; the dagster deploy of main 6e4494f8 went green (four dbt parses, dbt-state refresh, `dg check defs`, ansible ok=35 failed=0) at 21:11 UTC; a targeted fold of 5592501521 through the deployed code (run 92f481ae) read the renamed table and reported its three persons `unchanged` with no history written, so the fold's pins and the FINAL read resolve to the new name.
 
 Each slice is one plan executed with subagent-driven development, reviewed, merged and deployed
 before the next; shipped records are appended here as for addresses.
