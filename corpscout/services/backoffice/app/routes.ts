@@ -115,7 +115,7 @@ export default [
     route("general/roles", "routes/admin-general-roles.tsx"),
     route("settings/llms", "routes/admin-settings-llms.tsx"),
     route("settings/llms/local", "routes/admin-settings-llms-local.tsx"),
-    // One company, nine tabs. The layout owns the header and the sub-menu; a
+    // One company, ten tabs. The layout owns the header and the sub-menu; a
     // bare /admin/se/company/:companyId redirects to Info.
     route("se/company/:companyId", "routes/admin-se-company-layout.tsx", [
       index("routes/admin-se-company-index.tsx"),
@@ -123,6 +123,7 @@ export default [
       // Resource route behind the Info tab's Fold now: the run poller.
       route("info/run/:runId", "routes/admin-se-company-info-run.ts"),
       route("address", "routes/admin-se-company-address.tsx"),
+      route("people", "routes/admin-se-company-person.tsx"),
       route("financial", "routes/admin-se-company-financial.tsx"),
       // ESEF is an area: Info (aggregated extraction) as index, then one
       // sub-tab per filed document with facts, notes, and LLM subpages.
