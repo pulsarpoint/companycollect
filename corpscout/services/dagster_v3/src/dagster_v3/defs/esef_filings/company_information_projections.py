@@ -29,6 +29,10 @@ def esef_document_people_sql(
     *, target: str = tables.QUALIFIED_ESEF_DOCUMENT_PEOPLE_TABLE
 ) -> str:
     candidate_uid = _person_candidate_uid_sql()
+    # The candidate identity is (name, role_category) per the spec; every item of
+    # one extraction row shares extracted_at, so a tie within a role_category is
+    # broken by the model's own list order (item_index) -- the first-listed role
+    # wins, not ClickHouse's unstable sort.
     return f"""INSERT INTO {target}
 ({", ".join(tables.ESEF_DOCUMENT_PEOPLE_COLUMNS)})
 SELECT
@@ -52,12 +56,14 @@ SELECT
     info.source_run_id,
     info.extracted_at
 FROM {tables.QUALIFIED_ESEF_DOCUMENT_PEOPLE_EXTRACTION_TABLE} AS info
-ARRAY JOIN JSONExtractArrayRaw(info.people_json) AS item_json
+ARRAY JOIN
+    JSONExtractArrayRaw(info.people_json) AS item_json,
+    arrayEnumerate(JSONExtractArrayRaw(info.people_json)) AS item_index
 WHERE info.extraction_status IN ('extracted', 'reused')
   AND info.source_record_uid != ''
   AND JSONExtractString(item_json, 'name') != ''
   AND JSONExtractString(item_json, 'role') != ''
-ORDER BY multiIf(JSONExtractString(item_json, 'status') = 'current', 0, JSONExtractString(item_json, 'status') = 'historical', 1, 2), info.extracted_at DESC
+ORDER BY multiIf(JSONExtractString(item_json, 'status') = 'current', 0, JSONExtractString(item_json, 'status') = 'historical', 1, 2), info.extracted_at DESC, item_index
 LIMIT 1 BY info.lei, info.fiscal_year, info.source_record_uid, candidate_uid"""
 
 
@@ -203,6 +209,15 @@ def _replace_projection(
         client.execute(f"CREATE TABLE {stage} AS {target}")
         try:
             client.execute(statement_for(stage))
+            stage_count = int(client.execute(f"SELECT count() FROM {stage}")[0][0])
+            target_count = int(
+                client.execute(f"SELECT count() FROM {target} FINAL")[0][0]
+            )
+            if stage_count == 0 and target_count > 0:
+                raise ValueError(
+                    f"refusing to replace {target}: the rebuilt projection is "
+                    f"empty while the table holds {target_count} rows"
+                )
             client.execute(f"EXCHANGE TABLES {stage} AND {target}")
         finally:
             client.execute(f"DROP TABLE IF EXISTS {stage}")

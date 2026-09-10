@@ -178,6 +178,9 @@ class _EnrichmentRequestOutcome:
     # EsefLlmResponseError handling in _request_prepared_enrichment) is shared.
     result: object | None
     failure_kind: str | None = None
+    # The caught exception itself, so the failure log line can show the actual
+    # cause (a bad key, an exhausted balance, ...) beside the failure kind.
+    failure_exception: BaseException | None = None
 
 
 @dataclass(frozen=True)
@@ -530,7 +533,7 @@ def _request_enrichments(
         )
     with ThreadPoolExecutor(
         max_workers=concurrency,
-        thread_name_prefix="esef_company_information_llm",
+        thread_name_prefix="esef_llm_pass",
     ) as executor:
         yield from executor.map(call, work)
 
@@ -547,23 +550,26 @@ def _request_prepared_enrichment(
             evidence_input=work.evidence_input,
             request_payload=work.request_payload,
         )
-    except RateLimitError:
+    except RateLimitError as exc:
         return _EnrichmentRequestOutcome(
             work=work,
             result=None,
             failure_kind="rate_limited",
+            failure_exception=exc,
         )
-    except OpenAIError:
+    except OpenAIError as exc:
         return _EnrichmentRequestOutcome(
             work=work,
             result=None,
             failure_kind="http_error",
+            failure_exception=exc,
         )
-    except EsefLlmResponseError:
+    except EsefLlmResponseError as exc:
         return _EnrichmentRequestOutcome(
             work=work,
             result=None,
             failure_kind="invalid_response",
+            failure_exception=exc,
         )
     return _EnrichmentRequestOutcome(work=work, result=result)
 
@@ -732,11 +738,16 @@ def _process_pass_outcomes(
             failed_document_count += 1
             if outcome.failure_kind == "rate_limited":
                 rate_limited_document_count += 1
+            exc = outcome.failure_exception
+            exc_type = type(exc).__name__ if exc is not None else "unknown"
+            exc_text = str(exc)[:300] if exc is not None else ""
             log_info(
-                "ESEF LLM request failed for document %s (%s); "
+                "ESEF LLM request failed for document %s (%s: %s %s); "
                 "continuing batch: %s/%s attempted, %s failed",
                 work.document["source_document_id"],
                 outcome.failure_kind,
+                exc_type,
+                exc_text,
                 attempt_index,
                 attempted_count,
                 failed_document_count,

@@ -274,7 +274,7 @@ def run_esef_people_extraction(
         no_evidence_rows_by_document=no_evidence_rows_by_document,
         completed=completed,
         result_row=_build_people_row,
-        artifact_people=_people_artifact_people,
+        artifact_people=_people_artifact_candidates,
     )
 
     _replace_information_rows_clickhouse(
@@ -335,7 +335,7 @@ def run_esef_people_extraction(
     }
 
 
-def _people_artifact_people(artifact: Mapping[str, Any]) -> list[object]:
+def _people_artifact_candidates(artifact: Mapping[str, Any]) -> list[object]:
     extraction = _mapping(artifact.get("extraction"), name="extraction")
     people = extraction.get("people", [])
     return people if isinstance(people, list) else []

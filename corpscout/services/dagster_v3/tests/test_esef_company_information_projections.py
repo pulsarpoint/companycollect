@@ -108,6 +108,18 @@ def test_people_projection_uses_the_spec_identity_and_one_row_per_key() -> None:
     assert "info.extraction_status IN ('extracted', 'reused')" in sql
     assert "LIMIT 1 BY info.lei, info.fiscal_year, info.source_record_uid, candidate_uid" in sql
     assert "multiIf(JSONExtractString(item_json, 'status') = 'current', 0, JSONExtractString(item_json, 'status') = 'historical', 1, 2)" in sql
+    # The identity is (name, role_category); every item of one extraction row shares
+    # extracted_at, so a tie is broken by the model's own list order, not ClickHouse's
+    # unstable sort -- item_index must be zipped alongside item_json in the ARRAY JOIN
+    # and be the ORDER BY's tail.
+    assert (
+        "arrayEnumerate(JSONExtractArrayRaw(info.people_json)) AS item_index" in sql
+    )
+    assert (
+        "ORDER BY multiIf(JSONExtractString(item_json, 'status') = 'current', 0, "
+        "JSONExtractString(item_json, 'status') = 'historical', 1, 2), "
+        "info.extracted_at DESC, item_index"
+    ) in sql
     staged = esef_document_people_sql(target="corpscout._tmp_esef_document_people_abc")
     assert staged.startswith("INSERT INTO corpscout._tmp_esef_document_people_abc")
     assert "info.extracted_at" in sql and "parseDateTime64BestEffortOrNull" not in sql
@@ -120,11 +132,13 @@ def test_people_projection_replace_stages_and_exchanges_in_order() -> None:
                 (tables.ESEF_DOCUMENT_PEOPLE_EXTRACTION_TABLE,),
                 (tables.ESEF_DOCUMENT_PEOPLE_TABLE,),
             ],
-            [],
-            [],
-            [],
-            [],
-            [(3,)],
+            [],  # CREATE TABLE stage
+            [],  # INSERT INTO stage
+            [(3,)],  # SELECT count() FROM stage (the empty-rebuild guard)
+            [(2,)],  # SELECT count() FROM target FINAL (the guard's pre-check)
+            [],  # EXCHANGE TABLES
+            [],  # DROP TABLE IF EXISTS
+            [(3,)],  # SELECT count() FROM target FINAL (the returned row_count)
         ]
     )
 
@@ -142,6 +156,11 @@ def test_people_projection_replace_stages_and_exchanges_in_order() -> None:
     insert_index = next(
         index for index, sql in enumerate(statements) if sql.startswith("INSERT INTO")
     )
+    count_indexes = [
+        index
+        for index, sql in enumerate(statements)
+        if sql.startswith("SELECT count()")
+    ]
     exchange_index = next(
         index
         for index, sql in enumerate(statements)
@@ -154,8 +173,47 @@ def test_people_projection_replace_stages_and_exchanges_in_order() -> None:
     )
 
     assert create_index < insert_index < exchange_index < drop_index
+    # The guard's two counts are queried after the INSERT and before EXCHANGE; the
+    # final row_count is queried once more, after the DROP.
+    assert len(count_indexes) == 3
+    assert insert_index < count_indexes[0] < count_indexes[1] < exchange_index
+    assert count_indexes[2] > drop_index
     assert statements[insert_index].startswith(
         f"INSERT INTO {tables.ESEF_DATABASE}._tmp_{tables.ESEF_DOCUMENT_PEOPLE_TABLE}_"
     )
     assert result.metadata["row_count"] == 3
     assert result.metadata["table"] == tables.QUALIFIED_ESEF_DOCUMENT_PEOPLE_TABLE
+
+
+def test_people_projection_replace_refuses_to_empty_a_populated_table() -> None:
+    clickhouse = _FakeClickHouse(
+        [
+            [
+                (tables.ESEF_DOCUMENT_PEOPLE_EXTRACTION_TABLE,),
+                (tables.ESEF_DOCUMENT_PEOPLE_TABLE,),
+            ],
+            [],  # CREATE TABLE stage
+            [],  # INSERT INTO stage (rebuilds nothing this run)
+            [(0,)],  # SELECT count() FROM stage -- empty
+            [(5,)],  # SELECT count() FROM target FINAL -- 5 published rows
+            [],  # DROP TABLE IF EXISTS (still issued from the finally block)
+        ]
+    )
+
+    try:
+        _replace_projection(
+            clickhouse=clickhouse,
+            table_name=tables.ESEF_DOCUMENT_PEOPLE_TABLE,
+            statement_for=lambda target: esef_document_people_sql(target=target),
+            source_table=tables.ESEF_DOCUMENT_PEOPLE_EXTRACTION_TABLE,
+        )
+    except ValueError as error:
+        assert "refusing to replace" in str(error)
+        assert tables.ESEF_DOCUMENT_PEOPLE_TABLE in str(error)
+        assert "5 rows" in str(error)
+    else:
+        raise AssertionError("an empty rebuild over a populated table must be refused")
+
+    statements = [sql for sql, _parameters in clickhouse.client.calls]
+    assert not any(sql.startswith("EXCHANGE TABLES") for sql in statements)
+    assert any(sql.startswith("DROP TABLE IF EXISTS") for sql in statements)
