@@ -174,7 +174,6 @@ export default [
       index("routes/admin-se-companies-info.tsx"),
       route("geocoding", "routes/admin-se-companies-geocoding.tsx"),
       route("financial", "routes/admin-se-companies-financial.tsx"),
-      route("ratsit", "routes/admin-se-companies-ratsit.tsx"),
     ]),
     // The all-people LIST area: a sibling of se/companies, not one of its tabs --
     // every published person across every company, server-paged and filtered.
