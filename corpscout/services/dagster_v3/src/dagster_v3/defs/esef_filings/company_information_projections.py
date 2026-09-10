@@ -1,9 +1,16 @@
 """Typed ClickHouse projections of ESEF document company information.
 
-Each projection is an independent ESEF asset. They share the same paid LLM
-result as input but publish different serving contracts, so Dagster can run or
-retry them separately.
+Each projection is an independent ESEF asset. The business-items and
+group-relationships projections share the same paid company-information
+enrichment as input and only ever append, so Dagster can run or retry them
+separately. The people projection instead reads its own per-filing people
+pass (``esef_document_people_extraction``) and REPLACES its table (stage
+table + ``EXCHANGE TABLES``), since that pass can be rerun for any document
+and must not accumulate duplicate rows for the same candidate.
 """
+
+import uuid
+from collections.abc import Callable
 
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
@@ -18,12 +25,14 @@ _EXTRACTED_AT_SQL = (
 )
 
 
-def esef_document_people_sql() -> str:
-    candidate_uid = _candidate_uid_sql(item_kind_expression="'person'")
-    return f"""INSERT INTO {tables.QUALIFIED_ESEF_DOCUMENT_PEOPLE_TABLE}
+def esef_document_people_sql(
+    *, target: str = tables.QUALIFIED_ESEF_DOCUMENT_PEOPLE_TABLE
+) -> str:
+    candidate_uid = _person_candidate_uid_sql()
+    return f"""INSERT INTO {target}
 ({", ".join(tables.ESEF_DOCUMENT_PEOPLE_COLUMNS)})
 SELECT
-    {candidate_uid},
+    {candidate_uid} AS candidate_uid,
     info.source_record_uid,
     info.source_document_id,
     info.lei,
@@ -41,13 +50,15 @@ SELECT
     info.model_name,
     info.prompt_version,
     info.source_run_id,
-    {_EXTRACTED_AT_SQL}
-FROM {tables.QUALIFIED_ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE} AS info
+    info.extracted_at
+FROM {tables.QUALIFIED_ESEF_DOCUMENT_PEOPLE_EXTRACTION_TABLE} AS info
 ARRAY JOIN JSONExtractArrayRaw(info.people_json) AS item_json
-WHERE info.extraction_status IN ('enriched', 'reused')
+WHERE info.extraction_status IN ('extracted', 'reused')
   AND info.source_record_uid != ''
   AND JSONExtractString(item_json, 'name') != ''
-  AND JSONExtractString(item_json, 'role') != ''"""
+  AND JSONExtractString(item_json, 'role') != ''
+ORDER BY multiIf(JSONExtractString(item_json, 'status') = 'current', 0, JSONExtractString(item_json, 'status') = 'historical', 1, 2), info.extracted_at DESC
+LIMIT 1 BY info.lei, info.fiscal_year, info.source_record_uid, candidate_uid"""
 
 
 def esef_document_business_items_sql() -> str:
@@ -131,16 +142,33 @@ def _candidate_uid_sql(*, item_kind_expression: str) -> str:
     )
 
 
+def _person_candidate_uid_sql() -> str:
+    return (
+        "lower(hex(SHA256(concat("
+        "'company-source-record-v1\\nobservation\\n', "
+        "toString(info.source_record_uid), "
+        "'\\nesef_person\\n', "
+        "info.prompt_version, "
+        "'\\n', "
+        "lowerUTF8(trim(replaceRegexpAll(JSONExtractString(item_json, 'name'), "
+        "'\\\\s+', ' '))), "
+        "'\\n', "
+        "JSONExtractString(item_json, 'role_category')"
+        "))))"
+    )
+
+
 def _publish_projection(
     *,
     clickhouse: ClickhouseResource,
     table_name: str,
     statement: str,
+    source_table: str = tables.ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE,
 ) -> dg.MaterializeResult:
     assert_clickhouse_tables_exist(
         clickhouse,
         database=tables.ESEF_DATABASE,
-        tables=(tables.ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE, table_name),
+        tables=(source_table, table_name),
     )
     with clickhouse.get_connection() as client:
         client.execute(statement)
@@ -157,9 +185,39 @@ def _publish_projection(
     )
 
 
+def _replace_projection(
+    *,
+    clickhouse: ClickhouseResource,
+    table_name: str,
+    statement_for: Callable[[str], str],
+    source_table: str,
+) -> dg.MaterializeResult:
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=tables.ESEF_DATABASE,
+        tables=(source_table, table_name),
+    )
+    target = f"{tables.ESEF_DATABASE}.{table_name}"
+    stage = f"{tables.ESEF_DATABASE}._tmp_{table_name}_{uuid.uuid4().hex}"
+    with clickhouse.get_connection() as client:
+        client.execute(f"CREATE TABLE {stage} AS {target}")
+        try:
+            client.execute(statement_for(stage))
+            client.execute(f"EXCHANGE TABLES {stage} AND {target}")
+        finally:
+            client.execute(f"DROP TABLE IF EXISTS {stage}")
+        row_count = int(client.execute(f"SELECT count() FROM {target} FINAL")[0][0])
+    return dg.MaterializeResult(
+        metadata={
+            "table": target,
+            "row_count": row_count,
+        }
+    )
+
+
 @dg.asset(
     name="esef_document_people_clickhouse",
-    deps=[_COMPANY_INFORMATION_ASSET],
+    deps=[dg.AssetKey("esef_document_people_extraction_clickhouse")],
     group_name=GROUP_NAME,
     kinds={"clickhouse", "sql", "llm", "xbrl"},
     metadata={"table": tables.QUALIFIED_ESEF_DOCUMENT_PEOPLE_TABLE},
@@ -167,10 +225,11 @@ def _publish_projection(
 def esef_document_people_clickhouse(
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
-    return _publish_projection(
+    return _replace_projection(
         clickhouse=clickhouse,
         table_name=tables.ESEF_DOCUMENT_PEOPLE_TABLE,
-        statement=esef_document_people_sql(),
+        statement_for=lambda target: esef_document_people_sql(target=target),
+        source_table=tables.ESEF_DOCUMENT_PEOPLE_EXTRACTION_TABLE,
     )
 
 
