@@ -235,7 +235,7 @@ Expected: no output and `exit: 1` (ripgrep's "no matches"). Then confirm the rem
 rg -n -i 'ratsit' app tests | rg -v '"ratsit"' | rg -v "'ratsit'"
 ```
 
-Expected: only `app/routes/financial-demo.tsx:249` (a `ratsit.se` href in the demo page) and `app/lib/se-basic-info-fields.ts:66` (`ratsit: "Ratsit"`, the source *label*). Every other hit is a `source = 'ratsit'` string in the entity libs and their tests — leave all of them alone.
+Expected: a few dozen lines, every one a source label (`ratsit: "Ratsit"` in the basic-info, person and address field catalogues), a `source = 'ratsit'` value or comment in the entity libs and their tests, or the `ratsit.se` href in `app/routes/financial-demo.tsx` — none names the deleted cluster. Leave all of them alone.
 
 - [ ] **Step 10: Commit, by explicit paths**
 
@@ -429,7 +429,7 @@ JSON
 ssh dagster "curl -s -H 'content-type: application/json' --data-binary @- http://localhost:3000/graphql" < /tmp/mat.json | python3 -m json.tool
 ```
 
-Expected metadata: `execute` false, `companies` ≈ 864,000, `pages` ≈ 86 (864k / 10,000), `candidates` ≈ 864,000, `inserted` **0**, `stopped_at_cap` false. The spec's number is 863,504 companies normalized on 09-09 that never reached any entity, plus any company whose report is newer than its current suggestion. **If `candidates` is under 800,000 or over 1,000,000, stop and reconcile against Step 3(c) before writing anything.**
+Expected metadata: `execute` false, `companies` ≈ 863,500, `pages` 87 (863,504 / 10,000, ceiling), `candidates` ≈ 863,500, `inserted` **0**, `stopped_at_cap` false. The spec's number is 863,504 companies normalized on 09-09 that never reached any entity, plus any company whose report is newer than its current suggestion. **If `candidates` is under 800,000 or over 1,000,000, stop and reconcile against Step 3(c) before writing anything.**
 
 - [ ] **Step 5: Execute the extract**
 
@@ -464,7 +464,7 @@ WHERE source = 'ratsit';
 SQL
 ```
 
-Expected: `companies` ≈ 947,200 (Step 3(c)'s universe, i.e. 83,696 + ~864k), `with_description` ≈ 878,596, `rows = companies` (the suggestion table is `ReplacingMergeTree` ordered by `(company_id, source)`, so `FINAL` collapses to one row per company per source — any excess means `FINAL` was omitted somewhere).
+Expected: `companies` ≈ 947,200 (Step 3(c)'s universe, i.e. 83,696 + ~863.5k), `with_description` ≈ 878,596, `rows = companies` (the suggestion table is `ReplacingMergeTree` ordered by `(company_id, source)`, so `FINAL` collapses to one row per company per source — any excess means `FINAL` was omitted somewhere).
 
 Then re-run the **preview** of Step 4 once more. Expected: `candidates` **0** — the change scan is stamp-based, so a converged extractor selects nothing. A non-zero count here means a stamp is moving on its own; find out which before folding.
 

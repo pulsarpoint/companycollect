@@ -109,15 +109,14 @@ Edit:
 Nothing else imports the cluster; no e2e test references the route. The generated
 `.react-router/types/.../+types/admin-se-companies-ratsit.ts` regenerates itself. Live
 readers of `source = 'ratsit'` rows in the entity tables (people, addresses, basic info) are
-untouched. `pnpm typecheck` and the vitest suite must stay at their pre-existing counts
-(the suite has known failures outside this cluster; the deletion removes three files' tests
-and adds none).
+untouched. `pnpm typecheck` stays clean and the vitest suite changes only by the three deleted files'
+tests (the suite has known failures outside this cluster; the deletion adds no test).
 
 ### 3.2 Prod run
 
 1. `se_basic_info_suggestions_ratsit` with `execute: true, page_size: 10000`: the change
    scan selects every company without a Ratsit suggestion row (the 863,504) plus any whose
-   report is newer. Expect ~86 pages, ~864k candidates.
+   report is newer. Expect 87 pages, ~863.5k candidates.
 2. `se_company_basic_info_fold` over all 64 buckets (changed-only, the default: the fold's
    watermark sees the newer suggestions). Readout: `description_source = 'ratsit'` and
    `description_sv_source = 'ratsit'` counts with FINAL (expect several hundred thousand,
@@ -138,7 +137,10 @@ Record the counts in section 8.
 `ratsit_select_sql()` (live rows UNION ALL per-slot tombstones through
 `suggestions.person_select_sql`), `ratsit_current_sql()`, and the asset
 `se_company_person_suggestions_ratsit` from `define_person_suggestion_asset` with
-`deps=[dg.AssetKey("se_ratsit_normalized")]` and the `normalizer_version` select parameter.
+`deps=[dg.AssetKey("se_ratsit_company"), dg.AssetKey("se_ratsit_responsible_people")]` (the
+table-named keys the `se_ratsit_normalized` multi-asset declares; `se_ratsit_normalized`
+itself is the function name, not a key, and a dep on it makes a phantom node) and the
+`normalizer_version` select parameter.
 `assets.EXTRACTOR_SOURCES` becomes `("bolagsverket", "esef", "wikidata", "ratsit")`, which
 carries the asset into `se_company_person_extract_job`, the weekly's run config and the
 normalize asset's deps. The state-hash change scan and the per-slot tombstones are the
@@ -164,7 +166,7 @@ superseded scans' rows never appear. A row is live only when `name` is non-empty
 | `role_key` | NULL: Ratsit delivers no machine code; `roles.py` maps the label |
 | `fiscal_year` | `toYear(source_date_modified)` of the current report, else `toYear(normalized_at)`: the role is current at the scan |
 | `role_from`, `role_to`, `document_ref` | NULL |
-| `data` | `toJSONString(map(...))` over String values: `age`, `identity_available` (`'true'`/`'false'`), `profile_url`, `display_name_raw`, `ratsit_person_id` (the token), `external` (`'true'` when the role starts with `Extern`, else `'false'`); keys whose value is NULL are omitted |
+| `data` | `toJSONString(mapFilter((k, v) -> v != '', map(...)))` over String values coalesced to `''`: `age` (`ifNull(toString(age), '')`), `identity_available` (`'true'`/`'false'`), `profile_url`, `display_name_raw`, `ratsit_person_id` (the token), `external` (`'true'` when the role starts with `Extern`, else `'false'`); the filter drops the keys whose source value is NULL or empty, so a `map` alone (which would render `"age":null`) is not enough |
 
 The slot rule keeps a person's slot stable across scans (the token is Ratsit's person id)
 so split and merge rules keyed on slots survive re-scans; the 31 two-row tokens get
@@ -190,7 +192,8 @@ ratsit has no map is updated; `SOURCE_ROLELESS_CODES` gets no ratsit entry.
 ### 4.4 Wording, docs, backoffice
 
 - `precedence.py` docstring and `docs/person-design.md` (line 19, the module table, the
-  extractor table): ratsit is a source with an extractor, spelling precedence 1000 above
+  extractor table, and the `jobs.py` row that says the extract job is "the three extractors
+  plus the normalize asset", now four): ratsit is a source with an extractor, spelling precedence 1000 above
   Bolagsverket because Ratsit's names are register spellings with a birth date.
 - `tests/test_se_company_person_precedence.py`: the "reserved, no extractor yet" wording goes;
   the pinned dict is unchanged.
@@ -206,9 +209,12 @@ ratsit has no map is updated; `SOURCE_ROLELESS_CODES` gets no ratsit entry.
   `test_ratsit_slot_is_the_profile_token_with_role_and_index_fallbacks` that asserts the
   slot expression, the nameless filter, the birth-year and fiscal-year expressions and the
   `data` keys.
-- `tests/test_se_company_person_extractors_clickhouse_local.py`: `WANTED_CREATES` gains the
-  `se_ratsit_company` and `se_ratsit_responsible_people` DDL from migrations 000343 and
-  000346; the fixture file gets two companies: one with a VD carrying a URL with a date and
+- `tests/test_se_company_person_extractors_clickhouse_local.py`: the Ratsit tables cannot ride
+  `WANTED_CREATES` (it matches `CREATE TABLE` statements by name in a migration, and 000346
+  only `ALTER TABLE ... ADD COLUMN`s the v2 people columns; `se_ratsit_company`'s DDL already
+  sits in `tests/fixtures/se_basic_info_source_tables.sql`, which this test loads), so
+  `tests/fixtures/se_company_person_source_tables.sql` gets the `se_ratsit_responsible_people`
+  CREATE with the 000346 columns inlined. The fixture file gets two companies: one with a VD carrying a URL with a date and
   token, a `Delgivningsbar person` sharing that token (role-qualified slot), a nameless row
   (skipped) and a row without a URL (`idx:` slot); the second company's older scan must not
   leak (two reports, only the newest counts). Assertions: rows, slots, birth year, fiscal
@@ -243,8 +249,11 @@ spelling per postcode (ties broken by the alphabetically first spelling; `LIMIT 
 postal_code` after `ORDER BY count() DESC, post_town`). Every Ratsit row's `post_town` is the
 dictionary town for its postcode; when the postcode is unknown to the register (none today)
 the row keeps Ratsit's locality. The subquery is recomputed per page (SCB is 1.8M rows, a
-second or two); no new table, no migration. The lineage ruling holds: the extractor reads a
-register source table, never another extractor's output nor the fold.
+second or two); no new table, no migration. The asset declares the read:
+`deps=[dg.AssetKey("se_ratsit_company"), dg.AssetKey("se_ratsit_establishments"),
+dg.AssetKey("sweden_company_scb_companies_clickhouse")]` (the SCB key `address/scb.py` uses;
+the current `se_ratsit_normalized` dep is a phantom node and goes). The lineage ruling holds:
+the extractor reads a register source table, never another extractor's output nor the fold.
 
 ### 5.2 Rows
 
@@ -275,8 +284,12 @@ Ratsit's address extractor writes none today. With many slots per company it mus
 paged companies, every stored live Ratsit slot (a row in `se_company_address_suggestion FINAL`
 with `source = 'ratsit'` and a non-NULL `street_address`) that is absent from the live set
 gets a NULL row (its slot and kind kept, address columns NULL, `observed_at` the current
-report's), the same UNION ALL / LEFT ANTI JOIN shape the person extractor uses. The
-normalizer files a NULL row as `no_address` and the fold drops that slot from the set. Since
+report's), the UNION ALL / LEFT ANTI JOIN shape of `person/suggestions.py::person_select_sql`.
+No address-side helper exists (SCB and Bolagsverket tombstone by nulling the single-slot
+row on `has_company = 0`), so the slice adds one in `address/suggestions.py`
+(`address_select_sql(*, live_sql, source)` returning live UNION ALL tombstones) and the
+Ratsit module uses it. The normalizer files a NULL row as `no_address` and the fold drops
+that slot from the set. Since
 Ratsit never deletes companies, a whole-company tombstone is not needed.
 
 ### 5.4 Fold effect
@@ -309,8 +322,10 @@ cache; establishments at new locations are warmed before the fold.
 
 1. Deploy. 2. `se_company_address_suggestions_ratsit` with `execute: true, page_size: 10000,
 since: "2000-01-01T00:00:00Z"` (the town fix changes rows without moving `observed_at`, so
-the change scan alone would skip the 83,696 visited companies): ~93 pages, ~928k company
-rows + ~732k establishment rows. 3. `se_company_address_normalize` (`changed_only: true`).
+the change scan alone would skip the 83,696 visited companies): every company with a report
+is in scope, ~95 pages, ~947k company rows (the company row is emitted whether or not it
+carries a street, as today; the normalizer files the streetless ones as `no_address`) +
+~732k establishment rows. 3. `se_company_address_normalize` (`changed_only: true`).
 4. `se_address_geocodes_warm` (chunk size 150,000 as in the address slices) so new location
 keys are matched in bulk.
 5. `se_company_address_fold` backfill over the 64 buckets (changed-only; pool
