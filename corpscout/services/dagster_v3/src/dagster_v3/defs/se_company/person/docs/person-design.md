@@ -1,4 +1,4 @@
-# se_company.person (slices 0-2)
+# se_company.person (slices 0-4)
 
 The shipped part of the 2026-09-09 SE company person entity design
 (`docs/superpowers/specs/2026-09-09-se-company-person-entity-design.md`); read that for
@@ -6,7 +6,7 @@ everything past the modules below -- the backoffice.
 
 | Module | Responsibility |
 | --- | --- |
-| `tables.py` | Table names/column tuples, pinned against migration 000396; main table built as `se_company_person_v2`, renamed in the last slice |
+| `tables.py` | Table names/column tuples, pinned against migration 000396; main table `se_company_person` since migration 000398 (built as `se_company_person_v2`, because the 2026-08-19 table held the final name until slice 0 dropped it) |
 | `roles.py` | Per-source role maps (`role_code_for`), moved verbatim from `sweden_financial`/`esef_filings`/`wikidata`'s own `roles.py`; an unmapped label publishes as itself, lowercased and trimmed |
 | `normalize_se.py` | `normalize_se_person`: pure Swedish parser -- splits, folds and classifies a delivered name and role; never guesses a missing half |
 | `normalize.py` | The normalize SQL (`changed_scope_sql`, `changed_rows_sql`, `all_scope_sql`, `all_rows_sql`, `normalized_insert_sql`) and the paging/write loop (`normalize_all`, `normalize_companies`) |
@@ -68,7 +68,7 @@ outlives label rewordings that a human label does not. Slice 1's extractors fill
 straight from the source's own code column -- Bolagsverket's `role_kind`, ESEF's
 `role_category`, Wikidata's `role_property` -- and never out of `data`.
 
-## Interrupted-migration runbook (000396)
+## Interrupted-migration runbook (000396 and 000398)
 
 000396 stops `corpscout.se_companies_serving`, creates the six tables above, re-points the
 view's query with `ALTER TABLE ... MODIFY QUERY`, then restarts the view. If the migrate
@@ -76,6 +76,29 @@ client drops between the STOP and the re-point landing, the view is left stopped
 stale contents with nothing alerting on it. Recovery by hand: check `system.view_refreshes`
 for the view's status; run `SYSTEM START VIEW corpscout.se_companies_serving`; if the ALTER
 never landed, run it from 000396's `.up.sql`; then `migrate force 396` to match reality.
+
+000398 is the same shape with a rename in the middle and no CREATEs: `SYSTEM STOP VIEW`,
+`RENAME TABLE corpscout.se_company_person_v2 TO corpscout.se_company_person`, `ALTER TABLE
+... MODIFY QUERY`, `SYSTEM START VIEW`. Between the RENAME and the ALTER the view's stored
+query names a table that no longer exists, which is why the view is stopped first. Recovery
+by hand, if the migrate client drops in that window:
+
+1. `SELECT view, status, last_success_time, exception FROM system.view_refreshes WHERE
+   database = 'corpscout' AND view = 'se_companies_serving'` -- a stopped view still lists here.
+2. `SELECT name FROM system.tables WHERE database = 'corpscout' AND name LIKE
+   'se_company_person%'` says whether the RENAME landed.
+3. If it landed but the ALTER did not, run the `ALTER TABLE ... MODIFY QUERY` statement
+   verbatim from `000398_corpscout_se_company_person_rename.up.sql`; if neither landed,
+   re-running the whole up file is safe once the view has been started again.
+4. `SYSTEM START VIEW corpscout.se_companies_serving`.
+5. `migrate force 398`.
+
+Apply it OUTSIDE the :45 refresh window -- the refresh takes 13 to 15 minutes, so start just
+after one finishes. Neither 000396 nor 000398 uses `SYSTEM WAIT VIEW`, so neither can hit the
+staged-swap failure mode that left the ledger dirty at 391: for that one see
+`se_company/address/docs/address-design.md`, section "If a serving swap is interrupted" and
+"If the 000393 rename is interrupted", and memory `se-companies-serving-view` (the migrate
+client's `read_timeout=300` against a 27-minute `SYSTEM WAIT VIEW`).
 
 ## Running the asset
 
