@@ -43,7 +43,7 @@ const COUNTRY_NAVIGATION = [
     items: [
       {
         // One entry for the whole tabbed list area (Info · Geocoding ·
-        // Financial · Ratsit). exact:false so it stays active on every tab.
+        // Financial). exact:false so it stays active on every tab.
         title: "Companies",
         to: "/admin/se/companies",
         icon: Building2Icon,
