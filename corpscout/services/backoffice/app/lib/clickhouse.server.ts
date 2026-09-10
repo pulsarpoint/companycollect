@@ -179,3 +179,33 @@ export async function chInsertSeCompanyAddressRules<T extends object>(
     format: "JSONEachRow",
   });
 }
+
+/**
+ * Append a reviewer suggestion-row version to the SE person suggestion table; the
+ * normalize asset parses it and the fold reads the newest version per
+ * (company_id, source, slot) through FINAL.
+ */
+export async function chInsertSeCompanyPersonSuggestions<T extends object>(
+  values: T[],
+): Promise<void> {
+  if (values.length === 0) return;
+  await getWriteClient().insert({
+    table: "se_company_person_suggestion",
+    values,
+    format: "JSONEachRow",
+  });
+}
+
+/** Append a rule version (hide, merge, split, or its release) to the SE person rule
+ * table; the fold reads the newest version per (company_id, rule_id) through FINAL and
+ * applies only `active = 1`. */
+export async function chInsertSeCompanyPersonRules<T extends object>(
+  values: T[],
+): Promise<void> {
+  if (values.length === 0) return;
+  await getWriteClient().insert({
+    table: "se_company_person_rule",
+    values,
+    format: "JSONEachRow",
+  });
+}
