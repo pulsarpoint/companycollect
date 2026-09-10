@@ -1,5 +1,10 @@
 import json
 from hashlib import sha256
+from types import SimpleNamespace
+from typing import Any
+
+import httpx
+from openai import RateLimitError
 
 from dagster_v3.defs.esef_filings import llm_enrichment, tables
 from dagster_v3.defs.esef_filings.artifact_contract import ARTIFACT_SCHEMA_VERSION
@@ -450,3 +455,178 @@ def test_people_run_reuses_an_unchanged_request_and_records_no_evidence() -> Non
     assert inserted["people_json"] == "[]"
     assert inserted["extraction_artifact_object_key"] == ""
     assert inserted["input_artifact_object_key"].startswith("clickhouse://")
+
+
+def test_people_run_reuses_an_existing_artifact_without_calling_the_model() -> None:
+    # Mirror test_people_run_writes_one_extraction_row_per_document, except the exact
+    # request already has an output artifact under the people prefix in the fake store:
+    # run_esef_people_extraction must mark the row 'reused' and never call the client.
+    package_sha256 = "a" * 64
+    disclosure_rows, label_rows = _segment_artifact_clickhouse_rows()
+    lookup_clickhouse = _FakeClickHouse([disclosure_rows, label_rows])
+    artifacts = _load_disclosure_artifacts(
+        lookup_clickhouse, documents=[_source_document_mapping()]
+    )
+    evidence = build_enrichment_evidence(
+        artifacts["AAK-2024"],
+        max_evidence_chars=64_000,
+        evidence_segments=PEOPLE_EVIDENCE_SEGMENTS,
+        visible_section_types=PEOPLE_VISIBLE_SECTION_TYPES,
+    )
+    request_payload = build_people_extraction_request(evidence, model="deepseek-v4-flash")
+    request_sha256 = sha256(enrichment_request_json_bytes(request_payload)).hexdigest()
+    response = {
+        "people": [
+            {
+                "name": "Anna Andersson",
+                "role": "Chief Executive Officer",
+                "role_category": "chief_executive",
+                "organization": "AAK AB",
+                "status": "current",
+                "effective_from": None,
+                "effective_to": None,
+                "evidence_ids": ["E0001"],
+                "confidence": 0.98,
+            }
+        ]
+    }
+    result = request_people_extraction(
+        _client_returning(response),
+        evidence_input=evidence,
+        request_payload=request_payload,
+    )
+    output_key = people_extraction_object_key(
+        package_sha256, model="deepseek-v4-flash", request_sha256=request_sha256
+    )
+    artifact_bytes = people_extraction_artifact_json_bytes(
+        evidence_input=evidence,
+        result=result,
+        model="deepseek-v4-flash",
+        input_artifact_key="clickhouse://prior",
+        llm_request_object_key="prior-request-key",
+        llm_request_sha256=request_sha256,
+        generated_at="2026-09-01T00:00:00Z",
+        source_run_id="prior-run",
+        provider="deepseek",
+        base_url="https://api.deepseek.com",
+    )
+    object_store = _FakeObjectStore({(ESEF_DOCUMENT_BUCKET, output_key): artifact_bytes})
+    clickhouse = _FakeClickHouse(
+        [
+            [_source_document_clickhouse_row()],
+            disclosure_rows,
+            label_rows,
+            [(tables.ESEF_DOCUMENT_PEOPLE_EXTRACTION_TABLE,)],
+        ]
+    )
+
+    def _fail(**_kwargs: Any) -> None:
+        raise AssertionError("the model must not be called when the artifact is reused")
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=_fail))
+    )
+
+    metadata = run_esef_people_extraction(
+        clickhouse=clickhouse,
+        object_store=object_store,
+        client=client,  # type: ignore[arg-type]
+        model="deepseek-v4-flash",
+        source_run_id="people-run-3",
+        source_document_ids=["AAK-2024"],
+        country_iso2s=[],
+        link_statuses=["register_verified"],
+        company_ids=[],
+        max_documents=None,
+        refresh_existing=False,
+        max_evidence_chars=64_000,
+        log_info=lambda *_args: None,
+    )
+
+    assert metadata["attempted_document_count"] == 0
+    assert metadata["extracted_document_count"] == 0
+    assert metadata["reused_extraction_count"] == 1
+    assert metadata["extraction_row_count"] == 1
+    assert metadata["failed_document_count"] == 0
+
+    people_insert = next(
+        parameters
+        for sql, parameters in clickhouse.client.calls
+        if "esef_document_people_extraction" in sql and " VALUES" in sql
+    )
+    [inserted_values] = people_insert
+    inserted = dict(
+        zip(
+            tables.ESEF_DOCUMENT_PEOPLE_EXTRACTION_EXPORT_COLUMNS,
+            inserted_values,
+            strict=True,
+        )
+    )
+    assert inserted["source_document_id"] == "AAK-2024"
+    assert inserted["extraction_status"] == "reused"
+    assert json.loads(str(inserted["people_json"]))[0]["name"] == "Anna Andersson"
+
+
+def test_people_run_records_a_rate_limited_call_without_inserting_a_row() -> None:
+    # Mirror test_people_run_writes_one_extraction_row_per_document: one selected
+    # document, but the client raises openai.RateLimitError -- no row is inserted for
+    # that document, the run still returns normally, and both failed_document_count
+    # and rate_limited_document_count record it.
+    disclosure_rows, label_rows = _segment_artifact_clickhouse_rows()
+    clickhouse = _FakeClickHouse(
+        [
+            [_source_document_clickhouse_row()],
+            disclosure_rows,
+            label_rows,
+            [(tables.ESEF_DOCUMENT_PEOPLE_EXTRACTION_TABLE,)],
+        ]
+    )
+    object_store = _FakeObjectStore({})
+    error = RateLimitError(
+        "rate limited: insufficient balance",
+        response=httpx.Response(
+            429,
+            request=httpx.Request(
+                "POST", "https://api.deepseek.com/chat/completions"
+            ),
+        ),
+        body=None,
+    )
+
+    def _raise(**_kwargs: Any) -> None:
+        raise error
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=_raise))
+    )
+
+    metadata = run_esef_people_extraction(
+        clickhouse=clickhouse,
+        object_store=object_store,
+        client=client,  # type: ignore[arg-type]
+        model="deepseek-v4-flash",
+        source_run_id="people-run-4",
+        source_document_ids=["AAK-2024"],
+        country_iso2s=[],
+        link_statuses=["register_verified"],
+        company_ids=[],
+        max_documents=None,
+        refresh_existing=False,
+        max_evidence_chars=64_000,
+        log_info=lambda *_args: None,
+    )
+
+    assert metadata["attempted_document_count"] == 1
+    assert metadata["failed_document_count"] == 1
+    assert metadata["rate_limited_document_count"] == 1
+    assert metadata["extracted_document_count"] == 0
+    assert metadata["reused_extraction_count"] == 0
+    assert metadata["processed_document_count"] == 0
+    assert metadata["extraction_row_count"] == 0
+
+    people_inserts = [
+        parameters
+        for sql, parameters in clickhouse.client.calls
+        if "esef_document_people_extraction" in sql and " VALUES" in sql
+    ]
+    assert people_inserts == []
