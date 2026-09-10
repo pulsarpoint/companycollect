@@ -1,0 +1,462 @@
+"""The person extractors' SQL on a real ClickHouse (spec 2026-09-09 sections 3.1 and 6).
+
+Claims a fake client cannot settle:
+1. Each page select really produces the sixteen suggestion columns, in a UNION ALL whose
+   live and tombstone branches agree on every column type.
+2. `data` is a JSON object on every row -- the table's CONSTRAINT valid_data (Code: 469) is
+   the judge, and the tombstone branch's literal '{}' has to pass it too.
+3. suggestion_id equals sha256(company_id, source, slot, suggested_at) for every row, so
+   the WITH-bound stamp really is the instant the id hashed.
+4. The state-hash scope selects a company before anything is suggested, selects nothing
+   after the page is written (it converges), selects it again when the rebuilt source drops
+   one of its rows, and converges again once the tombstone is written -- under
+   join_use_nulls 0 and 1, which the scope's two aggregations exist to be immune to.
+5. A company the register flags has_company = 0 has every remaining slot tombstoned even
+   though the signatory table still holds its rows (spec section 6), and converges too.
+6. A company outside se_company_basic_info never reaches the suggestion table.
+7. The normalize hand-off (`changed_rows_sql()` + `normalized_row()`) reads what these
+   extractors wrote and gives the expected parse statuses, the tombstone included.
+"""
+
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from dagster_v3.defs.esef_filings import tables as esef_tables
+from dagster_v3.defs.esef_filings.country_views import build_se_esef_view_sql
+from dagster_v3.defs.se_company.basic_info.extract import insert_page_sql
+from dagster_v3.defs.se_company.person import bolagsverket, esef, tables, wikidata
+from dagster_v3.defs.se_company.person.normalize import (
+    RAW_ROW_COLUMNS,
+    changed_rows_sql,
+    normalized_row,
+)
+from dagster_v3.defs.se_company.person.normalize_se import NORMALIZER_VERSION
+from dagster_v3.defs.se_company.person.suggestions import PERSON_SELECT_COLUMNS, PERSON_TARGET
+from tests.clickhouse_local import clickhouse_local_command, render
+
+ESEF_PEOPLE_VIEW = next(
+    view for view in esef_tables.SE_ESEF_VIEWS if view.table == "esef_document_people"
+)
+LEI = "1FOLRR5RWTWWI397R131"
+DOCUMENT_ID = f"{LEI}-2023-12-31-ESEF-SE-0"
+ESEF_DATA = (
+    '{"organization":"Exempel AB","status":"current","confidence":"0.95",'
+    '"evidence_ids":"E0006","model_provider":"glm","model_name":"z-ai\\\\/glm",'
+    '"prompt_version":"esef-people-v1"}'
+)
+
+pytestmark = pytest.mark.integration
+
+MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
+FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
+# (file, the exact CREATE TABLE header line to keep). The trailing newline anchors the whole
+# name: `corpscout.se_company_person_` would also be a prefix of five dropped tables, and
+# `corpscout.esef_document_people` is a prefix of esef_document_people_legacy.
+WANTED_CREATES = (
+    ("000396_corpscout_se_company_person_entity.up.sql", "CREATE TABLE IF NOT EXISTS corpscout.se_company_person_suggestion\n"),
+    ("000396_corpscout_se_company_person_entity.up.sql", "CREATE TABLE IF NOT EXISTS corpscout.se_company_person_normalized\n"),
+    ("000377_corpscout_se_company_basic_info.up.sql", "CREATE TABLE IF NOT EXISTS corpscout.se_company_basic_info\n"),
+    ("000374_corpscout_se_bolagsverket_companies.up.sql", "CREATE TABLE IF NOT EXISTS corpscout.se_bolagsverket_companies\n"),
+    ("000395_corpscout_esef_country_agnostic_products.up.sql", "CREATE TABLE IF NOT EXISTS corpscout.esef_document_people\n"),
+)
+
+COMPANY_BV = "5561552760"
+COMPANY_WD = "5560125220"
+COMPANY_OUTSIDE = "5569999999"
+STATEMENT_KEY = "st1"
+BOARD_DATA = '{"signatory_kind":"board_signature","statement_key":"st1","person_seq":"1"}'
+CERT_DATA = '{"signatory_kind":"certification","statement_key":"st1","person_seq":"1"}'
+
+RAW_ROW_CHECK_COLUMNS = (*PERSON_SELECT_COLUMNS, "suggested_at")
+RAW_ROWS_SQL = (
+    f"SELECT {', '.join(PERSON_SELECT_COLUMNS)}, toString(suggested_at) "
+    f"FROM {tables.QUALIFIED_SUGGESTION_TABLE} FINAL ORDER BY company_id, source, slot"
+)
+# The same hash formula as PERSON_TRAILING_SELECT_SQL: '\\n' in the Python source is a
+# literal backslash-n in the SQL text, which ClickHouse's string literal turns into a real
+# newline when concat() builds the hashed string.
+IDENTITY_CHECK_SQL = (
+    f"SELECT count() FROM {tables.QUALIFIED_SUGGESTION_TABLE} FINAL "
+    "WHERE suggestion_id != lower(hex(SHA256(concat(company_id, '\\n', toString(source), '\\n', "
+    "slot, '\\n', toString(suggested_at)))))"
+)
+DATA_CHECK_SQL = (
+    f"SELECT countIf(JSONType(data) != 'Object') FROM {tables.QUALIFIED_SUGGESTION_TABLE} FINAL"
+)
+OUTSIDE_CHECK_SQL = (
+    f"SELECT count() FROM {tables.QUALIFIED_SUGGESTION_TABLE} FINAL "
+    f"WHERE company_id = '{COMPANY_OUTSIDE}'"
+)
+
+
+def _statements(path: Path, keep) -> list[str]:
+    out: list[str] = []
+    for raw in path.read_text(encoding="utf-8").split(";"):
+        statement = "\n".join(
+            line for line in raw.splitlines() if not line.strip().startswith("--")
+        ).strip()
+        if statement and keep(statement):
+            out.append(statement)
+    return out
+
+
+def _schema() -> list[str]:
+    schema = ["CREATE DATABASE IF NOT EXISTS corpscout"]
+    for name, header in WANTED_CREATES:
+        found = _statements(MIGRATIONS_DIR / name, lambda s, h=header: s.startswith(h.rstrip("\n")) and h in s + "\n")
+        assert len(found) == 1, (name, header, len(found))
+        schema += found
+    for fixture in ("se_basic_info_source_tables.sql", "se_company_person_source_tables.sql"):
+        schema += [s.strip() for s in (FIXTURES_DIR / fixture).read_text(encoding="utf-8").split(";") if s.strip()]
+    schema.append(build_se_esef_view_sql(ESEF_PEOPLE_VIEW).rstrip(";"))
+    return schema
+
+
+def _insert(select_sql: str, ids: list[str], *, extractor_version: str) -> str:
+    return render(
+        insert_page_sql(select_sql=select_sql, target=PERSON_TARGET),
+        {"company_ids": ids, "source_run_id": "run-1", "extractor_version": extractor_version},
+    )
+
+
+def _scope(scope_sql: str, source: str) -> str:
+    return render(scope_sql, {"source": source}) + "\nORDER BY company_id"
+
+
+def _ordered(sql: str, order_by: str) -> str:
+    return f"SELECT * FROM ({sql}) AS ordered ORDER BY {order_by}"
+
+
+def _sections(lines: list[str]) -> dict[str, list[list[str]]]:
+    result: dict[str, list[list[str]]] = {}
+    current = ""
+    for line in lines:
+        if line.startswith("@@"):
+            current = line[2:]
+            result[current] = []
+        else:
+            result[current].append(line.split("\t"))
+    return result
+
+
+def _as_row(fields: list[str]) -> tuple[str | None, ...]:
+    assert len(fields) == len(RAW_ROW_COLUMNS), fields
+    return tuple(None if field == "\\N" else field for field in fields)
+
+
+SIGNATORY_COLUMNS = (
+    "company_id, fiscal_year, statement_key, signatory_kind, person_seq, "
+    "first_name, last_name, role_original, role_kind, resolved_at"
+)
+BOARD_ROW = (
+    f"('{COMPANY_BV}', 2024, '{STATEMENT_KEY}', 'board_signature', 1, 'Anna', 'Svensson', "
+    "'Styrelseledamot', 'board_member', toDateTime64('2026-09-01 00:00:00', 3, 'UTC'))"
+)
+CERT_ROW = (
+    f"('{COMPANY_BV}', 2024, '{STATEMENT_KEY}', 'certification', 1, 'Anna', 'Svensson', "
+    "'Styrelseledamot', 'board_member', toDateTime64('2026-09-01 00:00:00', 3, 'UTC'))"
+)
+OUTSIDE_ROW = (
+    f"('{COMPANY_OUTSIDE}', 2024, 'st9', 'board_signature', 1, 'Nils', 'Utanfor', "
+    "'', 'unknown', toDateTime64('2026-09-01 00:00:00', 3, 'UTC'))"
+)
+
+
+def _signatory_insert(rows: tuple[str, ...]) -> str:
+    return (
+        f"INSERT INTO corpscout.se_financial_report_signatories ({SIGNATORY_COLUMNS}) VALUES "
+        + ", ".join(rows)
+    )
+
+
+def _register_row(company_id: str, observed_at: str, has_company: int) -> str:
+    """One se_bolagsverket_companies row. The table is ReplacingMergeTree(observed_at) ordered
+    by company_id, so a later row with has_company = 0 is the register's own tombstone."""
+    return (
+        "INSERT INTO corpscout.se_bolagsverket_companies (company_id, observed_at, has_company) "
+        f"VALUES ('{company_id}', toDateTime64('{observed_at}', 3, 'UTC'), {has_company})"
+    )
+
+
+def _script_statements() -> list[str]:
+    bv_scope = _scope(bolagsverket.bolagsverket_changed_scope_sql(), "bolagsverket")
+    bv_insert = _insert(
+        bolagsverket.bolagsverket_select_sql(), [COMPANY_BV],
+        extractor_version=bolagsverket.BOLAGSVERKET_PERSON_EXTRACTOR_VERSION,
+    )
+    esef_scope = _scope(esef.esef_changed_scope_sql(), "esef")
+    esef_insert = _insert(
+        esef.esef_select_sql(), [COMPANY_BV],
+        extractor_version=esef.ESEF_PERSON_EXTRACTOR_VERSION,
+    )
+    wd_scope = _scope(wikidata.wikidata_changed_scope_sql(), "wikidata")
+    wd_insert = _insert(
+        wikidata.wikidata_select_sql(), [COMPANY_WD],
+        extractor_version=wikidata.WIKIDATA_PERSON_EXTRACTOR_VERSION,
+    )
+    changed_rows = _ordered(
+        render(
+            changed_rows_sql(),
+            {"company_ids": [COMPANY_BV, COMPANY_WD], "normalizer_version": NORMALIZER_VERSION},
+        ),
+        "company_id, source, slot",
+    )
+    return [
+        *_schema(),
+        # The universe: COMPANY_OUTSIDE deliberately has no basic-info row.
+        f"INSERT INTO corpscout.se_company_basic_info (company_id) VALUES ('{COMPANY_BV}')",
+        f"INSERT INTO corpscout.se_company_basic_info (company_id) VALUES ('{COMPANY_WD}')",
+        "INSERT INTO corpscout.esef_entity_registry_map (lei, country_iso2, registry_id_raw, "
+        f"registry_id, match_source, link_status) VALUES ('{LEI}', 'SE', '{COMPANY_BV}', "
+        f"'{COMPANY_BV}', 'gleif', 'register_verified')",
+        "INSERT INTO corpscout.esef_document_people (candidate_uid, source_record_uid, "
+        "source_document_id, lei, fiscal_year, name, role, role_category, organization, status, "
+        "effective_from, effective_to, confidence, evidence_ids, model_provider, model_name, "
+        "prompt_version, source_run_id, extracted_at) VALUES "
+        f"('{'c' * 64}', '{'r' * 64}', '{DOCUMENT_ID}', '{LEI}', 2023, 'Öberg, Håkan', "
+        "'Verkställande direktör', 'chief_executive', 'Exempel AB', 'current', "
+        "toDate32('2021-07-16'), NULL, 0.95, ['E0006'], 'glm', 'z-ai/glm', 'esef-people-v1', "
+        "'run-0', toDateTime64('2026-09-02 00:00:00', 3, 'UTC'))",
+        "SELECT '@@esef_scope_1'",
+        esef_scope,
+        esef_insert,
+        "SELECT '@@esef_scope_2'",
+        esef_scope,
+        "INSERT INTO corpscout.wikidata_company_identifiers (wikidata_id, identifier_type, "
+        "wikidata_property_id, identifier_value, is_primary, source_system, source_run_id, "
+        "source_record_id, source_payload_hash, retrieved_at, resolved_at) VALUES "
+        f"('Q9', 'se_orgnr', 'P6460', '556012-5220', 1, 'wikidata', 'run-0', 'i1', '{'0' * 64}', "
+        "toDateTime64('2026-09-03 00:00:00', 3, 'UTC'), toDateTime64('2026-09-03 00:00:00', 3, 'UTC'))",
+        "INSERT INTO corpscout.wikidata_persons (person_wikidata_id, name, name_normalized, "
+        "description, birth_year, image_url, wikidata_url, source_system, source_run_id, "
+        "source_record_id, source_payload_hash, retrieved_at, resolved_at) VALUES "
+        "('Q404522', 'Jens Fischer', 'jens fischer', 'Swedish cinematographer', 1946, NULL, "
+        f"'http://www.wikidata.org/entity/Q404522', 'wikidata', 'run-0', 'p1', '{'0' * 64}', "
+        "toDateTime64('2026-09-03 00:00:00', 3, 'UTC'), toDateTime64('2026-09-03 00:00:00', 3, 'UTC')), "
+        "('_blank1', 'http://www.wikidata.org/.well-known/genid/abc', 'genid', NULL, NULL, NULL, "
+        f"NULL, 'wikidata', 'run-0', 'p2', '{'0' * 64}', "
+        "toDateTime64('2026-09-03 00:00:00', 3, 'UTC'), toDateTime64('2026-09-03 00:00:00', 3, 'UTC'))",
+        "INSERT INTO corpscout.wikidata_company_people (company_wikidata_id, person_wikidata_id, "
+        "role_property, role_label, start_date, end_date, is_current, source_system, source_run_id, "
+        "source_record_id, source_payload_hash, retrieved_at, resolved_at) VALUES "
+        "('Q9', 'Q404522', 'P169', 'chief executive officer', toDate('2021-07-16'), NULL, 1, "
+        f"'wikidata', 'run-0', 'Q9:P169:Q404522', '{'0' * 64}', "
+        "toDateTime64('2026-09-03 00:00:00', 3, 'UTC'), toDateTime64('2026-09-03 00:00:00', 3, 'UTC')), "
+        "('Q9', '_blank1', 'P112', 'founder', NULL, NULL, 1, "
+        f"'wikidata', 'run-0', 'Q9:P112:_blank1', '{'0' * 64}', "
+        "toDateTime64('2026-09-03 00:00:00', 3, 'UTC'), toDateTime64('2026-09-03 00:00:00', 3, 'UTC'))",
+        "SELECT '@@wd_scope_1'",
+        wd_scope,
+        wd_insert,
+        "SELECT '@@wd_scope_2'",
+        wd_scope,
+        _register_row(COMPANY_BV, "2026-09-01 00:00:00", 1),
+        _signatory_insert((BOARD_ROW, CERT_ROW, OUTSIDE_ROW)),
+        "SELECT '@@bv_scope_1'",
+        bv_scope,
+        bv_insert,
+        "SELECT '@@raw_rows_1'",
+        RAW_ROWS_SQL,
+        "SELECT '@@identity_check'",
+        IDENTITY_CHECK_SQL,
+        "SELECT '@@data_check'",
+        DATA_CHECK_SQL,
+        "SELECT '@@outside_check'",
+        OUTSIDE_CHECK_SQL,
+        "SELECT '@@bv_scope_2'",
+        bv_scope,
+        # The source is rebuilt whole (stage + EXCHANGE TABLES on prod) and this time the
+        # certification signature line is gone.
+        "SELECT sleep(0.01) FORMAT Null",
+        "TRUNCATE TABLE corpscout.se_financial_report_signatories",
+        _signatory_insert((BOARD_ROW, OUTSIDE_ROW)),
+        "SELECT '@@bv_scope_3'",
+        bv_scope,
+        bv_insert,
+        "SELECT '@@raw_rows_2'",
+        RAW_ROWS_SQL,
+        "SELECT '@@bv_scope_4'",
+        bv_scope,
+        "SELECT '@@data_check_2'",
+        DATA_CHECK_SQL,
+        "SELECT '@@changed_rows'",
+        changed_rows,
+        # The register deregisters the company (spec section 6). The signatory table still
+        # holds its board signature line -- reports are never deleted -- so only the
+        # has_company flag can retire the slot.
+        "SELECT sleep(0.01) FORMAT Null",
+        _register_row(COMPANY_BV, "2026-09-02 00:00:00", 0),
+        "SELECT '@@bv_scope_5'",
+        bv_scope,
+        bv_insert,
+        "SELECT '@@raw_rows_3'",
+        RAW_ROWS_SQL,
+        "SELECT '@@bv_scope_6'",
+        bv_scope,
+        "SELECT '@@data_check_3'",
+        DATA_CHECK_SQL,
+    ]
+
+
+@pytest.fixture(scope="module", params=(0, 1), ids=("join_use_nulls_off", "join_use_nulls_on"))
+def sections(request: pytest.FixtureRequest) -> dict[str, list[list[str]]]:
+    script = f"SET join_use_nulls = {request.param};\n" + ";\n".join(_script_statements()) + ";\n"
+    try:
+        completed = subprocess.run(
+            clickhouse_local_command(), input=script, capture_output=True, text=True, timeout=900
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:  # pragma: no cover - env
+        pytest.skip(f"clickhouse-local is unusable here: {exc}")
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+    return _sections([line for line in completed.stdout.splitlines() if line.strip()])
+
+
+def _rows(sections: dict[str, list[list[str]]], name: str) -> list[dict[str, str]]:
+    return [dict(zip(RAW_ROW_CHECK_COLUMNS, fields, strict=True)) for fields in sections[name]]
+
+
+def test_the_scope_selects_the_company_then_converges(sections) -> None:
+    assert sections["bv_scope_1"] == [[COMPANY_BV]]
+    assert sections["bv_scope_2"] == []
+
+
+def test_both_signature_lines_land_as_their_own_slot(sections) -> None:
+    rows = [r for r in _rows(sections, "raw_rows_1") if r["source"] == "bolagsverket"]
+    assert len(rows) == 2
+    assert {row["data"] for row in rows} == {BOARD_DATA, CERT_DATA}
+    assert len({row["slot"] for row in rows}) == 2
+    for row in rows:
+        assert row["source"] == "bolagsverket"
+        assert row["first_name"] == "Anna" and row["last_name"] == "Svensson"
+        assert row["full_name"] == "\\N"
+        assert row["role_original"] == "Styrelseledamot"
+        assert row["role_key"] == "board_member"
+        assert row["fiscal_year"] == "2024"
+        assert row["document_ref"] == STATEMENT_KEY
+        assert row["birth_year"] == row["wikidata_id"] == "\\N"
+        assert row["role_from"] == row["role_to"] == "\\N"
+        # slot = report record uid + signatory uid, both 64 hex characters.
+        record_uid, signatory_uid = row["slot"].split(":")
+        assert len(record_uid) == len(signatory_uid) == 64
+        assert row["source_record_id"] == record_uid
+
+
+def test_suggestion_id_matches_the_stamp_hash_and_data_is_always_an_object(sections) -> None:
+    assert sections["identity_check"] == [["0"]]
+    assert sections["data_check"] == [["0"]]
+    assert sections["data_check_2"] == [["0"]]
+
+
+def test_a_company_outside_the_basic_info_universe_is_never_written(sections) -> None:
+    assert sections["outside_check"] == [["0"]]
+
+
+def test_a_vanished_signature_line_is_tombstoned_and_the_scope_reconverges(sections) -> None:
+    assert sections["bv_scope_3"] == [[COMPANY_BV]]
+    before = {
+        row["slot"]: row for row in _rows(sections, "raw_rows_1") if row["source"] == "bolagsverket"
+    }
+    rows = [r for r in _rows(sections, "raw_rows_2") if r["source"] == "bolagsverket"]
+    assert len(rows) == 2
+    tombstones = [row for row in rows if row["data"] == "{}"]
+    assert len(tombstones) == 1
+    [tombstone] = tombstones
+    for column in ("full_name", "first_name", "last_name", "birth_year", "wikidata_id",
+                   "role_original", "role_key", "fiscal_year", "role_from", "role_to",
+                   "document_ref"):
+        assert tombstone[column] == "\\N", column
+    assert tombstone["source_record_id"] == ""
+    assert before[tombstone["slot"]]["data"] == CERT_DATA
+    assert tombstone["suggested_at"] > before[tombstone["slot"]]["suggested_at"]
+    [survivor] = [row for row in rows if row["data"] != "{}"]
+    assert survivor["data"] == BOARD_DATA
+    assert survivor["suggested_at"] > before[survivor["slot"]]["suggested_at"]
+    assert sections["bv_scope_4"] == []
+
+
+def test_a_deregistered_company_has_its_remaining_slots_tombstoned(sections) -> None:
+    """Spec section 6: tombstones on has_company = 0. The register flips, the company's
+    signature lines leave the live branch, and the slot still live is retired -- while the slot
+    already tombstoned is left exactly as it was, which is what makes the scope converge."""
+    assert sections["bv_scope_5"] == [[COMPANY_BV]]
+    before = {
+        row["slot"]: row for row in _rows(sections, "raw_rows_2") if row["source"] == "bolagsverket"
+    }
+    board_slot = next(slot for slot, row in before.items() if row["data"] != "{}")
+    cert_slot = next(slot for slot, row in before.items() if row["data"] == "{}")
+    rows = {
+        row["slot"]: row for row in _rows(sections, "raw_rows_3") if row["source"] == "bolagsverket"
+    }
+    assert set(rows) == {board_slot, cert_slot}
+    for slot, row in rows.items():
+        assert row["data"] == "{}", slot
+        assert row["first_name"] == row["last_name"] == row["role_key"] == "\\N", slot
+        assert row["source_record_id"] == "", slot
+    assert rows[board_slot]["suggested_at"] > before[board_slot]["suggested_at"]
+    # Already a tombstone, so the page did not rewrite it.
+    assert rows[cert_slot]["suggested_at"] == before[cert_slot]["suggested_at"]
+    assert sections["bv_scope_6"] == []
+    assert sections["data_check_3"] == [["0"]]
+
+
+def test_the_esef_row_keeps_the_delivered_full_name_dates_and_extras(sections) -> None:
+    assert sections["esef_scope_1"] == [[COMPANY_BV]]
+    assert sections["esef_scope_2"] == []
+    [row] = [r for r in _rows(sections, "raw_rows_1") if r["source"] == "esef"]
+    assert row["slot"] == f"{DOCUMENT_ID}:{'c' * 64}"
+    assert row["source_record_id"] == "r" * 64
+    assert row["full_name"] == "Öberg, Håkan"
+    assert row["first_name"] == row["last_name"] == "\\N"
+    assert row["role_original"] == "Verkställande direktör"
+    assert row["role_key"] == "chief_executive"
+    assert row["fiscal_year"] == "2023"
+    assert row["role_from"] == "2021-07-16" and row["role_to"] == "\\N"
+    assert row["document_ref"] == DOCUMENT_ID
+    assert row["data"] == ESEF_DATA
+
+
+WIKIDATA_DATA = (
+    '{"description":"Swedish cinematographer","image_url":"",'
+    '"wikidata_url":"http:\\\\/\\\\/www.wikidata.org\\\\/entity\\\\/Q404522",'
+    '"name_normalized":"jens fischer","is_current":"1"}'
+)
+
+
+def test_the_wikidata_row_carries_the_qid_birth_year_span_and_description(sections) -> None:
+    assert sections["wd_scope_1"] == [[COMPANY_WD]]
+    assert sections["wd_scope_2"] == []
+    rows = [r for r in _rows(sections, "raw_rows_1") if r["source"] == "wikidata"]
+    # The blank-node statement is not a person and never lands.
+    assert len(rows) == 1
+    [row] = rows
+    assert row["company_id"] == COMPANY_WD
+    assert row["slot"] == "Q9:P169:Q404522"
+    assert row["full_name"] == "Jens Fischer"
+    assert row["birth_year"] == "1946"
+    assert row["wikidata_id"] == "Q404522"
+    assert row["role_original"] == "chief executive officer"
+    assert row["role_key"] == "P169"
+    assert row["fiscal_year"] == "\\N"
+    assert row["role_from"] == "2021-07-16" and row["role_to"] == "\\N"
+    assert row["document_ref"] == "\\N"
+    assert row["data"] == WIKIDATA_DATA
+
+
+def test_the_normalize_hand_off_gives_the_expected_parse_statuses(sections) -> None:
+    rows = [normalized_row(_as_row(fields), None) for fields in sections["changed_rows"]]
+    status = tables.NORMALIZED_COLUMNS.index("parse_status")
+    notes = tables.NORMALIZED_COLUMNS.index("parse_notes")
+    code = tables.NORMALIZED_COLUMNS.index("role_code")
+    name = tables.NORMALIZED_COLUMNS.index("display_name")
+    by_status = sorted((row[status], row[name], row[code], tuple(row[notes])) for row in rows)
+    assert by_status == [
+        ("no_person", "", None, ("empty name",)),
+        ("ok", "Anna Svensson", "board_member", ()),
+        # normalize_se_person records the comma form of spec rule 4.1 ("Last, First") as a
+        # parse note -- verified directly against normalize_se_person(RawPerson(source="esef",
+        # full_name="Öberg, Håkan", ...)), which returns parse_notes=("comma form",).
+        ("ok", "Håkan Öberg", "chief_executive_officer", ("comma form",)),
+        ("ok", "Jens Fischer", "chief_executive_officer", ()),
+    ]

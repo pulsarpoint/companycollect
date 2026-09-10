@@ -1,5 +1,6 @@
 """Dagster assets of the person entity. Slice 0 ships the normalize asset; the extractors
-and the stopped weekly follow in slice 1, the fold and the precedence export in slice 2."""
+and the stopped weekly live in bolagsverket.py, esef.py, wikidata.py and jobs.py (slice 1),
+the fold and the precedence export in slice 2."""
 
 from datetime import UTC, datetime
 
@@ -14,6 +15,10 @@ from dagster_v3.defs.se_company.person.normalize import PAGE_SIZE, normalize_all
 
 GROUP_NAME = "se_company_person"
 NORMALIZE_POOL = "se_company_person_normalize"
+EXTRACTOR_SOURCES: tuple[str, ...] = ("bolagsverket", "esef", "wikidata")
+EXTRACTOR_ASSET_NAMES: tuple[str, ...] = tuple(
+    f"se_company_person_suggestions_{source}" for source in EXTRACTOR_SOURCES
+)
 
 
 class PersonNormalizeConfig(dg.Config):
@@ -31,6 +36,7 @@ class PersonNormalizeConfig(dg.Config):
     name="se_company_person_normalize",
     group_name=GROUP_NAME,
     pool=NORMALIZE_POOL,
+    deps=[dg.AssetKey(name) for name in EXTRACTOR_ASSET_NAMES],
     kinds={"clickhouse", "python"},
     metadata={"table": tables.QUALIFIED_NORMALIZED_TABLE, "reads": tables.QUALIFIED_SUGGESTION_TABLE},
     description=(

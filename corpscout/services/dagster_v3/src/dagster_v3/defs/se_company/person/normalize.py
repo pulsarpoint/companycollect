@@ -31,9 +31,6 @@ from dagster_v3.defs.se_company.person.normalize_se import (
 PAGE_SIZE = 20_000
 # changed_rows_sql() binds %(company_ids)s four times; see the test of the same name.
 NORMALIZE_ID_BOUND_QUERY_SETTINGS = {"max_query_size": 4_194_304, "max_execution_time": 1800}
-# This module's own scratch-table prefix (basic_info/extract.py:scope_pages), so a person
-# scan's scratch table can never collide with a basic-info or an address one.
-SCRATCH_SCOPE_PREFIX = "corpscout._tmp_person_scope_"
 
 RAW_ROW_COLUMNS: tuple[str, ...] = (
     "company_id", "source", "slot", "suggestion_id", "full_name", "first_name", "last_name",
@@ -254,7 +251,7 @@ def normalize_all(
     companies = 0
     for page in scope_pages(
         client, scope_sql=scope_sql, params={"normalizer_version": NORMALIZER_VERSION},
-        page_size=page_size, settings=SCAN_QUERY_SETTINGS, prefix=SCRATCH_SCOPE_PREFIX,
+        page_size=page_size, settings=SCAN_QUERY_SETTINGS, prefix=tables.SCRATCH_SCOPE_PREFIX,
     ):
         companies += len(page)
         pages.append(

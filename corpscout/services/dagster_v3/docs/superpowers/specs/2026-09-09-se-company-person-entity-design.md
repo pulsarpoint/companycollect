@@ -67,15 +67,17 @@ ENGINE ReplacingMergeTree(suggested_at) ORDER BY (company_id, source, slot)
 
 3.1.1 Slots. Bolagsverket: the report's source record uid plus the signatory uid (one slot per
 signature line, so a person signing two years has two slots). ESEF: the document id plus the
-person's index in the extraction. Wikidata: the QID plus the company link id. Reviewer: `r` plus
+extraction's candidate uid (the other session's ESEF slice 2 redefines that uid, which will
+tombstone and re-issue every ESEF slot once; set replacement absorbs it). Wikidata: the QID plus the company link id. Reviewer: `r` plus
 17 digits, as for addresses. A slot is stable across runs; a changed observation rewrites its slot.
 
 3.1.2 `data`. Everything the source knows about the person beyond the named columns, as a JSON
 object stored as text (the pinned ClickHouse Python driver cannot read or insert the native JSON
 type; a later migration may switch the column once it can; the column defaults to `{}` and a
-CHECK constraint refuses anything but an object): Wikidata's description, occupations, nationality, image; ESEF's title or position text and
-the section it came from; Bolagsverket's signatory kind. Extractors fill it; nothing is dropped
-at the raw layer.
+CHECK constraint refuses anything but an object): whatever the source carries beyond the named columns, for example Wikidata's
+description and image, ESEF's title or position text, evidence ids and confidence,
+Bolagsverket's signatory kind and statement key. Values are strings (one map value type per
+statement); extractors fill it; nothing is dropped at the raw layer.
 
 ### 3.2 `se_company_person_normalized`
 
@@ -290,8 +292,8 @@ the person table). One module per source:
 Each extractor is a change-scan SQL (`changed_only`) with one `WITH`-bound `now64()` per
 statement (never two calls), stamps `suggestion_id` and `suggested_at`, and is covered by a
 clickhouse-local test over fixture rows. Job `se_company_person_extract_job` = the three
-extractors plus `se_company_person_normalize`; schedule `se_company_person_weekly` Monday 07:15
-UTC, STOPPED (the fold stays manual, launched from the backoffice or by backfill).
+extractors plus `se_company_person_normalize`; schedule `se_company_person_weekly` Monday 07:25
+UTC (07:15 is taken by the France register schedule), STOPPED (the fold stays manual, launched from the backoffice or by backfill).
 
 ## 7. Backoffice
 
