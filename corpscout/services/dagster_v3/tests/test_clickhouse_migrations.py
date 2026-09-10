@@ -410,6 +410,7 @@ EXPECTED_MIGRATIONS = (
     "000394_corpscout_se_company_basic_info_economic_activity",
     "000395_corpscout_esef_country_agnostic_products",
     "000396_corpscout_se_company_person_entity",
+    "000397_corpscout_esef_document_people_extraction",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}

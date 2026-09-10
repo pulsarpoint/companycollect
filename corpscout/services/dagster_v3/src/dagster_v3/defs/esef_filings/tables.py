@@ -33,6 +33,7 @@ ESEF_FINANCIAL_METRICS_TABLE = "esef_financial_metrics"
 ESEF_DOCUMENT_CONTACT_CANDIDATES_TABLE = "esef_document_contact_candidates"
 ESEF_DOCUMENT_CONCEPT_LABELS_TABLE = "esef_document_concept_labels"
 ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE = "esef_document_company_information"
+ESEF_DOCUMENT_PEOPLE_EXTRACTION_TABLE = "esef_document_people_extraction"
 ESEF_DOCUMENT_PEOPLE_TABLE = "esef_document_people"
 ESEF_DOCUMENT_BUSINESS_ITEMS_TABLE = "esef_document_business_items"
 ESEF_DOCUMENT_GROUP_RELATIONSHIPS_TABLE = "esef_document_group_relationships"
@@ -55,6 +56,9 @@ QUALIFIED_ESEF_DOCUMENT_CONCEPT_LABELS_TABLE = (
 )
 QUALIFIED_ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE = (
     f"{ESEF_DATABASE}.{ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE}"
+)
+QUALIFIED_ESEF_DOCUMENT_PEOPLE_EXTRACTION_TABLE = (
+    f"{ESEF_DATABASE}.{ESEF_DOCUMENT_PEOPLE_EXTRACTION_TABLE}"
 )
 QUALIFIED_ESEF_DOCUMENT_PEOPLE_TABLE = f"{ESEF_DATABASE}.{ESEF_DOCUMENT_PEOPLE_TABLE}"
 QUALIFIED_ESEF_DOCUMENT_BUSINESS_ITEMS_TABLE = (
@@ -225,6 +229,34 @@ ESEF_DOCUMENT_COMPANY_INFORMATION_EXPORT_COLUMNS = (
     "business_segments_json",
     "material_group_relationships_json",
     "enrichment_artifact_object_key",
+    "input_artifact_object_key",
+    "llm_request_object_key",
+    "llm_request_sha256",
+    "llm_response_text",
+    "llm_response_sha256",
+    "model_provider",
+    "model_name",
+    "prompt_version",
+    "prompt_tokens",
+    "completion_tokens",
+    "input_character_count",
+    "source_run_id",
+    "extracted_at",
+)
+
+# One row per (document, provider, model, prompt version) from the paid people
+# extraction pass (migration 000397). source_record_uid and resolved_at are both
+# ClickHouse DEFAULT-expression columns there and are never part of the INSERT
+# tuple, so both are excluded from this list.
+ESEF_DOCUMENT_PEOPLE_EXTRACTION_EXPORT_COLUMNS = (
+    "source_document_id",
+    "package_sha256",
+    "lei",
+    "period_end",
+    "fiscal_year",
+    "extraction_status",
+    "people_json",
+    "extraction_artifact_object_key",
     "input_artifact_object_key",
     "llm_request_object_key",
     "llm_request_sha256",

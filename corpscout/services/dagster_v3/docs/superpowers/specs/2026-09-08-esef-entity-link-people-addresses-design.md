@@ -135,8 +135,16 @@ country." The views are named `se_esef_<table>`.
   filing, with the same budgets and citation rules. Output: the existing `PersonCandidate`
   list, at most 100.
 - Selection: every filing of a LEI the config admits, one extraction per (document, prompt
-  version, model), newest filings first. Cost for Sweden: 1,064 documents, roughly 11 million
-  input tokens.
+  version, model), newest filings first. Cost for Sweden: 1,379 documents (1,044 with a
+  people section plus 335 whose only people evidence is `people_and_audit` tagged facts,
+  cheap), roughly 11-13 million input tokens. 61 (LEI, period_end) pairs carry two filings
+  (re-filings and NO/SE dual filings) and are paid and projected twice under "every filing"
+  as written above -- an owner ruling on deduping them is pending; a
+  `row_number() OVER (PARTITION BY lei, period_end)` filter in the selection query is a
+  one-line follow-up if that duplication turns out to be unwanted. Newest-first also
+  surfaces a 2029-dated filing first (`549300GU5OHTR1T5IY68-2029-05-01-ESEF-SE-0`, an
+  upstream period bug, not a selection bug); it is the first document the rollout smoke run
+  processes.
 - Storage: a new table `esef_document_people_extraction` with one row per document and the
   enrichment's bookkeeping columns (status, artifact keys, response text and hashes, tokens,
   model, prompt version), keyed by document. `esef_document_people` is projected from this
@@ -149,7 +157,19 @@ country." The views are named `se_esef_<table>`.
   category, so a re-run with the same prompt replaces its rows; the materialised
   `person_profile_hash` and `person_role_hash` are unchanged. `fiscal_year` is the filing's,
   so a company's rosters accumulate per year.
-- `se_company_person_esef` is unchanged apart from reading `se_esef_document_people`.
+- `se_company_person_esef` no longer exists: the SE person slice 0 dropped that view on
+  2026-09-09. The reader of `se_esef_document_people` is now the SE person entity's extractor,
+  `se_company/person/esef.py`, which tombstones vanished slots itself and is re-run after the
+  projection rebuild.
+
+**Rulings (2026-09-10):**
+
+- `esef_document_people` keeps its 000395 key, `(lei, fiscal_year, source_record_uid,
+  candidate_uid)`.
+- The extraction table `esef_document_people_extraction` has no Swedish view: it has no
+  consumer.
+- `se_company_person_esef` is dropped, not merely unchanged (corrected above).
+- Migration number 000397 (000396 went to the person entity, merged 2026-09-09).
 
 ### 3. Registered-office addresses
 

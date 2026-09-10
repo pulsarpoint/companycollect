@@ -41,6 +41,9 @@ PARTITIONED_PARSING_MIGRATION_FILE = (
 COUNTRY_AGNOSTIC_MIGRATION_FILE = (
     MIGRATIONS_DIR / "000395_corpscout_esef_country_agnostic_products.up.sql"
 )
+PEOPLE_EXTRACTION_MIGRATION_FILE = (
+    MIGRATIONS_DIR / "000397_corpscout_esef_document_people_extraction.up.sql"
+)
 assert MIGRATION_FILE.exists(), (
     f"migration file not found at {MIGRATION_FILE} — check the parents[] depth "
     "(tests/ -> dagster_v3 -> services -> corpscout -> clickhouse/migrations)"
@@ -658,3 +661,15 @@ def test_partition_export_columns_match_promoted_table_contracts() -> None:
             if column not in defaulted_columns
         )
         assert explicit_columns == export_columns
+
+
+def test_people_extraction_export_columns_match_migration_000397_column_order() -> None:
+    sql = PEOPLE_EXTRACTION_MIGRATION_FILE.read_text(encoding="utf-8")
+    migration_columns = _migration_table_columns(sql, tables.ESEF_DOCUMENT_PEOPLE_EXTRACTION_TABLE)
+    assert [c for c in migration_columns if c not in ("source_record_uid", "resolved_at")] == list(
+        tables.ESEF_DOCUMENT_PEOPLE_EXTRACTION_EXPORT_COLUMNS
+    )
+    assert migration_columns[1] == "source_record_uid"
+    assert "ENGINE = MergeTree" in sql
+    assert "ORDER BY (source_document_id, model_provider, model_name, prompt_version)" in sql
+    assert "extracted_at DateTime64(3, 'UTC')" in sql
