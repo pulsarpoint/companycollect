@@ -125,7 +125,10 @@ model_provider, model_name, prompt_version)`.
   An unchanged content-addressed request hash instead skips the document
   entirely before either status is decided — no row is written, and it is
   counted in `unchanged_document_count`, not `reused`. A failed call is
-  likewise logged and counted but writes no row.
+  likewise logged and counted but writes no row; an `invalid_response`
+  failure additionally archives the model's raw text as
+  `invalid_response.json` beside the artifact path, with a rendered
+  validation summary, counted in `invalid_response_artifact_count`.
 - **Reuse rule.** Same as the company-information enrichment: an unchanged
   content-addressed request hash (matching the document's currently stored
   `existing_request_sha256`) skips the document entirely — no row is written,
