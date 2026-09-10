@@ -167,6 +167,49 @@ def test_people_response_without_people_key_is_an_error() -> None:
         raise AssertionError("a response without the people list must be refused")
 
 
+def test_people_response_reports_provider_truncation_with_raw_response() -> None:
+    # Mirror test_request_company_enrichment_reports_provider_truncation in
+    # test_esef_llm_enrichment.py: a finish_reason="length" completion is a
+    # transport-level failure raised by the shared _completion_json, but the
+    # truncated content is still available, so it travels as raw_response too
+    # -- an invalid_response artifact can archive it just like a
+    # schema-validation failure.
+    evidence = _people_evidence()
+    request = build_people_extraction_request(evidence, model="m")
+    truncated_content = '{"people":['
+    client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(
+                create=lambda **_kwargs: SimpleNamespace(
+                    id="response-truncated",
+                    choices=[
+                        SimpleNamespace(
+                            finish_reason="length",
+                            message=SimpleNamespace(content=truncated_content),
+                        )
+                    ],
+                    usage=SimpleNamespace(
+                        prompt_tokens=1_200,
+                        completion_tokens=8_000,
+                    ),
+                )
+            )
+        )
+    )
+
+    try:
+        request_people_extraction(
+            client,  # type: ignore[arg-type]
+            evidence_input=evidence,
+            request_payload=request,
+        )
+    except EsefLlmResponseError as error:
+        assert "truncated by the provider" in str(error)
+        assert error.raw_response == truncated_content
+    else:
+        raise AssertionError("a truncated response must be refused")
+
+
 def test_validation_summary_renders_the_first_error_with_a_remaining_count() -> None:
     try:
         EsefPeopleExtraction.model_validate({"people": [{"name": "Anna"}]})

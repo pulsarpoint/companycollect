@@ -720,7 +720,8 @@ def _completion_json(
         raise EsefLlmResponseError(
             "ESEF company enrichment response was truncated by the provider "
             "(finish_reason=length, client_output_token_limit=none, "
-            f"completion_tokens={completion_tokens})"
+            f"completion_tokens={completion_tokens})",
+            raw_response=content,
         )
     if content is None:
         raise EsefLlmResponseError("ESEF company enrichment returned no content")
