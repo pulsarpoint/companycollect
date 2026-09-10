@@ -16,6 +16,12 @@ everything past the modules below -- the fold and the backoffice.
 | `esef.py` | The ESEF document-people extractor `se_company_person_suggestions_esef`: one name string, `role_category` as `role_key`, slot = `source_document_id` + `candidate_uid` |
 | `wikidata.py` | The Wikidata company-person extractor `se_company_person_suggestions_wikidata`: orgnr/LEI-linked statements, slot = `Q<company>:P<property>:Q<person>` |
 | `jobs.py` | `se_company_person_extract_job` (the three extractors plus the normalize asset) and the STOPPED `se_company_person_weekly` schedule (`25 7 * * 1`) |
+| `precedence.py` | The `name` spelling order (`PERSON_PRECEDENCE`, `precedence_for`, `precedence_rows`): reviewer 20000, ratsit 1000 (reserved), bolagsverket 900, wikidata 600, esef 400. It decides the published spelling and the `data` merge, never who is published |
+| `fold.py` | The pure fold: identity sets (equal first/last tokens with the unique-minimal-superset middle rule, or a shared QID, never across two birth years), the canonical name and `person_key`, the reviewer rules, the member/roles/`data` blocks, the lifecycle diff and the history entries |
+| `batch.py` | The fold's SQL and paging: selection, the four page reads under `FINAL`, history-then-main writes, `FoldCounts`, `fold_companies`, `fold_bucket` |
+| `se_company_person_fold` | 64 static buckets (`bucket_00`..`bucket_63`, `modulo(cityHash64(company_id), 64)`), no pool, `BackfillPolicy.multi_run(max_partitions_per_run=1)`; config `changed_only` (default true) and `page_size` (default 20,000) |
+| `se_company_person_fold_companies` | The targeted fold for the backoffice's Fold now: normalizes `company_ids` first (always `changed_only`), then folds them (`changed_only` false by default) |
+| `se_company_person_precedence_clickhouse` | Exports `PERSON_PRECEDENCE` as the global (`company_id = ''`, `field = 'name'`) rows; re-running it re-folds every company |
 
 ## Change rule
 
@@ -106,3 +112,81 @@ false` (the default) previews the count without writing.
 `se_company_person_normalize` (which now `deps` on them); `se_company_person_weekly`
 schedules it Mondays 07:25 UTC (`25 7 * * 1`) with `execute: true`, `page_size: 10000` per
 extractor and `changed_only: true` on the normalize asset, registered STOPPED.
+
+## The fold
+
+**Identity** (spec 5.1). Two `ok` rows of one company are the same person when their
+`first_tokens` and `last_tokens` are equal and their `middle_tokens` are equal, or one side's
+middle tokens are a proper subset of the other's *and that other is the unique minimal
+superset* among the distinct middle-token sets sharing those first and last tokens -- or when
+both carry the same non-empty `wikidata_id` -- and never when both carry a `birth_year` and
+the years differ. Sets are the transitive closure of that relation, computed only inside the
+(first, last)-token and QID groupings a matching pair must share; a closed set that still
+holds two birth years (reached through a year-less member) is split by year, one sub-set per
+year with year-less members attached breadth first to a sub-set they directly match. The
+canonical name is the folded tokens of a set's most complete member (most tokens, then the
+longest joined string, then alphabetically first); `person_key` hashes the company id and
+that name -- the same `address_key` shape `normalize_se.py` uses for the address entity. Two
+sets of one company may not share a key (`ReplacingMergeTree ORDER BY (company_id,
+person_key)` would collapse them into one person), so a set whose canonical name collides
+with another's takes a discriminator: its birth year when it has one, else the smallest
+`source:slot` of its members; if that STILL collides -- a split rule leaving two sets that
+share both the name and the year, say -- the smallest member id is appended to the
+discriminator too. A set alone under its (name, discriminator) pair keeps the plain key,
+which is what makes keys stable across folds. Reviewer rules apply after the grouping, merge
+rules then split rules, each kind ordered by `rule_id`: a merge rule's keys resolve through
+the PREVIOUS published rows (key -> that row's member pairs -> the new set holding any of
+them) and the resolved sets join, re-keyed from their joined canonical name; a split rule's
+named slots leave their sets and form one set of their own. A key or slot that resolves to
+nothing is ignored and the rule counted in `stale_rules`.
+
+**The published row** (spec 5.3-5.5). Every `member_*` array, `slots` and `normalized_ids`
+follow member order `(-precedence_for(source, company_precedence), source, slot)`; `sources`
+is the same order deduplicated. `display_name`/`first_name`/`last_name`/`text_source` come
+from the highest-`name`-precedence member, ties broken by the most complete spelling.
+`birth_year` and `wikidata_id` come from the first member in member order that carries one.
+Roles are the union over members of `(role_code, year)` pairs with the sources that saw each,
+sorted by year then code: a member's years are its own `role_year` (a fiscal year) when it
+has one, else its `role_from`..`role_to` span expanded year by year with a missing `role_to`
+read as "to the current UTC year", else `role_to`'s year alone, else **the current UTC year
+alone** -- a role with no date at all is taken as held now (controller ruling 2026-09-10:
+dropping it would hide most of Wikidata's roles, 290 of 466 on prod). `first_year`/
+`last_year` are the min/max of that union; `current_roles` are the codes at `last_year`.
+`data` merges the members' JSON objects key by key in the same precedence order, two objects
+merging one level down and arrays replaced; a `reviewer` member's object wins outright, never
+merged into a lower member's.
+
+**Lifecycle and the five change kinds** (spec 5.6). Every set publishes `active = 1` unless a
+hide rule names its key -- resolved by key equality against the fold's own live sets first,
+and when the key is gone (a fuller spelling re-keyed the set) through the PREVIOUS published
+members instead, the same way a merge rule resolves, so a reviewer's Hide cannot silently
+reverse itself when the set it named gets re-keyed. Every previously published key with no
+set this fold is re-emitted `active = 0, inactive_reason = 'withdrawn'`, keeping its last
+blocks. History is appended before the main write, one row per person whose published columns
+changed (compared over every column except `folded_at`, `fold_version`, `source_run_id`),
+carrying the PREVIOUS main row's columns. The five `change_kind` values: `created` (no
+previous row -- the new image is its own genesis entry), `withdrawn` (becomes withdrawn and
+was not), `hidden` (becomes hidden and was not), `reactivated` (`active` goes 0 -> 1: a
+withdrawn person returning, or a hide rule Reset), else `updated`. A person whose columns did
+not change gets no history row, but its main row is still rewritten with the fold's
+`folded_at` -- exactly what makes the selection below converge.
+
+Because role years and `last_year` are computed from `current_year` at fold time, an OPEN or
+DATELESS Wikidata span (a `role_from` with no `role_to`, or a role with no date at all) keeps
+expanding with the calendar even when nothing in the database changes -- but the selection
+below only re-folds a company when one of its INPUTS changes, never merely because a year
+turned over. A company with only such a role therefore freezes at whatever `last_year` its
+last fold happened to compute, until something else re-selects it. The runbook answer is a
+yearly `changed_only: false` re-fold of the whole table, not a selection change: teaching the
+selection to watch the clock would re-fold every company holding an open or dateless role on
+every single run.
+
+A company is folded when it has no main row and at least one `ok` normalized row, or when its
+newest input is newer than its `max(folded_at)`. "Newest input" is the newest of: its newest
+normalized row **of any status** (a row leaving `ok` changes the published set), its newest
+rule version **of any `active` value** (a Reset is a new version with `active = 0`, and
+filtering it out here would make a rule permanent), its own newest precedence row, and the
+global precedence export's stamp — so re-exporting the dictionary re-folds every company
+once. Re-running a folded bucket selects nothing, because the fold rewrites every row of
+every folded company with the run's `folded_at`, whether or not anything changed; the history
+table is what records what actually changed.
