@@ -5,11 +5,13 @@ from typing import Any
 
 import httpx
 from openai import RateLimitError
+from pydantic import ValidationError
 
 from dagster_v3.defs.esef_filings import llm_enrichment, tables
 from dagster_v3.defs.esef_filings.artifact_contract import ARTIFACT_SCHEMA_VERSION
 from dagster_v3.defs.esef_filings.llm_enrichment import (
     EsefLlmResponseError,
+    EsefPeopleExtraction,
     PEOPLE_EVIDENCE_SEGMENTS,
     PEOPLE_PROMPT_VERSION,
     PEOPLE_VISIBLE_SECTION_TYPES,
@@ -133,17 +135,53 @@ def test_people_response_is_validated_and_citations_normalised() -> None:
 def test_people_response_without_people_key_is_an_error() -> None:
     evidence = _people_evidence()
     request = build_people_extraction_request(evidence, model="m")
+    canned_response = {"company_description": None}
+    # Pydantic orders its errors differently for a JSON string than for a dict
+    # (extra-field errors sort ahead of missing-field ones under
+    # model_validate_json but not under model_validate), so compute the
+    # expected summary the same way request_people_extraction does: from the
+    # exact JSON text the client returns.
+    try:
+        EsefPeopleExtraction.model_validate_json(json.dumps(canned_response))
+    except ValidationError as validation_error:
+        expected_validation_summary = llm_enrichment._validation_summary(
+            validation_error
+        )
+    else:
+        raise AssertionError("expected a validation error")
+
     try:
         request_people_extraction(
-            _client_returning({"company_description": None}),
+            _client_returning(canned_response),
             evidence_input=evidence,
             request_payload=request,
         )
     except EsefLlmResponseError as error:
         assert "people extraction" in str(error)
         assert "company enrichment" not in str(error)
+        # The raw model response and a rendered validation summary travel with
+        # the error so the caller can archive them for inspection.
+        assert error.raw_response == json.dumps(canned_response)
+        assert error.validation_summary == expected_validation_summary
     else:
         raise AssertionError("a response without the people list must be refused")
+
+
+def test_validation_summary_renders_the_first_error_with_a_remaining_count() -> None:
+    try:
+        EsefPeopleExtraction.model_validate({"people": [{"name": "Anna"}]})
+    except ValidationError as error:
+        summary = llm_enrichment._validation_summary(error)
+        errors = error.errors()
+    else:
+        raise AssertionError("expected a validation error")
+
+    assert len(errors) > 1
+    first = errors[0]
+    expected_loc = ".".join(str(part) for part in first["loc"])
+    assert summary.startswith(f"{expected_loc}: {first['msg']}")
+    assert summary.endswith(f"(+{len(errors) - 1} more)")
+    assert len(summary) <= 300
 
 
 def test_people_artifact_and_keys_are_versioned() -> None:
@@ -630,3 +668,77 @@ def test_people_run_records_a_rate_limited_call_without_inserting_a_row() -> Non
         if "esef_document_people_extraction" in sql and " VALUES" in sql
     ]
     assert people_inserts == []
+
+
+def test_people_run_keeps_the_raw_response_when_validation_fails() -> None:
+    # Mirror test_people_run_records_a_rate_limited_call_without_inserting_a_row,
+    # except the client returns JSON missing the required "people" key instead of
+    # raising: no row is inserted, the failure is counted as both a
+    # failed_document and an invalid_response_artifact, and the raw model
+    # response is archived in the fake store beside the artifact prefix so it
+    # can be inspected -- the failed document is still retried on the next run.
+    disclosure_rows, label_rows = _segment_artifact_clickhouse_rows()
+    clickhouse = _FakeClickHouse(
+        [
+            [_source_document_clickhouse_row()],
+            disclosure_rows,
+            label_rows,
+            [(tables.ESEF_DOCUMENT_PEOPLE_EXTRACTION_TABLE,)],
+        ]
+    )
+    object_store = _FakeObjectStore({})
+    canned_response = {"company_description": None}
+    log_lines: list[str] = []
+
+    def _capture_log(message: str, *args: object) -> None:
+        log_lines.append(message % args)
+
+    metadata = run_esef_people_extraction(
+        clickhouse=clickhouse,
+        object_store=object_store,
+        client=_client_returning(canned_response),
+        model="deepseek-v4-flash",
+        source_run_id="people-run-5",
+        source_document_ids=["AAK-2024"],
+        country_iso2s=[],
+        link_statuses=["register_verified"],
+        company_ids=[],
+        max_documents=None,
+        refresh_existing=False,
+        max_evidence_chars=64_000,
+        log_info=_capture_log,
+    )
+
+    assert metadata["attempted_document_count"] == 1
+    assert metadata["failed_document_count"] == 1
+    assert metadata["invalid_response_artifact_count"] == 1
+    assert metadata["rate_limited_document_count"] == 0
+    assert metadata["extracted_document_count"] == 0
+    assert metadata["processed_document_count"] == 0
+    assert metadata["extraction_row_count"] == 0
+
+    people_inserts = [
+        parameters
+        for sql, parameters in clickhouse.client.calls
+        if "esef_document_people_extraction" in sql and " VALUES" in sql
+    ]
+    assert people_inserts == []
+
+    invalid_response_keys = [
+        key
+        for bucket, key in object_store.objects
+        if bucket == ESEF_DOCUMENT_BUCKET
+        and key.startswith("esef_filings/llm_people_extraction/")
+        and key.endswith("/invalid_response.json")
+    ]
+    assert len(invalid_response_keys) == 1
+    stored = json.loads(
+        object_store.objects[(ESEF_DOCUMENT_BUCKET, invalid_response_keys[0])]
+    )
+    assert stored["schema_version"] == 1
+    assert stored["source_document_id"] == "AAK-2024"
+    assert stored["raw_response"] == json.dumps(canned_response)
+    assert stored["validation_summary"]
+    assert isinstance(stored["request_sha256"], str) and stored["request_sha256"]
+
+    assert any("response kept at" in line for line in log_lines)
