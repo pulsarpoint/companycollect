@@ -385,7 +385,7 @@ git commit -m "feat(dagster): person name precedence and its ClickHouse export"
 3. Sets are the transitive closure of that relation. Every matching pair shares either the (first, last) token pair or a QID, so the closure is computed inside those two groupings — never over all pairs.
 4. A closed set can still hold two distinct birth years, reached through a member carrying none. It is then **split by birth year**: one sub-set per year seeded with the members carrying it, and every year-less member attached, breadth first, to the sub-set holding a member it directly matches (ties, and they happen, go to the smallest year). This is deterministic and tested.
 5. The **canonical name** of a set is the folded tokens of its most complete member: most tokens, then the longest joined string, then alphabetically first. `person_key = sha256(company_id + "\n" + " ".join(canonical tokens))`, lower hex, exactly the way `address/normalize_se.py::address_key` builds its key.
-6. Two sets of one company **may not** share a key (`ReplacingMergeTree ORDER BY (company_id, person_key)` would collapse them into one person). Same-name-different-birth-year sets, and split rules, both produce that collision, so every colliding set — not just the later ones — takes a discriminator: `sha256(company_id + "\n" + canonical + "\n" + the set's birth year, or the smallest "source:slot" of the set when it has no year)`. A set alone under its canonical name keeps the plain key, which is what makes keys stable across folds.
+6. Two sets of one company **may not** share a key (`ReplacingMergeTree ORDER BY (company_id, person_key)` would collapse them into one person). Same-name-different-birth-year sets, and split rules, both produce that collision, so every colliding set — not just the later ones — takes a discriminator: `sha256(company_id + "\n" + canonical + "\n" + the set's birth year, or the smallest "source:slot" of the set when it has no year; "year:smallest source:slot" when two sets still share name and year)`. A set alone under its canonical name keeps the plain key, which is what makes keys stable across folds.
 7. Rules (spec 5.2) apply after the grouping, `active = 0` ignored, in kind order **merge, then split**, and inside a kind by `rule_id`. A merge rule's keys resolve through the previous published rows: key -> that row's `(member_sources, member_slots)` pairs -> the new sets holding any of those members; the resolved sets are joined and the joined set is re-keyed from its own canonical name. A split rule's slots leave their sets and form one set of their own. A key or slot that resolves to nothing is ignored and the rule counted in `stale_rules`. Hide rules are not applied here — they are a flag on the finished row (Task 3).
 
 - [ ] **Step 1: Write the failing tests**
@@ -932,18 +932,28 @@ def assign_keys(
     later ones, which would move the plain key from one person to another when a new set
     appears) takes a discriminator: its birth year when it has one (a set never holds two,
     and a year does not move when slots come and go), else the smallest "source:slot" of
-    its members (the split-rule case). A set alone under its name keeps the plain key,
-    which is what makes keys stable across folds."""
+    its members (the split-rule case). The collision unit is (canonical, discriminator):
+    when two sets still share the name AND the year (a split rule reaches it), each takes
+    "year:smallest source:slot" (fix round 1, 2026-09-10). A set alone under its name keeps
+    the plain key, which is what makes keys stable across folds."""
     canonical = [tuple(canonical_tokens(members)) for members in sets]
     shared = {name for name in canonical if canonical.count(name) > 1}
-    assigned: list[tuple[tuple[NormalizedRow, ...], str]] = []
+
+    def smallest_slot(members: Sequence[NormalizedRow]) -> str:
+        return min(f"{member.source}:{member.slot}" for member in members)
+
+    first_pass: list[tuple[tuple[str, ...], str]] = []
     for members, name in zip(sets, canonical, strict=True):
         discriminator = ""
         if name in shared:
             years = {member.birth_year for member in members if member.birth_year is not None}
-            discriminator = (
-                str(min(years)) if years else min(f"{member.source}:{member.slot}" for member in members)
-            )
+            discriminator = str(min(years)) if years else smallest_slot(members)
+        first_pass.append((name, discriminator))
+    still_shared = {pair for pair in first_pass if first_pass.count(pair) > 1}
+    assigned: list[tuple[tuple[NormalizedRow, ...], str]] = []
+    for members, (name, discriminator) in zip(sets, first_pass, strict=True):
+        if (name, discriminator) in still_shared and discriminator and ":" not in discriminator:
+            discriminator = f"{discriminator}:{smallest_slot(members)}"
         assigned.append((tuple(members), person_key(company_id, name, discriminator)))
     return assigned
 
