@@ -69,7 +69,10 @@ ENGINE ReplacingMergeTree(suggested_at) ORDER BY (company_id, source, slot)
 signature line, so a person signing two years has two slots). ESEF: the document id plus the
 extraction's candidate uid (the other session's ESEF slice 2 redefines that uid, which will
 tombstone and re-issue every ESEF slot once; set replacement absorbs it). Wikidata: the QID plus the company link id. Reviewer: `r` plus
-17 digits, as for addresses. A slot is stable across runs; a changed observation rewrites its slot.
+17 digits names the GROUP of one draft or one activated person, as for addresses; a STORED
+reviewer slot is that group plus a two-digit ordinal (19 digits), because one reviewer person is
+one suggestion row per role entry and the table is keyed `(company_id, source, slot)` (Ruling 2).
+A slot is stable across runs; a changed observation rewrites its slot.
 
 3.1.2 `data`. Everything the source knows about the person beyond the named columns, as a JSON
 object stored as text (the pinned ClickHouse Python driver cannot read or insert the native JSON
@@ -317,9 +320,35 @@ reviewer suggestion at slot `r` plus digits and launches the targeted fold), Cor
 row plus a hide rule on the corrected key unless the reviewer's text folds back to the same key),
 Remove (a hide rule; a reviewer-only row is tombstoned instead), Merge (two or more selected
 persons, a merge rule), Split (the slots to separate, a split rule), Reset (the rules on a
-person set inactive), Fold now. Every write is an append; nothing edits a published row. The
-edit sheet's `data` field is a JSON editor validated as an object; the note field allows line
-breaks and refuses other control characters, as for addresses.
+person set inactive), Fold now, and Discard, the eighth intent beside these seven: it drops an
+un-activated draft group by writing a cleared version over every one of its rows, the same
+append-only tombstone a reviewer-only Remove writes, so nothing is ever deleted. Every write is
+an append; nothing edits a published row. The edit sheet's `data` field is a JSON editor
+validated as an object; the note field allows line breaks and refuses other control characters,
+as for addresses.
+
+Nine rulings settled how these actions behave. Ruling 1: a hide rule resolves through a person's
+previous members, so Correct must not write one when the reviewer's text folds back into the
+person it corrects — only the corrected key's published members are checked against the draft's
+identity (name tokens, birth year, QID), and a match skips the rule. Ruling 2: a reviewer's slot
+has two shapes — `r` plus 17 digits names the GROUP (one draft, or one activated person), and the
+table stores one row per role entry, each the group plus a two-digit ordinal (19 digits), because
+`se_company_person_suggestion` is keyed `(company_id, source, slot)`. Ruling 3: role codes are
+never hard-coded; the sheet, the decision parser and the loader all read them from the live
+`corpscout.company_person_role_type` catalog. Ruling 4: the suggestion table carries no
+`decided_by`, `note` or `replaces_key` column (unlike the address table), so the reviewer row's
+`data` object carries those three keys itself, and a reviewer-typed `data` object may not use
+them. Ruling 5: a role year is one fiscal year or a `role_from`/`role_to` span with an open end
+left NULL, never both on the same row. Ruling 6: Activate launches the targeted fold itself, so
+the reviewer sees the activated person appear without a second click; Fold now and Activate both
+return a run id the workspace polls. Ruling 7: the fold-pending check reads a company's own
+precedence override among its watermarks but never the GLOBAL precedence export, which selects no
+company on its own — a reweighting that touches no company-specific row must not mark every
+company's fold pending. Ruling 8: Discard is its own intent, distinct from Remove, because it
+acts on a draft group that was never activated — nothing was ever published, so there is no key
+to hide and no rule to write. Ruling 9: a split pins the observations the reviewer ticks; because
+Bolagsverket mints a new slot per annual report, that pin holds only for today's observations and
+may need writing again after next year's report.
 
 The admin People list `/admin/se/people` is rewritten as a plain server-paged list over the
 main table with filters for company, name, source, role, year and status, counts strip, and a
@@ -503,5 +532,8 @@ Tables `se_company_person_suggestion`, `se_company_person_normalized`, `se_compa
 `se_company_person_precedence_clickhouse`; job `se_company_person_extract_job`; schedule
 `se_company_person_weekly`. Backoffice `app/lib/se-company-person-entity.server.ts`,
 `app/lib/se-person-fields.ts`, `app/lib/se-person-decision-form.ts`,
-`app/components/admin/se-person-workspace.tsx`, `app/components/admin/se-person-edit-sheet.tsx`,
-routes `admin-se-company-person.tsx` and `admin-se-people.tsx`.
+`app/lib/se-person-tables.ts`, `app/components/admin/se-person-workspace.tsx`,
+`app/components/admin/se-person-edit-sheet.tsx`, `app/components/admin/fold-run-poller.tsx`
+(reused from the address entity, unchanged); the People list's `app/lib/se-people-filters.ts`,
+`app/lib/se-people-list.server.ts` and `app/components/admin/se-people-table.tsx`; routes
+`admin-se-company-person.tsx` and `admin-se-people.tsx`.

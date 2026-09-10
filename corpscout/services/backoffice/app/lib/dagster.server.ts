@@ -54,6 +54,10 @@ export const SE_BASIC_INFO_FOLD_COMPANIES_ASSET = "se_company_basic_info_fold_co
 /** The targeted address fold (address spec section 8): normalizes then re-folds
  * the companies named in its config. Launched by the Address tab's Fold now. */
 export const SE_COMPANY_ADDRESS_FOLD_COMPANIES_ASSET = "se_company_address_fold_companies";
+/** The targeted person fold (person spec section 5): normalizes then re-folds the
+ * companies named in its config, whatever their bucket. Launched by the People tab's
+ * Fold now and by Activate. */
+export const SE_COMPANY_PERSON_FOLD_COMPANIES_ASSET = "se_company_person_fold_companies";
 
 export class DagsterError extends Error {
   constructor(message: string) {

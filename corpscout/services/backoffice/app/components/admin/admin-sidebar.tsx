@@ -12,6 +12,7 @@ import {
   Settings2Icon,
   SlidersHorizontalIcon,
   TagsIcon,
+  UsersIcon,
 } from "lucide-react";
 import {
   Collapsible,
@@ -46,6 +47,14 @@ const COUNTRY_NAVIGATION = [
         title: "Companies",
         to: "/admin/se/companies",
         icon: Building2Icon,
+        exact: false,
+      },
+      {
+        // A sibling of Companies, not one of its tabs: every published person
+        // across every company (person spec section 7).
+        title: "People",
+        to: "/admin/se/people",
+        icon: UsersIcon,
         exact: false,
       },
     ],

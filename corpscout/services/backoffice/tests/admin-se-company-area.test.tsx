@@ -136,7 +136,7 @@ describe("company area header", () => {
     expect(html).toContain(`href="/company/se/${COMPANY_ID}"`);
   });
 
-  it("renders all nine tabs and marks exactly the active one", () => {
+  it("renders every tab and marks exactly the active one", () => {
     for (const active of SE_COMPANY_TABS) {
       const html = render(
         <SeCompanyHeader shell={shell} tab={active.value} />,
@@ -1143,10 +1143,11 @@ describe("the Sources strip every tab opens with", () => {
 });
 
 describe("tab labels", () => {
-  it("is exactly Info, Address, Financial, ESEF, Domains, Technology, Contracts, Jobs, Listed, in that order", () => {
+  it("is exactly Info, Address, People, Financial, ESEF, Domains, Technology, Contracts, Jobs, Listed, in that order", () => {
     expect(SE_COMPANY_TABS.map((tab) => tab.label)).toEqual([
       "Info",
       "Address",
+      "People",
       "Financial",
       "ESEF",
       "Domains",
@@ -1157,8 +1158,12 @@ describe("tab labels", () => {
     ]);
   });
 
-  it("has no People tab: the 2026-08-19 people model was retired and slice 3 adds the new one", () => {
-    expect(SE_COMPANY_TABS.map((tab) => tab.value)).not.toContain("people");
+  it("carries the People tab of the new person entity, third, beside Address", () => {
+    const values = SE_COMPANY_TABS.map((tab) => tab.value);
+    expect(values).toContain("people");
+    expect(values.indexOf("people")).toBe(values.indexOf("address") + 1);
+    expect(seCompanyTabPath("5560125220", "people")).toBe("/admin/se/company/5560125220/people");
+    expect(seCompanyTabFromPath("/admin/se/company/5560125220/people")).toBe("people");
   });
 });
 
