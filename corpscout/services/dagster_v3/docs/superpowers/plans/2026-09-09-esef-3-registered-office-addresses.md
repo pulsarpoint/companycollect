@@ -298,9 +298,19 @@ git commit -m "test(se): the address extractors harness runs the esef registered
 
 ## Task 6: Rollout
 
-- [ ] **Step 1 (owner):** dbt-state refresh is not needed (no dbt change); light_sync deploy from main.
-- [ ] **Step 2:** launch `se_company_address_suggestions_esef` with `execute: true` (preview first with the default `execute: false` and read the count: about 404 companies). Verify `SELECT count(), countIf(raw_address IS NOT NULL), countIf(street_address IS NOT NULL) FROM corpscout.se_company_address_suggestion FINAL WHERE source = 'esef'`.
-- [ ] **Step 3:** launch `se_company_address_normalize` (`changed_only: true`, default); verify `SELECT parse_status, count() FROM corpscout.se_company_address_normalized FINAL WHERE source = 'esef' GROUP BY 1`.
-- [ ] **Step 4:** fold the touched companies: the fold asset in changed-only mode over the buckets (the address design's "Selection (fold)" section names the asset and its config); verify `SELECT count() FROM corpscout.se_company_address FINAL WHERE has(source_names, 'esef')` (or the fold's equivalent source column) is close to the parsed count, and that Handelsbanken's address tab (`/admin/se/company/5020077862/address`) lists `Kungsträdgårdsgatan 2, 106 70 Stockholm` with the ESEF source badge.
-- [ ] **Step 5:** run the geocode warm step if the address design requires it after a fold (its "Warm step" section).
-- [ ] **Step 6:** re-run `se_company_address_precedence_clickhouse` (the address design asks for it after a precedence-dictionary change; the fold reads only company override rows from that table, so nothing breaks before it runs, the exported global rows just lack `esef`).
+- [x] **Step 1 (owner):** dbt-state refresh is not needed (no dbt change); light_sync deploy from main.
+- [x] **Step 2:** launch `se_company_address_suggestions_esef` with `execute: true` (preview first with the default `execute: false` and read the count: about 404 companies). Verify `SELECT count(), countIf(raw_address IS NOT NULL), countIf(street_address IS NOT NULL) FROM corpscout.se_company_address_suggestion FINAL WHERE source = 'esef'`.
+- [x] **Step 3:** launch `se_company_address_normalize` (`changed_only: true`, default); verify `SELECT parse_status, count() FROM corpscout.se_company_address_normalized FINAL WHERE source = 'esef' GROUP BY 1`.
+- [x] **Step 4:** fold the touched companies: the fold asset in changed-only mode over the buckets (the address design's "Selection (fold)" section names the asset and its config); verify `SELECT count() FROM corpscout.se_company_address FINAL WHERE has(source_names, 'esef')` (or the fold's equivalent source column) is close to the parsed count, and that Handelsbanken's address tab (`/admin/se/company/5020077862/address`) lists `Kungsträdgårdsgatan 2, 106 70 Stockholm` with the ESEF source badge.
+- [x] **Step 5:** run the geocode warm step if the address design requires it after a fold (its "Warm step" section).
+- [x] **Step 6:** re-run `se_company_address_precedence_clickhouse` (the address design asks for it after a precedence-dictionary change; the fold reads only company override rows from that table, so nothing breaks before it runs, the exported global rows just lack `esef`).
+
+---
+
+## Rollout record (2026-09-10, UTC morning)
+
+- Deployed by the owner from main `2f5e1565a` (light_sync; host checksums of `esef.py`/`assets.py` verified; local dbt defs state refreshed first because the concurrent person-entity merge touched company_serving dbt).
+- Preview run `fb25f9eb`: 399 companies, 399 candidates, 0 inserted. Execute run `fad5709f`: 399 rows written (331 re-packed, 68 as street/town components, 71 with a trailing country word).
+- `se_company_address_normalize` run `ca3a3e45`: esef rows 324 `ok`, 75 `partial` (no postcode). `se_company_address_precedence_clickhouse` run `153c363c`: global rows now `reviewer 20000, bolagsverket 1000, scb 900, esef 500, ratsit 300`.
+- `se_company_address_fold_companies` run `465a9751` over the 399 ids: folded 399, published 643, changed 432, withdrawn 33, geocoded 608 (465 cache hits, 143 matched). Every one of the 399 companies has a published address carrying `esef` in `sources`; 180 of them merged with a register row.
+- Smoke: Handelsbanken (5020077862) publishes `Kungsträdgårdsgatan 2, 106 70 Stockholm` (kind `registered`, source `esef`, `matched_exact` / `building`) beside the register's `106 70 Stockholm`; the address tab shows the ESEF badge. The three companies whose postcode the first regex had invented now read `Box 3145, 103 62 Stockholm`, `Scheelevägen 27 8 tr, 223 63 Lund`, `Box 5112, 102 43 Stockholm`.
