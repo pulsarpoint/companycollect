@@ -11,7 +11,7 @@ No ``from __future__ import annotations``: Dagster inspects asset annotations.
 import json
 import os
 import uuid
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -33,7 +33,6 @@ from dagster_v3.defs.esef_filings.llm_enrichment import (
     ENRICHMENT_VISIBLE_SECTION_TYPES,
     PROMPT_VERSION,
     EsefEnrichmentInput,
-    EsefLlmEnrichmentResult,
     EsefLlmResponseError,
     build_company_enrichment_request,
     build_enrichment_evidence,
@@ -112,26 +111,44 @@ class EsefLlmEnrichmentConfig(dg.Config):
 def build_esef_llm_client(config: EsefLlmEnrichmentConfig) -> OpenAI:
     """Build the configured client while keeping credentials out of run config."""
     _validate_prompt_version(config.prompt_version)
-    variable = config.api_key_environment_variable
+    return _openai_client(
+        base_url=config.base_url,
+        api_key_environment_variable=config.api_key_environment_variable,
+        timeout_seconds=config.timeout_seconds,
+    )
+
+
+def _openai_client(
+    *,
+    base_url: str,
+    api_key_environment_variable: str,
+    timeout_seconds: int,
+) -> OpenAI:
+    """Build an OpenAI-compatible client while keeping credentials out of run config.
+
+    Shared by every ESEF LLM pass's asset function (company enrichment, people
+    extraction): the credential lookup and client construction do not depend on
+    which pass is calling.
+    """
+    variable = api_key_environment_variable
     api_key = os.getenv(variable, "").strip()
     if api_key == "":
-        raise ValueError(
-            f"No API key for ESEF LLM provider {config.provider!r}: "
-            f"set {variable} on the Dagster host"
-        )
+        raise ValueError(f"No ESEF LLM API key: set {variable} on the Dagster host")
     return OpenAI(
-        base_url=config.base_url.rstrip("/"),
+        base_url=base_url.rstrip("/"),
         api_key=api_key,
-        timeout=float(config.timeout_seconds),
+        timeout=float(timeout_seconds),
         max_retries=2,
     )
 
 
-def _validate_prompt_version(prompt_version: str) -> None:
-    if prompt_version != PROMPT_VERSION:
+def _validate_prompt_version(
+    prompt_version: str, *, expected: str = PROMPT_VERSION
+) -> None:
+    if prompt_version != expected:
         raise ValueError(
             "Unsupported ESEF LLM prompt_version "
-            f"{prompt_version!r}; this deployment provides {PROMPT_VERSION!r}"
+            f"{prompt_version!r}; this deployment provides {expected!r}"
         )
 
 
@@ -156,8 +173,90 @@ class _CompletedEnrichment:
 @dataclass(frozen=True)
 class _EnrichmentRequestOutcome:
     work: _PreparedEnrichment
-    result: EsefLlmEnrichmentResult | None
+    # The enrichment pass reads .enrichment on this; the people pass reads
+    # .extraction. Only the transport-level shape (RateLimitError/OpenAIError/
+    # EsefLlmResponseError handling in _request_prepared_enrichment) is shared.
+    result: object | None
     failure_kind: str | None = None
+
+
+@dataclass(frozen=True)
+class _PassProfile:
+    """Fixes one LLM pass's functions and identifiers for the shared helpers below.
+
+    ``run_esef_llm_enrichment`` and ``run_esef_people_extraction`` each build one
+    of these and pass it to ``_prepare_pass_documents``/``_process_pass_outcomes``/
+    ``_build_pass_rows`` so those helpers hold one implementation of the
+    preparation, request-artifact, artifact-reuse, and row-building loops instead
+    of each pass copying them.
+    """
+
+    prompt_version: str
+    build_request: Callable[..., Mapping[str, Any]]
+    request: Callable[..., object]
+    request_key: Callable[..., str]
+    output_key: Callable[..., str]
+    artifact_bytes: Callable[..., bytes]
+    extracted_status: str
+    table: str
+    columns: Sequence[str]
+
+
+@dataclass(frozen=True)
+class _PassRunParams:
+    """Scalars the preparation loop needs that vary per run, not per document."""
+
+    provider: str
+    model: str
+    temperature: float
+    refresh_existing: bool
+    reprocess_existing_without_model: bool
+    max_evidence_chars: int
+    evidence_segments: Sequence[str]
+    visible_section_types: Sequence[str]
+
+
+@dataclass(frozen=True)
+class _PassArtifactParams:
+    """Scalars the outcome loop needs to serialize a completed pass's artifact."""
+
+    provider: str
+    model: str
+    base_url: str
+    temperature: float
+    source_run_id: str
+    generated_at: str
+
+
+@dataclass(frozen=True)
+class _PreparedPassBatch:
+    no_evidence_documents: list[dict[str, object]]
+    completed: dict[str, _CompletedEnrichment]
+    pending: list[_PreparedEnrichment]
+    no_evidence_count: int
+    reused_count: int
+    request_artifact_written_count: int
+    request_artifact_reused_count: int
+
+
+@dataclass(frozen=True)
+class _PassOutcomeCounts:
+    completed: dict[str, _CompletedEnrichment]
+    enriched_count: int
+    failed_document_count: int
+    rate_limited_document_count: int
+
+
+@dataclass(frozen=True)
+class _PassRowBuildResult:
+    rows: list[dict[str, object]]
+    processed_documents: list[Mapping[str, object]]
+    raw_person_candidate_count: int
+    dropped_non_specific_person_candidate_count: int
+    citation_adjustment_count: int
+    dropped_invalid_citation_candidate_count: int
+    prompt_token_count: int
+    completion_token_count: int
 
 
 def run_esef_llm_enrichment(
@@ -219,8 +318,7 @@ def run_esef_llm_enrichment(
         raise ValueError("ESEF LLM link_statuses must not be empty")
     if not selected_link_statuses <= _LINK_STATUSES:
         raise ValueError(
-            "ESEF LLM link_statuses must be a subset of "
-            f"{sorted(_LINK_STATUSES)}"
+            f"ESEF LLM link_statuses must be a subset of {sorted(_LINK_STATUSES)}"
         )
     selected_ids = {value.strip() for value in source_document_ids if value.strip()}
     documents = _load_latest_source_documents(
@@ -237,257 +335,117 @@ def run_esef_llm_enrichment(
     artifacts = _load_disclosure_artifacts(clickhouse, documents=documents)
     object_store.ensure_bucket(ESEF_DOCUMENT_BUCKET)
     extracted_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-    information_rows_by_document: dict[str, dict[str, object]] = {}
-    completed_enrichments: dict[str, _CompletedEnrichment] = {}
-    pending_enrichments: list[_PreparedEnrichment] = []
-    enriched_count = 0
-    reused_count = 0
-    no_evidence_count = 0
-    prompt_token_count = 0
-    completion_token_count = 0
-    request_artifact_written_count = 0
-    request_artifact_reused_count = 0
-    raw_person_candidate_count = 0
-    dropped_non_specific_person_candidate_count = 0
-    citation_adjustment_count = 0
-    dropped_invalid_citation_candidate_count = 0
-    failed_document_count = 0
-    rate_limited_document_count = 0
 
     log_info(
         "ESEF LLM latest-company selector: %s source documents considered",
         len(documents),
     )
-    for index, document in enumerate(documents, start=1):
-        source_document_id = str(document["source_document_id"])
-        input_key = _disclosure_input_key(source_document_id)
-        segment_artifact = artifacts[source_document_id]
-        try:
-            evidence_input = build_enrichment_evidence(
-                segment_artifact,
-                max_evidence_chars=max_evidence_chars,
-            )
-        except ValueError as exc:
-            if str(exc) != "ESEF segment artifact contains no LLM enrichment evidence":
-                raise
-            if (
-                not refresh_existing
-                and not reprocess_existing_without_model
-                and str(document["existing_extraction_status"]) == "no_evidence"
-            ):
-                continue
-            information_rows_by_document[source_document_id] = _no_evidence_row(
-                {**document, "input_artifact_object_key": input_key},
-                provider=clean_provider,
-                model=model,
-                prompt_version=prompt_version,
-                source_run_id=source_run_id,
-                extracted_at=extracted_at,
-            )
-            no_evidence_count += 1
-            continue
 
-        package_sha256 = str(document["package_sha256"])
-        request_payload = build_company_enrichment_request(
-            evidence_input,
-            model=model,
-            provider=clean_provider,
-            temperature=temperature,
-            prompt_version=prompt_version,
-        )
-        request_bytes = enrichment_request_json_bytes(request_payload)
-        request_sha256 = sha256(request_bytes).hexdigest()
-        if (
-            not refresh_existing
-            and not reprocess_existing_without_model
-            and str(document["existing_request_sha256"]) == request_sha256
-        ):
-            continue
-
-        request_key = enrichment_request_object_key(
-            request_sha256,
-            provider=clean_provider,
-            model=model,
-            prompt_version=prompt_version,
-        )
-        if object_store.exists(request_key, bucket=ESEF_DOCUMENT_BUCKET):
-            request_artifact_reused_count += 1
-        else:
-            object_store.write_bytes(
-                request_key,
-                request_bytes,
-                bucket=ESEF_DOCUMENT_BUCKET,
-            )
-            request_artifact_written_count += 1
-        output_key = enrichment_object_key(
-            package_sha256,
-            provider=clean_provider,
-            model=model,
-            request_sha256=request_sha256,
-            prompt_version=prompt_version,
-        )
-        work = _PreparedEnrichment(
-            document=document,
-            input_key=input_key,
-            evidence_input=evidence_input,
-            request_payload=request_payload,
-            request_key=request_key,
-            request_sha256=request_sha256,
-            output_key=output_key,
-        )
-        if not refresh_existing and object_store.exists(
-            output_key,
-            bucket=ESEF_DOCUMENT_BUCKET,
-        ):
-            enrichment_artifact = _mapping(
-                json.loads(
-                    object_store.read_bytes(
-                        output_key,
-                        bucket=ESEF_DOCUMENT_BUCKET,
-                    )
-                ),
-                name="LLM enrichment artifact",
-            )
-            completed_enrichments[source_document_id] = _CompletedEnrichment(
-                artifact=enrichment_artifact,
-                work=work,
-                extraction_status="reused",
-            )
-            reused_count += 1
-        else:
-            pending_enrichments.append(work)
-        if index == 1 or index % _PROGRESS_INTERVAL == 0 or index == len(documents):
-            log_info(
-                "ESEF LLM latest-company selector: %s/%s documents prepared",
-                index,
-                len(documents),
-            )
+    profile = _PassProfile(
+        prompt_version=prompt_version,
+        build_request=build_company_enrichment_request,
+        request=request_company_enrichment,
+        request_key=enrichment_request_object_key,
+        output_key=enrichment_object_key,
+        artifact_bytes=enrichment_artifact_json_bytes,
+        extracted_status="enriched",
+        table=tables.ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE,
+        columns=tables.ESEF_DOCUMENT_COMPANY_INFORMATION_EXPORT_COLUMNS,
+    )
+    run_params = _PassRunParams(
+        provider=clean_provider,
+        model=model,
+        temperature=temperature,
+        refresh_existing=refresh_existing,
+        reprocess_existing_without_model=reprocess_existing_without_model,
+        max_evidence_chars=max_evidence_chars,
+        evidence_segments=ENRICHMENT_EVIDENCE_SEGMENTS,
+        visible_section_types=ENRICHMENT_VISIBLE_SECTION_TYPES,
+    )
+    batch = _prepare_pass_documents(
+        documents,
+        artifacts=artifacts,
+        object_store=object_store,
+        profile=profile,
+        run=run_params,
+        log_info=log_info,
+    )
 
     outcomes = _request_enrichments(
         client=client,
-        work=pending_enrichments,
+        work=batch.pending,
         concurrency=concurrency,
         log_info=log_info,
+        request=profile.request,
     )
-    for attempt_index, outcome in enumerate(outcomes, start=1):
-        work = outcome.work
-        result = outcome.result
-        if result is None:
-            failed_document_count += 1
-            if outcome.failure_kind == "rate_limited":
-                rate_limited_document_count += 1
-            log_info(
-                "ESEF LLM request failed for document %s (%s); "
-                "continuing batch: %s/%s attempted, %s failed",
-                work.document["source_document_id"],
-                outcome.failure_kind,
-                attempt_index,
-                len(pending_enrichments),
-                failed_document_count,
-            )
-            continue
-        serialized_artifact = enrichment_artifact_json_bytes(
-            evidence_input=work.evidence_input,
-            result=result,
-            model=model,
-            input_artifact_key=work.input_key,
-            llm_request_object_key=work.request_key,
-            llm_request_sha256=work.request_sha256,
-            generated_at=extracted_at,
-            source_run_id=source_run_id,
+    outcome_counts = _process_pass_outcomes(
+        outcomes,
+        attempted_count=len(batch.pending),
+        profile=profile,
+        object_store=object_store,
+        artifact_params=_PassArtifactParams(
             provider=clean_provider,
-            base_url=base_url.rstrip("/"),
+            model=model,
+            base_url=base_url,
             temperature=temperature,
-            prompt_version=prompt_version,
-        )
-        object_store.write_bytes(
-            work.output_key,
-            serialized_artifact,
-            bucket=ESEF_DOCUMENT_BUCKET,
-        )
-        source_document_id = str(work.document["source_document_id"])
-        completed_enrichments[source_document_id] = _CompletedEnrichment(
-            artifact=_mapping(
-                json.loads(serialized_artifact),
-                name="LLM enrichment artifact",
-            ),
-            work=work,
-            extraction_status="enriched",
-        )
-        enriched_count += 1
-        log_info(
-            "ESEF LLM request progress: %s/%s attempted, %s processed, %s failed",
-            attempt_index,
-            len(pending_enrichments),
-            enriched_count,
-            failed_document_count,
-        )
+            source_run_id=source_run_id,
+            generated_at=extracted_at,
+        ),
+        log_info=log_info,
+    )
+    completed = {**batch.completed, **outcome_counts.completed}
 
-    information_rows: list[dict[str, object]] = []
-    processed_documents: list[Mapping[str, object]] = []
-    for document in documents:
-        source_document_id = str(document["source_document_id"])
-        if source_document_id in information_rows_by_document:
-            information_rows.append(information_rows_by_document[source_document_id])
-            processed_documents.append(document)
-            continue
-        completed = completed_enrichments.get(source_document_id)
-        if completed is None:
-            continue
-        enrichment_artifact = completed.artifact
-        work = completed.work
-        information_row = _information_row(
+    no_evidence_rows_by_document = {
+        str(document["source_document_id"]): _no_evidence_row(
             document,
-            enrichment_artifact=enrichment_artifact,
-            enrichment_artifact_object_key=work.output_key,
-            input_artifact_object_key=work.input_key,
-            llm_request_object_key=work.request_key,
-            llm_request_sha256=work.request_sha256,
-            extraction_status=completed.extraction_status,
             provider=clean_provider,
             model=model,
             prompt_version=prompt_version,
             source_run_id=source_run_id,
             extracted_at=extracted_at,
         )
-        artifact_enrichment = _mapping(
-            enrichment_artifact.get("enrichment"),
-            name="enrichment",
+        for document in batch.no_evidence_documents
+    }
+
+    def _build_information_row(
+        document: Mapping[str, object],
+        entry: _CompletedEnrichment,
+    ) -> dict[str, object]:
+        return _information_row(
+            document,
+            artifact=entry.artifact,
+            artifact_object_key=entry.work.output_key,
+            input_artifact_object_key=entry.work.input_key,
+            llm_request_object_key=entry.work.request_key,
+            llm_request_sha256=entry.work.request_sha256,
+            extraction_status=entry.extraction_status,
+            provider=clean_provider,
+            model=model,
+            prompt_version=prompt_version,
+            source_run_id=source_run_id,
+            extracted_at=extracted_at,
         )
-        artifact_people = artifact_enrichment.get("people", [])
-        artifact_person_count = (
-            len(artifact_people) if isinstance(artifact_people, list) else 0
-        )
-        published_person_count = len(json.loads(str(information_row["people_json"])))
-        raw_person_candidate_count += artifact_person_count
-        dropped_non_specific_person_candidate_count += (
-            artifact_person_count - published_person_count
-        )
-        validation = enrichment_artifact.get("validation", {})
-        if isinstance(validation, Mapping):
-            adjustments = validation.get("citation_adjustments", [])
-            if isinstance(adjustments, list):
-                citation_adjustment_count += len(adjustments)
-                dropped_invalid_citation_candidate_count += sum(
-                    1
-                    for adjustment in adjustments
-                    if isinstance(adjustment, Mapping)
-                    and adjustment.get("action") == "candidate_dropped"
-                )
-        information_rows.append(information_row)
-        processed_documents.append(document)
-        prompt_token_count += int(information_row["prompt_tokens"])
-        completion_token_count += int(information_row["completion_tokens"])
+
+    row_build = _build_pass_rows(
+        documents,
+        no_evidence_rows_by_document=no_evidence_rows_by_document,
+        completed=completed,
+        result_row=_build_information_row,
+        artifact_people=_enrichment_artifact_people,
+    )
 
     _replace_information_rows_clickhouse(
         clickhouse,
         source_document_ids=[
-            str(document["source_document_id"]) for document in processed_documents
+            str(document["source_document_id"])
+            for document in row_build.processed_documents
         ],
         provider=clean_provider,
         model=model,
         prompt_version=prompt_version,
-        rows=information_rows,
+        rows=row_build.rows,
+        table=profile.table,
+        columns=profile.columns,
     )
     return {
         "selection_method": "latest_xbrl_per_lei",
@@ -499,41 +457,49 @@ def run_esef_llm_enrichment(
         "llm_concurrency": concurrency,
         "reprocess_existing_without_model": reprocess_existing_without_model,
         "candidate_document_count": len(documents),
-        "attempted_document_count": len(pending_enrichments),
-        "processed_document_count": len(processed_documents),
-        "failed_document_count": failed_document_count,
-        "rate_limited_document_count": rate_limited_document_count,
-        "selected_document_count": len(processed_documents),
+        "attempted_document_count": len(batch.pending),
+        "processed_document_count": len(row_build.processed_documents),
+        "failed_document_count": outcome_counts.failed_document_count,
+        "rate_limited_document_count": outcome_counts.rate_limited_document_count,
+        "selected_document_count": len(row_build.processed_documents),
         "unchanged_document_count": (
-            len(documents) - len(processed_documents) - failed_document_count
+            len(documents)
+            - len(row_build.processed_documents)
+            - outcome_counts.failed_document_count
         ),
         "selected_lei_count": len(
-            {str(document["lei"]) for document in processed_documents}
+            {str(document["lei"]) for document in row_build.processed_documents}
         ),
-        "information_row_count": len(information_rows),
-        "enriched_document_count": enriched_count,
-        "reused_enrichment_count": reused_count,
-        "no_evidence_count": no_evidence_count,
-        "prompt_token_count": prompt_token_count,
-        "completion_token_count": completion_token_count,
-        "request_artifact_written_count": request_artifact_written_count,
-        "request_artifact_reused_count": request_artifact_reused_count,
+        "information_row_count": len(row_build.rows),
+        "enriched_document_count": outcome_counts.enriched_count,
+        "reused_enrichment_count": batch.reused_count,
+        "no_evidence_count": batch.no_evidence_count,
+        "prompt_token_count": row_build.prompt_token_count,
+        "completion_token_count": row_build.completion_token_count,
+        "request_artifact_written_count": batch.request_artifact_written_count,
+        "request_artifact_reused_count": batch.request_artifact_reused_count,
         "description_candidate_count": sum(
-            str(row["company_description"]) != "" for row in information_rows
+            str(row["company_description"]) != "" for row in row_build.rows
         ),
         "person_candidate_count": sum(
-            len(json.loads(str(row["people_json"]))) for row in information_rows
+            len(json.loads(str(row["people_json"]))) for row in row_build.rows
         ),
-        "raw_person_candidate_count": raw_person_candidate_count,
+        "raw_person_candidate_count": row_build.raw_person_candidate_count,
         "dropped_non_specific_person_candidate_count": (
-            dropped_non_specific_person_candidate_count
+            row_build.dropped_non_specific_person_candidate_count
         ),
-        "citation_adjustment_count": citation_adjustment_count,
+        "citation_adjustment_count": row_build.citation_adjustment_count,
         "dropped_invalid_citation_candidate_count": (
-            dropped_invalid_citation_candidate_count
+            row_build.dropped_invalid_citation_candidate_count
         ),
         "table": tables.QUALIFIED_ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE,
     }
+
+
+def _enrichment_artifact_people(artifact: Mapping[str, Any]) -> list[object]:
+    enrichment = _mapping(artifact.get("enrichment"), name="enrichment")
+    people = enrichment.get("people", [])
+    return people if isinstance(people, list) else []
 
 
 def _request_enrichments(
@@ -542,9 +508,10 @@ def _request_enrichments(
     work: Sequence[_PreparedEnrichment],
     concurrency: int,
     log_info: Callable[..., object] | None = None,
+    request: Callable[..., object] = request_company_enrichment,
 ) -> Iterator[_EnrichmentRequestOutcome]:
     """Call the HTTP client with bounded parallelism and retain document order."""
-    call = partial(_request_prepared_enrichment, client=client)
+    call = partial(_request_prepared_enrichment, client=client, request=request)
     if concurrency == 1 or len(work) <= 1:
         for index, item in enumerate(work, start=1):
             if log_info is not None:
@@ -572,9 +539,10 @@ def _request_prepared_enrichment(
     work: _PreparedEnrichment,
     *,
     client: OpenAI,
+    request: Callable[..., object] = request_company_enrichment,
 ) -> _EnrichmentRequestOutcome:
     try:
-        result = request_company_enrichment(
+        result = request(
             client,
             evidence_input=work.evidence_input,
             request_payload=work.request_payload,
@@ -600,6 +568,296 @@ def _request_prepared_enrichment(
     return _EnrichmentRequestOutcome(work=work, result=result)
 
 
+def _prepare_pass_documents(
+    documents: Sequence[Mapping[str, object]],
+    *,
+    artifacts: Mapping[str, Mapping[str, Any]],
+    object_store: Any,
+    profile: _PassProfile,
+    run: _PassRunParams,
+    log_info: Callable[..., object],
+) -> _PreparedPassBatch:
+    """Prepare every selected document's evidence, request, and reuse decision.
+
+    Shared by every ESEF LLM pass: for each document this builds the evidence,
+    records a "no evidence" document when none is found, builds and
+    content-addresses the exact request (writing or reusing its S3 artifact),
+    and either marks the document already complete from a reused output
+    artifact or queues it for a model call.
+    """
+    no_evidence_documents: list[dict[str, object]] = []
+    completed: dict[str, _CompletedEnrichment] = {}
+    pending: list[_PreparedEnrichment] = []
+    no_evidence_count = 0
+    reused_count = 0
+    request_artifact_written_count = 0
+    request_artifact_reused_count = 0
+
+    for index, document in enumerate(documents, start=1):
+        source_document_id = str(document["source_document_id"])
+        input_key = _disclosure_input_key(source_document_id)
+        segment_artifact = artifacts[source_document_id]
+        try:
+            evidence_input = build_enrichment_evidence(
+                segment_artifact,
+                max_evidence_chars=run.max_evidence_chars,
+                evidence_segments=run.evidence_segments,
+                visible_section_types=run.visible_section_types,
+            )
+        except ValueError as exc:
+            if str(exc) != "ESEF segment artifact contains no LLM enrichment evidence":
+                raise
+            if (
+                not run.refresh_existing
+                and not run.reprocess_existing_without_model
+                and str(document["existing_extraction_status"]) == "no_evidence"
+            ):
+                continue
+            no_evidence_documents.append(
+                {**document, "input_artifact_object_key": input_key}
+            )
+            no_evidence_count += 1
+            continue
+
+        package_sha256 = str(document["package_sha256"])
+        request_payload = profile.build_request(
+            evidence_input,
+            model=run.model,
+            provider=run.provider,
+            temperature=run.temperature,
+            prompt_version=profile.prompt_version,
+        )
+        request_bytes = enrichment_request_json_bytes(request_payload)
+        request_sha256 = sha256(request_bytes).hexdigest()
+        if (
+            not run.refresh_existing
+            and not run.reprocess_existing_without_model
+            and str(document["existing_request_sha256"]) == request_sha256
+        ):
+            continue
+
+        request_key = profile.request_key(
+            request_sha256,
+            provider=run.provider,
+            model=run.model,
+            prompt_version=profile.prompt_version,
+        )
+        if object_store.exists(request_key, bucket=ESEF_DOCUMENT_BUCKET):
+            request_artifact_reused_count += 1
+        else:
+            object_store.write_bytes(
+                request_key,
+                request_bytes,
+                bucket=ESEF_DOCUMENT_BUCKET,
+            )
+            request_artifact_written_count += 1
+        output_key = profile.output_key(
+            package_sha256,
+            provider=run.provider,
+            model=run.model,
+            request_sha256=request_sha256,
+            prompt_version=profile.prompt_version,
+        )
+        work = _PreparedEnrichment(
+            document=document,
+            input_key=input_key,
+            evidence_input=evidence_input,
+            request_payload=request_payload,
+            request_key=request_key,
+            request_sha256=request_sha256,
+            output_key=output_key,
+        )
+        if not run.refresh_existing and object_store.exists(
+            output_key,
+            bucket=ESEF_DOCUMENT_BUCKET,
+        ):
+            artifact = _mapping(
+                json.loads(
+                    object_store.read_bytes(
+                        output_key,
+                        bucket=ESEF_DOCUMENT_BUCKET,
+                    )
+                ),
+                name="LLM artifact",
+            )
+            completed[source_document_id] = _CompletedEnrichment(
+                artifact=artifact,
+                work=work,
+                extraction_status="reused",
+            )
+            reused_count += 1
+        else:
+            pending.append(work)
+        if index == 1 or index % _PROGRESS_INTERVAL == 0 or index == len(documents):
+            log_info(
+                "ESEF LLM selector: %s/%s documents prepared",
+                index,
+                len(documents),
+            )
+    return _PreparedPassBatch(
+        no_evidence_documents=no_evidence_documents,
+        completed=completed,
+        pending=pending,
+        no_evidence_count=no_evidence_count,
+        reused_count=reused_count,
+        request_artifact_written_count=request_artifact_written_count,
+        request_artifact_reused_count=request_artifact_reused_count,
+    )
+
+
+def _process_pass_outcomes(
+    outcomes: Iterable[_EnrichmentRequestOutcome],
+    *,
+    attempted_count: int,
+    profile: _PassProfile,
+    object_store: Any,
+    artifact_params: _PassArtifactParams,
+    log_info: Callable[..., object],
+) -> _PassOutcomeCounts:
+    """Serialize every successful model outcome's artifact and record failures.
+
+    Shared by every ESEF LLM pass: the artifact serializer and completed
+    extraction status are supplied by ``profile``, everything else about
+    walking the outcomes, writing the output artifact, and progress logging is
+    identical between passes.
+    """
+    completed: dict[str, _CompletedEnrichment] = {}
+    enriched_count = 0
+    failed_document_count = 0
+    rate_limited_document_count = 0
+    for attempt_index, outcome in enumerate(outcomes, start=1):
+        work = outcome.work
+        result = outcome.result
+        if result is None:
+            failed_document_count += 1
+            if outcome.failure_kind == "rate_limited":
+                rate_limited_document_count += 1
+            log_info(
+                "ESEF LLM request failed for document %s (%s); "
+                "continuing batch: %s/%s attempted, %s failed",
+                work.document["source_document_id"],
+                outcome.failure_kind,
+                attempt_index,
+                attempted_count,
+                failed_document_count,
+            )
+            continue
+        serialized_artifact = profile.artifact_bytes(
+            evidence_input=work.evidence_input,
+            result=result,
+            model=artifact_params.model,
+            input_artifact_key=work.input_key,
+            llm_request_object_key=work.request_key,
+            llm_request_sha256=work.request_sha256,
+            generated_at=artifact_params.generated_at,
+            source_run_id=artifact_params.source_run_id,
+            provider=artifact_params.provider,
+            base_url=artifact_params.base_url.rstrip("/"),
+            temperature=artifact_params.temperature,
+            prompt_version=profile.prompt_version,
+        )
+        object_store.write_bytes(
+            work.output_key,
+            serialized_artifact,
+            bucket=ESEF_DOCUMENT_BUCKET,
+        )
+        source_document_id = str(work.document["source_document_id"])
+        completed[source_document_id] = _CompletedEnrichment(
+            artifact=_mapping(json.loads(serialized_artifact), name="LLM artifact"),
+            work=work,
+            extraction_status=profile.extracted_status,
+        )
+        enriched_count += 1
+        log_info(
+            "ESEF LLM request progress: %s/%s attempted, %s processed, %s failed",
+            attempt_index,
+            attempted_count,
+            enriched_count,
+            failed_document_count,
+        )
+    return _PassOutcomeCounts(
+        completed=completed,
+        enriched_count=enriched_count,
+        failed_document_count=failed_document_count,
+        rate_limited_document_count=rate_limited_document_count,
+    )
+
+
+def _build_pass_rows(
+    documents: Sequence[Mapping[str, object]],
+    *,
+    no_evidence_rows_by_document: Mapping[str, dict[str, object]],
+    completed: Mapping[str, _CompletedEnrichment],
+    result_row: Callable[
+        [Mapping[str, object], _CompletedEnrichment], dict[str, object]
+    ],
+    artifact_people: Callable[[Mapping[str, Any]], list[object]],
+) -> _PassRowBuildResult:
+    """Build every processed document's row and its candidate-tracking counters.
+
+    Shared by every ESEF LLM pass: ``result_row`` builds the pass-specific row
+    (already bound to its provider/model/prompt_version/source_run_id/
+    extracted_at by the caller) and ``artifact_people`` reads the raw,
+    pre-publication-filter people list out of the pass's artifact shape;
+    everything else about walking documents, counting candidates, and tallying
+    tokens is identical between passes.
+    """
+    rows: list[dict[str, object]] = []
+    processed_documents: list[Mapping[str, object]] = []
+    raw_person_candidate_count = 0
+    dropped_non_specific_person_candidate_count = 0
+    citation_adjustment_count = 0
+    dropped_invalid_citation_candidate_count = 0
+    prompt_token_count = 0
+    completion_token_count = 0
+    for document in documents:
+        source_document_id = str(document["source_document_id"])
+        if source_document_id in no_evidence_rows_by_document:
+            rows.append(no_evidence_rows_by_document[source_document_id])
+            processed_documents.append(document)
+            continue
+        entry = completed.get(source_document_id)
+        if entry is None:
+            continue
+        row = result_row(document, entry)
+        artifact_person_list = artifact_people(entry.artifact)
+        artifact_person_count = len(artifact_person_list)
+        published_person_count = len(json.loads(str(row["people_json"])))
+        raw_person_candidate_count += artifact_person_count
+        dropped_non_specific_person_candidate_count += (
+            artifact_person_count - published_person_count
+        )
+        validation = entry.artifact.get("validation", {})
+        if isinstance(validation, Mapping):
+            adjustments = validation.get("citation_adjustments", [])
+            if isinstance(adjustments, list):
+                citation_adjustment_count += len(adjustments)
+                dropped_invalid_citation_candidate_count += sum(
+                    1
+                    for adjustment in adjustments
+                    if isinstance(adjustment, Mapping)
+                    and adjustment.get("action") == "candidate_dropped"
+                )
+        rows.append(row)
+        processed_documents.append(document)
+        prompt_token_count += int(row["prompt_tokens"])
+        completion_token_count += int(row["completion_tokens"])
+    return _PassRowBuildResult(
+        rows=rows,
+        processed_documents=processed_documents,
+        raw_person_candidate_count=raw_person_candidate_count,
+        dropped_non_specific_person_candidate_count=(
+            dropped_non_specific_person_candidate_count
+        ),
+        citation_adjustment_count=citation_adjustment_count,
+        dropped_invalid_citation_candidate_count=(
+            dropped_invalid_citation_candidate_count
+        ),
+        prompt_token_count=prompt_token_count,
+        completion_token_count=completion_token_count,
+    )
+
+
 _LATEST_DOCUMENT_SELECTION_COLUMNS = (
     "source_document_id",
     "package_sha256",
@@ -620,13 +878,24 @@ def _selection_query(
     country_iso2s: set[str],
     company_ids: set[str],
     source_document_ids: set[str],
+    latest_per_lei: bool = True,
+    existing_table: str = tables.QUALIFIED_ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE,
+    evidence_segments: Sequence[str] = ENRICHMENT_EVIDENCE_SEGMENTS,
+    visible_section_types: Sequence[str] = ENRICHMENT_VISIBLE_SECTION_TYPES,
 ) -> tuple[str, dict[str, object]]:
-    """Build the (pure) SQL and parameters selecting the latest document per LEI.
+    """Build the (pure) SQL and parameters selecting eligible documents.
 
     Only LEIs admitted through ``esef_entity_registry_map`` are eligible: the
     membership filter joins on ``link_status`` (and, when given, the map's
     ``country_iso2``/``registry_id``) rather than any stamp on the disclosure
     itself.
+
+    With ``latest_per_lei=True`` (the company-information pass) only the latest
+    report per LEI is selected. With ``latest_per_lei=False`` (the people pass,
+    which extracts every filing) every eligible document is selected, newest
+    first, so a ``max_documents`` cap keeps the newest filings. ``existing_table``
+    is the prior-result table the reuse decision is read from, so each pass
+    compares against its own results.
     """
     columns = _LATEST_DOCUMENT_SELECTION_COLUMNS
     document_filters = [
@@ -640,8 +909,8 @@ def _selection_query(
         "model_provider": provider,
         "model_name": model,
         "prompt_version": prompt_version,
-        "evidence_segments": ENRICHMENT_EVIDENCE_SEGMENTS,
-        "visible_section_types": ENRICHMENT_VISIBLE_SECTION_TYPES,
+        "evidence_segments": tuple(evidence_segments),
+        "visible_section_types": tuple(visible_section_types),
     }
     link_filters = ["link_status IN %(link_statuses)s"]
     parameters["link_statuses"] = tuple(sorted(link_statuses))
@@ -657,10 +926,19 @@ def _selection_query(
         f"WHERE {' AND '.join(link_filters)})"
     )
 
-    outer_filters = ["documents.latest_lei_report_rank = 1"]
+    outer_filters = ["documents.latest_lei_report_rank = 1"] if latest_per_lei else []
     if source_document_ids:
         outer_filters.append("documents.source_document_id IN %(source_document_ids)s")
         parameters["source_document_ids"] = tuple(sorted(source_document_ids))
+    where_clause = f"WHERE {' AND '.join(outer_filters)}\n" if outer_filters else ""
+    order_by = (
+        "ORDER BY documents.lei, documents.source_document_id"
+        if latest_per_lei
+        else (
+            "ORDER BY documents.period_end DESC, documents.fiscal_year DESC, "
+            "documents.lei, documents.source_document_id"
+        )
+    )
     select_columns = ", ".join(f"documents.{column}" for column in columns)
     query = f"""
 SELECT
@@ -702,14 +980,13 @@ LEFT JOIN
         source_document_id,
         argMax(llm_request_sha256, resolved_at) AS llm_request_sha256,
         argMax(extraction_status, resolved_at) AS extraction_status
-    FROM {tables.QUALIFIED_ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE}
+    FROM {existing_table}
     WHERE model_provider = %(model_provider)s
       AND model_name = %(model_name)s
       AND prompt_version = %(prompt_version)s
     GROUP BY source_document_id
 ) AS existing USING (source_document_id)
-WHERE {" AND ".join(outer_filters)}
-ORDER BY documents.lei, documents.source_document_id
+{where_clause}{order_by}
 """
     return query, parameters
 
@@ -725,6 +1002,10 @@ def _load_latest_source_documents(
     company_ids: set[str],
     source_document_ids: set[str],
     max_documents: int | None,
+    latest_per_lei: bool = True,
+    existing_table: str = tables.QUALIFIED_ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE,
+    evidence_segments: Sequence[str] = ENRICHMENT_EVIDENCE_SEGMENTS,
+    visible_section_types: Sequence[str] = ENRICHMENT_VISIBLE_SECTION_TYPES,
 ) -> list[dict[str, object]]:
     query, parameters = _selection_query(
         model=model,
@@ -734,6 +1015,10 @@ def _load_latest_source_documents(
         country_iso2s=country_iso2s,
         company_ids=company_ids,
         source_document_ids=source_document_ids,
+        latest_per_lei=latest_per_lei,
+        existing_table=existing_table,
+        evidence_segments=evidence_segments,
+        visible_section_types=visible_section_types,
     )
     columns = _LATEST_DOCUMENT_SELECTION_COLUMNS
     with clickhouse.get_connection() as client:
@@ -940,8 +1225,8 @@ def _disclosure_input_key(source_document_id: str) -> str:
 def _information_row(
     document: Mapping[str, object],
     *,
-    enrichment_artifact: Mapping[str, Any],
-    enrichment_artifact_object_key: str,
+    artifact: Mapping[str, Any],
+    artifact_object_key: str,
     input_artifact_object_key: str,
     llm_request_object_key: str,
     llm_request_sha256: str,
@@ -952,8 +1237,8 @@ def _information_row(
     source_run_id: str,
     extracted_at: str,
 ) -> dict[str, object]:
-    enrichment = _mapping(enrichment_artifact.get("enrichment"), name="enrichment")
-    model_metadata = _mapping(enrichment_artifact.get("model"), name="model")
+    enrichment = _mapping(artifact.get("enrichment"), name="enrichment")
+    model_metadata = _mapping(artifact.get("model"), name="model")
     description_value = enrichment.get("company_description")
     description = (
         _mapping(description_value, name="company description")
@@ -992,7 +1277,7 @@ def _information_row(
         "material_group_relationships_json": _json_text(
             enrichment.get("material_group_relationships", [])
         ),
-        "enrichment_artifact_object_key": enrichment_artifact_object_key,
+        "enrichment_artifact_object_key": artifact_object_key,
         "input_artifact_object_key": input_artifact_object_key,
         "llm_request_object_key": llm_request_object_key,
         "llm_request_sha256": llm_request_sha256,
@@ -1000,14 +1285,10 @@ def _information_row(
         "llm_response_sha256": str(model_metadata.get("raw_response_sha256", "")),
         "model_provider": str(model_metadata.get("provider", provider)),
         "model_name": str(model_metadata.get("name", model)),
-        "prompt_version": str(
-            enrichment_artifact.get("prompt_version", prompt_version)
-        ),
+        "prompt_version": str(artifact.get("prompt_version", prompt_version)),
         "prompt_tokens": int(model_metadata.get("prompt_tokens") or 0),
         "completion_tokens": int(model_metadata.get("completion_tokens") or 0),
-        "input_character_count": int(
-            enrichment_artifact.get("input_character_count") or 0
-        ),
+        "input_character_count": int(artifact.get("input_character_count") or 0),
         "source_run_id": source_run_id,
         "extracted_at": extracted_at,
     }
@@ -1098,10 +1379,11 @@ def _replace_information_rows_clickhouse(
     model: str,
     prompt_version: str,
     rows: Sequence[Mapping[str, object]],
+    table: str = tables.ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE,
+    columns: Sequence[str] = tables.ESEF_DOCUMENT_COMPANY_INFORMATION_EXPORT_COLUMNS,
 ) -> None:
     if not source_document_ids:
         return
-    table = tables.ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE
     assert_clickhouse_tables_exist(
         clickhouse,
         database=tables.ESEF_DATABASE,
@@ -1128,7 +1410,6 @@ def _replace_information_rows_clickhouse(
                 parameters,
             )
             if rows:
-                columns = tables.ESEF_DOCUMENT_COMPANY_INFORMATION_EXPORT_COLUMNS
                 client.execute(
                     f"INSERT INTO {stage} ({', '.join(columns)}) VALUES",
                     [tuple(row[column] for column in columns) for row in rows],
