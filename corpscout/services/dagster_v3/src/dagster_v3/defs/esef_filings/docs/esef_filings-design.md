@@ -120,13 +120,20 @@ model_provider, model_name, prompt_version)`.
   `(source_document_id, model_provider, model_name, prompt_version)`, one row
   per document per pass, with `source_record_uid` a DEFAULT and `extracted_at`
   a `DateTime64(3, 'UTC')`.
-- **Statuses.** `extracted`, `reused` (the request hash is unchanged, or the
-  artifact is already present in the object store), and `no_evidence`. A failed
-  call is logged and counted but writes no row.
+- **Statuses.** `extracted` (a fresh model call), `reused` (the exact request's
+  output artifact is already present in the object store), and `no_evidence`.
+  An unchanged content-addressed request hash instead skips the document
+  entirely before either status is decided — no row is written, and it is
+  counted in `unchanged_document_count`, not `reused`. A failed call is
+  likewise logged and counted but writes no row.
 - **Reuse rule.** Same as the company-information enrichment: an unchanged
-  content-addressed request hash skips the paid call and records the row as
-  `reused`; only the pass's own config (provider, model, prompt version,
-  evidence bounds) changes what counts as unchanged.
+  content-addressed request hash (matching the document's currently stored
+  `existing_request_sha256`) skips the document entirely — no row is written,
+  counted as `unchanged_document_count`. When the hash has changed, the pass
+  still avoids the paid call if that exact request's output artifact is
+  already in the object store, writing a row with status `reused` instead.
+  Only the pass's own config (provider, model, prompt version, evidence
+  bounds) changes what counts as unchanged.
 - **Projection and identity.** `esef_document_people_clickhouse` REPLACES its
   table (stage table plus `EXCHANGE TABLES`) from
   `esef_document_people_extraction` alone — it never appends, because a rerun

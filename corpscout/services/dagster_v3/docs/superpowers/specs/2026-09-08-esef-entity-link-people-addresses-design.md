@@ -135,8 +135,16 @@ country." The views are named `se_esef_<table>`.
   filing, with the same budgets and citation rules. Output: the existing `PersonCandidate`
   list, at most 100.
 - Selection: every filing of a LEI the config admits, one extraction per (document, prompt
-  version, model), newest filings first. Cost for Sweden: 1,064 documents, roughly 11 million
-  input tokens.
+  version, model), newest filings first. Cost for Sweden: 1,379 documents (1,044 with a
+  people section plus 335 whose only people evidence is `people_and_audit` tagged facts,
+  cheap), roughly 11-13 million input tokens. 61 (LEI, period_end) pairs carry two filings
+  (re-filings and NO/SE dual filings) and are paid and projected twice under "every filing"
+  as written above -- an owner ruling on deduping them is pending; a
+  `row_number() OVER (PARTITION BY lei, period_end)` filter in the selection query is a
+  one-line follow-up if that duplication turns out to be unwanted. Newest-first also
+  surfaces a 2029-dated filing first (`549300GU5OHTR1T5IY68-2029-05-01-ESEF-SE-0`, an
+  upstream period bug, not a selection bug); it is the first document the rollout smoke run
+  processes.
 - Storage: a new table `esef_document_people_extraction` with one row per document and the
   enrichment's bookkeeping columns (status, artifact keys, response text and hashes, tokens,
   model, prompt version), keyed by document. `esef_document_people` is projected from this
