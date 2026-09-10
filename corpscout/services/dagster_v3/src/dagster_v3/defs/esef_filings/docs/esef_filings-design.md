@@ -85,6 +85,65 @@ reconstructs bounded model evidence directly from `esef_disclosures` and concept
 labels. The exact model request and response remain content-addressed in S3, but
 there is no enrichment DuckDB or second ClickHouse publisher.
 
+## The people pass
+
+The per-filing people pass is a second, independent paid extraction alongside
+`esef_document_company_information_clickhouse`. Where that asset enriches only
+the latest final document per linked company, the people pass extracts every
+eligible filing of every admitted LEI, newest first
+(`selection_method: every_filing_per_lei`), one row per `(source_document_id,
+model_provider, model_name, prompt_version)`.
+
+- **Asset and job.** `esef_document_people_extraction_clickhouse` depends on
+  `esef_disclosures_clickhouse`, `esef_document_concept_labels_clickhouse`, and
+  `esef_filings_clickhouse`. It is unpartitioned and launched explicitly through
+  `esef_document_people_job`, which chains the extraction with its projection;
+  it never runs on the weekly schedule or inside
+  `esef_document_company_information_job`.
+- **Config.** `EsefPeopleExtractionConfig` requires `provider` and `model` with
+  no defaults — a bare "Materialize" fails run-config validation rather than
+  silently spending on a default provider, mirroring the company-information
+  enrichment's config — plus `prompt_version`, `link_statuses` (default
+  `register_verified`), `country_iso2s`, `company_ids`, `source_document_ids`,
+  `max_documents`, `refresh_existing`, `max_evidence_chars`,
+  `timeout_seconds`, and `concurrency`.
+- **Prompt.** `esef-people-v1` is the people sentences of the company-information
+  enrichment prompt only, over the `people_and_audit` tagged facts and the six
+  people visible sections of one filing, with the same evidence budgets and
+  citation rules. Output is the existing `PersonCandidate` list, at most 100.
+- **Prefixes.** Artifacts are written under `esef_filings/llm_people_extraction`
+  and requests under `esef_filings/llm_people_extraction_requests` (the provider
+  segment is always present in both keys) — siblings of the company-information
+  enrichment's `esef_filings/llm_company_enrichment` and
+  `esef_filings/llm_company_enrichment_requests`.
+- **Table.** `esef_document_people_extraction` is a MergeTree keyed
+  `(source_document_id, model_provider, model_name, prompt_version)`, one row
+  per document per pass, with `source_record_uid` a DEFAULT and `extracted_at`
+  a `DateTime64(3, 'UTC')`.
+- **Statuses.** `extracted`, `reused` (the request hash is unchanged, or the
+  artifact is already present in the object store), and `no_evidence`. A failed
+  call is logged and counted but writes no row.
+- **Reuse rule.** Same as the company-information enrichment: an unchanged
+  content-addressed request hash skips the paid call and records the row as
+  `reused`; only the pass's own config (provider, model, prompt version,
+  evidence bounds) changes what counts as unchanged.
+- **Projection and identity.** `esef_document_people_clickhouse` REPLACES its
+  table (stage table plus `EXCHANGE TABLES`) from
+  `esef_document_people_extraction` alone — it never appends, because a rerun
+  of the same document under the same prompt and model must not accumulate
+  duplicate rows. Row identity is `(lei, fiscal_year, source_record_uid,
+  candidate_uid)`, where `candidate_uid` is the company-source-record
+  observation hash over `source_record_uid`, `esef_person`, the prompt version,
+  the normalised person name, and the role category; status preference is
+  current, then historical, then unclear.
+- **`people_json` on the enrichment.** The `people_json` column produced by
+  `esef_document_company_information_clickhouse` is retained only as an
+  artifact of that pass; no projection reads it any longer.
+  `esef_document_people` is sourced exclusively from
+  `esef_document_people_extraction`. The business-items and
+  group-relationships projections are unaffected and still append from the
+  company-information enrichment.
+
 ## Data quality invariants
 
 - Artifact schema versions are explicitly supported and validated.

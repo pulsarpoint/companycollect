@@ -149,7 +149,19 @@ country." The views are named `se_esef_<table>`.
   category, so a re-run with the same prompt replaces its rows; the materialised
   `person_profile_hash` and `person_role_hash` are unchanged. `fiscal_year` is the filing's,
   so a company's rosters accumulate per year.
-- `se_company_person_esef` is unchanged apart from reading `se_esef_document_people`.
+- `se_company_person_esef` no longer exists: the SE person slice 0 dropped that view on
+  2026-09-09. The reader of `se_esef_document_people` is now the SE person entity's extractor,
+  `se_company/person/esef.py`, which tombstones vanished slots itself and is re-run after the
+  projection rebuild.
+
+**Rulings (2026-09-10):**
+
+- `esef_document_people` keeps its 000395 key, `(lei, fiscal_year, source_record_uid,
+  candidate_uid)`.
+- The extraction table `esef_document_people_extraction` has no Swedish view: it has no
+  consumer.
+- `se_company_person_esef` is dropped, not merely unchanged (corrected above).
+- Migration number 000397 (000396 went to the person entity, merged 2026-09-09).
 
 ### 3. Registered-office addresses
 
