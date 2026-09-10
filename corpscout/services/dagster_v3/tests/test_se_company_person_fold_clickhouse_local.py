@@ -53,6 +53,7 @@ EXPORTED_AT = datetime(2026, 9, 10, 8, 0, tzinfo=UTC)
 RULE_AT = datetime(2026, 9, 10, 10, 30, tzinfo=UTC)
 FIRST_FOLD_AT = datetime(2026, 9, 10, 9, 0, tzinfo=UTC)
 SECOND_FOLD_AT = datetime(2026, 9, 10, 11, 0, tzinfo=UTC)
+FOURTH_FOLD_AT = datetime(2026, 9, 10, 12, 0, tzinfo=UTC)   # after round 3's SECOND_FOLD_AT
 
 # (company_id, source, slot, suggestion_id, full_name, first_name, last_name, birth_year,
 #  wikidata_id, role_original, role_key, fiscal_year, role_from, role_to, data)
@@ -217,8 +218,9 @@ def _rule_insert(company_id: str, rule_id: str, kind: str, person_keys, slots, a
 
 @pytest.fixture(scope="module", params=(0, 1), ids=("join_use_nulls_off", "join_use_nulls_on"))
 def folded(request: pytest.FixtureRequest) -> dict[str, Any]:
-    """Three rounds against one clickhouse-local session: the first fold, the re-run, and a
-    fold under a hide rule, a merge rule and a tombstone."""
+    """Four rounds against one clickhouse-local session: the first fold, the re-run, a fold
+    under a hide rule, a merge rule and a tombstone, and a changed_only=False refold that
+    proves the round trip through real ClickHouse reproduces every row exactly."""
     client = _LocalClient(request.param)
     client.add(_raw_insert(RAW, SUGGESTED_AT))
     client.add(_normalized_insert(RAW, NORMALIZED_AT))
@@ -251,8 +253,15 @@ def folded(request: pytest.FixtureRequest) -> dict[str, Any]:
     third = batch.fold_companies(
         client, COMPANY_IDS, changed_only=True, source_run_id="run-3", folded_at=SECOND_FOLD_AT
     )
+    # A full changed_only=False refold with nothing actually different since round 3: every
+    # company is read back through the real clickhouse-driver-shaped round trip (FixedString
+    # keys, Nullable(UInt16), the seven Array columns, `data`) and folded again, so a single
+    # type mismatch on the way back would turn rows `updated` instead of `unchanged`.
+    fourth = batch.fold_companies(
+        client, COMPANY_IDS, changed_only=False, source_run_id="run-4", folded_at=FOURTH_FOLD_AT
+    )
     return {
-        "client": client, "first": first, "rerun": rerun, "third": third,
+        "client": client, "first": first, "rerun": rerun, "third": third, "fourth": fourth,
         "first_company_rows": first_company_rows,
         "keys": {"anna": anna, "hakan": hakan, "erik": erik},
     }
@@ -326,6 +335,36 @@ def test_a_rule_a_merge_and_a_tombstone_all_move_their_persons(folded) -> None:
         "WHERE fold_run_id = 'run-3' GROUP BY change_kind ORDER BY change_kind"
     )
     assert kinds == [["hidden", "1"], ["updated", "1"], ["withdrawn", "2"]]
+
+
+def test_a_stable_refold_reproduces_every_row_the_driver_wrote(folded) -> None:
+    """I-4: no test before this one ever proved that a row written to real ClickHouse and
+    read back through current_main_rows_sql/main_row_from_row compares EQUAL to a freshly
+    built one -- round 2 selects nothing (the main read never runs) and round 3 changes every
+    company. A changed_only=False refold here forces every company in the fixture through
+    that exact read-compare-write cycle with nothing actually different since round 3, so a
+    single mismatched column (Array(Nullable(UInt16)), Array(Array(String)),
+    FixedString(64), Nullable(String), ...) would turn every row `updated` and write a spurious
+    history entry, while the rest of the suite stayed green."""
+    counts = folded["fourth"]
+    assert counts.considered == 3
+    for kind in ("created", "updated", "hidden", "withdrawn", "reactivated"):
+        assert getattr(counts, kind) == 0
+    client = folded["client"]
+    ids = ", ".join(f"'{company_id}'" for company_id in COMPANY_IDS)
+    per_company = client.read(
+        f"SELECT company_id, count() FROM {tables.QUALIFIED_MAIN_TABLE} FINAL "
+        f"WHERE company_id IN ({ids}) GROUP BY company_id ORDER BY company_id"
+    )
+    # Every company in the fixture still has its rows, and every one of those rows -- active,
+    # hidden and withdrawn alike -- came back unchanged: the ClickHouse row count for the
+    # fixture equals what fourth reports as `unchanged`.
+    assert {row[0] for row in per_company} == set(COMPANY_IDS)
+    assert counts.unchanged == sum(int(count) for _, count in per_company)
+    history = client.read(
+        f"SELECT count() FROM {tables.QUALIFIED_HISTORY_TABLE} WHERE fold_run_id = 'run-4'"
+    )
+    assert history == [["0"]]
 
 
 def test_no_company_ever_carries_one_person_key_twice(folded) -> None:

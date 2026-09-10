@@ -1,5 +1,7 @@
-"""Wiring of the person fold assets: 64 bucket partitions, NO pool (this fold opens no
-DuckDB, so buckets run in parallel), config bounds, and the targeted fold's order."""
+"""Wiring of the person fold assets: 64 bucket partitions, the bucket fold pooled at
+FOLD_POOL (its page read is a full table scan, so a backfill runs one bucket at a time) while
+the targeted fold stays unpooled (a few ids, primary-key reads), config bounds, and the
+targeted fold's order."""
 
 from types import SimpleNamespace
 
@@ -9,21 +11,31 @@ import pytest
 from dagster_v3.defs.se_company.person import assets, batch
 
 
-def test_the_fold_has_sixty_four_bucket_partitions_and_no_pool() -> None:
+def test_the_fold_has_sixty_four_bucket_partitions() -> None:
     keys = assets.PERSON_FOLD_PARTITIONS.get_partition_keys()
     assert keys[0] == "bucket_00" and keys[-1] == "bucket_63" and len(keys) == batch.BUCKET_COUNT
     fold = assets.se_company_person_fold
     assert fold.partitions_def is assets.PERSON_FOLD_PARTITIONS
     assert fold.backfill_policy == dg.BackfillPolicy.multi_run(max_partitions_per_run=1)
     for asset in (fold, assets.se_company_person_fold_companies):
-        assert asset.op.pool is None
         assert set(asset.required_resource_keys) >= {"clickhouse"}
         assert asset.group_names_by_key[asset.key] == assets.GROUP_NAME
 
 
+def test_the_bucket_fold_is_pooled_and_the_targeted_fold_is_not() -> None:
+    """The bucket fold's page read is a full scan (the bucket hash scatters ids over the
+    whole primary key), so a wide backfill would press the server's memory unpooled --
+    controller ruling 2026-09-10. The targeted fold reads a few ids by primary key and stays
+    unpooled."""
+    assert assets.se_company_person_fold.op.pool == assets.FOLD_POOL
+    assert assets.FOLD_POOL == "se_company_person_fold"
+    assert assets.se_company_person_fold_companies.op.pool is None
+
+
 def test_the_normalize_asset_keeps_its_own_pool() -> None:
-    """The fold has no pool; the normalize asset's stays as slice 0 shipped it."""
+    """The normalize asset's pool stays as slice 0 shipped it, distinct from FOLD_POOL."""
     assert assets.se_company_person_normalize.op.pool == assets.NORMALIZE_POOL
+    assert assets.NORMALIZE_POOL != assets.FOLD_POOL
 
 
 def test_bucket_index_parses_and_refuses() -> None:

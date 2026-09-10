@@ -76,6 +76,7 @@ def test_two_sources_spelling_one_name_are_one_person() -> None:
     assert len(result.rows) == 1
     assert result.rows[0].sources == ("bolagsverket", "esef")
     assert result.persons == 1
+    assert result.sets_split_by_birth_year == 0
 
 
 def test_anna_folds_with_anna_maria_when_she_is_the_only_more_complete_name() -> None:
@@ -149,14 +150,19 @@ def test_a_year_less_row_between_two_birth_years_splits_by_year() -> None:
     """The year-less Anna Maria matches both dated rows through the middle-name rule, so the
     closed set holds two years and is split; she attaches to the sub-set she matched
     through, the smallest year on a genuine tie."""
-    sets = identity_sets([
+    rows = [
         row("bolagsverket", "s1", middles=("maria",), birth_year=1970),
         row("bolagsverket", "s2", middles=("maria",), birth_year=1980),
         row("esef", "e1", middles=("maria",)),
-    ])
+    ]
+    sets = identity_sets(rows)
     assert len(sets) == 2
     by_year = {members[0].birth_year: {member.slot for member in members} for members in sets}
     assert by_year == {1970: {"s1", "e1"}, 1980: {"s2"}}
+    # The counter Task 6 reads as an acceptance readout must actually move: a bug pinning it
+    # to 0 would otherwise pass every other assertion here.
+    result = fold(rows)
+    assert result.sets_split_by_birth_year == 1
 
 
 def test_the_canonical_key_is_stable_across_two_folds() -> None:

@@ -190,10 +190,12 @@ def _split_by_birth_year(
 
 def identity_sets_before_split(
     rows: Sequence[NormalizedRow],
-) -> tuple[tuple[NormalizedRow, ...], ...]:
+) -> tuple[tuple[tuple[NormalizedRow, ...], ...], dict]:
     """The transitive closure of the guarded relation, BEFORE the birth-year split (spec
-    5.1). `fold_company_persons` counts the sets this returns that still hold two years, for
-    the `sets_split_by_birth_year` metric.
+    5.1), together with the (name -> middle-token-sets) map it builds along the way.
+    `fold_company_persons` counts the sets this returns that still hold two years, for the
+    `sets_split_by_birth_year` metric, and passes the map straight into `_split_sets` rather
+    than rebuilding it with a second `_middles_by_name(rows)` call.
 
     Every matching pair shares either the (first_tokens, last_tokens) pair or a QID, so the
     closure is computed inside those two groupings -- never over all pairs, which for a
@@ -228,7 +230,7 @@ def identity_sets_before_split(
     grouped: dict[int, list[NormalizedRow]] = defaultdict(list)
     for index, row in enumerate(ordered):
         grouped[find(index)].append(row)
-    return tuple(tuple(grouped[root]) for root in sorted(grouped))
+    return tuple(tuple(grouped[root]) for root in sorted(grouped)), middles_by_name
 
 
 def _split_sets(
@@ -247,7 +249,8 @@ def _split_sets(
 def identity_sets(rows: Sequence[NormalizedRow]) -> tuple[tuple[NormalizedRow, ...], ...]:
     """The company's persons as sets of observations: the closure, then the birth-year
     split of any set that still holds two years (spec 5.1)."""
-    return _split_sets(identity_sets_before_split(rows), _middles_by_name(rows))
+    closed, middles_by_name = identity_sets_before_split(rows)
+    return _split_sets(closed, middles_by_name)
 
 
 def canonical_tokens(members: Sequence[NormalizedRow]) -> tuple[str, ...]:
@@ -682,9 +685,11 @@ def fold_company_persons(
                 f"rule {rule.rule_id!r} company_id {rule.company_id!r} is not {company_id!r}"
             )
 
-    # One closure per company: the published sets and the split metric both come off it.
-    closed = identity_sets_before_split(rows)
-    grouped = _split_sets(closed, _middles_by_name(rows))
+    # One closure per company: the published sets and the split metric both come off it, and
+    # the (name -> middle-token-sets) map identity_sets_before_split already built for it
+    # feeds straight into _split_sets instead of being rebuilt.
+    closed, middles_by_name = identity_sets_before_split(rows)
+    grouped = _split_sets(closed, middles_by_name)
     sets_split = sum(
         1
         for members in closed

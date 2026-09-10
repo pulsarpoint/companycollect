@@ -1,8 +1,8 @@
-# se_company.person (slices 0-1)
+# se_company.person (slices 0-2)
 
 The shipped part of the 2026-09-09 SE company person entity design
 (`docs/superpowers/specs/2026-09-09-se-company-person-entity-design.md`); read that for
-everything past the modules below -- the fold and the backoffice.
+everything past the modules below -- the backoffice.
 
 | Module | Responsibility |
 | --- | --- |
@@ -19,7 +19,7 @@ everything past the modules below -- the fold and the backoffice.
 | `precedence.py` | The `name` spelling order (`PERSON_PRECEDENCE`, `precedence_for`, `precedence_rows`): reviewer 20000, ratsit 1000 (reserved), bolagsverket 900, wikidata 600, esef 400. It decides the published spelling and the `data` merge, never who is published |
 | `fold.py` | The pure fold: identity sets (equal first/last tokens with the unique-minimal-superset middle rule, or a shared QID, never across two birth years), the canonical name and `person_key`, the reviewer rules, the member/roles/`data` blocks, the lifecycle diff and the history entries |
 | `batch.py` | The fold's SQL and paging: selection, the four page reads under `FINAL`, history-then-main writes, `FoldCounts`, `fold_companies`, `fold_bucket` |
-| `se_company_person_fold` | 64 static buckets (`bucket_00`..`bucket_63`, `modulo(cityHash64(company_id), 64)`), no pool, `BackfillPolicy.multi_run(max_partitions_per_run=1)`; config `changed_only` (default true) and `page_size` (default 20,000) |
+| `se_company_person_fold` | 64 static buckets (`bucket_00`..`bucket_63`, `modulo(cityHash64(company_id), 64)`), `BackfillPolicy.multi_run(max_partitions_per_run=1)`, pooled at `FOLD_POOL` (limit 1) so a backfill runs one bucket at a time -- a page's `FINAL` read of the normalized table is a full scan (controller ruling 2026-09-10); config `changed_only` (default true) and `page_size` (default 20,000) |
 | `se_company_person_fold_companies` | The targeted fold for the backoffice's Fold now: normalizes `company_ids` first (always `changed_only`), then folds them (`changed_only` false by default) |
 | `se_company_person_precedence_clickhouse` | Exports `PERSON_PRECEDENCE` as the global (`company_id = ''`, `field = 'name'`) rows; re-running it re-folds every company |
 
@@ -190,3 +190,23 @@ global precedence export's stamp — so re-exporting the dictionary re-folds eve
 once. Re-running a folded bucket selects nothing, because the fold rewrites every row of
 every folded company with the run's `folded_at`, whether or not anything changed; the history
 table is what records what actually changed.
+
+## Known limits
+
+- **A split rule goes stale every filing year.** `_apply_split` pins the rule's `slots`, but
+  Bolagsverket mints a brand-new slot (`<statement_key>:<signatory_uid>`) on every annual
+  report, so the person a reviewer split out rejoins the very set it was split from the moment
+  next year's filing lands, silently. Merge and hide survive a re-key (they resolve through
+  the previous published members, and old slots persist for ever); split alone does not.
+  Slice 3 must decide how the backoffice expresses a durable split -- a ruling to take there,
+  not here.
+- **The bucket fold is serial behind `FOLD_POOL`.** A page's `current_normalized_sql` read is
+  a `FINAL` scan of the normalized table, and the bucket hash scatters a page's ids over the
+  whole primary key, so nearly every granule matches: measured on prod at 5.6M rows / 2.57
+  GiB / 7.7 s / 366 MiB for one 9,000-company page. 64 of those in parallel would press the
+  server's memory, so the asset is pooled at limit 1 and a backfill runs one bucket at a time
+  (~30 s each, ~30 min for all 64).
+- **An idle precedence re-export no longer moves the watermark.** `export_precedence` reads
+  the stored global rows first and inserts nothing when they already equal
+  `precedence_rows()`, so a "materialise everything" click on an unchanged dictionary does not
+  re-stamp `decided_at` and therefore does not re-select every company on the next fold.

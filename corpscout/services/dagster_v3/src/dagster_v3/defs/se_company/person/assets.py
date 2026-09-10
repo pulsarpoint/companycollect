@@ -31,6 +31,14 @@ from dagster_v3.defs.se_company.person.precedence import precedence_rows
 
 GROUP_NAME = "se_company_person"
 NORMALIZE_POOL = "se_company_person_normalize"
+# The bucket fold's page read is a full scan of the normalized table (the bucket hash
+# scatters a page's ids over the whole primary key: 5.6M rows, 366 MiB, 7.7 s per page on
+# prod), so 64 buckets unpooled would exceed the server's memory under a wide backfill. The
+# instance defaults every pool to limit 1 (dagster.yaml), so this pool serializes buckets:
+# about 30 s each, ~30 min for all 64 (controller ruling 2026-09-10, over the plan's "no
+# pool"). The targeted fold below (se_company_person_fold_companies, a few ids, primary-key
+# reads) stays unpooled -- it never scans the whole table.
+FOLD_POOL = "se_company_person_fold"
 EXTRACTOR_SOURCES: tuple[str, ...] = ("bolagsverket", "esef", "wikidata")
 EXTRACTOR_ASSET_NAMES: tuple[str, ...] = tuple(
     f"se_company_person_suggestions_{source}" for source in EXTRACTOR_SOURCES
@@ -96,24 +104,43 @@ def export_precedence(client: Any, exported_at: datetime) -> tuple[int, int]:
     """Insert every (field, source, precedence) pair as a global rule (company_id '',
     decided_by 'code') and count global rules exported before this run that the dictionary
     no longer names. Returns (pairs inserted, stale pairs remaining). Never touches a
-    company-scoped row."""
-    rows = [
-        ("", field, source, precedence, 0, "code", "", exported_at)
-        for field, source, precedence in precedence_rows()
-    ]
-    client.execute(
-        f"INSERT INTO {tables.QUALIFIED_PRECEDENCE_TABLE} "
-        f"({', '.join(tables.PRECEDENCE_COLUMNS)}) VALUES",
-        rows,
-    )
+    company-scoped row.
+
+    `decided_at` is one of the fold's selection watermarks (batch.py's
+    `global_precedence_watermark_sql`), so writing a fresh one when nothing actually changed
+    would re-fold every company on an idle re-materialisation. Read the stored global rows
+    first: when they already equal `precedence_rows()`, insert nothing and report 0 pairs
+    (the caller reads that as `unchanged`); otherwise (a first export against an empty table,
+    or a changed dictionary) insert the five rows as before."""
+    wanted = precedence_rows()
+    stored = {
+        tuple(row)
+        for row in client.execute(
+            f"SELECT field, source, precedence FROM {tables.QUALIFIED_PRECEDENCE_TABLE} "
+            "FINAL WHERE company_id = '' AND removed = 0"
+        )
+    }
+    pairs = 0
+    if stored != set(wanted):
+        rows = [
+            ("", field, source, precedence, 0, "code", "", exported_at)
+            for field, source, precedence in wanted
+        ]
+        client.execute(
+            f"INSERT INTO {tables.QUALIFIED_PRECEDENCE_TABLE} "
+            f"({', '.join(tables.PRECEDENCE_COLUMNS)}) VALUES",
+            rows,
+        )
+        pairs = len(rows)
     stale = int(
         client.execute(
             f"SELECT count() FROM {tables.QUALIFIED_PRECEDENCE_TABLE} FINAL "
-            "WHERE company_id = '' AND decided_at < toDateTime64(%(exported_at)s, 3, 'UTC')",
+            "WHERE company_id = '' AND removed = 0 "
+            "AND decided_at < toDateTime64(%(exported_at)s, 3, 'UTC')",
             {"exported_at": _precedence_export_timestamp(exported_at)},
         )[0][0]
     )
-    return len(rows), stale
+    return pairs, stale
 
 
 @dg.asset(
@@ -125,8 +152,10 @@ def export_precedence(client: Any, exported_at: datetime) -> tuple[int, int]:
         "Exports PERSON_PRECEDENCE to se_company_person_precedence as global rules "
         "(company_id '', field 'name') for the fold and the backoffice to read. The Python "
         "dictionary is the only source for these rows; re-run after changing it, which "
-        "re-folds every company (the export's stamp is newer than their last fold). Never "
-        "touches a company-scoped row."
+        "re-folds every company (the export's stamp is newer than their last fold). Idle "
+        "re-materialisation is a no-op: when the stored rows already match the dictionary, "
+        "nothing is written and the watermark does not move. Never touches a company-scoped "
+        "row."
     ),
 )
 def se_company_person_precedence_clickhouse(
@@ -145,7 +174,10 @@ def se_company_person_precedence_clickhouse(
             stale,
         )
     return dg.MaterializeResult(
-        metadata={"pairs": pairs, "stale_pairs": stale, "table": tables.QUALIFIED_PRECEDENCE_TABLE}
+        metadata={
+            "pairs": pairs, "stale_pairs": stale, "unchanged": pairs == 0,
+            "table": tables.QUALIFIED_PRECEDENCE_TABLE,
+        }
     )
 
 
@@ -234,6 +266,7 @@ def targeted_fold(
     partitions_def=PERSON_FOLD_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     group_name=GROUP_NAME,
+    pool=FOLD_POOL,
     kinds={"clickhouse", "python"},
     metadata={
         "table": tables.QUALIFIED_MAIN_TABLE,
@@ -244,8 +277,10 @@ def targeted_fold(
         "into se_company_person_v2: observations of one person merge into one row with every "
         "source, reviewer rules hide, merge and split, previously published keys without a "
         "set are withdrawn, and every change is appended to se_company_person_history first. "
-        "No pool: this fold opens no DuckDB, so buckets run in parallel. Manual: launch a "
-        "partition or a backfill from the UI."
+        "Pooled at FOLD_POOL (instance default limit 1): a page's FINAL read of the "
+        "normalized table is a full scan (the bucket hash scatters its ids over the whole "
+        "primary key), so a backfill runs one bucket at a time -- about 30 s each, ~30 min "
+        "for all 64. Manual: launch a partition or a backfill from the UI."
     ),
 )
 def se_company_person_fold(
