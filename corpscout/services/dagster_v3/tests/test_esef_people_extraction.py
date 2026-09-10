@@ -332,7 +332,21 @@ def test_people_run_writes_one_extraction_row_per_document() -> None:
     )
     assert inserted["source_document_id"] == "AAK-2024"
     assert inserted["extraction_status"] == "extracted"
-    assert json.loads(str(inserted["people_json"]))[0]["name"] == "Anna Andersson"
+    # The canned response's one person, after the run's own citation
+    # normalisation (unchanged here: E0001 is in the people_and_audit
+    # segment) -- every field the model returned, not just the name.
+    expected_person = {
+        "name": "Anna Andersson",
+        "role": "Chief Executive Officer",
+        "role_category": "chief_executive",
+        "organization": "AAK AB",
+        "status": "current",
+        "effective_from": None,
+        "effective_to": None,
+        "evidence_ids": ["E0001"],
+        "confidence": 0.98,
+    }
+    assert json.loads(str(inserted["people_json"])) == [expected_person]
     assert inserted["extraction_artifact_object_key"] == output_key
     assert inserted["input_artifact_object_key"].startswith("clickhouse://")
     assert inserted["llm_request_object_key"] == request_keys[0]
