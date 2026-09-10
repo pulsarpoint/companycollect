@@ -743,13 +743,20 @@ def _write_invalid_response_artifact(
     raw_response: str,
     validation_summary: str,
     exc_text: str,
-) -> str:
+    log_info: Callable[..., object],
+) -> str | None:
     """Archive an invalid model response beside its (never-written) artifact.
 
     The output key always ends in ``artifact.json``; this keeps everything
     ahead of that -- schema/prompt/model/package/request path segments -- and
     swaps in ``invalid_response.json`` so the raw text sits right next to
     where the validated artifact would have landed.
+
+    This archive is best-effort: it is already handling a failed document, so
+    an object-store error here must not propagate and stop the rest of the
+    batch. The write is caught, logged, and swallowed -- returning ``None``
+    tells the caller to fall back to the ordinary failure log line and leave
+    ``invalid_response_artifact_count`` unchanged.
     """
     invalid_response_key = (
         work.output_key.removesuffix("artifact.json") + "invalid_response.json"
@@ -762,16 +769,28 @@ def _write_invalid_response_artifact(
         "validation_summary": validation_summary,
         "raw_response": raw_response,
     }
-    object_store.write_bytes(
-        invalid_response_key,
-        json.dumps(
-            invalid_response_document,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8"),
-        bucket=ESEF_DOCUMENT_BUCKET,
-    )
+    body = json.dumps(
+        invalid_response_document,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    try:
+        object_store.write_bytes(
+            invalid_response_key,
+            body,
+            bucket=ESEF_DOCUMENT_BUCKET,
+        )
+    except Exception as exc:  # noqa: BLE001 - best-effort archive, must not stop the batch
+        log_info(
+            "ESEF LLM could not keep the invalid response for document %s at %s: "
+            "%s: %s",
+            source_document_id,
+            invalid_response_key,
+            type(exc).__name__,
+            str(exc)[:300],
+        )
+        return None
     return invalid_response_key
 
 
@@ -811,6 +830,7 @@ def _process_pass_outcomes(
             exc_text = str(exc)[:300] if exc is not None else ""
             source_document_id = str(work.document["source_document_id"])
             raw_response = getattr(exc, "raw_response", None)
+            invalid_response_key = None
             if outcome.failure_kind == "invalid_response" and raw_response:
                 validation_summary = (
                     getattr(exc, "validation_summary", None) or exc_text
@@ -822,8 +842,11 @@ def _process_pass_outcomes(
                     raw_response=raw_response,
                     validation_summary=validation_summary,
                     exc_text=exc_text,
+                    log_info=log_info,
                 )
-                invalid_response_artifact_count += 1
+                if invalid_response_key is not None:
+                    invalid_response_artifact_count += 1
+            if invalid_response_key is not None:
                 log_info(
                     "ESEF LLM request failed for document %s "
                     "(invalid_response: %s); response kept at %s; "

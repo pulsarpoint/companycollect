@@ -785,3 +785,156 @@ def test_people_run_keeps_the_raw_response_when_validation_fails() -> None:
     assert isinstance(stored["request_sha256"], str) and stored["request_sha256"]
 
     assert any("response kept at" in line for line in log_lines)
+
+
+class _RaisingOnInvalidResponseObjectStore(_FakeObjectStore):
+    """A store whose ``invalid_response.json`` archive write always fails.
+
+    Simulates an object-store outage hitting only the best-effort
+    invalid-response archive, so a test can assert that failure never
+    propagates out of the outcome loop and stops the rest of the batch.
+    """
+
+    def write_bytes(
+        self,
+        key: str,
+        body: bytes,
+        bucket: str | None = None,
+    ) -> None:
+        if key.endswith("invalid_response.json"):
+            raise RuntimeError("simulated object store outage")
+        super().write_bytes(key, body, bucket=bucket)
+
+
+def test_people_run_survives_a_store_failure_while_archiving_an_invalid_response() -> (
+    None
+):
+    # Two documents in one run: AAK-2024's response fails schema validation
+    # and the invalid_response.json archive write itself raises (a simulated
+    # object-store outage); AAK-2025's response is valid. The archive write
+    # is best-effort and must not propagate out of the outcome loop -- the
+    # valid document's row is still inserted, the failed document counts
+    # toward failed_document_count but NOT invalid_response_artifact_count
+    # (the archive never landed), and the outage is logged.
+    disclosure_rows, label_rows = _segment_artifact_clickhouse_rows()
+    source_document_id_index = tables.ESEF_DISCLOSURES_EXPORT_COLUMNS.index(
+        "source_document_id"
+    )
+    second_disclosure_rows = [
+        tuple(
+            "AAK-2025" if index == source_document_id_index else value
+            for index, value in enumerate(row)
+        )
+        for row in disclosure_rows
+    ]
+    second_label_rows = [("AAK-2025", *row[1:]) for row in label_rows]
+
+    first_document_row = _source_document_clickhouse_row()
+    second_document_row = (
+        "AAK-2025",
+        "e" * 64,
+        "549300GK4LGIDDWJWL07",
+        "2024-12-31",
+        2024,
+        "https://example.test/aak.zip",
+        ARTIFACT_SCHEMA_VERSION,
+        "",
+        "",
+    )
+    clickhouse = _FakeClickHouse(
+        [
+            [first_document_row, second_document_row],
+            disclosure_rows + second_disclosure_rows,
+            label_rows + second_label_rows,
+            [(tables.ESEF_DOCUMENT_PEOPLE_EXTRACTION_TABLE,)],
+        ]
+    )
+    object_store = _RaisingOnInvalidResponseObjectStore({})
+
+    invalid_content = json.dumps({"company_description": None})
+    valid_content = json.dumps(
+        {
+            "people": [
+                {
+                    "name": "Anna Andersson",
+                    "role": "Chief Executive Officer",
+                    "role_category": "chief_executive",
+                    "organization": "AAK AB",
+                    "status": "current",
+                    "effective_from": None,
+                    "effective_to": None,
+                    "evidence_ids": ["E0001"],
+                    "confidence": 0.98,
+                }
+            ]
+        }
+    )
+    responses = iter([invalid_content, valid_content])
+    client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(
+                create=lambda **_kwargs: SimpleNamespace(
+                    id="response",
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(content=next(responses)),
+                        )
+                    ],
+                    usage=None,
+                )
+            )
+        )
+    )
+    log_lines: list[str] = []
+
+    def _capture_log(message: str, *args: object) -> None:
+        log_lines.append(message % args)
+
+    metadata = run_esef_people_extraction(
+        clickhouse=clickhouse,
+        object_store=object_store,
+        client=client,  # type: ignore[arg-type]
+        model="deepseek-v4-flash",
+        source_run_id="people-run-6",
+        source_document_ids=["AAK-2024", "AAK-2025"],
+        country_iso2s=[],
+        link_statuses=["register_verified"],
+        company_ids=[],
+        max_documents=None,
+        refresh_existing=False,
+        max_evidence_chars=64_000,
+        log_info=_capture_log,
+    )
+
+    assert metadata["attempted_document_count"] == 2
+    assert metadata["failed_document_count"] == 1
+    assert metadata["invalid_response_artifact_count"] == 0
+    assert metadata["extracted_document_count"] == 1
+    assert metadata["processed_document_count"] == 1
+    assert metadata["extraction_row_count"] == 1
+
+    people_insert = next(
+        parameters
+        for sql, parameters in clickhouse.client.calls
+        if "esef_document_people_extraction" in sql and " VALUES" in sql
+    )
+    [inserted_values] = people_insert
+    inserted = dict(
+        zip(
+            tables.ESEF_DOCUMENT_PEOPLE_EXTRACTION_EXPORT_COLUMNS,
+            inserted_values,
+            strict=True,
+        )
+    )
+    assert inserted["source_document_id"] == "AAK-2025"
+    assert inserted["extraction_status"] == "extracted"
+
+    invalid_response_keys = [
+        key
+        for bucket, key in object_store.objects
+        if bucket == ESEF_DOCUMENT_BUCKET and key.endswith("/invalid_response.json")
+    ]
+    assert invalid_response_keys == []
+    assert any(
+        "could not keep the invalid response" in line for line in log_lines
+    )
