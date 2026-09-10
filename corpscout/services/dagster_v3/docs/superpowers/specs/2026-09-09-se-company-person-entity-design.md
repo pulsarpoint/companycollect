@@ -114,11 +114,13 @@ normalized_at         DateTime64(3, 'UTC')
 ENGINE ReplacingMergeTree(normalized_at) ORDER BY (company_id, source, slot)
 ```
 
-### 3.3 `se_company_person_v2` (main, renamed to `se_company_person` in the last slice)
+### 3.3 `se_company_person` (main)
 
-One row per company and person. Built as `_v2` because the old table holds the name until
-slice 0 drops it; the rename is a `RENAME TABLE` plus `MODIFY QUERY` on the serving view, the
-proven address recipe.
+One row per company and person. BUILT as `se_company_person_v2` because the 2026-08-19 table
+held the final name until slice 0 dropped it, and renamed by migration 000398 in slice 4 with
+a `RENAME TABLE` plus `MODIFY QUERY` on the serving view -- the proven address recipe
+(000393). 000396's DDL still declares the build name, under the ledger policy that a
+historical migration file is history.
 
 ```
 company_id            String
@@ -558,9 +560,9 @@ before the next; shipped records are appended here as for addresses.
 
 ## 10. Names
 
-Tables `se_company_person_suggestion`, `se_company_person_normalized`, `se_company_person_v2`
-(renamed `se_company_person` in slice 4), `se_company_person_history`, `se_company_person_rule`,
-`se_company_person_precedence`; catalog `company_person_role_type` (kept). Package
+Tables `se_company_person_suggestion`, `se_company_person_normalized`, `se_company_person`,
+`se_company_person_history`, `se_company_person_rule`, `se_company_person_precedence`;
+catalog `company_person_role_type` (kept). Package
 `dagster_v3.defs.se_company.person` (`tables`, `normalize_se`, `normalize`, `suggestions`,
 `bolagsverket`, `esef`, `wikidata`, `precedence`, `fold`, `batch`, `assets`, `jobs`, later
 `ratsit`). Assets `se_company_person_suggestions_<source>`, `se_company_person_normalize`,

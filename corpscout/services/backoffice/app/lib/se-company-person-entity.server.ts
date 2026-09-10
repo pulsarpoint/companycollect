@@ -58,7 +58,7 @@ import { SE_COMPANY_PERSON_TABLE } from "~/lib/se-person-tables";
 /* The rows, as the six reads deliver them                              */
 /* ------------------------------------------------------------------ */
 
-/** One published person (`se_company_person_v2`, the 29 columns of
+/** One published person (`se_company_person`, the 29 columns of
  * `tables.MAIN_COLUMNS`). `member_*` and `normalized_ids` are index-parallel -- one
  * entry per member; `sources` is the DISTINCT member sources and is never zipped with
  * them. `role_codes`, `role_years` and `role_sources` are a parallel triple of their

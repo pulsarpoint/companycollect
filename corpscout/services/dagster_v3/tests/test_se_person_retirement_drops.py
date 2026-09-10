@@ -7,6 +7,10 @@ standing between a typo and a dropped production table. It reads the SQL, parses
 names out, and compares them as WHOLE names -- corpscout.se_company_person is a prefix of
 five entries here AND of the six tables the entity keeps, and company_person_role prefixes
 the role catalog that stays.
+
+BOTH SCRIPTS ARE SPENT: they ran on prod on 2026-09-09, and migration 000398 has since given
+the name of their last DROP -- corpscout.se_company_person -- to the entity's live main
+table. Re-running se_person_retirement_drops.sql would destroy it. See REUSED_NAME below.
 """
 
 import re
@@ -44,13 +48,14 @@ DROP_ORDER = (
     ("TABLE", "se_company_person"),
 )
 
-# Never droppable. The entity's six tables (se_company_person_v2 and its siblings), the role
-# catalog Serbia shares, the raw sources every extractor will read in slice 1, and the
-# serving view.
+# Never droppable, at the names the entity carries TODAY: migration 000398 renamed
+# se_company_person_v2 to se_company_person, so the main table joins its five siblings here
+# under the live name. Also the role catalog Serbia shares, the raw sources every extractor
+# reads, and the serving view.
 KEPT = (
+    "se_company_person",
     "se_company_person_suggestion",
     "se_company_person_normalized",
-    "se_company_person_v2",
     "se_company_person_history",
     "se_company_person_rule",
     "se_company_person_precedence",
@@ -62,6 +67,13 @@ KEPT = (
     "wikidata_company_identifiers",
     "se_companies_serving",
 )
+
+# The one name on both lists, and the reason this file exists. corpscout.se_company_person
+# was the 2026-08-19 table this script dropped on 2026-09-09; migration 000398 then gave the
+# freed name to the entity's main table. THE SCRIPT IS SPENT -- running it again today would
+# destroy 1.1M published persons. It stays in the repo as history under the ledger policy and
+# must never be run a second time.
+REUSED_NAME = "se_company_person"
 
 _DROP = re.compile(r"^DROP (TABLE|VIEW) IF EXISTS corpscout\.(\w+);$", re.MULTILINE)
 
@@ -77,12 +89,16 @@ def test_the_drop_script_drops_exactly_the_retirement_list_in_order() -> None:
 def test_the_drop_script_names_no_kept_object() -> None:
     """Whole-name comparison. A substring check would call se_company_person_role a hit on
     the entity's se_company_person_rule, or -- written the other way round -- would call
-    company_person_role_type unsafe because company_person_role is being dropped."""
+    company_person_role_type unsafe because company_person_role is being dropped.
+
+    REUSED_NAME is excluded rather than the check being weakened: the script's last DROP and
+    the entity's main table spell the same name for different objects, one dropped on
+    2026-09-09 and one created by 000398's rename a day later."""
     dropped = {name for _, name in _statements(DROPS)}
-    assert dropped.isdisjoint(KEPT)
+    assert dropped.isdisjoint(set(KEPT) - {REUSED_NAME})
     assert len(dropped) == len(DROP_ORDER)
     assert "se_company_person_v2" not in dropped
-    assert "se_company_person" in dropped
+    assert dropped & set(KEPT) == {REUSED_NAME}
 
 
 def test_the_three_source_views_are_the_only_drop_views() -> None:
@@ -133,8 +149,10 @@ def test_the_precheck_counts_the_three_plain_views_itself() -> None:
 
 
 def test_the_precheck_gates_on_the_serving_view_being_repointed() -> None:
-    """The one reader that must be off the old tables before they go. Migration 000396 does
-    that; this gate proves it landed."""
+    """The one reader that had to be off the old tables before they went. Migration 000396
+    did that, and this gate proves it landed. The literal stays se_company_person_v2 on
+    purpose: the precheck ran on 2026-09-09, before 000398 renamed the entity, and a spent
+    operations script is history like a migration file."""
     sql = PRECHECK.read_text(encoding="utf-8")
     assert "se_company_person_v2" in sql
     assert "system.view_refreshes" in sql

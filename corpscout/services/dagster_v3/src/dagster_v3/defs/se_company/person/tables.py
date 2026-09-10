@@ -1,13 +1,15 @@
 """Table names and column tuples of the person entity, pinned against migration 000396.
 
-The main table is se_company_person_v2 for slices 0 to 3; slice 4 renames it to
-se_company_person, which is why MAIN_TABLE is the one place the name appears.
+The main table is se_company_person since migration 000398 (slice 4). It was BUILT as
+se_company_person_v2, because the 2026-08-19 table held the final name until slice 0 dropped
+it, and 000396's DDL still declares it under that build name -- the rename is a RENAME TABLE
+on the deployed database, and MAIN_TABLE is the one place this package spells it.
 """
 
 DATABASE = "corpscout"
 SUGGESTION_TABLE = "se_company_person_suggestion"
 NORMALIZED_TABLE = "se_company_person_normalized"
-MAIN_TABLE = "se_company_person_v2"
+MAIN_TABLE = "se_company_person"
 HISTORY_TABLE = "se_company_person_history"
 RULE_TABLE = "se_company_person_rule"
 PRECEDENCE_TABLE = "se_company_person_precedence"

@@ -1,6 +1,6 @@
 /**
  * The `/admin/se/people` list (person spec section 7): one row per published person of
- * `se_company_person_v2`, read through FINAL, filtered, counted and paged server-side.
+ * `se_company_person`, read through FINAL, filtered, counted and paged server-side.
  * No writes and no fold -- the company's People tab owns every decision.
  *
  * The company NAME is not on the person table (there is no cross-company person

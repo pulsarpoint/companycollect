@@ -197,7 +197,7 @@ const PRECEDENCE_ROWS = [
 ];
 
 function answer(sql: string): unknown[] {
-  if (sql.includes("FROM corpscout.se_company_person_v2 AS m FINAL")) return [MERGED_ROW, WIKI_ROW];
+  if (sql.includes("FROM corpscout.se_company_person AS m FINAL")) return [MERGED_ROW, WIKI_ROW];
   if (sql.includes("FROM corpscout.se_company_person_history")) return [HISTORY_ROW];
   if (sql.includes("FROM corpscout.se_company_person_normalized")) return NORMALIZED_ROWS;
   if (sql.includes("FROM corpscout.se_company_person_suggestion")) return RAW_ROWS;
@@ -224,7 +224,8 @@ describe("se-company-person-entity.server", () => {
   });
 
   it("pins every read to the entity's tables, FINAL where a current version is needed, the company parameter and string keys", () => {
-    expect(PERSON_MAIN_SQL).toContain("FROM corpscout.se_company_person_v2 AS m FINAL");
+    expect(PERSON_MAIN_SQL).toContain("FROM corpscout.se_company_person AS m FINAL");
+    expect(PERSON_MAIN_SQL).not.toContain("se_company_person_v2");
     expect(PERSON_MAIN_SQL).toContain("WHERE m.company_id = {companyId:String}");
     expect(PERSON_MAIN_SQL).toContain("toString(m.person_key) AS person_key");
     expect(PERSON_MAIN_SQL).toContain("arrayMap(x -> toString(x), m.normalized_ids) AS normalized_ids");

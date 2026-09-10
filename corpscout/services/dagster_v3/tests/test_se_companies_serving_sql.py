@@ -403,11 +403,12 @@ def _script(*, join_use_nulls: int) -> str:
         "CREATE TABLE corpscout.company_identifier (company_id String, issuer_scheme String, country_code String, is_current UInt8, issuer_id String) ENGINE = MergeTree ORDER BY company_id;",
         "CREATE TABLE corpscout.esef_financial_metrics (lei String) ENGINE = MergeTree ORDER BY lei;",
         "CREATE TABLE corpscout.se_financial_reports (company_id String) ENGINE = MergeTree ORDER BY company_id;",
-        # The person entity's main table (migration 000396) -- read FINAL, active rows only.
-        # Only the three columns the serving SELECT's IN-subqueries touch. ReplacingMergeTree
-        # (not plain MergeTree, which this ClickHouse rejects with ILLEGAL_FINAL) so the
-        # stub accepts the same FINAL modifier the real table's engine does.
-        "CREATE TABLE corpscout.se_company_person_v2 (company_id String, sources Array(String), active UInt8) ENGINE = ReplacingMergeTree ORDER BY company_id;",
+        # The person entity's main table (migration 000396, renamed by 000398) -- read
+        # FINAL, active rows only. Only the three columns the serving SELECT's IN-subqueries
+        # touch. ReplacingMergeTree (not plain MergeTree, which this ClickHouse rejects with
+        # ILLEGAL_FINAL) so the stub accepts the same FINAL modifier the real table's engine
+        # does.
+        "CREATE TABLE corpscout.se_company_person (company_id String, sources Array(String), active UInt8) ENGINE = ReplacingMergeTree ORDER BY company_id;",
         "CREATE TABLE corpscout.company_domains (company_id String, country_code String) ENGINE = MergeTree ORDER BY company_id;",
         "CREATE TABLE corpscout.company_traded_symbols (country_code String, company_id String) ENGINE = MergeTree ORDER BY company_id;",
         "CREATE TABLE corpscout.se_government_contracts (company_id String) ENGINE = MergeTree ORDER BY company_id;",
@@ -420,7 +421,7 @@ def _script(*, join_use_nulls: int) -> str:
         "INSERT INTO corpscout.se_code_labels VALUES ('status_reason', 'konkurs avslutad', 'Bankruptcy concluded', '', 1), ('legal_form', '49', 'Limited company (aktiebolag)', 'Aktiebolag', 1);",
         f"INSERT INTO corpscout.se_bolagsverket_financial_metrics VALUES ('{PRECISE}');",
         f"INSERT INTO corpscout.se_financial_reports VALUES ('{COARSE}');",
-        f"INSERT INTO corpscout.se_company_person_v2 VALUES ('{PRECISE}', ['esef'], 1);",
+        f"INSERT INTO corpscout.se_company_person VALUES ('{PRECISE}', ['esef'], 1);",
         # The SE filter must hold: UNGEOCODED's domain is Norwegian and must not count.
         f"INSERT INTO corpscout.company_domains VALUES ('{COARSE}', 'SE'), ('{UNGEOCODED}', 'NO');",
         # Market flags: PRECISE is listed (EODHD listings resolve); COARSE won a government

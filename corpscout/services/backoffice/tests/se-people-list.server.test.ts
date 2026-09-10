@@ -29,9 +29,11 @@ describe("se-people-list.server", () => {
   });
 
   it("reads the main table through FINAL, sorted by company then name, paged by parameter", () => {
-    expect(PEOPLE_LIST_SELECT_SQL).toContain("FROM corpscout.se_company_person_v2 AS p FINAL");
+    expect(PEOPLE_LIST_SELECT_SQL).toContain("FROM corpscout.se_company_person AS p FINAL");
+    expect(PEOPLE_LIST_SELECT_SQL).not.toContain("se_company_person_v2");
     expect(PEOPLE_LIST_SELECT_SQL).toContain("toString(p.person_key) AS person_key");
     expect(PEOPLE_LIST_SELECT_SQL).toContain("ifNull(toString(p.birth_year), '') AS birth_year");
+    expect(PEOPLE_COUNTS_SQL).toContain("FROM corpscout.se_company_person AS p FINAL");
     expect(PEOPLE_COUNTS_SQL).toContain("toString(countIf(p.active = 1)) AS active");
     expect(PEOPLE_COUNTS_SQL).toContain("toString(uniqExact(p.company_id)) AS companies");
     expect(PEOPLE_COMPANY_NAMES_SQL).toContain("FROM corpscout.se_companies_serving");
@@ -94,13 +96,15 @@ describe("se-people-list.server", () => {
 
   it("pages the persons under the resolved ids and names every company of the page in one lookup", async () => {
     clickhouse.query.mockImplementation(async (sql: string) => {
-      if (String(sql).includes("se_company_person_v2")) return [ROW];
+      if (String(sql).includes("corpscout.se_company_person AS p FINAL")) return [ROW];
       if (sql === PEOPLE_COMPANY_NAMES_SQL) return [{ company_id: "5560125220", legal_name: "Beijer" }];
       return [];
     });
     const page = await listSePeoplePage({ ...EMPTY, companyIds: ["5560125220"], page: 2, pageSize: 50 });
     expect(page.rows).toEqual([{ ...ROW, legal_name: "Beijer" }]);
-    const listCall = clickhouse.query.mock.calls.find(([sql]) => String(sql).includes("se_company_person_v2"));
+    const listCall = clickhouse.query.mock.calls.find(([sql]) =>
+      String(sql).includes("corpscout.se_company_person AS p FINAL"),
+    );
     expect(listCall?.[0]).toContain("WHERE p.company_id IN {companyIds:Array(String)}");
     expect(listCall?.[0]).toContain("ORDER BY p.company_id, p.display_name");
     expect(listCall?.[0]).toContain("LIMIT {limit:UInt32} OFFSET {offset:UInt32}");
@@ -110,7 +114,7 @@ describe("se-people-list.server", () => {
     });
     // A company the serving view has no row for reads blank, never `undefined`.
     clickhouse.query.mockImplementation(async (sql: string) =>
-      String(sql).includes("se_company_person_v2") ? [ROW] : [],
+      String(sql).includes("corpscout.se_company_person AS p FINAL") ? [ROW] : [],
     );
     expect((await listSePeoplePage({ ...EMPTY, companyIds: null, page: 1, pageSize: 50 })).rows[0]?.legal_name).toBe("");
   });

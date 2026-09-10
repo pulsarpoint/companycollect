@@ -9,6 +9,9 @@ COMPANY_ID_CHECK = "CONSTRAINT valid_company_id CHECK match(company_id, '^([0-9]
 # 2026-09-09): clickhouse-driver reads and writes it like any other String, and this
 # constraint is what stops a hand-written row from putting an array or a scalar in it.
 DATA_CHECK = "CONSTRAINT valid_data CHECK JSONType(data) = 'Object'"
+# Migration 000396 declares the main table under the build name it was created with; 000398
+# renames the DEPLOYED table and, under the ledger policy, does not touch that file.
+MAIN_DDL_TABLE = "se_company_person_v2"
 
 
 def test_suggestion_table_is_one_current_row_per_company_source_and_slot() -> None:
@@ -52,8 +55,8 @@ def test_normalized_table_has_the_same_key_and_its_own_version() -> None:
 
 
 def test_main_table_is_one_row_per_company_and_person() -> None:
-    block = table_block("se_company_person_v2")
-    assert declared_columns("se_company_person_v2") == list(tables.MAIN_COLUMNS)
+    block = table_block(MAIN_DDL_TABLE)
+    assert declared_columns(MAIN_DDL_TABLE) == list(tables.MAIN_COLUMNS)
     assert "ENGINE = ReplacingMergeTree(folded_at)" in block
     assert "ORDER BY (company_id, person_key)" in block
     assert COMPANY_ID_CHECK in block
@@ -109,7 +112,10 @@ def test_precedence_table_has_the_basic_info_shape() -> None:
 def test_column_tuples_agree_with_each_other() -> None:
     assert tables.QUALIFIED_SUGGESTION_TABLE == "corpscout.se_company_person_suggestion"
     assert tables.QUALIFIED_NORMALIZED_TABLE == "corpscout.se_company_person_normalized"
-    assert tables.QUALIFIED_MAIN_TABLE == "corpscout.se_company_person_v2"
+    assert tables.QUALIFIED_MAIN_TABLE == "corpscout.se_company_person"
+    # The five sibling tables keep names the main one is a PREFIX of, which is why every
+    # string match on it elsewhere carries the alias or the token that follows it.
+    assert tables.QUALIFIED_SUGGESTION_TABLE.startswith(tables.QUALIFIED_MAIN_TABLE)
     assert tables.QUALIFIED_HISTORY_TABLE == "corpscout.se_company_person_history"
     assert tables.QUALIFIED_RULE_TABLE == "corpscout.se_company_person_rule"
     assert tables.QUALIFIED_PRECEDENCE_TABLE == "corpscout.se_company_person_precedence"
@@ -126,13 +132,12 @@ def test_column_tuples_agree_with_each_other() -> None:
 
 
 def test_the_entity_name_is_a_prefix_of_five_siblings() -> None:
-    """Whole-name matching, everywhere. corpscout.se_company_person_v2 is the entity now and
-    se_company_person is the name it takes in slice 4 -- and that name prefixes all five of
-    the tables below, plus every table this slice drops."""
+    """Whole-name matching, everywhere. Since migration 000398 the main table is
+    se_company_person, and that name prefixes all five of the tables below."""
     siblings = (
         tables.SUGGESTION_TABLE, tables.NORMALIZED_TABLE, tables.HISTORY_TABLE,
         tables.RULE_TABLE, tables.PRECEDENCE_TABLE,
     )
     for name in siblings:
-        assert name.startswith("se_company_person_")
-        assert name != "se_company_person"
+        assert name.startswith(f"{tables.MAIN_TABLE}_")
+        assert name != tables.MAIN_TABLE
