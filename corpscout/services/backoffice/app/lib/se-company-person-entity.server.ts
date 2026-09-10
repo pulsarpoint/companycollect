@@ -208,7 +208,7 @@ export interface SePersonMember {
 }
 
 /** One entry of the published role block (spec 5.4's parallel triple, zipped). */
-export interface SePersonRoleEntry {
+export interface SePersonRoleYear {
   code: string;
   year: number;
   sources: string[];
@@ -217,10 +217,12 @@ export interface SePersonRoleEntry {
 export interface SePersonPublished {
   row: SePersonRow;
   members: SePersonMember[];
-  roles: SePersonRoleEntry[];
+  roles: SePersonRoleYear[];
   /** Why the published spelling came from `row.text_source` (spec 5.3's sort). */
   spellingReason: "precedence" | "most complete" | "tie-break" | "single source";
-  /** The active rules that name this person, by key or by one of its slots. */
+  /** The active rules that name this person: by its key, by a key it published under
+   * before (the fold resolves a re-keyed person through its previous members), or by
+   * one of its slots. */
   rules: SePersonRuleRow[];
 }
 
@@ -431,13 +433,39 @@ function membersOf(
   });
 }
 
+/**
+ * The keys this person has published under before: the history rows of this company
+ * whose observations overlap the ones it is built from now. A person is keyed over its
+ * whole member set, so a fuller spelling in a later filing -- or a Merge -- re-keys it,
+ * and `fold.py` keeps applying a hide or merge rule through those PREVIOUS members. The
+ * tab has to resolve a rule the same way or a re-keyed person is hidden with no route
+ * back: no rule shown, and Reset answering "No rule to reset".
+ */
+function previousKeysOf(
+  history: readonly SePersonHistoryRow[],
+  row: SePersonRow,
+): Set<string> {
+  const slots = new Set(row.member_slots);
+  const keys = new Set<string>([row.person_key]);
+  for (const past of history) {
+    if (past.member_slots.some((slot) => slots.has(slot))) keys.add(past.person_key);
+  }
+  return keys;
+}
+
 /** The rules the People tab shows on a person: the ones still in force that name its
- * key, or one of the observations it is built from (a split rule names slots only). */
-function rulesFor(rules: readonly SePersonRuleRow[], row: SePersonRow): SePersonRuleRow[] {
+ * key -- or a key it published under before -- or one of the observations it is built
+ * from (a split rule names slots only). */
+function rulesFor(
+  rules: readonly SePersonRuleRow[],
+  row: SePersonRow,
+  history: readonly SePersonHistoryRow[],
+): SePersonRuleRow[] {
+  const keys = previousKeysOf(history, row);
   return rules.filter(
     (rule) =>
       rule.active === 1 &&
-      (rule.person_keys.includes(row.person_key) ||
+      (rule.person_keys.some((key) => keys.has(key)) ||
         rule.slots.some((slot) => row.member_slots.includes(slot))),
   );
 }
@@ -519,7 +547,7 @@ export async function loadSePersonDetail(companyId: string): Promise<SePersonDet
         sources: row.role_sources[index] ?? [],
       })),
       spellingReason: spellingReason(row, members),
-      rules: rulesFor(rules, row),
+      rules: rulesFor(rules, row, history),
     };
   });
   const drafts = draftsOf(rawRows, normalizedRows);
@@ -922,6 +950,14 @@ export async function activateSePersonDraft(
   const draftData = parseObject(first.data);
   const note = decision.note !== "" ? decision.note : stringAt(draftData, "note");
   const replacesKey = stringAt(draftData, "replaces_key");
+  // `replaces_key` travels inside `data`, which is an unconstrained String; the rule's
+  // `person_keys` is a FixedString(64), which would silently ZERO-PAD anything shorter
+  // into a key that names nothing. Refuse before a single row lands.
+  if (replacesKey !== "" && !isPersonKey(replacesKey)) {
+    throw new SePersonDecisionError(
+      "This draft replaces something that is not a person key. Discard it and correct the person again.",
+    );
+  }
   await chInsertSeCompanyPersonSuggestions([
     ...rows.map((row) =>
       rowVersion(
@@ -968,9 +1004,19 @@ export async function activateSePersonDraft(
       return current !== undefined && foldsIntoPerson(draftIdentity, identityOf(current));
     });
   if (!foldsBack) {
-    await chInsertSeCompanyPersonRules([
-      newRule(companyId, HIDE_KIND, [replacesKey], [], "corrected by reviewer", stamp),
-    ]);
+    // The rows are already in. If the rule does not follow, say so: activating again
+    // would answer "No draft to activate." (the draft is cleared) and leave the
+    // reviewer wondering why both persons are published.
+    try {
+      await chInsertSeCompanyPersonRules([
+        newRule(companyId, HIDE_KIND, [replacesKey], [], "corrected by reviewer", stamp),
+      ]);
+    } catch (error) {
+      throw new SePersonDecisionError(
+        `The correction in ${decision.slot} was published, but the person it replaces was not hidden. Do not activate again -- Remove that person instead.`,
+        { cause: error },
+      );
+    }
   }
   return { decidedAt: stamp };
 }
@@ -1116,15 +1162,19 @@ export async function resetSePersonRules(
   now: Date = new Date(),
 ): Promise<{ decidedAt: string }> {
   const stamp = clickhouseStamp(now);
-  const [mainRows, rules] = await Promise.all([
+  // History comes along so a rule minted against a key the fold has since re-keyed away
+  // from is still found (`previousKeysOf`); it is the same bounded, FINAL-free read the
+  // tab already makes.
+  const [mainRows, rules, history] = await Promise.all([
     chQuery<SePersonRow>(PERSON_MAIN_SQL, { companyId }),
     chQuery<SePersonRuleRow>(PERSON_RULES_SQL, { companyId }),
+    chQuery<SePersonHistoryRow>(PERSON_HISTORY_SQL, { companyId }),
   ]);
   const row = isPersonKey(decision.personKey)
     ? mainRows.find((candidate) => candidate.person_key === decision.personKey)
     : undefined;
   if (row === undefined) throw new SePersonDecisionError("Unknown person.");
-  const naming = rulesFor(rules, row);
+  const naming = rulesFor(rules, row, history);
   if (naming.length === 0) throw new SePersonDecisionError("No rule to reset.");
   const note = decision.note === "" ? "reset" : `reset: ${decision.note}`;
   await chInsertSeCompanyPersonRules(

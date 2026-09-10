@@ -47,6 +47,8 @@ import {
 const COMPANY = "5560000001";
 const MERGED_KEY = "a".repeat(64);
 const WIKI_KEY = "b".repeat(64);
+/** The key the merged person published under before a fuller spelling re-keyed it. */
+const OLD_KEY = "c".repeat(64);
 const UNKNOWN_KEY = "e".repeat(64);
 const NOW = new Date("2026-09-10T12:00:00.123Z");
 const STAMP = "2026-09-10 12:00:00.123";
@@ -619,6 +621,68 @@ describe("se-company-person-entity.server", () => {
     expect(inserted(clickhouse.insertRules)).toEqual([
       expect.objectContaining({ rule_id: SPLIT_RULE_ID, kind: "split", active: 0, note: "reset" }),
     ]);
+  });
+
+  it("resets a rule naming the key this person published under before it was re-keyed", async () => {
+    // Remove hid the person under OLD_KEY. A fuller spelling in a later filing changed
+    // the canonical tokens and the fold minted MERGED_KEY -- but the fold keeps applying
+    // the rule, because it resolves a hide key through the PREVIOUS published members.
+    // The tab has to resolve it the same way, or the person is hidden with no route
+    // back: no rule shown and Reset answering "No rule to reset".
+    const oldRule: SePersonRuleRow = {
+      ...MERGE_RULE, rule_id: HIDE_RULE_ID, kind: "hide", person_keys: [OLD_KEY], slots: [],
+    };
+    clickhouse.query.mockImplementation(async (sql: string) =>
+      sql === PERSON_RULES_SQL
+        ? [oldRule]
+        : sql === PERSON_HISTORY_SQL
+          ? [{ ...HISTORY_ROW, person_key: OLD_KEY }]
+          : answer(sql),
+    );
+    // The person whose observations do NOT overlap that history row keeps its own keys.
+    const detail = await loadSePersonDetail(COMPANY);
+    expect(detail?.published[0]?.rules).toEqual([oldRule]);
+    expect(detail?.published[1]?.rules).toEqual([]);
+
+    await resetSePersonRules(COMPANY, { intent: "reset", personKey: MERGED_KEY, note: "" }, NOW);
+    expect(inserted(clickhouse.insertRules)).toEqual([
+      {
+        company_id: COMPANY, rule_id: HIDE_RULE_ID, kind: "hide", person_keys: [OLD_KEY],
+        slots: [], active: 0, note: "reset", created_at: STAMP, created_by: "backoffice",
+      },
+    ]);
+  });
+
+  it("refuses to activate a draft whose replaced key is not a key", async () => {
+    // `replaces_key` rides inside `data`, an unconstrained String; the rule column is a
+    // FixedString(64) that would zero-pad anything shorter into a key naming nothing.
+    clickhouse.query.mockImplementation(async (sql: string) =>
+      sql === PERSON_RAW_SQL
+        ? [{ ...DRAFT_RAW_1, data: '{"decided_by":"backoffice","note":"","replaces_key":"nope"}' }]
+        : answer(sql),
+    );
+    await expect(
+      activateSePersonDraft(COMPANY, { intent: "activate", slot: GROUP, note: "" }, NOW),
+    ).rejects.toThrow("not a person key");
+    // It refuses before anything lands, so the draft is still there to be corrected.
+    expect(clickhouse.insertSuggestions).not.toHaveBeenCalled();
+    expect(clickhouse.insertRules).not.toHaveBeenCalled();
+  });
+
+  it("names what already landed when the hide rule fails after the rows are published", async () => {
+    clickhouse.query.mockImplementation(async (sql: string) =>
+      sql === PERSON_RAW_SQL
+        ? [raw({}), ESEF_RAW, WIKI_RAW, { ...DRAFT_RAW_1, last_name: "Svenson" }, { ...DRAFT_RAW_2, last_name: "Svenson" }]
+        : answer(sql),
+    );
+    clickhouse.insertRules.mockRejectedValue(new Error("connection reset"));
+    const failure = activateSePersonDraft(COMPANY, { intent: "activate", slot: GROUP, note: "" }, NOW);
+    await expect(failure).rejects.toBeInstanceOf(SePersonDecisionError);
+    // The message names the group whose rows are already in, so the reviewer is not
+    // told to try again: a second Activate finds no draft and refuses.
+    await expect(failure).rejects.toThrow(GROUP);
+    await expect(failure).rejects.toThrow("Remove that person instead");
+    expect(clickhouse.insertSuggestions).toHaveBeenCalledTimes(1);
   });
 
   it("launches the targeted fold for this company alone", async () => {
