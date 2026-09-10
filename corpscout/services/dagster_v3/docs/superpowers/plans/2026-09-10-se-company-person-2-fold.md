@@ -129,7 +129,7 @@ def targeted_fold(client, company_ids, *, changed_only, source_run_id, folded_at
 - Consumes: `person/tables.py` (`QUALIFIED_PRECEDENCE_TABLE`, `PRECEDENCE_COLUMNS`), `person/assets.py` (`GROUP_NAME`, `assert_clickhouse_tables_exist`). Copy `_precedence_export_timestamp` from `address/assets.py:88-93`; do not import a private name across packages.
 - Produces: `FIELD`, `PERSON_PRECEDENCE`, `precedence_for`, `precedence_rows`, `export_precedence`, asset `se_company_person_precedence_clickhouse`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_se_company_person_precedence.py
@@ -211,12 +211,12 @@ def test_export_inserts_global_rows_and_counts_stale_pairs() -> None:
     assert params == {"exported_at": "2026-09-10 08:00:00.123"}
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run --frozen --no-sync pytest tests/test_se_company_person_precedence.py -q`
 Expected: FAIL with `ModuleNotFoundError: ...person.precedence` / `ImportError: cannot import name 'export_precedence'`.
 
-- [ ] **Step 3: Write the module**
+- [x] **Step 3: Write the module**
 
 ```python
 # src/dagster_v3/defs/se_company/person/precedence.py
@@ -269,7 +269,7 @@ def precedence_rows() -> list[tuple[str, str, int]]:
     ]
 ```
 
-- [ ] **Step 4: Append the export and its asset to `person/assets.py`**
+- [x] **Step 4: Append the export and its asset to `person/assets.py`**
 
 Add to the imports at the top of `person/assets.py` (keep every existing one):
 
@@ -347,7 +347,7 @@ def se_company_person_precedence_clickhouse(
     )
 ```
 
-- [ ] **Step 5: Run the tests and the defs check**
+- [x] **Step 5: Run the tests and the defs check**
 
 Run: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run --frozen --no-sync pytest tests/test_se_company_person_precedence.py tests/test_se_company_person_tables.py tests/test_se_company_person_jobs.py -q`
 Expected: PASS.
@@ -355,7 +355,7 @@ Expected: PASS.
 Run: `uv run --frozen --no-sync dg check defs`
 Expected: OK.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/dagster_v3/defs/se_company/person/precedence.py \
@@ -388,7 +388,7 @@ git commit -m "feat(dagster): person name precedence and its ClickHouse export"
 6. Two sets of one company **may not** share a key (`ReplacingMergeTree ORDER BY (company_id, person_key)` would collapse them into one person). Same-name-different-birth-year sets, and split rules, both produce that collision, so every colliding set — not just the later ones — takes a discriminator: `sha256(company_id + "\n" + canonical + "\n" + the set's birth year, or the smallest "source:slot" of the set when it has no year; "year:smallest source:slot" when two sets still share name and year)`. A set alone under its canonical name keeps the plain key, which is what makes keys stable across folds.
 7. Rules (spec 5.2) apply after the grouping, `active = 0` ignored, in kind order **merge, then split**, and inside a kind by `rule_id`. A merge rule's keys resolve through the previous published rows: key -> that row's `(member_sources, member_slots)` pairs -> the new sets holding any of those members; the resolved sets are joined and the joined set is re-keyed from its own canonical name. A split rule's slots leave their sets and form one set of their own. A key or slot that resolves to nothing is ignored and the rule counted in `stale_rules`. Hide rules are not applied here — they are a flag on the finished row (Task 3).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_se_company_person_fold.py
@@ -651,12 +651,12 @@ def test_bad_input_is_refused() -> None:
         fold([row("bolagsverket", "s1", company_id=OTHER)])
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run --frozen --no-sync pytest tests/test_se_company_person_fold.py -q`
 Expected: FAIL with `ModuleNotFoundError: ...person.fold`.
 
-- [ ] **Step 3: Write the first half of `fold.py`**
+- [x] **Step 3: Write the first half of `fold.py`**
 
 ```python
 # src/dagster_v3/defs/se_company/person/fold.py
@@ -1022,12 +1022,12 @@ def apply_rules(
     return working, stale
 ```
 
-- [ ] **Step 4: Run the part-1 tests until green**
+- [x] **Step 4: Run the part-1 tests until green**
 
 Run: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run --frozen --no-sync pytest tests/test_se_company_person_fold.py -q`
 Expected: the test file does NOT import yet — it names `fold_company_persons`, `PublishedPerson` and `HistoryEntry`, which Task 3 writes — so do not run it here. Run `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run --frozen --no-sync python -c "from dagster_v3.defs.se_company.person import fold"` → no error, then continue straight into Task 3. Tasks 2 and 3 are executed by ONE implementer as one unit (controller ruling 2026-09-10): the Task 2 commit below is optional; a single commit at the end of Task 3 with the whole fold module and its green test file is the expected shape.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/dagster_v3/defs/se_company/person/fold.py
@@ -1057,7 +1057,7 @@ git commit -m "feat(dagster): person identity grouping, canonical key and review
 7. **History** is appended before the main write, one row per person whose published columns changed, carrying the **previous** main row's columns plus `changed_at`, `change_kind` and `fold_run_id`. A person published for the first time has no previous image, so its `created` row carries the new image — the genesis entry that makes the backoffice's timeline start somewhere. `change_kind` is `created` (no previous row), `withdrawn` (the row becomes withdrawn and was not), `hidden` (becomes hidden and was not), `reactivated` (`active` goes 0 -> 1, which covers both a withdrawn person returning and a hide rule being reset), else `updated`.
 8. **"Changed"** compares the 26 published columns except `folded_at`, `fold_version`, `source_run_id`. A person whose columns did not change gets **no history row** — but its main row is still rewritten with this fold's `folded_at`, exactly as the address fold rewrites the whole set. That rewrite is what makes the selection converge: `main_watermarks_sql` reads `max(folded_at)` per company, so a company selected because of a rule or a precedence export that changed nothing must still advance its watermark or it would be selected again on every later run (Task 4's re-run proof).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/test_se_company_person_fold.py`:
 
@@ -1352,12 +1352,12 @@ def test_as_tuple_follows_main_columns_and_history_tuple_appends_the_change_bloc
 
 Add `import json` to the test module's imports.
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run --frozen --no-sync pytest tests/test_se_company_person_fold.py -q`
 Expected: FAIL with `ImportError: cannot import name 'PublishedPerson'`.
 
-- [ ] **Step 3: Append the second half of `fold.py`**
+- [x] **Step 3: Append the second half of `fold.py`**
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -1733,12 +1733,12 @@ def fold_company_persons(
 defines it beside `identity_sets`, and it is called here only to count the sets that had to
 be split.
 
-- [ ] **Step 4: Run the whole fold suite until green**
+- [x] **Step 4: Run the whole fold suite until green**
 
 Run: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run --frozen --no-sync pytest tests/test_se_company_person_fold.py -q`
 Expected: PASS, 38 tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/dagster_v3/defs/se_company/person/fold.py tests/test_se_company_person_fold.py
@@ -1766,7 +1766,7 @@ The global precedence stamp is one scalar read per `fold_companies` call, not pe
 
 Rerunning a folded bucket then selects nothing, because the fold rewrites every row of every folded company with this run's `folded_at`, which is newer than all four inputs.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_se_company_person_batch.py
@@ -2076,12 +2076,12 @@ def test_invalid_company_ids_are_refused_before_any_query() -> None:
     assert client.calls == []
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run --frozen --no-sync pytest tests/test_se_company_person_batch.py -q`
 Expected: FAIL with `ModuleNotFoundError: ...person.batch`.
 
-- [ ] **Step 3: Write the module**
+- [x] **Step 3: Write the module**
 
 ```python
 # src/dagster_v3/defs/se_company/person/batch.py
@@ -2454,12 +2454,12 @@ def fold_bucket(
     )
 ```
 
-- [ ] **Step 4: Run the tests until green**
+- [x] **Step 4: Run the tests until green**
 
 Run: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run --frozen --no-sync pytest tests/test_se_company_person_batch.py tests/test_se_company_person_fold.py -q`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/dagster_v3/defs/se_company/person/batch.py tests/test_se_company_person_batch.py
@@ -2479,7 +2479,7 @@ git commit -m "feat(dagster): person fold batch with selection, paging and histo
 - Consumes: Task 4's `batch.py`; `person/normalize.py::normalize_companies` and `NormalizeCounts`; `assert_clickhouse_tables_exist`; `normalized_se_company_ids`.
 - Produces: `PERSON_FOLD_PARTITIONS`, `person_bucket_index`, `PersonFoldConfig`, `PersonFoldCompaniesConfig`, `targeted_fold`, assets `se_company_person_fold` and `se_company_person_fold_companies`.
 
-- [ ] **Step 1: Write the failing asset tests**
+- [x] **Step 1: Write the failing asset tests**
 
 ```python
 # tests/test_se_company_person_assets.py
@@ -2557,7 +2557,7 @@ def test_targeted_fold_normalizes_the_ids_before_folding_them(monkeypatch) -> No
     assert normalized.as_metadata() == {"rows": 3} and folded.as_metadata() == {"persons": 2}
 ```
 
-- [ ] **Step 2: Add the fold assets**
+- [x] **Step 2: Add the fold assets**
 
 In `person/assets.py`, add to the imports:
 
@@ -2735,7 +2735,7 @@ def se_company_person_fold_companies(
 
 Update the module docstring: slice 2 ships the fold, the targeted fold and the precedence export.
 
-- [ ] **Step 3: Write the clickhouse-local proof**
+- [x] **Step 3: Write the clickhouse-local proof**
 
 ```python
 # tests/test_se_company_person_fold_clickhouse_local.py
@@ -3083,7 +3083,7 @@ def test_the_precedence_export_wrote_its_five_global_rows(folded) -> None:
                     ["wikidata", "600"], ["esef", "400"]]
 ```
 
-- [ ] **Step 4: Run both suites**
+- [x] **Step 4: Run both suites**
 
 Run: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run --frozen --no-sync pytest tests/test_se_company_person_assets.py -q`
 Expected: PASS.
@@ -3094,7 +3094,7 @@ Expected: PASS. It runs about 60 `clickhouse-local` invocations (two settings x 
 Run: `uv run --frozen --no-sync dg check defs` → OK, and
 `uv run --frozen --no-sync dg list defs | rg se_company_person` shows `se_company_person_fold`, `se_company_person_fold_companies`, `se_company_person_precedence_clickhouse` beside the four slice-0/1 assets.
 
-- [ ] **Step 5: Update `person-design.md`**
+- [x] **Step 5: Update `person-design.md`**
 
 Add these rows to the module table (after `assets.py`):
 
@@ -3126,7 +3126,7 @@ every folded company with the run's `folded_at`, whether or not anything changed
 table is what records what actually changed.
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/dagster_v3/defs/se_company/person/assets.py \
@@ -3142,20 +3142,20 @@ git commit -m "feat(dagster): person fold assets, clickhouse-local proof and des
 
 The controller runs this task; a task subagent never touches prod. Every step is a Dagster run or a read-only `SELECT`.
 
-- [ ] **Step 1: Whole-branch review, merge, deploy**
+- [x] **Step 1: Whole-branch review, merge, deploy**
 
 1. Review the branch end to end (`git -C <worktree> diff main...se-person-entity`).
 2. The owner merges. The main checkout sits on `main` today, so `git -C /Users/graovic/pulsarpoint/ppoint/companycollect merge se-person-entity`; if it is on another branch, merge through the deploy worktree (memory `se-worktree-deploy-recipe`).
 3. Deploy the dagster host from a pristine worktree at the merge commit (the dbt-state refresh is mandatory; see the same memory).
 4. On the host: `dg check defs` green, and `dg list defs | rg se_company_person` lists `se_company_person_fold`, `se_company_person_fold_companies` and `se_company_person_precedence_clickhouse`.
 
-- [ ] **Step 2: Export the precedence**
+- [x] **Step 2: Export the precedence**
 
 Materialize `se_company_person_precedence_clickhouse`. Expect `pairs = 5`, `stale_pairs = 0`.
 Verify: `SELECT source, precedence FROM corpscout.se_company_person_precedence FINAL WHERE company_id = '' ORDER BY precedence DESC` → the five rows of spec 3.6.
 **Do this before the first fold**: the export's `decided_at` is one of the fold's selection watermarks, so exporting afterwards would re-select every company on the next run.
 
-- [ ] **Step 3: Fold ONE bucket and read it**
+- [x] **Step 3: Fold ONE bucket and read it**
 
 Materialize `se_company_person_fold`, partition `bucket_00`, default config. Record the wall time (it sizes the other 63) and the metadata: `considered` (expect roughly 578,356 / 64 ≈ 9,000 companies), `persons`, `created` (= `persons` + hidden, all rows are new), `updated = hidden = withdrawn = reactivated = 0`, `unchanged = 0`, `stale_rules = 0`, `sets_split_by_birth_year` (expect a handful).
 
@@ -3210,15 +3210,15 @@ ORDER BY cityHash64(person_key) LIMIT 10;
 
 Acceptance: `count() = countIf(active = 1)` (nothing is hidden or withdrawn on a first fold), history rows = main rows and all of kind `created`, 0 duplicate keys. Spot-check the ten multi-source persons against `corpscout.se_company_person_normalized FINAL` for the same company: every member accounted for, the published spelling from the highest-precedence member, the role years the union of the members'.
 
-- [ ] **Step 4: Re-run `bucket_00` (the convergence proof)**
+- [x] **Step 4: Re-run `bucket_00` (the convergence proof)**
 
 Materialize `se_company_person_fold` `bucket_00` again with the default config: `considered = 0`, `persons = 0`, and no new history (`SELECT count() FROM corpscout.se_company_person_history WHERE fold_run_id = '<the second run id>'` → 0). If `considered > 0`, stop and find which watermark is newer than `folded_at` before backfilling anything.
 
-- [ ] **Step 5: Backfill the other 63 buckets**
+- [x] **Step 5: Backfill the other 63 buckets**
 
 Launch a UI backfill of `bucket_01`..`bucket_63` (`multi_run(1)`, so one run per partition; no pool, so several run in parallel — keep an eye on `max_concurrent_runs`). Poll; record the total wall time and the summed metadata.
 
-- [ ] **Step 6: Full readouts (spec 9 item 2)**
+- [x] **Step 6: Full readouts (spec 9 item 2)**
 
 The same seven queries without the bucket filter, plus:
 
@@ -3242,7 +3242,7 @@ FROM corpscout.se_companies_serving;
 
 Expect: active persons somewhere near 2 to 3 million over about 578,000 companies (5.5M `ok` observations, most companies signing the same board year after year — the members-per-person distribution is the number to record, not to predict); `stale_rules = 0` (no rules exist yet); `hidden = withdrawn = 0`; `has_people` roughly the company count of the first query.
 
-- [ ] **Step 7: Record and archive**
+- [x] **Step 7: Record and archive**
 
 1. Append the shipped record to spec section 9 item 2: the plan file, the merge commit, what shipped, the prod numbers of steps 3 to 6, and every ruling made on the way (the ones this plan already made are listed in its self-review).
 2. Tick this plan's checkboxes and archive the ledger.
