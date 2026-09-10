@@ -221,8 +221,11 @@ and no_person rows are stored with their notes and never folded into a person.
 
 `fold.py` is a pure function over one company's normalized rows (status ok), rules and the
 precedence table; `batch.py` drives the ClickHouse I/O in pages of 20,000 companies. Two assets:
-`se_company_person_fold` on 64 static hash buckets of `company_id` (no pool: no DuckDB and no
-geocoding, buckets run in parallel) and `se_company_person_fold_companies` for the tab's
+`se_company_person_fold` on 64 static hash buckets of `company_id` (its own pool
+`se_company_person_fold`, limit 1, so a backfill runs the buckets one after another: a page's
+`FINAL` read of the normalized table is a full scan because the bucket hash scatters the page's
+ids over the whole primary key, and 64 such reads at once would exceed the server's memory;
+amended 2026-09-10 from "no pool, buckets run in parallel") and `se_company_person_fold_companies` for the tab's
 targeted fold (normalizes the company first, as the address twin does).
 
 ### 5.1 Identity
@@ -426,6 +429,61 @@ flags read empty tables until the first fold.
    new rows) when it lands.
 2. Fold: precedence, fold, batch, the two fold assets; the first full fold over 64 buckets;
    readouts (persons, members per person, sources sets, roles per year, no key twice).
+   Shipped 2026-09-10 (plan `2026-09-10-se-company-person-2-fold.md`, main cdcb0cf6):
+   `se_company/person/` gained `precedence.py` (the `name` order of 3.6 and its export asset
+   `se_company_person_precedence_clickhouse`, idempotent: no insert when the stored rows already
+   match, since `decided_at` is a fold watermark), `fold.py` (pure: identity sets by the K3
+   rule with the unique-minimal-superset middle-name test, the QID match and the birth-year
+   guard, closure split by birth year; canonical name of the most complete member; `person_key`
+   = sha256(company_id, canonical) with a discriminator only when two sets share a name: the
+   birth year, else the smallest source:slot, and year:slot when name and year still collide;
+   hide/merge/split rules resolved through the previous published members; the person row,
+   roles and `data` per 5.3 to 5.5; the lifecycle diff and history), `batch.py` (the four
+   selection watermarks — newest normalized row, rule (active or not), precedence export —
+   against the company's last `folded_at`; pages of 20,000 under 1 MiB `max_query_size`;
+   history before main), and the assets `se_company_person_fold` (64 static buckets, pool
+   `se_company_person_fold`, serial) and `se_company_person_fold_companies` (normalize then
+   fold). Rulings on the way, all recorded in the plan's self-review: every folded company's
+   whole set is rewritten and "unchanged" means no history row; a `created` history row
+   carries the new image; spelling follows precedence while identity follows completeness
+   ("Anna Svensson" from Bolagsverket + "Anna Maria Svensson" from ESEF publishes the
+   Bolagsverket spelling under the fuller key); a role with no date at all is taken as held
+   now (290 of Wikidata's 466 roles carry no date); a fiscal year beats a span on the same
+   row; `reactivated` covers un-hiding; a merge-absorbed or re-keyed key is written
+   `withdrawn`; the rule watermark ignores `active`; section 5's "no pool" became a pool
+   because a page's FINAL read of the normalized table is a full scan (5.6M rows, 366 MiB,
+   7.7 s) and 64 at once would exceed the server. Known limits for slice 3: a split rule pins
+   slots and Bolagsverket mints a new slot per filing, so a Split written today stops applying
+   at next year's report; open and dateless Wikidata spans follow the clock while selection
+   does not (a yearly `changed_only: false` re-fold refreshes them).
+   Prod: deployed at cdcb0cf6 (dg check green, ansible ok=35 failed=0); precedence export
+   5 pairs / 0 stale; bucket_00 first: 9,036 companies considered, 17,617 persons created in
+   about two minutes, rows = active rows, history = main rows and all `created`,
+   created rows = distinct keys = main rows (no key twice), members per person 1 to 16
+   (2,422 singletons, 4,134 pairs), source sets bolagsverket 17,408 / esef 195 / wikidata 8 /
+   three combinations 6, roles per year 2019 1,316 to 2025 10,978 and 2026 341; the re-run of
+   bucket_00 considered 0 companies and wrote no history (convergence); ESEF coverage note: in
+   bucket 0 only 1 of 8 ESEF companies has any Bolagsverket signatory row, and that overlap
+   merged "Kerstin Hermansson" (ESEF) into "Kerstin Elisabet Hermansson" (Bolagsverket
+   spelling). Backfill of the other 63 buckets: one Dagster backfill (rwgyfebd), 63 runs one after another behind the
+   pool, about 88 s each, 11:08 to 12:40 UTC. Full readouts: 1,126,402 persons, all active, over 578,289 companies (67 of the 578,356
+   companies with normalized rows have no `ok` row); `created` history rows 1,126,402 =
+   distinct keys = main rows (no key twice); members per person 150,265 singletons, 261,872
+   pairs, 92,686 triples, 163,381 quadruples, then the even counts of re-signed boards down to
+   21; source sets bolagsverket 1,117,207, esef 8,672, wikidata 370, bolagsverket+esef 82,
+   bolagsverket+wikidata 42, esef+wikidata 29; roles per year 2019 83,104 rising to 2025
+   699,717, 2026 20,262 (the current-year roles: 2026 fiscal years plus the 290 dateless
+   Wikidata roles), 2029 21 (Wikidata end dates), 613 before 2015 incl. one 1970 Date-floor
+   span; no rules, so `stale_rules`, `hidden` and `withdrawn` are 0; the serving view's
+   `has_people` flags 578,289 companies after the 12:45 UTC refresh, exactly the fold's company
+   count (the view carries no per-source people flag).
+   Spot check: ten multi-source persons against their companies' normalized rows: every
+   member found, no same-name `ok` row left outside the person, the spelling from the
+   highest-precedence member in all ten, the fiscal years inside the role years in nine; the
+   tenth (four roleless Bolagsverket rows 2022 to 2025 plus a dateless Wikidata founder)
+   publishes `role_years` [2026] only, because a roleless observation contributes no (code,
+   year) pair — an owner question for slice 3: whether roleless rows should carry their years
+   under a placeholder code so `first_year`/`last_year` reflect them (2.02M such rows).
 3. Backoffice: the tab and the list; owner smoke.
 4. Rename and docs: `se_company_person_v2` to `se_company_person` with the serving re-point,
    the design doc under the package, memory.
