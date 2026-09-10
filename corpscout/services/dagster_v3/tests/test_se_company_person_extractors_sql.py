@@ -8,7 +8,6 @@ import dagster as dg
 
 from dagster_v3.defs.se_company.basic_info.extract import insert_page_sql
 from dagster_v3.defs.se_company.person import assets, bolagsverket, esef, tables, wikidata
-from dagster_v3.defs.se_company.person.normalize import SCRATCH_SCOPE_PREFIX
 from dagster_v3.defs.se_company.person.suggestions import (
     LIVE_ROW_PREDICATE,
     NULL_SQL,
@@ -55,7 +54,7 @@ def test_the_target_writes_the_eighteen_suggestion_columns() -> None:
     assert sorted(PERSON_TARGET.insert_columns) == sorted(tables.SUGGESTION_COLUMNS)
     assert PERSON_TARGET.asset_prefix == "se_company_person_suggestions_"
     assert PERSON_TARGET.group_name == assets.GROUP_NAME == "se_company_person"
-    assert PERSON_TARGET.scratch_prefix == SCRATCH_SCOPE_PREFIX == "corpscout._tmp_person_scope_"
+    assert PERSON_TARGET.scratch_prefix == tables.SCRATCH_SCOPE_PREFIX == "corpscout._tmp_person_scope_"
     # The suggestion table has neither column, so the trailing SQL consumes neither binding.
     assert "source_run_id" not in PERSON_TRAILING_SELECT_SQL
     assert "extractor_version" not in PERSON_TRAILING_SELECT_SQL
@@ -116,6 +115,10 @@ def test_the_changed_scope_compares_one_state_hash_per_company_on_both_sides() -
     state = person_state_sql("live")
     assert state.startswith("lower(hex(SHA256(arrayStringConcat(arraySort(groupArray(concat(")
     assert "toString(length(ifNull(toString(live.slot), ''))), ':', ifNull(toString(live.slot), '')" in state
+    # A non-String column (birth_year is Nullable(UInt16)) must render with the identical
+    # ifNull(toString(...), '') wrapper, so a rendering that special-cased one column's type
+    # would fail here even though the String-only "slot" pin above would not catch it.
+    assert "toString(length(ifNull(toString(live.birth_year), ''))), ':', ifNull(toString(live.birth_year), '')" in state
     assert "live.data" in state and "live.company_id" not in state
     for source, (_, _, _, scope_sql, _) in EXTRACTORS.items():
         assert scope_sql.count(state) == 2, source

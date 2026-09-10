@@ -30,6 +30,10 @@ from dagster_v3.defs.se_company.person.suggestions import (
 PERSON_SOURCE = "esef"
 ESEF_PERSON_EXTRACTOR_VERSION = "esef-person-v1"
 
+# DELIBERATELY UNSCOPED (unlike wikidata.py's universe CTE): the page's company filter is
+# applied by the outer person_select_sql, and the reviewer measured no cost difference on
+# prod (this universe is a primary-key read). wikidata.py scopes it because the same list
+# also feeds its links CTE.
 FROM_SQL = (
     "FROM corpscout.se_esef_document_people AS e\n"
     "INNER JOIN (SELECT company_id FROM corpscout.se_company_basic_info FINAL) AS universe\n"
@@ -53,7 +57,7 @@ ESEF_COLUMN_SQL: dict[str, str] = {
     "role_key": "nullIf(trim(toString(e.role_category)), '')",
     # The document's fiscal year is this row's role year (spec 4.3).
     "fiscal_year": "if(e.fiscal_year BETWEEN 1900 AND 2155, e.fiscal_year, CAST(NULL AS Nullable(UInt16)))",
-    # effective_from/to are Date32 in the source and Date here; accurateCastOrNull turns a
+    # effective_from/to are Nullable(Date32) in the source and Date here; accurateCastOrNull turns a
     # date outside Date's range into NULL instead of wrapping it into a wrong year.
     "role_from": "accurateCastOrNull(e.effective_from, 'Date')",
     "role_to": "accurateCastOrNull(e.effective_to, 'Date')",

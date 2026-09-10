@@ -1,8 +1,8 @@
-# se_company.person (slice 0)
+# se_company.person (slices 0-1)
 
 The shipped part of the 2026-09-09 SE company person entity design
 (`docs/superpowers/specs/2026-09-09-se-company-person-entity-design.md`); read that for
-everything past the modules below -- the fold, the extractors and the backoffice.
+everything past the modules below -- the fold and the backoffice.
 
 | Module | Responsibility |
 | --- | --- |
@@ -11,6 +11,11 @@ everything past the modules below -- the fold, the extractors and the backoffice
 | `normalize_se.py` | `normalize_se_person`: pure Swedish parser -- splits, folds and classifies a delivered name and role; never guesses a missing half |
 | `normalize.py` | The normalize SQL (`changed_scope_sql`, `changed_rows_sql`, `all_scope_sql`, `all_rows_sql`, `normalized_insert_sql`) and the paging/write loop (`normalize_all`, `normalize_companies`) |
 | `assets.py` | The Dagster asset `se_company_person_normalize` |
+| `suggestions.py` | The person `SuggestionTarget`, the shared column lists (`PERSON_SELECT_COLUMNS`/`PERSON_STATE_COLUMNS`) and the four SQL builders every source shares (`live_select_sql`, `person_state_sql`, `person_changed_scope_sql`, `person_select_sql`) |
+| `bolagsverket.py` | The Bolagsverket signatory extractor `se_company_person_suggestions_bolagsverket`: split name, `role_kind` as `role_key`, and the `has_company = 0` deregistration tombstone |
+| `esef.py` | The ESEF document-people extractor `se_company_person_suggestions_esef`: one name string, `role_category` as `role_key`, slot = `source_document_id` + `candidate_uid` |
+| `wikidata.py` | The Wikidata company-person extractor `se_company_person_suggestions_wikidata`: orgnr/LEI-linked statements, slot = `Q<company>:P<property>:Q<person>` |
+| `jobs.py` | `se_company_person_extract_job` (the three extractors plus the normalize asset) and the STOPPED `se_company_person_weekly` schedule (`25 7 * * 1`) |
 
 ## Change rule
 
@@ -81,7 +86,7 @@ raw suggestion row per (company, slot):
 
 | module | source | slot | notes |
 | --- | --- | --- | --- |
-| `bolagsverket.py` | `se_financial_report_signatories` | report `source_record_uid` + `signatory_uid` | split name, `role_kind` as `role_key`, fiscal year as the role year, `data` = signatory kind, statement key, person seq |
+| `bolagsverket.py` | `se_financial_report_signatories` | report `source_record_uid` + `signatory_uid` | split name, `role_kind` as `role_key`, fiscal year as the role year, `data` = signatory kind, statement key, person seq; a company with `has_company = 0` in `se_bolagsverket_companies FINAL` gets tombstones for all its Bolagsverket slots (`LEFT ANTI JOIN`, see `bolagsverket.py`) |
 | `esef.py` | `se_esef_document_people` (a view -- never `FINAL` after it) | `source_document_id` + `candidate_uid` | full name, `role_category` as `role_key`, document fiscal year, `data` = organization, status, confidence, evidence ids, model, prompt |
 | `wikidata.py` | `wikidata_company_people` + `wikidata_persons`, linked by orgnr or LEI | `Q<company>:P<property>:Q<person>` | full name, birth year, QID, property id as `role_key`, the role span, `data` = description, image, url, normalized name, is_current |
 

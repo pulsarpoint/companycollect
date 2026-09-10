@@ -27,6 +27,10 @@ from dagster_v3.defs.se_company.person.suggestions import (
 PERSON_SOURCE = "bolagsverket"
 BOLAGSVERKET_PERSON_EXTRACTOR_VERSION = "bolagsverket-person-v1"
 
+# DELIBERATELY UNSCOPED (unlike wikidata.py's universe CTE): the page's company filter is
+# applied by the outer person_select_sql, and the reviewer measured no cost difference on
+# prod (this universe is a primary-key read). wikidata.py scopes it because the same list
+# also feeds its links CTE.
 UNIVERSE_JOIN_SQL = (
     "INNER JOIN (SELECT company_id FROM corpscout.se_company_basic_info FINAL) AS universe\n"
     "    ON universe.company_id = s.company_id"

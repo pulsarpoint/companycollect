@@ -1,5 +1,7 @@
 """Spec 3.2 change rule and the shared page loop, against a scripted fake client."""
 
+from contextlib import contextmanager
+
 import dagster as dg
 import pytest
 
@@ -44,6 +46,10 @@ class FakeClient:
             return [(self.candidates,)]
         if sql.startswith("SELECT company_id FROM corpscout._tmp_"):
             return [(i,) for i in (self.scope_pages.pop(0) if self.scope_pages else [])]
+        if "system.tables" in sql:
+            # assert_clickhouse_tables_exist's own probe, run when an asset (not
+            # run_extractor directly) is materialized -- answer with exactly the tables it asked for.
+            return [(t,) for t in (params or {}).get("tables", ())]
         raise AssertionError(sql)
 
     def scope_inserts(self):
@@ -310,9 +316,32 @@ def test_a_changed_scope_override_replaces_the_helpers_scan_but_not_since() -> N
     assert override not in since_insert
 
 
+class _FakeResource:
+    """Stands in for ClickhouseResource: get_connection() yields the one FakeClient, so
+    every statement the asset's compute function issues -- the table-existence probe and
+    run_extractor's own scan/page reads -- lands on the same recorder."""
+
+    def __init__(self, client) -> None:
+        self._client = client
+
+    @contextmanager
+    def get_connection(self):
+        yield self._client
+
+
 def test_define_suggestion_asset_forwards_the_override() -> None:
+    override = "SELECT company_id FROM corpscout.some_scope"
     asset = define_suggestion_asset(
         source="scb", extractor_version="v", current_sql="SELECT 1", select_sql="SELECT 1",
-        description="d", changed_scope_override="SELECT company_id FROM corpscout.some_scope",
+        description="d", changed_scope_override=override,
     )
     assert asset.key == dg.AssetKey("se_basic_info_suggestions_scb")
+
+    # Materialize the asset itself (not run_extractor directly) against the file's
+    # FakeClient, so a broken forward of changed_scope_override inside the asset's own
+    # closure -- not just in run_extractor's handling of the kwarg -- would fail this test.
+    client = FakeClient(candidates=0, scope_pages=[["5560125220"]])
+    asset.node_def.compute_fn.decorated_fn(dg.build_asset_context(), ExtractConfig(), _FakeResource(client))
+    scope_insert = next(sql for sql, _, _ in client.statements if sql.startswith(SCOPE_INSERT))
+    assert override in scope_insert
+    assert "argMax(observed_at, suggested_at)" not in scope_insert

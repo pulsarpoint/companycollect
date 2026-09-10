@@ -1,5 +1,6 @@
 """Dagster assets of the person entity. Slice 0 ships the normalize asset; the extractors
-and the stopped weekly follow in slice 1, the fold and the precedence export in slice 2."""
+and the stopped weekly live in bolagsverket.py, esef.py, wikidata.py and jobs.py (slice 1),
+the fold and the precedence export in slice 2."""
 
 from datetime import UTC, datetime
 

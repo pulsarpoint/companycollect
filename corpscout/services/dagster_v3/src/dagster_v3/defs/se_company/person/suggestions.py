@@ -32,7 +32,6 @@ import dagster as dg
 from dagster_v3.defs.se_company.basic_info.extract import SuggestionTarget, define_suggestion_asset
 from dagster_v3.defs.se_company.person import tables
 from dagster_v3.defs.se_company.person.assets import GROUP_NAME
-from dagster_v3.defs.se_company.person.normalize import SCRATCH_SCOPE_PREFIX
 
 # The sixteen columns a source supplies: every suggestion column except the two the INSERT
 # stamps. There is no source_run_id and no extractor_version on this table.
@@ -79,7 +78,7 @@ PERSON_TARGET = SuggestionTarget(
     trailing_select_sql=PERSON_TRAILING_SELECT_SQL,
     asset_prefix="se_company_person_suggestions_",
     group_name=GROUP_NAME,
-    scratch_prefix=SCRATCH_SCOPE_PREFIX,
+    scratch_prefix=tables.SCRATCH_SCOPE_PREFIX,
     with_sql=PERSON_WITH_SQL,
 )
 

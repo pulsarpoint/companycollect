@@ -15,6 +15,11 @@ PRECEDENCE_TABLE = "se_company_person_precedence"
 # Sweden (000290/000294) and Serbia (000319).
 ROLE_TYPE_TABLE = "company_person_role_type"
 
+# This entity's own scratch-table prefix (basic_info/extract.py:scope_pages), so a person
+# scan's scratch table can never collide with a basic-info or an address one. Shared by
+# normalize.py's company scan and suggestions.py's extractor scan.
+SCRATCH_SCOPE_PREFIX = "corpscout._tmp_person_scope_"
+
 QUALIFIED_SUGGESTION_TABLE = f"{DATABASE}.{SUGGESTION_TABLE}"
 QUALIFIED_NORMALIZED_TABLE = f"{DATABASE}.{NORMALIZED_TABLE}"
 QUALIFIED_MAIN_TABLE = f"{DATABASE}.{MAIN_TABLE}"

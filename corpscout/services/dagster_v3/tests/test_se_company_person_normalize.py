@@ -9,7 +9,6 @@ from dagster_v3.defs.se_company.person import tables
 from dagster_v3.defs.se_company.person.normalize import (
     NORMALIZE_ID_BOUND_QUERY_SETTINGS,
     PAGE_SIZE,
-    SCRATCH_SCOPE_PREFIX,
     NormalizeCounts,
     all_rows_sql,
     all_scope_sql,
@@ -44,7 +43,7 @@ class FakeClient:
         self.statements.append((sql, params, settings))
         if sql.startswith(("CREATE TABLE", "DROP TABLE", "INSERT INTO")):
             return []
-        if sql.startswith(f"SELECT company_id FROM {SCRATCH_SCOPE_PREFIX}"):
+        if sql.startswith(f"SELECT company_id FROM {tables.SCRATCH_SCOPE_PREFIX}"):
             return [(company_id,) for company_id in (self.scope_pages.pop(0) if self.scope_pages else [])]
         if f"FROM {tables.QUALIFIED_SUGGESTION_TABLE} AS r FINAL" in sql:
             wanted = set(params["company_ids"])
@@ -156,8 +155,8 @@ def test_normalize_all_scans_into_a_scratch_table_and_pages_it() -> None:
     counts = normalize_all(client, changed_only=True, normalized_at=STAMP, page_size=PAGE_SIZE)
     assert counts.companies == 2 and counts.pages == 1 and counts.rows == 3
     created = [sql for sql, _, _ in client.statements if sql.startswith("CREATE TABLE")]
-    assert len(created) == 1 and created[0].split()[2].startswith(SCRATCH_SCOPE_PREFIX)
-    scope_insert = next(sql for sql, _, _ in client.statements if sql.startswith(f"INSERT INTO {SCRATCH_SCOPE_PREFIX}"))
+    assert len(created) == 1 and created[0].split()[2].startswith(tables.SCRATCH_SCOPE_PREFIX)
+    scope_insert = next(sql for sql, _, _ in client.statements if sql.startswith(f"INSERT INTO {tables.SCRATCH_SCOPE_PREFIX}"))
     assert changed_scope_sql() in scope_insert
     assert any(sql.startswith("DROP TABLE IF EXISTS") for sql, _, _ in client.statements)
 
