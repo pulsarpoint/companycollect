@@ -57,7 +57,7 @@
 - Produces: `tables.ESEF_DOCUMENT_PEOPLE_EXTRACTION_TABLE = "esef_document_people_extraction"`, `tables.QUALIFIED_ESEF_DOCUMENT_PEOPLE_EXTRACTION_TABLE`, `tables.ESEF_DOCUMENT_PEOPLE_EXTRACTION_EXPORT_COLUMNS` (21 names, in DDL order, without `source_record_uid` and `resolved_at`):
   `source_document_id, package_sha256, lei, period_end, fiscal_year, extraction_status, people_json, extraction_artifact_object_key, input_artifact_object_key, llm_request_object_key, llm_request_sha256, llm_response_text, llm_response_sha256, model_provider, model_name, prompt_version, prompt_tokens, completion_tokens, input_character_count, source_run_id, extracted_at`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `tests/test_esef_filings_client.py` add beside `COUNTRY_AGNOSTIC_MIGRATION_FILE`: `PEOPLE_EXTRACTION_MIGRATION_FILE = MIGRATIONS_DIR / "000397_corpscout_esef_document_people_extraction.up.sql"` and:
 
@@ -76,9 +76,9 @@ def test_people_extraction_export_columns_match_migration_000397_column_order() 
 
 In `tests/test_clickhouse_migrations.py` append `"000397_corpscout_esef_document_people_extraction"` after the `000396_corpscout_se_company_person_entity` entry of `EXPECTED_MIGRATIONS`.
 
-- [ ] **Step 2: Run to verify they fail**: `cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/dagster_v3 && uv run pytest tests/test_esef_filings_client.py tests/test_clickhouse_migrations.py -q -p no:warnings`. Expected: FAIL (attribute missing, file missing).
+- [x] **Step 2: Run to verify they fail**: `cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/dagster_v3 && uv run pytest tests/test_esef_filings_client.py tests/test_clickhouse_migrations.py -q -p no:warnings`. Expected: FAIL (attribute missing, file missing).
 
-- [ ] **Step 3: Write the migration and the constants**
+- [x] **Step 3: Write the migration and the constants**
 
 `000397_..._people_extraction.up.sql`:
 
@@ -121,8 +121,8 @@ ORDER BY (source_document_id, model_provider, model_name, prompt_version);
 
 `tables.py`: the three constants from the Interfaces block, placed after `QUALIFIED_ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE` and after `ESEF_DOCUMENT_COMPANY_INFORMATION_EXPORT_COLUMNS` respectively, with a comment that `source_record_uid` and `resolved_at` are ClickHouse defaults and never in the insert tuple.
 
-- [ ] **Step 4: Run the tests**: same command. Expected: PASS.
-- [ ] **Step 5: Commit**: `git add corpscout/clickhouse/migrations/000397_corpscout_esef_document_people_extraction.up.sql corpscout/clickhouse/migrations/000397_corpscout_esef_document_people_extraction.down.sql corpscout/services/dagster_v3/src/dagster_v3/defs/esef_filings/tables.py corpscout/services/dagster_v3/tests/test_esef_filings_client.py corpscout/services/dagster_v3/tests/test_clickhouse_migrations.py && git commit -m "feat(clickhouse): esef_document_people_extraction, one row per filing and people pass"`.
+- [x] **Step 4: Run the tests**: same command. Expected: PASS.
+- [x] **Step 5: Commit**: `git add corpscout/clickhouse/migrations/000397_corpscout_esef_document_people_extraction.up.sql corpscout/clickhouse/migrations/000397_corpscout_esef_document_people_extraction.down.sql corpscout/services/dagster_v3/src/dagster_v3/defs/esef_filings/tables.py corpscout/services/dagster_v3/tests/test_esef_filings_client.py corpscout/services/dagster_v3/tests/test_clickhouse_migrations.py && git commit -m "feat(clickhouse): esef_document_people_extraction, one row per filing and people pass"`.
 
 ---
 
@@ -144,7 +144,7 @@ ORDER BY (source_document_id, model_provider, model_name, prompt_version);
   - `people_request_object_key(request_sha256, *, model, provider, prompt_version) -> str` = `f"{PEOPLE_REQUEST_PREFIX}/schema=v1/prompt={prompt_version}/provider={provider}/model={safe model}/request_sha256={sha}/request.json"`; `people_extraction_object_key(package_sha256, *, model, request_sha256, provider, prompt_version) -> str` = `f"{PEOPLE_ARTIFACT_PREFIX}/schema=v1/prompt=.../provider=.../model=.../package_sha256={sha}/request_sha256={sha}/artifact.json"`. The provider segment is always present (the enrichment omits it for DeepSeek only to keep legacy paths; new prefixes have no legacy). Reuse whatever the enrichment key builders use to make the model name path-safe.
   - Factored helpers used by both passes: `_normalize_candidate_citations(candidates: list[dict[str, Any]], *, candidate_type: str, allowed_segments: frozenset[str], segments_by_id: Mapping[str, str]) -> tuple[list[dict[str, Any]], list[EsefCitationAdjustment]]` (the loop body of `_normalize_evidence_citations`, which now calls it per field) and `_completion_json(client, request_payload) -> _CompletionJson` (a frozen dataclass `raw_response: str, json_text: str, response_id: str, finish_reason: str, prompt_tokens: int | None, completion_tokens: int | None`; raises `EsefLlmResponseError` for no choices, `finish_reason == "length"`, `content is None`, no `{...}` substring, exactly as `request_company_enrichment` does today, which now calls it).
 
-- [ ] **Step 1: Write the failing tests** (`tests/test_esef_people_extraction.py`)
+- [x] **Step 1: Write the failing tests** (`tests/test_esef_people_extraction.py`)
 
 ```python
 import json
@@ -260,9 +260,9 @@ def test_enrichment_defaults_are_untouched() -> None:
 
 (`_segment_artifact()` from the enrichment tests has people facts and visible sections; if its first evidence item is not a people item after the people filter, pick `next(item.evidence_id for item in evidence.evidence if item.segment == "people_and_audit")`. If the sample has no `people_and_audit` content at all, extend the local helper with a `_fact(...)` in that segment inside the new test module rather than editing the enrichment test file.)
 
-- [ ] **Step 2: Run to verify they fail**: `uv run pytest tests/test_esef_people_extraction.py -q -p no:warnings`. Expected: ImportError.
+- [x] **Step 2: Run to verify they fail**: `uv run pytest tests/test_esef_people_extraction.py -q -p no:warnings`. Expected: ImportError.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `_people_system_prompt()` (verbatim; the schema is appended as the enrichment does):
 
@@ -292,8 +292,8 @@ def _people_system_prompt() -> str:
 
 The factoring of `_normalize_evidence_citations` and `request_company_enrichment` must leave `tests/test_esef_llm_enrichment.py` green with no expectation edits.
 
-- [ ] **Step 4: Run**: `uv run pytest tests/test_esef_people_extraction.py tests/test_esef_llm_enrichment.py -q -p no:warnings`. Expected: PASS.
-- [ ] **Step 5: Commit**: `git add corpscout/services/dagster_v3/src/dagster_v3/defs/esef_filings/llm_enrichment.py corpscout/services/dagster_v3/tests/test_esef_people_extraction.py && git commit -m "feat(esef): the people-only prompt, request, response and artifact beside the enrichment"`.
+- [x] **Step 4: Run**: `uv run pytest tests/test_esef_people_extraction.py tests/test_esef_llm_enrichment.py -q -p no:warnings`. Expected: PASS.
+- [x] **Step 5: Commit**: `git add corpscout/services/dagster_v3/src/dagster_v3/defs/esef_filings/llm_enrichment.py corpscout/services/dagster_v3/tests/test_esef_people_extraction.py && git commit -m "feat(esef): the people-only prompt, request, response and artifact beside the enrichment"`.
 
 ---
 
@@ -317,7 +317,7 @@ The factoring of `_normalize_evidence_citations` and `request_company_enrichment
   - `run_esef_people_extraction(*, clickhouse, object_store, client, model, source_run_id, country_iso2s, link_statuses, company_ids, source_document_ids, max_documents, refresh_existing, max_evidence_chars, log_info, provider="deepseek", base_url="https://api.deepseek.com", temperature=0, prompt_version=PEOPLE_PROMPT_VERSION, concurrency=1) -> dict[str, object]`.
   - Asset `esef_document_people_extraction_clickhouse`: the enrichment's three deps, `group_name="esef"`, `kinds={"python","s3","clickhouse","llm","xbrl"}`, `pool="esef_document_people_extraction_clickhouse"`, the same `RetryPolicy`, `metadata={"table": tables.QUALIFIED_ESEF_DOCUMENT_PEOPLE_EXTRACTION_TABLE}`; `defs = dg.Definitions(assets=[...])`.
 
-- [ ] **Step 1: Write the failing tests** (append to `tests/test_esef_people_extraction.py`; the fakes come from `tests.test_esef_llm_enrichment`: `_FakeClickHouse`, `_FakeObjectStore`, `_source_document_clickhouse_row`, `_segment_artifact_clickhouse_rows`, and read that module's `test_llm_asset_reads_disclosures_and_writes_clickhouse_directly` for the exact canned-result-set order the run expects: selection rows, disclosure rows, concept-label rows, then the replace statements)
+- [x] **Step 1: Write the failing tests** (append to `tests/test_esef_people_extraction.py`; the fakes come from `tests.test_esef_llm_enrichment`: `_FakeClickHouse`, `_FakeObjectStore`, `_source_document_clickhouse_row`, `_segment_artifact_clickhouse_rows`, and read that module's `test_llm_asset_reads_disclosures_and_writes_clickhouse_directly` for the exact canned-result-set order the run expects: selection rows, disclosure rows, concept-label rows, then the replace statements)
 
 ```python
 from dagster_v3.defs.esef_filings import tables
@@ -381,16 +381,16 @@ def test_people_run_reuses_an_unchanged_request_and_records_no_evidence() -> Non
 
 Write the two `...` bodies in full following the enrichment test they mirror (same fakes, same canned-result order), with the people-specific assertions in the comments.
 
-- [ ] **Step 2: Run to verify they fail**: `uv run pytest tests/test_esef_people_extraction.py -q -p no:warnings`. Expected: FAIL (TypeError on the new keywords, ImportError on the new module).
+- [x] **Step 2: Run to verify they fail**: `uv run pytest tests/test_esef_people_extraction.py -q -p no:warnings`. Expected: FAIL (TypeError on the new keywords, ImportError on the new module).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `run_esef_people_extraction` follows `run_esef_llm_enrichment` step by step with these differences: validation without the `reprocess_existing_without_model` rule; selection through `_load_latest_source_documents(..., latest_per_lei=False, existing_table=QUALIFIED_ESEF_DOCUMENT_PEOPLE_EXTRACTION_TABLE, evidence_segments=PEOPLE_EVIDENCE_SEGMENTS, visible_section_types=PEOPLE_VISIBLE_SECTION_TYPES)`; evidence through `build_enrichment_evidence(..., evidence_segments=PEOPLE_EVIDENCE_SEGMENTS, visible_section_types=PEOPLE_VISIBLE_SECTION_TYPES)`; request through `build_people_extraction_request`; keys through `people_request_object_key` / `people_extraction_object_key`; the reuse decision `existing_request_sha256 == request_sha256 and not refresh_existing` → skip; artifact reuse from the store when present and not refreshing (status `reused`); calls through `_request_enrichments(..., request=request_people_extraction)`; artifact bytes through `people_extraction_artifact_json_bytes`; status `extracted`; rows with the 21 export columns where `people_json` = `_json_text(_people_with_explicit_roles(people))` (import the enrichment's filter), `extracted_at` = a timezone-aware `datetime` (`datetime.now(UTC)` taken once per run, the artifact's `generated_at` is its ISO form), `input_artifact_object_key` = `_disclosure_input_key(source_document_id)`; the no-evidence row with the same identity, `extraction_status="no_evidence"`, empty strings and zeros; replace through `_replace_information_rows_clickhouse(..., table=tables.ESEF_DOCUMENT_PEOPLE_EXTRACTION_TABLE, columns=tables.ESEF_DOCUMENT_PEOPLE_EXTRACTION_EXPORT_COLUMNS)`. Metadata keys: `selection_method="every_filing_per_lei"`, `llm_provider`, `llm_model`, `llm_base_url`, `llm_temperature`, `llm_prompt_version`, `llm_concurrency`, `candidate_document_count`, `attempted_document_count`, `processed_document_count`, `failed_document_count`, `rate_limited_document_count`, `selected_document_count`, `unchanged_document_count`, `selected_lei_count`, `extraction_row_count`, `extracted_document_count`, `reused_extraction_count`, `no_evidence_count`, `prompt_token_count`, `completion_token_count`, `request_artifact_written_count`, `request_artifact_reused_count`, `person_candidate_count`, `raw_person_candidate_count`, `dropped_non_specific_person_candidate_count`, `citation_adjustment_count`, `dropped_invalid_citation_candidate_count`, `table`.
 
 Where the enrichment's loop bodies (preparation, request-artifact write, artifact reuse, persistence, row building) would be copied verbatim, factor them into helpers in `llm_enrichment_assets.py` that both passes call, parameterised by the request builder, the key builders, the artifact serialiser and the status names. The reviewer treats a second copy of a 40-line block as a defect; the reviewer equally treats a helper with more than six parameters as one, so prefer a small frozen dataclass `_PassProfile(prompt_version, build_request, request, request_key, output_key, artifact_bytes, extracted_status, table, columns)` passed once.
 
-- [ ] **Step 4: Run**: `uv run pytest tests/test_esef_people_extraction.py tests/test_esef_llm_enrichment.py -q -p no:warnings` and `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run dg check defs`. Expected: PASS; the new asset loads in group `esef`.
-- [ ] **Step 5: Commit**: `git add corpscout/services/dagster_v3/src/dagster_v3/defs/esef_filings/llm_enrichment_assets.py corpscout/services/dagster_v3/src/dagster_v3/defs/esef_filings/people_extraction_assets.py corpscout/services/dagster_v3/tests/test_esef_people_extraction.py && git commit -m "feat(esef): the people pass asset, every filing per admitted LEI on a named model"`.
+- [x] **Step 4: Run**: `uv run pytest tests/test_esef_people_extraction.py tests/test_esef_llm_enrichment.py -q -p no:warnings` and `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run dg check defs`. Expected: PASS; the new asset loads in group `esef`.
+- [x] **Step 5: Commit**: `git add corpscout/services/dagster_v3/src/dagster_v3/defs/esef_filings/llm_enrichment_assets.py corpscout/services/dagster_v3/src/dagster_v3/defs/esef_filings/people_extraction_assets.py corpscout/services/dagster_v3/tests/test_esef_people_extraction.py && git commit -m "feat(esef): the people pass asset, every filing per admitted LEI on a named model"`.
 
 ---
 
@@ -403,7 +403,7 @@ Where the enrichment's loop bodies (preparation, request-artifact write, artifac
 **Interfaces:**
 - Produces: `esef_document_people_sql(*, target: str = tables.QUALIFIED_ESEF_DOCUMENT_PEOPLE_TABLE) -> str`; `_person_candidate_uid_sql() -> str` (the Global Constraints expression); `_publish_projection(*, clickhouse, table_name, statement, source_table=tables.ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE)` (append, as today) and `_replace_projection(*, clickhouse, table_name, statement_for, source_table)` where `statement_for: Callable[[str], str]` renders the INSERT for a given qualified target: `CREATE TABLE stage AS target`, `statement_for(stage)`, `EXCHANGE TABLES stage AND target`, `DROP TABLE IF EXISTS stage` in `finally`, then the `FINAL` count as today. `enrichment_orchestration.ESEF_DOCUMENT_LLM_SELECTION` = company information + business items + group relationships; `ESEF_DOCUMENT_PEOPLE_SELECTION = dg.AssetSelection.assets("esef_document_people_extraction_clickhouse", "esef_document_people_clickhouse")`; `esef_document_people_job = dg.define_asset_job("esef_document_people_job", selection=ESEF_DOCUMENT_PEOPLE_SELECTION)`; both jobs in `defs`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_esef_company_information_projections.py`: in the first test, the people statement's source becomes `"FROM corpscout.esef_document_people_extraction AS info"` (the two business statements keep `esef_document_company_information`); `people_json` stays asserted for people. Add:
 
@@ -426,9 +426,9 @@ and in `test_esef_company_information_projections_are_separate_esef_assets` the 
 
 `tests/test_esef_enrichment_orchestration.py`: `test_paid_llm_job_is_explicit_and_unpartitioned` expects the three-asset set; add `test_people_job_runs_extraction_then_projection` asserting `ESEF_DOCUMENT_PEOPLE_SELECTION.resolve(repo.asset_graph) == {extraction, people}` and `repo.get_job("esef_document_people_job").partitions_def is None`.
 
-- [ ] **Step 2: Run to verify they fail**: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run pytest tests/test_esef_company_information_projections.py tests/test_esef_enrichment_orchestration.py -q -p no:warnings`. Expected: FAIL.
+- [x] **Step 2: Run to verify they fail**: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run pytest tests/test_esef_company_information_projections.py tests/test_esef_enrichment_orchestration.py -q -p no:warnings`. Expected: FAIL.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `esef_document_people_sql(target=...)`:
 
@@ -457,16 +457,16 @@ LIMIT 1 BY info.lei, info.fiscal_year, info.source_record_uid, candidate_uid
 
 The asset `esef_document_people_clickhouse`: `deps=[dg.AssetKey("esef_document_people_extraction_clickhouse")]`, body `_replace_projection(clickhouse=clickhouse, table_name=tables.ESEF_DOCUMENT_PEOPLE_TABLE, statement_for=lambda target: esef_document_people_sql(target=target), source_table=tables.ESEF_DOCUMENT_PEOPLE_EXTRACTION_TABLE)`. Stage name `_tmp_{table}_{uuid4().hex}` in `corpscout`. Update the module docstring (the people projection's input is the people pass).
 
-- [ ] **Step 4: Run**: the Step 2 command plus `uv run dg check defs` (with the env). Expected: PASS.
-- [ ] **Step 5: Commit**: `git add corpscout/services/dagster_v3/src/dagster_v3/defs/esef_filings/company_information_projections.py corpscout/services/dagster_v3/src/dagster_v3/defs/esef_filings/enrichment_orchestration.py corpscout/services/dagster_v3/tests/test_esef_company_information_projections.py corpscout/services/dagster_v3/tests/test_esef_enrichment_orchestration.py && git commit -m "feat(esef): esef_document_people is rebuilt from the people pass alone"`.
+- [x] **Step 4: Run**: the Step 2 command plus `uv run dg check defs` (with the env). Expected: PASS.
+- [x] **Step 5: Commit**: `git add corpscout/services/dagster_v3/src/dagster_v3/defs/esef_filings/company_information_projections.py corpscout/services/dagster_v3/src/dagster_v3/defs/esef_filings/enrichment_orchestration.py corpscout/services/dagster_v3/tests/test_esef_company_information_projections.py corpscout/services/dagster_v3/tests/test_esef_enrichment_orchestration.py && git commit -m "feat(esef): esef_document_people is rebuilt from the people pass alone"`.
 
 ---
 
 ## Task 5: Docs, verify, merge
 
-- [ ] **Step 1:** Document the people pass in the ESEF module doc that describes the enrichment stage (find it with `rg -l "esef_document_company_information_job" src/dagster_v3/defs/esef_filings/docs`): the asset, job, config, table, prefixes, statuses, the projection's replace semantics and identity, and that `people_json` on the enrichment is an artifact only. In the spec's section 2, note the ruling that `esef_document_people` keeps its 000395 key and that the extraction table has no Swedish view (no consumer). Commit: `docs(esef): the people pass`.
-- [ ] **Step 2:** `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run pytest -q -m "not integration" --deselect tests/test_schedule_cron_contracts.py::test_every_schedule_fires_on_a_unique_minute_hour_pair -p no:cacheprovider -p no:warnings --color=no -rf 2>&1 | rg "^FAILED|passed"`. Expected: only the four failures already on main (`test_backfill_policy_contracts`, `test_duckdb_bulk_loading_contract`, `test_nace_categories`, `test_sweden_address_geocoding` credentials).
-- [ ] **Step 3:** Collision check: `ls corpscout/clickhouse/migrations | rg 000396` on main shows only this slice's files (000396 is the person entity's, merged 2026-09-09), and the prod ledger reads 396. Merge `--no-ff` into main with the footer; the migration is applied by the owner after the merge (Task 6).
+- [x] **Step 1:** Document the people pass in the ESEF module doc that describes the enrichment stage (find it with `rg -l "esef_document_company_information_job" src/dagster_v3/defs/esef_filings/docs`): the asset, job, config, table, prefixes, statuses, the projection's replace semantics and identity, and that `people_json` on the enrichment is an artifact only. In the spec's section 2, note the ruling that `esef_document_people` keeps its 000395 key and that the extraction table has no Swedish view (no consumer). Commit: `docs(esef): the people pass`.
+- [x] **Step 2:** `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run pytest -q -m "not integration" --deselect tests/test_schedule_cron_contracts.py::test_every_schedule_fires_on_a_unique_minute_hour_pair -p no:cacheprovider -p no:warnings --color=no -rf 2>&1 | rg "^FAILED|passed"`. Expected: only the four failures already on main (`test_backfill_policy_contracts`, `test_duckdb_bulk_loading_contract`, `test_nace_categories`, `test_sweden_address_geocoding` credentials).
+- [x] **Step 3:** Collision check: `ls corpscout/clickhouse/migrations | rg 000396` on main shows only this slice's files (000396 is the person entity's, merged 2026-09-09), and the prod ledger reads 396. Merge `--no-ff` into main with the footer; the migration is applied by the owner after the merge (Task 6).
 
 ---
 
