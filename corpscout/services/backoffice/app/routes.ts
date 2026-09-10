@@ -176,6 +176,9 @@ export default [
       route("financial", "routes/admin-se-companies-financial.tsx"),
       route("ratsit", "routes/admin-se-companies-ratsit.tsx"),
     ]),
+    // The all-people LIST area: a sibling of se/companies, not one of its tabs --
+    // every published person across every company, server-paged and filtered.
+    route("se/people", "routes/admin-se-people.tsx"),
     // Old bookmarks: the list and the geocoding view moved under se/companies.
     // Thin loader-only routes that 302 to the new URLs.
     route("se/company-info", "routes/admin-se-company-info-redirect.ts"),
