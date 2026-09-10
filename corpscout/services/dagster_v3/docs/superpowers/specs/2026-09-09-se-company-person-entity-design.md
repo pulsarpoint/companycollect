@@ -381,6 +381,49 @@ flags read empty tables until the first fold.
    column, the orphaned dbt build target joined the drops, the Management removal is Sweden-only.
 1. Extractors: Bolagsverket, ESEF, Wikidata; the extract job and the stopped weekly; a prod run
    with the `parse_status` distribution per source and a spot check of twenty Bolagsverket rows.
+   Shipped 2026-09-10 (plan `2026-09-09-se-company-person-1-extractors.md`, main 3ac27d41):
+   `se_company/person/` gained `suggestions.py` (the person `SuggestionTarget`, the sixteen
+   source columns, the live/state/stored/scope/select builders and the per-company state-hash
+   change scan: the sources carry no `observed_at`, so a company is "changed" when the hash of
+   its live rows differs from the hash of its stored live rows), `bolagsverket.py` (over
+   `se_financial_report_signatories`, slot `source_record_uid:signatory_uid`, `role_kind` as
+   `role_key`, tombstones per vanished slot and for companies with `has_company = 0` in the
+   register), `esef.py` (over the `se_esef_document_people` view, slot
+   `source_document_id:candidate_uid`, `role_category` as `role_key`), `wikidata.py` (over
+   `wikidata_company_people` + `wikidata_persons`, linked by orgnr or LEI through
+   `wikidata_company_identifiers`, slot `Q<company>:P<property>:Q<person>`, the property as
+   `role_key`, `role_from`/`role_to` from the statement), `jobs.py`
+   (`se_company_person_extract_job` = the three extractors + normalize;
+   `se_company_person_weekly` STOPPED at `25 7 * * 1`, 07:15 being taken by
+   `france_sirene_register_schedule` and the cron contract forbidding a shared minute-hour);
+   the basic-info extract helper accepts a caller-built change scope
+   (`changed_scope_override`). `data` is `toJSONString(map(...))` over all-String values per
+   source (Bolagsverket signatory kind, statement key, person seq; ESEF organization, status,
+   confidence, evidence ids, model, prompt; Wikidata description, image, url, normalized name,
+   is_current). Spec amendments on the way: 3.1.1 ESEF slot is the extraction's
+   `candidate_uid` (not a positional index); 3.1.2 `data` reworded to what the sources carry
+   (`wikidata_persons` has no occupations or nationality); section 6 weekly 07:15 to 07:25.
+   Prod: deployed from the deploy worktree at 3ac27d41 (dg check green, ansible ok=33
+   failed=0); previews (`execute: false`, page 10,000) bolagsverket 577,901 companies / 58
+   pages / 5,559,317 candidates in about a minute, esef 384 / 9,610, wikidata 245 / 504,
+   exactly the plan's targets; execute runs inserted 5,559,317 (13 min), 9,610 and 504;
+   readouts: 0 tombstones (first run, no deregistered companies), 0 id mismatches against
+   `se_company_basic_info`, 0 `JSONType(data) != 'Object'`, 0 `suggestion_id` stamp
+   mismatches; convergence: a second preview of each extractor reports 0 changed companies;
+   spot check: 20 random Bolagsverket rows match `se_financial_report_signatories` on every
+   field (names, role_original, role_key, fiscal_year, document_ref, the three `data` keys).
+   Normalize (`changed_only`, page 20,000): 578,356 companies / 29 pages / 5,569,431 rows in 30 min; `ok` 5,508,877, `partial`
+   59,216, `no_person` 1,338 (per source: bolagsverket 5,498,848 / 59,199 / 1,270, esef 9,563 /
+   4 / 43, wikidata 466 / 13 / 25); top notes bolagsverket "only one name word" 58,354,
+   "initials only" 845, "company suffix in the name field" 817, "role word in the name
+   field" 249, "digits in the name field" 204; the August audit's large `no_person` share
+   did not materialize (0.02%). Role coverage: bolagsverket 2,018,042 roleless rows
+   (`role_kind = 'unknown'`, as expected) and 632 distinct `role_code`, esef 0 roleless / 404
+   codes, wikidata 0 / 5; the catalog codes dominate (board_member 2.3M, CEO 559k, chair
+   315k, auditor 310k) and the long tail is unmapped raw text (`styrelseledarmot`, "member of
+   the audit committee"), a mapping question for the fold slice. Extract weekly stays
+   STOPPED; the ESEF slice-2 re-extraction will churn `candidate_uid` slots (tombstones plus
+   new rows) when it lands.
 2. Fold: precedence, fold, batch, the two fold assets; the first full fold over 64 buckets;
    readouts (persons, members per person, sources sets, roles per year, no key twice).
 3. Backoffice: the tab and the list; owner smoke.

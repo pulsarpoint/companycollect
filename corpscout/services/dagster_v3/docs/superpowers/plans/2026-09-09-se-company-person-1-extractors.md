@@ -85,7 +85,7 @@ Task 2 creates `suggestions.py` and Bolagsverket together because the target and
 **Interfaces:**
 - Produces: `run_extractor(..., changed_scope_override: str | None = None)` and `define_suggestion_asset(..., changed_scope_override: str | None = None)`. When it is `None` (every existing caller) the behaviour and the rendered texts are exactly what they are today. When it is a string, `_scan_pages` uses it verbatim as the scope query instead of calling `changed_scope_sql(current_sql=..., target=...)`; `config.since` still wins over both, so the `since` escape hatch keeps working off `current_sql`.
 
-- [ ] **Step 1: Write the failing tests** — append to `tests/test_se_company_basic_info_extract.py`, reusing the file's existing imports and its `FakeClient`
+- [x] **Step 1: Write the failing tests** — append to `tests/test_se_company_basic_info_extract.py`, reusing the file's existing imports and its `FakeClient`
 
 ```python
 def test_the_default_change_scope_is_still_the_helpers_own() -> None:
@@ -131,12 +131,12 @@ def test_define_suggestion_asset_forwards_the_override() -> None:
     assert asset.key == dg.AssetKey("se_basic_info_suggestions_scb")
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run --frozen --no-sync pytest tests/test_se_company_basic_info_extract.py -q`
 Expected: the two override tests FAIL with `TypeError: run_extractor() got an unexpected keyword argument 'changed_scope_override'`; `test_the_default_change_scope_is_still_the_helpers_own` PASSES already, and so does everything else in the file.
 
-- [ ] **Step 3: Thread the parameter through**
+- [x] **Step 3: Thread the parameter through**
 
 In `extract.py`, `_scan_pages` gains the parameter and stops building the scope when it is given:
 
@@ -164,12 +164,12 @@ def _scan_pages(
 
 `run_extractor` gains `changed_scope_override: str | None = None` as its last keyword parameter and passes it to `_scan_pages`; `define_suggestion_asset` gains the same parameter and passes it to `run_extractor`. Nothing else changes.
 
-- [ ] **Step 4: Run the four suites that own these texts**
+- [x] **Step 4: Run the four suites that own these texts**
 
 Run: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run --frozen --no-sync pytest tests/test_se_company_basic_info_extract.py tests/test_se_company_basic_info_extractors_sql.py tests/test_se_company_address_extractors_sql.py tests/test_se_company_address_jobs.py -q`
 Expected: all PASS. Then `uv run --frozen --no-sync dg check defs`: green.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add corpscout/services/dagster_v3/src/dagster_v3/defs/se_company/basic_info/extract.py \
@@ -190,7 +190,7 @@ git commit -m "refactor(dagster): suggestion extract helper accepts a caller-bui
 - Consumes: Task 1's `changed_scope_override`; `basic_info/extract.py::SuggestionTarget`, `define_suggestion_asset`, `insert_page_sql`; `person/tables.py`; `person/normalize.py::SCRATCH_SCOPE_PREFIX`; `person/assets.py::GROUP_NAME`.
 - Produces: `PERSON_SELECT_COLUMNS` (16), `PERSON_STATE_COLUMNS` (14), `NULL_SQL`, `LIVE_ROW_PREDICATE`, `PERSON_WITH_SQL`, `PERSON_TRAILING_SELECT_SQL`, `PERSON_TARGET`, `live_select_sql(*, columns, from_sql, where_sql, with_sql="")`, `person_state_sql(alias)`, `stored_live_sql(*, source, columns, scoped)`, `person_changed_scope_sql(*, source, live_sql)`, `person_select_sql(*, source, live_sql)`, `define_person_suggestion_asset(**kwargs)`; and from `bolagsverket.py`: `PERSON_SOURCE`, `BOLAGSVERKET_PERSON_EXTRACTOR_VERSION`, `BOLAGSVERKET_COLUMN_SQL`, `bolagsverket_live_sql(*, scoped=False)`, `bolagsverket_current_sql()`, `bolagsverket_changed_scope_sql()`, `bolagsverket_select_sql()`, asset `se_company_person_suggestions_bolagsverket`; `assets.EXTRACTOR_SOURCES = ("bolagsverket", "esef", "wikidata")`, `assets.EXTRACTOR_ASSET_NAMES`.
 
-- [ ] **Step 1: Write the failing test** — `tests/test_se_company_person_extractors_sql.py`
+- [x] **Step 1: Write the failing test** — `tests/test_se_company_person_extractors_sql.py`
 
 ```python
 """Structure and text pins of the person extractors (spec 2026-09-09 sections 3.1 and 6):
@@ -348,12 +348,12 @@ def test_assets_are_named_grouped_and_declared() -> None:
         assert asset.group_names_by_key[asset.key] == "se_company_person"
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run --frozen --no-sync pytest tests/test_se_company_person_extractors_sql.py -q`
 Expected: FAIL with `ModuleNotFoundError: No module named 'dagster_v3.defs.se_company.person.suggestions'`.
 
-- [ ] **Step 3: Write `suggestions.py`**
+- [x] **Step 3: Write `suggestions.py`**
 
 ```python
 """The person entity's target for the shared suggestion extract helper (spec 2026-09-09
@@ -546,7 +546,7 @@ def define_person_suggestion_asset(**kwargs: Any) -> dg.AssetsDefinition:
     return define_suggestion_asset(target=PERSON_TARGET, **kwargs)
 ```
 
-- [ ] **Step 4: Write `bolagsverket.py`**
+- [x] **Step 4: Write `bolagsverket.py`**
 
 ```python
 """Bolagsverket annual-report signatories -> raw person suggestions (spec 2026-09-09
@@ -671,12 +671,12 @@ EXTRACTOR_ASSET_NAMES: tuple[str, ...] = tuple(
 )
 ```
 
-- [ ] **Step 5: Run the pins to verify they pass**
+- [x] **Step 5: Run the pins to verify they pass**
 
 Run: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run --frozen --no-sync pytest tests/test_se_company_person_extractors_sql.py tests/test_se_company_person_normalize.py tests/test_se_company_person_tables.py -q`
 Expected: all PASS. Then `uv run --frozen --no-sync dg check defs`: green, and `uv run --frozen --no-sync dg list defs | grep se_company_person_suggestions` lists exactly `se_company_person_suggestions_bolagsverket`.
 
-- [ ] **Step 6: Write the source-table fixture** — `tests/fixtures/se_company_person_source_tables.sql`
+- [x] **Step 6: Write the source-table fixture** — `tests/fixtures/se_company_person_source_tables.sql`
 
 Three tables no migration can supply cleanly: `se_financial_report_signatories` is a 000143 `CREATE` plus a 000287 `RENAME` plus `ALTER`s in 000244 and 000289, and the two Wikidata tables are likewise spread over 000018/000152/000244/000268/000289. `company_identifier`, `esef_entity_registry_map` and `wikidata_company_identifiers` are **not** repeated here — `tests/fixtures/se_basic_info_source_tables.sql` already has them and the harness loads both files.
 
@@ -737,7 +737,7 @@ CREATE TABLE IF NOT EXISTS corpscout.wikidata_persons (
 ) ENGINE = ReplacingMergeTree(resolved_at) ORDER BY (person_wikidata_id);
 ```
 
-- [ ] **Step 7: Write the clickhouse-local proof** — `tests/test_se_company_person_extractors_clickhouse_local.py`
+- [x] **Step 7: Write the clickhouse-local proof** — `tests/test_se_company_person_extractors_clickhouse_local.py`
 
 ```python
 """The person extractors' SQL on a real ClickHouse (spec 2026-09-09 sections 3.1 and 6).
@@ -1031,12 +1031,12 @@ def test_the_normalize_hand_off_gives_the_expected_parse_statuses(sections) -> N
 
 `normalized_row(row, None)` passes `None` as `normalized_at`: this test never inserts into the normalized table, so the stamp is unused. If a later change makes it load-bearing, pass `datetime(2026, 9, 9, tzinfo=UTC)`.
 
-- [ ] **Step 8: Run the proof**
+- [x] **Step 8: Run the proof**
 
 Run: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run --frozen --no-sync pytest tests/test_se_company_person_extractors_clickhouse_local.py -q -m integration`
 Expected: PASS twice (both `join_use_nulls` parameters), via the docker fallback if the machine has no `clickhouse-local` binary.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add corpscout/services/dagster_v3/src/dagster_v3/defs/se_company/person/suggestions.py \
@@ -1061,7 +1061,7 @@ git commit -m "feat(dagster): person suggestion target and the Bolagsverket sign
 - Consumes: Task 2's `NULL_SQL`, `live_select_sql`, `person_changed_scope_sql`, `person_select_sql`, `define_person_suggestion_asset`.
 - Produces: `PERSON_SOURCE = "esef"`, `ESEF_PERSON_EXTRACTOR_VERSION = "esef-person-v1"`, `ESEF_COLUMN_SQL`, `esef_live_sql(*, scoped=False)`, `esef_current_sql()`, `esef_changed_scope_sql()`, `esef_select_sql()`, asset `se_company_person_suggestions_esef`.
 
-- [ ] **Step 1: Write the failing test** — add to `tests/test_se_company_person_extractors_sql.py`
+- [x] **Step 1: Write the failing test** — add to `tests/test_se_company_person_extractors_sql.py`
 
 Add `from dagster_v3.defs.se_company.person import esef` to the imports, add the entry to `EXTRACTORS` (so every shared test above covers it too):
 
@@ -1101,12 +1101,12 @@ def test_esef_slot_is_the_document_and_the_extractions_candidate_uid() -> None:
     assert esef.ESEF_PERSON_EXTRACTOR_VERSION == "esef-person-v1"
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run --frozen --no-sync pytest tests/test_se_company_person_extractors_sql.py -q`
 Expected: FAIL with `ImportError: cannot import name 'esef' from 'dagster_v3.defs.se_company.person'`.
 
-- [ ] **Step 3: Write `esef.py`**
+- [x] **Step 3: Write `esef.py`**
 
 ```python
 """ESEF document people -> raw person suggestions (spec 2026-09-09 sections 3.1 and 6).
@@ -1224,7 +1224,7 @@ se_company_person_suggestions_esef = define_person_suggestion_asset(
 )
 ```
 
-- [ ] **Step 4: Add the ESEF rows and sections to the clickhouse-local proof**
+- [x] **Step 4: Add the ESEF rows and sections to the clickhouse-local proof**
 
 In `tests/test_se_company_person_extractors_clickhouse_local.py`:
 
@@ -1288,12 +1288,12 @@ def test_the_esef_row_keeps_the_delivered_full_name_dates_and_extras(sections) -
 
 and `test_the_normalize_hand_off_gives_the_expected_parse_statuses` grows its expected list by `("ok", "Håkan Öberg", "chief_executive_officer", ())` — the comma form of rule 4.1, and `role_code_for("esef", role_key="chief_executive")` maps to the catalog code.
 
-- [ ] **Step 5: Run**
+- [x] **Step 5: Run**
 
 Run: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run --frozen --no-sync pytest tests/test_se_company_person_extractors_sql.py tests/test_se_company_person_extractors_clickhouse_local.py -q`
 Expected: all PASS. `uv run --frozen --no-sync dg check defs`: green.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add corpscout/services/dagster_v3/src/dagster_v3/defs/se_company/person/esef.py \
@@ -1315,7 +1315,7 @@ git commit -m "feat(dagster): ESEF raw person extractor"
 - Consumes: Task 2's shared builders; the linking shape of `basic_info/wikidata.py::wikidata_links_cte_sql`.
 - Produces: `PERSON_SOURCE = "wikidata"`, `WIKIDATA_PERSON_EXTRACTOR_VERSION = "wikidata-person-v1"`, `WIKIDATA_COLUMN_SQL`, `wikidata_links_cte_sql(*, scoped=False)`, `wikidata_live_sql(*, scoped=False)`, `wikidata_current_sql()`, `wikidata_changed_scope_sql()`, `wikidata_select_sql()`, asset `se_company_person_suggestions_wikidata`.
 
-- [ ] **Step 1: Write the failing test** — add to `tests/test_se_company_person_extractors_sql.py`
+- [x] **Step 1: Write the failing test** — add to `tests/test_se_company_person_extractors_sql.py`
 
 Add `wikidata` to the imports and this entry to `EXTRACTORS`:
 
@@ -1361,12 +1361,12 @@ def test_wikidata_slot_is_the_link_record_id_and_the_link_is_orgnr_or_lei() -> N
     assert wikidata.WIKIDATA_PERSON_EXTRACTOR_VERSION == "wikidata-person-v1"
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run --frozen --no-sync pytest tests/test_se_company_person_extractors_sql.py -q`
 Expected: FAIL with `ImportError: cannot import name 'wikidata' from 'dagster_v3.defs.se_company.person'`.
 
-- [ ] **Step 3: Write `wikidata.py`**
+- [x] **Step 3: Write `wikidata.py`**
 
 ```python
 """Wikidata company-person statements -> raw person suggestions (spec 2026-09-09 sections
@@ -1535,7 +1535,7 @@ se_company_person_suggestions_wikidata = define_person_suggestion_asset(
 )
 ```
 
-- [ ] **Step 4: Add the Wikidata rows and sections to the clickhouse-local proof**
+- [x] **Step 4: Add the Wikidata rows and sections to the clickhouse-local proof**
 
 `COMPANY_WD = "5560125220"` gets its own basic-info row, and:
 
@@ -1598,12 +1598,12 @@ def test_the_wikidata_row_carries_the_qid_birth_year_span_and_description(sectio
 
 and `test_the_normalize_hand_off_gives_the_expected_parse_statuses` grows its expected list by `("ok", "Jens Fischer", "chief_executive_officer", ())` (`role_code_for("wikidata", role_key="P169")`).
 
-- [ ] **Step 5: Run**
+- [x] **Step 5: Run**
 
 Run: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run --frozen --no-sync pytest tests/test_se_company_person_extractors_sql.py tests/test_se_company_person_extractors_clickhouse_local.py -q`
 Expected: all PASS — including the shared `test_every_extractor_binds_company_ids_exactly_twice_in_its_page_select`, which now covers all three. `uv run --frozen --no-sync dg check defs`: green; `uv run --frozen --no-sync dg list defs | grep se_company_person_suggestions` lists all three.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add corpscout/services/dagster_v3/src/dagster_v3/defs/se_company/person/wikidata.py \
@@ -1626,7 +1626,7 @@ git commit -m "feat(dagster): Wikidata raw person extractor"
 - Consumes: `assets.EXTRACTOR_ASSET_NAMES` from Task 2.
 - Produces: `NORMALIZE_ASSET`, `WEEKLY_PAGE_SIZE = 10_000`, `WEEKLY_RUN_CONFIG`, `se_company_person_extract_job`, `se_company_person_weekly`.
 
-- [ ] **Step 1: Write the failing test** — `tests/test_se_company_person_jobs.py`
+- [x] **Step 1: Write the failing test** — `tests/test_se_company_person_jobs.py`
 
 ```python
 """The person extract job and its STOPPED weekly (spec 2026-09-09 section 6), plus the
@@ -1685,12 +1685,12 @@ def test_no_person_sensor_yet() -> None:
     assert not any("se_company_person" in sensor.name for sensor in _repo().sensor_defs)
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run --frozen --no-sync pytest tests/test_se_company_person_jobs.py -q`
 Expected: FAIL (`ModuleNotFoundError: No module named 'dagster_v3.defs.se_company.person.jobs'`).
 
-- [ ] **Step 3: Write `jobs.py` and the normalize deps**
+- [x] **Step 3: Write `jobs.py` and the normalize deps**
 
 ```python
 """The person extract job and its STOPPED weekly (spec 2026-09-09 section 6).
@@ -1738,7 +1738,7 @@ se_company_person_weekly = dg.ScheduleDefinition(
 In `person/assets.py`, the `@dg.asset` decorator of `se_company_person_normalize` gains
 `deps=[dg.AssetKey(name) for name in EXTRACTOR_ASSET_NAMES]` (the constants are already defined above it from Task 2).
 
-- [ ] **Step 4: Update `docs/person-design.md`**
+- [x] **Step 4: Update `docs/person-design.md`**
 
 Two slice-0 sentences become wrong in this slice and must be corrected, not merely appended to:
 
@@ -1755,12 +1755,12 @@ Then add an "Extractors (slice 1)" section, under 30 lines:
 
 plus prose for: the universe (`se_company_basic_info`, everything else dropped); the change rule (the per-company state hash, why not a timestamp, and that it converges); tombstones (per slot, `LEFT ANTI JOIN` against the same `live` CTE, every person column NULL and `data` `{}`); the one `WITH`-bound `now64()` that both `suggestion_id` and `suggested_at` come from; the fact that the suggestion table stores neither `source_run_id` nor `extractor_version`; `execute: false` for a preview; and the job plus the stopped weekly at `25 7 * * 1`.
 
-- [ ] **Step 5: Run**
+- [x] **Step 5: Run**
 
 Run: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run --frozen --no-sync pytest tests/test_se_company_person_jobs.py tests/test_se_company_person_normalize.py tests/test_se_company_person_extractors_sql.py tests/test_schedule_cron_contracts.py -q`
 Expected: the person suites PASS. `test_schedule_cron_contracts.py::test_every_schedule_fires_on_a_unique_minute_hour_pair` still fails on its **pre-existing** collisions — read the assertion message and confirm `se_company_person_weekly` is **not** among the reported names; if it is, pick another free minute of hour 7 (20, 35, 50 or 55) and update the test, `jobs.py` and the docs together. `uv run --frozen --no-sync dg check defs`: green.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add corpscout/services/dagster_v3/src/dagster_v3/defs/se_company/person/jobs.py \
@@ -1776,11 +1776,11 @@ git commit -m "feat(dagster): se_company_person_extract_job and its stopped week
 
 Not a coding task: the controller merges, deploys and runs. Every query below is read-only.
 
-1. [ ] Whole-branch review; run the full person suite plus the neighbours the shared helper touches:
+1. [x] Whole-branch review; run the full person suite plus the neighbours the shared helper touches:
    `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run --frozen --no-sync pytest tests/test_se_company_person_extractors_sql.py tests/test_se_company_person_extractors_clickhouse_local.py tests/test_se_company_person_jobs.py tests/test_se_company_person_normalize.py tests/test_se_company_person_normalize_clickhouse_local.py tests/test_se_company_person_normalize_se.py tests/test_se_company_person_tables.py tests/test_se_company_basic_info_extract.py tests/test_se_company_basic_info_extractors_sql.py tests/test_se_company_address_extractors_sql.py tests/test_se_company_address_jobs.py -q`
    and confirm the only failures anywhere are the ones listed in Global Constraints.
-2. [ ] Merge to main **through a worktree that checks main out** (memory `se-worktree-deploy-recipe`); hot-sync the dagster host from the deploy worktree at the merge commit; `dg list defs` on the host lists the three `se_company_person_suggestions_*` assets, `se_company_person_extract_job` and a STOPPED `se_company_person_weekly`.
-3. [ ] **Preview** each extractor (`execute: false`, `page_size: 10000`), one Dagster run each. Expected `companies` / `candidates`, measured on prod 2026-09-09:
+2. [x] Merge to main **through a worktree that checks main out** (memory `se-worktree-deploy-recipe`); hot-sync the dagster host from the deploy worktree at the merge commit; `dg list defs` on the host lists the three `se_company_person_suggestions_*` assets, `se_company_person_extract_job` and a STOPPED `se_company_person_weekly`.
+3. [x] **Preview** each extractor (`execute: false`, `page_size: 10000`), one Dagster run each. Expected `companies` / `candidates`, measured on prod 2026-09-09:
 
    | asset | companies | candidates |
    | --- | --- | --- |
@@ -1789,8 +1789,8 @@ Not a coding task: the controller merges, deploys and runs. Every query below is
    | `se_company_person_suggestions_wikidata` | 245 | 504 |
 
    A materially different number means the source moved since; record it and carry on. The Bolagsverket scan itself took 12 s in isolation.
-4. [ ] **Execute** the three (`execute: true`, `page_size: 10000`), then `se_company_person_normalize` (`changed_only: true`, `page_size: 20000`) — or the job in one go with `WEEKLY_RUN_CONFIG`. Record `inserted` per source and the normalize `companies`/`pages`/`rows`/`ok`/`partial`/`no_person`.
-5. [ ] **Readouts** on ClickHouse (`ssh companycollect "docker exec -i clickhouse-clickhouse-1 clickhouse-client --query \"...\""`):
+4. [x] **Execute** the three (`execute: true`, `page_size: 10000`), then `se_company_person_normalize` (`changed_only: true`, `page_size: 20000`) — or the job in one go with `WEEKLY_RUN_CONFIG`. Record `inserted` per source and the normalize `companies`/`pages`/`rows`/`ok`/`partial`/`no_person`.
+5. [x] **Readouts** on ClickHouse (`ssh companycollect "docker exec -i clickhouse-clickhouse-1 clickhouse-client --query \"...\""`):
 
    ```sql
    -- raw rows, distinct companies and tombstones per source
@@ -1830,8 +1830,8 @@ Not a coding task: the controller merges, deploys and runs. Every query below is
    ```
 
    Expect roughly 2.0M `roleless` Bolagsverket rows: `role_kind = 'unknown'` is `roles.py`'s roleless code and had 2,018,104 rows on 2026-09-09. Expect a large Bolagsverket `no_person` count too — the August audit found role words and dates in the name field — and read the notes to see which rule fires.
-6. [ ] **Convergence check:** re-run the three extractors in preview (`execute: false`). Each must report `companies: 0`. This is the single most important readout of the slice: a non-zero number means the state hash the extractor writes and the one it reads back disagree, and the weekly would rewrite every company forever. If it happens, do **not** re-run in execute mode — diff one company's two states by hand with `person_state_sql` before anything else.
-7. [ ] **Spot-check twenty Bolagsverket rows by hand** against the source:
+6. [x] **Convergence check:** re-run the three extractors in preview (`execute: false`). Each must report `companies: 0`. This is the single most important readout of the slice: a non-zero number means the state hash the extractor writes and the one it reads back disagree, and the weekly would rewrite every company forever. If it happens, do **not** re-run in execute mode — diff one company's two states by hand with `person_state_sql` before anything else.
+7. [x] **Spot-check twenty Bolagsverket rows by hand** against the source:
 
    ```sql
    SELECT p.company_id, p.slot, p.first_name, p.last_name, p.role_original, p.role_key,
@@ -1852,7 +1852,7 @@ Not a coding task: the controller merges, deploys and runs. Every query below is
    ```
 
    Every disagreement is a bug in this slice: fix it, re-run the extractor, and re-check.
-8. [ ] Record every count and finding in spec section 9 item 1 (the shipped record, in the style of item 0), archive the ledger, and update memory (`se-basic-info-design` / the person entity note) with: the state-hash change scan and why a timestamp does not work here, the three slot shapes, the ESEF `candidate_uid` churn that the pending ESEF slice-2 plan will cause, and the `25 7` cron slot.
+8. [x] Record every count and finding in spec section 9 item 1 (the shipped record, in the style of item 0), archive the ledger, and update memory (`se-basic-info-design` / the person entity note) with: the state-hash change scan and why a timestamp does not work here, the three slot shapes, the ESEF `candidate_uid` churn that the pending ESEF slice-2 plan will cause, and the `25 7` cron slot.
 
 ## Self-review
 
