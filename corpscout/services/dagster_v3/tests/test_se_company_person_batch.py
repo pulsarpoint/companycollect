@@ -184,6 +184,30 @@ def test_a_key_the_new_fold_no_longer_produces_is_withdrawn() -> None:
     assert history == {"created", "withdrawn"}
 
 
+def test_a_selected_company_with_no_ok_rows_withdraws_its_previous_persons() -> None:
+    """A company can be selected with zero current `ok` rows this page -- e.g. every row
+    flipped to no_person, driving foldable=0 while the watermark still moved past
+    max(folded_at). by_company.get(company_id, []) is then [] while current.get(company_id,
+    []) still holds the old main row: fold_company_persons must see the company with no
+    rows, not be skipped, so every previous key is withdrawn."""
+    stored = person(A, "w" * 64)
+    client = FakeClient(empty_scan(
+        normalized_watermarks_sql=[(A, T1, 0)], main_watermarks_sql=[(A, T0)],
+        current_main_rows_sql=[stored.as_tuple(T0)],
+    ))
+    counts = run(client, [A])
+    assert counts.considered == 1 and counts.withdrawn == 1
+    assert [sql.split(" (")[0] for sql, _ in client.inserts] == [
+        f"INSERT INTO {tables.QUALIFIED_HISTORY_TABLE}",
+        f"INSERT INTO {tables.QUALIFIED_MAIN_TABLE}",
+    ]
+    [history] = inserted(client, "history_insert_sql")
+    assert history["person_key"] == stored.person_key and history["change_kind"] == "withdrawn"
+    [row] = inserted(client, "main_insert_sql")
+    assert row["person_key"] == stored.person_key
+    assert (row["active"], row["inactive_reason"]) == (0, "withdrawn")
+
+
 def test_changed_only_selection_rules() -> None:
     client = FakeClient(empty_scan(
         # A: folded after its newest input -> skipped. B: a rule is newer -> folded.
