@@ -514,6 +514,42 @@ flags read empty tables until the first fold.
    year) pair — an owner question for slice 3: whether roleless rows should carry their years
    under a placeholder code so `first_year`/`last_year` reflect them (2.02M such rows).
 3. Backoffice: the tab and the list; owner smoke.
+   Shipped 2026-09-10 (plan `2026-09-10-se-company-person-3-backoffice.md`, main 0bd9c4c2):
+   the People tab at `/admin/se/company/:companyId/people` on the Address tab's six-file
+   shape — `se-person-tables.ts`, `se-person-fields.ts` (the catalogue, validation incl. the
+   note and `data` rules, and a TypeScript port of the normalizer's token rules checked
+   against the 55-case golden corpus, 36 `ok` cases, 0 skipped), `se-person-decision-form.ts`
+   (eight intents incl. `discard`), `se-company-person-entity.server.ts` (one read over the
+   six tables; the writes: drafts, Activate at slot `r` + 17-digit group + 2-digit ordinal,
+   Correct with a hide rule only when the tokens do not fold back, Remove by rule or
+   tombstone, Merge, Split with the caveat, Reset by key, slot or the person's previous
+   keys through inactive main rows and history, Fold now; `rule_id` =
+   sha256(company_id, kind, sorted keys, sorted slots, created_at)), the workspace and the
+   edit sheet, the route and tab, and the People list at `/admin/se/people` (six filters,
+   counts, 50 a page, the company-name filter resolved once through the serving view capped
+   at 200 ids). Rulings on the way: `decided_by`, `note` and `replaces_key` travel in `data`
+   (the table has no such columns), so a published person's merged `data` shows them; role
+   codes read live from `company_person_role_type` (22 codes on prod, not 25); the reviewer
+   types first and last name; "Fold pending" ignores the global precedence export; unmapped
+   role codes are not prefilled on Correct; span years before 1970 are refused (`Date`
+   floors there); an Activate whose fold launch fails returns the rows written with a
+   message. Smoke on prod data from the worktree's dev server: Handelsbanken's tab, Volvo
+   Car's Håkan Samuelsson (Wikidata + ESEF members side by side, precedence 600 over 400),
+   the list (2,526 ESEF board members of 2024 over 333 companies, 51 pages) and its row
+   link; every write action on 5592501521: Add + Activate (reviewer rows stamped as the
+   extractors stamp, the targeted fold published the person), Correct keeping the tokens
+   (no rule, same key, the reviewer spelling won), Correct changing the last name (a hide
+   rule, the old person hidden, the new one active), Merge (one rule, one person, the
+   absorbed key withdrawn), Split (the caveat verbatim; refused as a no-op when the ticked
+   slots are a former person's whole set — Reset is the undo there), Reset (the rule rewritten
+   inactive, the person reactivated), Remove (a reviewer person tombstoned and withdrawn),
+   Fold now after each; history kinds created, updated, hidden, withdrawn and reactivated
+   all appeared; the company was folded back to its Bolagsverket person. Follow-ups for the
+   owner: no UI action retracts an activated reviewer row on a source-backed person (a
+   Correct back to the source spelling is the workaround); the Correct prefill collapses
+   discrete role years into a span; the Split refusal should name Reset; the list's Roles
+   column shows raw codes; a durable split expression (Bolagsverket mints a slot per filing)
+   is still deferred.
 4. Rename and docs: `se_company_person_v2` to `se_company_person` with the serving re-point,
    the design doc under the package, memory.
 

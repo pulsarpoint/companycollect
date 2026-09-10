@@ -176,7 +176,7 @@ export async function loadSePeopleCounts(query: SePeopleFilters & { companyIds: 
 - Consumes: nothing. Model `app/lib/se-address-fields.ts` and `app/lib/se-address-decision-form.ts` for style (no `.server` import, hand-written validation, manual FormData reading) and `app/lib/se-address-tables.ts` for the table constant's comment.
 - Produces: the three modules' exports in the interface block above. Tasks 2 to 5 import them.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/se-person-fields.test.ts`:
 
@@ -522,12 +522,12 @@ describe("parseSePersonDecision", () => {
 });
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run (from `corpscout/services/backoffice`): `npx vitest run tests/se-person-fields.test.ts tests/se-person-decision-form.test.ts`
 Expected: FAIL — `Failed to resolve import "~/lib/se-person-fields"`.
 
-- [ ] **Step 3: Write the three modules**
+- [x] **Step 3: Write the three modules**
 
 `app/lib/se-person-tables.ts`:
 
@@ -1125,12 +1125,12 @@ export function parseSePersonDecision(
 }
 ```
 
-- [ ] **Step 4: Run the tests and the typecheck**
+- [x] **Step 4: Run the tests and the typecheck**
 
 Run: `npx vitest run tests/se-person-fields.test.ts tests/se-person-decision-form.test.ts && npm run typecheck`
 Expected: PASS, and `tsc` clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add app/lib/se-person-tables.ts app/lib/se-person-fields.ts app/lib/se-person-decision-form.ts \
@@ -1151,7 +1151,7 @@ git commit -m "feat(backoffice): person entity catalogue, validation and decisio
 - Consumes: `chQuery` and the `getWriteClient` insert pattern (`chInsertSeCompanyAddressSuggestions` in `clickhouse.server.ts`), `launchRun`, `dagsterRunUrl`, `ASSET_JOB_NAME` (`dagster.server.ts`), `getCompanyPersonRoleTypes` (`app/lib/company-roles.server.ts`), `clickhouseStamp` from `se-basic-info.server.ts` (a pure helper; import it), and Task 1's `SE_COMPANY_PERSON_TABLE`, `personFoldPending`, `personGroupSlot`, `personRowSlot`, `groupOfRowSlot`, `normalizeSePersonName`, `foldsIntoPerson`, `isPersonKey`, `SePersonDecision`, `SePersonInput`, `SePersonRoleOption`.
 - Produces: the interface block's types and functions. Tables: `corpscout.se_company_person_v2` (main, the 29 columns of `tables.MAIN_COLUMNS`), `_normalized` (23), `_suggestion` (18), `_history` (29 + `changed_at`, `change_kind`, `fold_run_id`), `_rule` (9), `_precedence` (8).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/se-company-person-entity.server.test.ts` — mocked exactly as `tests/se-company-address-entity.server.test.ts` mocks its two modules:
 
@@ -1550,7 +1550,7 @@ describe("se-company-person-entity.server", () => {
 });
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `npx vitest run tests/se-company-person-entity.server.test.ts`
 Expected: FAIL — `Failed to resolve import "~/lib/se-company-person-entity.server"`.
@@ -1806,7 +1806,7 @@ The write cases, in the same `describe`:
   });
 ```
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `app/lib/clickhouse.server.ts`, next to the address inserters:
 
@@ -2050,12 +2050,12 @@ function personRow(
 - `resetSePersonRules`: read main and rules; the row by key, else `"Unknown person."`; the active rules naming the key or one of the row's member slots, else `"No rule to reset."`; one new version per rule with the SAME `rule_id`, `kind`, `person_keys` and `slots`, `active: 0`, note `decision.note === "" ? "reset" : "reset: " + decision.note`, `created_at: stamp`.
 - `launchSePersonFold`: `launchRun` with `assetSelection: [SE_COMPANY_PERSON_FOLD_COMPANIES_ASSET]`, `runConfig.ops[<asset>].config.company_ids = [companyId]` (the asset's `changed_only` already defaults to `false` in `PersonFoldCompaniesConfig`, so the tab never sends it), tag `{ "backoffice/person": "fold-now" }`; returns `{ runId, url: dagsterRunUrl(runId) }`.
 
-- [ ] **Step 4: Run the tests and the typecheck**
+- [x] **Step 4: Run the tests and the typecheck**
 
 Run: `npx vitest run tests/se-company-person-entity.server.test.ts tests/se-company-address-entity.server.test.ts && npm run typecheck`
 Expected: PASS (the address suite proves the shared `clickhouse.server.ts` edit broke nothing).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add app/lib/se-company-person-entity.server.ts app/lib/clickhouse.server.ts app/lib/dagster.server.ts \
@@ -2106,7 +2106,7 @@ these literals, and they are written before this component is; spell them exactl
 - Every action is a plain `<Form method="post">` with a hidden `intent`, the hidden `person_key` / `slot` / `replaces_key` it acts on, the checkboxes where the decision takes several, and the dialog's note `Input` — the `AddressDecisionDialogBody` pattern, copied rather than imported (it is the Address tab's private component).
 - The edit sheet: `SheetContent` with `className="data-[side=right]:sm:max-w-3xl"`; titles `Add person` / `Correct person` / `Edit draft person` by mode; fields `first_name`, `last_name` (Inputs, with the hint that particles belong to the last name: "A particle belongs to the last name: von Essen"), `birth_year`, `wikidata_id`, a roles editor rendering `MAX_ROLE_ENTRIES` slots' worth of rows — each a native `<select name="role_code">` over `roleOptions` grouped by `group`, plus `role_from` and `role_to` number inputs — a `data` `Textarea` (JSON object, `maxLength={MAX_DATA_LENGTH}`), a `note` `Textarea`, and hidden `intent=save-draft`, `slot`, `replaces_key`. Save draft submits; the workspace closes the sheet on a successful `save-draft` result; a refusal keeps it open with the typed values and the error.
 
-- [ ] **Step 1: Write the failing sheet test** (`tests/se-person-edit-sheet.test.tsx`, modelled on `tests/se-address-edit-sheet.test.tsx`)
+- [x] **Step 1: Write the failing sheet test** (`tests/se-person-edit-sheet.test.tsx`, modelled on `tests/se-address-edit-sheet.test.tsx`)
 
 ```tsx
 import { renderToStaticMarkup } from "react-dom/server";
@@ -2232,19 +2232,19 @@ describe("SePersonEditForm", () => {
 });
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `npx vitest run tests/se-person-edit-sheet.test.tsx`
 Expected: FAIL — module not found.
 
-- [ ] **Step 3: Write the two components** as laid out above. `se-person-edit-sheet.tsx` follows `se-address-edit-sheet.tsx` line for line: the exported portal-free `SePersonEditForm` (a Base UI `SheetTitle` needs the Sheet root, so the header lives only in `SePersonEditSheet`), `key={`${mode}:${slot ?? ""}:${replacesKey ?? ""}`}` on the `<Form>` so reopening re-runs every `defaultValue`, and no closing effect inside the sheet (the workspace closes it on the save's result). `se-person-workspace.tsx` follows `se-address-workspace.tsx`: `busy` from `useNavigation` compared case-insensitively, `pending` and `sheet` state, an effect closing the dialog on any result and the sheet on a successful `save-draft`.
+- [x] **Step 3: Write the two components** as laid out above. `se-person-edit-sheet.tsx` follows `se-address-edit-sheet.tsx` line for line: the exported portal-free `SePersonEditForm` (a Base UI `SheetTitle` needs the Sheet root, so the header lives only in `SePersonEditSheet`), `key={`${mode}:${slot ?? ""}:${replacesKey ?? ""}`}` on the `<Form>` so reopening re-runs every `defaultValue`, and no closing effect inside the sheet (the workspace closes it on the save's result). `se-person-workspace.tsx` follows `se-address-workspace.tsx`: `busy` from `useNavigation` compared case-insensitively, `pending` and `sheet` state, an effect closing the dialog on any result and the sheet on a successful `save-draft`.
 
-- [ ] **Step 4: Run the tests and the typecheck**
+- [x] **Step 4: Run the tests and the typecheck**
 
 Run: `npx vitest run tests/se-person-edit-sheet.test.tsx tests/se-address-edit-sheet.test.tsx tests/admin-se-company-basic-info.test.tsx && npm run typecheck`
 Expected: PASS (the two neighbouring suites prove the shared poller and sheet patterns still hold).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add app/components/admin/se-person-workspace.tsx app/components/admin/se-person-edit-sheet.tsx \
@@ -2265,7 +2265,7 @@ git commit -m "feat(backoffice): person workspace and edit sheet on the person e
 
 **Interfaces:** consumes Tasks 1 to 3. `loader({ request, params })` returns `{ detail, roleOptions, selectedKey }`; `action({ request, params })` returns `SePersonResult` shapes.
 
-- [ ] **Step 1: Write the failing route test** (`tests/admin-se-company-person.test.tsx`)
+- [x] **Step 1: Write the failing route test** (`tests/admin-se-company-person.test.tsx`)
 
 ```tsx
 import { renderToStaticMarkup } from "react-dom/server";
@@ -2464,12 +2464,12 @@ describe("admin-se-company-person route", () => {
 });
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `npx vitest run tests/admin-se-company-person.test.tsx`
 Expected: FAIL — the route module does not exist.
 
-- [ ] **Step 3: Write the route**
+- [x] **Step 3: Write the route**
 
 `app/routes/admin-se-company-person.tsx`:
 
@@ -2605,7 +2605,7 @@ export default function AdminSwedenCompanyPeople({
 `route("people", "routes/admin-se-company-person.tsx"),`; update the comment above the
 layout from "nine tabs" to "ten tabs".
 
-- [ ] **Step 3b: Update the three cases of `tests/admin-se-company-area.test.tsx` that the new tab breaks**
+- [x] **Step 3b: Update the three cases of `tests/admin-se-company-area.test.tsx` that the new tab breaks**
 
 The `describe("tab labels")` block pins the tab list exactly, so adding `people` to
 `SE_COMPANY_TABS` fails two of its cases the moment Step 3 lands; a third only needs
@@ -2654,15 +2654,15 @@ something it should not have.
    `SE_COMPANY_TABS`, so it stays green — rename it "renders every tab and marks exactly the
    active one" so the name does not lie.
 
-- [ ] **Step 4: Run the tests and the typecheck**
+- [x] **Step 4: Run the tests and the typecheck**
 
 Run: `npx vitest run tests/admin-se-company-person.test.tsx tests/admin-se-company-area.test.tsx tests/se-company-tabs.server.test.ts && npm run typecheck`
 Expected: PASS — all three suites, the two rewritten cases included.
 Then the whole suite: `npm test` — the only failures allowed are pre-existing ones (name them in the report).
 
-- [ ] **Step 5: Docs**: spec section 7 gains Rulings 1 to 9 as sentences under "Actions" (the eighth intent, `discard`, named there beside the seven actions); section 10 gains the four list files, `se-person-tables.ts` and `fold-run-poller.tsx`; and **section 3.1.1 is amended** — it says "Reviewer: `r` plus 17 digits", which is the GROUP; a stored reviewer slot is that group plus a two-digit ordinal (19 digits), because one reviewer person is one suggestion row per role entry and the table is keyed `(company_id, source, slot)` (Ruling 2).
+- [x] **Step 5: Docs**: spec section 7 gains Rulings 1 to 9 as sentences under "Actions" (the eighth intent, `discard`, named there beside the seven actions); section 10 gains the four list files, `se-person-tables.ts` and `fold-run-poller.tsx`; and **section 3.1.1 is amended** — it says "Reviewer: `r` plus 17 digits", which is the GROUP; a stored reviewer slot is that group plus a two-digit ordinal (19 digits), because one reviewer person is one suggestion row per role entry and the table is keyed `(company_id, source, slot)` (Ruling 2).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/routes/admin-se-company-person.tsx app/routes.ts app/lib/se-company-tabs.ts \
@@ -2688,7 +2688,7 @@ git commit -m "feat(backoffice): People tab on the person entity"
 Spec section 7's list, plainly: no writes, no fold, one row per published person, 50 per page,
 sorted by company then display name, each row linking into that company's People tab.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/se-people-list.server.test.ts`:
 
@@ -2959,12 +2959,12 @@ describe("admin-se-people route", () => {
 });
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `npx vitest run tests/se-people-list.server.test.ts tests/admin-se-people.test.tsx`
 Expected: FAIL — modules not found.
 
-- [ ] **Step 3: Write the four modules**
+- [x] **Step 3: Write the four modules**
 
 `app/lib/se-people-filters.ts` — client-safe: `parseSePeopleFilters` trims each param, keeps
 `source` only when `isPersonSource`, `status` only when `isPersonStatus`, `year` only on
@@ -3061,12 +3061,12 @@ CompanyCollect admin"; the component renders a header ("People", one line of des
 `app/routes/admin-layout.tsx`: a breadcrumb branch for `pathname === "/admin/se/people"` —
 Admin / Sweden / People — beside the `onCompaniesPage` one.
 
-- [ ] **Step 4: Run the tests and the typecheck**
+- [x] **Step 4: Run the tests and the typecheck**
 
 Run: `npx vitest run tests/se-people-list.server.test.ts tests/admin-se-people.test.tsx && npm run typecheck && npm test`
 Expected: PASS; `npm test` green apart from pre-existing failures (name them in the report).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add app/lib/se-people-filters.ts app/lib/se-people-list.server.ts \
@@ -3084,20 +3084,20 @@ No deploy step: this slice touches no Dagster code (Ruling 5), and
 `se_company_person_fold_companies` has been live since slice 2 (main cdcb0cf6). The
 backoffice runs locally from the main checkout (memory: "Backoffice runs locally").
 
-1. [ ] Whole-branch review; the owner merges the branch (the main checkout is on `main`);
+1. [x] Whole-branch review; the owner merges the branch (the main checkout is on `main`);
    the owner starts `npm run dev` there and opens `http://localhost:5183`.
-2. [ ] `/admin/se/company/5020077862/people` (the owner's example): the persons list, the
+2. [x] `/admin/se/company/5020077862/people` (the owner's example): the persons list, the
    right panel's members, roles timeline, `data`, history and raw evidence render; the
    People tab sits beside Address in the sub-menu and the breadcrumb says People.
-3. [ ] Two multi-source companies: `5568108988` (Håkan Samuelsson, wikidata + esef) and
+3. [x] Two multi-source companies: `5568108988` (Håkan Samuelsson, wikidata + esef) and
    `5590701545` (Joakim Alexander Lundell, bolagsverket + wikidata) — one person, several
    sources, each member's spelling side by side, `text_source` and the spelling reason
    agreeing with the precedence block.
-4. [ ] `/admin/se/people`: the counts strip (persons, active, companies), then each filter
+4. [x] `/admin/se/people`: the counts strip (persons, active, companies), then each filter
    on its own — a company id, a company name prefix, a person-name prefix, `source=esef`,
    `role=board_member`, `year=2025`, `status=active` — and a row click landing on that
    company's People tab with the person selected.
-5. [ ] One small test company (bucket 0, e.g. `5592501521`), every action in order, with the
+5. [x] One small test company (bucket 0, e.g. `5592501521`), every action in order, with the
    fold poller watched each time:
    - **Add** a person with two role years, Save draft (the draft card shows it, "parses on
      Fold now"), **Activate** (Ruling 6: the fold launches itself) — the reviewer person
@@ -3111,7 +3111,7 @@ backoffice runs locally from the main checkout (memory: "Backoffice runs locally
      shows Ruling 9's caveat); **Remove** a source-backed person (hidden) and the reviewer
      person added in step 5 (withdrawn); **Reset** the rules on one of them; **Fold now**
      after each and read the result.
-6. [ ] Read the rows back on prod:
+6. [x] Read the rows back on prod:
    ```sql
    SELECT source, slot, first_name, last_name, birth_year, role_key, fiscal_year,
           role_from, role_to, data, suggested_at
@@ -3136,10 +3136,10 @@ backoffice runs locally from the main checkout (memory: "Backoffice runs locally
    `(company_id, source, slot, suggested_at)` as `suggestion_id`, and a `role_key` that is a
    catalog code; every rule must carry a `rule_id` that is 64 hex and `created_by =
    'backoffice'`.
-7. [ ] Leave the test company clean: Reset every rule written during the smoke, tombstone
+7. [x] Leave the test company clean: Reset every rule written during the smoke, tombstone
    the reviewer persons, Fold now, and confirm the published set matches what the sources
    deliver again.
-8. [ ] Record the slice-3 shipped record in the spec's section 9 item 3 (what shipped, the
+8. [x] Record the slice-3 shipped record in the spec's section 9 item 3 (what shipped, the
    readouts, the rulings that moved); archive the ledger; update memory
    (`se-address-entity.md`'s PEOPLE entity line: slice 3 live, slice 4 next).
 
