@@ -303,6 +303,9 @@ def run_esef_people_extraction(
         "processed_document_count": len(row_build.processed_documents),
         "failed_document_count": outcome_counts.failed_document_count,
         "rate_limited_document_count": outcome_counts.rate_limited_document_count,
+        "invalid_response_artifact_count": (
+            outcome_counts.invalid_response_artifact_count
+        ),
         "selected_document_count": len(row_build.processed_documents),
         "unchanged_document_count": (
             len(documents)

@@ -227,7 +227,24 @@ class EsefLlmPeopleResult:
 
 
 class EsefLlmResponseError(ValueError):
-    """A provider response that cannot become a validated enrichment artifact."""
+    """A provider response that cannot become a validated enrichment artifact.
+
+    ``raw_response`` and ``validation_summary`` are set only when the failure
+    happened after the provider returned content (an unparsable or
+    schema-invalid response); they stay ``None`` for the transport-level
+    failures raised before any content exists (no choices, no content).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        raw_response: str | None = None,
+        validation_summary: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.raw_response = raw_response
+        self.validation_summary = validation_summary
 
 
 @dataclass(frozen=True)
@@ -703,7 +720,8 @@ def _completion_json(
         raise EsefLlmResponseError(
             "ESEF company enrichment response was truncated by the provider "
             "(finish_reason=length, client_output_token_limit=none, "
-            f"completion_tokens={completion_tokens})"
+            f"completion_tokens={completion_tokens})",
+            raw_response=content,
         )
     if content is None:
         raise EsefLlmResponseError("ESEF company enrichment returned no content")
@@ -711,7 +729,8 @@ def _completion_json(
     json_end = content.rfind("}")
     if json_start < 0 or json_end < json_start:
         raise EsefLlmResponseError(
-            "ESEF company enrichment did not return a JSON object"
+            "ESEF company enrichment did not return a JSON object",
+            raw_response=content,
         )
     return _CompletionJson(
         raw_response=content,
@@ -721,6 +740,22 @@ def _completion_json(
         prompt_tokens=_usage_value(usage, "prompt_tokens"),
         completion_tokens=completion_tokens,
     )
+
+
+def _validation_summary(error: ValidationError) -> str:
+    """Render a compact one-line summary of a pydantic validation failure.
+
+    Only the first error is rendered in full (location and message); any
+    further errors are collapsed into a trailing count so the summary stays
+    short enough to log and to store beside the archived raw response.
+    """
+    errors = error.errors()
+    first = errors[0]
+    loc = ".".join(str(part) for part in first["loc"])
+    summary = f"{loc}: {first['msg']}"
+    if len(errors) > 1:
+        summary = f"{summary} (+{len(errors) - 1} more)"
+    return summary[:300]
 
 
 def request_company_enrichment(
@@ -737,7 +772,9 @@ def request_company_enrichment(
         raise EsefLlmResponseError(
             "ESEF company enrichment returned invalid structured JSON "
             f"(finish_reason={completion.finish_reason or 'unknown'}, "
-            f"completion_tokens={completion.completion_tokens})"
+            f"completion_tokens={completion.completion_tokens})",
+            raw_response=completion.raw_response,
+            validation_summary=_validation_summary(exc),
         ) from exc
     enrichment, citation_adjustments = _normalize_evidence_citations(
         raw_enrichment,
@@ -768,7 +805,9 @@ def request_people_extraction(
         raise EsefLlmResponseError(
             "ESEF people extraction returned invalid structured JSON "
             f"(finish_reason={completion.finish_reason or 'unknown'}, "
-            f"completion_tokens={completion.completion_tokens})"
+            f"completion_tokens={completion.completion_tokens})",
+            raw_response=completion.raw_response,
+            validation_summary=_validation_summary(exc),
         ) from exc
     segments_by_id = {
         item.evidence_id: item.segment for item in evidence_input.evidence

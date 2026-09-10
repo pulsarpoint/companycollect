@@ -5,11 +5,13 @@ from typing import Any
 
 import httpx
 from openai import RateLimitError
+from pydantic import ValidationError
 
 from dagster_v3.defs.esef_filings import llm_enrichment, tables
 from dagster_v3.defs.esef_filings.artifact_contract import ARTIFACT_SCHEMA_VERSION
 from dagster_v3.defs.esef_filings.llm_enrichment import (
     EsefLlmResponseError,
+    EsefPeopleExtraction,
     PEOPLE_EVIDENCE_SEGMENTS,
     PEOPLE_PROMPT_VERSION,
     PEOPLE_VISIBLE_SECTION_TYPES,
@@ -133,17 +135,96 @@ def test_people_response_is_validated_and_citations_normalised() -> None:
 def test_people_response_without_people_key_is_an_error() -> None:
     evidence = _people_evidence()
     request = build_people_extraction_request(evidence, model="m")
+    canned_response = {"company_description": None}
+    # Pydantic orders its errors differently for a JSON string than for a dict
+    # (extra-field errors sort ahead of missing-field ones under
+    # model_validate_json but not under model_validate), so compute the
+    # expected summary the same way request_people_extraction does: from the
+    # exact JSON text the client returns.
+    try:
+        EsefPeopleExtraction.model_validate_json(json.dumps(canned_response))
+    except ValidationError as validation_error:
+        expected_validation_summary = llm_enrichment._validation_summary(
+            validation_error
+        )
+    else:
+        raise AssertionError("expected a validation error")
+
     try:
         request_people_extraction(
-            _client_returning({"company_description": None}),
+            _client_returning(canned_response),
             evidence_input=evidence,
             request_payload=request,
         )
     except EsefLlmResponseError as error:
         assert "people extraction" in str(error)
         assert "company enrichment" not in str(error)
+        # The raw model response and a rendered validation summary travel with
+        # the error so the caller can archive them for inspection.
+        assert error.raw_response == json.dumps(canned_response)
+        assert error.validation_summary == expected_validation_summary
     else:
         raise AssertionError("a response without the people list must be refused")
+
+
+def test_people_response_reports_provider_truncation_with_raw_response() -> None:
+    # Mirror test_request_company_enrichment_reports_provider_truncation in
+    # test_esef_llm_enrichment.py: a finish_reason="length" completion is a
+    # transport-level failure raised by the shared _completion_json, but the
+    # truncated content is still available, so it travels as raw_response too
+    # -- an invalid_response artifact can archive it just like a
+    # schema-validation failure.
+    evidence = _people_evidence()
+    request = build_people_extraction_request(evidence, model="m")
+    truncated_content = '{"people":['
+    client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(
+                create=lambda **_kwargs: SimpleNamespace(
+                    id="response-truncated",
+                    choices=[
+                        SimpleNamespace(
+                            finish_reason="length",
+                            message=SimpleNamespace(content=truncated_content),
+                        )
+                    ],
+                    usage=SimpleNamespace(
+                        prompt_tokens=1_200,
+                        completion_tokens=8_000,
+                    ),
+                )
+            )
+        )
+    )
+
+    try:
+        request_people_extraction(
+            client,  # type: ignore[arg-type]
+            evidence_input=evidence,
+            request_payload=request,
+        )
+    except EsefLlmResponseError as error:
+        assert "truncated by the provider" in str(error)
+        assert error.raw_response == truncated_content
+    else:
+        raise AssertionError("a truncated response must be refused")
+
+
+def test_validation_summary_renders_the_first_error_with_a_remaining_count() -> None:
+    try:
+        EsefPeopleExtraction.model_validate({"people": [{"name": "Anna"}]})
+    except ValidationError as error:
+        summary = llm_enrichment._validation_summary(error)
+        errors = error.errors()
+    else:
+        raise AssertionError("expected a validation error")
+
+    assert len(errors) > 1
+    first = errors[0]
+    expected_loc = ".".join(str(part) for part in first["loc"])
+    assert summary.startswith(f"{expected_loc}: {first['msg']}")
+    assert summary.endswith(f"(+{len(errors) - 1} more)")
+    assert len(summary) <= 300
 
 
 def test_people_artifact_and_keys_are_versioned() -> None:
@@ -630,3 +711,230 @@ def test_people_run_records_a_rate_limited_call_without_inserting_a_row() -> Non
         if "esef_document_people_extraction" in sql and " VALUES" in sql
     ]
     assert people_inserts == []
+
+
+def test_people_run_keeps_the_raw_response_when_validation_fails() -> None:
+    # Mirror test_people_run_records_a_rate_limited_call_without_inserting_a_row,
+    # except the client returns JSON missing the required "people" key instead of
+    # raising: no row is inserted, the failure is counted as both a
+    # failed_document and an invalid_response_artifact, and the raw model
+    # response is archived in the fake store beside the artifact prefix so it
+    # can be inspected -- the failed document is still retried on the next run.
+    disclosure_rows, label_rows = _segment_artifact_clickhouse_rows()
+    clickhouse = _FakeClickHouse(
+        [
+            [_source_document_clickhouse_row()],
+            disclosure_rows,
+            label_rows,
+            [(tables.ESEF_DOCUMENT_PEOPLE_EXTRACTION_TABLE,)],
+        ]
+    )
+    object_store = _FakeObjectStore({})
+    canned_response = {"company_description": None}
+    log_lines: list[str] = []
+
+    def _capture_log(message: str, *args: object) -> None:
+        log_lines.append(message % args)
+
+    metadata = run_esef_people_extraction(
+        clickhouse=clickhouse,
+        object_store=object_store,
+        client=_client_returning(canned_response),
+        model="deepseek-v4-flash",
+        source_run_id="people-run-5",
+        source_document_ids=["AAK-2024"],
+        country_iso2s=[],
+        link_statuses=["register_verified"],
+        company_ids=[],
+        max_documents=None,
+        refresh_existing=False,
+        max_evidence_chars=64_000,
+        log_info=_capture_log,
+    )
+
+    assert metadata["attempted_document_count"] == 1
+    assert metadata["failed_document_count"] == 1
+    assert metadata["invalid_response_artifact_count"] == 1
+    assert metadata["rate_limited_document_count"] == 0
+    assert metadata["extracted_document_count"] == 0
+    assert metadata["processed_document_count"] == 0
+    assert metadata["extraction_row_count"] == 0
+
+    people_inserts = [
+        parameters
+        for sql, parameters in clickhouse.client.calls
+        if "esef_document_people_extraction" in sql and " VALUES" in sql
+    ]
+    assert people_inserts == []
+
+    invalid_response_keys = [
+        key
+        for bucket, key in object_store.objects
+        if bucket == ESEF_DOCUMENT_BUCKET
+        and key.startswith("esef_filings/llm_people_extraction/")
+        and key.endswith("/invalid_response.json")
+    ]
+    assert len(invalid_response_keys) == 1
+    stored = json.loads(
+        object_store.objects[(ESEF_DOCUMENT_BUCKET, invalid_response_keys[0])]
+    )
+    assert stored["schema_version"] == 1
+    assert stored["source_document_id"] == "AAK-2024"
+    assert stored["raw_response"] == json.dumps(canned_response)
+    assert stored["validation_summary"]
+    assert isinstance(stored["request_sha256"], str) and stored["request_sha256"]
+
+    assert any("response kept at" in line for line in log_lines)
+
+
+class _RaisingOnInvalidResponseObjectStore(_FakeObjectStore):
+    """A store whose ``invalid_response.json`` archive write always fails.
+
+    Simulates an object-store outage hitting only the best-effort
+    invalid-response archive, so a test can assert that failure never
+    propagates out of the outcome loop and stops the rest of the batch.
+    """
+
+    def write_bytes(
+        self,
+        key: str,
+        body: bytes,
+        bucket: str | None = None,
+    ) -> None:
+        if key.endswith("invalid_response.json"):
+            raise RuntimeError("simulated object store outage")
+        super().write_bytes(key, body, bucket=bucket)
+
+
+def test_people_run_survives_a_store_failure_while_archiving_an_invalid_response() -> (
+    None
+):
+    # Two documents in one run: AAK-2024's response fails schema validation
+    # and the invalid_response.json archive write itself raises (a simulated
+    # object-store outage); AAK-2025's response is valid. The archive write
+    # is best-effort and must not propagate out of the outcome loop -- the
+    # valid document's row is still inserted, the failed document counts
+    # toward failed_document_count but NOT invalid_response_artifact_count
+    # (the archive never landed), and the outage is logged.
+    disclosure_rows, label_rows = _segment_artifact_clickhouse_rows()
+    source_document_id_index = tables.ESEF_DISCLOSURES_EXPORT_COLUMNS.index(
+        "source_document_id"
+    )
+    second_disclosure_rows = [
+        tuple(
+            "AAK-2025" if index == source_document_id_index else value
+            for index, value in enumerate(row)
+        )
+        for row in disclosure_rows
+    ]
+    second_label_rows = [("AAK-2025", *row[1:]) for row in label_rows]
+
+    first_document_row = _source_document_clickhouse_row()
+    second_document_row = (
+        "AAK-2025",
+        "e" * 64,
+        "549300GK4LGIDDWJWL07",
+        "2024-12-31",
+        2024,
+        "https://example.test/aak.zip",
+        ARTIFACT_SCHEMA_VERSION,
+        "",
+        "",
+    )
+    clickhouse = _FakeClickHouse(
+        [
+            [first_document_row, second_document_row],
+            disclosure_rows + second_disclosure_rows,
+            label_rows + second_label_rows,
+            [(tables.ESEF_DOCUMENT_PEOPLE_EXTRACTION_TABLE,)],
+        ]
+    )
+    object_store = _RaisingOnInvalidResponseObjectStore({})
+
+    invalid_content = json.dumps({"company_description": None})
+    valid_content = json.dumps(
+        {
+            "people": [
+                {
+                    "name": "Anna Andersson",
+                    "role": "Chief Executive Officer",
+                    "role_category": "chief_executive",
+                    "organization": "AAK AB",
+                    "status": "current",
+                    "effective_from": None,
+                    "effective_to": None,
+                    "evidence_ids": ["E0001"],
+                    "confidence": 0.98,
+                }
+            ]
+        }
+    )
+    responses = iter([invalid_content, valid_content])
+    client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(
+                create=lambda **_kwargs: SimpleNamespace(
+                    id="response",
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(content=next(responses)),
+                        )
+                    ],
+                    usage=None,
+                )
+            )
+        )
+    )
+    log_lines: list[str] = []
+
+    def _capture_log(message: str, *args: object) -> None:
+        log_lines.append(message % args)
+
+    metadata = run_esef_people_extraction(
+        clickhouse=clickhouse,
+        object_store=object_store,
+        client=client,  # type: ignore[arg-type]
+        model="deepseek-v4-flash",
+        source_run_id="people-run-6",
+        source_document_ids=["AAK-2024", "AAK-2025"],
+        country_iso2s=[],
+        link_statuses=["register_verified"],
+        company_ids=[],
+        max_documents=None,
+        refresh_existing=False,
+        max_evidence_chars=64_000,
+        log_info=_capture_log,
+    )
+
+    assert metadata["attempted_document_count"] == 2
+    assert metadata["failed_document_count"] == 1
+    assert metadata["invalid_response_artifact_count"] == 0
+    assert metadata["extracted_document_count"] == 1
+    assert metadata["processed_document_count"] == 1
+    assert metadata["extraction_row_count"] == 1
+
+    people_insert = next(
+        parameters
+        for sql, parameters in clickhouse.client.calls
+        if "esef_document_people_extraction" in sql and " VALUES" in sql
+    )
+    [inserted_values] = people_insert
+    inserted = dict(
+        zip(
+            tables.ESEF_DOCUMENT_PEOPLE_EXTRACTION_EXPORT_COLUMNS,
+            inserted_values,
+            strict=True,
+        )
+    )
+    assert inserted["source_document_id"] == "AAK-2025"
+    assert inserted["extraction_status"] == "extracted"
+
+    invalid_response_keys = [
+        key
+        for bucket, key in object_store.objects
+        if bucket == ESEF_DOCUMENT_BUCKET and key.endswith("/invalid_response.json")
+    ]
+    assert invalid_response_keys == []
+    assert any(
+        "could not keep the invalid response" in line for line in log_lines
+    )

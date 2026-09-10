@@ -170,6 +170,8 @@ country." The views are named `se_esef_<table>`.
   consumer.
 - `se_company_person_esef` is dropped, not merely unchanged (corrected above).
 - Migration number 000397 (000396 went to the person entity, merged 2026-09-09).
+- An `invalid_response` from either LLM pass keeps its raw text beside the
+  artifact for inspection; still no row, retried on the next run.
 
 ### 3. Registered-office addresses
 

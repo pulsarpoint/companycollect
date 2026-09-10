@@ -248,6 +248,7 @@ class _PassOutcomeCounts:
     enriched_count: int
     failed_document_count: int
     rate_limited_document_count: int
+    invalid_response_artifact_count: int
 
 
 @dataclass(frozen=True)
@@ -464,6 +465,9 @@ def run_esef_llm_enrichment(
         "processed_document_count": len(row_build.processed_documents),
         "failed_document_count": outcome_counts.failed_document_count,
         "rate_limited_document_count": outcome_counts.rate_limited_document_count,
+        "invalid_response_artifact_count": (
+            outcome_counts.invalid_response_artifact_count
+        ),
         "selected_document_count": len(row_build.processed_documents),
         "unchanged_document_count": (
             len(documents)
@@ -711,6 +715,85 @@ def _prepare_pass_documents(
     )
 
 
+def _finish_reason_from_message(message: str) -> str | None:
+    """Pull ``finish_reason=...`` out of an EsefLlmResponseError message.
+
+    The exception carries no structured finish_reason of its own -- only the
+    validation and truncation messages embed it as text -- so the invalid-
+    response artifact recovers it this way, falling back to ``None`` when it
+    is absent or the placeholder value ``"unknown"``.
+    """
+    marker = "finish_reason="
+    start = message.find(marker)
+    if start < 0:
+        return None
+    start += len(marker)
+    end = start
+    while end < len(message) and message[end] not in ",) \n":
+        end += 1
+    value = message[start:end]
+    return None if value in ("", "unknown") else value
+
+
+def _write_invalid_response_artifact(
+    *,
+    object_store: Any,
+    work: _PreparedEnrichment,
+    source_document_id: str,
+    raw_response: str,
+    validation_summary: str,
+    exc_text: str,
+    log_info: Callable[..., object],
+) -> str | None:
+    """Archive an invalid model response beside its (never-written) artifact.
+
+    The output key always ends in ``artifact.json``; this keeps everything
+    ahead of that -- schema/prompt/model/package/request path segments -- and
+    swaps in ``invalid_response.json`` so the raw text sits right next to
+    where the validated artifact would have landed.
+
+    This archive is best-effort: it is already handling a failed document, so
+    an object-store error here must not propagate and stop the rest of the
+    batch. The write is caught, logged, and swallowed -- returning ``None``
+    tells the caller to fall back to the ordinary failure log line and leave
+    ``invalid_response_artifact_count`` unchanged.
+    """
+    invalid_response_key = (
+        work.output_key.removesuffix("artifact.json") + "invalid_response.json"
+    )
+    invalid_response_document = {
+        "schema_version": 1,
+        "source_document_id": source_document_id,
+        "request_sha256": work.request_sha256,
+        "finish_reason": _finish_reason_from_message(exc_text),
+        "validation_summary": validation_summary,
+        "raw_response": raw_response,
+    }
+    body = json.dumps(
+        invalid_response_document,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    try:
+        object_store.write_bytes(
+            invalid_response_key,
+            body,
+            bucket=ESEF_DOCUMENT_BUCKET,
+        )
+    except Exception as exc:  # noqa: BLE001 - best-effort archive, must not stop the batch
+        log_info(
+            "ESEF LLM could not keep the invalid response for document %s at %s: "
+            "%s: %s",
+            source_document_id,
+            invalid_response_key,
+            type(exc).__name__,
+            str(exc)[:300],
+        )
+        return None
+    return invalid_response_key
+
+
 def _process_pass_outcomes(
     outcomes: Iterable[_EnrichmentRequestOutcome],
     *,
@@ -725,12 +808,16 @@ def _process_pass_outcomes(
     Shared by every ESEF LLM pass: the artifact serializer and completed
     extraction status are supplied by ``profile``, everything else about
     walking the outcomes, writing the output artifact, and progress logging is
-    identical between passes.
+    identical between passes. An ``invalid_response`` failure whose exception
+    carries a raw response additionally has that response archived beside the
+    (unwritten) artifact -- the document itself still gets no row and is
+    retried on the next run.
     """
     completed: dict[str, _CompletedEnrichment] = {}
     enriched_count = 0
     failed_document_count = 0
     rate_limited_document_count = 0
+    invalid_response_artifact_count = 0
     for attempt_index, outcome in enumerate(outcomes, start=1):
         work = outcome.work
         result = outcome.result
@@ -741,17 +828,48 @@ def _process_pass_outcomes(
             exc = outcome.failure_exception
             exc_type = type(exc).__name__ if exc is not None else "unknown"
             exc_text = str(exc)[:300] if exc is not None else ""
-            log_info(
-                "ESEF LLM request failed for document %s (%s: %s %s); "
-                "continuing batch: %s/%s attempted, %s failed",
-                work.document["source_document_id"],
-                outcome.failure_kind,
-                exc_type,
-                exc_text,
-                attempt_index,
-                attempted_count,
-                failed_document_count,
-            )
+            source_document_id = str(work.document["source_document_id"])
+            raw_response = getattr(exc, "raw_response", None)
+            invalid_response_key = None
+            if outcome.failure_kind == "invalid_response" and raw_response:
+                validation_summary = (
+                    getattr(exc, "validation_summary", None) or exc_text
+                )
+                invalid_response_key = _write_invalid_response_artifact(
+                    object_store=object_store,
+                    work=work,
+                    source_document_id=source_document_id,
+                    raw_response=raw_response,
+                    validation_summary=validation_summary,
+                    exc_text=exc_text,
+                    log_info=log_info,
+                )
+                if invalid_response_key is not None:
+                    invalid_response_artifact_count += 1
+            if invalid_response_key is not None:
+                log_info(
+                    "ESEF LLM request failed for document %s "
+                    "(invalid_response: %s); response kept at %s; "
+                    "continuing batch: %s/%s attempted, %s failed",
+                    source_document_id,
+                    validation_summary,
+                    invalid_response_key,
+                    attempt_index,
+                    attempted_count,
+                    failed_document_count,
+                )
+            else:
+                log_info(
+                    "ESEF LLM request failed for document %s (%s: %s %s); "
+                    "continuing batch: %s/%s attempted, %s failed",
+                    source_document_id,
+                    outcome.failure_kind,
+                    exc_type,
+                    exc_text,
+                    attempt_index,
+                    attempted_count,
+                    failed_document_count,
+                )
             continue
         serialized_artifact = profile.artifact_bytes(
             evidence_input=work.evidence_input,
@@ -791,6 +909,7 @@ def _process_pass_outcomes(
         enriched_count=enriched_count,
         failed_document_count=failed_document_count,
         rate_limited_document_count=rate_limited_document_count,
+        invalid_response_artifact_count=invalid_response_artifact_count,
     )
 
 
