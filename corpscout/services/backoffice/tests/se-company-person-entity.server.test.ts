@@ -651,6 +651,34 @@ describe("se-company-person-entity.server", () => {
         slots: [], active: 0, note: "reset", created_at: STAMP, created_by: "backoffice",
       },
     ]);
+
+    // The SAME rule, resolved with NO history row at all: the main table keeps the old
+    // key's fact permanently, as a withdrawn row whose member arrays still overlap the
+    // re-keyed person's (`fold.py:754-765`) -- unlike history, which is capped at 200
+    // rows and can miss it. `previousKeysOf` must resolve through `mainRows`, not only
+    // through history.
+    clickhouse.insertRules.mockReset();
+    const withdrawnRow = main({ person_key: OLD_KEY, active: 0, inactive_reason: "withdrawn" });
+    clickhouse.query.mockImplementation(async (sql: string) =>
+      sql === PERSON_RULES_SQL
+        ? [oldRule]
+        : sql === PERSON_HISTORY_SQL
+          ? []
+          : sql === PERSON_MAIN_SQL
+            ? [MERGED_ROW, WIKI_ROW, withdrawnRow]
+            : answer(sql),
+    );
+    const viaMainRow = await loadSePersonDetail(COMPANY);
+    expect(viaMainRow?.published[0]?.rules).toEqual([oldRule]);
+    expect(viaMainRow?.published[1]?.rules).toEqual([]);
+
+    await resetSePersonRules(COMPANY, { intent: "reset", personKey: MERGED_KEY, note: "" }, NOW);
+    expect(inserted(clickhouse.insertRules)).toEqual([
+      {
+        company_id: COMPANY, rule_id: HIDE_RULE_ID, kind: "hide", person_keys: [OLD_KEY],
+        slots: [], active: 0, note: "reset", created_at: STAMP, created_by: "backoffice",
+      },
+    ]);
   });
 
   it("refuses to activate a draft whose replaced key is not a key", async () => {

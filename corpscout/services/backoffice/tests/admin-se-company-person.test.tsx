@@ -18,7 +18,12 @@ const server = vi.hoisted(() => ({
 vi.mock("~/lib/se-company-person-entity.server", () => server);
 
 import { action, loader } from "~/routes/admin-se-company-person";
-import { SePersonWorkspace } from "~/components/admin/se-person-workspace";
+import {
+  PersonDecisionDialogBody,
+  SePersonWorkspace,
+  type PendingPersonDecision,
+} from "~/components/admin/se-person-workspace";
+import { Dialog } from "~/components/ui/dialog";
 import type { SePersonDetail, SePersonPublished } from "~/lib/se-company-person-entity.server";
 
 const COMPANY = "5560125220";
@@ -162,6 +167,18 @@ describe("admin-se-company-person route", () => {
     expect(server.launchSePersonFold).toHaveBeenCalledTimes(2);
   });
 
+  it("answers ok with a message when Activate's rows land but the fold launch fails", async () => {
+    // Minor 1: the reviewer rows and the hide rule are already written by the time the
+    // launch runs, so a launch failure must not read as a lost write -- and a second
+    // Activate would only answer "No draft to activate.", the draft already cleared.
+    server.launchSePersonFold.mockRejectedValueOnce(new Error("Dagster is down"));
+    const activated = await action({ request: post({ intent: "activate", slot: SLOT }), params: { companyId: COMPANY } } as never);
+    expect(activated).toEqual({
+      ok: true, intent: "activate", runId: undefined,
+      message: "Rows written; the fold launch failed: Dagster is down. Use Fold now.",
+    });
+  });
+
   it("turns a store refusal into a form error and lets anything else through", async () => {
     server.removeSePerson.mockRejectedValueOnce(new server.SePersonDecisionError("Already hidden."));
     expect(await action({ request: post({ intent: "remove", person_key: KEY }), params: { companyId: COMPANY } } as never)).toEqual({
@@ -190,5 +207,37 @@ describe("admin-se-company-person route", () => {
     );
     expect(empty).toContain("No people published yet");
     expect(empty).toContain("Add person");
+  });
+
+  it("posts a split's checked slots, note and intent, with the caveat in the dialog's own words", () => {
+    // Minor 2: nothing rendered `PersonDecisionDialogBody` before, so a renamed
+    // `name=` here would have passed every hand-built-FormData parser test and broken
+    // the Split dialog in production. `Dialog` (the root, no `DialogContent` portal) is
+    // what `DialogTitle` inside the body needs to render at all.
+    const pending: PendingPersonDecision = {
+      intent: "split",
+      personKey: "",
+      slot: "",
+      line: "Anna Svensson",
+      members: published.members,
+      reviewerOnly: false,
+    };
+    const html = render(
+      <Dialog open>
+        <PersonDecisionDialogBody pending={pending} busy={false} onClose={() => {}} />
+      </Dialog>,
+    );
+    expect(html).toContain('name="intent" value="split"');
+    // A split names slots through its own checkboxes, never through a hidden `slot`.
+    expect(html).not.toContain('name="slot" value=""');
+    expect(html).toContain('type="checkbox"');
+    expect(html).toContain('name="slot" value="uid-1:sig-1"');
+    expect(html).toContain('name="slot" value="doc-9:cand-1"');
+    expect(html).toContain('name="note"');
+    // The literal fragment, not the `SPLIT_CAVEAT` export -- the point is that the
+    // dialog actually renders it, not that the constant matches itself.
+    expect(html).toContain("Bolagsverket mints a new slot per annual report");
+    // renderToStaticMarkup escapes the apostrophe as an HTML entity.
+    expect(html).toContain("may need writing again after next year");
   });
 });

@@ -28,11 +28,26 @@ export const MAX_NAME_LENGTH = 100;
 export const MAX_ROLE_ENTRIES = 20;
 export const MIN_BIRTH_YEAR = 1850;
 export const MIN_ROLE_YEAR = 1900;
+/** ClickHouse `Date` floors at 1970-01-01 (`toDate('1901-05-04')` -> `1970-01-01` on
+ * prod), so a role that renders as a span, an open span or an end-only year -- anything
+ * that writes into `role_from`/`role_to` rather than `fiscal_year` -- must not start
+ * before it: a year below this would be silently rewritten to 1970 and an open span
+ * would inflate into decades of fabricated role-years. A single fiscal year is exempt --
+ * it goes to `fiscal_year UInt16`, which does not floor -- and keeps `MIN_ROLE_YEAR`. */
+export const MIN_SPAN_YEAR = 1970;
 /** Wikidata end dates run past today (2029 on prod), so a typed role may too. */
 export const ROLE_YEAR_SLACK = 5;
 
 export type SePersonSource = (typeof PERSON_SOURCES)[number];
 export type SePersonStatus = (typeof PERSON_STATUSES)[number];
+
+/** The sources the main table can actually hold: `reviewer_draft` never folds into a
+ * published row and `ratsit` is reserved with no data yet, so both always return zero
+ * rows from the People list's Source filter. The list offers these four, not the whole
+ * catalogue. */
+export const MAIN_PERSON_SOURCES: readonly SePersonSource[] = PERSON_SOURCES.filter(
+  (source) => source !== DRAFT_SOURCE && source !== "ratsit",
+);
 
 const KEY_PATTERN = /^[0-9a-f]{64}$/;
 const CONTROL = /[\u0000-\u001f\u007f]/;
@@ -42,7 +57,6 @@ const CONTROL = /[\u0000-\u001f\u007f]/;
 const NOTE_CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 const QID_PATTERN = /^Q[1-9][0-9]{0,11}$/;
 export const PERSON_GROUP_SLOT_PATTERN = /^r[0-9]{17}$/;
-export const PERSON_ROW_SLOT_PATTERN = /^r[0-9]{19}$/;
 
 export function isPersonSource(value: string): value is SePersonSource {
   return (PERSON_SOURCES as readonly string[]).includes(value);
@@ -358,21 +372,32 @@ export function validateSePersonInput(
   }
 
   const maxRoleYear = currentYear + ROLE_YEAR_SLACK;
-  const entries = (raw.roles ?? []).filter(
-    (role) => role.code.trim() !== "" || role.fromYear.trim() !== "" || role.toYear.trim() !== "",
-  );
+  const entries = (raw.roles ?? [])
+    .map((role, index) => ({ role, index }))
+    .filter(
+      ({ role }) => role.code.trim() !== "" || role.fromYear.trim() !== "" || role.toYear.trim() !== "",
+    );
   if (entries.length > MAX_ROLE_ENTRIES) {
     return { ok: false, error: `At most ${MAX_ROLE_ENTRIES} roles.` };
   }
   const roles: SePersonRoleInput[] = [];
-  for (const entry of entries) {
+  for (const { role: entry, index } of entries) {
     const code = entry.code.trim();
+    // A row with years but no code has nothing else wrong with it -- naming it here,
+    // rather than falling through to "Unknown role: .", is what tells the reviewer
+    // where to look.
+    if (code === "") return { ok: false, error: `Pick a role for row ${index + 1}.` };
     if (!roleCodes.includes(code)) return { ok: false, error: `Unknown role: ${code}.` };
     const fromYear = entry.fromYear.trim();
     const toYear = entry.toYear.trim();
+    // A single fiscal year (equal, non-empty) keeps the 1900 floor; a span, an open
+    // span or an end-only year writes into `role_from`/`role_to` and must not cross the
+    // ClickHouse `Date` floor at 1970.
+    const single = fromYear !== "" && fromYear === toYear;
+    const minYear = single ? MIN_ROLE_YEAR : MIN_SPAN_YEAR;
     for (const [label, year] of [["From year", fromYear], ["To year", toYear]] as const) {
-      if (year !== "" && !isYear(year, MIN_ROLE_YEAR, maxRoleYear)) {
-        return { ok: false, error: `${label} must be between ${MIN_ROLE_YEAR} and ${maxRoleYear}.` };
+      if (year !== "" && !isYear(year, minYear, maxRoleYear)) {
+        return { ok: false, error: `${label} must be between ${minYear} and ${maxRoleYear}.` };
       }
     }
     if (fromYear !== "" && toYear !== "" && Number(toYear) < Number(fromYear)) {

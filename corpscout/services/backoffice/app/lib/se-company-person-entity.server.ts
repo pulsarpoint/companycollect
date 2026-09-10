@@ -434,19 +434,29 @@ function membersOf(
 }
 
 /**
- * The keys this person has published under before: the history rows of this company
- * whose observations overlap the ones it is built from now. A person is keyed over its
- * whole member set, so a fuller spelling in a later filing -- or a Merge -- re-keys it,
- * and `fold.py` keeps applying a hide or merge rule through those PREVIOUS members. The
- * tab has to resolve a rule the same way or a re-keyed person is hidden with no route
- * back: no rule shown, and Reset answering "No rule to reset".
+ * The keys this person has published under before: the company's OTHER main rows --
+ * inactive ones (`active = 0`), which `fold.py:754-765` keeps for ever as `withdrawn`
+ * with the old key's member arrays intact -- whose member slots overlap the ones this
+ * person is built from now, UNION the history rows (a supplement: history is capped at
+ * 200 rows and newest-first, so it can miss a key the permanent main-table row still
+ * holds). A person is keyed over its whole member set, so a fuller spelling in a later
+ * filing -- or a Merge -- re-keys it, and `fold.py:698-703` keeps applying a hide or
+ * merge rule through those PREVIOUS members by resolving through the main table, not a
+ * bounded history read. The tab has to resolve a rule the same way or a re-keyed person
+ * is hidden with no route back: no rule shown, and Reset answering "No rule to reset".
  */
 function previousKeysOf(
+  mainRows: readonly SePersonRow[],
   history: readonly SePersonHistoryRow[],
   row: SePersonRow,
 ): Set<string> {
   const slots = new Set(row.member_slots);
   const keys = new Set<string>([row.person_key]);
+  for (const other of mainRows) {
+    if (other.active === 0 && other.member_slots.some((slot) => slots.has(slot))) {
+      keys.add(other.person_key);
+    }
+  }
   for (const past of history) {
     if (past.member_slots.some((slot) => slots.has(slot))) keys.add(past.person_key);
   }
@@ -459,9 +469,10 @@ function previousKeysOf(
 function rulesFor(
   rules: readonly SePersonRuleRow[],
   row: SePersonRow,
+  mainRows: readonly SePersonRow[],
   history: readonly SePersonHistoryRow[],
 ): SePersonRuleRow[] {
-  const keys = previousKeysOf(history, row);
+  const keys = previousKeysOf(mainRows, history, row);
   return rules.filter(
     (rule) =>
       rule.active === 1 &&
@@ -547,7 +558,7 @@ export async function loadSePersonDetail(companyId: string): Promise<SePersonDet
         sources: row.role_sources[index] ?? [],
       })),
       spellingReason: spellingReason(row, members),
-      rules: rulesFor(rules, row, history),
+      rules: rulesFor(rules, row, mainRows, history),
     };
   });
   const drafts = draftsOf(rawRows, normalizedRows);
@@ -1046,12 +1057,20 @@ export async function discardSePersonDraft(
   return { decidedAt: stamp };
 }
 
-/** The hide rule in force for a key: a current version (FINAL already collapsed the
- * older ones) that has not been released. */
-function activeHideRule(rules: readonly SePersonRuleRow[], personKey: string): SePersonRuleRow | null {
+/** The hide rule in force for a person: a current version (FINAL already collapsed the
+ * older ones) that has not been released, matched against the same previous-key set
+ * `rulesFor` resolves through -- not the literal key alone, or a person already hidden
+ * under a key it published under before would not be recognised. */
+function activeHideRule(
+  rules: readonly SePersonRuleRow[],
+  keys: ReadonlySet<string>,
+): SePersonRuleRow | null {
   return (
     rules.find(
-      (rule) => rule.kind === HIDE_KIND && rule.active === 1 && rule.person_keys.includes(personKey),
+      (rule) =>
+        rule.kind === HIDE_KIND &&
+        rule.active === 1 &&
+        rule.person_keys.some((key) => keys.has(key)),
     ) ?? null
   );
 }
@@ -1070,16 +1089,19 @@ export async function removeSePerson(
   now: Date = new Date(),
 ): Promise<{ decidedAt: string }> {
   const stamp = clickhouseStamp(now);
-  const [mainRows, rules] = await Promise.all([
+  const [mainRows, rules, history] = await Promise.all([
     chQuery<SePersonRow>(PERSON_MAIN_SQL, { companyId }),
     chQuery<SePersonRuleRow>(PERSON_RULES_SQL, { companyId }),
+    chQuery<SePersonHistoryRow>(PERSON_HISTORY_SQL, { companyId }),
   ]);
   const row = isPersonKey(decision.personKey)
     ? mainRows.find((candidate) => candidate.person_key === decision.personKey)
     : undefined;
   if (row === undefined) throw new SePersonDecisionError("Unknown person.");
-  // Hidden already, or hidden by a rule the next fold has yet to apply.
-  if (row.inactive_reason === "hidden" || activeHideRule(rules, row.person_key) !== null) {
+  // Hidden already, or hidden by a rule the next fold has yet to apply -- matched
+  // through the same previous-key set `rulesFor` uses, not the literal key alone.
+  const keys = previousKeysOf(mainRows, history, row);
+  if (row.inactive_reason === "hidden" || activeHideRule(rules, keys) !== null) {
     throw new SePersonDecisionError("Already hidden.");
   }
   const note = decision.note === "" ? "removed by reviewer" : decision.note;
@@ -1162,9 +1184,9 @@ export async function resetSePersonRules(
   now: Date = new Date(),
 ): Promise<{ decidedAt: string }> {
   const stamp = clickhouseStamp(now);
-  // History comes along so a rule minted against a key the fold has since re-keyed away
-  // from is still found (`previousKeysOf`); it is the same bounded, FINAL-free read the
-  // tab already makes.
+  // mainRows carries the permanent, un-capped record of a key this person published
+  // under before (`previousKeysOf`); history rides along as a supplement, the same
+  // bounded, FINAL-free read the tab already makes.
   const [mainRows, rules, history] = await Promise.all([
     chQuery<SePersonRow>(PERSON_MAIN_SQL, { companyId }),
     chQuery<SePersonRuleRow>(PERSON_RULES_SQL, { companyId }),
@@ -1174,7 +1196,7 @@ export async function resetSePersonRules(
     ? mainRows.find((candidate) => candidate.person_key === decision.personKey)
     : undefined;
   if (row === undefined) throw new SePersonDecisionError("Unknown person.");
-  const naming = rulesFor(rules, row, history);
+  const naming = rulesFor(rules, row, mainRows, history);
   if (naming.length === 0) throw new SePersonDecisionError("No rule to reset.");
   const note = decision.note === "" ? "reset" : `reset: ${decision.note}`;
   await chInsertSeCompanyPersonRules(

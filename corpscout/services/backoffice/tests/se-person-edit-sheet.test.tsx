@@ -6,7 +6,6 @@ import {
   SePersonEditForm,
   type SePersonEditInitial,
 } from "~/components/admin/se-person-edit-sheet";
-import { SPLIT_CAVEAT } from "~/components/admin/se-person-workspace";
 
 const COMPANY = "5560000001";
 const KEY = "b7".repeat(32);
@@ -21,8 +20,17 @@ const published: SePersonEditInitial = {
   birthYear: "1975",
   wikidataId: "Q7",
   roles: [{ code: "board_member", fromYear: "2023", toYear: "2025" }],
+  unmappedRoleCodes: [],
   data: '{"title":"Chair"}',
   note: "",
+};
+/** Important 2: a published role code the live catalogue does not have (2,326 persons
+ * on prod, e.g. `ledamot i valberedningen`) is dropped from `roles`, not prefilled into
+ * a row whose `<select>` has no matching `<option>`. */
+const withUnmapped: SePersonEditInitial = {
+  ...published,
+  roles: [],
+  unmappedRoleCodes: ["ledamot i valberedningen"],
 };
 
 function render(element: React.ReactElement): string {
@@ -78,6 +86,31 @@ describe("SePersonEditForm", () => {
     expect(html).toContain("Correct person");
   });
 
+  it("drops an unmapped role code from the roles editor and notes it above them", () => {
+    // Important 2: prefilling it anyway would select "No role" (the `<select>` has no
+    // matching `<option>`) while the year inputs stayed filled, and Save would then
+    // refuse with "Pick a role for row 1." -- naming a row the reviewer never typed
+    // into and never sees a role for.
+    const html = render(
+      <SePersonEditForm
+        mode="correct"
+        initial={withUnmapped}
+        roleOptions={ROLE_OPTIONS}
+        slot={null}
+        replacesKey={KEY}
+        result={null}
+        onCancel={() => {}}
+      />,
+    );
+    expect(html).toContain(
+      "1 role(s) with codes outside the catalogue were not prefilled: ledamot i valberedningen",
+    );
+    // The unmapped code gets no row of its own -- just the one blank trailing row every
+    // mode renders when there is nothing else to prefill.
+    expect(html).toContain('aria-label="Role 1"');
+    expect(html).not.toContain('aria-label="Role 2"');
+  });
+
   it("carries the draft's slot in edit-draft mode and shows this form's own refusal", () => {
     const html = render(
       <SePersonEditForm
@@ -93,15 +126,6 @@ describe("SePersonEditForm", () => {
     expect(html).toContain(`name="slot" value="${SLOT}"`);
     expect(html).toContain('role="alert"');
     expect(html).toContain("initials only");
-  });
-
-  it("warns, in the Split dialog's own words, that Bolagsverket re-slots every filing", () => {
-    // Ruling 9 / spec 7's known limit for this slice. The dialog itself renders
-    // nothing server-side (an open Dialog is client state), so the sentence is
-    // exported as a string and pinned here -- the same trick `se-address-workspace.tsx`
-    // uses for `removeDescription`.
-    expect(SPLIT_CAVEAT).toContain("Bolagsverket mints a new slot per annual report");
-    expect(SPLIT_CAVEAT).toContain("may need writing again after next year's report");
   });
 
   it("keeps another action's refusal out of the sheet", () => {

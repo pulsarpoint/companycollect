@@ -14,7 +14,7 @@ import {
 import { DataTable } from "~/components/data-table/data-table";
 import { DataTablePagination } from "~/components/data-table/pagination";
 import {
-  PERSON_SOURCES,
+  MAIN_PERSON_SOURCES,
   PERSON_STATUSES,
   personSourceLabel,
 } from "~/lib/se-person-fields";
@@ -145,7 +145,7 @@ function PeopleFilterBar({ filters, pageSize }: { filters: SePeopleFilters; page
           name="source"
           label="Source"
           value={filters.source}
-          options={PERSON_SOURCES}
+          options={MAIN_PERSON_SOURCES}
           labelOf={personSourceLabel}
         />
       </Field>

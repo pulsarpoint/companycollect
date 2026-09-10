@@ -80,7 +80,17 @@ import { cn } from "~/lib/utils";
  * can each show only their own (an intent-less refusal is shown by both rather than by
  * neither). */
 export type SePersonResult =
-  | { ok: true; intent: string; runId?: string; url?: string | null; slot?: string }
+  | {
+      ok: true;
+      intent: string;
+      runId?: string;
+      url?: string | null;
+      slot?: string;
+      /** Set only when the decision itself landed but a follow-on step (the fold
+       * Activate launches) failed -- so the write is not a lost one, but the reviewer
+       * still has to act (Minor 1: Fold now). */
+      message?: string;
+    }
   | { ok: false; intent?: string; error: string }
   | null;
 
@@ -225,12 +235,25 @@ function selectPerson(detail: SePersonDetail, selectedKey: string | null): SePer
 
 /** What a Correct opens on: the published person's own columns and the roles it holds.
  * `data` stays empty on purpose -- the published object is the fold's merge of every
- * source's extras, and retyping it would re-assert all of it as the reviewer's own. */
-function initialFromRow(entry: SePersonPublished): SePersonEditInitial {
+ * source's extras, and retyping it would re-assert all of it as the reviewer's own. A
+ * role code the live catalogue does not have (spec 4.3's unmapped label, published as
+ * itself) is dropped rather than prefilled -- its `<select>` has no matching `<option>`,
+ * which silently falls back to "No role" while the years stay filled -- and named in
+ * `unmappedRoleCodes` so the sheet can say so. */
+function initialFromRow(
+  entry: SePersonPublished,
+  roleOptions: readonly SePersonRoleOption[],
+): SePersonEditInitial {
   const { row } = entry;
+  const known = new Set(roleOptions.map((option) => option.code));
   const spans = new Map<string, { from: number; to: number }>();
+  const unmapped = new Set<string>();
   for (const role of entry.roles) {
     if (role.year === 0) continue;
+    if (!known.has(role.code)) {
+      unmapped.add(role.code);
+      continue;
+    }
     const span = spans.get(role.code);
     if (span === undefined) spans.set(role.code, { from: role.year, to: role.year });
     else {
@@ -244,6 +267,10 @@ function initialFromRow(entry: SePersonPublished): SePersonEditInitial {
     toYear: String(span.to),
   }));
   for (const code of row.current_roles) {
+    if (!known.has(code)) {
+      unmapped.add(code);
+      continue;
+    }
     if (!spans.has(code)) roles.push({ code, fromYear: "", toYear: "" });
   }
   return {
@@ -252,6 +279,7 @@ function initialFromRow(entry: SePersonPublished): SePersonEditInitial {
     birthYear: row.birth_year,
     wikidataId: row.wikidata_id,
     roles,
+    unmappedRoleCodes: [...unmapped],
     data: "",
     note: "",
   };
@@ -270,6 +298,9 @@ function initialFromDraft(draft: SePersonDraft): SePersonEditInitial {
     birthYear: first?.birth_year ?? "",
     wikidataId: first?.wikidata_id ?? "",
     roles,
+    // A draft's rows are validated against the catalog before they are ever saved
+    // (`validateSePersonInput`), so a draft never carries a code outside it.
+    unmappedRoleCodes: [],
     data: reviewerData(first?.data ?? ""),
     note: draft.note,
   };
@@ -841,9 +872,13 @@ function FoldCard({
   busy: boolean;
 }) {
   // Ruling 6: Activate launches the targeted fold itself, so its result carries a run
-  // to follow exactly as Fold now's does.
+  // to follow exactly as Fold now's does -- unless the launch itself is what failed
+  // (Minor 1), in which case there is no run to poll and `ResultAlert` says so instead.
   const launched =
-    result !== null && result.ok && (result.intent === "fold-now" || result.intent === "activate");
+    result !== null &&
+    result.ok &&
+    result.message === undefined &&
+    (result.intent === "fold-now" || result.intent === "activate");
   const runId = launched ? (result.runId ?? "") : "";
   const runUrl = result?.ok ? (result.url ?? null) : null;
   return (
@@ -939,6 +974,17 @@ function ResultAlert({
         <TriangleAlertIcon />
         <AlertTitle>Not saved</AlertTitle>
         <AlertDescription>{result.error}</AlertDescription>
+      </Alert>
+    );
+  }
+  // Minor 1: the rows landed but the fold launch that was meant to follow them did not
+  // -- not a lost write, but not what Ruling 6 promised either.
+  if (result.message !== undefined) {
+    return (
+      <Alert>
+        <TriangleAlertIcon />
+        <AlertTitle>Fold launch failed</AlertTitle>
+        <AlertDescription>{result.message}</AlertDescription>
       </Alert>
     );
   }
@@ -1285,7 +1331,7 @@ export function SePersonWorkspace({
   const openCorrect = (entry: SePersonPublished) =>
     setSheet({
       mode: "correct",
-      initial: initialFromRow(entry),
+      initial: initialFromRow(entry, roleOptions),
       slot: null,
       replacesKey: entry.row.person_key,
     });

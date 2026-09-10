@@ -66,6 +66,11 @@ export interface SePersonEditInitial {
   birthYear: string;
   wikidataId: string;
   roles: SePersonEditRole[];
+  /** Role codes the published person carries that the live catalogue does not (spec
+   * 4.3: an unmapped source label publishes as itself) -- dropped from `roles` above
+   * rather than prefilled into a row whose `<select>` has no matching `<option>`, which
+   * silently falls back to "No role" while the years stay filled. */
+  unmappedRoleCodes: string[];
   /** The reviewer's own JSON object, without the three keys the backoffice owns. */
   data: string;
   note: string;
@@ -78,6 +83,7 @@ export const EMPTY_PERSON_INITIAL: SePersonEditInitial = {
   birthYear: "",
   wikidataId: "",
   roles: [],
+  unmappedRoleCodes: [],
   data: "",
   note: "",
 };
@@ -281,6 +287,12 @@ export function SePersonEditForm({
       </div>
       <fieldset className="flex flex-col gap-2">
         <legend className="text-muted-foreground text-xs uppercase tracking-wide">Roles</legend>
+        {initial.unmappedRoleCodes.length === 0 ? null : (
+          <p className="text-muted-foreground text-xs">
+            {initial.unmappedRoleCodes.length} role(s) with codes outside the catalogue were not
+            prefilled: {initial.unmappedRoleCodes.join(", ")}
+          </p>
+        )}
         {Array.from({ length: rowCount }, (_, index) => (
           <RoleRow
             key={`role-${index}`}

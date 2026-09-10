@@ -72,9 +72,23 @@ export async function action({ request, params }: Route.ActionArgs) {
     if (decision.intent === "activate") {
       await activateSePersonDraft(params.companyId, decision);
       // Ruling 6 (spec 7): Activate launches the targeted fold itself, so the reviewer
-      // sees the person appear without a second click.
-      const { runId, url } = await launchSePersonFold(params.companyId);
-      return { ok: true as const, intent, runId, url };
+      // sees the person appear without a second click. The rows are already written by
+      // the time this runs, so a launch failure here must not read as a lost write --
+      // it answers ok, with a message pointing at Fold now, rather than rethrowing a
+      // 500 (Minor 1). A second Activate would only answer "No draft to activate.": the
+      // draft is already cleared.
+      try {
+        const { runId, url } = await launchSePersonFold(params.companyId);
+        return { ok: true as const, intent, runId, url };
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        return {
+          ok: true as const,
+          intent,
+          runId: undefined,
+          message: `Rows written; the fold launch failed: ${reason}. Use Fold now.`,
+        };
+      }
     }
     if (decision.intent === "discard") {
       await discardSePersonDraft(params.companyId, decision);

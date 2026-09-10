@@ -198,8 +198,8 @@ table is what records what actually changed.
   report, so the person a reviewer split out rejoins the very set it was split from the moment
   next year's filing lands, silently. Merge and hide survive a re-key (they resolve through
   the previous published members, and old slots persist for ever); split alone does not.
-  Slice 3 must decide how the backoffice expresses a durable split -- a ruling to take there,
-  not here.
+  A split rule pins slots and the Split dialog says so (Ruling 9); a durable split
+  expression is deferred.
 - **The bucket fold is serial behind `FOLD_POOL`.** A page's `current_normalized_sql` read is
   a `FINAL` scan of the normalized table, and the bucket hash scatters a page's ids over the
   whole primary key, so nearly every granule matches: measured on prod at 5.6M rows / 2.57

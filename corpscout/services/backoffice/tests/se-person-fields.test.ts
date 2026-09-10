@@ -5,6 +5,7 @@ import {
   isPersonKey,
   isPersonSource,
   isPersonStatus,
+  MAIN_PERSON_SOURCES,
   normalizeSePersonName,
   personFoldPending,
   personGroupSlot,
@@ -43,6 +44,10 @@ describe("person catalogue", () => {
     expect(isPersonStatus("withdrawn") && !isPersonStatus("gone")).toBe(true);
     expect(personSourceLabel("esef")).toBe("ESEF");
     expect(personSourceLabel("reviewer_draft")).toBe("Reviewer draft");
+    // Minor 5: `reviewer_draft` never folds and `ratsit` is reserved with no data, so
+    // both always return zero rows from the list's Source filter -- offer the other
+    // four.
+    expect([...MAIN_PERSON_SOURCES]).toEqual(["bolagsverket", "esef", "wikidata", "reviewer"]);
     expect(roleLabel("board_chair", ROLE_OPTIONS)).toBe("Board chair");
     // An unmapped code (a source's own label, published as itself) reads as itself.
     expect(roleLabel("styrelseledarmot", ROLE_OPTIONS)).toBe("styrelseledarmot");
@@ -184,9 +189,67 @@ describe("validateSePersonInput", () => {
     expect(
       validateSePersonInput({ ...base, roles: [{ code: "board_member", fromYear: "2025", toYear: "2019" }] }, ROLE_CODES, 2026),
     ).toEqual({ ok: false, error: "A role cannot end before it starts." });
+    // An open span (from-only): the 1970 floor applies, not the single-year 1900 one.
     expect(
       validateSePersonInput({ ...base, roles: [{ code: "board_member", fromYear: "2040", toYear: "" }] }, ROLE_CODES, 2026),
+    ).toEqual({ ok: false, error: "From year must be between 1970 and 2031." });
+  });
+
+  it("refuses a row with years but no code, naming the row", () => {
+    // Important 2: the sheet always renders a trailing blank row, and typing a year
+    // into it without picking a role must not fall through to "Unknown role: .".
+    expect(
+      validateSePersonInput({ ...base, roles: [{ code: "", fromYear: "2024", toYear: "2024" }] }, ROLE_CODES, 2026),
+    ).toEqual({ ok: false, error: "Pick a role for row 1." });
+    // The row number is the position among ALL rows the sheet rendered, blank ones
+    // included, so it names the row the reviewer is looking at.
+    expect(
+      validateSePersonInput(
+        {
+          ...base,
+          roles: [
+            { code: "board_member", fromYear: "2023", toYear: "2025" },
+            { code: "", fromYear: "", toYear: "2026" },
+          ],
+        },
+        ROLE_CODES,
+        2026,
+      ),
+    ).toEqual({ ok: false, error: "Pick a role for row 2." });
+  });
+
+  it("keeps 1900 for a single fiscal year but floors a span, an open span and an end-only year at 1970", () => {
+    // Important 3: ClickHouse `Date` floors at 1970-01-01 (verified on prod:
+    // toDate('1901-05-04') -> '1970-01-01'), so anything that writes into
+    // `role_from`/`role_to` -- everything but a single fiscal year -- must refuse below
+    // it, or an open span silently inflates into decades of fabricated role-years.
+    expect(
+      validateSePersonInput({ ...base, roles: [{ code: "board_member", fromYear: "1900", toYear: "1900" }] }, ROLE_CODES, 2026).ok,
+    ).toBe(true);
+    expect(
+      validateSePersonInput({ ...base, roles: [{ code: "board_member", fromYear: "1899", toYear: "1899" }] }, ROLE_CODES, 2026),
     ).toEqual({ ok: false, error: "From year must be between 1900 and 2031." });
+    // A span.
+    expect(
+      validateSePersonInput({ ...base, roles: [{ code: "board_member", fromYear: "1970", toYear: "1975" }] }, ROLE_CODES, 2026).ok,
+    ).toBe(true);
+    expect(
+      validateSePersonInput({ ...base, roles: [{ code: "board_member", fromYear: "1950", toYear: "1955" }] }, ROLE_CODES, 2026),
+    ).toEqual({ ok: false, error: "From year must be between 1970 and 2031." });
+    // An open span (from-only, no end).
+    expect(
+      validateSePersonInput({ ...base, roles: [{ code: "board_member", fromYear: "1970", toYear: "" }] }, ROLE_CODES, 2026).ok,
+    ).toBe(true);
+    expect(
+      validateSePersonInput({ ...base, roles: [{ code: "board_member", fromYear: "1950", toYear: "" }] }, ROLE_CODES, 2026),
+    ).toEqual({ ok: false, error: "From year must be between 1970 and 2031." });
+    // An end-only year (to-only, no start).
+    expect(
+      validateSePersonInput({ ...base, roles: [{ code: "board_member", fromYear: "", toYear: "1970" }] }, ROLE_CODES, 2026).ok,
+    ).toBe(true);
+    expect(
+      validateSePersonInput({ ...base, roles: [{ code: "board_member", fromYear: "", toYear: "1950" }] }, ROLE_CODES, 2026),
+    ).toEqual({ ok: false, error: "To year must be between 1970 and 2031." });
   });
 
   it("refuses data that is not an object, a reserved key, and a note with a control character", () => {
