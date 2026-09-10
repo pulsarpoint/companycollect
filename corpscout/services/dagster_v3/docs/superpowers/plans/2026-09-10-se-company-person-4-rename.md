@@ -914,7 +914,7 @@ Claude-Session: https://claude.ai/code/session_01RY2W9FTCX9YxUcXtSBaEJ5"
 
 ### Task 4: Prod run (controller)
 
-No new code. The deploy must land BEFORE the migration, and the migration must land outside the :45 refresh window. The backoffice runs locally from the main checkout (memory `backoffice-runs-locally`), so its "deploy" is the merge.
+No new code. The migration lands right after the merge and outside the :45 refresh window, and the dagster deploy lands AFTER the migration (controller ruling 2026-09-10 over this plan's first draft: the deployed code then never names a table that does not exist, and the owner's backoffice on the main checkout reads the new name only in the minutes between the merge and the migration). The backoffice runs locally from the main checkout (memory `backoffice-runs-locally`), so its "deploy" is the merge.
 
 1. [ ] **Whole-branch review, then merge to main.** The main checkout is on `main` today. If main has taken 000398 in the meantime, renumber FIRST — both migration files, `EXPECTED_MIGRATIONS`, `MIGRATION` in `tests/test_se_companies_serving_mv.py`, the `migrate force 398` line in the up file's header, and the `000398` mentions in `person-design.md` and spec sections 3.3 and 10 — then re-run:
 
@@ -924,7 +924,23 @@ No new code. The deploy must land BEFORE the migration, and the migration must l
      pytest tests/test_clickhouse_migrations.py tests/test_se_companies_serving_mv.py -q
    ```
 
-2. [ ] **Deploy the dagster host from a pristine deploy worktree at the merge commit** (memory `se-worktree-deploy-recipe`; the constant changes what `build_se_companies_serving_sql` renders and what `batch.py` writes to, so the host must carry it before the table moves):
+2. [ ] **Apply the migration, outside the refresh window.** Move the deploy worktree to the merge commit first (`git -C <scratch>/deploy-worktree checkout --detach <merge-commit>`) so the Makefile runs the merged ledger. Wait for a :45 refresh to finish (13-15 min, so start about :00 and no later than :30):
+
+   ```sql
+   SELECT view, status, last_success_time, exception
+   FROM system.view_refreshes
+   WHERE database = 'corpscout' AND view = 'se_companies_serving';
+   ```
+
+   Proceed only when `status` is `Scheduled` and `last_success_time` is this hour's :45 run. Then:
+
+   ```bash
+   make -s -C <scratch>/deploy-worktree/corpscout clickhouse-migrate-up-one
+   ```
+
+   This should return in seconds: there is no `SYSTEM WAIT VIEW` here, which is the statement that outlived the migrate client's `read_timeout=300` at 000391 (memory `se-companies-serving-view`). **If the client drops anyway**, follow the runbook Task 3 put in `person-design.md`: read `system.view_refreshes`; check `SELECT name FROM system.tables WHERE database='corpscout' AND name LIKE 'se_company_person%'` to see whether the RENAME landed; run the `ALTER TABLE ... MODIFY QUERY` from the up file if it did not; `SYSTEM START VIEW corpscout.se_companies_serving`; then `make -s -C <scratch>/deploy-worktree/corpscout clickhouse-migrate-force VERSION=398`.
+
+3. [ ] **Deploy the dagster host from a pristine deploy worktree at the merge commit** (memory `se-worktree-deploy-recipe`; the constant changes what `build_se_companies_serving_sql` renders and what `batch.py` writes to, so the host must carry it before the table moves):
 
    ```bash
    git worktree add <scratch>/deploy-worktree <merge-commit>
@@ -940,23 +956,7 @@ No new code. The deploy must land BEFORE the migration, and the migration must l
 
    Capture the playbook's exit code explicitly; never trust `ansible-playbook | tail`. Expect `failed=0`.
 
-   **The window between this step and step 3 is deliberate.** The deployed code names `corpscout.se_company_person` while the database still holds `_v2`. Nothing scheduled reads the main table: `se_company_person_weekly` is STOPPED and both fold assets are manual. So the only ways to hit the gap are to launch a fold by hand or to open the People tab on the merged local backoffice — do neither until step 3 reports success. The serving view is unaffected: its STORED query still names `_v2`, which still exists, so the :45 refresh in this window succeeds normally.
-
-3. [ ] **Apply the migration, outside the refresh window.** Wait for a :45 refresh to finish (13-15 min, so start about :00 and no later than :30):
-
-   ```sql
-   SELECT view, status, last_success_time, exception
-   FROM system.view_refreshes
-   WHERE database = 'corpscout' AND view = 'se_companies_serving';
-   ```
-
-   Proceed only when `status` is `Scheduled` and `last_success_time` is this hour's :45 run. Then:
-
-   ```bash
-   make -s -C <scratch>/deploy-worktree/corpscout clickhouse-migrate-up-one
-   ```
-
-   This should return in seconds: there is no `SYSTEM WAIT VIEW` here, which is the statement that outlived the migrate client's `read_timeout=300` at 000391 (memory `se-companies-serving-view`). **If the client drops anyway**, follow the runbook Task 3 put in `person-design.md`: read `system.view_refreshes`; check `SELECT name FROM system.tables WHERE database='corpscout' AND name LIKE 'se_company_person%'` to see whether the RENAME landed; run the `ALTER TABLE ... MODIFY QUERY` from the up file if it did not; `SYSTEM START VIEW corpscout.se_companies_serving`; then `make -s -C <scratch>/deploy-worktree/corpscout clickhouse-migrate-force VERSION=398`.
+   **This step runs after the migration.** Between the merge (step 1) and the migration (step 2) the owner's backoffice on the main checkout names `corpscout.se_company_person` while the database still holds `_v2`; keep that window to minutes and do not open the People tab in it. Nothing scheduled reads the main table: `se_company_person_weekly` is STOPPED and both fold assets are manual.
 
 4. [ ] **Read out the rename.** Record the row count from BEFORE the migration (1,126,408 at 2026-09-10 19:05 UTC; take a fresh one just before step 3 in case the slice-3 smoke company was re-folded) and require it unchanged:
 

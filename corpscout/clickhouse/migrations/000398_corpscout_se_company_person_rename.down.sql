@@ -2,8 +2,8 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 
 -- Undoes 000398: the entity goes back to corpscout.se_company_person_v2 and the serving
 -- view is re-pointed at the _v2 render 000396 deployed. The rename runs BEFORE the
--- MODIFY-QUERY step here for the same reason it runs after it in the up file: the query
--- must never be set to a name that does not exist yet. Nothing else comes back -- the
+-- MODIFY-QUERY step here, as it does in the up file: the query must never be set to a
+-- name that does not exist yet. Nothing else comes back -- the
 -- 2026-08-19 table that used to hold the name was dropped by hand in slice 0 and is not
 -- this migration's business. Running this down migration restores the database only: the
 -- deployed dagster code (companies_current.py, person/tables.py) and the backoffice
