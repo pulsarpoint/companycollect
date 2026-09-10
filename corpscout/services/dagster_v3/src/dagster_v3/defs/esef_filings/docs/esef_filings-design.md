@@ -36,7 +36,10 @@ then:
 
 - downloads each unique report package;
 - verifies and archives it under its SHA-256 digest;
-- reuses an existing supported artifact when possible;
+- reuses an existing artifact only when its schema version matches the parser's
+  current schema version, re-parsing a stale-schema artifact on any partition
+  run even outside `refresh_existing`, which instead forces every artifact to
+  be re-parsed regardless of its schema version;
 - parses missing artifacts with Arelle in recycled worker processes;
 - extracts XBRL facts, internal document metadata, contact candidates, taxonomy
   labels, visible sections, and parser quality information; and

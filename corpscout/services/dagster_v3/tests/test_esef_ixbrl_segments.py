@@ -826,21 +826,24 @@ def test_document_asset_archives_parses_and_stores_source_linked_rows(
     assert "company_id" not in artifact["source"] and "country" not in artifact["source"]
     assert artifact["source"]["source_run_id"] == "parse-run"
 
-    compatible_v4_key = artifact_key.replace("/schema=v5/", "/schema=v4/")
-    compatible_v4_artifact = {**artifact, "schema_version": 4}
-    compatible_v4_artifact.pop("visible_sections")
+    # An artifact left behind at an older schema version (v4) is no longer
+    # reusable: owner ruling 2026-09-10 says a stale-schema artifact is always
+    # re-parsed, regardless of `refresh_existing`.
+    stale_v4_key = artifact_key.replace("/schema=v5/", "/schema=v4/")
+    stale_v4_artifact = {**artifact, "schema_version": 4}
+    stale_v4_artifact.pop("visible_sections")
     object_store.objects.pop((ESEF_DOCUMENT_BUCKET, artifact_key))
-    object_store.objects[(ESEF_DOCUMENT_BUCKET, compatible_v4_key)] = json.dumps(
-        compatible_v4_artifact
+    object_store.objects[(ESEF_DOCUMENT_BUCKET, stale_v4_key)] = json.dumps(
+        stale_v4_artifact
     ).encode("utf-8")
     third = _run_document_artifact_stages(
         database=database,
         object_store=object_store,
         client=client,
-        source_run_id="v4-reuse-run",
+        source_run_id="v4-upgrade-run",
         source_document_ids=["SAMPLE-2024"],
     )
-    compatible_result = json.loads(
+    upgraded_result = json.loads(
         object_store.objects[
             (ESEF_DOCUMENT_BUCKET, document_result_object_key("2025-03-30"))
         ]
@@ -855,16 +858,21 @@ def test_document_asset_archives_parses_and_stores_source_linked_rows(
     assert second["reused_artifact_count"] == 1
     assert second["reused_artifact_schema_counts"] == {"5": 1}
     assert second["reused_package_count"] == 1
-    assert third["parsed_package_count"] == 0
-    assert third["reused_artifact_count"] == 1
-    assert third["reused_artifact_schema_counts"] == {"4": 1}
+    # A stale v4 artifact is re-parsed (counted as "upgraded"), not reused --
+    # the package itself is still reused since it is unaffected by schema drift.
+    assert third["parsed_package_count"] == 1
+    assert third["downloaded_package_count"] == 0
     assert third["reused_package_count"] == 1
+    assert third["reused_artifact_count"] == 0
+    assert third["reused_artifact_schema_counts"] == {}
+    assert third["upgraded_artifact_count"] == 1
+    assert third["upgraded_artifact_schema_counts"] == {"4": 1}
     assert client.calls == ["https://example.test/sample.zip"]
-    assert (ESEF_DOCUMENT_BUCKET, artifact_key) not in object_store.objects
-    assert compatible_result["document_rows"][0]["artifact_schema_version"] == 4
+    assert (ESEF_DOCUMENT_BUCKET, artifact_key) in object_store.objects
+    assert upgraded_result["document_rows"][0]["artifact_schema_version"] == 5
     assert (
-        compatible_result["document_rows"][0]["parsed_artifact_object_key"]
-        == compatible_v4_key
+        upgraded_result["document_rows"][0]["parsed_artifact_object_key"]
+        == artifact_key
     )
     result_key = document_result_object_key("2025-03-30")
     assert (ESEF_DOCUMENT_BUCKET, result_key) in object_store.uploaded_files
@@ -909,6 +917,50 @@ def test_document_asset_archives_parses_and_stores_source_linked_rows(
             "Beskrivning av verksamheten",
             True,
         ),
+    ]
+
+
+def test_refresh_existing_reparses_current_version_artifact(tmp_path: Path) -> None:
+    """`refresh_existing=True` re-parses even a current-schema artifact, but
+    that is a deliberate full refresh -- not a schema-driven upgrade -- so it
+    must not be counted in `upgraded_artifact_count`."""
+    package_body = _write_sample_report_package(tmp_path).read_bytes()
+    package_sha256 = sha256(package_body).hexdigest()
+    database = duckdb_resource(tmp_path / "esef.duckdb")
+    _seed_filing_index(database, package_sha256=package_sha256)
+    object_store = _FakeObjectStore({})
+    client = _FakeDownloadClient(package_body)
+
+    first = _run_document_artifact_stages(
+        database=database,
+        object_store=object_store,
+        client=client,
+        source_run_id="parse-run",
+        source_document_ids=["SAMPLE-2024"],
+    )
+    assert first["parsed_package_count"] == 1
+    artifact_key = artifact_object_key(package_sha256)
+    assert (ESEF_DOCUMENT_BUCKET, artifact_key) in object_store.objects
+
+    refreshed = _run_document_artifact_stages(
+        database=database,
+        object_store=object_store,
+        client=client,
+        source_run_id="refresh-run",
+        source_document_ids=["SAMPLE-2024"],
+        refresh_existing=True,
+    )
+
+    assert refreshed["parsed_package_count"] == 1
+    assert refreshed["reused_artifact_count"] == 0
+    assert refreshed["reused_artifact_schema_counts"] == {}
+    assert refreshed["upgraded_artifact_count"] == 0
+    assert refreshed["upgraded_artifact_schema_counts"] == {}
+    assert refreshed["downloaded_package_count"] == 1
+    assert refreshed["reused_package_count"] == 0
+    assert client.calls == [
+        "https://example.test/sample.zip",
+        "https://example.test/sample.zip",
     ]
 
 
@@ -1313,6 +1365,7 @@ def _run_document_artifact_stages(
     client: _FakeDownloadClient,
     source_run_id: str,
     source_document_ids: list[str],
+    refresh_existing: bool = False,
 ) -> dict[str, object]:
     partition_key = "2025-03-30"
     run_esef_document_manifest_partition(
@@ -1329,7 +1382,7 @@ def _run_document_artifact_stages(
         client=client,
         partition_key=partition_key,
         source_run_id=source_run_id,
-        refresh_existing=False,
+        refresh_existing=refresh_existing,
         validate_esef=False,
         parse_workers=1,
         log_info=lambda *_args: None,
