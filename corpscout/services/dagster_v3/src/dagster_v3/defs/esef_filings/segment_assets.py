@@ -228,6 +228,10 @@ def _write_jsonl_array(result: TextIO, rows_path: Path) -> None:
     result.write("]")
 
 
+def _noop_log(*_args: object, **_kwargs: object) -> None:
+    return None
+
+
 def run_esef_document_manifest_partition(
     *,
     esef_filings_duckdb: DuckDBResource,
@@ -295,6 +299,7 @@ def run_esef_document_artifacts_partition(
     validate_esef: bool,
     parse_workers: int,
     log_info: Callable[..., object],
+    log_warning: Callable[..., object] = _noop_log,
 ) -> dict[str, object]:
     """Archive and parse unique packages in worker processes outside DuckDB."""
     if parse_workers < 1 or parse_workers > _MAX_DOCUMENT_PARSE_WORKERS:
@@ -320,6 +325,8 @@ def run_esef_document_artifacts_partition(
     parsed_packages = 0
     reused_artifacts = 0
     reused_artifact_schema_counts: dict[str, int] = {}
+    upgraded_artifacts = 0
+    upgraded_artifact_schema_counts: dict[str, int] = {}
     skipped_packages = 0
     processed_documents = 0
     next_progress = 1
@@ -495,6 +502,16 @@ def run_esef_document_artifacts_partition(
                     if digest in current_artifact_keys_by_digest
                     else compatible_artifacts_by_digest.get(digest)
                 )
+                # Owner ruling 2026-09-10: an existing artifact is reusable
+                # only when its schema version matches the parser's current
+                # ARTIFACT_SCHEMA_VERSION. An artifact at any other version
+                # (older, or -- unexpectedly -- newer) is re-parsed instead.
+                reusable_current_artifact = (
+                    reusable_artifact
+                    if reusable_artifact is not None
+                    and reusable_artifact[0] == ARTIFACT_SCHEMA_VERSION
+                    else None
+                )
                 local_package = temp_root / f"{digest}.zip"
                 io_started = perf_counter()
                 package_exists = object_store.exists(
@@ -522,8 +539,10 @@ def run_esef_document_artifacts_partition(
                     reused_packages += 1
                 package_io_seconds += perf_counter() - io_started
 
-                if not refresh_existing and reusable_artifact is not None:
-                    artifact_schema_version, reusable_artifact_key = reusable_artifact
+                if not refresh_existing and reusable_current_artifact is not None:
+                    artifact_schema_version, reusable_artifact_key = (
+                        reusable_current_artifact
+                    )
                     artifact_read_started = perf_counter()
                     local_artifact = temp_root / f"{digest}.artifact.json"
                     object_store.download_file(
@@ -557,6 +576,26 @@ def run_esef_document_artifacts_partition(
                     local_package.unlink(missing_ok=True)
                     local_artifact.unlink(missing_ok=True)
                 else:
+                    if not refresh_existing and reusable_artifact is not None:
+                        stale_schema_version, _stale_artifact_key = reusable_artifact
+                        if stale_schema_version > ARTIFACT_SCHEMA_VERSION:
+                            log_warning(
+                                "ESEF processed week %s: digest %s has a stored "
+                                "artifact schema version %s newer than the "
+                                "parser's current version %s; re-parsing",
+                                partition_key,
+                                digest,
+                                stale_schema_version,
+                                ARTIFACT_SCHEMA_VERSION,
+                            )
+                        upgraded_artifacts += 1
+                        upgraded_schema_key = str(stale_schema_version)
+                        upgraded_artifact_schema_counts[upgraded_schema_key] = (
+                            upgraded_artifact_schema_counts.get(
+                                upgraded_schema_key, 0
+                            )
+                            + 1
+                        )
                     if not local_package.exists():
                         download_started = perf_counter()
                         object_store.download_file(
@@ -643,6 +682,10 @@ def run_esef_document_artifacts_partition(
             "reused_artifact_schema_counts": dict(
                 sorted(reused_artifact_schema_counts.items())
             ),
+            "upgraded_artifact_count": upgraded_artifacts,
+            "upgraded_artifact_schema_counts": dict(
+                sorted(upgraded_artifact_schema_counts.items())
+            ),
             "skipped_package_count": skipped_packages,
             "parse_worker_count": parse_workers,
             "parse_tasks_per_worker": _DOCUMENT_PARSE_TASKS_PER_CHILD,
@@ -684,11 +727,12 @@ def run_esef_document_artifacts_partition(
 
     log_info(
         "ESEF processed week %s: artifact stage completed in %.2fs "
-        "(parsed=%s reused=%s workers=%s)",
+        "(parsed=%s reused=%s upgraded=%s workers=%s)",
         partition_key,
         elapsed,
         parsed_packages,
         reused_artifacts,
+        upgraded_artifacts,
         parse_workers,
     )
     return metadata
@@ -1257,6 +1301,7 @@ def esef_document_artifacts_s3(
         validate_esef=config.validate_esef,
         parse_workers=config.parse_workers,
         log_info=context.log.info,
+        log_warning=context.log.warning,
     )
     return dg.MaterializeResult(metadata=metadata)
 
