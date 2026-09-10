@@ -411,6 +411,7 @@ EXPECTED_MIGRATIONS = (
     "000395_corpscout_esef_country_agnostic_products",
     "000396_corpscout_se_company_person_entity",
     "000397_corpscout_esef_document_people_extraction",
+    "000398_corpscout_se_company_person_rename",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -4260,8 +4261,14 @@ SLICE_0_EMPTIED = (
 # Every name whose DDL leaves the ledger in person slice 0: the twelve the owner-run script
 # drops, plus se_company_person_draft, se_company_person_draft_legacy and company_person_role,
 # dropped by migrations back in August and only losing their DDL now. WHOLE-NAME matching
-# only: se_company_person prefixes the six tables the entity KEEPS, and company_person_role
-# prefixes company_person_role_type, the catalog that stays.
+# only: se_company_person prefixes the five sibling tables the entity KEEPS, and
+# company_person_role prefixes company_person_role_type, the catalog that stays.
+#
+# se_company_person IS ALSO THE LIVE ENTITY SINCE 000398, which renamed
+# se_company_person_v2 into the name slice 0 freed. The guard below is unaffected: it forbids
+# a CREATE or an ALTER that DECLARES one of these names, and a RENAME TABLE declares nothing.
+# The entity's DDL still lives in 000396 under se_company_person_v2, which is why that name,
+# not this one, is the kept object asserted below.
 SLICE_0_DROPPED_OBJECTS = (
     "se_company_person",
     "se_company_person_role",
@@ -4280,6 +4287,8 @@ SLICE_0_DROPPED_OBJECTS = (
     "company_management_observations",
 )
 
+# The names the ledger DECLARES for the entity. se_company_person_v2 is 000396's build name;
+# the deployed table is se_company_person since 000398, which renames rather than declares.
 SLICE_0_KEPT_OBJECTS = (
     "se_company_person_suggestion",
     "se_company_person_normalized",

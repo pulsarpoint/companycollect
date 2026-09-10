@@ -274,7 +274,7 @@ def targeted_fold(
     },
     description=(
         "Folds the current normalized person rows of the companies in one of 64 hash buckets "
-        "into se_company_person_v2: observations of one person merge into one row with every "
+        "into se_company_person: observations of one person merge into one row with every "
         "source, reviewer rules hide, merge and split, previously published keys without a "
         "set are withdrawn, and every change is appended to se_company_person_history first. "
         "Pooled at FOLD_POOL (instance default limit 1): a page's FINAL read of the "

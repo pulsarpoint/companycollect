@@ -1,3 +1,10 @@
+-- THIS SCRIPT IS SPENT. It ran on prod on 2026-09-09 and must NEVER be run again. Its last
+-- statement -- DROP TABLE IF EXISTS corpscout.se_company_person -- named the 2026-08-19
+-- people model that held that name back then. Migration 000398 has since renamed
+-- corpscout.se_company_person_v2 to that same freed name, so corpscout.se_company_person is
+-- now the person entity's live main table. Re-running this script would drop it and destroy
+-- every published person.
+
 -- SE person slice 0: the 2026-08-19 people model leaves ClickHouse. OWNER-RUN, by hand,
 -- after the slice-0 dagster deploy is live, migration 000396 is applied, and
 -- se_person_retirement_precheck.sql is clean. Nothing in this repo executes this file

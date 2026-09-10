@@ -76,12 +76,11 @@ from dagster_v3.defs.sweden_company.geocode_store import (
 # The SE address entity (migration 000384, renamed to its final name by 000393). This
 # constant is the one place the view names it.
 COMPANY_ADDRESS_TABLE = f"{CLICKHOUSE_DATABASE}.se_company_address"
-# The SE person entity (migration 000396). This constant is the one place the view names
-# it. The table is empty until slice 2's first fold, so the three people flags below read
-# 0 for every company between this migration and that fold -- deliberately (spec section
-# 8: "the flags read empty tables until the first fold"). It is se_company_person_v2 for
-# slices 0 to 3; slice 4 renames it and edits this one line.
-COMPANY_PERSON_TABLE = f"{CLICKHOUSE_DATABASE}.se_company_person_v2"
+# The SE person entity (migration 000396, renamed to its final name by 000398). This
+# constant is the one place the view names it; the three people flags below read the
+# table's ACTIVE rows under FINAL, so a hidden or withdrawn person does not keep a flag
+# lit (spec section 8).
+COMPANY_PERSON_TABLE = f"{CLICKHOUSE_DATABASE}.se_company_person"
 # The company spine and its register/label joins (basic-info slice 4, migration 000391).
 BASIC_INFO_TABLE = f"{CLICKHOUSE_DATABASE}.se_company_basic_info"
 BOLAGSVERKET_TABLE = f"{CLICKHOUSE_DATABASE}.se_bolagsverket_companies"

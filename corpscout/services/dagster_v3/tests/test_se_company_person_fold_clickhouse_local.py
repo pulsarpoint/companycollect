@@ -99,7 +99,9 @@ def _literal(value: Any) -> str:
 def _schema_statements() -> list[str]:
     """CREATE DATABASE plus the six CREATE TABLEs of 000396 -- never its SYSTEM STOP/START
     VIEW or ALTER TABLE ... MODIFY QUERY, which name se_companies_serving, a view this
-    fixture does not build."""
+    fixture does not build. 000396 declares the main table under its build name and 000398
+    renames the DEPLOYED table without touching that file, so the rename is replayed here:
+    batch.py reads tables.QUALIFIED_MAIN_TABLE, which is the renamed name."""
     text = (MIGRATIONS_DIR / MIGRATION_FILE).read_text(encoding="utf-8")
     statements: list[str] = []
     for raw in text.split(";"):
@@ -109,7 +111,11 @@ def _schema_statements() -> list[str]:
         if statement.upper().startswith("CREATE DATABASE") or (
             "CREATE TABLE IF NOT EXISTS corpscout.se_company_person_" in statement
         ):
-            statements.append(statement)
+            statements.append(
+                statement.replace(
+                    "corpscout.se_company_person_v2", tables.QUALIFIED_MAIN_TABLE
+                )
+            )
     return statements
 
 
