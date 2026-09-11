@@ -367,6 +367,33 @@ development, reviewed, merged to main and run on prod before the next; shipped r
 appended below each item.
 
 1. Basic info from every Ratsit company (prod run) and the dead inspector page (backoffice).
+   Shipped 2026-09-11 (plan `2026-09-11-se-ratsit-1-info-and-inspector.md`, main 7b66e6cf):
+   the backoffice lost the dead Ratsit request inspector — 11 files, +2/−1,382 lines (the
+   route, its component, two libs, three test files, the `ratsit` route line, the tab entry,
+   the layout prose, the sidebar comment); typecheck clean, the vitest suite went from
+   128 files / 1,352 tests to 125 / 1,340 with the same pre-existing failures; the owner's
+   dev server answers 200/200/404 for info, geocoding and the old ratsit path. Prod: the
+   preview of `se_basic_info_suggestions_ratsit` found exactly the 863,504 companies the
+   spec predicted (87 pages); the execute run (6cb86fdb) inserted 863,504 rows in 4 min and
+   a second preview found 0 candidates (converged); the Ratsit suggestion set now covers all
+   947,200 companies with a report (878,502 with a description, 213,283 already translated).
+   Fold backfill cgocdvzm over the 64 buckets: 64/64 SUCCESS in 66 min (22:53–23:59 UTC),
+   changed-only honoured (≈13,550 of ≈55,000 companies considered per bucket), 715 companies
+   changed in total. Readouts before → after (FINAL): `description_source = 'ratsit'`
+   75 → 789, `description_sv_source = 'ratsit'` 77 → 792, companies with no description
+   667,794 → 667,080, no Swedish description 668,465 → 667,750, `legal_name` and `status`
+   from Ratsit 0 → 0; the 23:45 serving refresh ran over the half-folded table and succeeded
+   (finished 23:57:29, no exception), the 00:45 one carries the rest; the three weeklies
+   stayed STOPPED. Finding: Ratsit's `business_description` is the registered
+   verksamhetsbeskrivning Bolagsverket already delivers — identical on 854,687 of the
+   877,710 companies with both (871,818 share the first 60 characters, same average length
+   177), so of 878,502 Ratsit-described companies 876,816 already publish Bolagsverket's text
+   at 400 and only 626 had none; the 667k description-less companies are mostly inactive
+   register-only rows (68,381 in Ratsit, 626 with a Ratsit text). Ratsit is therefore a
+   fallback description source for a few hundred companies, and a precedence change would
+   gain nothing. Rulings: the extract and the fold ran ahead of the merge (the code they run
+   is unchanged since 2026-09-08, the merge only carried the backoffice deletion); preview
+   before execute.
 2. The Ratsit person extractor, roles, wording, backoffice filter; prod extract, normalize,
    fold.
 3. Ratsit addresses: the postal-town dictionary, the establishments as `workplace`, per-slot
