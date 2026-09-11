@@ -35,7 +35,7 @@ import pytest
 
 from dagster_v3.defs.se_company.person import batch, tables
 from dagster_v3.defs.se_company.person.assets import export_precedence
-from dagster_v3.defs.se_company.person.fold import person_key
+from dagster_v3.defs.se_company.person.fold import MATCH_THRESHOLD, person_key
 from dagster_v3.defs.se_company.person.normalize import RAW_ROW_COLUMNS, normalized_row
 from dagster_v3.defs.se_company.person.normalize_se import NORMALIZER_VERSION
 from tests.clickhouse_local import clickhouse_local_command
@@ -493,6 +493,19 @@ def test_a_stored_pair_joins_the_two_spellings_into_one_person(matched) -> None:
         f"WHERE company_id = '{MATCH_CO}' AND inactive_reason = 'withdrawn'"
     )
     assert withdrawn == [["1"]]
+
+
+def test_the_stored_confidence_is_float64_and_compares_exactly(matched) -> None:
+    """Fix wave F6: the fold admits a pair with `confidence >= MATCH_THRESHOLD` and
+    match_pairs_sql repeats that comparison in SQL, so the column may not round the value.
+    As Float32, 0.93 comes back as 0.9300000071525574 and `confidence = 0.93` is FALSE --
+    and a threshold like 0.7 would be stored as 0.69999998807907104 and drop every pair
+    scored at exactly it."""
+    rows = matched["client"].read(
+        f"SELECT toTypeName(confidence), confidence = 0.93, confidence >= {MATCH_THRESHOLD} "
+        f"FROM {tables.QUALIFIED_MATCH_TABLE} FINAL WHERE company_id = '{MATCH_CO}'"
+    )
+    assert rows == [["Float64", "1", "1"]]
 
 
 def test_re_running_the_matched_fold_selects_nothing(matched) -> None:

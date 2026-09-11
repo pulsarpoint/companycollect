@@ -32,9 +32,12 @@ from dagster_v3.defs.se_company.person.precedence import FIELD as PRECEDENCE_FIE
 BUCKET_COUNT = 64
 PAGE_SIZE = 20_000
 
-# clickhouse-driver renders %(company_ids)s into the statement text; a 20,000-id page is
-# about 300 KB, past ClickHouse's 262,144-byte default max_query_size. Each statement here
-# binds the id list once, so 1 MiB is >3x the measured worst case (guard test in
+# clickhouse-driver renders %(company_ids)s into the statement text; one bound 20,000-id
+# page is about 320 KB, past ClickHouse's 262,144-byte default max_query_size. Every
+# statement here binds the list once (~320 KB rendered, 3.3x headroom) EXCEPT
+# `match_pairs_sql`, which binds it twice -- the outer IN prunes the pair table before the
+# join, which the join alone would not -- and renders to about 640 KB, 1.64x headroom under
+# this setting and the widest statement of the page (measured by the guard test in
 # tests/test_se_company_person_batch.py). max_execution_time makes a pathological page fail
 # visibly instead of holding a connection forever.
 FOLD_ID_BOUND_QUERY_SETTINGS = {"max_query_size": 1_048_576, "max_execution_time": 1800}
@@ -155,7 +158,12 @@ def match_pairs_sql() -> str:
     The state table is one row per company, so the join on `input_hash` is what supersedes a
     previous input's pairs without deleting them; `error = ''` keeps a company whose last
     attempt failed from folding on a hash nothing certified. An INNER JOIN, so the result
-    cannot depend on `join_use_nulls`."""
+    cannot depend on `join_use_nulls`.
+
+    The id list is bound TWICE on purpose: the inner select needs it, and the outer
+    `p.company_id IN` prunes the pair table's granules before the join instead of after it.
+    That doubles the rendered statement to about 640 KB at PAGE_SIZE, which is why
+    FOLD_ID_BOUND_QUERY_SETTINGS raises max_query_size to 1 MiB."""
     return (
         f"SELECT {', '.join(f'p.{column}' for column in MATCH_PAIR_SELECT_COLUMNS)}\n"
         f"FROM {tables.QUALIFIED_MATCH_TABLE} AS p FINAL\n"

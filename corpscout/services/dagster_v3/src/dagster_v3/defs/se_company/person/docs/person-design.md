@@ -225,32 +225,79 @@ normalize and the fold, `se_company_person_match` groups each company's normaliz
 from the four MACHINE sources (`bolagsverket`, `esef`, `wikidata`, `ratsit` -- a reviewer row
 never reaches a model) into candidates, one per source per `(first_tokens, middle_tokens,
 last_tokens)` triple, carrying the group's longest `display_name`, any birth year, Ratsit's
-`data.age` and `external` flag, and at most 20 distinct `(role_code, role_year)` pairs. A
-company is in scope when its candidates span two or more sources. The candidate list is
-serialized deterministically (sorted by source then id, sorted keys) and hashed: the change
-scan sends a company whose stored `input_hash` differs, that has no state row, or whose last
-attempt errored.
+`data.age` (the smallest the group carries, so the value never follows row order) and
+`external` flag, and at most 20 distinct `(role_code, role_year)` pairs -- the 20 MOST RECENT
+when the cut bites, presented ascending, because the years that separate two people are this
+decade's and not the 1990s'. A company is in scope when its candidates span two or more
+sources. The candidate list is serialized deterministically (sorted by source then id, sorted
+keys) and hashed.
+
+WHAT THE CHANGE SCAN SENDS. A company with no state row, or one whose stored `input_hash`
+differs, is sent. A company whose hash is unchanged is sent again only when its stored error
+is TRANSIENT -- the prefixes `rate_limited:` and `http_error:`, the provider's weather.
+`invalid_response:` (malformed, truncated or empty), `too many candidates` and `unexpected:`
+are STICKY for the same input: re-sending buys the same failure at the same price, so the
+company is skipped and counted as `skipped_sticky`, and -- because a skip writes NO state row
+-- its `matched_at` stops moving, which is what keeps the fold from re-selecting it every run
+as well. A sticky company is sent again the moment its candidates change.
 
 One request per company, `concurrency` in flight through `info.map_ordered`, temperature 0,
-JSON mode, thinking disabled on deepseek, `max_tokens` 4,000, timeout 120 s, the SDK's two
-retries. The answer is `{"pairs": [{"a", "b", "confidence", "reason"}]}`; the parser accepts
-both id orders, stores the pair with the ids ascending, keeps the higher confidence of a
-repeated pair, drops and counts unknown ids, self-pairs and confidences outside [0, 1], and
-stores a pair whose two candidates carry different birth years at `confidence = 0` with reason
-`birth-year conflict`. A failed call or an unparseable answer becomes a state row with `error`
-and the raw text, and the run continues. A company with more than 400 candidates is skipped
-with `error = 'too many candidates'` rather than truncated.
+JSON mode, thinking disabled on deepseek, timeout 120 s, the SDK's two retries. The model
+reads the candidates under SHORT ordinal ids `c0`..`cN`: a 64-character normalized id is
+about 16 tokens it would have to read once and echo twice per pair, and it has no use for
+one. `parse_match_response` maps the ordinal back, so every stored pair still names real
+ids, and the HASHED rendering keeps the full ids -- moving the prompt to ordinals moved no
+stored `input_hash`. `max_tokens` is `max(4_000, 120 x candidates, profile.max_tokens)`: the
+profile's value wins only when it is LARGER, and the floor scales with the list so prod's
+159-candidate company is not truncated at the default.
+
+The answer is `{"pairs": [{"a", "b", "confidence", "reason"}]}`; the parser accepts both id
+orders, stores the pair with the ids ascending, keeps the higher confidence of a repeated
+pair, drops and counts unknown ids (an ordinal past the end of the list, or an invented one),
+self-pairs and confidences outside [0, 1], and stores a pair whose two candidates carry
+different birth years at `confidence = 0` with reason `birth-year conflict`. A failed call or
+an unparseable answer becomes a state row with `error` and the raw text, and the run
+continues; a truncated (`finish_reason = length`) or empty answer is recorded the same way
+WITH its usage and its exact text, because it was paid for either way. A company with more
+than 400 candidates is skipped with `error = 'too many candidates'` rather than truncated.
+
+THE CIRCUIT BREAKER. Per-company errors must not turn a provider outage into a green run.
+Once a page has attempted at least 20 calls, a failure share above 50% raises after that
+page's rows are written: the pages already on disk stay, the failing page's state rows stay
+too as the evidence of what happened, and the asset's `RetryPolicy` (3 retries, exponential
+from 60 s) supplies the backoff. Without it an outage wrote an error row for every company,
+reported success, and left all of them to be paid for again on the next run.
 
 The fold reads the pairs at or above `MATCH_THRESHOLD` (0.8) whose `input_hash` equals the
 company's current state row, and `max(matched_at)` from the state table as a FIFTH selection
 watermark. `identity_sets_before_split` unions every member of one side with every member of
 the other AFTER the name and QID pairs and through the same `_years_conflict` veto, before the
 birth-year split and before `apply_rules` -- so a reviewer's split or merge rule still has the
-last word, and a Reset of that split lets the match apply again. A published person whose set
+last word, and a Reset of that split lets the match apply again. THE SPLIT HONOURS THE PAIRS:
+a year-less row that entered a two-year set through a pair alone matches no bucket by name, so
+the split attaches it to the bucket holding a member it is PAIRED with before it tries the
+name relation, and only then falls back to the smallest year. Without that the row landed on
+the wrong person AND lost its `llm_match`, because `pairs_within` then found only one side of
+the pair inside the set. A published person whose set
 was joined records it in the fold-owned `data.llm_match` key (`pairs` with the two names, the
 confidence and the reason, plus `model` and `prompt_version`), written after
 `merge_member_data`; `RESERVED_DATA_KEYS` stays the reviewer's three. `FOLD_VERSION` is
 `se-person-fold-v2`.
+
+`MATCH_THRESHOLD` is compared INCLUSIVELY (`>= 0.8`) here and in `match_pairs_sql`, and
+`se_company_person_match.confidence` is `Float64` so that comparison is exact. Float32 would
+store this constant's twin as 0.800000011920929 and a threshold of 0.7 as 0.69999998807907104
+-- a pair scored at exactly the threshold would then be kept or dropped by the storage format
+rather than by the constant. The `llm_match` JSON still rounds the confidence to four
+decimals: `data` is in `_COMPARED`, so that text decides whether a person counts as changed.
+
+WHAT THE WEEKLY RUN COSTS IS BIRTHDAY-DRIVEN. Ratsit delivers `data.age`, not a birth date,
+so a person's age moves once a year: the extractor's state hash for that company moves with
+it, its slots are re-stamped, the normalizer mints new `normalized_id`s and the candidate
+`input_hash` moves -- and the company is re-sent, however little the model would see change.
+Expect roughly 5-8% of the multi-source companies per weekly run on that account alone, on
+top of genuinely new or changed people. It is the reason the change scan is worth its
+complexity and the reason a sticky error must not add itself to that bill every week.
 
 A normalizer bump changes every `normalized_id`, therefore every candidate hash, therefore
 re-matches every multi-source company on the next run. That is the price of a normalizer

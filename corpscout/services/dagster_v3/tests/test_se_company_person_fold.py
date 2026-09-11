@@ -733,6 +733,57 @@ def test_llm_match_is_fold_owned_and_overwrites_whatever_a_member_carried() -> N
     assert data["llm_match"]["model"] == "deepseek-v4-flash"
 
 
+def test_the_birth_year_split_sends_a_paired_row_to_its_partner_not_the_smallest_year() -> None:
+    """A year-less row can enter a set through an LLM pair ALONE: it matches no bucket by
+    name, so a split that only knows `_matches` drops it on the smallest year -- the wrong
+    person -- and `pairs_within` then finds nothing, so the row does not even record the
+    match that moved it (fix wave F1)."""
+    r1 = row("ratsit", "r1", display="Erik Bo Bengtsson", first="erik", middles=("bo",),
+             last="bengtsson", birth_year=1966)
+    r2 = row("ratsit", "r2", display="Erik Bo Bengtsson", first="erik", middles=("bo",),
+             last="bengtsson")
+    r3 = row("ratsit", "r3", display="Erik Bo Bengtsson", first="erik", middles=("bo",),
+             last="bengtsson", birth_year=1980)
+    b1 = row("bolagsverket", "b1", display="Bo Bengtsson", first="bo", last="bengtsson")
+    pair = match(a=r3, b=b1, confidence=0.95, reason="call name")
+
+    # One closure (r2 joins both years by name, b1 joins r3 by the pair), split into two.
+    assert len(identity_sets([r1, r2, r3, b1], [pair])) == 2
+    result = fold([r1, r2, r3, b1], matches=[pair])
+    assert result.sets_split_by_birth_year == 1
+    by_slot = {
+        slot: person for person in result.rows for slot in person.member_slots
+    }
+    assert by_slot["b1"] is by_slot["r3"]                  # the partner, not the 1966 person
+    assert by_slot["b1"].birth_year == 1980
+    assert sorted(by_slot["b1"].member_slots) == ["b1", "r3"]
+    assert json.loads(by_slot["b1"].data)["llm_match"]["pairs"] == [
+        {"a": "Erik Bo Bengtsson", "b": "Bo Bengtsson", "confidence": 0.95,
+         "reason": "call name"}
+    ]
+    # The 1966 person keeps the year-less row that reached it by NAME, and no llm_match.
+    assert sorted(by_slot["r1"].member_slots) == ["r1", "r2"]
+    assert by_slot["r1"].birth_year == 1966
+    assert "llm_match" not in json.loads(by_slot["r1"].data)
+
+
+def test_a_paired_row_still_falls_back_to_the_name_relation_and_then_to_the_smallest_year() -> None:
+    """The pair relation is tried FIRST, not instead: a year-less row with no pair inside the
+    set still attaches by name, and one that reaches neither still lands deterministically."""
+    r1 = row("ratsit", "r1", display="Erik Bo Bengtsson", first="erik", middles=("bo",),
+             last="bengtsson", birth_year=1966)
+    r2 = row("ratsit", "r2", display="Erik Bo Bengtsson", first="erik", middles=("bo",),
+             last="bengtsson")
+    r3 = row("ratsit", "r3", display="Erik Bo Bengtsson", first="erik", middles=("bo",),
+             last="bengtsson", birth_year=1980)
+    # A pair naming a member that is not in this set changes nothing.
+    outsider = row("esef", "e9", display="Bo Bengtsson", first="bo", last="bengtsson")
+    result = fold([r1, r2, r3], matches=[match(a=r3, b=outsider)])
+    by_slot = {slot: person for person in result.rows for slot in person.member_slots}
+    assert sorted(by_slot["r2"].member_slots) == ["r1", "r2"]      # the smallest year, as before
+    assert all("llm_match" not in json.loads(person.data) for person in result.rows)
+
+
 def test_pairs_within_needs_both_sides_and_admits_only_year_compatible_pairs() -> None:
     members = [RATSIT_ERIK, ESEF_BO]
     assert pairs_within(members, [match()]) == (match(),)

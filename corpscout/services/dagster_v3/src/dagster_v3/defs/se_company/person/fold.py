@@ -27,6 +27,12 @@ FOLD_VERSION = "se-person-fold-v2"
 # identity set (spec 2026-09-11 section 4). It lives here, beside the version, because the
 # FOLD is what applies it: raising or lowering it is a constant edit and a re-fold, never a
 # re-match -- the stored pairs keep every confidence the model gave.
+#
+# THE COMPARISON IS INCLUSIVE AND EXACT. `se_company_person_match.confidence` is Float64
+# (migration 000399), so a value the model gave as 0.8 is stored as 0.8 and `>= 0.8` admits
+# it, here and in `batch.match_pairs_sql`'s SQL. Float32 would store this constant's twin as
+# 0.800000011920929 and a threshold like 0.7 as 0.69999998807907104, which would silently
+# drop every pair scored at exactly that threshold -- which is why the column is not Float32.
 MATCH_THRESHOLD = 0.8
 # The fold-owned key `_published_from` writes into `data` after merge_member_data. No member
 # ever supplies it, the backoffice treats it as read-only, and RESERVED_DATA_KEYS stays the
@@ -200,12 +206,34 @@ def _middles_by_name(rows: Sequence[NormalizedRow]) -> dict:
     return {name: tuple(middles) for name, middles in grouped.items()}
 
 
+def _pair_adjacency(matches: Sequence[MatchPair]) -> dict[str, set[str]]:
+    """normalized_id -> the ids an admitted pair puts it with, both directions.
+
+    The birth-year split needs it because a year-less row can enter a set through an LLM pair
+    ALONE: it matches no bucket by name, so a split that only knows `_matches` drops it on
+    the smallest year -- the wrong person -- and `pairs_within` then finds nothing on either
+    side, so the row it moved does not even record the match that moved it."""
+    adjacency: dict[str, set[str]] = defaultdict(set)
+    for pair in matches:
+        for left in pair.members_a:
+            for right in pair.members_b:
+                adjacency[left].add(right)
+                adjacency[right].add(left)
+    return adjacency
+
+
 def _split_by_birth_year(
-    members: Sequence[NormalizedRow], middles_by_name
+    members: Sequence[NormalizedRow], middles_by_name, adjacency: Mapping[str, set[str]]
 ) -> tuple[tuple[NormalizedRow, ...], ...]:
     """A closed set holding two birth years is split by year; year-less members attach,
-    breadth first, to the sub-set holding a member they directly match. On a genuine tie
-    (a year-less member matching both years) the smallest year wins, deterministically."""
+    breadth first, to the sub-set holding a member they are PAIRED with, else to the sub-set
+    holding a member they directly match. On a genuine tie (a year-less member reaching both
+    years by the same relation) the smallest year wins, deterministically.
+
+    The pair relation is tried first, and not merged with the name relation, because it is
+    the stronger claim: the model was shown both spellings and said they are one person,
+    while `_matches` only says two rows could be. A year-less row that is paired to the
+    1980-born member and happens to match the 1966-born one by name belongs with 1980."""
     years = sorted({member.birth_year for member in members if member.birth_year is not None})
     if len(years) <= 1:
         return (tuple(members),)
@@ -217,11 +245,18 @@ def _split_by_birth_year(
         remaining: list[NormalizedRow] = []
         progressed = False
         for member in pending:
+            partners = adjacency.get(member.normalized_id, frozenset())
             hits = sorted(
                 year
                 for year, bucket in buckets.items()
-                if any(_matches(member, other, middles_by_name) for other in bucket)
+                if any(other.normalized_id in partners for other in bucket)
             )
+            if not hits:
+                hits = sorted(
+                    year
+                    for year, bucket in buckets.items()
+                    if any(_matches(member, other, middles_by_name) for other in bucket)
+                )
             if hits:
                 buckets[hits[0]].append(member)
                 progressed = True
@@ -299,15 +334,22 @@ def identity_sets_before_split(
 
 
 def _split_sets(
-    closed: Sequence[Sequence[NormalizedRow]], middles_by_name
+    closed: Sequence[Sequence[NormalizedRow]],
+    middles_by_name,
+    matches: Sequence[MatchPair] = (),
 ) -> tuple[tuple[NormalizedRow, ...], ...]:
     """The birth-year split applied to an already computed closure. Split out so that
     `fold_company_persons` can take the closure ONCE and derive both the sets it publishes
     and the `sets_split_by_birth_year` metric from it: the closure is the fold's dominant
-    cost and it used to run twice per company."""
+    cost and it used to run twice per company.
+
+    `matches` are the SAME pairs the closure was given (already threshold-filtered by the
+    caller): the split has to honour them, or a row the pairs put into a two-year set lands
+    in the wrong year."""
+    adjacency = _pair_adjacency(matches)
     sets: list[tuple[NormalizedRow, ...]] = []
     for members in closed:
-        sets.extend(_split_by_birth_year(members, middles_by_name))
+        sets.extend(_split_by_birth_year(members, middles_by_name, adjacency))
     return tuple(sets)
 
 
@@ -315,9 +357,10 @@ def identity_sets(
     rows: Sequence[NormalizedRow], matches: Sequence[MatchPair] = ()
 ) -> tuple[tuple[NormalizedRow, ...], ...]:
     """The company's persons as sets of observations: the closure (including the scored
-    pairs), then the birth-year split of any set that still holds two years (spec 5.1)."""
+    pairs), then the birth-year split of any set that still holds two years (spec 5.1), which
+    reads the same pairs so a year-less row stays with the member it was paired to."""
     closed, middles_by_name = identity_sets_before_split(rows, matches)
-    return _split_sets(closed, middles_by_name)
+    return _split_sets(closed, middles_by_name, matches)
 
 
 def canonical_tokens(members: Sequence[NormalizedRow]) -> tuple[str, ...]:
@@ -644,7 +687,12 @@ def merge_member_data(members: Sequence[NormalizedRow], company_precedence) -> s
 def _with_llm_match(data: str, pairs: Sequence[MatchPair]) -> str:
     """`data` with the fold-owned `llm_match` key, or `data` unchanged when no pair joined
     this set. Written AFTER merge_member_data so a member can never supply or shadow it;
-    keys stay sorted, so the row compares stably across folds."""
+    keys stay sorted, so the row compares stably across folds.
+
+    The confidence is ROUNDED TO FOUR DECIMALS even though the column is Float64 and round
+    trips exactly: `data` is in `_COMPARED`, so this text is what decides whether a person
+    counts as changed, and four decimals is more precision than a model's score carries
+    while being short enough that the JSON cannot wobble in its last digit."""
     if not pairs:
         return data
     ordered = sorted(pairs, key=lambda pair: (-pair.confidence, pair.name_a, pair.name_b))
@@ -787,7 +835,7 @@ def fold_company_persons(
     # the (name -> middle-token-sets) map identity_sets_before_split already built for it
     # feeds straight into _split_sets instead of being rebuilt.
     closed, middles_by_name = identity_sets_before_split(rows, admitted)
-    grouped = _split_sets(closed, middles_by_name)
+    grouped = _split_sets(closed, middles_by_name, admitted)
     sets_split = sum(
         1
         for members in closed

@@ -8,11 +8,14 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 -- parser, not by the engine, and the sort key is that ordered pair, so a re-match of the same
 -- pair replaces its row instead of adding a second.
 --
--- WHY input_hash IS ON BOTH TABLES. A re-match writes the company its new pairs and its new
--- state row. The previous input hash keeps its pair rows -- nothing deletes them -- and the
--- fold reads only the pairs whose input_hash equals the company state row hash, so the old
--- input is superseded rather than removed. The state table is one row per company
--- (ReplacingMergeTree ORDER BY company_id), which is what makes that comparison a single hash.
+-- WHY input_hash IS ON BOTH TABLES. It is NOT in this table's sort key, so it does not
+-- version anything: a re-match of the SAME pair replaces that pair's row, keeping the newer
+-- input's confidence, reason and hash. What the column does is certify. The fold reads only
+-- the pairs whose input_hash equals the company's state-row hash, so a row left behind by an
+-- input the company no longer has -- a pair the new candidate list no longer contains, or one
+-- the model stopped scoring -- is simply never read again, without anything deleting it. The
+-- state table is one row per company (ReplacingMergeTree ORDER BY company_id), which is what
+-- makes that comparison a single hash.
 --
 -- WHY raw_response IS STORED. The same reason the basic-info observation cache stores it: a
 -- paid answer is evidence, and a parse that changes must be re-readable against the exact text
@@ -40,7 +43,11 @@ CREATE TABLE IF NOT EXISTS corpscout.se_company_person_match
     source_b LowCardinality(String),
     name_a String,
     name_b String,
-    confidence Float32,
+    -- Float64, not Float32: the fold admits a pair with `confidence >= MATCH_THRESHOLD` and
+    -- that comparison is inclusive. Float32 would store 0.8 as 0.800000011920929 and a
+    -- threshold of 0.7 as 0.69999998807907104, so a pair scored at exactly the threshold
+    -- would be kept or dropped by the storage format rather than by the constant.
+    confidence Float64,
     reason String,
     model LowCardinality(String),
     prompt_version LowCardinality(String),

@@ -154,7 +154,16 @@ def test_match_table_is_one_row_per_unordered_pair() -> None:
     assert "    members_a Array(FixedString(64))," in block
     assert "    members_b Array(FixedString(64))," in block
     assert "    source_a LowCardinality(String)," in block
-    assert "    confidence Float32," in block
+    # Float64, never Float32: the fold admits a pair with `confidence >= MATCH_THRESHOLD`
+    # and batch.match_pairs_sql() repeats that comparison in SQL. Float32 would store 0.8 as
+    # 0.800000011920929 and a threshold of 0.7 as 0.69999998807907104, so a pair scored at
+    # exactly the threshold would be kept or dropped by the storage format.
+    assert "    confidence Float64," in block
+    assert "    confidence Float32," not in block
+    # input_hash is NOT in the sort key, so it versions nothing: a re-match of the same pair
+    # REPLACES its row. What supersedes a previous input is the fold's join on the state
+    # row's hash (batch.match_pairs_sql), never a second version of the pair row.
+    assert "input_hash" not in block.split("ORDER BY", 1)[1]
     assert "    model LowCardinality(String)," in block
     assert "    prompt_version LowCardinality(String)," in block
     assert "    input_hash FixedString(64)," in block

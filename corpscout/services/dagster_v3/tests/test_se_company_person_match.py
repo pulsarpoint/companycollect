@@ -27,8 +27,6 @@ from dagster_v3.defs.se_company.person.match import (
     serialize_candidates,
 )
 
-from datetime import UTC, datetime
-
 import httpx
 from openai import OpenAIError, RateLimitError
 from pydantic import ValidationError
@@ -124,13 +122,30 @@ def test_the_candidate_carries_the_longest_name_any_year_the_age_and_the_roles()
     assert candidate.roles == (("board_member", 2025), ("chief_executive_officer", 2026))
 
 
-def test_roleless_rows_contribute_no_role_and_the_list_is_capped() -> None:
+def test_roleless_rows_contribute_no_role_and_the_cap_keeps_the_most_recent() -> None:
+    """A forty-year candidate must reach the model with THIS decade's roles: the cut is by
+    year descending, and what survives is still presented ascending."""
     rows = [row("bolagsverket", "s0", role_code=None, role_year=None)]
     rows += [row("bolagsverket", f"y{year}", role_year=year) for year in range(1990, 2030)]
     candidate = build_candidates(rows)[0]
     assert len(candidate.roles) == MAX_ROLES == 20
-    assert candidate.roles[0] == ("board_member", 1990)   # sorted by code then year, capped
+    assert candidate.roles[0] == ("board_member", 2010)   # 2010..2029, the newest twenty
+    assert candidate.roles[-1] == ("board_member", 2029)
+    assert list(candidate.roles) == sorted(candidate.roles)       # presented ascending
     assert build_candidates([row("bolagsverket", "s0", role_code=None, role_year=None)])[0].roles == ()
+
+
+def test_a_year_less_role_is_the_first_to_fall_out_of_the_cap() -> None:
+    """A dated role is the stronger evidence, so a pair with no year sorts last in the cut --
+    and keeps its place at the front of the presented list when it survives."""
+    rows = [row("bolagsverket", "n0", role_code="auditor", role_year=None)]
+    rows += [row("bolagsverket", f"y{year}", role_year=year) for year in range(2010, 2030)]
+    capped = build_candidates(rows)[0]
+    assert ("auditor", None) not in capped.roles and len(capped.roles) == MAX_ROLES
+    rows = [row("bolagsverket", "n0", role_code="auditor", role_year=None)]
+    rows += [row("bolagsverket", f"y{year}", role_year=year) for year in range(2010, 2029)]
+    fits = build_candidates(rows)[0]
+    assert fits.roles[0] == ("auditor", None) and len(fits.roles) == MAX_ROLES
 
 
 def test_a_malformed_data_object_degrades_instead_of_failing() -> None:
@@ -140,6 +155,22 @@ def test_a_malformed_data_object_degrades_instead_of_failing() -> None:
     assert candidate.age is None and candidate.external is False
     other = build_candidates([row("ratsit", "r2", data='{"age":"not a number"}')])[0]
     assert other.age is None
+
+
+def test_the_age_does_not_depend_on_the_order_the_members_came_back_in() -> None:
+    """Two slots of one candidate can carry ages stamped in different weeks (Ratsit re-stamps
+    a person's age on their birthday). The smallest wins whichever order they arrive in, the
+    way birth_year already takes years[0] -- an age that followed row order would move the
+    prompt and the input hash with it."""
+    older = row("ratsit", "r1", data='{"age":"60"}')
+    younger = row("ratsit", "r2", data='{"age":"59"}')
+    assert build_candidates([older, younger])[0].age == 59
+    assert build_candidates([younger, older])[0].age == 59
+    assert input_hash(build_candidates([older, younger])) == input_hash(
+        build_candidates([younger, older])
+    )
+    mixed = build_candidates([row("ratsit", "r1", data="{}"), row("ratsit", "r2", data='{"age":"58"}')])
+    assert mixed[0].age == 58
 
 
 def test_scope_needs_two_sources() -> None:
@@ -171,6 +202,11 @@ def test_the_input_hash_moves_only_when_the_candidate_list_moves() -> None:
     rows = [row("bolagsverket", "s1"), row("esef", "e1")]
     base = input_hash(build_candidates(rows))
     assert len(base) == 64 and base == input_hash(build_candidates(list(reversed(rows))))
+    # PINNED. The hash is what decides whether a company is re-sent, so a change to it re-
+    # sends -- and re-pays for -- every one of the 124,646 multi-source companies. Moving
+    # the prompt to short ordinal ids deliberately did NOT move it: serialize_candidates
+    # still hashes the full normalized ids and the members.
+    assert base == "80d8193d045c30991e0fdb3622dffc997596ca1d93307d907563f2faba818b9a"
     # A second slot with the SAME tokens joins an existing candidate's members. The PROMPT is
     # unchanged (the id, name and roles are the same), but the hash moves, because a stored
     # pair must name every member the fold will union.
@@ -199,25 +235,63 @@ def answer(*pairs) -> str:
     return json.dumps({"pairs": list(pairs)})
 
 
-def test_the_system_prompt_states_the_swedish_naming_rules() -> None:
+def test_the_system_prompt_states_the_swedish_naming_rules_and_the_short_ids() -> None:
     for phrase in (
         "call name", "tilltalsnamn", "Erik Bo Bengtsson", "Double surnames",
         "maiden or married", "Initials", "Bjorn", "birth year", "common surnames",
-        "untrusted data",
+        "untrusted data", '"c0", "c1", "c2"', "Use only the short ids",
     ):
         assert phrase in SYSTEM_PROMPT, phrase
-    assert '{"pairs": [{"a": "<id>", "b": "<id>", "confidence": 0.0-1.0' in SYSTEM_PROMPT
+    assert '{"pairs": [{"a": "c0", "b": "c3", "confidence": 0.0-1.0' in SYSTEM_PROMPT
     assert PROMPT_VERSION == "se-person-match-v1"
 
 
-def test_the_request_is_the_prompt_the_sorted_candidates_and_json_mode() -> None:
+def test_the_prompt_carries_ordinal_ids_and_no_normalized_id() -> None:
+    """A normalized id is 64 hex characters -- about 16 tokens the model would read once and
+    echo twice per pair for an identifier it has no use for. The model sees `c0`..`cN`; the
+    HASHED rendering keeps the real ids, so no stored input_hash moves."""
+    candidates = build_candidates([ERIK, BO, ANNA])
+    payload = json.loads(match.prompt_payload(candidates))
+    assert [entry["id"] for entry in payload] == ["c0", "c1", "c2"]
+    # The serialized (hashed) order is source then id: bolagsverket, esef, ratsit.
+    assert [entry["source"] for entry in payload] == ["bolagsverket", "esef", "ratsit"]
+    for candidate in candidates:
+        assert candidate.id not in match.prompt_payload(candidates)
+    assert "members" not in match.prompt_payload(candidates)
+    # Same keys as the hashed rendering, only the id differs.
+    hashed = json.loads(serialize_candidates(candidates))
+    assert [set(entry) for entry in payload] == [set(entry) for entry in hashed]
+    assert [entry["name"] for entry in payload] == [entry["name"] for entry in hashed]
+    assert match.ordinal_id(0) == "c0" and match.ordinal_id(17) == "c17"
+
+
+def test_the_answer_budget_scales_with_the_candidate_list() -> None:
+    """A fixed 4,000 truncates the answer for a long list (prod's widest company has 159
+    candidates), and a truncation is a paid call whose pairs are lost. The profile's own
+    max_tokens still wins when it is LARGER."""
+    small = build_candidates([ERIK, BO])
+    assert match.request_max_tokens(small, PROFILE) == 4_000
+    wide = build_candidates([
+        row("bolagsverket", f"s{index}", first=f"first{index}", last=f"last{index}")
+        for index in range(100)
+    ])
+    assert len(wide) == 100
+    assert match.request_max_tokens(wide, PROFILE) == 12_000 == 120 * 100
+    generous = LlmProfileConfig(provider="deepseek", model="m",
+                                prompt_version=PROMPT_VERSION, max_tokens=20_000)
+    assert match.request_max_tokens(wide, generous) == 20_000
+    assert build_match_request(wide, PROFILE)["max_tokens"] == 12_000
+
+
+def test_the_request_is_the_prompt_the_ordinal_candidates_and_json_mode() -> None:
     candidates = build_candidates([ERIK, BO])
     request = build_match_request(candidates, PROFILE)
     assert request["model"] == "deepseek-v4-flash"
     assert request["temperature"] == 0 and request["max_tokens"] == 4_000
     assert request["response_format"] == {"type": "json_object"}
     assert request["messages"][0] == {"role": "system", "content": SYSTEM_PROMPT}
-    assert request["messages"][1]["content"] == serialize_candidates(candidates)
+    assert request["messages"][1]["content"] == match.prompt_payload(candidates)
+    assert request["messages"][1]["content"] != serialize_candidates(candidates)
     # deepseek-v4-flash is a reasoning model and its reasoning counts against max_tokens,
     # so the pass disables thinking exactly as the ESEF passes do.
     assert request["extra_body"] == {"thinking": {"type": "disabled"}}
@@ -232,10 +306,12 @@ def test_the_request_refuses_a_prompt_version_it_does_not_implement() -> None:
             provider="deepseek", model="deepseek-v4-flash", prompt_version="se-person-match-v0"))
 
 
-def test_a_pair_is_stored_in_id_order_whichever_order_the_model_used() -> None:
+def test_an_ordinal_answer_maps_back_to_the_normalized_ids() -> None:
+    """The model answers in `c0`/`c1`; nothing downstream ever sees an ordinal, and the pair
+    is stored with the two NORMALIZED ids ascending whichever order the model used."""
     candidates = build_candidates([ERIK, BO])
     low, high = sorted(candidate.id for candidate in candidates)
-    for a, b in ((low, high), (high, low)):
+    for a, b in (("c0", "c1"), ("c1", "c0")):
         parsed = parse_match_response(
             answer({"a": a, "b": b, "confidence": 0.93, "reason": "call name"}), candidates)
         assert len(parsed.pairs) == 1
@@ -244,13 +320,21 @@ def test_a_pair_is_stored_in_id_order_whichever_order_the_model_used() -> None:
         assert pair.confidence == 0.93 and pair.reason == "call name"
 
 
-def test_a_repeated_pair_keeps_the_higher_confidence() -> None:
+def test_a_full_normalized_id_in_the_answer_counts_as_unknown() -> None:
+    """The prompt never carries one, so an answer that does is the model inventing ids."""
     candidates = build_candidates([ERIK, BO])
     low, high = sorted(candidate.id for candidate in candidates)
     parsed = parse_match_response(
+        answer({"a": low, "b": high, "confidence": 0.93, "reason": "call name"}), candidates)
+    assert parsed.pairs == () and parsed.dropped_unknown == 1
+
+
+def test_a_repeated_pair_keeps_the_higher_confidence() -> None:
+    candidates = build_candidates([ERIK, BO])
+    parsed = parse_match_response(
         answer(
-            {"a": low, "b": high, "confidence": 0.4, "reason": "weak"},
-            {"a": high, "b": low, "confidence": 0.9, "reason": "strong"},
+            {"a": "c0", "b": "c1", "confidence": 0.4, "reason": "weak"},
+            {"a": "c1", "b": "c0", "confidence": 0.9, "reason": "strong"},
         ),
         candidates,
     )
@@ -267,28 +351,29 @@ def test_a_same_source_pair_is_allowed() -> None:
             last="bengtsson"),
     ])
     assert [candidate.source for candidate in candidates] == ["esef", "esef"]
-    low, high = sorted(candidate.id for candidate in candidates)
     parsed = parse_match_response(
-        answer({"a": low, "b": high, "confidence": 0.9, "reason": "call name"}), candidates)
+        answer({"a": "c0", "b": "c1", "confidence": 0.9, "reason": "call name"}), candidates)
     assert len(parsed.pairs) == 1 and parsed.pairs[0].confidence == 0.9
 
 
 def test_unknown_ids_self_pairs_and_out_of_range_confidences_are_dropped_and_counted() -> None:
     candidates = build_candidates([ERIK, BO, ANNA])
-    ids = sorted(candidate.id for candidate in candidates)
+    assert len(candidates) == 3
     parsed = parse_match_response(
         answer(
-            {"a": ids[0], "b": "z" * 64, "confidence": 0.9, "reason": "invented"},
-            {"a": ids[1], "b": ids[1], "confidence": 0.9, "reason": "itself"},
-            {"a": ids[0], "b": ids[1], "confidence": 1.4, "reason": "over"},
-            {"a": ids[0], "b": ids[2], "confidence": -0.1, "reason": "under"},
-            {"a": ids[1], "b": ids[2], "confidence": "high", "reason": "not a number"},
+            # `c9` is past the end of a three-candidate list; so is an id it invented.
+            {"a": "c0", "b": "c9", "confidence": 0.9, "reason": "past the end"},
+            {"a": "c1", "b": "z" * 64, "confidence": 0.9, "reason": "invented"},
+            {"a": "c1", "b": "c1", "confidence": 0.9, "reason": "itself"},
+            {"a": "c0", "b": "c1", "confidence": 1.4, "reason": "over"},
+            {"a": "c0", "b": "c2", "confidence": -0.1, "reason": "under"},
+            {"a": "c1", "b": "c2", "confidence": "high", "reason": "not a number"},
             "not an object",
         ),
         candidates,
     )
     assert parsed.pairs == ()
-    assert parsed.dropped_unknown == 2          # the invented id and the non-object entry
+    assert parsed.dropped_unknown == 3          # past the end, invented, and the non-object
     assert parsed.dropped_self == 1
     assert parsed.dropped_confidence == 3
 
@@ -299,9 +384,8 @@ def test_the_birth_year_lock_stores_the_pair_at_zero_confidence() -> None:
     other_year = row("bolagsverket", "s9", display="Erik Bo Bengtsson", first="erik",
                      middles=("bo",), last="bengtsson", birth_year=1971)
     candidates = build_candidates([ERIK, other_year])
-    low, high = sorted(candidate.id for candidate in candidates)
     parsed = parse_match_response(
-        answer({"a": low, "b": high, "confidence": 0.97, "reason": "identical name"}), candidates)
+        answer({"a": "c0", "b": "c1", "confidence": 0.97, "reason": "identical name"}), candidates)
     assert len(parsed.pairs) == 1 and parsed.birth_year_locked == 1
     assert parsed.pairs[0].confidence == 0.0
     assert parsed.pairs[0].reason == "birth-year conflict"
@@ -309,8 +393,7 @@ def test_the_birth_year_lock_stores_the_pair_at_zero_confidence() -> None:
 
 def test_the_parser_accepts_prose_around_the_object_and_refuses_what_is_not_one() -> None:
     candidates = build_candidates([ERIK, BO])
-    low, high = sorted(candidate.id for candidate in candidates)
-    wrapped = f'Here you go: {answer({"a": low, "b": high, "confidence": 0.8, "reason": "ok"})} done'
+    wrapped = f'Here you go: {answer({"a": "c0", "b": "c1", "confidence": 0.8, "reason": "ok"})} done'
     assert len(parse_match_response(wrapped, candidates).pairs) == 1
     assert parse_match_response('{"pairs": []}', candidates).pairs == ()
     for bad in (None, "", "no json here", "{not json}", '{"pairs": "none"}', '{"other": []}'):
@@ -320,9 +403,8 @@ def test_the_parser_accepts_prose_around_the_object_and_refuses_what_is_not_one(
 
 def test_a_reason_is_capped_so_one_answer_cannot_bloat_a_row() -> None:
     candidates = build_candidates([ERIK, BO])
-    low, high = sorted(candidate.id for candidate in candidates)
     parsed = parse_match_response(
-        answer({"a": low, "b": high, "confidence": 0.9, "reason": "x" * 5_000}), candidates)
+        answer({"a": "c0", "b": "c1", "confidence": 0.9, "reason": "x" * 5_000}), candidates)
     assert len(parsed.pairs[0].reason) == REASON_LIMIT == 500
 
 
@@ -346,7 +428,8 @@ def normalized_tuple(row: NormalizedRow) -> tuple:
 
 class FakeClient:
     """A clickhouse-driver-shaped client: the scan's scratch table, the two page reads, and
-    every INSERT recorded in order."""
+    every INSERT recorded in order. `state` rows are (company_id, input_hash, error), the
+    three columns match_state_sql now returns."""
 
     def __init__(self, *, scope_pages, rows, state=()):
         self.scope_pages = [list(page) for page in scope_pages]
@@ -397,9 +480,10 @@ class FakeModel:
         )
 
 
-def one_pair(low: str, high: str, *, confidence=0.93, reason="call name") -> str:
-    """A model answer with exactly one scored pair (`answer` is Task 3's helper)."""
-    return answer({"a": low, "b": high, "confidence": confidence, "reason": reason})
+def one_pair(a: str = "c0", b: str = "c1", *, confidence=0.93, reason="call name") -> str:
+    """A model answer with exactly one scored pair, in the ordinal ids the prompt hands out
+    (`answer` is Task 3's helper)."""
+    return answer({"a": a, "b": b, "confidence": confidence, "reason": reason})
 
 
 def rate_limited(message: str) -> RateLimitError:
@@ -436,7 +520,7 @@ def test_the_scope_sql_gates_on_two_machine_sources() -> None:
     assert "reviewer" not in sql
 
 
-def test_the_page_reads_bind_ids_read_final_and_skip_error_state_rows() -> None:
+def test_the_page_reads_bind_ids_read_final_and_keep_error_state_rows() -> None:
     candidates_sql = match.current_candidates_sql()
     assert f"FROM {tables.QUALIFIED_NORMALIZED_TABLE} FINAL" in candidates_sql
     assert candidates_sql.startswith(f"SELECT {', '.join(batch.NORMALIZED_SELECT_COLUMNS)}")
@@ -445,8 +529,10 @@ def test_the_page_reads_bind_ids_read_final_and_skip_error_state_rows() -> None:
     state_sql = match.match_state_sql()
     assert f"FROM {tables.QUALIFIED_MATCH_STATE_TABLE} FINAL" in state_sql
     assert "toString(input_hash) AS input_hash" in state_sql
-    # A company whose last attempt errored has no usable hash, so it is re-sent.
-    assert "error = ''" in state_sql
+    # EVERY stored company, errored rows included: which of them is worth paying for again
+    # is is_transient_error's decision, not a WHERE clause's.
+    assert state_sql.endswith("WHERE company_id IN %(company_ids)s")
+    assert "error = ''" not in state_sql and state_sql.count("error") == 1
     assert match.match_insert_sql() == (
         f"INSERT INTO {tables.QUALIFIED_MATCH_TABLE} "
         f"({', '.join(tables.MATCH_COLUMNS)}) VALUES"
@@ -460,7 +546,7 @@ def test_the_page_reads_bind_ids_read_final_and_skip_error_state_rows() -> None:
 def test_the_run_calls_once_per_company_and_writes_pairs_then_state() -> None:
     rows = [*multi(A), row("bolagsverket", "x1", company_id=SOLO)]
     ids = sorted(candidate.id for candidate in build_candidates(multi(A)))
-    model = FakeModel({A: one_pair(ids[0], ids[1])})
+    model = FakeModel({A: one_pair()})
     client = FakeClient(scope_pages=[[A, SOLO]], rows=rows)
     counts = run_match(client, llm_client=None, config=CONFIG, source_run_id="run-1",
                        call_model=model)
@@ -493,13 +579,14 @@ def test_an_unchanged_input_hash_is_reused_and_never_called() -> None:
     rows = multi(A)
     stored = input_hash(build_candidates(rows))
     model = FakeModel({})
-    client = FakeClient(scope_pages=[[A]], rows=rows, state=[(A, stored)])
+    client = FakeClient(scope_pages=[[A]], rows=rows, state=[(A, stored, "")])
     counts = run_match(client, llm_client=None, config=CONFIG, source_run_id="run-1",
                        call_model=model)
     assert model.requests == [] and client.inserts == []
     assert (counts.reused, counts.called, counts.pairs) == (1, 0, 0)
+    assert counts.skipped_sticky == 0
     # changed_only=false re-sends the same company even with the hash stored.
-    again = FakeClient(scope_pages=[[A]], rows=rows, state=[(A, stored)])
+    again = FakeClient(scope_pages=[[A]], rows=rows, state=[(A, stored, "")])
     counts = run_match(again, llm_client=None,
                        config=PersonMatchProfile(provider="deepseek", model="m",
                                                  page_size=10, changed_only=False),
@@ -508,11 +595,142 @@ def test_an_unchanged_input_hash_is_reused_and_never_called() -> None:
     assert match.match_state_sql() not in [sql for sql, _, _ in again.statements]
 
 
+def test_a_transient_error_is_re_sent_on_the_same_input() -> None:
+    """A rate limit and an HTTP failure are the provider's weather: the same input is worth
+    paying for again, which is why the state read no longer filters them out in SQL."""
+    rows = multi(A)
+    stored = input_hash(build_candidates(rows))
+    for error in ("rate_limited: slow down", "http_error: connection reset"):
+        model = FakeModel({A: one_pair()})
+        client = FakeClient(scope_pages=[[A]], rows=rows, state=[(A, stored, error)])
+        counts = run_match(client, llm_client=None, config=CONFIG, source_run_id="run-1",
+                           call_model=model)
+        assert [company_id for company_id, _ in model.requests] == [A], error
+        assert (counts.called, counts.reused, counts.skipped_sticky) == (1, 0, 0), error
+        assert match.is_transient_error(error) is True
+
+
+def test_a_sticky_error_is_skipped_and_writes_no_state_row() -> None:
+    """An answer that did not parse and a list over the candidate cap are properties of the
+    INPUT: re-sending it buys the same failure at the same price. Skipping it writes NO state
+    row, so its matched_at stops moving and the fold stops re-selecting the company (F3)."""
+    rows = multi(A)
+    stored = input_hash(build_candidates(rows))
+    for error in ("invalid_response: person match response carries no `pairs` list",
+                  "invalid_response: truncated at 4000 completion tokens",
+                  "too many candidates",
+                  "unexpected: RuntimeError: boom"):
+        model = FakeModel({A: one_pair()})
+        client = FakeClient(scope_pages=[[A]], rows=rows, state=[(A, stored, error)])
+        counts = run_match(client, llm_client=None, config=CONFIG, source_run_id="run-1",
+                           call_model=model)
+        assert model.requests == [] and client.inserts == [], error
+        assert (counts.skipped_sticky, counts.called, counts.reused) == (1, 0, 0), error
+        assert match.is_transient_error(error) is False
+    # A CHANGED input clears the stickiness: the company is sent again on its new hash.
+    model = FakeModel({A: one_pair()})
+    client = FakeClient(scope_pages=[[A]], rows=rows,
+                        state=[(A, "0" * 64, "invalid_response: nonsense")])
+    counts = run_match(client, llm_client=None, config=CONFIG, source_run_id="run-1",
+                       call_model=model)
+    assert counts.called == 1 and counts.skipped_sticky == 0
+
+
+def test_a_truncated_or_empty_answer_keeps_its_usage_and_its_raw_text() -> None:
+    """The call was paid for either way (F5): the state row must not claim 0 tokens and an
+    empty raw_response for a company that cost thousands."""
+    rows = [*multi(A), *multi(B)]
+
+    class Unusable:
+        def __call__(self, request, *, company_id):
+            if company_id == A:
+                return match.CallResult(content='{"pairs": [', prompt_tokens=1_200,
+                                        completion_tokens=4_000, finish_reason="length")
+            return match.CallResult(content="  ", prompt_tokens=900, completion_tokens=0,
+                                    finish_reason="stop")
+
+    client = FakeClient(scope_pages=[[A, B]], rows=rows)
+    counts = run_match(client, llm_client=None, config=CONFIG, source_run_id="run-1",
+                       call_model=Unusable())
+    state = {
+        entry[0]: dict(zip(tables.MATCH_STATE_COLUMNS, entry))
+        for entry in client.rows_for(tables.QUALIFIED_MATCH_STATE_TABLE)
+    }
+    assert state[A]["error"] == "invalid_response: truncated at 4000 completion tokens"
+    assert (state[A]["prompt_tokens"], state[A]["completion_tokens"]) == (1_200, 4_000)
+    assert state[A]["raw_response"] == '{"pairs": ['
+    assert state[B]["error"] == "invalid_response: empty"
+    assert (state[B]["prompt_tokens"], state[B]["raw_response"]) == (900, "  ")
+    assert (counts.errors, counts.called) == (2, 0)
+    assert (counts.prompt_tokens, counts.completion_tokens) == (2_100, 4_000)
+
+
+def test_an_unexpected_exception_is_one_company_not_the_run() -> None:
+    """P2: the three typed handlers do not cover a driver's own class or a bug in here."""
+    rows = [*multi(A), *multi(B)]
+    model = FakeModel({B: one_pair()}, failures={A: RuntimeError("boom")})
+    client = FakeClient(scope_pages=[[A, B]], rows=rows)
+    counts = run_match(client, llm_client=None, config=CONFIG, source_run_id="run-1",
+                       call_model=model)
+    assert (counts.called, counts.errors, counts.pairs) == (1, 1, 1)
+    state = {
+        entry[0]: dict(zip(tables.MATCH_STATE_COLUMNS, entry))
+        for entry in client.rows_for(tables.QUALIFIED_MATCH_STATE_TABLE)
+    }
+    assert state[A]["error"] == "unexpected: RuntimeError: boom"
+    assert state[B]["error"] == ""
+
+
+def test_a_page_of_provider_failures_stops_the_run_after_writing_it() -> None:
+    """F2: a provider outage must not finish green. The first page's rows are written and
+    stay; the page that trips the breaker is written too, and THEN the run raises, so the
+    asset's RetryPolicy backs off instead of the next run re-paying for everything."""
+    good = [f"55600001{index:02d}" for index in range(match.BREAKER_MIN_ATTEMPTS)]
+    bad = [f"55600002{index:02d}" for index in range(match.BREAKER_MIN_ATTEMPTS)]
+    rows = [entry for company_id in (*good, *bad) for entry in multi(company_id)]
+    model = FakeModel({}, failures={company_id: rate_limited("slow down") for company_id in bad})
+    client = FakeClient(scope_pages=[good, bad], rows=rows)
+    config = PersonMatchProfile(provider="deepseek", model="m",
+                                page_size=match.BREAKER_MIN_ATTEMPTS)
+    with pytest.raises(RuntimeError, match="100%"):
+        run_match(client, llm_client=None, config=config, source_run_id="run-1",
+                  call_model=model)
+    state = {
+        entry[0]: dict(zip(tables.MATCH_STATE_COLUMNS, entry))
+        for entry in client.rows_for(tables.QUALIFIED_MATCH_STATE_TABLE)
+    }
+    assert set(state) == {*good, *bad}                  # both pages are on disk
+    assert all(state[company_id]["error"] == "" for company_id in good)
+    assert all(state[company_id]["error"].startswith("rate_limited: ") for company_id in bad)
+
+
+def test_a_minority_of_failures_does_not_stop_the_run() -> None:
+    """Half the page failing is not enough, and neither is a small page of failures: below
+    BREAKER_MIN_ATTEMPTS the share is noise, not evidence about the provider."""
+    ids = [f"55600003{index:02d}" for index in range(match.BREAKER_MIN_ATTEMPTS)]
+    rows = [entry for company_id in ids for entry in multi(company_id)]
+    half = {company_id: rate_limited("slow down") for company_id in ids[: len(ids) // 2]}
+    client = FakeClient(scope_pages=[ids], rows=rows)
+    counts = run_match(client, llm_client=None,
+                       config=PersonMatchProfile(provider="deepseek", model="m",
+                                                 page_size=match.BREAKER_MIN_ATTEMPTS),
+                       source_run_id="run-1", call_model=FakeModel({}, failures=half))
+    assert counts.errors == len(ids) // 2 == 10 and counts.called == 10
+    small = ids[: match.BREAKER_MIN_ATTEMPTS - 1]
+    tiny = FakeClient(scope_pages=[small], rows=rows)
+    counts = run_match(tiny, llm_client=None,
+                       config=PersonMatchProfile(provider="deepseek", model="m",
+                                                 page_size=match.BREAKER_MIN_ATTEMPTS),
+                       source_run_id="run-1",
+                       call_model=FakeModel({}, failures={
+                           company_id: rate_limited("slow down") for company_id in small}))
+    assert counts.errors == len(small) == 19        # every call failed, below the minimum
+
+
 def test_a_failing_company_is_recorded_and_the_run_continues() -> None:
     rows = [*multi(A), *multi(B)]
-    ids = sorted(candidate.id for candidate in build_candidates(multi(B)))
     model = FakeModel(
-        {B: one_pair(ids[0], ids[1])},
+        {B: one_pair()},
         failures={A: OpenAIError("connection reset")},
     )
     client = FakeClient(scope_pages=[[A, B]], rows=rows)
@@ -631,11 +849,12 @@ def test_the_profile_requires_provider_and_model_and_pins_the_prompt_version() -
 
 
 def test_match_counts_as_metadata_names_every_counter() -> None:
-    counts = MatchCounts(companies=1, pages=2, called=3, reused=4, skipped_single_source=5,
-                         pairs=6, pairs_above_threshold=7, errors=8, prompt_tokens=9,
-                         completion_tokens=10, stopped_at_cap=False)
+    counts = MatchCounts(companies=1, pages=2, called=3, reused=4, skipped_sticky=11,
+                         skipped_single_source=5, pairs=6, pairs_above_threshold=7, errors=8,
+                         prompt_tokens=9, completion_tokens=10, stopped_at_cap=False)
     assert set(counts.as_metadata()) == {
-        "companies", "pages", "called", "reused", "skipped_single_source", "pairs",
-        "pairs_above_threshold", "errors", "prompt_tokens", "completion_tokens",
-        "stopped_at_cap", "prompt_version", "threshold",
+        "companies", "pages", "called", "reused", "skipped_sticky",
+        "skipped_single_source", "pairs", "pairs_above_threshold", "errors",
+        "prompt_tokens", "completion_tokens", "stopped_at_cap", "prompt_version", "threshold",
     }
+    assert counts.as_metadata()["skipped_sticky"] == 11

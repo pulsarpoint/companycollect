@@ -382,15 +382,27 @@ def test_a_full_page_renders_under_the_query_size_setting() -> None:
         client_settings={"server_side_params": False},
     )
     ids = [str(556000000000 + index) for index in range(batch.PAGE_SIZE)]
-    sizes = []
-    for text in (batch.current_normalized_sql(), batch.current_main_rows_sql(),
-                 batch.normalized_watermarks_sql(), batch.active_rules_sql(),
-                 batch.company_precedence_sql(), batch.match_watermarks_sql(),
-                 batch.match_pairs_sql()):
-        rendered = text % escape_params({"company_ids": ids}, context)
-        sizes.append(len(rendered.encode()))
-        assert sizes[-1] < batch.FOLD_ID_BOUND_QUERY_SETTINGS["max_query_size"]
-    assert max(sizes) > DEFAULT_MAX_QUERY_SIZE   # the raised setting is not decoration
+    params = escape_params({"company_ids": ids}, context)
+    sizes = {}
+    for name in ("current_normalized_sql", "current_main_rows_sql", "normalized_watermarks_sql",
+                 "active_rules_sql", "company_precedence_sql", "match_watermarks_sql",
+                 "match_pairs_sql"):
+        rendered = getattr(batch, name)() % params
+        sizes[name] = len(rendered.encode())
+        assert sizes[name] < batch.FOLD_ID_BOUND_QUERY_SETTINGS["max_query_size"], name
+    assert max(sizes.values()) > DEFAULT_MAX_QUERY_SIZE   # the raised setting is not decoration
+    # match_pairs_sql binds the id list TWICE (the outer IN prunes the pair table before the
+    # join), so it is the widest statement of the page at about 640 KB -- 1.64x headroom, not
+    # the 3.3x every single-bound statement has. The comment on
+    # FOLD_ID_BOUND_QUERY_SETTINGS says exactly that, and this is what keeps it true.
+    widest = max(sizes, key=lambda name: sizes[name])
+    assert widest == "match_pairs_sql"
+    assert 600_000 < sizes["match_pairs_sql"] < 700_000
+    single = sizes["match_watermarks_sql"]
+    assert 300_000 < single < 340_000
+    assert 1.9 < sizes["match_pairs_sql"] / single < 2.1
+    headroom = batch.FOLD_ID_BOUND_QUERY_SETTINGS["max_query_size"] / sizes["match_pairs_sql"]
+    assert 1.6 < headroom < 1.7
 
 
 def test_fold_bucket_reads_the_bucket_ids_then_folds_them() -> None:
