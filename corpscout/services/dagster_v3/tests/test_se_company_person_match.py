@@ -27,6 +27,20 @@ from dagster_v3.defs.se_company.person.match import (
     serialize_candidates,
 )
 
+from datetime import UTC, datetime
+
+import httpx
+from openai import OpenAIError, RateLimitError
+from pydantic import ValidationError
+
+from dagster_v3.defs.se_company.person import batch, tables
+from dagster_v3.defs.se_company.person import match
+from dagster_v3.defs.se_company.person.match import (
+    MatchCounts,
+    PersonMatchProfile,
+    run_match,
+)
+
 C = "5561552760"
 
 
@@ -316,3 +330,312 @@ def test_the_threshold_is_zero_point_eight_and_lives_in_the_fold() -> None:
     """Spec sections 4 and 9: the constant sits beside FOLD_VERSION, because the fold is
     what applies it -- a threshold change is a constant edit and a re-fold, not a re-match."""
     assert MATCH_THRESHOLD == 0.8
+
+
+A, B, SOLO = "5560000001", "5560000002", "5560000003"
+
+
+def normalized_tuple(row: NormalizedRow) -> tuple:
+    """A NormalizedRow as current_candidates_sql returns it: NORMALIZED_SELECT_COLUMNS
+    order, token tuples as the lists clickhouse-driver hands back."""
+    values = {name: getattr(row, name) for name in batch.NORMALIZED_SELECT_COLUMNS}
+    for name in ("first_tokens", "middle_tokens", "last_tokens"):
+        values[name] = list(values[name])
+    return tuple(values[name] for name in batch.NORMALIZED_SELECT_COLUMNS)
+
+
+class FakeClient:
+    """A clickhouse-driver-shaped client: the scan's scratch table, the two page reads, and
+    every INSERT recorded in order."""
+
+    def __init__(self, *, scope_pages, rows, state=()):
+        self.scope_pages = [list(page) for page in scope_pages]
+        self.rows = list(rows)
+        self.state = list(state)
+        self.statements: list[tuple[str, object, object]] = []
+        self.inserts: list[tuple[str, list]] = []
+
+    def execute(self, sql, params=None, settings=None):
+        self.statements.append((sql, params, settings))
+        if sql.startswith(("CREATE TABLE", "DROP TABLE")):
+            return []
+        if sql.startswith(f"INSERT INTO {tables.SCRATCH_SCOPE_PREFIX}"):
+            return []
+        if sql.startswith("INSERT INTO"):
+            self.inserts.append((sql, list(params)))
+            return []
+        if sql.startswith(f"SELECT company_id FROM {tables.SCRATCH_SCOPE_PREFIX}"):
+            page = self.scope_pages.pop(0) if self.scope_pages else []
+            return [(company_id,) for company_id in page]
+        ids = set(params["company_ids"])
+        if sql == match.current_candidates_sql():
+            return [normalized_tuple(r) for r in self.rows if r.company_id in ids]
+        if sql == match.match_state_sql():
+            return [entry for entry in self.state if entry[0] in ids]
+        raise AssertionError(sql)
+
+    def rows_for(self, table: str) -> list[tuple]:
+        prefix = f"INSERT INTO {table} ("
+        return [row for sql, rows in self.inserts if sql.startswith(prefix) for row in rows]
+
+
+class FakeModel:
+    """Answers per company from a script, and raises for the companies named in `failures`."""
+
+    def __init__(self, answers, failures=()):
+        self.answers = dict(answers)
+        self.failures = dict(failures)
+        self.requests: list[tuple[str, dict]] = []
+
+    def __call__(self, request, *, company_id):
+        self.requests.append((company_id, request))
+        if company_id in self.failures:
+            raise self.failures[company_id]
+        return match.CallResult(
+            content=self.answers.get(company_id, '{"pairs": []}'),
+            prompt_tokens=100, completion_tokens=20,
+        )
+
+
+def one_pair(low: str, high: str, *, confidence=0.93, reason="call name") -> str:
+    """A model answer with exactly one scored pair (`answer` is Task 3's helper)."""
+    return answer({"a": low, "b": high, "confidence": confidence, "reason": reason})
+
+
+def rate_limited(message: str) -> RateLimitError:
+    """openai's RateLimitError is an APIStatusError: it reads `response.status_code`, so it
+    needs a real httpx response, not None."""
+    request = httpx.Request("POST", "https://api.deepseek.com/v1/chat/completions")
+    return RateLimitError(message, response=httpx.Response(429, request=request), body=None)
+
+
+CONFIG = PersonMatchProfile(provider="deepseek", model="deepseek-v4-flash", page_size=10)
+
+
+def multi(company_id: str) -> list[NormalizedRow]:
+    """Two sources spelling one person: the call-name gap of spec section 1."""
+    return [
+        row("ratsit", f"{company_id}-r1", display="Erik Bo Bengtsson", first="erik",
+            middles=("bo",), last="bengtsson", birth_year=1966, company_id=company_id,
+            normalized_id=f"ratsit-{company_id}".ljust(64, "0")),
+        row("bolagsverket", f"{company_id}-s1", display="Bo Bengtsson", first="bo",
+            last="bengtsson", company_id=company_id,
+            normalized_id=f"bolagsverket-{company_id}".ljust(64, "0")),
+    ]
+
+
+def test_the_scope_sql_gates_on_two_machine_sources() -> None:
+    sql = match.match_scope_sql()
+    assert f"FROM {tables.QUALIFIED_NORMALIZED_TABLE} FINAL" in sql
+    assert "parse_status = 'ok'" in sql
+    assert "source IN ('bolagsverket', 'esef', 'wikidata', 'ratsit')" in sql
+    assert "uniqExact(source) AS sources" in sql and "HAVING sources >= 2" in sql
+    # No keyset tail: scope_pages runs this once into a scratch table and pages that.
+    assert "%(after_company_id)s" not in sql and "LIMIT" not in sql
+    # Reviewer rows never reach the model.
+    assert "reviewer" not in sql
+
+
+def test_the_page_reads_bind_ids_read_final_and_skip_error_state_rows() -> None:
+    candidates_sql = match.current_candidates_sql()
+    assert f"FROM {tables.QUALIFIED_NORMALIZED_TABLE} FINAL" in candidates_sql
+    assert candidates_sql.startswith(f"SELECT {', '.join(batch.NORMALIZED_SELECT_COLUMNS)}")
+    assert "company_id IN %(company_ids)s" in candidates_sql
+    assert "ORDER BY company_id, source, slot" in candidates_sql
+    state_sql = match.match_state_sql()
+    assert f"FROM {tables.QUALIFIED_MATCH_STATE_TABLE} FINAL" in state_sql
+    assert "toString(input_hash) AS input_hash" in state_sql
+    # A company whose last attempt errored has no usable hash, so it is re-sent.
+    assert "error = ''" in state_sql
+    assert match.match_insert_sql() == (
+        f"INSERT INTO {tables.QUALIFIED_MATCH_TABLE} "
+        f"({', '.join(tables.MATCH_COLUMNS)}) VALUES"
+    )
+    assert match.match_state_insert_sql() == (
+        f"INSERT INTO {tables.QUALIFIED_MATCH_STATE_TABLE} "
+        f"({', '.join(tables.MATCH_STATE_COLUMNS)}) VALUES"
+    )
+
+
+def test_the_run_calls_once_per_company_and_writes_pairs_then_state() -> None:
+    rows = [*multi(A), row("bolagsverket", "x1", company_id=SOLO)]
+    ids = sorted(candidate.id for candidate in build_candidates(multi(A)))
+    model = FakeModel({A: one_pair(ids[0], ids[1])})
+    client = FakeClient(scope_pages=[[A, SOLO]], rows=rows)
+    counts = run_match(client, llm_client=None, config=CONFIG, source_run_id="run-1",
+                       call_model=model)
+    assert [company_id for company_id, _ in model.requests] == [A]
+    assert (counts.companies, counts.pages, counts.called, counts.reused) == (2, 1, 1, 0)
+    assert counts.skipped_single_source == 1 and counts.errors == 0
+    assert (counts.pairs, counts.pairs_above_threshold) == (1, 1)
+    assert (counts.prompt_tokens, counts.completion_tokens) == (100, 20)
+    # The pairs are written BEFORE the state row that certifies them: a fold running between
+    # the two statements must never see a state hash whose pairs are not there yet.
+    assert [sql for sql, _ in client.inserts] == [
+        match.match_insert_sql(), match.match_state_insert_sql()
+    ]
+    pair = dict(zip(tables.MATCH_COLUMNS, client.rows_for(tables.QUALIFIED_MATCH_TABLE)[0]))
+    assert (pair["company_id"], pair["candidate_a"], pair["candidate_b"]) == (A, ids[0], ids[1])
+    assert pair["confidence"] == 0.93 and pair["reason"] == "call name"
+    assert pair["model"] == "deepseek-v4-flash" and pair["prompt_version"] == PROMPT_VERSION
+    assert isinstance(pair["members_a"], list) and isinstance(pair["members_b"], list)
+    state = dict(zip(tables.MATCH_STATE_COLUMNS,
+                     client.rows_for(tables.QUALIFIED_MATCH_STATE_TABLE)[0]))
+    assert state["company_id"] == A and state["input_hash"] == pair["input_hash"]
+    assert (state["candidates"], state["sources"], state["pairs"]) == (2, 2, 1)
+    assert (state["prompt_tokens"], state["completion_tokens"]) == (100, 20)
+    assert state["error"] == "" and state["source_run_id"] == "run-1"
+    assert state["raw_response"] == model.answers[A]
+    assert state["matched_at"] == pair["matched_at"]
+
+
+def test_an_unchanged_input_hash_is_reused_and_never_called() -> None:
+    rows = multi(A)
+    stored = input_hash(build_candidates(rows))
+    model = FakeModel({})
+    client = FakeClient(scope_pages=[[A]], rows=rows, state=[(A, stored)])
+    counts = run_match(client, llm_client=None, config=CONFIG, source_run_id="run-1",
+                       call_model=model)
+    assert model.requests == [] and client.inserts == []
+    assert (counts.reused, counts.called, counts.pairs) == (1, 0, 0)
+    # changed_only=false re-sends the same company even with the hash stored.
+    again = FakeClient(scope_pages=[[A]], rows=rows, state=[(A, stored)])
+    counts = run_match(again, llm_client=None,
+                       config=PersonMatchProfile(provider="deepseek", model="m",
+                                                 page_size=10, changed_only=False),
+                       source_run_id="run-2", call_model=FakeModel({}))
+    assert counts.called == 1 and counts.reused == 0
+    assert match.match_state_sql() not in [sql for sql, _, _ in again.statements]
+
+
+def test_a_failing_company_is_recorded_and_the_run_continues() -> None:
+    rows = [*multi(A), *multi(B)]
+    ids = sorted(candidate.id for candidate in build_candidates(multi(B)))
+    model = FakeModel(
+        {B: one_pair(ids[0], ids[1])},
+        failures={A: OpenAIError("connection reset")},
+    )
+    client = FakeClient(scope_pages=[[A, B]], rows=rows)
+    counts = run_match(client, llm_client=None, config=CONFIG, source_run_id="run-1",
+                       call_model=model)
+    assert (counts.called, counts.errors, counts.pairs) == (1, 1, 1)
+    state = {
+        entry[0]: dict(zip(tables.MATCH_STATE_COLUMNS, entry))
+        for entry in client.rows_for(tables.QUALIFIED_MATCH_STATE_TABLE)
+    }
+    assert state[A]["error"].startswith("http_error: ") and "connection reset" in state[A]["error"]
+    assert state[A]["pairs"] == 0 and state[A]["raw_response"] == ""
+    assert state[B]["error"] == ""
+
+
+def test_a_rate_limit_and_a_malformed_answer_are_typed_separately() -> None:
+    rows = [*multi(A), *multi(B)]
+    model = FakeModel(
+        {B: "the model forgot the JSON"},
+        failures={A: rate_limited("slow down")},
+    )
+    client = FakeClient(scope_pages=[[A, B]], rows=rows)
+    counts = run_match(client, llm_client=None, config=CONFIG, source_run_id="run-1",
+                       call_model=model)
+    assert counts.errors == 2 and counts.pairs == 0 and counts.called == 0
+    state = {
+        entry[0]: dict(zip(tables.MATCH_STATE_COLUMNS, entry))
+        for entry in client.rows_for(tables.QUALIFIED_MATCH_STATE_TABLE)
+    }
+    assert state[A]["error"].startswith("rate_limited: ")
+    assert state[B]["error"].startswith("invalid_response: ")
+    # The raw text of a malformed answer is kept, so the parse can be re-read against it.
+    assert state[B]["raw_response"] == "the model forgot the JSON"
+    # The usage of a call that answered but did not parse is still counted.
+    assert (counts.prompt_tokens, counts.completion_tokens) == (100, 20)
+
+
+def test_a_company_above_the_candidate_cap_is_skipped_with_an_error() -> None:
+    """Spec section 8: never truncate the list silently."""
+    rows = [
+        row(source, f"s{index}", first=f"first{index}", last=f"last{index}", company_id=A,
+            normalized_id=f"{source}-{index}".ljust(64, "0"))
+        for source in ("bolagsverket", "ratsit")
+        for index in range(match.MAX_CANDIDATES // 2 + 1)
+    ]
+    model = FakeModel({})
+    client = FakeClient(scope_pages=[[A]], rows=rows)
+    counts = run_match(client, llm_client=None, config=CONFIG, source_run_id="run-1",
+                       call_model=model)
+    assert model.requests == [] and counts.errors == 1 and counts.called == 0
+    state = dict(zip(tables.MATCH_STATE_COLUMNS,
+                     client.rows_for(tables.QUALIFIED_MATCH_STATE_TABLE)[0]))
+    assert state["error"] == "too many candidates" and state["candidates"] == len(rows)
+
+
+def test_each_page_is_written_before_the_next_one_starts() -> None:
+    """Spec 3.1: a killed run resumes by its own change scan, so a page's results must be on
+    disk before the next page's calls begin."""
+    rows = [*multi(A), *multi(B)]
+    client = FakeClient(scope_pages=[[A], [B]], rows=rows)
+    counts = run_match(client, llm_client=None,
+                       config=PersonMatchProfile(provider="deepseek", model="m", page_size=1),
+                       source_run_id="run-1", call_model=FakeModel({}))
+    assert counts.pages == 2 and counts.called == 2
+    order = [sql.split("(")[0].strip() for sql, _ in client.inserts]
+    assert order == [
+        f"INSERT INTO {tables.QUALIFIED_MATCH_STATE_TABLE}",
+        f"INSERT INTO {tables.QUALIFIED_MATCH_STATE_TABLE}",
+    ]           # no pairs from the empty answers, one state insert per page
+
+
+def test_the_cap_stops_the_scan_without_paging_further() -> None:
+    client = FakeClient(scope_pages=[[A], [B]], rows=[*multi(A), *multi(B)])
+    counts = run_match(
+        client, llm_client=None,
+        config=PersonMatchProfile(provider="deepseek", model="m", page_size=1, max_companies=1),
+        source_run_id="run-1", call_model=FakeModel({}),
+    )
+    assert counts.stopped_at_cap is True and counts.companies == 1 and counts.pages == 1
+    # The scan's scratch table is created once and dropped even when the loop breaks early.
+    starts = [sql.split()[0] for sql, _, _ in client.statements]
+    assert starts.count("CREATE") == 1 and starts.count("DROP") == 1
+
+
+def test_company_ids_page_in_memory_with_no_scan() -> None:
+    client = FakeClient(scope_pages=[], rows=multi(A))
+    counts = run_match(
+        client, llm_client=None,
+        config=PersonMatchProfile(provider="deepseek", model="m", company_ids=[A]),
+        source_run_id="run-1", call_model=FakeModel({}),
+    )
+    assert counts.companies == 1 and counts.called == 1
+    assert not [sql for sql, _, _ in client.statements if sql.startswith("CREATE TABLE")]
+
+
+def test_the_profile_requires_provider_and_model_and_pins_the_prompt_version() -> None:
+    with pytest.raises(ValidationError):
+        PersonMatchProfile()
+    with pytest.raises(ValidationError):
+        PersonMatchProfile(provider="deepseek")
+    with pytest.raises(ValidationError):
+        PersonMatchProfile(provider="deepseek", model="m", prompt_version="se-person-match-v0")
+    config = PersonMatchProfile(provider="deepseek", model="m")
+    assert config.prompt_version == PROMPT_VERSION and config.base_url == "https://api.deepseek.com"
+    assert config.temperature == 0 and config.max_tokens == 4_000
+    assert config.changed_only is True and config.company_ids == []
+    assert (config.page_size, config.concurrency, config.timeout_seconds) == (500, 8, 120)
+    assert config.max_companies == 5_000_000
+    assert match.PAGE_SIZE == 500
+    # LlmProfileConfig caps concurrency at 8 -- these are paid calls on one vendor account.
+    with pytest.raises(ValidationError):
+        PersonMatchProfile(provider="deepseek", model="m", concurrency=9)
+    assert PersonMatchProfile(provider="deepseek", model="m",
+                              company_ids=["5560000002", "5560000001", "5560000001"]
+                              ).company_ids == ["5560000001", "5560000002"]
+
+
+def test_match_counts_as_metadata_names_every_counter() -> None:
+    counts = MatchCounts(companies=1, pages=2, called=3, reused=4, skipped_single_source=5,
+                         pairs=6, pairs_above_threshold=7, errors=8, prompt_tokens=9,
+                         completion_tokens=10, stopped_at_cap=False)
+    assert set(counts.as_metadata()) == {
+        "companies", "pages", "called", "reused", "skipped_single_source", "pairs",
+        "pairs_above_threshold", "errors", "prompt_tokens", "completion_tokens",
+        "stopped_at_cap", "prompt_version", "threshold",
+    }

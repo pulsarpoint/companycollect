@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import dagster as dg
 import pytest
 
-from dagster_v3.defs.se_company.person import assets, batch
+from dagster_v3.defs.se_company.person import assets, batch, tables
 
 
 def test_the_fold_has_sixty_four_bucket_partitions() -> None:
@@ -82,3 +82,30 @@ def test_targeted_fold_normalizes_the_ids_before_folding_them(monkeypatch) -> No
     )
     assert calls == [("normalize", ["5560000001"], True), ("fold", ["5560000001"], False, "run-1")]
     assert normalized.as_metadata() == {"rows": 3} and folded.as_metadata() == {"persons": 2}
+
+
+def test_the_match_asset_is_pooled_grouped_and_retried() -> None:
+    asset = assets.se_company_person_match
+    assert asset.op.pool == assets.MATCH_POOL == "se_company_person_match"
+    assert asset.group_names_by_key[asset.key] == assets.GROUP_NAME
+    assert set(asset.required_resource_keys) >= {"clickhouse"}
+    # One pool of limit 1 (the instance default), so two runs never race the same companies.
+    assert assets.MATCH_POOL not in {assets.NORMALIZE_POOL, assets.FOLD_POOL}
+    policy = asset.op.retry_policy
+    assert (policy.max_retries, policy.delay, policy.backoff) == (3, 60, dg.Backoff.EXPONENTIAL)
+    assert asset.partitions_def is None
+
+
+def test_the_match_asset_runs_after_the_normalizer() -> None:
+    from dagster_v3.definitions import defs as load_defs
+
+    node = load_defs().get_repository_def().asset_graph.get(
+        dg.AssetKey("se_company_person_match"))
+    assert {key.path[-1] for key in node.parent_keys} == {"se_company_person_normalize"}
+
+
+def test_the_targeted_fold_reads_the_match_tables_too() -> None:
+    """The fold's page read now joins the pair table, so the existence assertion must name
+    it -- otherwise a fold on a host without 000399 fails deep inside a page."""
+    assert tables.MATCH_TABLE in assets._FOLD_TABLES
+    assert tables.MATCH_STATE_TABLE in assets._FOLD_TABLES

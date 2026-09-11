@@ -17,12 +17,25 @@ hand -- and the API key is read from the host environment at call time by
 import hashlib
 import json
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import closing
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from functools import partial
 from typing import Any
 
-from dagster_v3.defs.se_company.info import LlmProfileConfig
-from dagster_v3.defs.se_company.person.fold import FOLDABLE_STATUS, NormalizedRow
+from openai import OpenAI, OpenAIError, RateLimitError
+from pydantic import Field, field_validator
+
+from dagster_v3.defs.se_company.basic_info.extract import SCAN_QUERY_SETTINGS, scope_pages
+from dagster_v3.defs.se_company.common import normalized_se_company_ids
+from dagster_v3.defs.se_company.info import LlmProfileConfig, map_ordered
+from dagster_v3.defs.se_company.person import tables
+from dagster_v3.defs.se_company.person.batch import (
+    NORMALIZED_SELECT_COLUMNS,
+    normalized_row_from_row,
+)
+from dagster_v3.defs.se_company.person.fold import FOLDABLE_STATUS, MATCH_THRESHOLD, NormalizedRow
 
 PROMPT_VERSION = "se-person-match-v1"
 # The sources a model may be asked about. `reviewer` and `reviewer_draft` are deliberately
@@ -352,4 +365,391 @@ def parse_match_response(
     return ParsedMatches(
         pairs=tuple(pairs), dropped_unknown=unknown, dropped_self=self_pairs,
         dropped_confidence=bad_confidence, birth_year_locked=locked,
+    )
+
+
+# Companies per page (spec 3.1): a page's results are written before the next page starts,
+# so a killed run resumes from its own change scan having lost at most one page of calls.
+PAGE_SIZE = 500
+# A page binds %(company_ids)s once per read and a 500-id page renders to about 8 KB, far
+# inside the raised setting; the setting is here so the shape matches batch.py's and a
+# larger page can never trip ClickHouse's 262,144-byte default.
+MATCH_ID_BOUND_QUERY_SETTINGS = {"max_query_size": 1_048_576, "max_execution_time": 1800}
+ERROR_LIMIT = 500
+_MACHINE_SOURCES_SQL = ", ".join(f"'{source}'" for source in MACHINE_SOURCES)
+
+
+class PersonMatchProfile(LlmProfileConfig):
+    """The match asset's whole config: which model to call and what to send it.
+
+    `provider` and `model` have NO defaults, like `LlmSuggestionProfile` and the ESEF
+    passes: a bare Materialize must fail validation rather than spend on a default.
+    `prompt_version` is pinned to the prompt this module implements, so a run configured
+    for another version refuses rather than storing rows under a prompt nobody wrote.
+    """
+
+    provider: str = Field(min_length=1, max_length=64)
+    model: str = Field(min_length=1, max_length=200)
+    prompt_version: str = Field(default=PROMPT_VERSION, min_length=1, max_length=120)
+    # deepseek-v4-flash is a reasoning model and its reasoning counts against max_tokens;
+    # 4,000 is the spec's budget for an answer that is a list of pairs.
+    max_tokens: int = Field(default=4_000, ge=256, le=32_000)
+    # LlmProfileConfig caps this at 8: paid calls against one vendor account.
+    concurrency: int = Field(default=8, ge=1, le=8)
+    changed_only: bool = True
+    company_ids: list[str] = Field(default_factory=list)
+    page_size: int = Field(default=PAGE_SIZE, ge=1, le=5_000)
+    max_companies: int = Field(default=5_000_000, ge=1, le=5_000_000)
+    timeout_seconds: int = Field(default=120, ge=1, le=600)
+
+    @field_validator("company_ids")
+    @classmethod
+    def _valid_ids(cls, value: list[str]) -> list[str]:
+        return list(normalized_se_company_ids(value))
+
+    @field_validator("prompt_version")
+    @classmethod
+    def _pinned_prompt_version(cls, value: str) -> str:
+        if value != PROMPT_VERSION:
+            raise ValueError(f"person match prompt_version must be {PROMPT_VERSION!r}")
+        return value
+
+
+@dataclass(frozen=True, slots=True)
+class CallResult:
+    content: str
+    prompt_tokens: int
+    completion_tokens: int
+
+
+@dataclass(frozen=True, slots=True)
+class MatchCounts:
+    companies: int                 # ids the pages handed out
+    pages: int
+    called: int                    # companies the model answered and the parser accepted
+    reused: int                    # unchanged input hash, no call made
+    skipped_single_source: int
+    pairs: int                     # pair rows written
+    pairs_above_threshold: int
+    errors: int                    # state rows carrying an error, including the cap
+    prompt_tokens: int
+    completion_tokens: int
+    stopped_at_cap: bool
+
+    def as_metadata(self) -> dict[str, Any]:
+        return {
+            "companies": self.companies, "pages": self.pages, "called": self.called,
+            "reused": self.reused, "skipped_single_source": self.skipped_single_source,
+            "pairs": self.pairs, "pairs_above_threshold": self.pairs_above_threshold,
+            "errors": self.errors, "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens, "stopped_at_cap": self.stopped_at_cap,
+            "prompt_version": PROMPT_VERSION, "threshold": MATCH_THRESHOLD,
+        }
+
+
+def match_scope_sql() -> str:
+    """Companies whose current normalized `ok` rows come from two or more machine sources.
+
+    That is as far as the gate goes in SQL: the candidate hash is a Python computation over
+    the page's rows, so the scan's job is only to keep single-source companies out of the
+    pages. `scope_pages` runs this once into a scratch table and keyset-pages that, so the
+    FINAL read of the normalized table happens once per run.
+    """
+    return (
+        "SELECT company_id FROM (\n"
+        "    SELECT company_id, uniqExact(source) AS sources\n"
+        f"    FROM {tables.QUALIFIED_NORMALIZED_TABLE} FINAL\n"
+        f"    WHERE parse_status = '{FOLDABLE_STATUS}' AND source IN ({_MACHINE_SOURCES_SQL})\n"
+        "    GROUP BY company_id\n"
+        "    HAVING sources >= 2\n"
+        ")"
+    )
+
+
+def current_candidates_sql() -> str:
+    """The page's candidate rows -- the same columns and the same shape the fold reads, so
+    `batch.normalized_row_from_row` turns them into NormalizedRow unchanged."""
+    return (
+        f"SELECT {', '.join(NORMALIZED_SELECT_COLUMNS)}\n"
+        f"FROM {tables.QUALIFIED_NORMALIZED_TABLE} FINAL\n"
+        f"WHERE company_id IN %(company_ids)s AND source IN ({_MACHINE_SOURCES_SQL}) "
+        f"AND parse_status = '{FOLDABLE_STATUS}'\n"
+        "ORDER BY company_id, source, slot"
+    )
+
+
+def match_state_sql() -> str:
+    """The page's stored input hashes. A company whose last attempt errored is excluded, so
+    it is re-sent on the next run (spec 3.3)."""
+    return (
+        "SELECT company_id, toString(input_hash) AS input_hash\n"
+        f"FROM {tables.QUALIFIED_MATCH_STATE_TABLE} FINAL\n"
+        "WHERE company_id IN %(company_ids)s AND error = ''"
+    )
+
+
+def match_insert_sql() -> str:
+    return (
+        f"INSERT INTO {tables.QUALIFIED_MATCH_TABLE} "
+        f"({', '.join(tables.MATCH_COLUMNS)}) VALUES"
+    )
+
+
+def match_state_insert_sql() -> str:
+    return (
+        f"INSERT INTO {tables.QUALIFIED_MATCH_STATE_TABLE} "
+        f"({', '.join(tables.MATCH_STATE_COLUMNS)}) VALUES"
+    )
+
+
+def match_row(
+    company_id: str,
+    pair: MatchedPair,
+    by_id: Mapping[str, Candidate],
+    *,
+    model: str,
+    prompt_version: str,
+    input_hash: str,
+    matched_at: datetime,
+) -> tuple[Any, ...]:
+    """One insert tuple in tables.MATCH_COLUMNS order."""
+    left, right = by_id[pair.candidate_a], by_id[pair.candidate_b]
+    values: dict[str, Any] = {
+        "company_id": company_id,
+        "candidate_a": left.id, "candidate_b": right.id,
+        "members_a": list(left.members), "members_b": list(right.members),
+        "source_a": left.source, "source_b": right.source,
+        "name_a": left.name, "name_b": right.name,
+        "confidence": float(pair.confidence), "reason": pair.reason,
+        "model": model, "prompt_version": prompt_version,
+        "input_hash": input_hash, "matched_at": matched_at,
+    }
+    return tuple(values[column] for column in tables.MATCH_COLUMNS)
+
+
+def match_state_row(
+    company_id: str,
+    *,
+    input_hash: str,
+    candidates: int,
+    sources: int,
+    pairs: int,
+    model: str,
+    prompt_version: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    raw_response: str,
+    error: str,
+    source_run_id: str,
+    matched_at: datetime,
+) -> tuple[Any, ...]:
+    """One insert tuple in tables.MATCH_STATE_COLUMNS order."""
+    values: dict[str, Any] = {
+        "company_id": company_id, "input_hash": input_hash, "candidates": candidates,
+        "sources": sources, "pairs": pairs, "model": model, "prompt_version": prompt_version,
+        "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
+        "raw_response": raw_response, "error": error, "source_run_id": source_run_id,
+        "matched_at": matched_at,
+    }
+    return tuple(values[column] for column in tables.MATCH_STATE_COLUMNS)
+
+
+def _default_call_model(
+    request: Mapping[str, Any], *, company_id: str, client: OpenAI
+) -> CallResult:
+    """One paid call. `run_match` binds `client`, so the seam a test injects is
+    `(request, *, company_id)`."""
+    response = client.chat.completions.create(**dict(request))
+    if not response.choices:
+        raise ValueError(f"person match for {company_id} returned no response choices")
+    choice = response.choices[0]
+    usage = getattr(response, "usage", None)
+    result = CallResult(
+        content=choice.message.content or "",
+        prompt_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
+        completion_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
+    )
+    if getattr(choice, "finish_reason", None) == "length":
+        raise ValueError(
+            f"person match for {company_id} was truncated (finish_reason=length, "
+            f"completion_tokens={result.completion_tokens})"
+        )
+    if choice.message.content is None:
+        raise ValueError(f"person match for {company_id} returned no content")
+    return result
+
+
+@dataclass(frozen=True, slots=True)
+class _Outcome:
+    """One company's call, whatever happened to it."""
+
+    company_id: str
+    candidates: tuple[Candidate, ...]
+    input_hash: str
+    parsed: ParsedMatches | None
+    prompt_tokens: int
+    completion_tokens: int
+    raw_response: str
+    error: str
+
+
+def _pages(client: Any, config: PersonMatchProfile) -> Iterator[list[str]]:
+    if config.company_ids:
+        ids = list(config.company_ids)
+        return (ids[start : start + config.page_size] for start in range(0, len(ids), config.page_size))
+    return scope_pages(
+        client, scope_sql=match_scope_sql(), params={}, page_size=config.page_size,
+        settings=SCAN_QUERY_SETTINGS, prefix=tables.SCRATCH_SCOPE_PREFIX,
+    )
+
+
+def run_match(
+    client: Any,
+    *,
+    llm_client: OpenAI | None,
+    config: PersonMatchProfile,
+    source_run_id: str,
+    log: Callable[..., object] | None = None,
+    call_model: Callable[..., CallResult] | None = None,
+) -> MatchCounts:
+    """Match every company in scope, a page at a time (spec 3.1 to 3.3).
+
+    Per page: read the candidate rows, build and hash the candidate lists, drop the
+    single-source companies and the ones whose hash is unchanged, call the model for the
+    rest through `map_ordered` at `config.concurrency`, then write the page's pair rows and
+    its state rows with ONE stamp. A company whose call fails or whose answer does not parse
+    gets a state row with `error` set and the run continues -- it is re-sent next run,
+    because `match_state_sql` reads only rows with `error = ''`.
+    """
+    caller = call_model if call_model is not None else partial(_default_call_model, client=llm_client)
+    counts: dict[str, int] = defaultdict(int)
+    stopped = False
+    with closing(_pages(client, config)) as scope:
+        for page in scope:
+            remaining = config.max_companies - counts["companies"]
+            if remaining <= 0:
+                stopped = True
+                break
+            if len(page) > remaining:
+                page, stopped = page[:remaining], True
+            counts["pages"] += 1
+            counts["companies"] += len(page)
+            params = {"company_ids": page}
+            by_company: dict[str, list[NormalizedRow]] = defaultdict(list)
+            for raw in client.execute(
+                current_candidates_sql(), params, settings=MATCH_ID_BOUND_QUERY_SETTINGS
+            ):
+                normalized = normalized_row_from_row(raw)
+                by_company[normalized.company_id].append(normalized)
+            stored: dict[str, str] = {}
+            if config.changed_only:
+                stored = {
+                    str(company_id): str(hashed)
+                    for company_id, hashed in client.execute(
+                        match_state_sql(), params, settings=MATCH_ID_BOUND_QUERY_SETTINGS
+                    )
+                }
+
+            prepared: list[tuple[str, tuple[Candidate, ...], str]] = []
+            outcomes: list[_Outcome] = []
+            for company_id in page:
+                candidates = tuple(build_candidates(by_company.get(company_id, [])))
+                if not in_scope(candidates):
+                    counts["skipped_single_source"] += 1
+                    continue
+                hashed = input_hash(candidates)
+                if stored.get(company_id) == hashed:
+                    counts["reused"] += 1
+                    continue
+                if len(candidates) > MAX_CANDIDATES:
+                    # Spec section 8: skip, never truncate silently.
+                    outcomes.append(_Outcome(company_id, candidates, hashed, None, 0, 0, "",
+                                             "too many candidates"))
+                    continue
+                prepared.append((company_id, candidates, hashed))
+
+            def _resolve(item: tuple[str, tuple[Candidate, ...], str]) -> _Outcome:
+                company_id, candidates, hashed = item
+                request = build_match_request(candidates, config)
+                try:
+                    result = caller(request, company_id=company_id)
+                except RateLimitError as exc:
+                    return _Outcome(company_id, candidates, hashed, None, 0, 0, "",
+                                    f"rate_limited: {exc}"[:ERROR_LIMIT])
+                except OpenAIError as exc:
+                    return _Outcome(company_id, candidates, hashed, None, 0, 0, "",
+                                    f"http_error: {exc}"[:ERROR_LIMIT])
+                except ValueError as exc:
+                    return _Outcome(company_id, candidates, hashed, None, 0, 0, "",
+                                    f"invalid_response: {exc}"[:ERROR_LIMIT])
+                try:
+                    parsed = parse_match_response(result.content, candidates)
+                except ValueError as exc:
+                    return _Outcome(company_id, candidates, hashed, None, result.prompt_tokens,
+                                    result.completion_tokens, result.content,
+                                    f"invalid_response: {exc}"[:ERROR_LIMIT])
+                return _Outcome(company_id, candidates, hashed, parsed, result.prompt_tokens,
+                                result.completion_tokens, result.content, "")
+
+            outcomes.extend(map_ordered(_resolve, prepared, concurrency=config.concurrency))
+            # Taken AFTER the calls, not at the top of the page: a page can run for many
+            # minutes, and the fold selects on max(matched_at) against folded_at, so a
+            # page-start stamp could be silently skipped by a fold that ran meanwhile.
+            matched_at = datetime.now(UTC)
+            pair_rows: list[tuple[Any, ...]] = []
+            state_rows: list[tuple[Any, ...]] = []
+            for outcome in outcomes:
+                by_id = {candidate.id: candidate for candidate in outcome.candidates}
+                pairs = outcome.parsed.pairs if outcome.parsed is not None else ()
+                pair_rows.extend(
+                    match_row(outcome.company_id, pair, by_id, model=config.model,
+                              prompt_version=config.prompt_version,
+                              input_hash=outcome.input_hash, matched_at=matched_at)
+                    for pair in pairs
+                )
+                counts["pairs"] += len(pairs)
+                counts["pairs_above_threshold"] += sum(
+                    1 for pair in pairs if pair.confidence >= MATCH_THRESHOLD
+                )
+                counts["prompt_tokens"] += outcome.prompt_tokens
+                counts["completion_tokens"] += outcome.completion_tokens
+                if outcome.error:
+                    counts["errors"] += 1
+                else:
+                    counts["called"] += 1
+                state_rows.append(
+                    match_state_row(
+                        outcome.company_id, input_hash=outcome.input_hash,
+                        candidates=len(outcome.candidates),
+                        sources=len({candidate.source for candidate in outcome.candidates}),
+                        pairs=len(pairs), model=config.model,
+                        prompt_version=config.prompt_version,
+                        prompt_tokens=outcome.prompt_tokens,
+                        completion_tokens=outcome.completion_tokens,
+                        raw_response=outcome.raw_response, error=outcome.error,
+                        source_run_id=source_run_id, matched_at=matched_at,
+                    )
+                )
+            # Pairs FIRST: the fold reads the pairs whose input_hash equals the state row's,
+            # so a fold landing between the two statements must never find a state hash whose
+            # pairs are not written yet.
+            if pair_rows:
+                client.execute(match_insert_sql(), pair_rows)
+            if state_rows:
+                client.execute(match_state_insert_sql(), state_rows)
+            if log is not None:
+                log(
+                    "Person match page %d: companies=%d called=%d reused=%d skipped=%d "
+                    "pairs=%d errors=%d",
+                    counts["pages"], len(page), counts["called"], counts["reused"],
+                    counts["skipped_single_source"], counts["pairs"], counts["errors"],
+                )
+            if stopped:
+                break
+    return MatchCounts(
+        companies=counts["companies"], pages=counts["pages"], called=counts["called"],
+        reused=counts["reused"], skipped_single_source=counts["skipped_single_source"],
+        pairs=counts["pairs"], pairs_above_threshold=counts["pairs_above_threshold"],
+        errors=counts["errors"], prompt_tokens=counts["prompt_tokens"],
+        completion_tokens=counts["completion_tokens"], stopped_at_cap=stopped,
     )
