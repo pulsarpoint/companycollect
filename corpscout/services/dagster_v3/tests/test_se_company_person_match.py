@@ -8,14 +8,22 @@ Part 3 (Task 4): the run loop against a fake ClickHouse client and a fake model.
 import json
 from datetime import date
 
-from dagster_v3.defs.se_company.person.fold import NormalizedRow
+import pytest
+
+from dagster_v3.defs.se_company.info import LlmProfileConfig
+from dagster_v3.defs.se_company.person.fold import MATCH_THRESHOLD, NormalizedRow
 from dagster_v3.defs.se_company.person.match import (
     MACHINE_SOURCES,
     MAX_CANDIDATES,
     MAX_ROLES,
+    PROMPT_VERSION,
+    REASON_LIMIT,
+    SYSTEM_PROMPT,
     build_candidates,
+    build_match_request,
     in_scope,
     input_hash,
+    parse_match_response,
     serialize_candidates,
 )
 
@@ -162,3 +170,149 @@ def test_the_input_hash_moves_only_when_the_candidate_list_moves() -> None:
 def test_the_hard_candidate_cap_is_four_hundred() -> None:
     """Spec section 8: a company above the cap is skipped with an error, never truncated."""
     assert MAX_CANDIDATES == 400
+
+
+PROFILE = LlmProfileConfig(provider="deepseek", model="deepseek-v4-flash",
+                           prompt_version=PROMPT_VERSION, max_tokens=4_000)
+
+ERIK = row("ratsit", "r1", display="Erik Bo Bengtsson", first="erik", middles=("bo",),
+           last="bengtsson", birth_year=1966)
+BO = row("esef", "e1", display="Bo Bengtsson", first="bo", last="bengtsson")
+ANNA = row("bolagsverket", "s1")
+
+
+def answer(*pairs) -> str:
+    return json.dumps({"pairs": list(pairs)})
+
+
+def test_the_system_prompt_states_the_swedish_naming_rules() -> None:
+    for phrase in (
+        "call name", "tilltalsnamn", "Erik Bo Bengtsson", "Double surnames",
+        "maiden or married", "Initials", "Bjorn", "birth year", "common surnames",
+        "untrusted data",
+    ):
+        assert phrase in SYSTEM_PROMPT, phrase
+    assert '{"pairs": [{"a": "<id>", "b": "<id>", "confidence": 0.0-1.0' in SYSTEM_PROMPT
+    assert PROMPT_VERSION == "se-person-match-v1"
+
+
+def test_the_request_is_the_prompt_the_sorted_candidates_and_json_mode() -> None:
+    candidates = build_candidates([ERIK, BO])
+    request = build_match_request(candidates, PROFILE)
+    assert request["model"] == "deepseek-v4-flash"
+    assert request["temperature"] == 0 and request["max_tokens"] == 4_000
+    assert request["response_format"] == {"type": "json_object"}
+    assert request["messages"][0] == {"role": "system", "content": SYSTEM_PROMPT}
+    assert request["messages"][1]["content"] == serialize_candidates(candidates)
+    # deepseek-v4-flash is a reasoning model and its reasoning counts against max_tokens,
+    # so the pass disables thinking exactly as the ESEF passes do.
+    assert request["extra_body"] == {"thinking": {"type": "disabled"}}
+    other = build_match_request(candidates, LlmProfileConfig(
+        provider="openai", model="gpt-x", prompt_version=PROMPT_VERSION))
+    assert "extra_body" not in other
+
+
+def test_the_request_refuses_a_prompt_version_it_does_not_implement() -> None:
+    with pytest.raises(ValueError, match="se-person-match-v1"):
+        build_match_request(build_candidates([ERIK, BO]), LlmProfileConfig(
+            provider="deepseek", model="deepseek-v4-flash", prompt_version="se-person-match-v0"))
+
+
+def test_a_pair_is_stored_in_id_order_whichever_order_the_model_used() -> None:
+    candidates = build_candidates([ERIK, BO])
+    low, high = sorted(candidate.id for candidate in candidates)
+    for a, b in ((low, high), (high, low)):
+        parsed = parse_match_response(
+            answer({"a": a, "b": b, "confidence": 0.93, "reason": "call name"}), candidates)
+        assert len(parsed.pairs) == 1
+        pair = parsed.pairs[0]
+        assert (pair.candidate_a, pair.candidate_b) == (low, high)
+        assert pair.confidence == 0.93 and pair.reason == "call name"
+
+
+def test_a_repeated_pair_keeps_the_higher_confidence() -> None:
+    candidates = build_candidates([ERIK, BO])
+    low, high = sorted(candidate.id for candidate in candidates)
+    parsed = parse_match_response(
+        answer(
+            {"a": low, "b": high, "confidence": 0.4, "reason": "weak"},
+            {"a": high, "b": low, "confidence": 0.9, "reason": "strong"},
+        ),
+        candidates,
+    )
+    assert len(parsed.pairs) == 1
+    assert parsed.pairs[0].confidence == 0.9 and parsed.pairs[0].reason == "strong"
+
+
+def test_a_same_source_pair_is_allowed() -> None:
+    """Spec section 8: one source can spell the same person two ways across filings, so the
+    parser has NO source filter -- the fold treats such a pair like any other."""
+    candidates = build_candidates([
+        row("esef", "e1", display="Bo Bengtsson", first="bo", last="bengtsson"),
+        row("esef", "e2", display="Erik Bo Bengtsson", first="erik", middles=("bo",),
+            last="bengtsson"),
+    ])
+    assert [candidate.source for candidate in candidates] == ["esef", "esef"]
+    low, high = sorted(candidate.id for candidate in candidates)
+    parsed = parse_match_response(
+        answer({"a": low, "b": high, "confidence": 0.9, "reason": "call name"}), candidates)
+    assert len(parsed.pairs) == 1 and parsed.pairs[0].confidence == 0.9
+
+
+def test_unknown_ids_self_pairs_and_out_of_range_confidences_are_dropped_and_counted() -> None:
+    candidates = build_candidates([ERIK, BO, ANNA])
+    ids = sorted(candidate.id for candidate in candidates)
+    parsed = parse_match_response(
+        answer(
+            {"a": ids[0], "b": "z" * 64, "confidence": 0.9, "reason": "invented"},
+            {"a": ids[1], "b": ids[1], "confidence": 0.9, "reason": "itself"},
+            {"a": ids[0], "b": ids[1], "confidence": 1.4, "reason": "over"},
+            {"a": ids[0], "b": ids[2], "confidence": -0.1, "reason": "under"},
+            {"a": ids[1], "b": ids[2], "confidence": "high", "reason": "not a number"},
+            "not an object",
+        ),
+        candidates,
+    )
+    assert parsed.pairs == ()
+    assert parsed.dropped_unknown == 2          # the invented id and the non-object entry
+    assert parsed.dropped_self == 1
+    assert parsed.dropped_confidence == 3
+
+
+def test_the_birth_year_lock_stores_the_pair_at_zero_confidence() -> None:
+    """Spec 3.3: the guard is ours, not the model's -- the pair is kept as evidence of what
+    the model said, with confidence 0 so no fold can ever act on it."""
+    other_year = row("bolagsverket", "s9", display="Erik Bo Bengtsson", first="erik",
+                     middles=("bo",), last="bengtsson", birth_year=1971)
+    candidates = build_candidates([ERIK, other_year])
+    low, high = sorted(candidate.id for candidate in candidates)
+    parsed = parse_match_response(
+        answer({"a": low, "b": high, "confidence": 0.97, "reason": "identical name"}), candidates)
+    assert len(parsed.pairs) == 1 and parsed.birth_year_locked == 1
+    assert parsed.pairs[0].confidence == 0.0
+    assert parsed.pairs[0].reason == "birth-year conflict"
+
+
+def test_the_parser_accepts_prose_around_the_object_and_refuses_what_is_not_one() -> None:
+    candidates = build_candidates([ERIK, BO])
+    low, high = sorted(candidate.id for candidate in candidates)
+    wrapped = f'Here you go: {answer({"a": low, "b": high, "confidence": 0.8, "reason": "ok"})} done'
+    assert len(parse_match_response(wrapped, candidates).pairs) == 1
+    assert parse_match_response('{"pairs": []}', candidates).pairs == ()
+    for bad in (None, "", "no json here", "{not json}", '{"pairs": "none"}', '{"other": []}'):
+        with pytest.raises(ValueError):
+            parse_match_response(bad, candidates)
+
+
+def test_a_reason_is_capped_so_one_answer_cannot_bloat_a_row() -> None:
+    candidates = build_candidates([ERIK, BO])
+    low, high = sorted(candidate.id for candidate in candidates)
+    parsed = parse_match_response(
+        answer({"a": low, "b": high, "confidence": 0.9, "reason": "x" * 5_000}), candidates)
+    assert len(parsed.pairs[0].reason) == REASON_LIMIT == 500
+
+
+def test_the_threshold_is_zero_point_eight_and_lives_in_the_fold() -> None:
+    """Spec sections 4 and 9: the constant sits beside FOLD_VERSION, because the fold is
+    what applies it -- a threshold change is a constant edit and a re-fold, not a re-match."""
+    assert MATCH_THRESHOLD == 0.8

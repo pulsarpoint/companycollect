@@ -23,6 +23,11 @@ from dagster_v3.defs.se_company.person import tables
 from dagster_v3.defs.se_company.person.precedence import precedence_for
 
 FOLD_VERSION = "se-person-fold-v1"
+# A scored pair at or above this confidence joins its two candidates' members into one
+# identity set (spec 2026-09-11 section 4). It lives here, beside the version, because the
+# FOLD is what applies it: raising or lowering it is a constant edit and a re-fold, never a
+# re-match -- the stored pairs keep every confidence the model gave.
+MATCH_THRESHOLD = 0.8
 # Only `ok` rows fold. `partial` (one name word, initials only) and `no_person` (a role word,
 # a number, a company suffix) are stored with their notes and never become a person (4.4).
 FOLDABLE_STATUS = "ok"
