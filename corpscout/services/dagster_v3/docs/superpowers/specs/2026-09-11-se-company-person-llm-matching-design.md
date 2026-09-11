@@ -325,6 +325,35 @@ matches" panel.
    builder, prompt, parser, state and pairs writers, the asset and job wiring; the fold's
    pair read, watermark, union, `llm_match` and version; tests; prod: migrate, deploy, the
    sample gate, the full match, the 64-bucket fold, readouts, record.
+   Shipped 2026-09-11 (plan `2026-09-11-se-person-llm-match-1-phase-and-fold.md`, main 5204a79e):
+   migration 000399 (`se_company_person_match`, `se_company_person_match_state`),
+   `person/match.py` (candidates grouped per source by tokens, ordinal prompt ids, the Swedish
+   naming prompt `se-person-match-v1`, a pair parser with the birth-year lock, a paged run loop
+   with a per-page circuit breaker, sticky errors for malformed answers and over-cap companies,
+   transient errors retried), the asset `se_company_person_match` in the extract job and the
+   weekly's config, and the fold consuming pairs at or above 0.8 inside the union-find and the
+   birth-year split (fold `se-person-fold-v2`, `data.llm_match` on joined persons, a fifth change-scan
+   watermark on the match state). Five task gates, a final review (nine findings: the split
+   ignoring the pairs, the breaker, sticky errors, ordinal ids and the token budget, usage on
+   truncation, Float64 confidence, comments, the roles cap, docs) fixed in one wave and
+   re-reviewed. Prod: 000399 applied 11:46 UTC (15.6 s), deploy 11:49; sample gate on 1,880
+   companies (run b39cb8d9): 0 errors, 2,232 of 2,403 pairs at or above 0.8, recall 86.4% on the
+   sample's 1,033 call-name pairs, precision clean on inspection (the differing-surname pairs are
+   double surnames extended or reversed), Swedbank 7 → 10 Ratsit+ESEF merges through a targeted
+   fold; owner go. Full match (run f79d096b, 12:47–20:14 UTC): 122,837 companies called, 1,701
+   reused, 159,789 pairs (149,334 at or above 0.8; bands 0.9: 136,721, 0.8: 11,152, 0.6: 8,706,
+   0.5: 824), 108 transient connection errors left for the next run, 107.8M prompt and 7.8M
+   completion tokens (≈878 + 64 per company, above the spec's 500 estimate). Fold backfill avskbump over the 64 buckets, 64/64 in 72 min (20:14–21:26 UTC): 124,645 companies
+   considered, 345,324 persons folded, 710 created, 119,736 updated, 52,132 withdrawn (the joined
+   set keeps the more complete member's key), 4,002 reactivated, 10 sets split by birth year. Entity before → after: active persons 1,321,187 → 1,273,764 (47,423 duplicates
+   merged away), companies with a person 677,256 unchanged, persons from two or more sources 82,944 →
+   118,539, persons carrying `llm_match` 124,451, Ratsit-only persons 194,708 → 159,115; the call-name
+   gap 26,356 → 3,258 pairs (25,701 → 3,218 companies, −88%), the same-display-name gap 7,190 → 2,380
+   pairs (−67%); Swedbank 129 persons with 10 Ratsit+ESEF merges. The 21:45 serving refresh after the fold succeeded in 16 min with no exception and `has_people` stayed at 677,256 (merges change persons, not the companies that have one). The People tab and the
+   list serve the merged persons on the owner's dev server. Follow-ups: the 108 connection errors and
+   the residual gaps are re-sent by the next match run; the 0.5–0.8 band (9,529 pairs) waits for
+   slice 2's possible-matches panel; recall on the call-name gap could be lifted with a prompt
+   version 2, at the price of re-sending every company.
 2. The backoffice: the match read, the member badge, the `llm_match` rendering, the
    possible-matches panel with its merge; tests; owner smoke.
 
