@@ -20,6 +20,8 @@ everything past the modules below -- the backoffice.
 | `precedence.py` | The `name` spelling order (`PERSON_PRECEDENCE`, `precedence_for`, `precedence_rows`): reviewer 20000, ratsit 1000, bolagsverket 900, wikidata 600, esef 400. It decides the published spelling and the `data` merge, never who is published |
 | `fold.py` | The pure fold: identity sets (equal first/last tokens with the unique-minimal-superset middle rule, or a shared QID, never across two birth years), the canonical name and `person_key`, the reviewer rules, the member/roles/`data` blocks, the lifecycle diff and the history entries |
 | `batch.py` | The fold's SQL and paging: selection, the four page reads under `FINAL`, history-then-main writes, `FoldCounts`, `fold_companies`, `fold_bucket` |
+| `match.py` | The LLM matching phase: candidates per source per name-token triple, the versioned prompt and its parser, the change scan and the paged run loop, `PersonMatchProfile` |
+| `se_company_person_match` | One call per company whose normalized `ok` rows span two or more machine sources; writes `se_company_person_match` (scored pairs) and `se_company_person_match_state` (one row per company). Pool `se_company_person_match` (limit 1), retried 3 times with exponential backoff; `provider` and `model` have no defaults |
 | `se_company_person_fold` | 64 static buckets (`bucket_00`..`bucket_63`, `modulo(cityHash64(company_id), 64)`), `BackfillPolicy.multi_run(max_partitions_per_run=1)`, pooled at `FOLD_POOL` (limit 1) so a backfill runs one bucket at a time -- a page's `FINAL` read of the normalized table is a full scan (controller ruling 2026-09-10); config `changed_only` (default true) and `page_size` (default 20,000) |
 | `se_company_person_fold_companies` | The targeted fold for the backoffice's Fold now: normalizes `company_ids` first (always `changed_only`), then folds them (`changed_only` false by default) |
 | `se_company_person_precedence_clickhouse` | Exports `PERSON_PRECEDENCE` as the global (`company_id = ''`, `field = 'name'`) rows; re-running it re-folds every company |
@@ -215,6 +217,44 @@ global precedence export's stamp — so re-exporting the dictionary re-folds eve
 once. Re-running a folded bucket selects nothing, because the fold rewrites every row of
 every folded company with the run's `folded_at`, whether or not anything changed; the history
 table is what records what actually changed.
+
+## LLM identity matching
+
+Spec `docs/superpowers/specs/2026-09-11-se-company-person-llm-matching-design.md`. Between
+normalize and the fold, `se_company_person_match` groups each company's normalized `ok` rows
+from the four MACHINE sources (`bolagsverket`, `esef`, `wikidata`, `ratsit` -- a reviewer row
+never reaches a model) into candidates, one per source per `(first_tokens, middle_tokens,
+last_tokens)` triple, carrying the group's longest `display_name`, any birth year, Ratsit's
+`data.age` and `external` flag, and at most 20 distinct `(role_code, role_year)` pairs. A
+company is in scope when its candidates span two or more sources. The candidate list is
+serialized deterministically (sorted by source then id, sorted keys) and hashed: the change
+scan sends a company whose stored `input_hash` differs, that has no state row, or whose last
+attempt errored.
+
+One request per company, `concurrency` in flight through `info.map_ordered`, temperature 0,
+JSON mode, thinking disabled on deepseek, `max_tokens` 4,000, timeout 120 s, the SDK's two
+retries. The answer is `{"pairs": [{"a", "b", "confidence", "reason"}]}`; the parser accepts
+both id orders, stores the pair with the ids ascending, keeps the higher confidence of a
+repeated pair, drops and counts unknown ids, self-pairs and confidences outside [0, 1], and
+stores a pair whose two candidates carry different birth years at `confidence = 0` with reason
+`birth-year conflict`. A failed call or an unparseable answer becomes a state row with `error`
+and the raw text, and the run continues. A company with more than 400 candidates is skipped
+with `error = 'too many candidates'` rather than truncated.
+
+The fold reads the pairs at or above `MATCH_THRESHOLD` (0.8) whose `input_hash` equals the
+company's current state row, and `max(matched_at)` from the state table as a FIFTH selection
+watermark. `identity_sets_before_split` unions every member of one side with every member of
+the other AFTER the name and QID pairs and through the same `_years_conflict` veto, before the
+birth-year split and before `apply_rules` -- so a reviewer's split or merge rule still has the
+last word, and a Reset of that split lets the match apply again. A published person whose set
+was joined records it in the fold-owned `data.llm_match` key (`pairs` with the two names, the
+confidence and the reason, plus `model` and `prompt_version`), written after
+`merge_member_data`; `RESERVED_DATA_KEYS` stays the reviewer's three. `FOLD_VERSION` is
+`se-person-fold-v2`.
+
+A normalizer bump changes every `normalized_id`, therefore every candidate hash, therefore
+re-matches every multi-source company on the next run. That is the price of a normalizer
+version change, and it is stated here so it is not a surprise.
 
 ## Known limits
 

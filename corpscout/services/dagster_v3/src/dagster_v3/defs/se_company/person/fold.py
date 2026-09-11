@@ -22,12 +22,16 @@ from typing import Any
 from dagster_v3.defs.se_company.person import tables
 from dagster_v3.defs.se_company.person.precedence import precedence_for
 
-FOLD_VERSION = "se-person-fold-v1"
+FOLD_VERSION = "se-person-fold-v2"
 # A scored pair at or above this confidence joins its two candidates' members into one
 # identity set (spec 2026-09-11 section 4). It lives here, beside the version, because the
 # FOLD is what applies it: raising or lowering it is a constant edit and a re-fold, never a
 # re-match -- the stored pairs keep every confidence the model gave.
 MATCH_THRESHOLD = 0.8
+# The fold-owned key `_published_from` writes into `data` after merge_member_data. No member
+# ever supplies it, the backoffice treats it as read-only, and RESERVED_DATA_KEYS stays the
+# reviewer's three.
+LLM_MATCH_KEY = "llm_match"
 # Only `ok` rows fold. `partial` (one name word, initials only) and `no_person` (a role word,
 # a number, a company suffix) are stored with their notes and never become a person (4.4).
 FOLDABLE_STATUS = "ok"
@@ -96,6 +100,26 @@ class PersonRule:
     slots: tuple[str, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class MatchPair:
+    """One scored pair as the batch read it from se_company_person_match (spec 4).
+
+    `members_a`/`members_b` are the normalized_ids the two candidates stand for -- the fold
+    unions MEMBERS, not candidates, because a candidate is a group of rows that already fold
+    together within its source. The four display fields travel so the published row can
+    record what was merged and by which model, without a second read.
+    """
+
+    members_a: tuple[str, ...]
+    members_b: tuple[str, ...]
+    confidence: float
+    reason: str
+    name_a: str = ""
+    name_b: str = ""
+    model: str = ""
+    prompt_version: str = ""
+
+
 def _row_order(row: NormalizedRow) -> tuple[str, str]:
     return (row.source, row.slot)
 
@@ -106,6 +130,27 @@ def _name_key(row: NormalizedRow) -> tuple[tuple[str, ...], tuple[str, ...]]:
 
 def _years_conflict(a: NormalizedRow, b: NormalizedRow) -> bool:
     return a.birth_year is not None and b.birth_year is not None and a.birth_year != b.birth_year
+
+
+def pairs_within(
+    members: Sequence[NormalizedRow], matches: Sequence[MatchPair]
+) -> tuple[MatchPair, ...]:
+    """The matches whose two sides BOTH have a member in `members` and that the birth-year
+    veto admits -- what a published person records in `data.llm_match`.
+
+    Both sides must be present, so a split rule that pulls one side back out silently drops
+    the record too, which is the honest answer: that person was not merged by the model."""
+    by_id = {member.normalized_id: member for member in members}
+    kept: list[MatchPair] = []
+    for pair in matches:
+        left = [by_id[member] for member in pair.members_a if member in by_id]
+        right = [by_id[member] for member in pair.members_b if member in by_id]
+        if not left or not right:
+            continue
+        if any(_years_conflict(a, b) for a in left for b in right):
+            continue
+        kept.append(pair)
+    return tuple(kept)
 
 
 def _unique_minimal_superset(
@@ -194,7 +239,7 @@ def _split_by_birth_year(
 
 
 def identity_sets_before_split(
-    rows: Sequence[NormalizedRow],
+    rows: Sequence[NormalizedRow], matches: Sequence[MatchPair] = ()
 ) -> tuple[tuple[tuple[NormalizedRow, ...], ...], dict]:
     """The transitive closure of the guarded relation, BEFORE the birth-year split (spec
     5.1), together with the (name -> middle-token-sets) map it builds along the way.
@@ -232,6 +277,21 @@ def identity_sets_before_split(
                 if _matches(ordered[left], ordered[right], middles_by_name):
                     union(left, right)
 
+    # The LLM's pairs, after the name and QID pairs and before the birth-year split (spec
+    # section 4). Every member of one side is unioned with every member of the other; a pair
+    # whose two sides carry different birth years is ignored -- the stored row already says
+    # confidence 0 for that case, and this is the second lock.
+    by_normalized_id = {row.normalized_id: index for index, row in enumerate(ordered)}
+    for pair in matches:
+        left = [by_normalized_id[member] for member in pair.members_a if member in by_normalized_id]
+        right = [by_normalized_id[member] for member in pair.members_b if member in by_normalized_id]
+        if not left or not right:
+            continue
+        if any(_years_conflict(ordered[a], ordered[b]) for a in left for b in right):
+            continue
+        for other in (*left[1:], *right):
+            union(left[0], other)
+
     grouped: dict[int, list[NormalizedRow]] = defaultdict(list)
     for index, row in enumerate(ordered):
         grouped[find(index)].append(row)
@@ -251,10 +311,12 @@ def _split_sets(
     return tuple(sets)
 
 
-def identity_sets(rows: Sequence[NormalizedRow]) -> tuple[tuple[NormalizedRow, ...], ...]:
-    """The company's persons as sets of observations: the closure, then the birth-year
-    split of any set that still holds two years (spec 5.1)."""
-    closed, middles_by_name = identity_sets_before_split(rows)
+def identity_sets(
+    rows: Sequence[NormalizedRow], matches: Sequence[MatchPair] = ()
+) -> tuple[tuple[NormalizedRow, ...], ...]:
+    """The company's persons as sets of observations: the closure (including the scored
+    pairs), then the birth-year split of any set that still holds two years (spec 5.1)."""
+    closed, middles_by_name = identity_sets_before_split(rows, matches)
     return _split_sets(closed, middles_by_name)
 
 
@@ -579,6 +641,30 @@ def merge_member_data(members: Sequence[NormalizedRow], company_precedence) -> s
     return json.dumps(merged, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+def _with_llm_match(data: str, pairs: Sequence[MatchPair]) -> str:
+    """`data` with the fold-owned `llm_match` key, or `data` unchanged when no pair joined
+    this set. Written AFTER merge_member_data so a member can never supply or shadow it;
+    keys stay sorted, so the row compares stably across folds."""
+    if not pairs:
+        return data
+    ordered = sorted(pairs, key=lambda pair: (-pair.confidence, pair.name_a, pair.name_b))
+    merged = _data_object(data)
+    merged[LLM_MATCH_KEY] = {
+        "pairs": [
+            {
+                "a": pair.name_a,
+                "b": pair.name_b,
+                "confidence": round(float(pair.confidence), 4),
+                "reason": pair.reason,
+            }
+            for pair in ordered
+        ],
+        "model": ordered[0].model,
+        "prompt_version": ordered[0].prompt_version,
+    }
+    return json.dumps(merged, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
 def _text_member(members: Sequence[NormalizedRow], company_precedence) -> NormalizedRow:
     """Whose spelling the person shows (spec 5.3): the highest `name` precedence, ties by
     the most complete spelling."""
@@ -605,6 +691,7 @@ def _published_from(
     source_run_id: str,
     current_year: int,
     hidden: bool,
+    matches: Sequence[MatchPair] = (),
 ) -> PublishedPerson:
     ordered = sorted(members, key=lambda row: _member_order(row, company_precedence))
     text = _text_member(ordered, company_precedence)
@@ -637,7 +724,9 @@ def _published_from(
         first_year=roles.first_year,
         last_year=roles.last_year,
         text_source=text.source,
-        data=merge_member_data(ordered, company_precedence),
+        data=_with_llm_match(
+            merge_member_data(ordered, company_precedence), pairs_within(ordered, matches)
+        ),
         active=0 if hidden else 1,
         inactive_reason=HIDDEN if hidden else "",
         folded_at=None,
@@ -667,6 +756,7 @@ def fold_company_persons(
     *,
     source_run_id: str,
     current_year: int,
+    matches: Sequence[MatchPair] = (),
 ) -> FoldResult:
     """One company's whole published set, plus the history entries for what changed.
 
@@ -690,10 +780,13 @@ def fold_company_persons(
                 f"rule {rule.rule_id!r} company_id {rule.company_id!r} is not {company_id!r}"
             )
 
+    # The batch already filters on confidence in SQL; filtering again here is what makes the
+    # threshold a fold constant -- a re-fold at a new threshold needs no re-match.
+    admitted = tuple(pair for pair in matches if pair.confidence >= MATCH_THRESHOLD)
     # One closure per company: the published sets and the split metric both come off it, and
     # the (name -> middle-token-sets) map identity_sets_before_split already built for it
     # feeds straight into _split_sets instead of being rebuilt.
-    closed, middles_by_name = identity_sets_before_split(rows)
+    closed, middles_by_name = identity_sets_before_split(rows, admitted)
     grouped = _split_sets(closed, middles_by_name)
     sets_split = sum(
         1
@@ -735,7 +828,7 @@ def fold_company_persons(
         _published_from(
             company_id, members, key,
             company_precedence=company_precedence, source_run_id=source_run_id,
-            current_year=current_year, hidden=key in hide_keys,
+            current_year=current_year, hidden=key in hide_keys, matches=admitted,
         )
         for members, key in assigned
     ]

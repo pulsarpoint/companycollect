@@ -14,13 +14,16 @@ import pytest
 from dagster_v3.defs.se_company.person import tables
 from dagster_v3.defs.se_company.person.fold import (
     FOLD_VERSION,
+    MATCH_THRESHOLD,
     HistoryEntry,
+    MatchPair,
     NormalizedRow,
     PersonRule,
     PublishedPerson,  # noqa: F401  (the module's published surface, asserted through `fold`)
     canonical_tokens,
     fold_company_persons,
     identity_sets,
+    pairs_within,
     person_key,
 )
 
@@ -61,9 +64,10 @@ def row(
     )
 
 
-def fold(rows, published=(), rules=(), precedence=None, *, run="run-1", year=2026):
+def fold(rows, published=(), rules=(), precedence=None, *, run="run-1", year=2026, matches=()):
     return fold_company_persons(
-        C, rows, published, rules, precedence, source_run_id=run, current_year=year
+        C, rows, published, rules, precedence, source_run_id=run, current_year=year,
+        matches=matches,
     )
 
 
@@ -352,10 +356,11 @@ def published(result, key: str | None = None):
     return next(person for person in result.rows if person.person_key == key)
 
 
-def refold(result, rows, rules=(), precedence=None, *, run="run-2", year=2026):
+def refold(result, rows, rules=(), precedence=None, *, run="run-2", year=2026, matches=()):
     """Feed a fold's output back in as the published set, the way the batch does."""
     previous = [dataclasses.replace(person, folded_at=None) for person in result.rows]
-    return fold(rows, published=previous, rules=rules, precedence=precedence, run=run, year=year)
+    return fold(rows, published=previous, rules=rules, precedence=precedence, run=run,
+                year=year, matches=matches)
 
 
 def test_the_person_row_takes_its_spelling_from_the_highest_precedence_member() -> None:
@@ -620,3 +625,118 @@ def test_as_tuple_follows_main_columns_and_history_tuple_appends_the_change_bloc
     assert len(history) == len(tables.HISTORY_COLUMNS) == 32
     assert history[-3:] == (folded_at, "created", "run-1")
     assert dict(zip(tables.HISTORY_COLUMNS, history, strict=True))["folded_at"] == folded_at
+
+
+# --- part 3: the LLM's scored pairs (spec 2026-09-11 section 4) -------------------------
+
+RATSIT_ERIK = row("ratsit", "r1", display="Erik Bo Bengtsson", first="erik",
+                  middles=("bo",), last="bengtsson", birth_year=1966)
+ESEF_BO = row("esef", "e1", display="Bo Bengtsson", first="bo", last="bengtsson")
+
+
+def match(a=RATSIT_ERIK, b=ESEF_BO, *, confidence=0.93, reason="call name") -> MatchPair:
+    return MatchPair(
+        members_a=(a.normalized_id,), members_b=(b.normalized_id,), confidence=confidence,
+        reason=reason, name_a=a.display_name, name_b=b.display_name,
+        model="deepseek-v4-flash", prompt_version="se-person-match-v1",
+    )
+
+
+def test_a_call_name_pair_becomes_one_person_with_the_ratsit_spelling() -> None:
+    """The gap of spec section 1: the K3 identity keeps `erik bo bengtsson` and
+    `bo bengtsson` apart, and a scored pair joins them."""
+    apart = fold([RATSIT_ERIK, ESEF_BO])
+    assert len(apart.rows) == 2
+
+    result = fold([RATSIT_ERIK, ESEF_BO], matches=[match()])
+    person = published(result)
+    assert result.persons == 1
+    # Identity follows the most complete member; the spelling follows the name precedence,
+    # and ratsit (1000) outranks esef (400), so both say the full name here.
+    assert person.person_key == person_key(C, ("erik", "bo", "bengtsson"))
+    assert person.display_name == "Erik Bo Bengtsson" and person.text_source == "ratsit"
+    assert person.sources == ("ratsit", "esef")
+    assert person.birth_year == 1966
+    assert json.loads(person.data)["llm_match"] == {
+        "pairs": [{"a": "Erik Bo Bengtsson", "b": "Bo Bengtsson",
+                   "confidence": 0.93, "reason": "call name"}],
+        "model": "deepseek-v4-flash",
+        "prompt_version": "se-person-match-v1",
+    }
+    assert person.fold_version == FOLD_VERSION == "se-person-fold-v2"
+
+
+def test_a_pair_across_two_birth_years_never_joins() -> None:
+    """The second lock (spec section 4): the stored row already says confidence 0 for this
+    case, and the fold refuses it again even at 0.99."""
+    other_year = row("esef", "e1", display="Bo Bengtsson", first="bo", last="bengtsson",
+                     birth_year=1971)
+    result = fold([RATSIT_ERIK, other_year],
+                  matches=[match(b=other_year, confidence=0.99)])
+    assert len(result.rows) == 2
+    for person in result.rows:
+        assert "llm_match" not in json.loads(person.data)
+
+
+def test_a_match_below_the_threshold_does_nothing() -> None:
+    result = fold([RATSIT_ERIK, ESEF_BO], matches=[match(confidence=0.79)])
+    assert len(result.rows) == 2
+    assert MATCH_THRESHOLD == 0.8
+    exact = fold([RATSIT_ERIK, ESEF_BO], matches=[match(confidence=0.8)])
+    assert len(exact.rows) == 1              # at the threshold, not above it
+
+
+def test_a_split_rule_on_the_ratsit_slot_undoes_the_merge() -> None:
+    """apply_rules runs on the LLM-joined sets, so a reviewer keeps the last word (spec 4);
+    and the person left behind no longer carries llm_match, because the pair is no longer
+    inside one set."""
+    rule = PersonRule(C, "rule-1", "split", (), ("r1",))
+    result = fold([RATSIT_ERIK, ESEF_BO], rules=[rule], matches=[match()])
+    assert names(result) == ["Bo Bengtsson", "Erik Bo Bengtsson"]
+    assert result.stale_rules == 0
+    for person in result.rows:
+        assert "llm_match" not in json.loads(person.data)
+
+
+def test_the_same_match_on_a_second_fold_changes_nothing() -> None:
+    first = fold([RATSIT_ERIK, ESEF_BO], matches=[match()])
+    again = refold(first, [RATSIT_ERIK, ESEF_BO], matches=[match()])
+    assert (again.created, again.updated, again.unchanged) == (0, 0, 1)
+    assert again.history == ()
+    assert again.rows[0].person_key == first.rows[0].person_key
+
+
+def test_the_merge_is_an_update_whose_history_keeps_the_previous_image() -> None:
+    """`data` is in _COMPARED, so the added key alone would already mark the row changed --
+    here the re-key does it, exactly as a name-driven re-key does."""
+    before = fold([RATSIT_ERIK, ESEF_BO])
+    after = refold(before, [RATSIT_ERIK, ESEF_BO], matches=[match()])
+    assert len(before.rows) == 2
+    assert sorted(entry.change_kind for entry in after.history) == ["updated", "withdrawn"]
+    surviving = [person for person in after.rows if person.active == 1]
+    assert len(surviving) == 1 and len(surviving[0].member_slots) == 2
+    # The joined set keeps the fuller name's key, which the Ratsit person already had, so
+    # the ESEF person's key is the one that goes.
+    assert surviving[0].person_key == person_key(C, ("erik", "bo", "bengtsson"))
+    withdrawn = [person for person in after.rows if person.inactive_reason == "withdrawn"]
+    assert len(withdrawn) == 1 and withdrawn[0].person_key == person_key(C, ("bo", "bengtsson"))
+
+
+def test_llm_match_is_fold_owned_and_overwrites_whatever_a_member_carried() -> None:
+    """Member `data` never contains the key; if a hand-written row does, the fold's value
+    wins, because it is written AFTER merge_member_data."""
+    liar = row("esef", "e1", display="Bo Bengtsson", first="bo", last="bengtsson",
+               data='{"llm_match":"not mine","section":"signatures"}')
+    person = published(fold([RATSIT_ERIK, liar], matches=[match(b=liar)]))
+    data = json.loads(person.data)
+    assert data["section"] == "signatures"
+    assert data["llm_match"]["model"] == "deepseek-v4-flash"
+
+
+def test_pairs_within_needs_both_sides_and_admits_only_year_compatible_pairs() -> None:
+    members = [RATSIT_ERIK, ESEF_BO]
+    assert pairs_within(members, [match()]) == (match(),)
+    assert pairs_within([RATSIT_ERIK], [match()]) == ()
+    other_year = row("esef", "e2", display="Bo Bengtsson", first="bo", last="bengtsson",
+                     birth_year=1971)
+    assert pairs_within([RATSIT_ERIK, other_year], [match(b=other_year)]) == ()

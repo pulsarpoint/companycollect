@@ -20,6 +20,8 @@ from dagster_v3.defs.se_company.person.fold import (
     EXCLUDED_SOURCES,
     FOLD_VERSION,
     FOLDABLE_STATUS,
+    MATCH_THRESHOLD,
+    MatchPair,
     NormalizedRow,
     PersonRule,
     PublishedPerson,
@@ -47,6 +49,10 @@ NORMALIZED_SELECT_COLUMNS: tuple[str, ...] = (
 # PREVIOUS image, which needs that row's own folded_at, fold_version and source_run_id too.
 MAIN_SELECT_COLUMNS: tuple[str, ...] = tables.MAIN_COLUMNS
 RULE_SELECT_COLUMNS: tuple[str, ...] = ("company_id", "rule_id", "kind", "person_keys", "slots")
+MATCH_PAIR_SELECT_COLUMNS: tuple[str, ...] = (
+    "company_id", "members_a", "members_b", "confidence", "reason",
+    "name_a", "name_b", "model", "prompt_version",
+)
 _EXCLUDED_SQL = " AND ".join(f"source != '{source}'" for source in EXCLUDED_SOURCES)
 
 
@@ -131,6 +137,38 @@ def company_precedence_watermarks_sql() -> str:
     )
 
 
+def match_watermarks_sql() -> str:
+    """Newest match stamp per company (spec section 4). No FINAL: max() over the versions is
+    the newest anyway, and an errored attempt is a real input change too -- it can turn a
+    company's pairs from something into nothing."""
+    return (
+        "SELECT company_id, max(matched_at) AS matched_at\n"
+        f"FROM {tables.QUALIFIED_MATCH_STATE_TABLE}\n"
+        "WHERE company_id IN %(company_ids)s\n"
+        "GROUP BY company_id"
+    )
+
+
+def match_pairs_sql() -> str:
+    """The page's scored pairs at or above the threshold, for the company's CURRENT input.
+
+    The state table is one row per company, so the join on `input_hash` is what supersedes a
+    previous input's pairs without deleting them; `error = ''` keeps a company whose last
+    attempt failed from folding on a hash nothing certified. An INNER JOIN, so the result
+    cannot depend on `join_use_nulls`."""
+    return (
+        f"SELECT {', '.join(f'p.{column}' for column in MATCH_PAIR_SELECT_COLUMNS)}\n"
+        f"FROM {tables.QUALIFIED_MATCH_TABLE} AS p FINAL\n"
+        "INNER JOIN (\n"
+        "    SELECT company_id, input_hash\n"
+        f"    FROM {tables.QUALIFIED_MATCH_STATE_TABLE} FINAL\n"
+        "    WHERE company_id IN %(company_ids)s AND error = ''\n"
+        ") AS s ON s.company_id = p.company_id AND s.input_hash = p.input_hash\n"
+        f"WHERE p.company_id IN %(company_ids)s AND p.confidence >= {MATCH_THRESHOLD}\n"
+        "ORDER BY p.company_id, p.candidate_a, p.candidate_b"
+    )
+
+
 def global_precedence_watermark_sql() -> str:
     """One scalar for the whole run: the newest export of the global order. A dictionary
     change therefore re-folds every company once, which is exactly what it should do -- the
@@ -209,6 +247,16 @@ def rule_from_row(row: Sequence[Any]) -> PersonRule:
     return PersonRule(company_id, str(rule_id), kind, tuple(person_keys), tuple(slots))
 
 
+def match_pair_from_row(row: Sequence[Any]) -> MatchPair:
+    values = dict(zip(MATCH_PAIR_SELECT_COLUMNS, row, strict=True))
+    return MatchPair(
+        members_a=tuple(values["members_a"]), members_b=tuple(values["members_b"]),
+        confidence=float(values["confidence"]), reason=str(values["reason"]),
+        name_a=str(values["name_a"]), name_b=str(values["name_b"]),
+        model=str(values["model"]), prompt_version=str(values["prompt_version"]),
+    )
+
+
 def _pages(items: Sequence[str], size: int) -> list[list[str]]:
     return [list(items[index : index + size]) for index in range(0, len(items), size)]
 
@@ -225,12 +273,16 @@ def _changed_company_ids(
     folded = dict(read(main_watermarks_sql()))
     ruled = dict(read(rule_watermarks_sql()))
     decided = dict(read(company_precedence_watermarks_sql()))
+    matched = dict(read(match_watermarks_sql()))
     changed: list[str] = []
     for company_id in company_ids:
         if company_id not in normalized:
             continue
         newest, foldable = normalized[company_id]
-        for stamp in (ruled.get(company_id), decided.get(company_id), global_precedence_at):
+        for stamp in (
+            ruled.get(company_id), decided.get(company_id), matched.get(company_id),
+            global_precedence_at,
+        ):
             if stamp is not None and stamp > newest:
                 newest = stamp
         if company_id not in folded:
@@ -294,6 +346,9 @@ def fold_companies(
         precedence: dict[str, dict[str, int]] = defaultdict(dict)
         for company_id, source, number in read(company_precedence_sql()):
             precedence[company_id][source] = int(number)
+        matches: dict[str, list[MatchPair]] = defaultdict(list)
+        for row in read(match_pairs_sql()):
+            matches[str(row[0])].append(match_pair_from_row(row))
 
         main_rows: list[tuple[Any, ...]] = []
         history_rows: list[tuple[Any, ...]] = []
@@ -306,7 +361,7 @@ def fold_companies(
             result = fold_company_persons(
                 company_id, rows, previous, rules.get(company_id, []),
                 precedence.get(company_id), source_run_id=source_run_id,
-                current_year=current_year,
+                current_year=current_year, matches=matches.get(company_id, []),
             )
             page_persons += result.persons
             unchanged += result.unchanged

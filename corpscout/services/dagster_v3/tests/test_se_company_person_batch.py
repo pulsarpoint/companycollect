@@ -2,13 +2,19 @@
 """The batch around the pure person fold: selection, paging, history before main. A fake
 client answers each SELECT by its SQL-text function name and records every statement."""
 
+import json
 from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 
 from dagster_v3.defs.se_company.person import batch, tables
-from dagster_v3.defs.se_company.person.fold import FOLD_VERSION, PublishedPerson
+from dagster_v3.defs.se_company.person.fold import (
+    FOLD_VERSION,
+    MATCH_THRESHOLD as FOLD_MATCH_THRESHOLD,
+    MatchPair,
+    PublishedPerson,
+)
 
 T0 = datetime(2026, 9, 1, 8, 0, tzinfo=UTC)
 T1 = datetime(2026, 9, 2, 8, 0, tzinfo=UTC)
@@ -79,9 +85,10 @@ class FakeClient:
 def empty_scan(**extra) -> dict[str, list]:
     answers = {
         "normalized_watermarks_sql": [], "main_watermarks_sql": [], "rule_watermarks_sql": [],
-        "company_precedence_watermarks_sql": [], "global_precedence_watermark_sql": [(EPOCH,)],
+        "company_precedence_watermarks_sql": [], "match_watermarks_sql": [],
+        "global_precedence_watermark_sql": [(EPOCH,)],
         "current_normalized_sql": [], "current_main_rows_sql": [], "active_rules_sql": [],
-        "company_precedence_sql": [],
+        "company_precedence_sql": [], "match_pairs_sql": [],
     }
     answers.update(extra)
     return answers
@@ -101,6 +108,93 @@ def inserted(client, sql_name: str) -> list[dict]:
         dict(zip(columns, values, strict=True))
         for sql, rows in client.inserts if sql == statement for values in rows
     ]
+
+
+def match_pair_tuple(company_id: str, left: str, right: str, *, confidence=0.93,
+                     reason="call name", name_a="Erik Bo Bengtsson", name_b="Bo Bengtsson"):
+    """One row in MATCH_PAIR_SELECT_COLUMNS order, the shape match_pairs_sql returns."""
+    values = {
+        "company_id": company_id, "members_a": [left], "members_b": [right],
+        "confidence": confidence, "reason": reason, "name_a": name_a, "name_b": name_b,
+        "model": "deepseek-v4-flash", "prompt_version": "se-person-match-v1",
+    }
+    return tuple(values[column] for column in batch.MATCH_PAIR_SELECT_COLUMNS)
+
+
+def test_the_match_sql_texts_pin_the_threshold_the_hash_join_and_the_state_watermark() -> None:
+    pairs = batch.match_pairs_sql()
+    assert f"FROM {tables.QUALIFIED_MATCH_TABLE} AS p FINAL" in pairs
+    assert f"FROM {tables.QUALIFIED_MATCH_STATE_TABLE} FINAL" in pairs
+    # Only the pairs of the company's CURRENT input: a re-match supersedes by hash, it does
+    # not delete the previous input's rows.
+    assert "s.company_id = p.company_id AND s.input_hash = p.input_hash" in pairs
+    assert f"p.confidence >= {FOLD_MATCH_THRESHOLD}" in pairs
+    assert "error = ''" in pairs
+    assert pairs.count("%(company_ids)s") == 2
+    assert "ORDER BY p.company_id, p.candidate_a, p.candidate_b" in pairs
+    watermarks = batch.match_watermarks_sql()
+    assert watermarks == (
+        "SELECT company_id, max(matched_at) AS matched_at\n"
+        f"FROM {tables.QUALIFIED_MATCH_STATE_TABLE}\n"
+        "WHERE company_id IN %(company_ids)s\n"
+        "GROUP BY company_id"
+    )
+    assert batch.MATCH_PAIR_SELECT_COLUMNS == (
+        "company_id", "members_a", "members_b", "confidence", "reason",
+        "name_a", "name_b", "model", "prompt_version",
+    )
+
+
+def test_a_company_matched_after_its_last_fold_is_re_folded() -> None:
+    """The fifth watermark (spec section 4): a new match is a new input, exactly like a new
+    rule version or a precedence decision."""
+    client = FakeClient(empty_scan(
+        normalized_watermarks_sql=[(A, T0, 1)],
+        main_watermarks_sql=[(A, T1)],
+        match_watermarks_sql=[(A, T2)],
+        current_normalized_sql=[normalized_row(A, "bolagsverket", "s1")],
+    ))
+    assert run(client, [A]).considered == 1
+    # An older match stamp does not re-select it.
+    quiet = FakeClient(empty_scan(
+        normalized_watermarks_sql=[(A, T0, 1)],
+        main_watermarks_sql=[(A, T2)],
+        match_watermarks_sql=[(A, T1)],
+    ))
+    assert run(quiet, [A]).considered == 0
+
+
+def test_the_page_feeds_its_pairs_into_the_fold() -> None:
+    left = "bolagsverket-s1".ljust(64, "0")
+    right = "esef-e1".ljust(64, "0")
+    client = FakeClient(empty_scan(
+        normalized_watermarks_sql=[(A, T1, 2)],
+        current_normalized_sql=[
+            normalized_row(A, "bolagsverket", "s1", first="erik", middles=("bo",), last="bengtsson"),
+            normalized_row(A, "esef", "e1", first="bo", last="bengtsson"),
+        ],
+        match_pairs_sql=[match_pair_tuple(A, left, right)],
+    ))
+    counts = run(client, [A])
+    # Without the pair these are two persons; with it they are one.
+    assert counts.persons == 1
+    row = inserted(client, "main_insert_sql")[0]
+    assert json.loads(row["data"])["llm_match"]["model"] == "deepseek-v4-flash"
+    assert batch.match_pair_from_row(match_pair_tuple(A, left, right)) == MatchPair(
+        members_a=(left,), members_b=(right,), confidence=0.93, reason="call name",
+        name_a="Erik Bo Bengtsson", name_b="Bo Bengtsson",
+        model="deepseek-v4-flash", prompt_version="se-person-match-v1",
+    )
+
+
+def test_the_page_reads_the_pairs_under_the_id_bound_settings() -> None:
+    client = FakeClient(empty_scan(normalized_watermarks_sql=[(A, T1, 1)],
+                                   current_normalized_sql=[normalized_row(A, "bolagsverket", "s1")]))
+    run(client, [A])
+    # FOLD_ID_BOUND_QUERY_SETTINGS is a dict, so it cannot sit in a set -- a list of the
+    # settings every match_pairs_sql() call carried says the same thing.
+    calls = [settings for sql, _, settings in client.calls if sql == batch.match_pairs_sql()]
+    assert calls and all(settings == batch.FOLD_ID_BOUND_QUERY_SETTINGS for settings in calls)
 
 
 def test_sql_texts_bind_ids_read_final_and_filter_drafts_and_non_ok_rows() -> None:
@@ -291,7 +385,8 @@ def test_a_full_page_renders_under_the_query_size_setting() -> None:
     sizes = []
     for text in (batch.current_normalized_sql(), batch.current_main_rows_sql(),
                  batch.normalized_watermarks_sql(), batch.active_rules_sql(),
-                 batch.company_precedence_sql()):
+                 batch.company_precedence_sql(), batch.match_watermarks_sql(),
+                 batch.match_pairs_sql()):
         rendered = text % escape_params({"company_ids": ids}, context)
         sizes.append(len(rendered.encode()))
         assert sizes[-1] < batch.FOLD_ID_BOUND_QUERY_SETTINGS["max_query_size"]
