@@ -263,6 +263,12 @@ Dagster metadata should additionally report `financial_periods_source`,
   unit must not be applied to it until Ratsit's salary unit is confirmed.
 - Other monetary fields continue to use the report-level `monetary_unit` with
   no implicit rescaling.
+- Since migration 000400 (financial entity spec 2026-09-11, slice 0) every monetary column
+  has a `_usd` twin filled in place by the asset `se_ratsit_financial_periods_usd`: scale by
+  the row's `monetary_unit` (the two per-employee figures are always MSEK), then the SEK to
+  USD rate at `period_end` (Dec 31 of `fiscal_year` when undated) from the shared
+  exchange-rate client; `fx_rate_to_usd`, `fx_rate_date`, `fx_source` record the rate.
+  `average_salary` has no twin until its unit is known; the ratios are not money.
 
 ## Normalizer and asset behavior
 
