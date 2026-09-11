@@ -315,22 +315,32 @@ SYSTEM_PROMPT = (
 TOKENS_PER_CANDIDATE = 120
 # No answer gets less than this, whatever the list length says.
 MIN_ANSWER_TOKENS = 4_000
+# And none gets more: the `le` of `LlmProfileConfig.max_tokens` and of this module's own
+# `PersonMatchProfile.max_tokens`, pinned against both by the tests. A computed budget above
+# what run config is allowed to ask for is a number no caller could have set by hand, and a
+# request the provider may simply refuse -- which would turn the widest companies into an
+# http_error on every run.
+MAX_ANSWER_TOKENS = 32_000
 
 
 def request_max_tokens(
     candidates: Sequence[Candidate], profile: LlmProfileConfig
 ) -> int:
-    """The completion budget for one company: 120 tokens per candidate, never below 4,000,
-    and never below the profile's own `max_tokens`.
+    """The completion budget for one company: 120 tokens per candidate, never below 4,000 or
+    the profile's own `max_tokens`, never above MAX_ANSWER_TOKENS.
 
     THE PROFILE WINS ONLY WHEN IT IS LARGER. A fixed 4,000 truncates the answer for a long
-    list -- prod's widest company has 159 candidates -- and a truncated answer is a paid call
-    whose pairs are lost, so the floor scales with the list; raising `max_tokens` in run
-    config still raises it above the computed value. At the 400-candidate cap this asks for
-    48,000 completion tokens, which is above the profile field's own 32,000 ceiling: that is
-    deliberate, because the alternative for such a company is a guaranteed truncation.
+    list -- prod's widest company has 159 candidates, so 19,080 -- and a truncated answer is a
+    paid call whose pairs are lost, so the floor scales with the list; raising `max_tokens` in
+    run config still raises it above the computed value. The ceiling only ever binds near the
+    400-candidate hard cap (48,000 computed), where the company is an outlier the cap itself
+    may well skip; a company truncated at 32,000 is recorded as `invalid_response: truncated`
+    with its usage, which is a visible outcome rather than a refused request.
     """
-    return max(MIN_ANSWER_TOKENS, TOKENS_PER_CANDIDATE * len(candidates), profile.max_tokens)
+    return min(
+        max(MIN_ANSWER_TOKENS, TOKENS_PER_CANDIDATE * len(candidates), profile.max_tokens),
+        MAX_ANSWER_TOKENS,
+    )
 
 
 def build_match_request(
@@ -482,13 +492,18 @@ MATCH_ID_BOUND_QUERY_SETTINGS = {"max_query_size": 1_048_576, "max_execution_tim
 ERROR_LIMIT = 500
 _MACHINE_SOURCES_SQL = ", ".join(f"'{source}'" for source in MACHINE_SOURCES)
 
-# The errors worth paying for again on the SAME input: the provider's weather. Everything
-# else -- an answer that did not parse, a truncated or empty answer, a candidate list over
-# the cap, an unexpected exception -- is a property of the input, so re-sending it buys the
-# same failure at the same price. A sticky company is skipped until its candidates change
-# (which moves its input hash), and skipping it writes no state row, so it stops re-selecting
-# itself for the fold through `batch.match_watermarks_sql` every run (fix wave F3).
-TRANSIENT_ERROR_PREFIXES: tuple[str, ...] = ("rate_limited:", "http_error:")
+# The errors worth paying for again on the SAME input: the provider's weather, plus anything
+# we did not foresee. `unexpected:` is in the list because its cause is usually a bug in THIS
+# module, and a bug fix does not move a candidate hash -- treating it as sticky would strand
+# every company it touched until its people changed, which could be a year (controller ruling,
+# fix-wave follow-up 1).
+#
+# What is left out is sticky: an answer that did not parse, a truncated or empty answer, and a
+# candidate list over the cap are properties of the INPUT, so re-sending it buys the same
+# failure at the same price. A sticky company is skipped until its candidates change (which
+# moves its input hash), and skipping it writes no state row, so it stops re-selecting itself
+# for the fold through `batch.match_watermarks_sql` every run (fix wave F3).
+TRANSIENT_ERROR_PREFIXES: tuple[str, ...] = ("rate_limited:", "http_error:", "unexpected:")
 # One page that is mostly errors is a provider outage, not 500 unlucky companies. Below this
 # many attempts the share is noise; at or above it, a majority of failures fails the RUN, so
 # the asset's RetryPolicy backs off instead of a green run leaving the whole page to be
@@ -615,7 +630,8 @@ def match_state_sql() -> str:
     a WHERE clause. Excluding every errored row here re-sent a company whose answer will not
     parse on every run for ever: the same input buys the same failure, at the same price,
     and each attempt wrote a new state row whose `matched_at` then re-selected the company
-    for the fold as well (fix wave F3)."""
+    for the fold as well (fix wave F3). The `error` column is what the next run reads to tell
+    the two apart, so it has to come back with the hash."""
     return (
         "SELECT company_id, toString(input_hash) AS input_hash, error\n"
         f"FROM {tables.QUALIFIED_MATCH_STATE_TABLE} FINAL\n"
@@ -831,7 +847,9 @@ def run_match(
                 except Exception as exc:  # noqa: BLE001 -- one company, never the run
                     # Anything the three typed handlers did not name: a bug here, a driver
                     # raising its own class, a JSON library error. One company's state row
-                    # records it, and the page's circuit breaker still counts it as a failure.
+                    # records it, the page's circuit breaker still counts it as a failure,
+                    # and the next run re-sends it -- the cause is usually ours to fix, and a
+                    # fix does not move the candidate hash that would otherwise free it.
                     return _Outcome(company_id, candidates, hashed, None, 0, 0, "",
                                     f"unexpected: {type(exc).__name__}: {exc}"[:ERROR_LIMIT])
                 # A truncated or empty answer is a paid call: its usage and its exact text are

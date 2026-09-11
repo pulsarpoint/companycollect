@@ -234,8 +234,10 @@ keys) and hashed.
 
 WHAT THE CHANGE SCAN SENDS. A company with no state row, or one whose stored `input_hash`
 differs, is sent. A company whose hash is unchanged is sent again only when its stored error
-is TRANSIENT -- the prefixes `rate_limited:` and `http_error:`, the provider's weather.
-`invalid_response:` (malformed, truncated or empty), `too many candidates` and `unexpected:`
+is TRANSIENT: `rate_limited:` and `http_error:` (the provider's weather) and `unexpected:` --
+that last one because its cause is usually a bug in `match.py`, and a bug fix does not move a
+candidate hash, so treating it as sticky would strand every company it touched until its
+people changed. `invalid_response:` (malformed, truncated or empty) and `too many candidates`
 are STICKY for the same input: re-sending buys the same failure at the same price, so the
 company is skipped and counted as `skipped_sticky`, and -- because a skip writes NO state row
 -- its `matched_at` stops moving, which is what keeps the fold from re-selecting it every run
@@ -247,9 +249,12 @@ reads the candidates under SHORT ordinal ids `c0`..`cN`: a 64-character normaliz
 about 16 tokens it would have to read once and echo twice per pair, and it has no use for
 one. `parse_match_response` maps the ordinal back, so every stored pair still names real
 ids, and the HASHED rendering keeps the full ids -- moving the prompt to ordinals moved no
-stored `input_hash`. `max_tokens` is `max(4_000, 120 x candidates, profile.max_tokens)`: the
-profile's value wins only when it is LARGER, and the floor scales with the list so prod's
-159-candidate company is not truncated at the default.
+stored `input_hash`. `max_tokens` is
+`min(max(4_000, 120 x candidates, profile.max_tokens), 32_000)`: the profile's value wins only
+when it is LARGER, the floor scales with the list so prod's 159-candidate company (19,080) is
+not truncated at the default, and the ceiling is the `le` run config itself may ask for, so a
+company near the 400-candidate cap asks for a budget a caller could have set by hand rather
+than one the provider may refuse.
 
 The answer is `{"pairs": [{"a", "b", "confidence", "reason"}]}`; the parser accepts both id
 orders, stores the pair with the ids ascending, keeps the higher confidence of a repeated

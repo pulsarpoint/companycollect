@@ -114,11 +114,16 @@ def se_company_person_normalize(
         "machine sources, which of them are the same physical person, and stores the scored "
         "pairs in se_company_person_match with one state row per company in "
         "se_company_person_match_state. The fold unions the pairs at or above "
-        "MATCH_THRESHOLD. changed_only=true sends only companies whose candidate list "
-        "changed since their state row (or that have none, or whose last attempt errored); "
-        "company_ids targets companies. provider and model have no defaults -- a bare "
-        "Materialize fails validation rather than spending on one -- and the provider's API "
-        "key is read from the host environment at call time."
+        "MATCH_THRESHOLD. changed_only=true sends a company with no state row, one whose "
+        "candidate list changed (a different input_hash), and one whose last attempt failed "
+        "TRANSIENTLY (rate_limited:, http_error:, unexpected:); a malformed, truncated or "
+        "empty answer and a company over the candidate cap are STICKY for the same input -- "
+        "skipped without a new state row and reported as skipped_sticky -- until its "
+        "candidates change. company_ids targets companies. provider and model have no "
+        "defaults -- a bare Materialize fails validation rather than spending on one -- and "
+        "the provider's API key is read from the host environment at call time. A page in "
+        "which most calls fail raises after its rows are written, so a provider outage "
+        "retries with backoff instead of finishing green."
     ),
 )
 def se_company_person_match(

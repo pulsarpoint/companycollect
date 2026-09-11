@@ -265,22 +265,48 @@ def test_the_prompt_carries_ordinal_ids_and_no_normalized_id() -> None:
     assert match.ordinal_id(0) == "c0" and match.ordinal_id(17) == "c17"
 
 
+def _wide(count: int):
+    """`count` candidates, one source, one per name -- only their number matters here."""
+    return build_candidates([
+        row("bolagsverket", f"s{index}", first=f"first{index}", last=f"last{index}")
+        for index in range(count)
+    ])
+
+
 def test_the_answer_budget_scales_with_the_candidate_list() -> None:
     """A fixed 4,000 truncates the answer for a long list (prod's widest company has 159
     candidates), and a truncation is a paid call whose pairs are lost. The profile's own
     max_tokens still wins when it is LARGER."""
-    small = build_candidates([ERIK, BO])
-    assert match.request_max_tokens(small, PROFILE) == 4_000
-    wide = build_candidates([
-        row("bolagsverket", f"s{index}", first=f"first{index}", last=f"last{index}")
-        for index in range(100)
-    ])
+    assert match.request_max_tokens(build_candidates([ERIK, BO]), PROFILE) == 4_000
+    wide = _wide(100)
     assert len(wide) == 100
     assert match.request_max_tokens(wide, PROFILE) == 12_000 == 120 * 100
     generous = LlmProfileConfig(provider="deepseek", model="m",
                                 prompt_version=PROMPT_VERSION, max_tokens=20_000)
     assert match.request_max_tokens(wide, generous) == 20_000
     assert build_match_request(wide, PROFILE)["max_tokens"] == 12_000
+
+
+def test_the_answer_budget_never_leaves_the_profiles_own_range() -> None:
+    """Both ends. 3 candidates ask for the 4,000 floor; the 400-candidate hard cap computes
+    48,000 and is held at MAX_ANSWER_TOKENS, which is exactly the `le` run config itself may
+    ask for -- a budget no caller could have set by hand is one the provider may refuse, and
+    a refusal on every run is worse than a truncation the state row records."""
+    assert match.request_max_tokens(_wide(3), PROFILE) == match.MIN_ANSWER_TOKENS == 4_000
+    at_cap = _wide(MAX_CANDIDATES)
+    assert len(at_cap) == MAX_CANDIDATES == 400
+    assert 120 * MAX_CANDIDATES == 48_000                      # what the formula computes
+    assert match.request_max_tokens(at_cap, PROFILE) == match.MAX_ANSWER_TOKENS == 32_000
+    assert build_match_request(at_cap, PROFILE)["max_tokens"] == 32_000
+    # The ceiling IS the profile field's own limit, in both the shared config and this
+    # module's, so neither can drift away from it unnoticed.
+    for model_class in (LlmProfileConfig, PersonMatchProfile):
+        limits = [
+            item.le
+            for item in model_class.model_fields["max_tokens"].metadata
+            if getattr(item, "le", None) is not None
+        ]
+        assert limits == [match.MAX_ANSWER_TOKENS], model_class.__name__
 
 
 def test_the_request_is_the_prompt_the_ordinal_candidates_and_json_mode() -> None:
@@ -597,10 +623,15 @@ def test_an_unchanged_input_hash_is_reused_and_never_called() -> None:
 
 def test_a_transient_error_is_re_sent_on_the_same_input() -> None:
     """A rate limit and an HTTP failure are the provider's weather: the same input is worth
-    paying for again, which is why the state read no longer filters them out in SQL."""
+    paying for again, which is why the state read no longer filters them out in SQL.
+
+    `unexpected:` is transient too (controller ruling): its cause is usually a bug in
+    match.py, and fixing a bug does not move a candidate hash -- treating it as sticky would
+    strand every company it touched until its people changed, which can be a year."""
     rows = multi(A)
     stored = input_hash(build_candidates(rows))
-    for error in ("rate_limited: slow down", "http_error: connection reset"):
+    for error in ("rate_limited: slow down", "http_error: connection reset",
+                  "unexpected: RuntimeError: boom"):
         model = FakeModel({A: one_pair()})
         client = FakeClient(scope_pages=[[A]], rows=rows, state=[(A, stored, error)])
         counts = run_match(client, llm_client=None, config=CONFIG, source_run_id="run-1",
@@ -618,8 +649,8 @@ def test_a_sticky_error_is_skipped_and_writes_no_state_row() -> None:
     stored = input_hash(build_candidates(rows))
     for error in ("invalid_response: person match response carries no `pairs` list",
                   "invalid_response: truncated at 4000 completion tokens",
-                  "too many candidates",
-                  "unexpected: RuntimeError: boom"):
+                  "invalid_response: empty",
+                  "too many candidates"):
         model = FakeModel({A: one_pair()})
         client = FakeClient(scope_pages=[[A]], rows=rows, state=[(A, stored, error)])
         counts = run_match(client, llm_client=None, config=CONFIG, source_run_id="run-1",
@@ -679,6 +710,9 @@ def test_an_unexpected_exception_is_one_company_not_the_run() -> None:
     }
     assert state[A]["error"] == "unexpected: RuntimeError: boom"
     assert state[B]["error"] == ""
+    # And it is retried: the cause is ours to fix, and a fix moves no candidate hash.
+    assert match.is_transient_error(state[A]["error"]) is True
+    assert match.TRANSIENT_ERROR_PREFIXES == ("rate_limited:", "http_error:", "unexpected:")
 
 
 def test_a_page_of_provider_failures_stops_the_run_after_writing_it() -> None:
