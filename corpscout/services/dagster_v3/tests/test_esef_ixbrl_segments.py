@@ -1,4 +1,5 @@
 import json
+import os
 import struct
 import time
 from datetime import timedelta
@@ -852,6 +853,11 @@ def test_document_asset_archives_parses_and_stores_source_linked_rows(
 
     assert first["parsed_package_count"] == 1
     assert first["downloaded_package_count"] == 1
+    # A real parse goes through the nested spawn child, so this is a real
+    # (small, non-negative) bootstrap measurement, not a synthetic one.
+    assert first["parse_bootstrap_seconds"] >= 0
+    assert first["failed_document_count"] == 0
+    assert first["timed_out_document_count"] == 0
     assert first["email_candidate_count"] == 2
     assert first["phone_candidate_count"] == 1
     assert first["website_candidate_count"] == 3
@@ -985,6 +991,18 @@ def _raise_synthetic_parse_failure(
     raise ValueError("synthetic parse failure")
 
 
+def _exit_immediately_without_a_result(
+    task: "segment_assets._DocumentParseTask",
+) -> "segment_assets._DocumentParseResult":
+    """Simulate a crashed child (os._exit, OOM-kill, a segfault, ...).
+
+    `os._exit` terminates the process immediately -- no exception unwinds
+    through `_run_document_parse_child`'s try/except, so nothing is ever
+    sent over the pipe.
+    """
+    os._exit(3)
+
+
 def _fake_synthetic_success(
     task: "segment_assets._DocumentParseTask",
 ) -> "segment_assets._DocumentParseResult":
@@ -1073,6 +1091,32 @@ def test_parse_document_package_worker_wraps_a_child_exception_as_failed(
 
     assert excinfo.value.fxo_id == "FAIL-2024"
     assert "synthetic parse failure" in excinfo.value.detail
+    assert not artifact_path.exists()
+
+
+def test_parse_document_package_worker_reports_a_crashed_child_as_failed(
+    tmp_path: Path,
+) -> None:
+    """A child that dies without sending anything (crash, not a raised
+    exception) must not be silently dropped -- `poll()` returns True at
+    EOF, so a bare `.recv()` would raise `EOFError` instead of falling
+    through to the "exited without a result" failure."""
+    artifact_path = tmp_path / "artifact.json"
+    task = segment_assets._DocumentParseTask(
+        package_path=str(tmp_path / "package.zip"),
+        artifact_path=str(artifact_path),
+        source=EsefArtifactSource(fxo_id="CRASH-2024"),
+        validate_esef=False,
+        parse_timeout_seconds=30,
+    )
+
+    with pytest.raises(segment_assets.DocumentParseFailedError) as excinfo:
+        segment_assets._parse_document_package_worker(
+            task, _exit_immediately_without_a_result
+        )
+
+    assert excinfo.value.fxo_id == "CRASH-2024"
+    assert "exited with code 3" in excinfo.value.detail
     assert not artifact_path.exists()
 
 
@@ -1187,6 +1231,92 @@ def test_document_artifact_stage_skips_a_timed_out_document_and_publishes_the_re
         ESEF_DOCUMENT_BUCKET,
         artifact_object_key(good_sha256),
     ) in object_store.objects
+
+
+def _seed_shared_package_filing_index(database: object) -> str:
+    """Two filings (`fxo_id`s) that both point at the identical package."""
+    body = b"shared-package-body"
+    package_sha256 = sha256(body).hexdigest()
+    with database.get_connection() as connection:
+        connection.execute(f"create schema {tables.DLT_DATASET_NAME}")
+        connection.execute(
+            f"create table {tables.QUALIFIED_FILINGS_INDEX_TABLE} ("
+            "fxo_id varchar, lei varchar, entity_name varchar, country varchar, "
+            "period_end varchar, package_url varchar, report_url varchar, "
+            "viewer_url varchar, package_sha256 varchar, processed_at varchar)"
+        )
+        for fxo_id in ("SHARED-A-2024", "SHARED-B-2024"):
+            connection.execute(
+                f"insert into {tables.QUALIFIED_FILINGS_INDEX_TABLE} values "
+                "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    fxo_id,
+                    "549300SAMPLE000000003",
+                    "Shared AB",
+                    "SE",
+                    "2024-12-31",
+                    "https://example.test/shared.zip",
+                    "https://example.test/report.xhtml",
+                    "https://example.test/viewer",
+                    package_sha256,
+                    "2025-04-01T00:00:00",
+                ],
+            )
+    return package_sha256
+
+
+def test_document_artifact_stage_counts_every_document_in_a_failed_shared_package(
+    tmp_path: Path,
+) -> None:
+    """Two filings sharing one package digest are grouped into ONE parse
+    task/future. A failure there must count both documents (the size of
+    the group), not just the single future that failed."""
+    database = duckdb_resource(tmp_path / "esef.duckdb")
+    package_sha256 = _seed_shared_package_filing_index(database)
+    object_store = _FakeObjectStore({})
+    client = _MultiPackageDownloadClient(
+        {"https://example.test/shared.zip": b"shared-package-body"}
+    )
+    partition_key = "2025-03-30"
+
+    run_esef_document_manifest_partition(
+        esef_filings_duckdb=database,
+        object_store=object_store,
+        partition_key=partition_key,
+        source_run_id="shared-run",
+        source_document_ids=["SHARED-A-2024", "SHARED-B-2024"],
+        max_documents=None,
+        log_info=lambda *_args: None,
+    )
+    metadata = run_esef_document_artifacts_partition(
+        object_store=object_store,
+        client=client,
+        partition_key=partition_key,
+        source_run_id="shared-run",
+        refresh_existing=False,
+        validate_esef=False,
+        parse_workers=1,
+        parse_timeout_seconds=10,
+        parse_fn=_raise_synthetic_parse_failure,
+        log_info=lambda *_args: None,
+    )
+
+    assert metadata["unique_package_count"] == 1
+    assert metadata["selected_document_count"] == 2
+    assert metadata["failed_document_count"] == 2
+    assert metadata["timed_out_document_count"] == 0
+    assert metadata["parsed_package_count"] == 0
+
+    result = json.loads(
+        object_store.objects[
+            (ESEF_DOCUMENT_BUCKET, document_result_object_key(partition_key))
+        ]
+    )
+    assert result["document_rows"] == []
+    assert not object_store.exists(
+        artifact_object_key(package_sha256),
+        bucket=ESEF_DOCUMENT_BUCKET,
+    )
 
 
 def test_document_artifact_stage_accepts_schema_two_manifest() -> None:

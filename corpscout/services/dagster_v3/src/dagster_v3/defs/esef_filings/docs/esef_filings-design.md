@@ -41,10 +41,16 @@ then:
   run even outside `refresh_existing`, which instead forces every artifact to
   be re-parsed regardless of its schema version;
 - parses missing artifacts with Arelle in recycled worker processes, each
-  parse bounded by `parse_timeout_seconds`: a document that exceeds its
-  budget is killed and skipped for the run, counted in
+  parse run in its own killable nested child process bounded by
+  `parse_timeout_seconds`: a document that exceeds its budget is killed and
+  skipped for the run, counted in
   `timed_out_document_count`/`failed_document_count`, and retried by a
-  later run rather than blocking every other document behind it;
+  later run rather than blocking every other document behind it. The
+  nested child re-imports Arelle/lxml on every document, a measured cost
+  (`parse_bootstrap_seconds` in the run's metadata, alongside
+  `parse_worker_seconds`); a persistent per-worker parse child that avoids
+  re-paying that import cost is a documented follow-up, not implemented
+  here;
 - extracts XBRL facts, internal document metadata, contact candidates, taxonomy
   labels, visible sections, and parser quality information; and
 - writes one versioned result object for the processed week.

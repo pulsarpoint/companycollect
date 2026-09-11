@@ -11,10 +11,11 @@ No ``from __future__ import annotations``: Dagster inspects asset annotations.
 import json
 import re
 import tempfile
+import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wait
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from hashlib import sha256
 from multiprocessing import get_context
@@ -167,6 +168,13 @@ class _DocumentParseResult:
     parse_seconds: float
     serialization_seconds: float
     artifact_size_bytes: int
+    # Wall-clock time between the parent starting the nested parse child and
+    # the child reporting in (import/interpreter bootstrap, invisible to
+    # `parse_seconds` since that clock starts only after the child's own
+    # imports finish). Filled in by `_parse_document_package_worker`, not by
+    # `_run_document_parse` itself, which has no visibility into the
+    # parent's pre-`child.start()` timestamp.
+    bootstrap_seconds: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -230,13 +238,20 @@ def _run_document_parse_child(
     task: _DocumentParseTask,
     connection: Connection,
 ) -> None:
-    """Entry point for the nested parse child: run `parse_fn`, report back."""
+    """Entry point for the nested parse child: run `parse_fn`, report back.
+
+    Stamps its own entry time (before `parse_fn` -- i.e. before the actual
+    parse, but after this child's own interpreter/import bootstrap) so the
+    parent can measure that bootstrap cost; see
+    `_parse_document_package_worker`.
+    """
+    entered_at = time.time()
     try:
         result = parse_fn(task)
     except Exception as exc:  # noqa: BLE001 - reported to the parent, not swallowed
         connection.send(("error", f"{type(exc).__name__}: {exc}"))
     else:
-        connection.send(("ok", result))
+        connection.send(("ok", result, entered_at))
     finally:
         connection.close()
 
@@ -266,6 +281,7 @@ def _parse_document_package_worker(
         target=_run_document_parse_child,
         args=(parse_fn, task, child_connection),
     )
+    started_at = time.time()
     child.start()
     child_connection.close()
     child.join(timeout=task.parse_timeout_seconds)
@@ -280,19 +296,35 @@ def _parse_document_package_worker(
         _delete_partial_artifact(task.artifact_path)
         raise DocumentParseTimeoutError(task.source.fxo_id, task.parse_timeout_seconds)
 
+    message: tuple[Any, ...] | None
     if parent_connection.poll():
-        kind, payload = parent_connection.recv()
+        try:
+            message = parent_connection.recv()
+        except EOFError:
+            # The child died (os._exit, OOM-kill, a segfault, ...) without
+            # ever calling `connection.send(...)`: the pipe only looks
+            # "ready" because the read end hit EOF, not because a pickled
+            # message is waiting. Fall through to the same "no result"
+            # failure as a child that never sent anything at all.
+            message = None
     else:
-        kind, payload = (
-            "error",
-            f"parse child exited with code {child.exitcode} without a result",
-        )
+        message = None
     parent_connection.close()
 
+    if message is None:
+        _delete_partial_artifact(task.artifact_path)
+        raise DocumentParseFailedError(
+            task.source.fxo_id,
+            f"parse child exited with code {child.exitcode} without a result",
+        )
+
+    kind = message[0]
     if kind == "error":
         _delete_partial_artifact(task.artifact_path)
-        raise DocumentParseFailedError(task.source.fxo_id, str(payload))
-    return payload
+        raise DocumentParseFailedError(task.source.fxo_id, str(message[1]))
+
+    _tag, result, entered_at = message
+    return replace(result, bootstrap_seconds=max(entered_at - started_at, 0.0))
 
 
 def report_package_object_key(package_sha256: str) -> str:
@@ -475,6 +507,7 @@ def run_esef_document_artifacts_partition(
     artifact_read_seconds = 0.0
     artifact_upload_seconds = 0.0
     parse_seconds = 0.0
+    parse_bootstrap_seconds = 0.0
     serialization_seconds = 0.0
     artifact_size_bytes = 0
     document_row_count = 0
@@ -599,6 +632,7 @@ def run_esef_document_artifacts_partition(
             nonlocal serialization_seconds
             nonlocal failed_document_count
             nonlocal timed_out_document_count
+            nonlocal parse_bootstrap_seconds
             for future in completed:
                 scheduled = pending.pop(future)
                 try:
@@ -607,9 +641,13 @@ def run_esef_document_artifacts_partition(
                     # reported parse failure, or any other worker exception
                     # (e.g. a broken process pool) must skip this document,
                     # not block the rest of the run.
-                    failed_document_count += 1
+                    # A package can carry more than one filing (documents
+                    # grouped by shared digest) -- one failed parse skips
+                    # every document in that group, so every counter here
+                    # advances by the group's size, not by one.
+                    failed_document_count += len(scheduled.documents)
                     if isinstance(exc, DocumentParseTimeoutError):
-                        timed_out_document_count += 1
+                        timed_out_document_count += len(scheduled.documents)
                     fxo_id = str(scheduled.documents[0]["source_document_id"])
                     log_warning(
                         "ESEF document parse failed for %s (%s: %s); the "
@@ -648,6 +686,7 @@ def run_esef_document_artifacts_partition(
                 del artifact
                 parse_seconds += result.parse_seconds
                 serialization_seconds += result.serialization_seconds
+                parse_bootstrap_seconds += result.bootstrap_seconds
                 artifact_size_bytes += result.artifact_size_bytes
                 parsed_packages += 1
                 processed_documents += len(scheduled.documents)
@@ -803,21 +842,26 @@ def run_esef_document_artifacts_partition(
                         local_package=local_package,
                     )
 
-                if len(pending) >= parse_workers * 2:
+                # A plain `if` here would let an empty (timed-out) wake-up
+                # fall through to submitting the next future anyway, so
+                # `pending` could grow past the cap for a window instead of
+                # actually throttling it. Retry (with the drain loop's same
+                # once-per-wake-up heartbeat) until the backlog drops.
+                while len(pending) >= parse_workers * 2:
                     completed, _ = wait(
                         pending,
                         timeout=parse_timeout_seconds,
                         return_when=FIRST_COMPLETED,
                     )
-                    if completed:
-                        complete_futures(completed)
-                    else:
+                    if not completed:
                         log_info(
                             "ESEF processed week %s: waiting on %s in-flight "
                             "parses",
                             partition_key,
                             len(pending),
                         )
+                        continue
+                    complete_futures(completed)
 
                 if processed_documents >= next_progress:
                     log_info(
@@ -891,6 +935,7 @@ def run_esef_document_artifacts_partition(
             "artifact_read_seconds": artifact_read_seconds,
             "artifact_upload_seconds": artifact_upload_seconds,
             "parse_worker_seconds": parse_seconds,
+            "parse_bootstrap_seconds": parse_bootstrap_seconds,
             "serialization_worker_seconds": serialization_seconds,
             "artifact_size_bytes": artifact_size_bytes,
             "email_candidate_count": email_candidate_count,
