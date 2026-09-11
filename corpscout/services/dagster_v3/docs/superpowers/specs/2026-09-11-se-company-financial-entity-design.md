@@ -75,28 +75,42 @@ normalizer's INSERT lists its columns explicitly and is untouched: new columns d
 the `se_ratsit_financial_periods` spec key and on `exchange_rates_v2_clickhouse` with an
 `AllPartitionMapping`. Each run:
 
-1. Reads the distinct rate dates still pending: rows `FINAL` with `fx_rate_to_usd IS NULL` and at
-   least one monetary value, rate date `ifNull(period_end, makeDate32(fiscal_year, 12, 31))`.
+1. Reads the distinct rate dates still pending: rows `FINAL` with `fx_rate_to_usd IS NULL`, a
+   known `monetary_unit` and at least one monetary value, rate date `ifNull(period_end,
+   makeDate32(fiscal_year, 12, 31))`. A row without a unit would scale as SEK in the mutation's
+   `multiIf`, so it is left alone and counted on its own.
 2. Resolves SEK to USD for those dates through the shared `ExchangeRateClient.usd_rates`, batched
    at 50 like the Bolagsverket step; the client picks the latest ECB date at or before the
-   requested one and reports it as `fx_rate_date`.
+   requested one and reports it as `fx_rate_date`. Only dates inside the window the ECB series
+   covers for both legs (SEK and USD against EUR) are asked for: the client never refuses a date,
+   so a date outside that window would be answered with a far-off rate and stamped for good.
 3. Writes the resolved rates into a per-run `Join(ANY, LEFT, rate_date)` table
    `corpscout._tmp_ratsit_fx_<run>` and runs one `ALTER TABLE ... UPDATE` restricted to
    `fx_rate_to_usd IS NULL AND <rate date> IN (SELECT rate_date FROM <join table>)`, with
-   `mutations_sync = 2`. USD is `multiplyDecimal(<amount> * <scale>, joinGet(<join table>,
+   `mutations_sync = 0`. USD is `multiplyDecimal(<amount> * <scale>, joinGet(<join table>,
    'fx_rate', <rate date>), 6)` where the scale is `multiIf(monetary_unit = 'MSEK', 1000000,
    monetary_unit = 'TSEK', 1000, 1)` for the 18 amount lines and a fixed 1000000 for the two
    per-employee MSEK figures. The join table name is always database-qualified (a mutation has no
-   default database). Then drops the join table.
-4. Reports `rows_pending`, `rate_dates_needed`, `rates_found`, `rows_converted` and
+   default database). The mutation therefore runs asynchronously and the asset polls
+   `system.mutations` for it: a transient failure reason keeps the wait going while parts still
+   complete, a killed mutation or three failing polls without progress end it. The join table is
+   dropped only after the mutation reported `is_done = 1`; dropping it under a queued mutation
+   leaves that mutation retrying against a missing table and blocks every later mutation of the
+   periods table, so a failed wait keeps the join table and reports the `KILL MUTATION` recipe,
+   and a run refuses to start while an earlier run's USD mutation is unfinished.
+4. Reports `rows_pending`, `rate_dates_needed`, `rates_found`, `rows_convertible`,
+   `rows_rate_date_outside_series`, `rows_unknown_unit`, `rows_converted` and
    `rows_still_without_rate`. Config `execute` defaults to false (preview counts only), as the
    entity extractors do.
 
 Proven on 2026-09-11 against ClickHouse 26.5 in clickhouse-local: the mutation fills the twins and
 the three fx columns, scales MSEK and TSEK, derives the rate date for undated rows and leaves rows
 without a rate untouched. The step is idempotent and re-runnable: a row is converted once, a row
-whose rate does not exist yet (a period end after the newest ECB date) is picked up on a later
-run, and the normalizer never overwrites USD because it only inserts rows for new report versions.
+whose rate date lies outside the ECB series in either direction (before its 2006 start or after
+its newest rate) is not converted, is counted as `rows_rate_date_outside_series` and waits for a
+later run — the pre-2006 rows keep native-only figures, the guideline's precedent for an absent
+rate — and the normalizer never overwrites USD because it only inserts rows for new report
+versions.
 `_amount` stays Ratsit's rounded published figure in its published unit and `_usd` is the
 full-unit dollar value: the guideline's asymmetry, scaling applied before FX.
 

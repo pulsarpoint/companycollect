@@ -1321,11 +1321,15 @@ cd ansible && ANSIBLE_BECOME_TIMEOUT=60 ansible-playbook -i inventory.ini light_
 
 Expected: `RC=0`. The deploy ships the worktree's tree, which must equal the merged main: after Step 1 run `git merge --ff-only main` on the branch in the worktree (main itself cannot be checked out there, the main checkout holds it) and confirm `git diff main --stat` prints nothing.
 
+- [ ] **Step 3b: Materialize the exchange rates for the current year**
+
+Materialize `exchange_rates_v2_clickhouse` for the current year so the newest SEK and USD rates are present (the preview's `rows_rate_date_outside_series` should then cover only pre-2006 rows). The rate table was about ten weeks stale on 2026-09-11 and every pending date after its newest rate is left unconverted by design.
+
 - [ ] **Step 4: Preview run**
 
-In the Dagster UI (location `dagster_v3`), materialize `se_ratsit_financial_periods_usd` with the default config (`execute: false`). Record from the run metadata: `rows_pending` (expect about 3.1M), `rate_dates_needed`, `rates_found`, `rows_convertible`, `rows_still_without_rate`.
+In the Dagster UI (location `dagster_v3`), materialize `se_ratsit_financial_periods_usd` with the default config (`execute: false`). Record from the run metadata: `rows_pending` (expect about 3.1M), `rate_dates_needed`, `rates_found`, `rows_convertible`, `rows_rate_date_outside_series`, `rows_unknown_unit`, `rows_still_without_rate`.
 
-Expected: `rates_found` equals `rate_dates_needed` (the client answers every date with the nearest rate, before or after), so `rows_convertible == rows_pending`.
+Expected: after Step 3b `rows_rate_date_outside_series` covers only the pre-2006 rows (about 301 on 2026-09-11), every in-series date gets a rate, and `rows_convertible == rows_pending - rows_rate_date_outside_series`.
 
 - [ ] **Step 5: Execute run (owner's "do it")**
 
@@ -1338,7 +1342,9 @@ ops:
       execute: true
 ```
 
-The mutation rewrites every part of the table once (3.1M rows, a few GB); the asset polls every 5 s for up to two hours. Expected metadata: `rows_converted` about 3.1M, `rows_still_without_rate` 0.
+The mutation rewrites every part of the table once (3.1M rows, a few GB); the asset polls every 5 s for up to two hours. Expected metadata: `rows_converted` about 3.1M, `rows_still_without_rate` equal to `rows_rate_date_outside_series` (the pre-2006 rows).
+
+This is the first time the mutation polling path runs on prod, so watch `system.mutations` during the execute run (the query in Step 6): `parts_to_do` should fall, and a `latest_fail_reason` that appears while it keeps falling is transient. The asset keeps the join table if the wait fails — do not drop it by hand while the mutation is still queued.
 
 - [ ] **Step 6: Verify on prod**
 
@@ -1351,7 +1357,22 @@ SELECT count() AS leftover_join_tables FROM system.tables WHERE database = 'corp
 SQL
 ```
 
-Expected: `without_rate` 0 for every unit; for 5567081699 fiscal 2023 `revenue_amount` 60.3 and `revenue_amount_usd` about 5.9M (60.3e6 times the ECB SEK→USD rate of 2023-12-29, about 0.099); the USD agreement with Bolagsverket within 2% on roughly half the pairs, the same share as the native comparison of 2026-09-11 (rounding, not rate); `leftover_join_tables` 0.
+Expected: `without_rate` equal to the pre-2006 rows for every unit (0 for the units that have none); for 5567081699 fiscal 2023 `revenue_amount` 60.3 and `revenue_amount_usd` about 5.9M (60.3e6 times the ECB SEK→USD rate of 2023-12-29, about 0.099); the USD agreement with Bolagsverket within 2% on roughly half the pairs, the same share as the native comparison of 2026-09-11 (rounding, not rate); `leftover_join_tables` 0.
+
+If the execute run reported a mutation that did not finish, it kept its join table on purpose. Inspect and recover with:
+
+```bash
+ssh -o ConnectTimeout=20 companycollect 'docker exec -i clickhouse-clickhouse-1 clickhouse-client --query "SELECT mutation_id, is_done, parts_to_do, latest_fail_reason FROM system.mutations WHERE database = '"'"'corpscout'"'"' AND table = '"'"'se_ratsit_financial_periods'"'"' AND is_done = 0"'
+```
+
+While `parts_to_do` keeps falling the mutation is working; leave it. Only when it is truly stuck:
+
+```sql
+KILL MUTATION WHERE database = 'corpscout' AND table = 'se_ratsit_financial_periods' AND mutation_id = '<id>';
+DROP TABLE corpscout._tmp_ratsit_fx_<run>;
+```
+
+In that order: dropping the join table first leaves the mutation retrying against a missing table and every later mutation of the periods table queues behind it.
 
 - [ ] **Step 7: Record the rollout**
 
