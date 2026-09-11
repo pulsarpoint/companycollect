@@ -16,6 +16,11 @@ PRECEDENCE_TABLE = "se_company_person_precedence"
 # Kept from the retired model: the 25-code role catalog the normalizer maps into, seeded for
 # Sweden (000290/000294) and Serbia (000319).
 ROLE_TYPE_TABLE = "company_person_role_type"
+# The LLM matching phase (migration 000399): the scored pairs and one state row per matched
+# company. Both names have MAIN_TABLE as a prefix, like the five older siblings, so every
+# string match on a table name compares whole names.
+MATCH_TABLE = "se_company_person_match"
+MATCH_STATE_TABLE = "se_company_person_match_state"
 
 # This entity's own scratch-table prefix (basic_info/extract.py:scope_pages), so a person
 # scan's scratch table can never collide with a basic-info or an address one. Shared by
@@ -29,6 +34,8 @@ QUALIFIED_HISTORY_TABLE = f"{DATABASE}.{HISTORY_TABLE}"
 QUALIFIED_RULE_TABLE = f"{DATABASE}.{RULE_TABLE}"
 QUALIFIED_PRECEDENCE_TABLE = f"{DATABASE}.{PRECEDENCE_TABLE}"
 QUALIFIED_ROLE_TYPE_TABLE = f"{DATABASE}.{ROLE_TYPE_TABLE}"
+QUALIFIED_MATCH_TABLE = f"{DATABASE}.{MATCH_TABLE}"
+QUALIFIED_MATCH_STATE_TABLE = f"{DATABASE}.{MATCH_STATE_TABLE}"
 
 SOURCES: tuple[str, ...] = ("bolagsverket", "esef", "wikidata", "ratsit", "reviewer", "reviewer_draft")
 PARSE_STATUSES: tuple[str, ...] = ("ok", "partial", "no_person")
@@ -69,4 +76,14 @@ RULE_COLUMNS: tuple[str, ...] = (
 )
 PRECEDENCE_COLUMNS: tuple[str, ...] = (
     "company_id", "field", "source", "precedence", "removed", "decided_by", "note", "decided_at",
+)
+MATCH_COLUMNS: tuple[str, ...] = (
+    "company_id", "candidate_a", "candidate_b", "members_a", "members_b",
+    "source_a", "source_b", "name_a", "name_b", "confidence", "reason",
+    "model", "prompt_version", "input_hash", "matched_at",
+)
+MATCH_STATE_COLUMNS: tuple[str, ...] = (
+    "company_id", "input_hash", "candidates", "sources", "pairs", "model",
+    "prompt_version", "prompt_tokens", "completion_tokens", "raw_response", "error",
+    "source_run_id", "matched_at",
 )
