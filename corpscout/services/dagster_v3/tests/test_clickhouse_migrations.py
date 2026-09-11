@@ -413,6 +413,7 @@ EXPECTED_MIGRATIONS = (
     "000397_corpscout_esef_document_people_extraction",
     "000398_corpscout_se_company_person_rename",
     "000399_corpscout_se_company_person_match",
+    "000400_corpscout_se_ratsit_financial_periods_usd",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -3791,6 +3792,56 @@ def test_ratsit_normalization_v2_migration_is_additive_and_nace_joinable() -> No
     assert (
         "DROP VIEW IF EXISTS corpscout.se_ratsit_establishments_with_nace" in down_sql
     )
+
+
+RATSIT_FINANCIAL_AMOUNT_COLUMNS = (
+    "revenue_amount",
+    "operating_costs_amount",
+    "operating_profit_amount",
+    "profit_after_financial_items_amount",
+    "net_income_amount",
+    "current_assets_amount",
+    "fixed_assets_amount",
+    "share_capital_amount",
+    "equity_amount",
+    "untaxed_reserves_amount",
+    "provisions_amount",
+    "long_term_liabilities_amount",
+    "current_liabilities_amount",
+    "liabilities_amount",
+    "total_assets_amount",
+    "balance_sheet_total_amount",
+    "ebitda_amount",
+    "dividend_amount",
+)
+
+
+def test_ratsit_financial_periods_usd_migration_adds_a_twin_per_monetary_column() -> None:
+    up_sql = _migration_sql("000400_corpscout_se_ratsit_financial_periods_usd.up.sql")
+    down_sql = _migration_sql("000400_corpscout_se_ratsit_financial_periods_usd.down.sql")
+
+    assert up_sql.startswith("CREATE DATABASE IF NOT EXISTS corpscout;")
+    assert "ALTER TABLE corpscout.se_ratsit_financial_periods" in up_sql
+    for column in RATSIT_FINANCIAL_AMOUNT_COLUMNS:
+        assert (
+            f"ADD COLUMN IF NOT EXISTS {column}_usd Nullable(Decimal(38, 6)) AFTER {column}"
+            in up_sql
+        ), column
+        assert f"DROP COLUMN IF EXISTS {column}_usd" in down_sql, column
+    for native, usd in (
+        ("personnel_cost_per_employee_msek", "personnel_cost_per_employee_usd"),
+        ("revenue_per_employee_msek", "revenue_per_employee_usd"),
+    ):
+        assert f"ADD COLUMN IF NOT EXISTS {usd} Nullable(Decimal(38, 6)) AFTER {native}" in up_sql
+        assert f"DROP COLUMN IF EXISTS {usd}" in down_sql
+    assert "ADD COLUMN IF NOT EXISTS fx_rate_to_usd Nullable(Decimal(38, 12)) AFTER employee_count" in up_sql
+    assert "ADD COLUMN IF NOT EXISTS fx_rate_date Nullable(Date32) AFTER fx_rate_to_usd" in up_sql
+    assert "ADD COLUMN IF NOT EXISTS fx_source LowCardinality(String) DEFAULT '' AFTER fx_rate_date" in up_sql
+    # Unit unknown (Ratsit never states it) and ratios are not money: no twins.
+    assert "average_salary_usd" not in up_sql
+    assert "_percent_usd" not in up_sql
+    assert up_sql.count("ADD COLUMN IF NOT EXISTS") == 23
+    assert down_sql.count("DROP COLUMN IF EXISTS") == 23
 
 
 def test_sweden_ats_retirement_drops_and_can_recreate_every_source_table() -> None:
