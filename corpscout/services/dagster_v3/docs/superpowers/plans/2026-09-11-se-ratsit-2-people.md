@@ -66,7 +66,7 @@ Not touched, deliberately: `person/suggestions.py`, `person/normalize.py`, `pers
 - Consumes: from `person/suggestions.py` — `NULL_SQL: Mapping[str, str]`, `live_select_sql(*, columns: Mapping[str, str], from_sql: str, where_sql: str, with_sql: str = "") -> str`, `person_changed_scope_sql(*, source: str, live_sql: str) -> str`, `person_select_sql(*, source: str, live_sql: str) -> str`, `define_person_suggestion_asset(**kwargs) -> dg.AssetsDefinition` (it forwards to `define_suggestion_asset(target=PERSON_TARGET, ...)`, whose keyword arguments are `source`, `extractor_version`, `current_sql`, `select_sql`, `select_params`, `deps`, `description`, `changed_scope_override`). From `sweden_ratsit/normalization.py` — `RATSIT_NORMALIZER_VERSION = "ratsit-normalizer-v2"`.
 - Produces: module `dagster_v3.defs.se_company.person.ratsit` with `PERSON_SOURCE = "ratsit"`, `RATSIT_PERSON_EXTRACTOR_VERSION = "ratsit-person-v1"`, `RATSIT_SELECT_PARAMS = {"normalizer_version": RATSIT_NORMALIZER_VERSION}`, `UNIVERSE_JOIN_SQL: str`, `RATSIT_COLUMN_SQL: dict[str, str]` (all sixteen `PERSON_SELECT_COLUMNS`), `ratsit_report_cte_sql(*, scoped: bool = False) -> str`, `ratsit_live_sql(*, scoped: bool = False) -> str`, `ratsit_current_sql() -> str`, `ratsit_changed_scope_sql() -> str`, `ratsit_select_sql() -> str`, and the asset object `se_company_person_suggestions_ratsit`. Task 2 registers the source; Task 3 runs this SQL on a real engine.
 
-- [ ] **Step 1: Record the baseline**
+- [x] **Step 1: Record the baseline**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/dagster_v3
@@ -76,7 +76,7 @@ uv run pytest tests/test_se_company_person_extractors_sql.py -q 2>&1 | tail -3
 
 Expected: `12 passed`. This is the file Step 2 extends; if it is not green before the change, stop.
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Three edits to `tests/test_se_company_person_extractors_sql.py`.
 
@@ -218,7 +218,7 @@ def test_the_ratsit_current_sql_is_the_reports_own_stamp() -> None:
     assert "%(company_ids)s" not in current
 ```
 
-- [ ] **Step 3: Run the tests and watch them fail**
+- [x] **Step 3: Run the tests and watch them fail**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/dagster_v3
@@ -227,7 +227,7 @@ uv run pytest tests/test_se_company_person_extractors_sql.py -q 2>&1 | tail -5
 
 Expected: a collection error — `ImportError: cannot import name 'ratsit' from 'dagster_v3.defs.se_company.person'`. The whole file errors, which is the correct "not written yet" signal.
 
-- [ ] **Step 4: Write `person/ratsit.py`**
+- [x] **Step 4: Write `person/ratsit.py`**
 
 Create `src/dagster_v3/defs/se_company/person/ratsit.py` with exactly this content:
 
@@ -457,7 +457,7 @@ se_company_person_suggestions_ratsit = define_person_suggestion_asset(
 )
 ```
 
-- [ ] **Step 5: Run the tests and watch them pass**
+- [x] **Step 5: Run the tests and watch them pass**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/dagster_v3
@@ -466,7 +466,7 @@ uv run pytest tests/test_se_company_person_extractors_sql.py -q 2>&1 | tail -3
 
 Expected: `15 passed` (the 12 that were there, plus the 3 new ones). The generic loops — sixteen columns, two `%(company_ids)s` bindings, the UNION ALL tombstone shape, the state-hash scope — now cover ratsit too; if one of them fails, the module's SQL is wrong, not the test.
 
-- [ ] **Step 6: Prove the definitions still load**
+- [x] **Step 6: Prove the definitions still load**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/dagster_v3
@@ -477,7 +477,7 @@ uv run dg list defs 2>&1 | rg se_company_person_suggestions
 
 Expected: `dg check defs` reports no errors, and the list shows four `se_company_person_suggestions_*` assets — the new one is picked up by defs auto-discovery as soon as the module exists, before Task 2 registers it in the job.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info
@@ -523,7 +523,7 @@ git log --oneline -1
 - Consumes: Task 1's module — `dagster_v3.defs.se_company.person.ratsit.se_company_person_suggestions_ratsit` (asset key `se_company_person_suggestions_ratsit`).
 - Produces: `assets.EXTRACTOR_SOURCES == ("bolagsverket", "esef", "wikidata", "ratsit")` and therefore `assets.EXTRACTOR_ASSET_NAMES == ("se_company_person_suggestions_bolagsverket", "se_company_person_suggestions_esef", "se_company_person_suggestions_wikidata", "se_company_person_suggestions_ratsit")`, which `jobs.py` reads for `se_company_person_extract_job`'s selection and `WEEKLY_RUN_CONFIG`, and `assets.py` reads for `se_company_person_normalize`'s `deps`. `roles.RATSIT_ROLE_LABEL_TO_CANONICAL_ROLE: Mapping[str, str]` and `roles.SOURCE_ROLE_MAPPINGS["ratsit"]`, both keyed on the lowercased, trimmed Swedish label, so `role_code_for("ratsit", role_original="VD", role_key=None) == "chief_executive_officer"`. Task 3 relies on the registration (the normalize hand-off reads `role_code_for`); Task 5 launches `se_company_person_suggestions_ratsit`.
 
-- [ ] **Step 1: Write the failing role tests**
+- [x] **Step 1: Write the failing role tests**
 
 Create `tests/test_se_company_person_roles.py`:
 
@@ -611,7 +611,7 @@ Then update the two existing pins.
     assert set(SOURCE_ROLE_MAPPINGS) == {"bolagsverket", "esef", "wikidata", "ratsit"}
 ```
 
-- [ ] **Step 2: Run them and watch them fail**
+- [x] **Step 2: Run them and watch them fail**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/dagster_v3
@@ -620,7 +620,7 @@ uv run pytest tests/test_se_company_person_roles.py tests/test_se_company_person
 
 Expected: the eight parametrized label cases fail (`assert None == 'chief_executive_officer'` — the passthrough returns the lowercased label, so `role_code_for("ratsit", role_original="VD")` is `'vd'` today), `test_extern_keeps_the_role_and_lives_in_the_data_instead` passes accidentally (both sides are passthroughs — leave it, it is a real pin once the map exists), `test_ratsit_has_a_map_and_no_roleless_labels` fails on the three-key set, and the two pin edits fail. `test_an_unmapped_ratsit_label_publishes_as_itself` passes now and must keep passing.
 
-- [ ] **Step 3: Add the Ratsit role map**
+- [x] **Step 3: Add the Ratsit role map**
 
 In `src/dagster_v3/defs/se_company/person/roles.py`, after the Wikidata block (line 52, `WIKIDATA_ROLELESS_PROPERTIES`) and before `SOURCE_ROLE_MAPPINGS`:
 
@@ -670,7 +670,7 @@ After:
     `aktuarie`).
 ```
 
-- [ ] **Step 4: Register the source**
+- [x] **Step 4: Register the source**
 
 `src/dagster_v3/defs/se_company/person/assets.py:42`. Before:
 
@@ -702,7 +702,7 @@ ratsit.py joined them 2026-09-11), the fold and the precedence export in slice 2
 
 Nothing else changes: `se_company_person_normalize`'s `deps`, `se_company_person_extract_job`'s selection and `WEEKLY_RUN_CONFIG` are all derived from `EXTRACTOR_ASSET_NAMES`.
 
-- [ ] **Step 5: Run the tests and watch them pass**
+- [x] **Step 5: Run the tests and watch them pass**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/dagster_v3
@@ -714,7 +714,7 @@ uv run pytest tests/test_se_company_person_roles.py tests/test_se_company_person
 
 Expected: all green. `test_se_company_person_jobs.py` passes unchanged — it asserts against `EXTRACTOR_ASSET_NAMES`, which now has four entries, and `test_the_normalize_asset_runs_after_the_extractors` proves the new asset became a parent of the normalize asset.
 
-- [ ] **Step 6: Retire the "reserved" wording**
+- [x] **Step 6: Retire the "reserved" wording**
 
 Four edits, all prose. No assertion changes.
 
@@ -808,7 +808,7 @@ siblings (controller ruling 2026-09-11). Do not touch that paragraph.
 
 Line 134: `selects the three extractors and` becomes `selects the four extractors and`.
 
-- [ ] **Step 7: Full person suite and definitions check**
+- [x] **Step 7: Full person suite and definitions check**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/dagster_v3
@@ -820,7 +820,7 @@ rg -n "reserved" src/dagster_v3/defs/se_company/person tests/test_se_company_per
 
 Expected: green; `dg check defs` clean; the `rg` finds no surviving "reserved" claim about ratsit (a hit in another context is fine — read it before deciding).
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info
@@ -868,7 +868,7 @@ git log --oneline -1
 
 Everything in this file runs as ONE `clickhouse-local` script per `join_use_nulls` setting: `_script_statements()` returns the statements, the module-scoped `sections` fixture pipes them through `clickhouse_local_command()` (a `clickhouse-local` binary if the machine has one, else `docker run --rm -i clickhouse/clickhouse-server:26.5 clickhouse-local`, else `pytest.skip`), and `_sections()` splits the stdout on the `@@name` marker rows. Do not invent another harness.
 
-- [ ] **Step 1: Add the source table to the fixture file**
+- [x] **Step 1: Add the source table to the fixture file**
 
 Append to `tests/fixtures/se_company_person_source_tables.sql`:
 
@@ -896,7 +896,7 @@ CREATE TABLE IF NOT EXISTS corpscout.se_ratsit_responsible_people (
 ) ENGINE = ReplacingMergeTree(normalized_at) ORDER BY (company_id, result_sha256, normalizer_version, person_index);
 ```
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 Five edits to `tests/test_se_company_person_extractors_clickhouse_local.py`.
 
@@ -1236,7 +1236,7 @@ def test_a_ratsit_slot_survives_a_rescan_and_a_dropped_person_is_tombstoned(sect
     assert sections["data_check_4"] == [["0"]]
 ```
 
-- [ ] **Step 3: Run it and watch it fail**
+- [x] **Step 3: Run it and watch it fail**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/dagster_v3
@@ -1245,7 +1245,7 @@ uv run pytest tests/test_se_company_person_extractors_clickhouse_local.py -q -m 
 
 Expected before Step 1's fixture DDL exists: every test in the file fails with the script's stderr in the assertion message — `Code: 60. DB::Exception: Unknown table expression identifier 'corpscout.se_ratsit_responsible_people'`. Run it in this order **once** (fixture first, then the test edits) and you will instead see the three new tests fail on missing sections; either failure is the right "not there yet" signal. If the file **skips** (`no clickhouse-local binary and no docker to run one`), start Docker — this task cannot be validated without it.
 
-- [ ] **Step 4: Run it green**
+- [x] **Step 4: Run it green**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/dagster_v3
@@ -1254,7 +1254,7 @@ uv run pytest tests/test_se_company_person_extractors_clickhouse_local.py -q -m 
 
 Expected: `26 passed` — the file's 9 tests plus the 4 new ones, each run twice (the module-scoped `sections` fixture is parametrized `join_use_nulls` 0 and 1); it collects 18 today. The numbers that matter: both settings give identical Ratsit rows (verified on `clickhouse/clickhouse-server:26.5`, 2026-09-11), and `data_check_4` is `0`, i.e. every row — tombstone included — satisfies `CONSTRAINT valid_data`.
 
-- [ ] **Step 5: Run the whole non-integration suite once**
+- [x] **Step 5: Run the whole non-integration suite once**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/dagster_v3
@@ -1264,7 +1264,7 @@ uv run pytest tests -q -m "not integration" 2>&1 | tail -5
 
 Expected: the same counts as on `main` plus this slice's new tests. A failure anywhere else is this slice's doing — the only shared objects touched are `EXTRACTOR_SOURCES` and `SOURCE_ROLE_MAPPINGS`, whose pins Task 2 updated.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info
@@ -1305,7 +1305,7 @@ git log --oneline -1
 - Consumes: nothing from the Dagster tasks at build time — this is the same repo, a different project. It is correct only once Task 5's fold has published Ratsit rows, which is why the smoke test lives in Task 5.
 - Produces: `MAIN_PERSON_SOURCES: readonly SePersonSource[] = ["bolagsverket", "esef", "wikidata", "ratsit", "reviewer"]` (the order is `PERSON_SOURCES`' own, minus `DRAFT_SOURCE`). Its only reader is `app/components/admin/se-people-table.tsx:148`, which passes it as the Source facet's `options`; `SOURCE_LABELS.ratsit = "Ratsit"` already exists, so no label work.
 
-- [ ] **Step 1: Record the baseline**
+- [x] **Step 1: Record the baseline**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/backoffice
@@ -1315,7 +1315,7 @@ CI=1 pnpm exec vitest run --reporter=dot 2>&1 | tail -20
 
 Expected on this branch (slice 1 left it here): `pnpm typecheck` prints only the three `The \`envFile\` option is deprecated` lines and exits 0; `Test Files  2 failed | 123 passed (125)` and `Tests  5 failed | 1335 passed (1340)`, the two failing files being `tests/queries.server.test.ts` and `tests/admin-se-company-esef.test.tsx`. Under load a run can show extra timeout failures; **the non-flaky numbers are 125 files and 1,340 tests** — this task changes neither.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 `tests/se-person-fields.test.ts`, lines 47-50. Before:
 
@@ -1337,7 +1337,7 @@ After:
     ]);
 ```
 
-- [ ] **Step 3: Run it and watch it fail**
+- [x] **Step 3: Run it and watch it fail**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/backoffice
@@ -1346,7 +1346,7 @@ CI=1 pnpm exec vitest run tests/se-person-fields.test.ts 2>&1 | tail -12
 
 Expected: one failing assertion, `- "ratsit"` missing from the received array.
 
-- [ ] **Step 4: Let Ratsit through the filter**
+- [x] **Step 4: Let Ratsit through the filter**
 
 `app/lib/se-person-fields.ts`, lines 44-50. Before:
 
@@ -1372,7 +1372,7 @@ export const MAIN_PERSON_SOURCES: readonly SePersonSource[] = PERSON_SOURCES.fil
 );
 ```
 
-- [ ] **Step 5: Run it green, then the whole suite and the typecheck**
+- [x] **Step 5: Run it green, then the whole suite and the typecheck**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/backoffice
@@ -1383,7 +1383,7 @@ CI=1 pnpm exec vitest run --reporter=dot 2>&1 | tail -20
 
 Expected: the file passes; typecheck exits 0 with only the deprecation lines; the suite is still 125 files / 1,340 tests with the same two pre-existing failing files. **A third failing file means this change broke something** — the only other reader of `MAIN_PERSON_SOURCES` is the people table's facet, so look there first.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info
@@ -1420,7 +1420,7 @@ git log --oneline -1
 - Consumes: Tasks 1-4, merged to `main` and deployed. Asset names: `se_company_person_suggestions_ratsit` (`ExtractConfig`: `execute`, `company_ids`, `max_companies`, `since`, `page_size` ≤ 20,000), `se_company_person_normalize` (`PersonNormalizeConfig`: `changed_only`, `company_ids`, `page_size`), `se_company_person_fold` (64 static partitions `bucket_00`..`bucket_63`, `PersonFoldConfig`: `changed_only`, `page_size`; pool `se_company_person_fold`, limit 1).
 - Produces: the Shipped record the next slice reads.
 
-- [ ] **Step 1: Review, merge, deploy**
+- [x] **Step 1: Review, merge, deploy**
 
 1. Review the branch end to end: `git -C /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info diff main...se-ratsit-source`.
 2. The owner merges to `main`. If the main checkout sits on another branch, merge through a worktree that has `main` checked out (memory `se-worktree-deploy-recipe`).
@@ -1453,7 +1453,7 @@ ssh dagster "curl -s -H 'content-type: application/json' --data-binary @- http:/
 
 Expected: the list contains `se_company_person_suggestions_ratsit` beside the three older extractors, `se_company_person_normalize`, `se_company_person_fold`, `se_company_person_fold_companies` and `se_company_person_precedence_clickhouse`.
 
-- [ ] **Step 2: Confirm prod's state before anything runs**
+- [x] **Step 2: Confirm prod's state before anything runs**
 
 ```bash
 cat > /tmp/instigators.json <<'JSON'
@@ -1528,7 +1528,7 @@ Expected (spec section 2, prod 2026-09-10): (a) `ratsit_rows` **0**; (b) no `rat
 
 Record (a), (b) and (c): the AFTER steps subtract from these numbers, not from the spec's.
 
-- [ ] **Step 3: Preview the extract**
+- [x] **Step 3: Preview the extract**
 
 The asset's default is a preview (`execute: false`): the same change scan, counted and not written.
 
@@ -1559,7 +1559,7 @@ ssh dagster "curl -s -H 'content-type: application/json' --data-binary @- http:/
 
 Expected: `execute` false, `companies` ≈ **236,800** (Step 2(c)'s company count — a company whose Ratsit rows are all nameless appears on NEITHER side of the state hash and is never visited), `pages` **24** (ceiling of companies / 10,000), `candidates` ≈ **277,600** (Step 2(c)'s live rows; every company is new to this source, so there are no tombstones yet), `inserted` **0**, `stopped_at_cap` false. **If `candidates` is under 200,000 or over 400,000, stop and reconcile against Step 2(c) before writing anything.**
 
-- [ ] **Step 4: Execute the extract**
+- [x] **Step 4: Execute the extract**
 
 The same launch with the gate open — only `"execute": true` differs.
 
@@ -1572,7 +1572,7 @@ ssh dagster "curl -s -H 'content-type: application/json' --data-binary @- http:/
 
 Poll with `/tmp/run.json` until `SUCCESS`, then re-read the metadata. Expected: `execute` true, `companies` and `candidates` as in the preview, `inserted` **equal to `candidates`**, `stopped_at_cap` false (the cap is 5,000,000 companies). Record the wall time — the basic-info Ratsit run wrote 863,504 rows over 87 pages in 4 minutes, and this one writes a third of that through a heavier select, so single-digit minutes is unremarkable and half an hour is not alarming.
 
-- [ ] **Step 5: Read out the suggestions and prove convergence**
+- [x] **Step 5: Read out the suggestions and prove convergence**
 
 ```bash
 ssh companycollect 'docker exec -i clickhouse-clickhouse-1 clickhouse-client --database corpscout --format PrettyCompact' <<'SQL'
@@ -1611,7 +1611,7 @@ Expected: `rows = live_rows` ≈ 277,600 and `tombstones` **0** (nothing was sto
 
 Then re-run the **preview** of Step 3. Expected: `companies` **0** — the state hash converges in one pass. A non-zero count means the two sides of the hash disagree about what is live; find out which before normalizing.
 
-- [ ] **Step 6: Normalize**
+- [x] **Step 6: Normalize**
 
 ```bash
 cat > /tmp/person-normalize.json <<'JSON'
@@ -1639,7 +1639,7 @@ SQL
 
 Expected: `ok` dominant; the role codes are the five catalog codes of spec 4.3 plus `aktuarie` as itself (2 rows) — **no `vd`, `prokurist` written as a raw label where the map should have fired**, which would mean Task 2's map did not deploy.
 
-- [ ] **Step 7: Back-fill the fold over all 64 buckets**
+- [x] **Step 7: Back-fill the fold over all 64 buckets**
 
 `se_company_person_fold` is `StaticPartitionsDefinition(["bucket_00" … "bucket_63"])` with `BackfillPolicy.multi_run(max_partitions_per_run=1)` and pool `FOLD_POOL = "se_company_person_fold"` (instance default limit 1), so the backfill produces one run per partition and the pool serializes them. A backfill carries no run config, which is what the defaults want: `changed_only: true` (the fold's watermark sees the newer normalized rows), `page_size: 20000`.
 
@@ -1687,7 +1687,7 @@ Expected per bucket (`FoldCounts.as_metadata` plus the asset's `bucket`, `change
 
 Expect 64/64 `SUCCESS`. Person slice 2's first fold ran ~30 s per bucket over 578k companies behind this same pool (~30 min for all 64); this one folds fewer companies but writes more history rows, so budget 30-90 minutes and record the real total.
 
-- [ ] **Step 8: Read out the entity (the spec 4.6 numbers)**
+- [x] **Step 8: Read out the entity (the spec 4.6 numbers)**
 
 Also record (added by the final-review fix wave): the fold metadata's `withdrawn` and `reactivated`
 sums over the 64 runs (non-zero `withdrawn` is expected — a set re-keys when Ratsit's name is its most
@@ -1752,7 +1752,7 @@ Acceptance, against Step 2(a):
 - In (f) every row must show `text_source = 'ratsit'`: precedence 1000 beats Bolagsverket's 900, so the Ratsit spelling is published. A `bolagsverket` here means the precedence export or the fold read something else — stop and check Step 2(d). The `birth_year` must be filled and `member_sources` must list both sources for the same person.
 - (e) is dominated by `created` and `updated`; a large `withdrawn` count would mean the fold retired people it should have kept — investigate before the serving refresh.
 
-- [ ] **Step 9: Let the serving refresh land**
+- [x] **Step 9: Let the serving refresh land**
 
 `corpscout.se_companies_serving` is a refreshable materialized view (hourly); `has_people` is `company_id IN (se_company_person FINAL WHERE active = 1)`, so it grows by the first-person companies. There are no per-source person flags for Ratsit — `people_bolagsverket` and `people_esef` are the only two, and neither changes (spec section 6).
 
@@ -1768,7 +1768,7 @@ SQL
 
 Expected: `status` `Scheduled`, an `exception` that is empty, and `companies_with_people` up by about the same 105,759. Do **not** trigger the view by hand; if the refresh ran over a half-folded table it still succeeds and the next hour carries the rest (slice 1 saw exactly that).
 
-- [ ] **Step 10: Smoke the backoffice on the owner's dev server**
+- [x] **Step 10: Smoke the backoffice on the owner's dev server**
 
 The backoffice is not deployed; the owner runs `pnpm dev` from the **main checkout** at `http://localhost:5183` (memory `backoffice-runs-locally`). After the merge, that checkout carries Task 4.
 
@@ -1782,7 +1782,7 @@ Expected `200` twice. Then look at both pages in a browser:
 - `/admin/se/people` — the Source select now offers **Ratsit** (five options: Bolagsverket, ESEF, Wikidata, Ratsit, Reviewer) and picking it returns rows.
 - `/admin/se/company/<id>/people` for the Step 8(f) company — the person shows the Ratsit spelling, a birth year, both sources, and the `data` block renders the Ratsit keys (`age`, `identity_available`, `profile_url`, `display_name_raw`, `ratsit_person_id`, `external`) as JSON. The tab renders `data` generically, so nothing should look broken; if a key renders as `null`, `mapFilter` did not do its job.
 
-- [ ] **Step 11: Record the shipped slice and tick the plan**
+- [x] **Step 11: Record the shipped slice and tick the plan**
 
 1. Append a Shipped record under spec section 8 item 2, in the house style of item 1 — the plan file, the merge commit, what shipped, and the prod numbers from Steps 2, 4, 5, 6, 7, 8 and 9: the extract's `companies`/`candidates`/`inserted` and wall time, the convergence preview, the suggestion readout (live rows, birth years, slot kinds, role labels), the normalize counts and role codes, the backfill id with its wall time and summed metadata, the entity before → after for every line of Step 2(a), the companies gaining a first person, the `text_source` split, `has_people` before → after, and any ruling made on the way. Section 8 item 2 reads:
 

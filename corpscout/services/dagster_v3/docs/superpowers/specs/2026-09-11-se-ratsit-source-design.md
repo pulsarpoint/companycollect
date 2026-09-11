@@ -419,5 +419,35 @@ appended below each item.
    before execute.
 2. The Ratsit person extractor, roles, wording, backoffice filter; prod extract, normalize,
    fold.
+   Shipped 2026-09-11 (plan `2026-09-11-se-ratsit-2-people.md`, main 3f1c39bc): `person/ratsit.py`
+   on the sibling shape (current report per company inside the basic-info universe, nameless
+   rows skipped, slot = the profile token with `token:role` for a repeated token and `idx:<n>`
+   for a repeated (token, role) pair or a missing URL, birth year from the URL date, fiscal year
+   from the scan date, `data` via `mapFilter`, `source_record_id` without the report hash so a
+   re-scan with unchanged people moves no state hash), the Ratsit role map, the wording, a
+   clickhouse-local proof (28 cases incl. an out-of-universe company and a re-scan tombstone),
+   and the People list's Source filter offering Ratsit. Reviews: four task gates clean; the
+   final review's findings (slot collision on a repeated pair, re-scan churn through the report
+   hash, weak fiscal-year proof) fixed in one wave; the double-surname split and the call-name
+   gap recorded as identity limits (section 6). Prod: deploy of main 3f1c39bc (second attempt —
+   the deploy worktree had lost its `.env` to the tmp cleanup); preview 223,640 companies /
+   277,649 candidates, execute run 62531553 wrote 277,649 rows in a minute, second preview 0
+   (converged); suggestions: 277,592 birth years, 0 role keys, 62 role-qualified and 6 `idx:`
+   slots, nine labels, 63,508 external, 0 malformed; normalize 277,649 rows (277,569 ok, 24
+   partial, 56 no_person), role codes CEO 196,944 / legal representative 46,627 / deputy CEO
+   24,945 / other representative 7,937 / procurist 1,195 / aktuarie 1; fold backfill nlffzefp
+   64/64 in 71 min (07:16–08:27 UTC): considered 223,578 companies, created 239,711, updated
+   42,119, withdrawn 44,926 (re-keying to the more complete Ratsit name, as expected),
+   reactivated 0, 2 sets split by birth year. Entity before → after: active persons 1,126,402 →
+   1,321,187; companies with a person 578,289 → 677,256 (98,967 gained their first); rows with a
+   birth year 385 → 277,904; multi-source persons 154 → 82,944 (82,586 Ratsit + Bolagsverket);
+   Ratsit spelling wins on all 277,538 Ratsit-bearing persons. The 08:45 serving refresh after the backfill succeeded in 16 min (no exception) and `has_people` rose from 578,289 to 677,256, equal to the entity's companies with a person. Identity gaps
+   measured (the reason for the next spec): 32,390 pairs in 31,360 companies where a Ratsit-only
+   person carries the full given names and a Bolagsverket- or ESEF-only person the call name
+   (`Erik Bo Bengtsson` beside `Bo Bengtsson`; 176 of them ESEF, e.g. Swedbank 5020177753 with
+   89 Ratsit and 50 ESEF persons and only 7 merged), plus 3,793 exact-same-display-name pairs in
+   3,666 companies from the double-surname split — the owner ruled that cross-source identity
+   goes to an LLM matching phase after normalization, precedence unchanged. Weeklies stayed
+   STOPPED.
 3. Ratsit addresses: the postal-town dictionary, the establishments as `workplace`, per-slot
    tombstones; prod re-extract with `since`, normalize, warm, fold.
