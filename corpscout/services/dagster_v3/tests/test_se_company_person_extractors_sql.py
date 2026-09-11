@@ -246,21 +246,28 @@ def test_wikidata_slot_is_the_link_record_id_and_the_link_is_orgnr_or_lei() -> N
 
 
 def test_ratsit_slot_is_the_profile_token_with_role_and_index_fallbacks() -> None:
-    """Spec 2026-09-11 section 4.2. The slot is Ratsit's own person id -- the trailing token
-    of profile_url, which the same person carries at every company -- so a re-scan rewrites
-    the row in place instead of retiring the slot and inventing a new one. The 31 (company,
-    token) pairs that carry two rows (a `Delgivningsbar person` who is also VD) get the role
-    appended; a named row without a URL falls back to its person_index."""
+    """Spec 2026-09-11 section 4.2 (fix F1). The slot is Ratsit's own person id -- the
+    trailing token of profile_url, which the same person carries at every company -- so a
+    re-scan rewrites the row in place instead of retiring the slot and inventing a new one.
+    The 31 (company, token) pairs that carry two rows (a `Delgivningsbar person` who is also
+    VD) get the role appended; a report that repeats BOTH the token and the lowercased role
+    would still collide under that qualifier alone, so those rows fall all the way back to
+    idx:<person_index>, exactly as a named row without a URL does."""
     columns = ratsit.RATSIT_COLUMN_SQL
     assert columns["slot"] == (
         "multiIf("
         "r.token = '', concat('idx:', toString(r.person_index)), "
+        "count() OVER (PARTITION BY r.company_id, r.token, lowerUTF8(trim(r.role_raw))) > 1, "
+        "concat('idx:', toString(r.person_index)), "
         "count() OVER (PARTITION BY r.company_id, r.token) > 1, "
         "concat(r.token, ':', lowerUTF8(trim(r.role_raw))), "
         "r.token)"
     )
+    # source_record_id no longer carries the report hash (fix F2): se_ratsit_company can
+    # recover the report by company and stamp, so a re-scan whose hash changes for any
+    # reason must not re-extract byte-identical people.
     assert columns["source_record_id"] == (
-        "concat('ratsit:', toString(r.result_sha256), ':', toString(r.person_index))"
+        "concat('ratsit:', r.company_id, ':', toString(r.person_index))"
     )
     # Ratsit delivers one name string; the normalizer splits it.
     assert columns["full_name"] == "nullIf(trim(r.name_raw), '')"

@@ -18,8 +18,9 @@ Claims a fake client cannot settle:
    extractors wrote and gives the expected parse statuses, the tombstone included.
 8. The Ratsit branch really picks the newest report per company (an older scan's people must
    not leak), drops a company outside the basic-info universe, skips the nameless rows, gives
-   the two-row token a role-qualified slot and the URL-less row an `idx:` slot, and keeps a
-   slot stable across a re-scan while tombstoning the one the new report dropped.
+   the two-row token a role-qualified slot and the URL-less row an `idx:` slot, falls all the
+   way back to `idx:` when a report repeats BOTH the token and the role too (fix F1), and
+   keeps a slot stable across a re-scan while tombstoning the one the new report dropped.
 """
 
 import subprocess
@@ -70,20 +71,28 @@ WANTED_CREATES = (
 COMPANY_BV = "5561552760"
 COMPANY_WD = "5560125220"
 COMPANY_OUTSIDE = "5569999999"
-# Ratsit (spec 2026-09-11 section 4.5). Two companies: the first exercises the slot rules and
-# the re-scan, the second proves an older report cannot leak.
+# Ratsit (spec 2026-09-11 section 4.5). Three companies: the first exercises the slot rules
+# and the re-scan, the second proves an older report cannot leak, the third proves fix F1's
+# (token, role) fallback.
 COMPANY_RATSIT_A = "5565550001"
 COMPANY_RATSIT_B = "5565550002"
 # Scanned by Ratsit, absent from se_company_basic_info: the universe join must drop it.
 COMPANY_RATSIT_OUTSIDE = "5565550003"
+# Two rows share BOTH the token and the lowercased role -- the role qualifier alone would
+# still collide (both would render `dup555:prokurist`) -- so both fall back to
+# idx:<person_index>; a third row shares the token under a different role and keeps the
+# role-qualified slot (fix F1).
+COMPANY_RATSIT_C = "5565550004"
 RATSIT_URL_A = "https://www.ratsit.se/19800101-Anna_Ek/abc123"
 RATSIT_URL_B = "https://www.ratsit.se/19751212-Cecilia_Nord/xyz789"
 RATSIT_URL_OUTSIDE = "https://www.ratsit.se/19700707-Nils_Utanfor/out999"
+RATSIT_URL_C = "https://www.ratsit.se/19900101-Dup_Person/dup555"
 RATSIT_REPORT_A1 = "a" * 64        # the first scan of company A
 RATSIT_REPORT_A2 = "d" * 64        # its re-scan, one person short
 RATSIT_REPORT_B_OLD = "b" * 64     # company B's superseded scan
 RATSIT_REPORT_B = "c" * 64         # company B's current report
 RATSIT_REPORT_OUTSIDE = "e" * 64   # the out-of-universe company's report
+RATSIT_REPORT_C = "f" * 64         # company C's (token, role)-repeating report
 RATSIT_OUTSIDE_CHECK_SQL = (
     f"SELECT count() FROM {tables.QUALIFIED_SUGGESTION_TABLE} FINAL "
     f"WHERE company_id = '{COMPANY_RATSIT_OUTSIDE}'"
@@ -281,7 +290,7 @@ def _script_statements() -> list[str]:
     )
     ratsit_insert = _insert(
         ratsit.ratsit_select_sql(),
-        [COMPANY_RATSIT_A, COMPANY_RATSIT_B, COMPANY_RATSIT_OUTSIDE],
+        [COMPANY_RATSIT_A, COMPANY_RATSIT_B, COMPANY_RATSIT_C, COMPANY_RATSIT_OUTSIDE],
         extractor_version=ratsit.RATSIT_PERSON_EXTRACTOR_VERSION,
         normalizer_version=RATSIT_NORMALIZER_VERSION,
     )
@@ -315,6 +324,7 @@ def _script_statements() -> list[str]:
         f"INSERT INTO corpscout.se_company_basic_info (company_id) VALUES ('{COMPANY_WD}')",
         f"INSERT INTO corpscout.se_company_basic_info (company_id) VALUES ('{COMPANY_RATSIT_A}')",
         f"INSERT INTO corpscout.se_company_basic_info (company_id) VALUES ('{COMPANY_RATSIT_B}')",
+        f"INSERT INTO corpscout.se_company_basic_info (company_id) VALUES ('{COMPANY_RATSIT_C}')",
         "INSERT INTO corpscout.esef_entity_registry_map (lei, country_iso2, registry_id_raw, "
         f"registry_id, match_source, link_status) VALUES ('{LEI}', 'SE', '{COMPANY_BV}', "
         f"'{COMPANY_BV}', 'gleif', 'register_verified')",
@@ -407,7 +417,7 @@ def _script_statements() -> list[str]:
         # --- Ratsit (spec 2026-09-11 section 4.5) ----------------------------------
         # Company A's first scan: a VD with a dated URL, a Delgivningsbar person sharing
         # that token, a nameless GDPR row and a named row with no URL at all.
-        _ratsit_report(COMPANY_RATSIT_A, RATSIT_REPORT_A1, "2026-09-09 00:00:00", "2026-08-30"),
+        _ratsit_report(COMPANY_RATSIT_A, RATSIT_REPORT_A1, "2026-09-09 00:00:00", "2024-08-30"),
         _ratsit_person(
             COMPANY_RATSIT_A, RATSIT_REPORT_A1, 0, name="Anna Ek", role="VD",
             url=RATSIT_URL_A, age=45, display_raw="Anna Ek, 45 år",
@@ -438,6 +448,25 @@ def _script_statements() -> list[str]:
         _ratsit_person(
             COMPANY_RATSIT_B, RATSIT_REPORT_B, 0, name="Cecilia Nord", role="Prokurist",
             url=RATSIT_URL_B, age=51, display_raw="Cecilia Nord, 51 år",
+            normalized_at="2026-09-09 00:00:00",
+        ),
+        # Company C (fix F1): two rows share BOTH the token and the lowercased role, so the
+        # role qualifier alone would still collide -- both fall back to idx:<person_index>. A
+        # third row shares the token under a different role and keeps the role-qualified slot.
+        _ratsit_report(COMPANY_RATSIT_C, RATSIT_REPORT_C, "2026-09-09 00:00:00", "2026-08-30"),
+        _ratsit_person(
+            COMPANY_RATSIT_C, RATSIT_REPORT_C, 0, name="Person Zero", role="Prokurist",
+            url=RATSIT_URL_C, age=40, display_raw="Person Zero",
+            normalized_at="2026-09-09 00:00:00",
+        ),
+        _ratsit_person(
+            COMPANY_RATSIT_C, RATSIT_REPORT_C, 1, name="Person One", role="Prokurist",
+            url=RATSIT_URL_C, age=41, display_raw="Person One",
+            normalized_at="2026-09-09 00:00:00",
+        ),
+        _ratsit_person(
+            COMPANY_RATSIT_C, RATSIT_REPORT_C, 2, name="Person Two", role="VD",
+            url=RATSIT_URL_C, age=42, display_raw="Person Two",
             normalized_at="2026-09-09 00:00:00",
         ),
         # Scanned like the others, but the entity has never heard of it.
@@ -646,8 +675,10 @@ def test_the_normalize_hand_off_gives_the_expected_parse_statuses(sections) -> N
 
 
 def test_the_ratsit_rows_are_the_current_reports_named_people(sections) -> None:
-    # Two companies, not three: COMPANY_RATSIT_OUTSIDE is outside the basic-info universe.
-    assert sections["ratsit_scope_1"] == [[COMPANY_RATSIT_A], [COMPANY_RATSIT_B]]
+    # Three companies, not four: COMPANY_RATSIT_OUTSIDE is outside the basic-info universe.
+    assert sections["ratsit_scope_1"] == [
+        [COMPANY_RATSIT_A], [COMPANY_RATSIT_B], [COMPANY_RATSIT_C],
+    ]
     rows = {
         row["slot"]: row
         for row in _rows(sections, "ratsit_rows_1")
@@ -661,10 +692,10 @@ def test_the_ratsit_rows_are_the_current_reports_named_people(sections) -> None:
     assert vd["birth_year"] == "1980"                    # from the URL's 19800101
     assert vd["role_original"] == "VD"
     assert vd["role_key"] == "\\N"                       # Ratsit has no machine code
-    assert vd["fiscal_year"] == "2026"                   # source_date_modified 2026-08-30
+    assert vd["fiscal_year"] == "2024"                   # source_date_modified 2024-08-30
     assert vd["wikidata_id"] == vd["role_from"] == vd["role_to"] == "\\N"
     assert vd["document_ref"] == "\\N"
-    assert vd["source_record_id"] == f"ratsit:{RATSIT_REPORT_A1}:0"
+    assert vd["source_record_id"] == f"ratsit:{COMPANY_RATSIT_A}:0"
     assert vd["data"] == RATSIT_DATA_VD
     # The same token twice in one report: both slots carry the lowercased role.
     assert rows["abc123:delgivningsbar person"]["role_original"] == "Delgivningsbar person"
@@ -700,15 +731,37 @@ def test_only_the_newest_ratsit_report_reaches_the_suggestion_table(sections) ->
     assert row["slot"] == "xyz789"                       # a token seen once keeps it bare
     assert row["full_name"] == "Cecilia Nord"
     assert row["role_original"] == "Prokurist"
-    assert row["source_record_id"] == f"ratsit:{RATSIT_REPORT_B}:0"
+    assert row["source_record_id"] == f"ratsit:{COMPANY_RATSIT_B}:0"
     # No source_date_modified on the current report: the role year is the scan's stamp.
     assert row["fiscal_year"] == "2026"
 
 
+def test_a_repeated_token_and_role_falls_back_to_the_person_index(sections) -> None:
+    """Fix F1. Company C's current report repeats the SAME token under the SAME role twice
+    (both `dup555`, both `Prokurist`): the role qualifier alone would still collide (both
+    would render the identical `dup555:prokurist`), so those two rows fall all the way back
+    to idx:<person_index>. A third row shares the token under a different role and keeps the
+    ordinary role-qualified slot -- there is no bare `dup555` slot at all, and the company
+    converges in the same single pass as A and B (spec fix F1, proved on ratsit_scope_2)."""
+    rows = {
+        row["slot"]: row
+        for row in _rows(sections, "ratsit_rows_1")
+        if row["company_id"] == COMPANY_RATSIT_C
+    }
+    assert set(rows) == {"idx:0", "idx:1", "dup555:vd"}
+    assert rows["idx:0"]["full_name"] == "Person Zero"
+    assert rows["idx:0"]["role_original"] == "Prokurist"
+    assert rows["idx:1"]["full_name"] == "Person One"
+    assert rows["idx:1"]["role_original"] == "Prokurist"
+    assert rows["dup555:vd"]["full_name"] == "Person Two"
+    assert rows["dup555:vd"]["role_original"] == "VD"
+    assert sections["ratsit_scope_2"] == []              # the company converges in one pass
+
+
 def test_a_ratsit_slot_survives_a_rescan_and_a_dropped_person_is_tombstoned(sections) -> None:
     """The token is Ratsit's own person id, so a re-scan rewrites the person's row in place
-    (new source_record_id, same slot) while the slot the new report no longer delivers gets
-    the shared per-slot tombstone."""
+    (a later suggested_at and the same source_record_id, same slot) while the slot the new
+    report no longer delivers gets the shared per-slot tombstone."""
     assert sections["ratsit_scope_3"] == [[COMPANY_RATSIT_A]]
     before = {
         r["slot"]: r
@@ -723,7 +776,11 @@ def test_a_ratsit_slot_survives_a_rescan_and_a_dropped_person_is_tombstoned(sect
     assert set(rows) == set(before)
     survivor = rows["abc123:vd"]
     assert survivor["full_name"] == "Anna Ek"
-    assert survivor["source_record_id"] == f"ratsit:{RATSIT_REPORT_A2}:0"
+    # source_record_id no longer carries the report hash (fix F2), so it is unchanged by the
+    # re-scan even though the report hash itself did (RATSIT_REPORT_A1 -> RATSIT_REPORT_A2).
+    assert survivor["source_record_id"] == f"ratsit:{COMPANY_RATSIT_A}:0"
+    assert survivor["source_record_id"] == before["abc123:vd"]["source_record_id"]
+    # The age change (45 -> 46) still moves the state hash, so the row IS rewritten.
     assert survivor["suggested_at"] > before["abc123:vd"]["suggested_at"]
     tombstone = rows["idx:3"]
     assert tombstone["data"] == "{}"

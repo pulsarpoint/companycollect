@@ -11,13 +11,23 @@ THE SLOT IS RATSIT'S OWN PERSON ID: the trailing token of profile_url
 (https://www.ratsit.se/<YYYYMMDD>-<Name>_<Town>/<token>), which the same person carries at
 every company -- 191,434 distinct tokens over 277,646 rows on 2026-09-10. Keeping it as the
 slot means a re-scan rewrites the person's row in place instead of tombstoning it and
-inventing a new one, which is what the fold's slot-keyed reviewer rules need. Two
+inventing a new one, which is what the fold's slot-keyed reviewer rules need. That stability
+holds only while the person's row count in the report stays the same: gaining or losing a
+second row for a token moves its slot between the bare token `T` and the qualified `T:role`,
+which tombstones whichever of the two the newest report no longer produces. Three
 exceptions: 31 (company, token) pairs carry two rows (a `Delgivningsbar person` who is also
-VD or Vice VD), so a token a report repeats is qualified with the lowercased role; and a
-named row with no URL falls back to `idx:<person_index>`.
+VD or Vice VD), so a token a report repeats is qualified with the lowercased role; a report
+that repeats both the token AND the lowercased role (the qualifier would still collide) falls
+back to `idx:<person_index>` instead; and a named row with no URL falls back to
+`idx:<person_index>` too.
 
 23,432 rows are nameless -- GDPR-limited evidence: a role, no name, no URL. They carry no
-identity, so the live branch drops them and they never become suggestions.
+identity, so the live branch drops them and they never become suggestions. Every row the
+live branch keeps has a name, so `identity_available` is constant `true` on every live row --
+migration 000346's CONSTRAINT se_ratsit_responsible_identity forces it whenever `name` is not
+NULL for normalizer_version ratsit-normalizer-v2 -- and `data` simply keeps it as the
+source's own delivered flag rather than recomputing something the constraint already
+guarantees.
 
 THE UNIVERSE IS se_company_basic_info, as it is for bolagsverket.py, esef.py and
 wikidata.py: this entity's universe is the folded company, and a Ratsit company the entity
@@ -53,6 +63,13 @@ TOKEN_SQL = "extract(ifNull(p.profile_url, ''), '/([A-Za-z0-9_-]+)$')"
 # a nullability risk. ClickHouse computes windows after WHERE, so the count covers the named
 # rows only -- the same set the slot is drawn from.
 TOKEN_ROWS_SQL = "count() OVER (PARTITION BY r.company_id, r.token)"
+# The same window, partitioned finer by the lowercased role too: a report that repeats one
+# (token, role) pair would still collide under TOKEN_ROWS_SQL's qualifier alone (both rows
+# render the identical `token:role`), so this partition is checked FIRST and falls all the
+# way back to the person index instead.
+TOKEN_ROLE_ROWS_SQL = (
+    "count() OVER (PARTITION BY r.company_id, r.token, lowerUTF8(trim(r.role_raw)))"
+)
 
 # The same universe join bolagsverket.py uses, against the report rather than the people
 # rows: one INNER JOIN per statement, and ratsit_current_sql can reuse the identical text.
@@ -67,13 +84,15 @@ RATSIT_COLUMN_SQL: dict[str, str] = {
     "slot": (
         "multiIf("
         "r.token = '', concat('idx:', toString(r.person_index)), "
+        f"{TOKEN_ROLE_ROWS_SQL} > 1, concat('idx:', toString(r.person_index)), "
         f"{TOKEN_ROWS_SQL} > 1, "
         "concat(r.token, ':', lowerUTF8(trim(r.role_raw))), "
         "r.token)"
     ),
-    "source_record_id": (
-        "concat('ratsit:', toString(r.result_sha256), ':', toString(r.person_index))"
-    ),
+    # The report is recoverable from se_ratsit_company by company and stamp, so the id no
+    # longer carries the report hash: a re-scan whose report hash changes for any reason
+    # (address, financials, ...) must not re-extract byte-identical people (spec fix F2).
+    "source_record_id": "concat('ratsit:', r.company_id, ':', toString(r.person_index))",
     # Ratsit delivers one name string; the normalizer splits it.
     "full_name": "nullIf(trim(r.name_raw), '')",
     "first_name": NULL_SQL["first_name"],
