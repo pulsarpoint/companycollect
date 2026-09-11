@@ -24,6 +24,7 @@ Both `join_use_nulls` settings run: none of these statements joins, so the param
 a guard against a future one, not a live risk.
 """
 
+import hashlib
 import json
 import subprocess
 from datetime import UTC, date, datetime
@@ -34,14 +35,16 @@ import pytest
 
 from dagster_v3.defs.se_company.person import batch, tables
 from dagster_v3.defs.se_company.person.assets import export_precedence
-from dagster_v3.defs.se_company.person.fold import person_key
+from dagster_v3.defs.se_company.person.fold import MATCH_THRESHOLD, person_key
 from dagster_v3.defs.se_company.person.normalize import RAW_ROW_COLUMNS, normalized_row
+from dagster_v3.defs.se_company.person.normalize_se import NORMALIZER_VERSION
 from tests.clickhouse_local import clickhouse_local_command
 
 pytestmark = pytest.mark.integration
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
 MIGRATION_FILE = "000396_corpscout_se_company_person_entity.up.sql"
+MATCH_MIGRATION_FILE = "000399_corpscout_se_company_person_match.up.sql"
 
 COMPANY = "5561552760"          # two persons: Anna Svensson (2 members) and Håkan Öberg
 HIDE_CO = "5560000003"          # one person, hidden by a rule in round 3
@@ -97,25 +100,27 @@ def _literal(value: Any) -> str:
 
 
 def _schema_statements() -> list[str]:
-    """CREATE DATABASE plus the six CREATE TABLEs of 000396 -- never its SYSTEM STOP/START
-    VIEW or ALTER TABLE ... MODIFY QUERY, which name se_companies_serving, a view this
-    fixture does not build. 000396 declares the main table under its build name and 000398
-    renames the DEPLOYED table without touching that file, so the rename is replayed here:
-    batch.py reads tables.QUALIFIED_MAIN_TABLE, which is the renamed name."""
-    text = (MIGRATIONS_DIR / MIGRATION_FILE).read_text(encoding="utf-8")
+    """CREATE DATABASE plus the six CREATE TABLEs of 000396 and the two of 000399 -- never
+    000396's SYSTEM STOP/START VIEW or ALTER TABLE ... MODIFY QUERY, which name
+    se_companies_serving, a view this fixture does not build. 000396 declares the main table
+    under its build name and 000398 renames the DEPLOYED table without touching that file, so
+    the rename is replayed here: batch.py reads tables.QUALIFIED_MAIN_TABLE, which is the
+    renamed name."""
     statements: list[str] = []
-    for raw in text.split(";"):
-        statement = "\n".join(
-            line for line in raw.splitlines() if not line.strip().startswith("--")
-        ).strip()
-        if statement.upper().startswith("CREATE DATABASE") or (
-            "CREATE TABLE IF NOT EXISTS corpscout.se_company_person_" in statement
-        ):
-            statements.append(
-                statement.replace(
-                    "corpscout.se_company_person_v2", tables.QUALIFIED_MAIN_TABLE
+    for name in (MIGRATION_FILE, MATCH_MIGRATION_FILE):
+        text = (MIGRATIONS_DIR / name).read_text(encoding="utf-8")
+        for raw in text.split(";"):
+            statement = "\n".join(
+                line for line in raw.splitlines() if not line.strip().startswith("--")
+            ).strip()
+            if statement.upper().startswith("CREATE DATABASE") or (
+                "CREATE TABLE IF NOT EXISTS corpscout.se_company_person_" in statement
+            ):
+                statements.append(
+                    statement.replace(
+                        "corpscout.se_company_person_v2", tables.QUALIFIED_MAIN_TABLE
+                    )
                 )
-            )
     return statements
 
 
@@ -130,8 +135,12 @@ _QUERY_COLUMNS: dict[str, tuple[str, ...]] = {
     batch.current_main_rows_sql(): batch.MAIN_SELECT_COLUMNS,
     batch.active_rules_sql(): batch.RULE_SELECT_COLUMNS,
     batch.company_precedence_sql(): ("company_id", "source", "precedence"),
+    batch.match_watermarks_sql(): ("company_id", "matched_at"),
+    batch.match_pairs_sql(): batch.MATCH_PAIR_SELECT_COLUMNS,
 }
-_DATETIME_COLUMNS = frozenset({"normalized_at", "folded_at", "created_at", "decided_at"})
+_DATETIME_COLUMNS = frozenset(
+    {"normalized_at", "folded_at", "created_at", "decided_at", "matched_at"}
+)
 _DATE_COLUMNS = frozenset({"role_from", "role_to"})
 
 
@@ -394,3 +403,114 @@ def test_the_precedence_export_wrote_its_five_global_rows(folded) -> None:
     )
     assert rows == [["reviewer", "20000"], ["ratsit", "1000"], ["bolagsverket", "900"],
                     ["wikidata", "600"], ["esef", "400"]]
+
+
+# --- a real stored match pair, read through the real SQL (spec 2026-09-11 section 4) -----
+
+MATCH_CO = "5560000005"            # one Ratsit and one ESEF spelling of one person
+MATCHED_AT = datetime(2026, 9, 10, 10, 45, tzinfo=UTC)
+FIFTH_FOLD_AT = datetime(2026, 9, 10, 13, 0, tzinfo=UTC)
+
+MATCH_RAW = (
+    (MATCH_CO, "ratsit", "p1", "1" * 64, "Erik Bo Bengtsson", None, None, 1966, None,
+     "Verkställande direktör", None, 2026, None, None, '{"age":"60"}'),
+    (MATCH_CO, "esef", "doc9:1", "2" * 64, "Bo Bengtsson", None, None, None, None,
+     "VD", "chief_executive", 2025, None, None, "{}"),
+)
+
+
+MATCH_HASH = "h" * 64
+MATCH_ANSWER = '{"pairs":[{"a":"...","b":"...","confidence":0.93,"reason":"call name"}]}'
+
+
+def _normalized_id(suggestion_id: str) -> str:
+    """The id normalize.normalized_row computes, which is what a match row names."""
+    return hashlib.sha256(f"{suggestion_id}\n{NORMALIZER_VERSION}".encode()).hexdigest()
+
+
+def _match_insert(company_id: str, ratsit_id: str, esef_id: str) -> str:
+    low, high = sorted((ratsit_id, esef_id))
+    names = {ratsit_id: "Erik Bo Bengtsson", esef_id: "Bo Bengtsson"}
+    sources = {ratsit_id: "ratsit", esef_id: "esef"}
+    row = (company_id, low, high, [low], [high], sources[low], sources[high],
+           names[low], names[high], 0.93, "call name",
+           "deepseek-v4-flash", "se-person-match-v1", MATCH_HASH, MATCHED_AT)
+    return (
+        f"INSERT INTO {tables.QUALIFIED_MATCH_TABLE} "
+        f"({', '.join(tables.MATCH_COLUMNS)}) VALUES {_literal(row)}"
+    )
+
+
+def _match_state_insert(company_id: str) -> str:
+    row = (company_id, MATCH_HASH, 2, 2, 1, "deepseek-v4-flash", "se-person-match-v1",
+           480, 60, MATCH_ANSWER, "", "run-match", MATCHED_AT)
+    return (
+        f"INSERT INTO {tables.QUALIFIED_MATCH_STATE_TABLE} "
+        f"({', '.join(tables.MATCH_STATE_COLUMNS)}) VALUES {_literal(row)}"
+    )
+
+
+@pytest.fixture(scope="module", params=(0, 1), ids=("join_use_nulls_off", "join_use_nulls_on"))
+def matched(request: pytest.FixtureRequest) -> dict[str, Any]:
+    """One company, two sources spelling one person, and a stored pair at 0.93: the fold's
+    real SQL must read the pair through the hash join and publish ONE person."""
+    client = _LocalClient(request.param)
+    client.add(_raw_insert(MATCH_RAW, SUGGESTED_AT))
+    client.add(_normalized_insert(MATCH_RAW, NORMALIZED_AT))
+    export_precedence(client, EXPORTED_AT)
+    before = batch.fold_companies(
+        client, [MATCH_CO], changed_only=True, source_run_id="run-a", folded_at=FIRST_FOLD_AT
+    )
+    apart = client.read(
+        f"SELECT count() FROM {tables.QUALIFIED_MAIN_TABLE} FINAL "
+        f"WHERE company_id = '{MATCH_CO}' AND active = 1"
+    )
+    client.add(_match_insert(MATCH_CO, _normalized_id("1" * 64), _normalized_id("2" * 64)))
+    client.add(_match_state_insert(MATCH_CO))
+    after = batch.fold_companies(
+        client, [MATCH_CO], changed_only=True, source_run_id="run-b", folded_at=FIFTH_FOLD_AT
+    )
+    return {"client": client, "before": before, "after": after, "apart": apart}
+
+
+def test_a_stored_pair_joins_the_two_spellings_into_one_person(matched) -> None:
+    assert matched["apart"] == [["2"]]                 # two persons before the match
+    # The match stamp is newer than the first fold, so the fifth watermark selects it.
+    assert matched["after"].considered == 1
+    rows = matched["client"].read(
+        f"SELECT display_name, text_source, arrayStringConcat(sources, ','), "
+        f"JSONExtractString(data, 'llm_match', 'model'), "
+        f"JSONExtractFloat(JSONExtractRaw(data, 'llm_match'), 'pairs', 1, 'confidence') "
+        f"FROM {tables.QUALIFIED_MAIN_TABLE} FINAL "
+        f"WHERE company_id = '{MATCH_CO}' AND active = 1"
+    )
+    assert len(rows) == 1
+    assert rows[0][0] == "Erik Bo Bengtsson" and rows[0][1] == "ratsit"
+    assert rows[0][2] == "ratsit,esef"
+    assert rows[0][3] == "deepseek-v4-flash" and rows[0][4].startswith("0.93")
+    withdrawn = matched["client"].read(
+        f"SELECT count() FROM {tables.QUALIFIED_MAIN_TABLE} FINAL "
+        f"WHERE company_id = '{MATCH_CO}' AND inactive_reason = 'withdrawn'"
+    )
+    assert withdrawn == [["1"]]
+
+
+def test_the_stored_confidence_is_float64_and_compares_exactly(matched) -> None:
+    """Fix wave F6: the fold admits a pair with `confidence >= MATCH_THRESHOLD` and
+    match_pairs_sql repeats that comparison in SQL, so the column may not round the value.
+    As Float32, 0.93 comes back as 0.9300000071525574 and `confidence = 0.93` is FALSE --
+    and a threshold like 0.7 would be stored as 0.69999998807907104 and drop every pair
+    scored at exactly it."""
+    rows = matched["client"].read(
+        f"SELECT toTypeName(confidence), confidence = 0.93, confidence >= {MATCH_THRESHOLD} "
+        f"FROM {tables.QUALIFIED_MATCH_TABLE} FINAL WHERE company_id = '{MATCH_CO}'"
+    )
+    assert rows == [["Float64", "1", "1"]]
+
+
+def test_re_running_the_matched_fold_selects_nothing(matched) -> None:
+    counts = batch.fold_companies(
+        matched["client"], [MATCH_CO], changed_only=True, source_run_id="run-c",
+        folded_at=datetime(2026, 9, 10, 14, 0, tzinfo=UTC),
+    )
+    assert counts.considered == 0

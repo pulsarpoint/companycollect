@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import dagster as dg
 import pytest
 
-from dagster_v3.defs.se_company.person import assets, batch
+from dagster_v3.defs.se_company.person import assets, batch, match, tables
 
 
 def test_the_fold_has_sixty_four_bucket_partitions() -> None:
@@ -82,3 +82,48 @@ def test_targeted_fold_normalizes_the_ids_before_folding_them(monkeypatch) -> No
     )
     assert calls == [("normalize", ["5560000001"], True), ("fold", ["5560000001"], False, "run-1")]
     assert normalized.as_metadata() == {"rows": 3} and folded.as_metadata() == {"persons": 2}
+
+
+def test_the_match_asset_is_pooled_grouped_and_retried() -> None:
+    asset = assets.se_company_person_match
+    assert asset.op.pool == assets.MATCH_POOL == "se_company_person_match"
+    assert asset.group_names_by_key[asset.key] == assets.GROUP_NAME
+    assert set(asset.required_resource_keys) >= {"clickhouse"}
+    # One pool of limit 1 (the instance default), so two runs never race the same companies.
+    assert assets.MATCH_POOL not in {assets.NORMALIZE_POOL, assets.FOLD_POOL}
+    policy = asset.op.retry_policy
+    assert (policy.max_retries, policy.delay, policy.backoff) == (3, 60, dg.Backoff.EXPONENTIAL)
+    assert asset.partitions_def is None
+
+
+def test_the_match_asset_description_states_the_retry_rule() -> None:
+    """What the UI tells an operator about a re-run has to be the rule the code applies:
+    which errors come back next run, which are sticky, and what the counter for those is
+    called in the materialization's metadata."""
+    description = assets.se_company_person_match.descriptions_by_key[
+        assets.se_company_person_match.key
+    ]
+    for phrase in (*match.TRANSIENT_ERROR_PREFIXES, "STICKY", "skipped_sticky",
+                   "input_hash", "candidate cap"):
+        assert phrase in description, phrase
+    assert "whose last attempt errored" not in description        # the pre-fix-wave rule
+    assert "skipped_sticky" in match.MatchCounts(
+        companies=0, pages=0, called=0, reused=0, skipped_sticky=0, skipped_single_source=0,
+        pairs=0, pairs_above_threshold=0, errors=0, prompt_tokens=0, completion_tokens=0,
+        stopped_at_cap=False,
+    ).as_metadata()
+
+
+def test_the_match_asset_runs_after_the_normalizer() -> None:
+    from dagster_v3.definitions import defs as load_defs
+
+    node = load_defs().get_repository_def().asset_graph.get(
+        dg.AssetKey("se_company_person_match"))
+    assert {key.path[-1] for key in node.parent_keys} == {"se_company_person_normalize"}
+
+
+def test_the_targeted_fold_reads_the_match_tables_too() -> None:
+    """The fold's page read now joins the pair table, so the existence assertion must name
+    it -- otherwise a fold on a host without 000399 fails deep inside a page."""
+    assert tables.MATCH_TABLE in assets._FOLD_TABLES
+    assert tables.MATCH_STATE_TABLE in assets._FOLD_TABLES

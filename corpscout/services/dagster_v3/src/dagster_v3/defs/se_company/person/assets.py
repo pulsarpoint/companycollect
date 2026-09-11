@@ -13,6 +13,7 @@ from pydantic import Field, field_validator
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.se_company.common import normalized_se_company_ids
+from dagster_v3.defs.se_company.info import build_llm_client
 from dagster_v3.defs.se_company.person import tables
 from dagster_v3.defs.se_company.person.batch import (
     BUCKET_COUNT,
@@ -21,6 +22,7 @@ from dagster_v3.defs.se_company.person.batch import (
     fold_bucket,
     fold_companies,
 )
+from dagster_v3.defs.se_company.person.match import MatchCounts, PersonMatchProfile, run_match
 from dagster_v3.defs.se_company.person.normalize import (
     PAGE_SIZE,
     NormalizeCounts,
@@ -39,6 +41,9 @@ NORMALIZE_POOL = "se_company_person_normalize"
 # pool"). The targeted fold below (se_company_person_fold_companies, a few ids, primary-key
 # reads) stays unpooled -- it never scans the whole table.
 FOLD_POOL = "se_company_person_fold"
+# One pool of limit 1 (the instance default), so two match runs can never race on the same
+# companies and double-spend their calls (spec section 8).
+MATCH_POOL = "se_company_person_match"
 EXTRACTOR_SOURCES: tuple[str, ...] = ("bolagsverket", "esef", "wikidata", "ratsit")
 EXTRACTOR_ASSET_NAMES: tuple[str, ...] = tuple(
     f"se_company_person_suggestions_{source}" for source in EXTRACTOR_SOURCES
@@ -89,6 +94,57 @@ def se_company_person_normalize(
             )
     return dg.MaterializeResult(
         metadata={**counts.as_metadata(), "table": tables.QUALIFIED_NORMALIZED_TABLE}
+    )
+
+
+@dg.asset(
+    name="se_company_person_match",
+    group_name=GROUP_NAME,
+    pool=MATCH_POOL,
+    deps=[se_company_person_normalize],
+    kinds={"clickhouse", "python", "llm"},
+    retry_policy=dg.RetryPolicy(max_retries=3, delay=60, backoff=dg.Backoff.EXPONENTIAL),
+    metadata={
+        "table": tables.QUALIFIED_MATCH_TABLE,
+        "state_table": tables.QUALIFIED_MATCH_STATE_TABLE,
+        "reads": tables.QUALIFIED_NORMALIZED_TABLE,
+    },
+    description=(
+        "Asks an LLM, once per company whose normalized people come from two or more "
+        "machine sources, which of them are the same physical person, and stores the scored "
+        "pairs in se_company_person_match with one state row per company in "
+        "se_company_person_match_state. The fold unions the pairs at or above "
+        "MATCH_THRESHOLD. changed_only=true sends a company with no state row, one whose "
+        "candidate list changed (a different input_hash), and one whose last attempt failed "
+        "TRANSIENTLY (rate_limited:, http_error:, unexpected:); a malformed, truncated or "
+        "empty answer and a company over the candidate cap are STICKY for the same input -- "
+        "skipped without a new state row and reported as skipped_sticky -- until its "
+        "candidates change. company_ids targets companies. provider and model have no "
+        "defaults -- a bare Materialize fails validation rather than spending on one -- and "
+        "the provider's API key is read from the host environment at call time. A page in "
+        "which most calls fail raises after its rows are written, so a provider outage "
+        "retries with backoff instead of finishing green."
+    ),
+)
+def se_company_person_match(
+    context: dg.AssetExecutionContext,
+    config: PersonMatchProfile,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    assert_clickhouse_tables_exist(
+        clickhouse, database=tables.DATABASE,
+        tables=(tables.NORMALIZED_TABLE, tables.MATCH_TABLE, tables.MATCH_STATE_TABLE),
+    )
+    # Built before any page is touched, so a run configured for a provider whose key this
+    # host does not carry fails without having written a row or spent a call.
+    llm_client = build_llm_client(config, timeout_seconds=config.timeout_seconds)
+    with clickhouse.get_connection() as client:
+        counts: MatchCounts = run_match(
+            client, llm_client=llm_client, config=config, source_run_id=context.run_id,
+            log=context.log.info,
+        )
+    return dg.MaterializeResult(
+        metadata={**counts.as_metadata(), "table": tables.QUALIFIED_MATCH_TABLE}
     )
 
 
@@ -185,8 +241,8 @@ PERSON_FOLD_PARTITIONS = dg.StaticPartitionsDefinition(
     [f"bucket_{bucket:02d}" for bucket in range(BUCKET_COUNT)]
 )
 _FOLD_TABLES = (
-    tables.NORMALIZED_TABLE, tables.MAIN_TABLE, tables.HISTORY_TABLE,
-    tables.RULE_TABLE, tables.PRECEDENCE_TABLE,
+    tables.NORMALIZED_TABLE, tables.MATCH_TABLE, tables.MATCH_STATE_TABLE,
+    tables.MAIN_TABLE, tables.HISTORY_TABLE, tables.RULE_TABLE, tables.PRECEDENCE_TABLE,
 )
 
 

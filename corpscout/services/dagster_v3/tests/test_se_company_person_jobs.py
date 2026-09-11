@@ -12,10 +12,12 @@ def _repo():
     return load_defs().get_repository_def()
 
 
-def test_the_job_selects_every_extractor_and_the_normalize_asset() -> None:
+def test_the_job_selects_every_extractor_the_normalizer_and_the_matcher() -> None:
     job = _repo().get_job("se_company_person_extract_job")
     selected = {key.path[-1] for key in job.asset_layer.executable_asset_keys}
-    assert selected == {*assets.EXTRACTOR_ASSET_NAMES, "se_company_person_normalize"}
+    assert selected == {
+        *assets.EXTRACTOR_ASSET_NAMES, "se_company_person_normalize", "se_company_person_match"
+    }
 
 
 def test_the_weekly_is_stopped_on_a_minute_hour_no_other_schedule_uses() -> None:
@@ -35,13 +37,17 @@ def test_the_weekly_is_stopped_on_a_minute_hour_no_other_schedule_uses() -> None
     assert ("25", "7") not in taken
 
 
-def test_the_weekly_runs_every_extractor_and_the_normalizer_with_the_page_size() -> None:
+def test_the_weekly_runs_every_extractor_the_normalizer_and_the_matcher() -> None:
     ops = jobs.WEEKLY_RUN_CONFIG["ops"]
     for name in assets.EXTRACTOR_ASSET_NAMES:
         assert ops[name] == {"config": {"execute": True, "page_size": jobs.WEEKLY_PAGE_SIZE}}
     assert ops["se_company_person_normalize"] == {"config": {"changed_only": True}}
-    # Every person page select binds %(company_ids)s twice and the helper runs it under
-    # max_query_size 1 MiB; 10,000 twelve-digit ids render to about 130 KB per binding.
+    # provider and model are spelled out, because the match profile has no defaults for
+    # them: an automated run must say what it is paying for.
+    assert ops["se_company_person_match"] == {
+        "config": {"provider": "deepseek", "model": "deepseek-v4-flash", "changed_only": True}
+    }
+    assert jobs.MATCH_ASSET == "se_company_person_match"
     assert jobs.WEEKLY_PAGE_SIZE == 10_000
 
 

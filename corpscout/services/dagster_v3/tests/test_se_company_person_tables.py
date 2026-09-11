@@ -141,3 +141,68 @@ def test_the_entity_name_is_a_prefix_of_five_siblings() -> None:
     for name in siblings:
         assert name.startswith(f"{tables.MAIN_TABLE}_")
         assert name != tables.MAIN_TABLE
+
+
+def test_match_table_is_one_row_per_unordered_pair() -> None:
+    block = table_block("se_company_person_match")
+    assert declared_columns("se_company_person_match") == list(tables.MATCH_COLUMNS)
+    assert "ENGINE = ReplacingMergeTree(matched_at)" in block
+    assert "ORDER BY (company_id, candidate_a, candidate_b)" in block
+    assert COMPANY_ID_CHECK in block
+    assert "    candidate_a FixedString(64)," in block
+    assert "    candidate_b FixedString(64)," in block
+    assert "    members_a Array(FixedString(64))," in block
+    assert "    members_b Array(FixedString(64))," in block
+    assert "    source_a LowCardinality(String)," in block
+    # Float64, never Float32: the fold admits a pair with `confidence >= MATCH_THRESHOLD`
+    # and batch.match_pairs_sql() repeats that comparison in SQL. Float32 would store 0.8 as
+    # 0.800000011920929 and a threshold of 0.7 as 0.69999998807907104, so a pair scored at
+    # exactly the threshold would be kept or dropped by the storage format.
+    assert "    confidence Float64," in block
+    assert "    confidence Float32," not in block
+    # input_hash is NOT in the sort key, so it versions nothing: a re-match of the same pair
+    # REPLACES its row. What supersedes a previous input is the fold's join on the state
+    # row's hash (batch.match_pairs_sql), never a second version of the pair row.
+    assert "input_hash" not in block.split("ORDER BY", 1)[1]
+    assert "    model LowCardinality(String)," in block
+    assert "    prompt_version LowCardinality(String)," in block
+    assert "    input_hash FixedString(64)," in block
+    # The pair table carries no `data` column, so it carries no valid_data constraint.
+    assert "JSONType" not in block
+
+
+def test_match_state_is_one_row_per_matched_company() -> None:
+    block = table_block("se_company_person_match_state")
+    assert declared_columns("se_company_person_match_state") == list(tables.MATCH_STATE_COLUMNS)
+    assert "ENGINE = ReplacingMergeTree(matched_at)" in block
+    assert "ORDER BY (company_id)" in block
+    assert COMPANY_ID_CHECK in block
+    assert "    input_hash FixedString(64)," in block
+    assert "    candidates UInt16," in block
+    assert "    sources UInt8," in block
+    assert "    pairs UInt16," in block
+    assert "    prompt_tokens UInt32," in block
+    assert "    completion_tokens UInt32," in block
+    # error DEFAULT '' so a successful run may omit it; raw_response keeps the model's
+    # exact text the way the basic-info observation cache does.
+    assert "    error String DEFAULT ''," in block
+    assert "    raw_response String," in block
+
+
+def test_the_match_tables_join_the_entitys_column_tuples() -> None:
+    assert tables.QUALIFIED_MATCH_TABLE == "corpscout.se_company_person_match"
+    assert tables.QUALIFIED_MATCH_STATE_TABLE == "corpscout.se_company_person_match_state"
+    # Whole-name matching: the state table's name has the pair table's as a prefix, so no
+    # membership test on a qualified name may ever stand in for equality.
+    assert tables.MATCH_STATE_TABLE.startswith(f"{tables.MATCH_TABLE}_")
+    assert tables.MATCH_STATE_TABLE != tables.MATCH_TABLE
+    assert tables.MATCH_COLUMNS == (
+        "company_id", "candidate_a", "candidate_b", "members_a", "members_b",
+        "source_a", "source_b", "name_a", "name_b", "confidence", "reason",
+        "model", "prompt_version", "input_hash", "matched_at",
+    )
+    assert tables.MATCH_STATE_COLUMNS == (
+        "company_id", "input_hash", "candidates", "sources", "pairs", "model",
+        "prompt_version", "prompt_tokens", "completion_tokens", "raw_response", "error",
+        "source_run_id", "matched_at",
+    )
