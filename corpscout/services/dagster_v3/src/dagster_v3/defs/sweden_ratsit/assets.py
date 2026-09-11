@@ -1577,8 +1577,13 @@ class RatsitFinancialUsdConfig(dg.Config):
         "every row still without a rate (financial entity spec 2026-09-11, slice 0): SEK to "
         "USD at the period end (Dec 31 of the fiscal year for undated rows) through the "
         "shared exchange-rate client, scaled from the row's MSEK/TSEK unit first. "
-        "Re-runnable: a row is converted once; a row whose rate does not exist yet waits "
-        "for a later run. Preview by default (config execute)."
+        "Re-runnable: a row is converted once; a row whose rate date lies outside the ECB "
+        "series (before its 2006 start or after its newest rate) is left alone, counted as "
+        "rows_rate_date_outside_series and waits for a later run, as does a row with no "
+        "monetary_unit. The mutation is asynchronous and polled: its join table is dropped "
+        "only once the mutation is done and kept, with the KILL MUTATION recipe, when the "
+        "wait fails; a mutation left unfinished by an earlier run stops the next one. "
+        "Preview by default (config execute)."
     ),
 )
 def se_ratsit_financial_periods_usd(
