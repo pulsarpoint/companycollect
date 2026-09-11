@@ -1,5 +1,5 @@
 """The person extract job and its STOPPED weekly (spec 2026-09-09 section 6), plus the
-normalize asset's dependence on the three extractors."""
+normalize asset's dependence on every extractor."""
 
 import dagster as dg
 
@@ -12,7 +12,7 @@ def _repo():
     return load_defs().get_repository_def()
 
 
-def test_the_job_selects_the_three_extractors_and_the_normalize_asset() -> None:
+def test_the_job_selects_every_extractor_and_the_normalize_asset() -> None:
     job = _repo().get_job("se_company_person_extract_job")
     selected = {key.path[-1] for key in job.asset_layer.executable_asset_keys}
     assert selected == {*assets.EXTRACTOR_ASSET_NAMES, "se_company_person_normalize"}

@@ -207,7 +207,7 @@ def test_esef_slot_is_the_document_and_the_extractions_candidate_uid() -> None:
 
 
 def test_assets_are_named_grouped_and_declared() -> None:
-    assert assets.EXTRACTOR_SOURCES == ("bolagsverket", "esef", "wikidata")
+    assert assets.EXTRACTOR_SOURCES == ("bolagsverket", "esef", "wikidata", "ratsit")
     assert assets.EXTRACTOR_ASSET_NAMES == tuple(
         f"se_company_person_suggestions_{s}" for s in assets.EXTRACTOR_SOURCES
     )

@@ -9,8 +9,10 @@ rather than being excluded.
 
 WHY THESE NUMBERS. `reviewer` outranks everything so an activated reviewer correction spells
 its own row (the backoffice writes those in slice 3, at source `reviewer`; the fold already
-ranks them here). `ratsit` is reserved at 1000 -- the source has the highest trust of the
-machine sources and no extractor yet. Bolagsverket delivers a first/last split from the
+ranks them here). `ratsit` leads the machine sources at 1000 -- its names are register
+spellings delivered with a birth date in the profile URL, the strongest identity evidence
+any machine source gives us (extractor `person/ratsit.py` since 2026-09-11). Bolagsverket
+delivers a first/last split from the
 register, Wikidata a curated label, ESEF an LLM extraction from a PDF-shaped filing: that is
 the 900 / 600 / 400 order. `reviewer_draft` never reaches the fold (the batch filters it by
 source) and no other source has people.
