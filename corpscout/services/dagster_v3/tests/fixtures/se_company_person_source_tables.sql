@@ -54,3 +54,24 @@ CREATE TABLE IF NOT EXISTS corpscout.wikidata_persons (
     `retrieved_at` DateTime64(3, 'UTC'),
     `resolved_at` DateTime64(3, 'UTC')
 ) ENGINE = ReplacingMergeTree(resolved_at) ORDER BY (person_wikidata_id);
+
+-- corpscout.se_ratsit_responsible_people: migration 000343's CREATE with 000346's four v2
+-- columns (display_name_raw, name, age, identity_available) inlined in their ALTER order;
+-- CODECs and CONSTRAINTs stripped like the neighbouring snapshots. It cannot ride
+-- WANTED_CREATES: that helper lifts a whole CREATE TABLE statement out of ONE named
+-- migration, and 000346 only ALTERs this table. se_ratsit_company needs no entry -- its DDL
+-- is already in se_basic_info_source_tables.sql, which this test also loads.
+CREATE TABLE IF NOT EXISTS corpscout.se_ratsit_responsible_people (
+    `company_id` String,
+    `result_sha256` FixedString(64),
+    `normalizer_version` LowCardinality(String),
+    `person_index` UInt16,
+    `display_name` Nullable(String),
+    `display_name_raw` Nullable(String),
+    `name` Nullable(String),
+    `age` Nullable(UInt16),
+    `identity_available` Bool DEFAULT false,
+    `role` Nullable(String),
+    `profile_url` Nullable(String),
+    `normalized_at` DateTime64(6, 'UTC')
+) ENGINE = ReplacingMergeTree(normalized_at) ORDER BY (company_id, result_sha256, normalizer_version, person_index);

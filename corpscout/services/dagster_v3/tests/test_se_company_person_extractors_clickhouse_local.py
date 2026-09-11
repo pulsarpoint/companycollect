@@ -16,6 +16,10 @@ Claims a fake client cannot settle:
 6. A company outside se_company_basic_info never reaches the suggestion table.
 7. The normalize hand-off (`changed_rows_sql()` + `normalized_row()`) reads what these
    extractors wrote and gives the expected parse statuses, the tombstone included.
+8. The Ratsit branch really picks the newest report per company (an older scan's people must
+   not leak), drops a company outside the basic-info universe, skips the nameless rows, gives
+   the two-row token a role-qualified slot and the URL-less row an `idx:` slot, and keeps a
+   slot stable across a re-scan while tombstoning the one the new report dropped.
 """
 
 import subprocess
@@ -26,7 +30,7 @@ import pytest
 from dagster_v3.defs.esef_filings import tables as esef_tables
 from dagster_v3.defs.esef_filings.country_views import build_se_esef_view_sql
 from dagster_v3.defs.se_company.basic_info.extract import insert_page_sql
-from dagster_v3.defs.se_company.person import bolagsverket, esef, tables, wikidata
+from dagster_v3.defs.se_company.person import bolagsverket, esef, ratsit, tables, wikidata
 from dagster_v3.defs.se_company.person.normalize import (
     RAW_ROW_COLUMNS,
     changed_rows_sql,
@@ -34,6 +38,7 @@ from dagster_v3.defs.se_company.person.normalize import (
 )
 from dagster_v3.defs.se_company.person.normalize_se import NORMALIZER_VERSION
 from dagster_v3.defs.se_company.person.suggestions import PERSON_SELECT_COLUMNS, PERSON_TARGET
+from dagster_v3.defs.sweden_ratsit.normalization import RATSIT_NORMALIZER_VERSION
 from tests.clickhouse_local import clickhouse_local_command, render
 
 ESEF_PEOPLE_VIEW = next(
@@ -65,6 +70,45 @@ WANTED_CREATES = (
 COMPANY_BV = "5561552760"
 COMPANY_WD = "5560125220"
 COMPANY_OUTSIDE = "5569999999"
+# Ratsit (spec 2026-09-11 section 4.5). Two companies: the first exercises the slot rules and
+# the re-scan, the second proves an older report cannot leak.
+COMPANY_RATSIT_A = "5565550001"
+COMPANY_RATSIT_B = "5565550002"
+# Scanned by Ratsit, absent from se_company_basic_info: the universe join must drop it.
+COMPANY_RATSIT_OUTSIDE = "5565550003"
+RATSIT_URL_A = "https://www.ratsit.se/19800101-Anna_Ek/abc123"
+RATSIT_URL_B = "https://www.ratsit.se/19751212-Cecilia_Nord/xyz789"
+RATSIT_URL_OUTSIDE = "https://www.ratsit.se/19700707-Nils_Utanfor/out999"
+RATSIT_REPORT_A1 = "a" * 64        # the first scan of company A
+RATSIT_REPORT_A2 = "d" * 64        # its re-scan, one person short
+RATSIT_REPORT_B_OLD = "b" * 64     # company B's superseded scan
+RATSIT_REPORT_B = "c" * 64         # company B's current report
+RATSIT_REPORT_OUTSIDE = "e" * 64   # the out-of-universe company's report
+RATSIT_OUTSIDE_CHECK_SQL = (
+    f"SELECT count() FROM {tables.QUALIFIED_SUGGESTION_TABLE} FINAL "
+    f"WHERE company_id = '{COMPANY_RATSIT_OUTSIDE}'"
+)
+# toJSONString escapes '/' as '\/' and the TSV dump doubles the backslash, exactly as
+# WIKIDATA_DATA below records it.
+RATSIT_DATA_VD = (
+    '{"age":"45","identity_available":"true",'
+    '"profile_url":"https:\\\\/\\\\/www.ratsit.se\\\\/19800101-Anna_Ek\\\\/abc123",'
+    '"display_name_raw":"Anna Ek, 45 år","ratsit_person_id":"abc123","external":"false"}'
+)
+# No age, no URL: mapFilter drops the three empty keys instead of rendering them null.
+RATSIT_DATA_BO = '{"identity_available":"true","display_name_raw":"Bo Ek","external":"true"}'
+RATSIT_ROWS_SQL = (
+    f"SELECT {', '.join(PERSON_SELECT_COLUMNS)}, toString(suggested_at) "
+    f"FROM {tables.QUALIFIED_SUGGESTION_TABLE} FINAL WHERE source = 'ratsit' "
+    "ORDER BY company_id, slot"
+)
+RATSIT_COMPANY_COLUMNS = (
+    "company_id, result_sha256, normalizer_version, schema_version, parser_version, "
+    "requested_url, source_url, result_bucket, result_object_key, name, organization_number, "
+    "source_date_modified, industry_code_count, summary_count, responsible_people_count, "
+    "establishment_count, financial_report_count, financial_period_count, "
+    "people_at_address_count, normalized_at"
+)
 STATEMENT_KEY = "st1"
 BOARD_DATA = '{"signatory_kind":"board_signature","statement_key":"st1","person_seq":"1"}'
 CERT_DATA = '{"signatory_kind":"certification","statement_key":"st1","person_seq":"1"}'
@@ -114,15 +158,20 @@ def _schema() -> list[str]:
     return schema
 
 
-def _insert(select_sql: str, ids: list[str], *, extractor_version: str) -> str:
+def _insert(select_sql: str, ids: list[str], *, extractor_version: str, **params: str) -> str:
     return render(
         insert_page_sql(select_sql=select_sql, target=PERSON_TARGET),
-        {"company_ids": ids, "source_run_id": "run-1", "extractor_version": extractor_version},
+        {
+            "company_ids": ids, "source_run_id": "run-1",
+            "extractor_version": extractor_version, **params,
+        },
     )
 
 
-def _scope(scope_sql: str, source: str) -> str:
-    return render(scope_sql, {"source": source}) + "\nORDER BY company_id"
+def _scope(scope_sql: str, source: str, **params: str) -> str:
+    """`params` carries a source's own select parameters (Ratsit's normalizer_version);
+    `render` asserts no `%(name)s` survives, so a forgotten one fails loudly right here."""
+    return render(scope_sql, {"source": source, **params}) + "\nORDER BY company_id"
 
 
 def _ordered(sql: str, order_by: str) -> str:
@@ -180,7 +229,62 @@ def _register_row(company_id: str, observed_at: str, has_company: int) -> str:
     )
 
 
+def _ratsit_report(company_id: str, sha: str, normalized_at: str, modified: str | None) -> str:
+    """One se_ratsit_company row. The table is ReplacingMergeTree(normalized_at) ordered by
+    (company_id, result_sha256, normalizer_version) and is never pruned, so a re-scanned
+    company keeps both rows and only the newest normalized_at is the current report."""
+    source_date = "NULL" if modified is None else f"toDate32('{modified}')"
+    orgnr = company_id[-10:]
+    return (
+        f"INSERT INTO corpscout.se_ratsit_company ({RATSIT_COMPANY_COLUMNS}) VALUES "
+        f"('{company_id}', '{sha}', '{RATSIT_NORMALIZER_VERSION}', 1, 'ratsit-parser-v1', "
+        f"'https://www.ratsit.se/{orgnr}', 'https://www.ratsit.se/{orgnr}', 'bucket', "
+        f"'sweden_ratsit/pilot/company_id={company_id}/report.json', 'Exempel AB', '{orgnr}', "
+        f"{source_date}, 0, 0, 0, 0, 0, 0, 0, toDateTime64('{normalized_at}', 6, 'UTC'))"
+    )
+
+
+def _ratsit_person(
+    company_id: str,
+    sha: str,
+    index: int,
+    *,
+    name: str | None,
+    role: str,
+    url: str | None,
+    age: int | None,
+    display_raw: str | None,
+    normalized_at: str,
+) -> str:
+    """One se_ratsit_responsible_people row. `name=None` is the GDPR-limited shape the
+    normalizer writes for a role-only entry: no name, no age, no URL, identity_available
+    false (migration 000346's CONSTRAINT se_ratsit_responsible_identity)."""
+
+    def text(value: str | None) -> str:
+        return "NULL" if value is None else "'" + value.replace("'", "''") + "'"
+
+    return (
+        "INSERT INTO corpscout.se_ratsit_responsible_people (company_id, result_sha256, "
+        "normalizer_version, person_index, display_name, display_name_raw, name, age, "
+        "identity_available, role, profile_url, normalized_at) VALUES "
+        f"('{company_id}', '{sha}', '{RATSIT_NORMALIZER_VERSION}', {index}, {text(name)}, "
+        f"{text(display_raw)}, {text(name)}, {'NULL' if age is None else age}, "
+        f"{0 if name is None else 1}, '{role}', {text(url)}, "
+        f"toDateTime64('{normalized_at}', 6, 'UTC'))"
+    )
+
+
 def _script_statements() -> list[str]:
+    ratsit_scope = _scope(
+        ratsit.ratsit_changed_scope_sql(), "ratsit",
+        normalizer_version=RATSIT_NORMALIZER_VERSION,
+    )
+    ratsit_insert = _insert(
+        ratsit.ratsit_select_sql(),
+        [COMPANY_RATSIT_A, COMPANY_RATSIT_B, COMPANY_RATSIT_OUTSIDE],
+        extractor_version=ratsit.RATSIT_PERSON_EXTRACTOR_VERSION,
+        normalizer_version=RATSIT_NORMALIZER_VERSION,
+    )
     bv_scope = _scope(bolagsverket.bolagsverket_changed_scope_sql(), "bolagsverket")
     bv_insert = _insert(
         bolagsverket.bolagsverket_select_sql(), [COMPANY_BV],
@@ -205,9 +309,12 @@ def _script_statements() -> list[str]:
     )
     return [
         *_schema(),
-        # The universe: COMPANY_OUTSIDE deliberately has no basic-info row.
+        # The universe: COMPANY_OUTSIDE and COMPANY_RATSIT_OUTSIDE deliberately have no
+        # basic-info row.
         f"INSERT INTO corpscout.se_company_basic_info (company_id) VALUES ('{COMPANY_BV}')",
         f"INSERT INTO corpscout.se_company_basic_info (company_id) VALUES ('{COMPANY_WD}')",
+        f"INSERT INTO corpscout.se_company_basic_info (company_id) VALUES ('{COMPANY_RATSIT_A}')",
+        f"INSERT INTO corpscout.se_company_basic_info (company_id) VALUES ('{COMPANY_RATSIT_B}')",
         "INSERT INTO corpscout.esef_entity_registry_map (lei, country_iso2, registry_id_raw, "
         f"registry_id, match_source, link_status) VALUES ('{LEI}', 'SE', '{COMPANY_BV}', "
         f"'{COMPANY_BV}', 'gleif', 'register_verified')",
@@ -296,6 +403,82 @@ def _script_statements() -> list[str]:
         "SELECT '@@bv_scope_6'",
         bv_scope,
         "SELECT '@@data_check_3'",
+        DATA_CHECK_SQL,
+        # --- Ratsit (spec 2026-09-11 section 4.5) ----------------------------------
+        # Company A's first scan: a VD with a dated URL, a Delgivningsbar person sharing
+        # that token, a nameless GDPR row and a named row with no URL at all.
+        _ratsit_report(COMPANY_RATSIT_A, RATSIT_REPORT_A1, "2026-09-09 00:00:00", "2026-08-30"),
+        _ratsit_person(
+            COMPANY_RATSIT_A, RATSIT_REPORT_A1, 0, name="Anna Ek", role="VD",
+            url=RATSIT_URL_A, age=45, display_raw="Anna Ek, 45 år",
+            normalized_at="2026-09-09 00:00:00",
+        ),
+        _ratsit_person(
+            COMPANY_RATSIT_A, RATSIT_REPORT_A1, 1, name="Anna Ek",
+            role="Delgivningsbar person", url=RATSIT_URL_A, age=45,
+            display_raw="Anna Ek, 45 år", normalized_at="2026-09-09 00:00:00",
+        ),
+        _ratsit_person(
+            COMPANY_RATSIT_A, RATSIT_REPORT_A1, 2, name=None, role="Extern firmatecknare",
+            url=None, age=None, display_raw=None, normalized_at="2026-09-09 00:00:00",
+        ),
+        _ratsit_person(
+            COMPANY_RATSIT_A, RATSIT_REPORT_A1, 3, name="Bo Ek", role="Extern VD",
+            url=None, age=None, display_raw="Bo Ek", normalized_at="2026-09-09 00:00:00",
+        ),
+        # Company B: a superseded scan that must not leak, then the current report (no
+        # source_date_modified, so the role year comes from the scan's own stamp).
+        _ratsit_report(COMPANY_RATSIT_B, RATSIT_REPORT_B_OLD, "2026-08-01 00:00:00", "2024-05-05"),
+        _ratsit_person(
+            COMPANY_RATSIT_B, RATSIT_REPORT_B_OLD, 0, name="Old Vd", role="VD",
+            url="https://www.ratsit.se/19600101-Old_Vd/old111", age=None,
+            display_raw="Old Vd", normalized_at="2026-08-01 00:00:00",
+        ),
+        _ratsit_report(COMPANY_RATSIT_B, RATSIT_REPORT_B, "2026-09-09 00:00:00", None),
+        _ratsit_person(
+            COMPANY_RATSIT_B, RATSIT_REPORT_B, 0, name="Cecilia Nord", role="Prokurist",
+            url=RATSIT_URL_B, age=51, display_raw="Cecilia Nord, 51 år",
+            normalized_at="2026-09-09 00:00:00",
+        ),
+        # Scanned like the others, but the entity has never heard of it.
+        _ratsit_report(
+            COMPANY_RATSIT_OUTSIDE, RATSIT_REPORT_OUTSIDE, "2026-09-09 00:00:00", "2026-08-30"
+        ),
+        _ratsit_person(
+            COMPANY_RATSIT_OUTSIDE, RATSIT_REPORT_OUTSIDE, 0, name="Nils Utanfor", role="VD",
+            url=RATSIT_URL_OUTSIDE, age=55, display_raw="Nils Utanfor, 55 år",
+            normalized_at="2026-09-09 00:00:00",
+        ),
+        "SELECT '@@ratsit_scope_1'",
+        ratsit_scope,
+        ratsit_insert,
+        "SELECT '@@ratsit_rows_1'",
+        RATSIT_ROWS_SQL,
+        "SELECT '@@ratsit_scope_2'",
+        ratsit_scope,
+        "SELECT '@@ratsit_outside_check'",
+        RATSIT_OUTSIDE_CHECK_SQL,
+        # The re-scan: Bo Ek is gone and both Anna rows keep their slots under a new hash.
+        "SELECT sleep(0.01) FORMAT Null",
+        _ratsit_report(COMPANY_RATSIT_A, RATSIT_REPORT_A2, "2026-09-10 00:00:00", "2026-09-09"),
+        _ratsit_person(
+            COMPANY_RATSIT_A, RATSIT_REPORT_A2, 0, name="Anna Ek", role="VD",
+            url=RATSIT_URL_A, age=46, display_raw="Anna Ek, 46 år",
+            normalized_at="2026-09-10 00:00:00",
+        ),
+        _ratsit_person(
+            COMPANY_RATSIT_A, RATSIT_REPORT_A2, 1, name="Anna Ek",
+            role="Delgivningsbar person", url=RATSIT_URL_A, age=46,
+            display_raw="Anna Ek, 46 år", normalized_at="2026-09-10 00:00:00",
+        ),
+        "SELECT '@@ratsit_scope_3'",
+        ratsit_scope,
+        ratsit_insert,
+        "SELECT '@@ratsit_rows_2'",
+        RATSIT_ROWS_SQL,
+        "SELECT '@@ratsit_scope_4'",
+        ratsit_scope,
+        "SELECT '@@data_check_4'",
         DATA_CHECK_SQL,
     ]
 
@@ -460,3 +643,94 @@ def test_the_normalize_hand_off_gives_the_expected_parse_statuses(sections) -> N
         ("ok", "Håkan Öberg", "chief_executive_officer", ("comma form",)),
         ("ok", "Jens Fischer", "chief_executive_officer", ()),
     ]
+
+
+def test_the_ratsit_rows_are_the_current_reports_named_people(sections) -> None:
+    # Two companies, not three: COMPANY_RATSIT_OUTSIDE is outside the basic-info universe.
+    assert sections["ratsit_scope_1"] == [[COMPANY_RATSIT_A], [COMPANY_RATSIT_B]]
+    rows = {
+        row["slot"]: row
+        for row in _rows(sections, "ratsit_rows_1")
+        if row["company_id"] == COMPANY_RATSIT_A
+    }
+    # person_index 2 is the nameless GDPR row: a role, no identity, never a person.
+    assert set(rows) == {"abc123:vd", "abc123:delgivningsbar person", "idx:3"}
+    vd = rows["abc123:vd"]
+    assert vd["full_name"] == "Anna Ek"
+    assert vd["first_name"] == vd["last_name"] == "\\N"
+    assert vd["birth_year"] == "1980"                    # from the URL's 19800101
+    assert vd["role_original"] == "VD"
+    assert vd["role_key"] == "\\N"                       # Ratsit has no machine code
+    assert vd["fiscal_year"] == "2026"                   # source_date_modified 2026-08-30
+    assert vd["wikidata_id"] == vd["role_from"] == vd["role_to"] == "\\N"
+    assert vd["document_ref"] == "\\N"
+    assert vd["source_record_id"] == f"ratsit:{RATSIT_REPORT_A1}:0"
+    assert vd["data"] == RATSIT_DATA_VD
+    # The same token twice in one report: both slots carry the lowercased role.
+    assert rows["abc123:delgivningsbar person"]["role_original"] == "Delgivningsbar person"
+    assert rows["abc123:delgivningsbar person"]["birth_year"] == "1980"
+    # Named, but no URL: no token, so the slot is the person index, the birth year is NULL
+    # and `Extern VD` sets data.external.
+    bo = rows["idx:3"]
+    assert bo["full_name"] == "Bo Ek" and bo["birth_year"] == "\\N"
+    assert bo["data"] == RATSIT_DATA_BO
+    assert sections["ratsit_scope_2"] == []              # the scan converges in one pass
+
+
+def test_a_ratsit_company_outside_the_basic_info_universe_is_never_written(sections) -> None:
+    """The universe join of `report`: COMPANY_RATSIT_OUTSIDE has a current report and a named
+    VD, and the page select was handed its id, but the entity has no basic-info row for it --
+    so it produces no live row, no suggestion, and no state-hash scope hit either (it is on
+    neither side of the comparison)."""
+    assert sections["ratsit_outside_check"] == [["0"]]
+    assert [COMPANY_RATSIT_OUTSIDE] not in sections["ratsit_scope_1"]
+    assert not [
+        r for r in _rows(sections, "ratsit_rows_1")
+        if r["company_id"] == COMPANY_RATSIT_OUTSIDE
+    ]
+
+
+def test_only_the_newest_ratsit_report_reaches_the_suggestion_table(sections) -> None:
+    """Company B carries two scans. `Old Vd` belongs to the superseded one and the people
+    rows join the report's own (company_id, result_sha256, normalizer_version), so it never
+    appears -- the report row itself is never deleted."""
+    rows = [r for r in _rows(sections, "ratsit_rows_1") if r["company_id"] == COMPANY_RATSIT_B]
+    assert len(rows) == 1
+    [row] = rows
+    assert row["slot"] == "xyz789"                       # a token seen once keeps it bare
+    assert row["full_name"] == "Cecilia Nord"
+    assert row["role_original"] == "Prokurist"
+    assert row["source_record_id"] == f"ratsit:{RATSIT_REPORT_B}:0"
+    # No source_date_modified on the current report: the role year is the scan's stamp.
+    assert row["fiscal_year"] == "2026"
+
+
+def test_a_ratsit_slot_survives_a_rescan_and_a_dropped_person_is_tombstoned(sections) -> None:
+    """The token is Ratsit's own person id, so a re-scan rewrites the person's row in place
+    (new source_record_id, same slot) while the slot the new report no longer delivers gets
+    the shared per-slot tombstone."""
+    assert sections["ratsit_scope_3"] == [[COMPANY_RATSIT_A]]
+    before = {
+        r["slot"]: r
+        for r in _rows(sections, "ratsit_rows_1")
+        if r["company_id"] == COMPANY_RATSIT_A
+    }
+    rows = {
+        r["slot"]: r
+        for r in _rows(sections, "ratsit_rows_2")
+        if r["company_id"] == COMPANY_RATSIT_A
+    }
+    assert set(rows) == set(before)
+    survivor = rows["abc123:vd"]
+    assert survivor["full_name"] == "Anna Ek"
+    assert survivor["source_record_id"] == f"ratsit:{RATSIT_REPORT_A2}:0"
+    assert survivor["suggested_at"] > before["abc123:vd"]["suggested_at"]
+    tombstone = rows["idx:3"]
+    assert tombstone["data"] == "{}"
+    assert tombstone["source_record_id"] == ""
+    for column in ("full_name", "first_name", "last_name", "birth_year", "wikidata_id",
+                   "role_original", "role_key", "fiscal_year", "role_from", "role_to",
+                   "document_ref"):
+        assert tombstone[column] == "\\N", column
+    assert sections["ratsit_scope_4"] == []
+    assert sections["data_check_4"] == [["0"]]
