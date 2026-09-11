@@ -67,7 +67,7 @@ Nothing else imports the cluster: `rg` finds `se-ratsit-results` and `se-ratsit-
 - Consumes: nothing from another task.
 - Produces: for Task 2, one commit on `se-ratsit-source` whose tree has no `/admin/se/companies/ratsit` route and a three-entry `SE_COMPANIES_TABS` (`info`, `geocoding`, `financial`). `seCompaniesTabFromPath`, `seCompaniesTabLabel` and `seCompaniesTabPath` keep their signatures (`(pathname: string) => SeCompaniesTab`, `(tab: SeCompaniesTab) => string`, `(tab: SeCompaniesTab) => string`); only the union `SeCompaniesTab` narrows from `"info" | "geocoding" | "financial" | "ratsit"` to `"info" | "geocoding" | "financial"`.
 
-- [ ] **Step 1: Record the BEFORE baseline of the suite and the typecheck**
+- [x] **Step 1: Record the BEFORE baseline of the suite and the typecheck**
 
 The suite has pre-existing failures and some of them are load-flaky, so the baseline is a *record*, not a promise. Run both from the backoffice directory and paste the tail of each into the task notes:
 
@@ -84,7 +84,7 @@ Expected on 2026-09-11 (measured three times on this worktree):
 - `Test Files  2 failed | 126 passed (128)` and `Tests  5 failed | 1347 passed (1352)` on a quiet machine; the two failing files are `tests/queries.server.test.ts` (4 address assertions) and `tests/admin-se-company-esef.test.tsx` (1 rendering assertion). Under load one run gave `4 failed | 124 passed (128)` / `8 failed | 1344 passed (1352)` — extra failures are timeouts, not regressions.
 - **The numbers that matter and are NOT flaky: 128 test files, 1352 tests.** Write them down; Step 8 asserts 125 and 1340.
 
-- [ ] **Step 2: Delete the seven files**
+- [x] **Step 2: Delete the seven files**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/backoffice
@@ -101,7 +101,7 @@ git status --short
 
 Expected: exactly seven `D ` lines and nothing else. `git rm` stages the deletions, which is what Step 9 commits.
 
-- [ ] **Step 3: Edit `app/routes.ts` — drop the route**
+- [x] **Step 3: Edit `app/routes.ts` — drop the route**
 
 Remove the `ratsit` line from the `se/companies` block. Before (lines 173-178):
 
@@ -124,7 +124,7 @@ After:
     ]),
 ```
 
-- [ ] **Step 4: Edit `app/lib/se-companies-tabs.ts` — drop the tab**
+- [x] **Step 4: Edit `app/lib/se-companies-tabs.ts` — drop the tab**
 
 Before (lines 14-19):
 
@@ -149,7 +149,7 @@ export const SE_COMPANIES_TABS = [
 
 Change nothing else in the file. `seCompaniesTabFromPath`, `seCompaniesTabLabel` and `seCompaniesTabPath` are already generic over `SE_COMPANIES_TABS`, so a stale `/admin/se/companies/ratsit` bookmark now falls back to `"info"` in the breadcrumb and 404s on the route — the spec's intent.
 
-- [ ] **Step 5: Edit `app/routes/admin-se-companies-layout.tsx` — the header prose**
+- [x] **Step 5: Edit `app/routes/admin-se-companies-layout.tsx` — the header prose**
 
 Before (lines 31-35):
 
@@ -170,7 +170,7 @@ After:
         </p>
 ```
 
-- [ ] **Step 6: Edit `app/components/admin/admin-sidebar.tsx` — the tab comment**
+- [x] **Step 6: Edit `app/components/admin/admin-sidebar.tsx` — the tab comment**
 
 Before (lines 44-50, inside `COUNTRY_NAVIGATION[0].items`):
 
@@ -192,7 +192,7 @@ After:
 
 Nothing else in the sidebar changes: there was never a Ratsit nav entry, only this comment.
 
-- [ ] **Step 7: Drop the stale generated route types, then typecheck**
+- [x] **Step 7: Drop the stale generated route types, then typecheck**
 
 `react-router typegen` writes the tree but does not reliably prune a `+types` file whose route is gone, and `tsconfig.json` includes `.react-router/types/**/*` — the stale module still says `typeof import("../admin-se-companies-ratsit.js")`, which `tsc` cannot resolve. Delete it first:
 
@@ -205,7 +205,7 @@ echo "typecheck exit: $?"
 
 Expected: the same three `envFile` deprecation lines as the baseline, no TypeScript diagnostics, `typecheck exit: 0`. If `tsc` still complains about `admin-se-companies-ratsit`, the generated tree is stale elsewhere: `rm -rf .react-router` and re-run (the directory is gitignored and fully regenerated).
 
-- [ ] **Step 8: Run the suite and compare with the baseline**
+- [x] **Step 8: Run the suite and compare with the baseline**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/backoffice
@@ -220,7 +220,7 @@ Expected, against the Step 1 record:
 
 If a *new* file fails, stop and read the failure before touching anything: the only legitimate change to this suite is the disappearance of the three deleted files.
 
-- [ ] **Step 9: Prove no reference survives**
+- [x] **Step 9: Prove no reference survives**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/backoffice
@@ -237,7 +237,7 @@ rg -n -i 'ratsit' app tests | rg -v '"ratsit"' | rg -v "'ratsit'"
 
 Expected: a few dozen lines, every one a source label (`ratsit: "Ratsit"` in the basic-info, person and address field catalogues), a `source = 'ratsit'` value or comment in the entity libs and their tests, or the `ratsit.se` href in `app/routes/financial-demo.tsx` — none names the deleted cluster. Leave all of them alone.
 
-- [ ] **Step 10: Commit, by explicit paths**
+- [x] **Step 10: Commit, by explicit paths**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/backoffice
@@ -321,7 +321,7 @@ ssh dagster "curl -s -H 'content-type: application/json' --data-binary @- http:/
 
 Every launch below targets code location `dagster_v3`, repository `__repository__`, job `__ASSET_JOB`, with the asset named in `assetSelection` and its config under `ops.<asset name>.config`.
 
-- [ ] **Step 1: Whole-branch review, then merge to main**
+- [x] **Step 1: Whole-branch review, then merge to main**
 
 1. Review the branch end to end: `git -C /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info diff main...se-ratsit-source`. Expect the spec commit plus Task 1's single deletion commit, and nothing outside `corpscout/services/backoffice` and `corpscout/services/dagster_v3/docs`.
 2. The controller merges. If the main checkout is on `main`: `git -C /Users/graovic/pulsarpoint/ppoint/companycollect merge se-ratsit-source`. If it is on another session's branch, merge through a deploy worktree that checks `main` out (memory `se-worktree-deploy-recipe`) — never `git checkout main` in the shared checkout.
@@ -336,7 +336,7 @@ Every launch below targets code location `dagster_v3`, repository `__repository_
 
    Expected: `200`, `200`, `404`. The tab bar on the first two shows three tabs — Info, Geocoding, Financial.
 
-- [ ] **Step 2: Confirm what prod is about to run**
+- [x] **Step 2: Confirm what prod is about to run**
 
 The schedule must be off and the deployed extractor must be `ratsit-v2` — a version that is not what this plan assumes means someone deployed something in between.
 
@@ -362,7 +362,7 @@ SQL
 
 Expected: one row, `ratsit-v2`, 83,696 rows, `last_write` on 2026-09-08 (spec section 2).
 
-- [ ] **Step 3: Record the BEFORE numbers**
+- [x] **Step 3: Record the BEFORE numbers**
 
 These are the baseline half of the spec's readout. Run all three and paste the output into the task notes.
 
@@ -400,7 +400,7 @@ SQL
 
 Expected (spec section 2, prod 2026-09-10/11): (a) ~3,523,558 companies, `description_ratsit` **75**, `no_description_source` **667,794**; (b) 83,696 rows over 83,696 companies; (c) 947,200 companies, 878,596 reports with a description. Small drift is fine — record what prod actually says, because the AFTER step subtracts from *these* numbers, not from the spec's.
 
-- [ ] **Step 4: Preview the extract**
+- [x] **Step 4: Preview the extract**
 
 The asset's default is a preview (`execute: false`), which walks the same change scan and counts without writing. It is the cheap proof that the scan finds the ~864k companies and not, say, 3 or 3 million.
 
@@ -431,7 +431,7 @@ ssh dagster "curl -s -H 'content-type: application/json' --data-binary @- http:/
 
 Expected metadata: `execute` false, `companies` ≈ 863,500, `pages` 87 (863,504 / 10,000, ceiling), `candidates` ≈ 863,500, `inserted` **0**, `stopped_at_cap` false. The spec's number is 863,504 companies normalized on 09-09 that never reached any entity, plus any company whose report is newer than its current suggestion. **If `candidates` is under 800,000 or over 1,000,000, stop and reconcile against Step 3(c) before writing anything.**
 
-- [ ] **Step 5: Execute the extract**
+- [x] **Step 5: Execute the extract**
 
 Same launch with the gate open. The only change from Step 4 is `"execute": true`.
 
@@ -446,7 +446,7 @@ Poll with `/tmp/run.json` as in Step 4 until `SUCCESS`, then re-read the materia
 
 Expected: `execute` true, `companies` and `candidates` the same order as the preview, `inserted` **equal to `candidates`**, `stopped_at_cap` false (the default cap is 5,000,000 companies, far above this scan). Record the wall time; the 83,696-row run took 41 s at page_size 20,000 on 2026-09-08, so an order of ten minutes here is unremarkable.
 
-- [ ] **Step 6: Read out the suggestions, and prove convergence**
+- [x] **Step 6: Read out the suggestions, and prove convergence**
 
 ```bash
 ssh companycollect 'docker exec -i clickhouse-clickhouse-1 clickhouse-client --database corpscout --format PrettyCompact' <<'SQL'
@@ -468,7 +468,7 @@ Expected: `companies` ≈ 947,200 (Step 3(c)'s universe, i.e. 83,696 + ~863.5k),
 
 Then re-run the **preview** of Step 4 once more. Expected: `candidates` **0** — the change scan is stamp-based, so a converged extractor selects nothing. A non-zero count here means a stamp is moving on its own; find out which before folding.
 
-- [ ] **Step 7: Back-fill the fold over all 64 buckets**
+- [x] **Step 7: Back-fill the fold over all 64 buckets**
 
 `se_company_basic_info_fold` is a static-partitioned asset (`bucket_00`..`bucket_63`) with `BackfillPolicy.multi_run(max_partitions_per_run=1)` and pool `se_company_basic_info_fold`, so a backfill produces one run per partition and the pool serializes them. Default config: `changed_only: true`, `page_size: 20000` — a backfill carries no run config, which is exactly what the default wants (the fold's watermark selection sees the newer suggestions and folds only those companies).
 
@@ -528,7 +528,7 @@ Expected per bucket: `bucket` the partition's number, `changed_only` true, `page
 
 Expect 64/64 `SUCCESS`. The slice-2 backfill of 2026-09-04 took about a minute per bucket behind this same limit-1 pool; a wider fold is slower, so budget an hour or two and record the real total.
 
-- [ ] **Step 8: Read out the entity (the spec's numbers)**
+- [x] **Step 8: Read out the entity (the spec's numbers)**
 
 ```bash
 ssh companycollect 'docker exec -i clickhouse-clickhouse-1 clickhouse-client --database corpscout --format PrettyCompact' <<'SQL'
@@ -575,7 +575,7 @@ Expected against Step 3(a):
 - `companies` (the row count) may rise above the Step 3(a) figure for exactly those register-unknown companies. Record the delta; do not assume it is zero.
 - Spot-check (d) by hand against the source: for one of the ten, `SELECT name, status, business_description FROM corpscout.se_ratsit_company FINAL WHERE company_id = '<id>' ORDER BY normalized_at DESC LIMIT 1` must match what the entity published.
 
-- [ ] **Step 9: Let the serving view refresh, then check it**
+- [x] **Step 9: Let the serving view refresh, then check it**
 
 `corpscout.se_companies_serving` is a refreshable MV on the hour at :45 (13-15 minutes). Nothing needs launching (spec 3.2 item 3); just confirm the next refresh succeeded.
 
@@ -589,7 +589,7 @@ SQL
 
 Expected: `status` `Scheduled`, `last_success_time` after the backfill finished, `exception` empty. A failed refresh here is the gate that catches a fold that wrote something the view cannot read.
 
-- [ ] **Step 10: Confirm nothing was restarted**
+- [x] **Step 10: Confirm nothing was restarted**
 
 ```bash
 ssh dagster "curl -s -H 'content-type: application/json' --data-binary @- http://localhost:3000/graphql" < /tmp/instigators.json \
@@ -598,7 +598,7 @@ ssh dagster "curl -s -H 'content-type: application/json' --data-binary @- http:/
 
 Expected: `se_company_basic_info_weekly STOPPED`, and the address and person weeklies STOPPED as well. This run must not have turned anything on.
 
-- [ ] **Step 11: Record the shipped slice and tick the plan**
+- [x] **Step 11: Record the shipped slice and tick the plan**
 
 1. Append a Shipped record to spec section 8 item 1, in the house style (the person spec's section 9 records are the model): the plan file, the merge commit, what shipped, and the prod numbers from Steps 3, 5, 6, 7 and 8 — `description_source = 'ratsit'` before → after, `description_sv_source = 'ratsit'` before → after, the empty-description count before → after, the suggestion companies before → after, the extract's `candidates`/`inserted` and wall time, the backfill id and its total wall time, and any ruling made on the way. Section 8 item 1 reads:
 
