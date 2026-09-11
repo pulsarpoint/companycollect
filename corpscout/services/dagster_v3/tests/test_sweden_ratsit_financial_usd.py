@@ -2,6 +2,13 @@
 se_ratsit_financial_periods. Column pairs, the SQL the asset runs, and the run function
 against a fake client and fake rates."""
 
+from datetime import date
+from decimal import Decimal
+
+import pytest
+from exchange_rates import ExchangeRateRequest
+from exchange_rates.models import UsdExchangeRate
+
 from dagster_v3.defs.sweden_ratsit import financial_usd
 from dagster_v3.defs.sweden_ratsit.financial_usd import (
     AMOUNT_COLUMNS,
@@ -11,12 +18,16 @@ from dagster_v3.defs.sweden_ratsit.financial_usd import (
     QUALIFIED_PERIODS_TABLE,
     RATE_DATE_SQL,
     USD_PAIRS,
+    UsdCounts,
+    convert_ratsit_financial_periods,
     join_insert_sql,
     join_table_ddl,
     join_table_name,
+    load_usd_rates,
     mutation_status_sql,
     pending_rate_dates_sql,
     usd_update_sql,
+    wait_for_mutation,
 )
 
 
@@ -96,3 +107,149 @@ def test_mutation_status_sql_is_bound_by_table_and_join_name() -> None:
     assert "FROM system.mutations" in sql
     assert "database = %(database)s AND table = %(table)s AND command LIKE %(pattern)s" in sql
     assert "ORDER BY create_time DESC LIMIT 1" in sql
+
+
+class FakeRates:
+    """usd_rates over a dict of known ISO dates; a batch with one unknown date raises, as the
+    real client does, so the loader must fall back to one request at a time."""
+
+    def __init__(self, known: dict[str, Decimal]):
+        self.known = known
+        self.calls: list[list[ExchangeRateRequest]] = []
+
+    def usd_rates(self, requests):
+        requests = list(requests)
+        self.calls.append(requests)
+        out = {}
+        for request in requests:
+            if request.rate_date not in self.known:
+                raise LookupError(request.rate_date)
+            out[(request.currency, request.rate_date)] = UsdExchangeRate(
+                currency=request.currency,
+                requested_rate_date=request.rate_date,
+                rate_date=request.rate_date,
+                rate=self.known[request.rate_date],
+                eur_to_usd=Decimal("1.1"),
+                eur_to_currency=Decimal("11"),
+                source="ecb",
+                components=(),
+            )
+        return out
+
+
+class FakeClient:
+    """Answers the pending scan from `pending` (one list per call), the mutation poll from
+    `statuses` (one row per call), and records every other statement."""
+
+    def __init__(self, *, pending, statuses=((1, ""),)):
+        self.pending = [list(p) for p in pending]
+        self.statuses = list(statuses)
+        self.statements: list[tuple[str, object]] = []
+
+    def execute(self, sql, params=None, settings=None):
+        self.statements.append((sql, params))
+        if sql.startswith("SELECT ifNull(period_end"):
+            return self.pending.pop(0)
+        if "FROM system.mutations" in sql:
+            row = self.statuses.pop(0)
+            return [row] if row is not None else []
+        if sql.startswith(("CREATE TABLE", "DROP TABLE", "INSERT INTO", "ALTER TABLE")):
+            return []
+        raise AssertionError(sql)
+
+
+PENDING = [(date(2023, 12, 31), 3), (date(2021, 6, 30), 2), (date(2004, 12, 31), 1)]
+
+
+def test_load_usd_rates_batches_at_fifty_and_skips_only_the_missing_date() -> None:
+    known = {f"2023-01-{day:02d}": Decimal("0.1") for day in range(1, 32)}
+    rates = FakeRates(known)
+    requests = [
+        ExchangeRateRequest(currency="SEK", rate_date=f"2023-01-{day:02d}") for day in range(1, 32)
+    ] + [ExchangeRateRequest(currency="SEK", rate_date="1999-12-31")] + [
+        ExchangeRateRequest(currency="SEK", rate_date=f"2023-01-{day:02d}") for day in range(1, 20)
+    ]
+    assert len(requests) == 51
+    found = load_usd_rates(rates, requests)
+    assert len(found) == 31
+    assert ("SEK", "1999-12-31") not in found
+    # First batch of 50 raised on the unknown date and was retried one by one (50 single
+    # calls), the second batch of 1 succeeded whole: 1 + 50 + 1 calls.
+    assert [len(call) for call in rates.calls] == [50] + [1] * 50 + [1]
+
+
+def test_preview_reports_counts_and_writes_nothing() -> None:
+    client = FakeClient(pending=[PENDING])
+    rates = FakeRates({"2023-12-31": Decimal("0.099"), "2021-06-30": Decimal("0.117")})
+    counts = convert_ratsit_financial_periods(client, rates, run_id="run-1", execute=False)
+    assert counts == UsdCounts(
+        rows_pending=6, rate_dates_needed=3, rates_found=2, rows_convertible=5,
+        rows_converted=0, rows_still_without_rate=6, executed=False,
+    )
+    assert counts.as_metadata()["rows_convertible"] == 5
+    assert [s for s, _ in client.statements] == [
+        "SELECT ifNull(period_end, makeDate32(fiscal_year, 12, 31)) AS rate_date, count() AS rows\n"
+        "FROM corpscout.se_ratsit_financial_periods FINAL\n"
+        "WHERE fx_rate_to_usd IS NULL AND " + MONETARY_PRESENT_SQL + "\n"
+        "GROUP BY rate_date\nORDER BY rate_date"
+    ]
+
+
+def test_execute_loads_the_join_table_runs_the_mutation_waits_and_drops() -> None:
+    client = FakeClient(pending=[PENDING, [(date(2004, 12, 31), 1)]], statuses=[(0, ""), (1, "")])
+    rates = FakeRates({"2023-12-31": Decimal("0.099"), "2021-06-30": Decimal("0.117")})
+    slept: list[float] = []
+    counts = convert_ratsit_financial_periods(
+        client, rates, run_id="a1b2-c3", execute=True, sleep=slept.append,
+    )
+    assert counts == UsdCounts(
+        rows_pending=6, rate_dates_needed=3, rates_found=2, rows_convertible=5,
+        rows_converted=5, rows_still_without_rate=1, executed=True,
+    )
+    name = "corpscout._tmp_ratsit_fx_a1b2c3"
+    statements = [s for s, _ in client.statements]
+    assert statements[1] == join_table_ddl(name)
+    assert statements[2] == join_insert_sql(name)
+    rows = client.statements[2][1]
+    assert rows == [
+        (date(2023, 12, 31), Decimal("0.099"), date(2023, 12, 31), "ecb"),
+        (date(2021, 6, 30), Decimal("0.117"), date(2021, 6, 30), "ecb"),
+    ]
+    assert statements[3] == usd_update_sql(name)
+    assert "FROM system.mutations" in statements[4] and "FROM system.mutations" in statements[5]
+    assert client.statements[4][1] == {
+        "database": "corpscout", "table": "se_ratsit_financial_periods", "pattern": f"%{name}%",
+    }
+    assert slept == [5.0]  # one poll came back not done
+    assert statements[6] == f"DROP TABLE IF EXISTS {name}"
+    assert statements[7].startswith("SELECT ifNull(period_end")  # the after-count
+
+
+def test_execute_with_no_rate_found_writes_nothing() -> None:
+    client = FakeClient(pending=[PENDING])
+    counts = convert_ratsit_financial_periods(client, FakeRates({}), run_id="r", execute=True)
+    assert counts.rates_found == 0 and counts.rows_converted == 0 and counts.executed is True
+    assert len(client.statements) == 1
+
+
+def test_wait_for_mutation_raises_on_failure_and_on_timeout() -> None:
+    failed = FakeClient(pending=[], statuses=[(0, "Code: 241. DB::Exception: memory")])
+    with pytest.raises(RuntimeError, match="memory"):
+        wait_for_mutation(failed, join_table="corpscout._tmp_ratsit_fx_x", sleep=lambda _: None)
+    slow = FakeClient(pending=[], statuses=[(0, ""), (0, ""), (0, "")])
+    with pytest.raises(TimeoutError):
+        wait_for_mutation(
+            slow, join_table="corpscout._tmp_ratsit_fx_x", poll_seconds=5.0,
+            timeout_seconds=10.0, sleep=lambda _: None,
+        )
+    # A mutation row that has not appeared yet is not a failure: keep polling.
+    late = FakeClient(pending=[], statuses=[None, (1, "")])
+    wait_for_mutation(late, join_table="corpscout._tmp_ratsit_fx_x", sleep=lambda _: None)
+
+
+def test_the_join_table_is_dropped_when_the_mutation_fails() -> None:
+    client = FakeClient(pending=[PENDING], statuses=[(0, "boom")])
+    rates = FakeRates({"2023-12-31": Decimal("0.099")})
+    with pytest.raises(RuntimeError, match="boom"):
+        convert_ratsit_financial_periods(client, rates, run_id="r", execute=True, sleep=lambda _: None)
+    assert [s for s, _ in client.statements][-1] == "DROP TABLE IF EXISTS corpscout._tmp_ratsit_fx_r"

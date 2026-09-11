@@ -139,3 +139,154 @@ def mutation_status_sql() -> str:
         "WHERE database = %(database)s AND table = %(table)s AND command LIKE %(pattern)s "
         "ORDER BY create_time DESC LIMIT 1"
     )
+
+
+@dataclass(frozen=True)
+class UsdCounts:
+    rows_pending: int
+    rate_dates_needed: int
+    rates_found: int
+    rows_convertible: int
+    rows_converted: int
+    rows_still_without_rate: int
+    executed: bool
+
+    def as_metadata(self) -> dict[str, int | bool]:
+        return {
+            "rows_pending": self.rows_pending,
+            "rate_dates_needed": self.rate_dates_needed,
+            "rates_found": self.rates_found,
+            "rows_convertible": self.rows_convertible,
+            "rows_converted": self.rows_converted,
+            "rows_still_without_rate": self.rows_still_without_rate,
+            "executed": self.executed,
+        }
+
+
+def load_usd_rates(
+    exchange_rates: Any, requests: Sequence[ExchangeRateRequest]
+) -> dict[tuple[str, str], Any]:
+    """Batches of RATE_REQUEST_BATCH; a batch the client refuses (LookupError on any date)
+    is retried one request at a time so only the missing dates are dropped. Same shape as
+    sweden_financial.usd_conversion._load_rates."""
+    rates: dict[tuple[str, str], Any] = {}
+    for start in range(0, len(requests), RATE_REQUEST_BATCH):
+        batch = list(requests[start : start + RATE_REQUEST_BATCH])
+        try:
+            rates.update(exchange_rates.usd_rates(batch))
+        except LookupError:
+            for request in batch:
+                try:
+                    rates.update(exchange_rates.usd_rates([request]))
+                except LookupError:
+                    continue
+    return rates
+
+
+def _pending(client: Any) -> list[tuple[date, int]]:
+    return [(row[0], int(row[1])) for row in client.execute(pending_rate_dates_sql())]
+
+
+def wait_for_mutation(
+    client: Any,
+    *,
+    join_table: str,
+    poll_seconds: float = 5.0,
+    timeout_seconds: float = 7200.0,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """Poll system.mutations for the mutation whose command names `join_table` until it is
+    done. A failure reason raises RuntimeError; no completion within the timeout raises
+    TimeoutError. A poll that finds no row yet keeps waiting (the row appears right after
+    the ALTER returns, but a replica lag is possible)."""
+    waited = 0.0
+    params = {
+        "database": DATABASE,
+        "table": RATSIT_FINANCIAL_PERIODS_TABLE,
+        "pattern": f"%{join_table}%",
+    }
+    while True:
+        rows = client.execute(mutation_status_sql(), params)
+        if rows:
+            is_done, fail_reason = rows[0][0], rows[0][1]
+            if fail_reason:
+                raise RuntimeError(f"USD mutation failed: {fail_reason}")
+            if int(is_done) == 1:
+                return
+        if waited >= timeout_seconds:
+            raise TimeoutError(
+                f"USD mutation still running after {timeout_seconds:.0f} s (join table {join_table})"
+            )
+        sleep(poll_seconds)
+        waited += poll_seconds
+
+
+def convert_ratsit_financial_periods(
+    client: Any,
+    exchange_rates: Any,
+    *,
+    run_id: str,
+    execute: bool,
+    log: Callable[..., object] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+) -> UsdCounts:
+    """Preview (execute=False) counts the pending rows and the rates that exist for them and
+    writes nothing. Execute loads the rates into a run-scoped Join table, runs the mutation,
+    waits for it, drops the join table, and re-counts what is still pending."""
+    pending = _pending(client)
+    rows_pending = sum(rows for _, rows in pending)
+    requests = [
+        ExchangeRateRequest(currency=RATSIT_FINANCIAL_CURRENCY, rate_date=rate_date.isoformat())
+        for rate_date, _ in pending
+    ]
+    rates = load_usd_rates(exchange_rates, requests)
+    rows_convertible = sum(
+        rows for rate_date, rows in pending
+        if (RATSIT_FINANCIAL_CURRENCY, rate_date.isoformat()) in rates
+    )
+    counts = UsdCounts(
+        rows_pending=rows_pending,
+        rate_dates_needed=len(pending),
+        rates_found=len(rates),
+        rows_convertible=rows_convertible,
+        rows_converted=0,
+        rows_still_without_rate=rows_pending,
+        executed=execute,
+    )
+    if log is not None:
+        log(
+            "Ratsit financial USD %s: rows_pending=%s rate_dates_needed=%s rates_found=%s rows_convertible=%s",
+            "execute" if execute else "preview",
+            rows_pending, len(pending), len(rates), rows_convertible,
+        )
+    if not execute or not rates:
+        return counts
+
+    join_table = join_table_name(run_id)
+    client.execute(join_table_ddl(join_table))
+    try:
+        client.execute(
+            join_insert_sql(join_table),
+            [
+                (
+                    date.fromisoformat(rate.requested_rate_date),
+                    rate.rate,
+                    date.fromisoformat(str(rate.rate_date)),
+                    str(rate.source),
+                )
+                for rate in rates.values()
+            ],
+        )
+        client.execute(usd_update_sql(join_table))
+        wait_for_mutation(client, join_table=join_table, sleep=sleep)
+    finally:
+        client.execute(f"DROP TABLE IF EXISTS {join_table}")
+
+    still = sum(rows for _, rows in _pending(client))
+    counts = replace(counts, rows_converted=rows_pending - still, rows_still_without_rate=still)
+    if log is not None:
+        log(
+            "Ratsit financial USD converted rows_converted=%s rows_still_without_rate=%s",
+            counts.rows_converted, counts.rows_still_without_rate,
+        )
+    return counts
