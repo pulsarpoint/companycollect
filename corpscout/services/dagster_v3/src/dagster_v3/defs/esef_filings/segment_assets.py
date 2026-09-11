@@ -17,6 +17,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
+from multiprocessing import get_context
+from multiprocessing.connection import Connection
 from pathlib import Path
 from time import perf_counter
 from typing import Any, TextIO
@@ -71,6 +73,52 @@ _MAX_DOCUMENT_PARSE_WORKERS = 8
 # amortizes that while still bounding per-child memory growth.
 _DOCUMENT_PARSE_TASKS_PER_CHILD = 16
 _DOCUMENT_PUBLICATION_INSERT_BATCH_SIZE = 25_000
+# 1200s (20min) default per-document wall-clock budget. A hung worker process
+# (2026-09-10: week 2024-07-07 stalled at 369/371 documents for ~20h on one
+# asleep worker) must never block the rest of a processed-week run -- see
+# `_parse_document_package_worker`.
+_DEFAULT_DOCUMENT_PARSE_TIMEOUT_SECONDS = 1200
+_MIN_DOCUMENT_PARSE_TIMEOUT_SECONDS = 60
+_MAX_DOCUMENT_PARSE_TIMEOUT_SECONDS = 7200
+# Grace period between SIGTERM and SIGKILL for a parse child that does not
+# exit promptly once its budget is up.
+_DOCUMENT_PARSE_CHILD_TERMINATE_GRACE_SECONDS = 5.0
+
+
+class DocumentParseTimeoutError(Exception):
+    """A document parse exceeded its wall-clock budget and was killed."""
+
+    def __init__(self, fxo_id: str, timeout_seconds: int) -> None:
+        self.fxo_id = fxo_id
+        self.timeout_seconds = timeout_seconds
+        super().__init__(
+            f"ESEF document parse for {fxo_id} exceeded its {timeout_seconds}s "
+            "budget and was killed"
+        )
+
+    def __reduce__(self) -> tuple[Any, tuple[str, int]]:
+        # `future.result()` re-raises this after pickling it through the
+        # ProcessPoolExecutor's result queue. The default `Exception.__reduce__`
+        # replays `self.args` (the formatted message, one string) into
+        # `__init__`, which takes `(fxo_id, timeout_seconds)` -- that mismatch
+        # crashed the worker on unpickle (`BrokenProcessPool`) rather than
+        # cleanly propagating the timeout. Reconstruct from the real fields
+        # instead.
+        return (type(self), (self.fxo_id, self.timeout_seconds))
+
+
+class DocumentParseFailedError(Exception):
+    """A document parse child exited without producing a usable result."""
+
+    def __init__(self, fxo_id: str, detail: str) -> None:
+        self.fxo_id = fxo_id
+        self.detail = detail
+        super().__init__(f"ESEF document parse failed for {fxo_id}: {detail}")
+
+    def __reduce__(self) -> tuple[Any, tuple[str, str]]:
+        # See `DocumentParseTimeoutError.__reduce__`: same constructor/args
+        # mismatch, same fix.
+        return (type(self), (self.fxo_id, self.detail))
 
 
 class EsefDocumentManifestConfig(dg.Config):
@@ -90,6 +138,14 @@ class EsefDocumentArtifactConfig(dg.Config):
         ge=1,
         le=_MAX_DOCUMENT_PARSE_WORKERS,
     )
+    # Per-document wall-clock budget: a parse that runs longer than this is
+    # killed and skipped for the run rather than blocking every other
+    # document behind it (retried automatically by a later run).
+    parse_timeout_seconds: int = Field(
+        default=_DEFAULT_DOCUMENT_PARSE_TIMEOUT_SECONDS,
+        ge=_MIN_DOCUMENT_PARSE_TIMEOUT_SECONDS,
+        le=_MAX_DOCUMENT_PARSE_TIMEOUT_SECONDS,
+    )
 
 
 @dataclass(frozen=True)
@@ -98,6 +154,7 @@ class _DocumentParseTask:
     artifact_path: str
     source: EsefArtifactSource
     validate_esef: bool
+    parse_timeout_seconds: int
     # The filing's OAM country from the filings.xbrl.org index (not the
     # register-verified company link): a phone-normalization hint only, never
     # written into the artifact's source or any product row.
@@ -139,7 +196,15 @@ class _JsonlRowSpool:
             self._handle.close()
 
 
-def _parse_document_package_worker(task: _DocumentParseTask) -> _DocumentParseResult:
+def _run_document_parse(task: _DocumentParseTask) -> _DocumentParseResult:
+    """Parse one package and write its artifact file -- the actual work.
+
+    Runs inside the killable parse child (see `_parse_document_package_worker`).
+    Kept as a standalone, module-level, picklable callable so tests can inject
+    a fake in its place (a hung or failing stand-in) without parsing a real
+    package, and so the real implementation can be handed explicitly to the
+    parse child across the spawn boundary.
+    """
     parse_started = perf_counter()
     parsed = parse_esef_report_package(
         task.package_path,
@@ -158,6 +223,76 @@ def _parse_document_package_worker(task: _DocumentParseTask) -> _DocumentParseRe
         serialization_seconds=perf_counter() - serialization_started,
         artifact_size_bytes=artifact_size_bytes,
     )
+
+
+def _run_document_parse_child(
+    parse_fn: Callable[[_DocumentParseTask], _DocumentParseResult],
+    task: _DocumentParseTask,
+    connection: Connection,
+) -> None:
+    """Entry point for the nested parse child: run `parse_fn`, report back."""
+    try:
+        result = parse_fn(task)
+    except Exception as exc:  # noqa: BLE001 - reported to the parent, not swallowed
+        connection.send(("error", f"{type(exc).__name__}: {exc}"))
+    else:
+        connection.send(("ok", result))
+    finally:
+        connection.close()
+
+
+def _delete_partial_artifact(artifact_path: str) -> None:
+    Path(artifact_path).unlink(missing_ok=True)
+
+
+def _parse_document_package_worker(
+    task: _DocumentParseTask,
+    parse_fn: Callable[
+        [_DocumentParseTask], _DocumentParseResult
+    ] = _run_document_parse,
+) -> _DocumentParseResult:
+    """Run one document parse in a child process bounded by its own timeout.
+
+    A hung parse (the trigger: week 2024-07-07 stalled 20h on one asleep
+    worker with no timeout) is terminated -- then killed if it ignores
+    SIGTERM -- once `task.parse_timeout_seconds` elapses, so a single
+    document can never block the rest of a processed-week run. Runs in a
+    ``spawn`` context regardless of the outer pool's start method (nested
+    spawn is fine) so the child is always independently killable.
+    """
+    ctx = get_context("spawn")
+    parent_connection, child_connection = ctx.Pipe(duplex=False)
+    child = ctx.Process(
+        target=_run_document_parse_child,
+        args=(parse_fn, task, child_connection),
+    )
+    child.start()
+    child_connection.close()
+    child.join(timeout=task.parse_timeout_seconds)
+
+    if child.is_alive():
+        child.terminate()
+        child.join(timeout=_DOCUMENT_PARSE_CHILD_TERMINATE_GRACE_SECONDS)
+        if child.is_alive():
+            child.kill()
+            child.join()
+        parent_connection.close()
+        _delete_partial_artifact(task.artifact_path)
+        raise DocumentParseTimeoutError(task.source.fxo_id, task.parse_timeout_seconds)
+
+    if parent_connection.poll():
+        kind, payload = parent_connection.recv()
+    else:
+        kind, payload = (
+            "error",
+            f"parse child exited with code {child.exitcode} without a result",
+        )
+    parent_connection.close()
+
+    if kind == "error":
+        _delete_partial_artifact(task.artifact_path)
+        raise DocumentParseFailedError(task.source.fxo_id, str(payload))
+    return payload
 
 
 def report_package_object_key(package_sha256: str) -> str:
@@ -298,6 +433,10 @@ def run_esef_document_artifacts_partition(
     refresh_existing: bool,
     validate_esef: bool,
     parse_workers: int,
+    parse_timeout_seconds: int = _DEFAULT_DOCUMENT_PARSE_TIMEOUT_SECONDS,
+    parse_fn: Callable[
+        [_DocumentParseTask], _DocumentParseResult
+    ] = _run_document_parse,
     log_info: Callable[..., object],
     log_warning: Callable[..., object] = _noop_log,
 ) -> dict[str, object]:
@@ -328,6 +467,8 @@ def run_esef_document_artifacts_partition(
     upgraded_artifacts = 0
     upgraded_artifact_schema_counts: dict[str, int] = {}
     skipped_packages = 0
+    failed_document_count = 0
+    timed_out_document_count = 0
     processed_documents = 0
     next_progress = 1
     package_io_seconds = 0.0
@@ -456,9 +597,33 @@ def run_esef_document_artifacts_partition(
             nonlocal parsed_packages
             nonlocal processed_documents
             nonlocal serialization_seconds
+            nonlocal failed_document_count
+            nonlocal timed_out_document_count
             for future in completed:
                 scheduled = pending.pop(future)
-                result = future.result()
+                try:
+                    result = future.result()
+                except Exception as exc:  # noqa: BLE001 - a killed timeout, a
+                    # reported parse failure, or any other worker exception
+                    # (e.g. a broken process pool) must skip this document,
+                    # not block the rest of the run.
+                    failed_document_count += 1
+                    if isinstance(exc, DocumentParseTimeoutError):
+                        timed_out_document_count += 1
+                    fxo_id = str(scheduled.documents[0]["source_document_id"])
+                    log_warning(
+                        "ESEF document parse failed for %s (%s: %s); the "
+                        "document is skipped this run",
+                        fxo_id,
+                        type(exc).__name__,
+                        exc,
+                    )
+                    (temp_root / f"{scheduled.digest}.artifact.json").unlink(
+                        missing_ok=True
+                    )
+                    scheduled.local_package.unlink(missing_ok=True)
+                    processed_documents += len(scheduled.documents)
+                    continue
                 artifact_path = Path(result.artifact_path)
                 artifact = _validated_artifact_file(
                     artifact_path,
@@ -623,8 +788,10 @@ def run_esef_document_artifacts_partition(
                                 expected_package_sha256=digest,
                             ),
                             validate_esef=validate_esef,
+                            parse_timeout_seconds=parse_timeout_seconds,
                             phone_region=str(representative["country_iso2"]).upper(),
                         ),
+                        parse_fn,
                     )
                     pending[future] = _ScheduledDocumentParse(
                         digest=digest,
@@ -637,8 +804,20 @@ def run_esef_document_artifacts_partition(
                     )
 
                 if len(pending) >= parse_workers * 2:
-                    completed, _ = wait(pending, return_when=FIRST_COMPLETED)
-                    complete_futures(completed)
+                    completed, _ = wait(
+                        pending,
+                        timeout=parse_timeout_seconds,
+                        return_when=FIRST_COMPLETED,
+                    )
+                    if completed:
+                        complete_futures(completed)
+                    else:
+                        log_info(
+                            "ESEF processed week %s: waiting on %s in-flight "
+                            "parses",
+                            partition_key,
+                            len(pending),
+                        )
 
                 if processed_documents >= next_progress:
                     log_info(
@@ -651,7 +830,22 @@ def run_esef_document_artifacts_partition(
                         next_progress += _PROGRESS_INTERVAL
 
             while pending:
-                completed, _ = wait(pending, return_when=FIRST_COMPLETED)
+                # `parse_timeout_seconds` bounds this wake-up only -- each
+                # in-flight parse enforces its own budget in its own child
+                # process (`_parse_document_package_worker`), so this loop
+                # never needs to kill anything itself.
+                completed, _ = wait(
+                    pending,
+                    timeout=parse_timeout_seconds,
+                    return_when=FIRST_COMPLETED,
+                )
+                if not completed:
+                    log_info(
+                        "ESEF processed week %s: waiting on %s in-flight parses",
+                        partition_key,
+                        len(pending),
+                    )
+                    continue
                 complete_futures(completed)
                 log_info(
                     "ESEF processed week %s: %s/%s documents processed",
@@ -687,7 +881,10 @@ def run_esef_document_artifacts_partition(
                 sorted(upgraded_artifact_schema_counts.items())
             ),
             "skipped_package_count": skipped_packages,
+            "failed_document_count": failed_document_count,
+            "timed_out_document_count": timed_out_document_count,
             "parse_worker_count": parse_workers,
+            "parse_timeout_seconds": parse_timeout_seconds,
             "parse_tasks_per_worker": _DOCUMENT_PARSE_TASKS_PER_CHILD,
             "wall_seconds": elapsed,
             "package_io_seconds": package_io_seconds,
@@ -727,13 +924,14 @@ def run_esef_document_artifacts_partition(
 
     log_info(
         "ESEF processed week %s: artifact stage completed in %.2fs "
-        "(parsed=%s reused=%s upgraded=%s workers=%s)",
+        "(parsed=%s reused=%s upgraded=%s workers=%s failed=%s)",
         partition_key,
         elapsed,
         parsed_packages,
         reused_artifacts,
         upgraded_artifacts,
         parse_workers,
+        failed_document_count,
     )
     return metadata
 
@@ -1300,6 +1498,7 @@ def esef_document_artifacts_s3(
         refresh_existing=config.refresh_existing,
         validate_esef=config.validate_esef,
         parse_workers=config.parse_workers,
+        parse_timeout_seconds=config.parse_timeout_seconds,
         log_info=context.log.info,
         log_warning=context.log.warning,
     )
