@@ -42,11 +42,11 @@ export type SePersonSource = (typeof PERSON_SOURCES)[number];
 export type SePersonStatus = (typeof PERSON_STATUSES)[number];
 
 /** The sources the main table can actually hold: `reviewer_draft` never folds into a
- * published row and `ratsit` is reserved with no data yet, so both always return zero
- * rows from the People list's Source filter. The list offers these four, not the whole
- * catalogue. */
+ * published row, so it always returns zero rows from the People list's Source filter.
+ * The list offers the other five. `ratsit` joined them on 2026-09-11, when the Ratsit
+ * person extractor shipped (dagster_v3 `se_company/person/ratsit.py`). */
 export const MAIN_PERSON_SOURCES: readonly SePersonSource[] = PERSON_SOURCES.filter(
-  (source) => source !== DRAFT_SOURCE && source !== "ratsit",
+  (source) => source !== DRAFT_SOURCE,
 );
 
 const KEY_PATTERN = /^[0-9a-f]{64}$/;

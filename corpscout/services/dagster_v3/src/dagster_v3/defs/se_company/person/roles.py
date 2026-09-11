@@ -51,6 +51,23 @@ WIKIDATA_ROLE_PROPERTY_TO_CANONICAL_ROLE: Mapping[str, str] = {
 }
 WIKIDATA_ROLELESS_PROPERTIES: frozenset[str] = frozenset()
 
+# Ratsit's responsible-people labels (spec 2026-09-11 section 4.3), keyed on the lowercased,
+# trimmed Swedish label: Ratsit delivers no machine code, so the extractor writes role_key
+# NULL and role_code_for falls through to the label. `Extern` marks a role held by someone
+# outside the company; that distinction lives in the suggestion's `data.external`, not in the
+# code, so `extern vd` maps exactly where `vd` does. `aktuarie` (2 rows on prod 2026-09-10)
+# is deliberately absent and publishes as itself.
+RATSIT_ROLE_LABEL_TO_CANONICAL_ROLE: Mapping[str, str] = {
+    "vd": "chief_executive_officer",
+    "extern vd": "chief_executive_officer",
+    "vice vd": "deputy_chief_executive_officer",
+    "extern vice vd": "deputy_chief_executive_officer",
+    "ställföreträdande vd": "deputy_chief_executive_officer",
+    "extern firmatecknare": "legal_representative",
+    "prokurist": "procurist",
+    "delgivningsbar person": "other_representative",
+}
+
 SOURCE_ROLE_MAPPINGS: Mapping[str, Mapping[str, str]] = {
     "bolagsverket": {
         **BOLAGSVERKET_ROLE_KIND_TO_CANONICAL_ROLE,
@@ -58,6 +75,7 @@ SOURCE_ROLE_MAPPINGS: Mapping[str, Mapping[str, str]] = {
     },
     "esef": ESEF_ROLE_CATEGORY_TO_CANONICAL_ROLE,
     "wikidata": WIKIDATA_ROLE_PROPERTY_TO_CANONICAL_ROLE,
+    "ratsit": RATSIT_ROLE_LABEL_TO_CANONICAL_ROLE,
 }
 SOURCE_ROLELESS_CODES: Mapping[str, frozenset[str]] = {
     "bolagsverket": BOLAGSVERKET_ROLELESS_ROLE_KINDS,
@@ -90,8 +108,9 @@ def role_code_for(
     maps are keyed on it, the label second (Bolagsverket's original-role map is keyed on the
     Swedish label), and what comes back when neither maps is the delivered label, lowercased
     and trimmed. A key in the source's roleless set means "person evidence, no role" and
-    returns None. Sources with no map at all -- reviewer, reviewer_draft, ratsit -- always
-    take the passthrough.
+    returns None. Sources with no map at all -- reviewer, reviewer_draft -- always take the
+    passthrough, and so does a label a mapped source's map does not know (Ratsit's
+    `aktuarie`).
     """
     lookup = _LOOKUP.get(source, {})
     roleless = _ROLELESS.get(source, frozenset())

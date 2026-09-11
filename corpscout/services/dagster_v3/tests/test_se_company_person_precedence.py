@@ -22,9 +22,10 @@ def test_the_global_order_is_the_spec_order() -> None:
     }
 
 
-def test_the_reviewer_outranks_every_source_including_the_reserved_ratsit() -> None:
-    """Slice 3's backoffice writes reviewer rows at source `reviewer`; the fold already
-    ranks them above ratsit, which is reserved and has no extractor yet."""
+def test_the_reviewer_outranks_every_source_including_ratsit() -> None:
+    """Slice 3's backoffice writes reviewer rows at source `reviewer`; the fold ranks them
+    above ratsit, which since 2026-09-11 has an extractor of its own and the highest
+    machine-source spelling precedence."""
     assert precedence_for("reviewer") > precedence_for("ratsit") > precedence_for("bolagsverket")
 
 

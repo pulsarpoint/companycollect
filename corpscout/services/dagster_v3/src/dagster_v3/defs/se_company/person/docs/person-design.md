@@ -15,8 +15,9 @@ everything past the modules below -- the backoffice.
 | `bolagsverket.py` | The Bolagsverket signatory extractor `se_company_person_suggestions_bolagsverket`: split name, `role_kind` as `role_key`, and the `has_company = 0` deregistration tombstone |
 | `esef.py` | The ESEF document-people extractor `se_company_person_suggestions_esef`: one name string, `role_category` as `role_key`, slot = `source_document_id` + `candidate_uid` |
 | `wikidata.py` | The Wikidata company-person extractor `se_company_person_suggestions_wikidata`: orgnr/LEI-linked statements, slot = `Q<company>:P<property>:Q<person>` |
-| `jobs.py` | `se_company_person_extract_job` (the three extractors plus the normalize asset) and the STOPPED `se_company_person_weekly` schedule (`25 7 * * 1`) |
-| `precedence.py` | The `name` spelling order (`PERSON_PRECEDENCE`, `precedence_for`, `precedence_rows`): reviewer 20000, ratsit 1000 (reserved), bolagsverket 900, wikidata 600, esef 400. It decides the published spelling and the `data` merge, never who is published |
+| `ratsit.py` | The Ratsit responsible-people extractor `se_company_person_suggestions_ratsit`: the newest normalized report per company, one row per named person, slot = the profile-URL token (role-qualified when a report repeats it, `idx:<person_index>` without a URL), `role_key` NULL |
+| `jobs.py` | `se_company_person_extract_job` (the four extractors plus the normalize asset) and the STOPPED `se_company_person_weekly` schedule (`25 7 * * 1`) |
+| `precedence.py` | The `name` spelling order (`PERSON_PRECEDENCE`, `precedence_for`, `precedence_rows`): reviewer 20000, ratsit 1000, bolagsverket 900, wikidata 600, esef 400. It decides the published spelling and the `data` merge, never who is published |
 | `fold.py` | The pure fold: identity sets (equal first/last tokens with the unique-minimal-superset middle rule, or a shared QID, never across two birth years), the canonical name and `person_key`, the reviewer rules, the member/roles/`data` blocks, the lifecycle diff and the history entries |
 | `batch.py` | The fold's SQL and paging: selection, the four page reads under `FINAL`, history-then-main writes, `FoldCounts`, `fold_companies`, `fold_bucket` |
 | `se_company_person_fold` | 64 static buckets (`bucket_00`..`bucket_63`, `modulo(cityHash64(company_id), 64)`), `BackfillPolicy.multi_run(max_partitions_per_run=1)`, pooled at `FOLD_POOL` (limit 1) so a backfill runs one bucket at a time -- a page's `FINAL` read of the normalized table is a full scan (controller ruling 2026-09-10); config `changed_only` (default true) and `page_size` (default 20,000) |
@@ -107,9 +108,9 @@ client's `read_timeout=300` against a 27-minute `SYSTEM WAIT VIEW`).
 `company_ids` (default `[]` = every company, scanned into a scratch table and paged; named
 ids page in memory with no scan), and `page_size` (default `PAGE_SIZE` = 20,000, max 50,000).
 
-## Extractors (slice 1)
+## Extractors (slice 1; ratsit 2026-09-11)
 
-`se_company_person_suggestions_<source>` (`bolagsverket`, `esef`, `wikidata`), on the same
+`se_company_person_suggestions_<source>` (`bolagsverket`, `esef`, `wikidata`, `ratsit`), on the same
 basic-info extract helper (`suggestions.py::define_person_suggestion_asset`), each write one
 raw suggestion row per (company, slot):
 
@@ -118,6 +119,7 @@ raw suggestion row per (company, slot):
 | `bolagsverket.py` | `se_financial_report_signatories` | report `source_record_uid` + `signatory_uid` | split name, `role_kind` as `role_key`, fiscal year as the role year, `data` = signatory kind, statement key, person seq; a company with `has_company = 0` in `se_bolagsverket_companies FINAL` gets tombstones for all its Bolagsverket slots (`LEFT ANTI JOIN`, see `bolagsverket.py`) |
 | `esef.py` | `se_esef_document_people` (a view -- never `FINAL` after it) | `source_document_id` + `candidate_uid` | full name, `role_category` as `role_key`, document fiscal year, `data` = organization, status, confidence, evidence ids, model, prompt |
 | `wikidata.py` | `wikidata_company_people` + `wikidata_persons`, linked by orgnr or LEI | `Q<company>:P<property>:Q<person>` | full name, birth year, QID, property id as `role_key`, the role span, `data` = description, image, url, normalized name, is_current |
+| `ratsit.py` | `se_ratsit_company` + `se_ratsit_responsible_people`, joined on the report key, inside the basic-info universe | the `profile_url` token, `:<role>` when a report repeats it, else `idx:<person_index>` | one name string, birth year from the URL's date, the Swedish label as `role_original` with `role_key` NULL (no machine code), the scan year as the role year, `data` = age, identity_available, profile_url, display_name_raw, ratsit person id, external |
 
 The universe is `se_company_basic_info`: every extractor joins the folded company and drops
 everything else. The change scan is a per-company state hash, not a timestamp -- a sha256
@@ -131,7 +133,7 @@ person column NULL and `data` `{}`. `suggestion_id` and `suggested_at` both come
 The suggestion table stores neither `source_run_id` nor `extractor_version`. `execute:
 false` (the default) previews the count without writing.
 
-`se_company_person_extract_job` (`jobs.py`) selects the three extractors and
+`se_company_person_extract_job` (`jobs.py`) selects the four extractors and
 `se_company_person_normalize` (which now `deps` on them); `se_company_person_weekly`
 schedules it Mondays 07:25 UTC (`25 7 * * 1`) with `execute: true`, `page_size: 10000` per
 extractor and `changed_only: true` on the normalize asset, registered STOPPED.

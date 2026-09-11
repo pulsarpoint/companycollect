@@ -463,4 +463,4 @@ def test_the_retired_people_chain_is_gone_from_the_source_tree() -> None:
     # The maps themselves live on, in the person package.
     from dagster_v3.defs.se_company.person.roles import SOURCE_ROLE_MAPPINGS
 
-    assert set(SOURCE_ROLE_MAPPINGS) == {"bolagsverket", "esef", "wikidata"}
+    assert set(SOURCE_ROLE_MAPPINGS) == {"bolagsverket", "esef", "wikidata", "ratsit"}

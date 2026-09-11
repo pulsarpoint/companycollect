@@ -7,7 +7,7 @@ tests/test_se_company_person_extractors_clickhouse_local.py."""
 import dagster as dg
 
 from dagster_v3.defs.se_company.basic_info.extract import insert_page_sql
-from dagster_v3.defs.se_company.person import assets, bolagsverket, esef, tables, wikidata
+from dagster_v3.defs.se_company.person import assets, bolagsverket, esef, ratsit, tables, wikidata
 from dagster_v3.defs.se_company.person.suggestions import (
     LIVE_ROW_PREDICATE,
     NULL_SQL,
@@ -17,6 +17,7 @@ from dagster_v3.defs.se_company.person.suggestions import (
     PERSON_TRAILING_SELECT_SQL,
     person_state_sql,
 )
+from dagster_v3.defs.sweden_ratsit.normalization import RATSIT_NORMALIZER_VERSION
 
 EXTRACTORS = {
     "bolagsverket": (
@@ -39,6 +40,13 @@ EXTRACTORS = {
         wikidata.wikidata_select_sql(),
         wikidata.wikidata_changed_scope_sql(),
         wikidata.se_company_person_suggestions_wikidata,
+    ),
+    "ratsit": (
+        ratsit.RATSIT_COLUMN_SQL,
+        ratsit.ratsit_live_sql(scoped=True),
+        ratsit.ratsit_select_sql(),
+        ratsit.ratsit_changed_scope_sql(),
+        ratsit.se_company_person_suggestions_ratsit,
     ),
 }
 
@@ -199,7 +207,7 @@ def test_esef_slot_is_the_document_and_the_extractions_candidate_uid() -> None:
 
 
 def test_assets_are_named_grouped_and_declared() -> None:
-    assert assets.EXTRACTOR_SOURCES == ("bolagsverket", "esef", "wikidata")
+    assert assets.EXTRACTOR_SOURCES == ("bolagsverket", "esef", "wikidata", "ratsit")
     assert assets.EXTRACTOR_ASSET_NAMES == tuple(
         f"se_company_person_suggestions_{s}" for s in assets.EXTRACTOR_SOURCES
     )
@@ -235,3 +243,121 @@ def test_wikidata_slot_is_the_link_record_id_and_the_link_is_orgnr_or_lei() -> N
     assert "%(company_ids)s" not in live
     assert wikidata.wikidata_live_sql(scoped=True).count("%(company_ids)s") == 1
     assert wikidata.WIKIDATA_PERSON_EXTRACTOR_VERSION == "wikidata-person-v1"
+
+
+def test_ratsit_slot_is_the_profile_token_with_role_and_index_fallbacks() -> None:
+    """Spec 2026-09-11 section 4.2 (fix F1). The slot is Ratsit's own person id -- the
+    trailing token of profile_url, which the same person carries at every company -- so a
+    re-scan rewrites the row in place instead of retiring the slot and inventing a new one.
+    The 31 (company, token) pairs that carry two rows (a `Delgivningsbar person` who is also
+    VD) get the role appended; a report that repeats BOTH the token and the lowercased role
+    would still collide under that qualifier alone, so those rows fall all the way back to
+    idx:<person_index>, exactly as a named row without a URL does."""
+    columns = ratsit.RATSIT_COLUMN_SQL
+    assert columns["slot"] == (
+        "multiIf("
+        "r.token = '', concat('idx:', toString(r.person_index)), "
+        "count() OVER (PARTITION BY r.company_id, r.token, lowerUTF8(trim(r.role_raw))) > 1, "
+        "concat('idx:', toString(r.person_index)), "
+        "count() OVER (PARTITION BY r.company_id, r.token) > 1, "
+        "concat(r.token, ':', lowerUTF8(trim(r.role_raw))), "
+        "r.token)"
+    )
+    # source_record_id no longer carries the report hash (fix F2): se_ratsit_company can
+    # recover the report by company and stamp, so a re-scan whose hash changes for any
+    # reason must not re-extract byte-identical people.
+    assert columns["source_record_id"] == (
+        "concat('ratsit:', r.company_id, ':', toString(r.person_index))"
+    )
+    # Ratsit delivers one name string; the normalizer splits it.
+    assert columns["full_name"] == "nullIf(trim(r.name_raw), '')"
+    assert columns["first_name"] == NULL_SQL["first_name"]
+    assert columns["last_name"] == NULL_SQL["last_name"]
+    # The birth date is the first eight digits of the profile URL's path (277,592 of the
+    # 301,536 rows carry it); NULL when the row has no URL.
+    assert columns["birth_year"] == (
+        "toUInt16OrNull(substring(extract(r.profile_url, "
+        "'^https://www\\.ratsit\\.se/(\\d{8})-'), 1, 4))"
+    )
+    assert columns["wikidata_id"] == NULL_SQL["wikidata_id"]
+    assert columns["role_original"] == "nullIf(trim(r.role_raw), '')"
+    # Ratsit has no machine role code: roles.py maps the Swedish label instead.
+    assert columns["role_key"] == NULL_SQL["role_key"]
+    # The role is current at the scan, so the scan date is the role year (the report's
+    # normalized_at when Ratsit delivered no source_date_modified).
+    assert columns["fiscal_year"] == (
+        "toYear(ifNull(r.source_date_modified, toDate32(r.normalized_at)))"
+    )
+    assert columns["role_from"] == NULL_SQL["role_from"]
+    assert columns["role_to"] == NULL_SQL["role_to"]
+    assert columns["document_ref"] == NULL_SQL["document_ref"]
+    # mapFilter over coalesced String values: a NULL age must leave the key OUT of the
+    # object. A bare map() would render "age":null, which is a value no reader expects.
+    assert columns["data"].startswith("toJSONString(mapFilter((k, v) -> v != '', map(")
+    for key in ("'age'", "'identity_available'", "'profile_url'", "'display_name_raw'",
+                "'ratsit_person_id'", "'external'"):
+        assert key in columns["data"], key
+    assert (
+        "if(startsWith(lowerUTF8(trim(r.role_raw)), 'extern'), 'true', 'false')"
+    ) in columns["data"]
+
+    live = ratsit.ratsit_live_sql()
+    # The current report per company: newest normalized_at, ties by the higher hash.
+    assert live.startswith("WITH report AS (")
+    assert "FROM corpscout.se_ratsit_company AS c FINAL" in live
+    assert (
+        "    ORDER BY c.normalized_at DESC, c.result_sha256 DESC\n"
+        "    LIMIT 1 BY c.company_id"
+    ) in live
+    # The same universe as the three siblings: a Ratsit company the entity does not know
+    # yields no live row, so it is on neither side of the state hash and never visited.
+    assert ratsit.UNIVERSE_JOIN_SQL in live
+    assert (
+        "    INNER JOIN (SELECT company_id FROM corpscout.se_company_basic_info FINAL) AS universe\n"
+        "        ON universe.company_id = c.company_id"
+    ) in live
+    # People join the report's own key, so a superseded scan's rows never appear.
+    assert "FROM corpscout.se_ratsit_responsible_people AS p FINAL" in live
+    assert (
+        "    INNER JOIN report\n"
+        "        ON report.company_id = p.company_id\n"
+        "        AND report.result_sha256 = p.result_sha256\n"
+        "        AND report.normalizer_version = p.normalizer_version"
+    ) in live
+    # 23,432 nameless rows are role-only GDPR evidence, not identities.
+    assert live.endswith("WHERE trim(r.name_raw) != ''")
+    assert "%(company_ids)s" not in live
+    assert ratsit.ratsit_live_sql(scoped=True).count("%(company_ids)s") == 1
+    assert ratsit.RATSIT_PERSON_EXTRACTOR_VERSION == "ratsit-person-v1"
+    assert ratsit.RATSIT_SELECT_PARAMS == {"normalizer_version": RATSIT_NORMALIZER_VERSION}
+    # run_extractor binds select_params into both the scope and every page.
+    assert ratsit.ratsit_select_sql().count("%(normalizer_version)s") == 1
+    assert ratsit.ratsit_changed_scope_sql().count("%(normalizer_version)s") == 1
+
+
+def test_the_ratsit_asset_reads_the_ratsit_tables_and_the_basic_info_fold() -> None:
+    """Spec 4.1: `se_ratsit_normalized` is the multi-asset's FUNCTION name, not an asset key
+    -- a dep on it makes a phantom node. The keys the multi-asset declares are the table
+    names, which is what this asset deps on, plus the fold that publishes the universe (the
+    key `bolagsverket.py` and `wikidata.py` already carry)."""
+    asset = ratsit.se_company_person_suggestions_ratsit
+    assert {dep.asset_key for dep in asset.specs_by_key[asset.key].deps} == {
+        dg.AssetKey("se_ratsit_company"),
+        dg.AssetKey("se_ratsit_responsible_people"),
+        dg.AssetKey("se_company_basic_info_fold"),
+    }
+
+
+def test_the_ratsit_current_sql_is_the_reports_own_stamp() -> None:
+    """`current_sql` exists only for the `since` escape hatch (the change scan is the state
+    hash). It is the newest report's normalized_at, picked exactly as the live branch picks
+    the report -- a max() over every report would keep re-selecting companies whose older
+    report was written later."""
+    current = ratsit.ratsit_current_sql()
+    assert "toDateTime64(c.normalized_at, 3, 'UTC') AS observed_at" in current
+    assert "    LIMIT 1 BY c.company_id" in current
+    # The same universe as the live branch, so `since` and the page agree on who exists
+    # (bolagsverket_current_sql carries its UNIVERSE_JOIN_SQL for the same reason).
+    assert ratsit.UNIVERSE_JOIN_SQL in current
+    assert current.count("%(normalizer_version)s") == 1
+    assert "%(company_ids)s" not in current

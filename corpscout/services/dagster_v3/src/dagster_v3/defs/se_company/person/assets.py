@@ -1,6 +1,6 @@
 """Dagster assets of the person entity. Slice 0 ships the normalize asset; the extractors
-and the stopped weekly live in bolagsverket.py, esef.py, wikidata.py and jobs.py (slice 1),
-the fold and the precedence export in slice 2."""
+and the stopped weekly live in bolagsverket.py, esef.py, wikidata.py and jobs.py (slice 1;
+ratsit.py joined them 2026-09-11), the fold and the precedence export in slice 2."""
 
 import re
 from collections.abc import Callable, Sequence
@@ -39,7 +39,7 @@ NORMALIZE_POOL = "se_company_person_normalize"
 # pool"). The targeted fold below (se_company_person_fold_companies, a few ids, primary-key
 # reads) stays unpooled -- it never scans the whole table.
 FOLD_POOL = "se_company_person_fold"
-EXTRACTOR_SOURCES: tuple[str, ...] = ("bolagsverket", "esef", "wikidata")
+EXTRACTOR_SOURCES: tuple[str, ...] = ("bolagsverket", "esef", "wikidata", "ratsit")
 EXTRACTOR_ASSET_NAMES: tuple[str, ...] = tuple(
     f"se_company_person_suggestions_{source}" for source in EXTRACTOR_SOURCES
 )

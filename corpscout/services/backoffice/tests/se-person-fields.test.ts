@@ -44,10 +44,12 @@ describe("person catalogue", () => {
     expect(isPersonStatus("withdrawn") && !isPersonStatus("gone")).toBe(true);
     expect(personSourceLabel("esef")).toBe("ESEF");
     expect(personSourceLabel("reviewer_draft")).toBe("Reviewer draft");
-    // Minor 5: `reviewer_draft` never folds and `ratsit` is reserved with no data, so
-    // both always return zero rows from the list's Source filter -- offer the other
-    // four.
-    expect([...MAIN_PERSON_SOURCES]).toEqual(["bolagsverket", "esef", "wikidata", "reviewer"]);
+    // Minor 5: `reviewer_draft` never folds into a published row, so it always returns
+    // zero rows from the list's Source filter -- offer the other five. Ratsit joined
+    // them on 2026-09-11 with the person extractor.
+    expect([...MAIN_PERSON_SOURCES]).toEqual([
+      "bolagsverket", "esef", "wikidata", "ratsit", "reviewer",
+    ]);
     expect(roleLabel("board_chair", ROLE_OPTIONS)).toBe("Board chair");
     // An unmapped code (a source's own label, published as itself) reads as itself.
     expect(roleLabel("styrelseledarmot", ROLE_OPTIONS)).toBe("styrelseledarmot");
