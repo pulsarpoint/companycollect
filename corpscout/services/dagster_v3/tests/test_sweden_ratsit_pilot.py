@@ -999,6 +999,18 @@ def test_ratsit_dispatch_and_normalized_table_assets_are_registered() -> None:
     assert "se_ratsit_pilot_reports_job" not in job_names
 
 
+def test_ratsit_financial_usd_asset_and_job_are_registered() -> None:
+    repository = load_project_defs().get_repository_def()
+    node = repository.asset_graph.get(dg.AssetKey("se_ratsit_financial_periods_usd"))
+    assert node.parent_keys == {
+        dg.AssetKey("se_ratsit_financial_periods"),
+        dg.AssetKey("exchange_rates_v2_clickhouse"),
+    }
+    assert node.partitions_def is None
+    assert node.group_name == "sweden_ratsit"
+    assert repository.has_job("se_ratsit_financial_usd_job")
+
+
 @pytest.mark.parametrize(
     ("retry_not_found", "expected_company_ids"),
     (
