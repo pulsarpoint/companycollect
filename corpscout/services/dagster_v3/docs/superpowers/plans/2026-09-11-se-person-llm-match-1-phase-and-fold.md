@@ -3372,6 +3372,12 @@ Acceptance (spec 7.2): **s4 `pct` well above 90**; **s5 `different_surnames` nea
 
 - [ ] **Step 5: The full match (spec 7.3)**
 
+Added by the final-review fix wave: if a match run is interrupted (killed, or it raised on the
+circuit breaker), re-run it before any fold — a page whose pairs were written without its state row
+is invisible to the fold's hash join until the state row lands. Expect prompt tokens per company to
+vary from a few hundred (median 3 candidates) to ~10k for the largest companies; the ordinal ids keep
+the answers short.
+
 Same launch payload as step 4(b) with `company_ids` **omitted** (so the scan runs) and the rest unchanged: `changed_only: true, page_size: 500, concurrency: 8`. The sample's 2,000 companies are skipped as `reused` — their hashes are already stored — so this run calls roughly 122,600 companies. Budget hours; the asset resumes from its own change scan if it is interrupted, and its pool of limit 1 means a second launch cannot race it.
 
 Poll the run; when it finishes, read the metadata and:

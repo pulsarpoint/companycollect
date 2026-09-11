@@ -113,7 +113,8 @@ of which one is the call name (`Erik Bo Bengtsson` is `Bo Bengtsson`), double su
 or without a hyphen, a maiden or married surname change is NOT the same person unless the
 given names, birth year and roles all agree, initials, transliterations (`Björn`/`Bjorn`),
 and that a differing birth year or age means different people. The user message is the
-candidate list as JSON. The answer is JSON only: `{"pairs": [{"a": id, "b": id,
+candidate list as JSON with short ordinal ids (`c0`..`cN` in the serialized order; the 64-char
+normalized ids never reach the model, and the parser maps the ordinals back). The answer is JSON only: `{"pairs": [{"a": id, "b": id,
 "confidence": 0-1, "reason": "..."}]}` — pairs, not per-candidate lists, so the two
 directions cannot disagree; the parser accepts both `a`/`b` orders and keeps the higher
 confidence when a pair is repeated. Sanity rules applied after parsing: unknown ids,
@@ -123,11 +124,15 @@ conflict` (the guard is ours, not the model's).
 
 Model and client (section 3.5): `deepseek-v4-flash` on `https://api.deepseek.com` through
 the `se_company/info.py` profile, temperature 0, `response_format json_object`, thinking
-disabled for the deepseek provider (as the ESEF pass does), `max_tokens` 4,000 (a reasoning
-model's reasoning counts against it), timeout 120 s, the SDK's two retries on transport
+disabled for the deepseek provider (as the ESEF pass does), `max_tokens` scaled with the candidate count (at least 4,000; a
+reasoning model's reasoning counts against it, and a 150-candidate company answers dozens of pairs), timeout 120 s, the SDK's two retries on transport
 errors and 429; a company whose call still fails or answers malformed JSON gets a state row
-with `error` (and the raw text) and is retried on the next run — the run itself never fails
-on one company.
+with `error`, the raw text and the usage, and is retried on the next run only when the error
+was transient (`rate_limited:`, `http_error:`) or the input hash moved — a malformed answer or
+an over-cap company is sticky for the same input, so it is neither re-paid nor re-folded every
+run. The run never fails on one company, but a page whose error share exceeds one half after
+twenty attempts raises (a provider outage must not produce a green run that re-sends
+everything next week); the asset's retry policy supplies the backoff.
 
 ### 3.4 Tables (migration 000399)
 
@@ -143,7 +148,7 @@ source_a         LowCardinality(String)
 source_b         LowCardinality(String)
 name_a           String
 name_b           String
-confidence       Float32
+confidence       Float64
 reason           String
 model            LowCardinality(String)
 prompt_version   LowCardinality(String)
@@ -168,9 +173,11 @@ ENGINE = ReplacingMergeTree(matched_at) ORDER BY (company_id)
 (`raw_response` keeps the model's exact text as the basic-info observation cache does; at
 ~1 KB per company it is a hundred megabytes for the whole population.)
 
-A re-match of a company writes its new pairs and its new state row; pairs of the previous
-input are superseded by `input_hash` (the fold reads only pairs whose `input_hash` equals
-the state row's). `EXPECTED_MIGRATIONS` gains `000399_corpscout_se_company_person_match`.
+A re-match of a company writes its new pairs and its new state row; a re-scored pair replaces
+its row (`input_hash` is not in the ORDER BY) and what supersedes the previous input is the
+fold's join on the state row's `input_hash`. A run killed between the pairs and the state row of
+one page leaves pairs the fold cannot see until the next match run (the runbook re-runs the
+match before folding after an interruption). `EXPECTED_MIGRATIONS` gains `000399_corpscout_se_company_person_match`.
 Down: drop both tables.
 
 ### 3.5 Client and profile
@@ -295,6 +302,13 @@ secrets.
   surprise.
 - Same-source pairs are allowed (a source spelling the same person two ways across
   filings); the fold treats them like any pair.
+- Weekly cost is birthday-driven: Ratsit's `data.age` moves a company's extractor state hash
+  once a year per person, which re-stamps its slots, mints new normalized ids and a new input
+  hash — expect roughly 5-8% of multi-source companies re-sent per weekly run. The
+  birth-year guard inside the split honours the LLM pairs (a year-less row paired to a
+  1980-born member stays with that member, never falls to the smallest year).
+- `confidence` is stored as Float64 and the threshold is inclusive, so a threshold edit is
+  exact.
 
 ## 9. Names
 
