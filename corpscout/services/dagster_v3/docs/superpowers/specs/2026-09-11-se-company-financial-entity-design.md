@@ -524,7 +524,8 @@ the entity.
 
 0. Ratsit USD: migration 000400, `se_ratsit_financial_periods_usd` and its job, tests; prod
    preview and execute over 3.1M rows with the spot check (57.1 MSEK near 5.4M USD for 5567081699
-   in 2023 at the ECB rate of that date). Code complete 2026-09-11 on branch se-financial-entity (Tasks 1 to 5 of plan 2026-09-11-se-company-financial-0-ratsit-usd.md); prod rollout pending.
+   in 2023 at the ECB rate of that date). Code complete 2026-09-11 on branch se-financial-entity
+   (Tasks 1 to 5 of plan 2026-09-11-se-company-financial-0-ratsit-usd.md); prod rollout pending.
 1. Tables and precedence: migration 000401 with the five tables, `financial/tables.py`,
    `precedence.py` with the export asset, DDL tests; prod apply and export.
 2. Extractors: `state_scan.py` lifted from the person package with person switched to it, the
