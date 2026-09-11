@@ -239,7 +239,7 @@ def match_pair_from_row(row: Sequence[Any]) -> MatchPair
 - Consumes: nothing.
 - Produces: `tables.MATCH_TABLE`, `tables.MATCH_STATE_TABLE`, `tables.QUALIFIED_MATCH_TABLE`, `tables.QUALIFIED_MATCH_STATE_TABLE`, `tables.MATCH_COLUMNS` (15 names), `tables.MATCH_STATE_COLUMNS` (13 names) — every later task builds its SQL and its insert tuples from these and never retypes a column name.
 
-- [ ] **Step 1: Write the failing DDL-pin tests**
+- [x] **Step 1: Write the failing DDL-pin tests**
 
 Append to `tests/test_se_company_person_tables.py` (the module already imports `tables`, `declared_columns` and `table_block`, and already defines `COMPANY_ID_CHECK`):
 
@@ -306,7 +306,7 @@ And in `tests/test_clickhouse_migrations.py`, append one line to `EXPECTED_MIGRA
     "000399_corpscout_se_company_person_match",
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/dagster_v3
@@ -314,7 +314,7 @@ uv run --frozen --no-sync pytest tests/test_se_company_person_tables.py tests/te
 ```
 Expected: FAIL — `AttributeError: module ... has no attribute 'MATCH_COLUMNS'` from the tables tests, and `test_clickhouse_migration_files_are_explicit` failing because `000399_*.up.sql` / `.down.sql` do not exist.
 
-- [ ] **Step 3: Write the up migration**
+- [x] **Step 3: Write the up migration**
 
 Create `corpscout/clickhouse/migrations/000399_corpscout_se_company_person_match.up.sql` exactly:
 
@@ -395,7 +395,7 @@ ENGINE = ReplacingMergeTree(matched_at)
 ORDER BY (company_id);
 ```
 
-- [ ] **Step 4: Write the down migration**
+- [x] **Step 4: Write the down migration**
 
 Create `corpscout/clickhouse/migrations/000399_corpscout_se_company_person_match.down.sql` exactly:
 
@@ -404,7 +404,7 @@ DROP TABLE IF EXISTS corpscout.se_company_person_match_state;
 DROP TABLE IF EXISTS corpscout.se_company_person_match;
 ```
 
-- [ ] **Step 5: Add the constants to `tables.py`**
+- [x] **Step 5: Add the constants to `tables.py`**
 
 In `src/dagster_v3/defs/se_company/person/tables.py`, after the `ROLE_TYPE_TABLE` line add:
 
@@ -438,7 +438,7 @@ MATCH_STATE_COLUMNS: tuple[str, ...] = (
 )
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/dagster_v3
@@ -446,7 +446,7 @@ uv run --frozen --no-sync pytest tests/test_se_company_person_tables.py tests/te
 ```
 Expected: PASS, both files, no skips. `test_clickhouse_migrations_create_databases_and_tables` and `test_clickhouse_migrations_have_down_files` cover 000399 automatically; `test_clickhouse_migration_line_comments_do_not_contain_semicolons` is why no `--` comment above may contain a `;`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info
@@ -483,7 +483,7 @@ rm -f "$MSGFILE"
 - Consumes: `tables.MATCH_TABLE` etc. from Task 1 (not used yet), `fold.NormalizedRow` and `fold.FOLDABLE_STATUS` (existing).
 - Produces: `Candidate`, `MACHINE_SOURCES`, `MAX_CANDIDATES`, `MAX_ROLES`, `build_candidates`, `in_scope`, `serialize_candidates`, `input_hash` — Task 3 builds the request from these, Task 4 pages over them.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/test_se_company_person_match.py`:
 
@@ -654,7 +654,7 @@ def test_the_hard_candidate_cap_is_four_hundred() -> None:
     assert MAX_CANDIDATES == 400
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/dagster_v3
@@ -662,7 +662,7 @@ uv run --frozen --no-sync pytest tests/test_se_company_person_match.py -q
 ```
 Expected: FAIL — `ModuleNotFoundError: No module named 'dagster_v3.defs.se_company.person.match'`.
 
-- [ ] **Step 3: Write the module's first half**
+- [x] **Step 3: Write the module's first half**
 
 Create `src/dagster_v3/defs/se_company/person/match.py`:
 
@@ -852,7 +852,7 @@ def input_hash(candidates: Sequence[Candidate]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/dagster_v3
@@ -860,7 +860,7 @@ uv run --frozen --no-sync pytest tests/test_se_company_person_match.py -q
 ```
 Expected: PASS, 8 tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info
@@ -897,7 +897,7 @@ rm -f "$MSGFILE"
 
 **Why `MATCH_THRESHOLD` lands here and not in Task 5:** spec section 4 says the constant lives in `fold.py` beside `FOLD_VERSION`, and Task 4's asset metadata reports `pairs_above_threshold`. Adding the constant (and nothing else) to `fold.py` now means no task ever imports a name a later task defines. `FOLD_VERSION` stays `se-person-fold-v1` until Task 5.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/test_se_company_person_match.py`, and extend its import block with the new names:
 
@@ -1060,7 +1060,7 @@ def test_the_threshold_is_zero_point_eight_and_lives_in_the_fold() -> None:
     assert MATCH_THRESHOLD == 0.8
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/dagster_v3
@@ -1068,7 +1068,7 @@ uv run --frozen --no-sync pytest tests/test_se_company_person_match.py -q
 ```
 Expected: FAIL with `ImportError: cannot import name 'SYSTEM_PROMPT'` (and `MATCH_THRESHOLD`).
 
-- [ ] **Step 3: Add the threshold to `fold.py`**
+- [x] **Step 3: Add the threshold to `fold.py`**
 
 In `src/dagster_v3/defs/se_company/person/fold.py`, immediately after the `FOLD_VERSION = "se-person-fold-v1"` line:
 
@@ -1080,7 +1080,7 @@ In `src/dagster_v3/defs/se_company/person/fold.py`, immediately after the `FOLD_
 MATCH_THRESHOLD = 0.8
 ```
 
-- [ ] **Step 4: Add the prompt, the request builder and the parser to `match.py`**
+- [x] **Step 4: Add the prompt, the request builder and the parser to `match.py`**
 
 Extend the imports of `src/dagster_v3/defs/se_company/person/match.py`:
 
@@ -1262,7 +1262,7 @@ def parse_match_response(
     )
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/dagster_v3
@@ -1270,7 +1270,7 @@ uv run --frozen --no-sync pytest tests/test_se_company_person_match.py tests/tes
 ```
 Expected: PASS both files — the fold file must stay green, because Task 3 adds a constant to `fold.py` and changes no behaviour.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info
@@ -1313,7 +1313,7 @@ rm -f "$MSGFILE"
 
 **Why the asset lives in `assets.py` and the run loop in `match.py`:** `dg.load_from_defs_folder` would find an asset in either module, but every other person asset is in `assets.py` and `tests/test_se_company_person_assets.py` is where their wiring is pinned. The pure/SQL half stays in `match.py`, the way `fold.py`/`batch.py` stay out of `assets.py`.
 
-- [ ] **Step 1: Write the failing tests for the run loop**
+- [x] **Step 1: Write the failing tests for the run loop**
 
 Append to `tests/test_se_company_person_match.py` (extend the import block with the new names):
 
@@ -1642,7 +1642,7 @@ def test_match_counts_as_metadata_names_every_counter() -> None:
 
 Also add `from pydantic import ValidationError` to the test module's imports.
 
-- [ ] **Step 2: Write the failing asset and job tests**
+- [x] **Step 2: Write the failing asset and job tests**
 
 Append to `tests/test_se_company_person_assets.py`:
 
@@ -1701,7 +1701,7 @@ def test_the_weekly_runs_every_extractor_the_normalizer_and_the_matcher() -> Non
     assert jobs.WEEKLY_PAGE_SIZE == 10_000
 ```
 
-- [ ] **Step 3: Run the tests to verify they fail**
+- [x] **Step 3: Run the tests to verify they fail**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/dagster_v3
@@ -1712,7 +1712,7 @@ Expected: FAIL — `ImportError: cannot import name 'PersonMatchProfile'`, and `
 
 ---
 
-- [ ] **Step 4: Write the run loop in `match.py`**
+- [x] **Step 4: Write the run loop in `match.py`**
 
 Extend the imports of `src/dagster_v3/defs/se_company/person/match.py`:
 
@@ -2128,7 +2128,7 @@ def run_match(
     )
 ```
 
-- [ ] **Step 5: Add the asset to `assets.py` and the wiring to `jobs.py`**
+- [x] **Step 5: Add the asset to `assets.py` and the wiring to `jobs.py`**
 
 In `src/dagster_v3/defs/se_company/person/assets.py`, extend the imports:
 
@@ -2238,7 +2238,7 @@ se_company_person_extract_job = dg.define_asset_job(
 
 Update the module docstring's first line to name the matcher: `"""The person extract job (extractors, normalize, match) and its STOPPED weekly."""`
 
-- [ ] **Step 6: Run the tests and `dg check defs`**
+- [x] **Step 6: Run the tests and `dg check defs`**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/dagster_v3
@@ -2248,7 +2248,7 @@ uv run --frozen --no-sync dg check defs
 ```
 Expected: PASS all three files; `dg check defs` green. If `dg list defs | rg se_company_person` is run for reassurance it must now show `se_company_person_match`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info
@@ -2292,7 +2292,7 @@ rm -f "$MSGFILE"
 - Consumes: `tables.QUALIFIED_MATCH_TABLE`, `tables.QUALIFIED_MATCH_STATE_TABLE` (Task 1); `fold.MATCH_THRESHOLD` (Task 3); the rows Task 4's asset writes.
 - Produces: `fold.MatchPair`, `fold.pairs_within`, `fold.LLM_MATCH_KEY`, `FOLD_VERSION = "se-person-fold-v2"`, the `matches=` parameter on `identity_sets_before_split`, `identity_sets` and `fold_company_persons`; `batch.MATCH_PAIR_SELECT_COLUMNS`, `batch.match_watermarks_sql`, `batch.match_pairs_sql`, `batch.match_pair_from_row`.
 
-- [ ] **Step 1: Write the failing fold tests**
+- [x] **Step 1: Write the failing fold tests**
 
 Extend the import block of `tests/test_se_company_person_fold.py` with `MATCH_THRESHOLD`, `MatchPair` and `pairs_within`, and change the two helpers so every existing call keeps working:
 
@@ -2429,7 +2429,7 @@ def test_pairs_within_needs_both_sides_and_admits_only_year_compatible_pairs() -
 
 Add `from dagster_v3.defs.se_company.person.fold import MATCH_THRESHOLD, MatchPair, pairs_within` to the test module's fold imports. (`json` is already imported at the top of the file.)
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/dagster_v3
@@ -2437,7 +2437,7 @@ uv run --frozen --no-sync pytest tests/test_se_company_person_fold.py -q
 ```
 Expected: FAIL — `ImportError: cannot import name 'MatchPair'`.
 
-- [ ] **Step 3: Teach `fold.py` the matches**
+- [x] **Step 3: Teach `fold.py` the matches**
 
 In `src/dagster_v3/defs/se_company/person/fold.py`:
 
@@ -2622,7 +2622,7 @@ and pass them into the row builder:
     ]
 ```
 
-- [ ] **Step 4: Run the fold tests to verify they pass**
+- [x] **Step 4: Run the fold tests to verify they pass**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/dagster_v3
@@ -2632,7 +2632,7 @@ Expected: PASS — including every pre-existing test, because `matches` defaults
 
 ---
 
-- [ ] **Step 5: Write the failing batch tests**
+- [x] **Step 5: Write the failing batch tests**
 
 In `tests/test_se_company_person_batch.py`, add the two new answers to `empty_scan` so every existing test keeps passing:
 
@@ -2750,7 +2750,7 @@ Extend the module's imports with `import json`, `from dagster_v3.defs.se_company
 
 `match_pairs_sql()` binds the id list **twice**, so a 20,000-id page renders to about 640 KB — still inside the 1 MiB setting, and this assertion is what keeps it so.
 
-- [ ] **Step 6: Run the batch tests to verify they fail**
+- [x] **Step 6: Run the batch tests to verify they fail**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/dagster_v3
@@ -2758,7 +2758,7 @@ uv run --frozen --no-sync pytest tests/test_se_company_person_batch.py -q
 ```
 Expected: FAIL — `AttributeError: module 'dagster_v3.defs.se_company.person.batch' has no attribute 'match_pairs_sql'`.
 
-- [ ] **Step 7: Teach `batch.py` the pairs and the fifth watermark**
+- [x] **Step 7: Teach `batch.py` the pairs and the fifth watermark**
 
 In `src/dagster_v3/defs/se_company/person/batch.py`:
 
@@ -2869,7 +2869,7 @@ and pass them to the fold:
 
 The targeted path needs no change of its own: `se_company_person_fold_companies` calls `fold_companies`, so the backoffice's Fold now sees the stored pairs without ever calling the model (spec section 4).
 
-- [ ] **Step 8: Extend the clickhouse-local proof**
+- [x] **Step 8: Extend the clickhouse-local proof**
 
 In `tests/test_se_company_person_fold_clickhouse_local.py`:
 
@@ -3020,7 +3020,7 @@ def test_re_running_the_matched_fold_selects_nothing(matched) -> None:
     assert counts.considered == 0
 ```
 
-- [ ] **Step 9: Run every person test**
+- [x] **Step 9: Run every person test**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/dagster_v3
@@ -3034,7 +3034,7 @@ uv run --frozen --no-sync dg check defs
 ```
 Expected: PASS everywhere. The clickhouse-local file skips itself if `clickhouse-local` is unusable on the machine — a skip is acceptable locally, but say so in the task report, because Task 6 relies on this proof.
 
-- [ ] **Step 10: Update the design doc**
+- [x] **Step 10: Update the design doc**
 
 In `src/dagster_v3/defs/se_company/person/docs/person-design.md`:
 
@@ -3087,7 +3087,7 @@ re-matches every multi-source company on the next run. That is the price of a no
 version change, and it is stated here so it is not a surprise.
 ```
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info
@@ -3129,7 +3129,7 @@ local loop (memory `se-person-entity`: local pollers get OOM-killed during long 
 **Files:** `docs/superpowers/specs/2026-09-11-se-company-person-llm-matching-design.md` (the
 shipped record, step 9) and this plan (the ticks).
 
-- [ ] **Step 1: Whole-branch review, merge, deploy**
+- [x] **Step 1: Whole-branch review, merge, deploy**
 
 1. Review the branch end to end: `git -C /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info diff main...se-person-llm-match`.
 2. The owner merges. If the main checkout sits on another branch, merge through a worktree that has `main` checked out (memory `se-worktree-deploy-recipe`).
@@ -3157,7 +3157,7 @@ shipped record, step 9) and this plan (the ticks).
    ```
    Expected: the list contains `se_company_person_match`.
 
-- [ ] **Step 2: Migrate 000399 and check the ledger**
+- [x] **Step 2: Migrate 000399 and check the ledger**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect
@@ -3173,7 +3173,7 @@ WHERE database = 'corpscout' AND name LIKE 'se_company_person_match%' ORDER BY n
 ```
 Expected: two `ReplacingMergeTree` rows, `total_rows` 0. **This migration touches no view**, so there is no refresh window to avoid and no `SYSTEM START VIEW` recovery to think about.
 
-- [ ] **Step 3: Confirm the API key is on the host, and take the baselines**
+- [x] **Step 3: Confirm the API key is on the host, and take the baselines**
 
 Check the key **by name only** — never print a value:
 
@@ -3231,7 +3231,7 @@ SELECT count() AS companies FROM (
 ```
 Expected (spec section 2 and the Ratsit shipped record): b1 ≈ 1,321,187 / 677,256 / 82,944; b2 near **32,390** in 31,360 companies; b3 near **3,793** in 3,666; b4 persons 139 with 7 both-sources; b5 ≈ **124,646**. These queries are this plan's own wording of the gap measurements, so a few percent of drift from the spec's figures is fine — **what matters is that these numbers are the baseline and step 7 re-runs the identical text**.
 
-- [ ] **Step 4: The sample gate (spec 7.2)**
+- [x] **Step 4: The sample gate (spec 7.2)**
 
 (a) Draw 2,000 company ids as a paste-ready JSON array:
 
@@ -3370,7 +3370,7 @@ WHERE company_id = '5020177753' ORDER BY confidence DESC LIMIT 30;
 
 Acceptance (spec 7.2): **s4 `pct` well above 90**; **s5 `different_surnames` near 0** (a maiden-name merge is legitimate but must be rare and must carry a reason that says so); s2 `avg_prompt` in the hundreds, so the full run's cost projects to roughly `avg_prompt × 124,646`; s6's twenty reasons read as real Swedish naming arguments, not as restated names. **The owner reads this before step 5.** A threshold change is a constant edit in `fold.py` and a re-fold — **never** a re-match.
 
-- [ ] **Step 5: The full match (spec 7.3)**
+- [x] **Step 5: The full match (spec 7.3)**
 
 Added by the final-review fix wave: if a match run is interrupted (killed, or it raised on the
 circuit breaker), re-run it before any fold — a page whose pairs were written without its state row
@@ -3409,7 +3409,7 @@ FROM corpscout.se_company_person_match_state FINAL WHERE error != '' GROUP BY er
 ```
 Expected: f1 `companies` ≈ **124,646**, `prompt_tokens` in the tens of millions (the spec projects ~60M); f4 `in_scope − matched_ok` = the errored companies. **Re-launch the same run config once** to sweep the errors: `changed_only` re-sends exactly them (`match_state_sql` reads only `error = ''`), and `reused` should then be ≈ f1 `companies`.
 
-- [ ] **Step 6: The fold backfill over the 64 buckets (spec 7.4)**
+- [x] **Step 6: The fold backfill over the 64 buckets (spec 7.4)**
 
 ```bash
 python3 - > /tmp/person-fold-backfill.json <<'PY'
@@ -3431,7 +3431,7 @@ Default config, so `changed_only: true` — the new match watermark is what sele
 
 Read the first finished bucket before the rest complete: `considered` ≈ 124,646 / 64 ≈ **1,950**, `updated` the people a pair joined, `withdrawn` the keys a re-key gave up, `created` the re-keyed people, `stale_rules` 0, `fold_version` **`se-person-fold-v2`**. **If `considered` comes back near 20,000 (the whole bucket), stop — `changed_only` is not being honoured and something is stamping every company.**
 
-- [ ] **Step 7: The after-readouts (spec 7.4)**
+- [x] **Step 7: The after-readouts (spec 7.4)**
 
 Re-run **b1 to b4 verbatim** from step 3, then:
 
@@ -3459,7 +3459,7 @@ SELECT (SELECT count() FROM corpscout.se_company_person_history WHERE change_kin
 ```
 Acceptance: b1 `multi_source_persons` **up** from 82,944 (every merged pair adds one); b2 `pairs` **far below** its baseline (the call-name gap is what this slice exists to close); b3 `pairs` below its baseline; b4 Swedbank's `ratsit_plus_esef` above 7; a1 roughly the number of `pairs_above_threshold` the match reported, minus the pairs a rule or the year split pulled apart; a2 `updated` + `withdrawn` + `created` consistent with step 6's summed metadata; a4 `created_rows` ≥ `distinct_keys` (history is append-only across every fold this table has ever had, so it is a lower bound, not an equality, after slice 2's first fold). Spot-check ten of a3's merges against `corpscout.se_company_person_normalized FINAL` for the same company: the members belong together, the spelling is the highest-precedence member's, the reason is a naming argument.
 
-- [ ] **Step 8: The serving refresh and the People tab smoke**
+- [x] **Step 8: The serving refresh and the People tab smoke**
 
 The refreshable view runs hourly at :45 and takes 13-16 minutes. After the next one:
 
@@ -3474,7 +3474,7 @@ Expected: `status` not `Error`, no exception, and `has_people` **unchanged** aga
 
 Smoke the backoffice People tab on a merged company from a3 (it runs locally: `pnpm dev` at `http://localhost:5183`). The tab has no match UI yet — that is slice 2 — so the check is only that the merged person shows both sources, the fuller spelling, and `llm_match` rendered as raw JSON in the member card's `data`.
 
-- [ ] **Step 9: Record and tick**
+- [x] **Step 9: Record and tick**
 
 1. Append the shipped record to spec section 10 item 1: the plan file, the merge commit, what shipped, the numbers of steps 3 to 8 (before → after for b1-b4, the sample gate's s4/s5, the full run's f1/f2, the backfill's totals), the cost in tokens, and every ruling made on the way (this plan's self-review lists the ones it already made).
 2. Tick this plan's checkboxes.
