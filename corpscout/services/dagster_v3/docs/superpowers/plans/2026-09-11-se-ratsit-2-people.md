@@ -1689,6 +1689,13 @@ Expect 64/64 `SUCCESS`. Person slice 2's first fold ran ~30 s per bucket over 57
 
 - [ ] **Step 8: Read out the entity (the spec 4.6 numbers)**
 
+Also record (added by the final-review fix wave): the fold metadata's `withdrawn` and `reactivated`
+sums over the 64 runs (non-zero `withdrawn` is expected — a set re-keys when Ratsit's name is its most
+complete member), and the double-surname count from spec section 6: companies holding an active Ratsit
+person and an active Bolagsverket person with equal first tokens whose last tokens are a prefix or
+suffix of each other but with different `person_key`s. The controller writes that query at run time
+against `corpscout.se_company_person FINAL` and puts the number in the shipped record.
+
 ```bash
 ssh companycollect 'docker exec -i clickhouse-clickhouse-1 clickhouse-client --database corpscout --format PrettyCompact' <<'SQL'
 -- (a) the same shape as Step 2(a): compare line by line

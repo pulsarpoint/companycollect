@@ -157,8 +157,8 @@ superseded scans' rows never appear. A row is live only when `name` is non-empty
 | column | value |
 | --- | --- |
 | `company_id`, `source` | the company; `'ratsit'` |
-| `slot` | the URL token `extract(profile_url, '/([A-Za-z0-9_-]+)$')`; when the same token appears on more than one row of the report, `concat(token, ':', lowerUTF8(trim(role)))`; when there is no token, `concat('idx:', toString(person_index))` |
-| `source_record_id` | `concat('ratsit:', toString(result_sha256), ':', toString(person_index))` |
+| `slot` | the URL token `extract(profile_url, '/([A-Za-z0-9_-]+)$')`; when the same token appears on more than one row of the report, `concat(token, ':', lowerUTF8(trim(role)))`; when the (token, role) pair itself repeats, `concat('idx:', toString(person_index))` (a shared slot would collapse in the ReplacingMergeTree and the state scan would never converge); when there is no token, `concat('idx:', toString(person_index))` |
+| `source_record_id` | `concat('ratsit:', company_id, ':', toString(person_index))` — not the report hash: `source_record_id` is in the state hash and nothing downstream reads it, so a hash-bearing id would re-extract, re-normalize and re-fold every Ratsit company on every re-scan whose report changed for any reason (~277k rows, ~237k companies); the report is recoverable from `se_ratsit_company` by company and stamp (final-review ruling 2026-09-11) |
 | `full_name` | `name` trimmed; `first_name`, `last_name` NULL (the normalizer splits) |
 | `birth_year` | `toUInt16OrNull(substring(extract(profile_url, '^https://www\\.ratsit\\.se/(\\d{8})-'), 1, 4))`, NULL when the URL carries no date |
 | `wikidata_id` | NULL |
@@ -232,7 +232,12 @@ ratsit has no map is updated; `SOURCE_ROLELESS_CODES` gets no ratsit entry.
 (every company is new to the source: ~236,814 companies, ~277k live rows). 3.
 `se_company_person_normalize` (`changed_only: true`). 4. `se_company_person_fold` backfill over
 the 64 buckets (changed-only: the watermark sees the newer normalized rows; pool
-`se_company_person_fold`, serial). Readouts: main rows with `has(sources, 'ratsit')`,
+`se_company_person_fold`, serial). Readouts: main rows with `has(sources, 'ratsit')`, the run
+metadata's `created`/`updated`/`withdrawn`/`reactivated` (non-zero `withdrawn` is expected: a set
+re-keys when Ratsit's name is its most complete member, and hide rules resolve through the
+previous members), the double-surname count of section 6 (companies holding a Ratsit person and
+a Bolagsverket person with equal first tokens whose last tokens are a prefix or suffix of each
+other but landed on different keys),
 companies gaining their first person (expect ~106k), created/updated/merged counts from the
 run metadata, a spot check of a company with Bolagsverket + Ratsit rows (the Ratsit spelling
 wins, the birth year lands), the People tab on the owner's dev server. 5. The serving
@@ -336,6 +341,24 @@ samples now folded into the register set, `se_companies_serving` address counts 
 refresh, the Address tab on the owner's dev server for a company with establishments.
 
 ## 6. Risks and rulings
+
+- Double surnames split differently across sources: Ratsit delivers a full name and the
+  normalizer takes the last word as the surname (`Anna Ek Svensson` → last `svensson`, middle
+  `ek`), while Bolagsverket delivers first/last (`Ek Svensson` → last `ek svensson`); the fold
+  needs equal first and last tokens, so such a person publishes twice, the Ratsit one with the
+  birth year. Pre-existing for ESEF and Wikidata, larger with Ratsit's 277k rows. Not fixed in
+  this slice (a normalizer change means a version bump and a full re-normalize); the slice 2
+  readout counts the affected companies and the owner decides on a normalizer follow-up.
+- Slot stability: the token slot survives re-scans while the person's row count is unchanged;
+  gaining or losing a second row moves `T` to `T:role` (old slot tombstoned), which breaks a
+  slot-keyed reviewer rule on that person. Rare (31 two-row tokens today).
+- `fiscal_year` is the scan year, so on a merged person `last_year` becomes the scan year and
+  the People list's current roles show what Ratsit saw; a Bolagsverket seat from an earlier
+  year stops reading as current (filters use the full role union, so only the display moves).
+- `data.identity_available` is constant `true` on live rows (000346's constraint forbids a
+  named row without it); kept as the source's own flag.
+- `roles.py` matches labels with `str.lower()` and no Unicode normalization; an NFD-decomposed
+  `Ställföreträdande VD` would pass through unmapped (21 rows today). Follow-up if it happens.
 
 - Ratsit's descriptions at 300 lose to Bolagsverket's at 400; the gain is the ~667k
   companies without any description. If the owner wants Ratsit's longer texts to win, that
