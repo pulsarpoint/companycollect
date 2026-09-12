@@ -14,24 +14,17 @@ from dagster_v3.defs.se_company.financial.precedence import precedence_rows
 GROUP_NAME = "se_company_financial"
 
 
-def _precedence_export_timestamp(exported_at: datetime) -> str:
-    """``exported_at`` as a UTC ``%Y-%m-%d %H:%M:%S.mmm`` string for ``toDateTime64(..., 3,
-    'UTC')``: a bare tz-aware datetime parameter would let the stale-pairs comparison depend
-    on the server's default timezone and drop sub-second precision (the three older entities
-    do the same)."""
-    return exported_at.strftime("%Y-%m-%d %H:%M:%S.") + f"{exported_at.microsecond // 1000:03d}"
-
-
 def export_precedence(client: Any, exported_at: datetime) -> tuple[int, int]:
     """Insert every (field, source, precedence) pair as a global rule (company_id '',
-    period_key '', decided_by 'code') and count global rules exported before this run that
-    the dictionary no longer names. Returns (pairs inserted, stale pairs remaining). Never
-    touches a company-scoped row.
+    period_key '', decided_by 'code'). Returns (pairs inserted, stale pairs): stale is the
+    count of global (field, source) pairs present in ClickHouse that the dictionary no
+    longer names at all -- they stay until removed by hand (the export never deletes). A
+    pair whose number merely changed is not stale; the insert corrects it. Never touches a
+    company-scoped row.
 
-    `decided_at` is one of the fold's selection watermarks (slice 3), so writing a fresh one
-    when nothing changed would re-fold every company on an idle re-materialisation. Read the
-    stored global rows first: when they already equal `precedence_rows()`, insert nothing
-    and report 0 pairs (the caller reads that as `unchanged`); otherwise insert every pair."""
+    Read the stored global rows first: when they already equal `precedence_rows()`, insert
+    nothing and report 0 pairs (the caller reads that as `unchanged`); otherwise insert every
+    pair."""
     wanted = precedence_rows()
     stored = {
         tuple(row)
@@ -52,13 +45,9 @@ def export_precedence(client: Any, exported_at: datetime) -> tuple[int, int]:
             rows,
         )
         pairs = len(rows)
-    stale = int(
-        client.execute(
-            f"SELECT count() FROM {tables.QUALIFIED_PRECEDENCE_TABLE} FINAL "
-            "WHERE company_id = '' AND period_key = '' AND removed = 0 "
-            "AND decided_at < toDateTime64(%(exported_at)s, 3, 'UTC')",
-            {"exported_at": _precedence_export_timestamp(exported_at)},
-        )[0][0]
+    stale = len(
+        {(field, source) for field, source, _ in stored}
+        - {(field, source) for field, source, _ in wanted}
     )
     return pairs, stale
 
