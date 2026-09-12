@@ -153,10 +153,10 @@ country." The views are named `se_esef_<table>`.
   is no longer projected. The projection replaces the table (stage plus EXCHANGE) instead of
   appending.
 - Identity: `candidate_uid` = the company-source-record observation hash over
-  `source_record_uid`, `esef_person`, prompt version, the normalised name and the role
-  category, so a re-run with the same prompt replaces its rows; the materialised
-  `person_profile_hash` and `person_role_hash` are unchanged. `fiscal_year` is the filing's,
-  so a company's rosters accumulate per year.
+  `source_record_uid`, `esef_person`, prompt version, the normalised name, the role
+  category and the normalised role text, so a re-run with the same prompt replaces its rows;
+  the materialised `person_profile_hash` and `person_role_hash` are unchanged. `fiscal_year`
+  is the filing's, so a company's rosters accumulate per year.
 - `se_company_person_esef` no longer exists: the SE person slice 0 dropped that view on
   2026-09-09. The reader of `se_esef_document_people` is now the SE person entity's extractor,
   `se_company/person/esef.py`, which tombstones vanished slots itself and is re-run after the
@@ -172,6 +172,9 @@ country." The views are named `se_esef_<table>`.
 - Migration number 000397 (000396 went to the person entity, merged 2026-09-09).
 - An `invalid_response` from either LLM pass keeps its raw text beside the
   artifact for inspection; still no row, retried on the next run.
+- 2026-09-12: the role text joins the identity -- a person's committee seat is its own row
+  (owner: name and positions matter, not only the person); duplicate filings for one (LEI,
+  period end) are kept, both extracted and projected (owner: fine to be duplicated).
 
 ### 3. Registered-office addresses
 
