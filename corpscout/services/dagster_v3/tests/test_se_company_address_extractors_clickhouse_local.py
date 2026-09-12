@@ -33,13 +33,17 @@ MIGRATIONS = (
     "000390_corpscout_se_source_translated_views.up.sql",
 )
 # se_ratsit_company is not created by any of the five migrations above (its own migration,
-# 000343, is out of scope here), so the fixture supplies it with no risk of colliding with a
+# 000343, is out of scope here), so the fixtures supply it with no risk of colliding with a
 # CREATE TABLE the migrations already issued for one of these five. 000390's two views
-# (se_bolagsverket_companies_translated, se_ratsit_company_translated -- basic-info's ratsit
-# extractor, reused here unchanged, reads the latter) need only se_bolagsverket_companies
-# (000374), se_ratsit_company and text_translations (both already in the fixture); its two
-# INSERT INTO ... SELECT statements are data moves the schema replay skips.
-FIXTURE = Path(__file__).resolve().parent / "fixtures" / "se_basic_info_source_tables.sql"
+# (se_bolagsverket_companies_translated, se_ratsit_company_translated) need only
+# se_bolagsverket_companies (000374), se_ratsit_company and text_translations (both already
+# in the fixture); its two INSERT INTO ... SELECT statements are data moves the schema replay
+# skips. The second fixture carries se_ratsit_establishments, which ratsit-address-v2 reads:
+# this script seeds no establishment rows, but the table has to exist for the select to parse.
+FIXTURES = (
+    Path(__file__).resolve().parent / "fixtures" / "se_basic_info_source_tables.sql",
+    Path(__file__).resolve().parent / "fixtures" / "se_company_address_source_tables.sql",
+)
 
 COMPANY_SCB_BV = "5561552760"
 COMPANY_RATSIT = "5560125220"
@@ -179,7 +183,12 @@ def _schema() -> list[str]:
                 # 000390's two INSERT INTO ... SELECT statements (data moves, not schema) are
                 # excluded by construction -- they start with neither prefix above.
                 views_sql.append(statement)
-    fixture = [s.strip() for s in FIXTURE.read_text(encoding="utf-8").split(";") if s.strip()]
+    fixture = [
+        statement
+        for path in FIXTURES
+        for statement in (s.strip() for s in path.read_text(encoding="utf-8").split(";"))
+        if statement
+    ]
     esef_views = [
         build_se_esef_view_sql(view)
         for view in esef_tables.SE_ESEF_VIEWS

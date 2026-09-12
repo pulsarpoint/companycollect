@@ -351,3 +351,34 @@ def test_bad_input_is_refused() -> None:
     previous = fold([row("scb")]).rows[0]
     with pytest.raises(ValueError):
         fold([], published=[dataclasses.replace(previous, company_id="5560000002")])
+
+
+def test_a_workplace_establishment_at_the_postal_address_publishes_one_row() -> None:
+    """Spec 5.4: `kinds` is the DISTINCT member kinds in member order, so the 288,840
+    establishments that repeat the company's own postal street and postcode merge into the
+    postal row instead of publishing a second address. The members tie on completeness, on
+    source precedence and on suggested_at, so `_sort_key` falls through to the slot and
+    `company` sorts before `est:EST-1`."""
+    result = fold([row("ratsit", "company"), row("ratsit", "est:EST-1", kind="workplace")])
+    assert (result.published, result.hidden, result.withdrawn) == (1, 0, 0)
+    published = result.rows[0]
+    assert published.kinds == ("postal", "workplace")
+    assert published.sources == ("ratsit", "ratsit")
+    assert published.slots == ("company", "est:EST-1")
+    assert published.text_source == "ratsit"
+    assert published.active == 1 and published.inactive_reason == ""
+
+
+def test_a_workplace_establishment_elsewhere_publishes_its_own_row() -> None:
+    """The other ~444k establishments: a different street is a different address, so the
+    company publishes two rows and the workplace one geocodes on its own location key."""
+    result = fold([
+        row("ratsit", "company"),
+        row(
+            "ratsit", "est:EST-2", kind="workplace", street_name="kungsgatan", house_number="5",
+            postal_code="11143", normalized_address="Kungsgatan 5, 111 43 Stockholm",
+        ),
+    ])
+    assert (result.published, result.hidden, result.withdrawn) == (2, 0, 0)
+    assert {published.kinds for published in result.rows} == {("postal",), ("workplace",)}
+    assert {published.slots for published in result.rows} == {("company",), ("est:EST-2",)}
