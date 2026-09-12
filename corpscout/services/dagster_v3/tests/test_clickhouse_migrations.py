@@ -414,6 +414,7 @@ EXPECTED_MIGRATIONS = (
     "000398_corpscout_se_company_person_rename",
     "000399_corpscout_se_company_person_match",
     "000400_corpscout_se_ratsit_financial_periods_usd",
+    "000401_corpscout_se_company_financial_entity",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -3842,6 +3843,48 @@ def test_ratsit_financial_periods_usd_migration_adds_a_twin_per_monetary_column(
     assert "_percent_usd" not in up_sql
     assert up_sql.count("ADD COLUMN IF NOT EXISTS") == 23
     assert down_sql.count("DROP COLUMN IF EXISTS") == 23
+
+
+FINANCIAL_ENTITY_TABLES = (
+    "se_company_financial_suggestion",
+    "se_company_financial",
+    "se_company_financial_history",
+    "se_company_financial_precedence",
+    "se_company_financial_rule",
+)
+
+
+def test_se_company_financial_entity_migration_declares_five_period_keyed_tables() -> None:
+    up_sql = _migration_sql("000401_corpscout_se_company_financial_entity.up.sql")
+    down_sql = _migration_sql("000401_corpscout_se_company_financial_entity.down.sql")
+
+    assert up_sql.startswith("CREATE DATABASE IF NOT EXISTS corpscout;")
+    for table in FINANCIAL_ENTITY_TABLES:
+        assert f"CREATE TABLE IF NOT EXISTS corpscout.{table}\n" in up_sql, table
+        assert f"DROP TABLE IF EXISTS corpscout.{table};" in down_sql, table
+    assert up_sql.count("CREATE TABLE IF NOT EXISTS") == 5
+    assert up_sql.count("ORDER BY (company_id, source, period_key)") == 1
+    assert up_sql.count("ORDER BY (company_id, scope, period_end)") == 1
+    assert up_sql.count("ORDER BY (company_id, scope, period_end, changed_at)") == 1
+    assert up_sql.count("ORDER BY (company_id, period_key, field, source)") == 1
+    assert up_sql.count("ORDER BY (company_id, period_key, action)") == 1
+    # The period key is derived from scope and period end on both tables that carry it.
+    assert up_sql.count(
+        "CONSTRAINT valid_period_key CHECK period_key = concat(scope, ':', toString(period_end))"
+    ) == 2
+    assert "CONSTRAINT valid_amount_scale CHECK amount_scale IN (1, 1000, 1000000)" in up_sql
+    assert "CONSTRAINT valid_action CHECK action IN ('hide')" in up_sql
+    assert "CONSTRAINT valid_global_scope CHECK company_id != '' OR period_key = ''" in up_sql
+    assert "CONSTRAINT valid_currency CHECK ifNull(currency, 'x') != ''" in up_sql
+    assert (
+        "CONSTRAINT valid_source CHECK source IN "
+        "('bolagsverket', 'bolagsverket_comparative', 'esef', 'ratsit', 'reviewer', 'reviewer_draft')"
+    ) in up_sql
+    assert "CONSTRAINT valid_hide_period CHECK period_key != ''" in up_sql
+    # Twenty USD twins on the suggestion row and on each of main and history.
+    assert up_sql.count("_amount_usd Nullable(Decimal(38, 6))") == 60
+    # No reader moves in slice 1: no serving view is touched.
+    assert "SYSTEM STOP VIEW" not in up_sql and "MODIFY QUERY" not in up_sql
 
 
 def test_sweden_ats_retirement_drops_and_can_recreate_every_source_table() -> None:

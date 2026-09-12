@@ -139,7 +139,7 @@ One current row per company, source and period.
 company_id          String
 source              LowCardinality(String)  -- bolagsverket, bolagsverket_comparative, esef, ratsit, reviewer, reviewer_draft
 period_key          String                  -- '<scope>:<period_end>', e.g. 'standalone:2023-12-31'
-suggestion_id       String                  -- lineage id, minted by the extractor from one clock read
+suggestion_id       FixedString(64)         -- lineage id (sha256 hex), as address and person carry
 suggested_at        DateTime64(3, 'UTC')    -- version
 source_record_uid   String                  -- statement key; ESEF fxo_id; 'ratsit:<company>:<report index>:<period index>'; '' for reviewer rows
 scope               LowCardinality(String)  -- standalone | consolidated
@@ -165,6 +165,8 @@ CHECK match(company_id, '^([0-9]{10}|[0-9]{12})$')
 CHECK scope IN ('standalone', 'consolidated')
 CHECK period_key = concat(scope, ':', toString(period_end))
 CHECK amount_scale IN (1, 1000, 1000000)
+CHECK ifNull(currency, 'x') != ''
+CHECK source IN ('bolagsverket', 'bolagsverket_comparative', 'esef', 'ratsit', 'reviewer', 'reviewer_draft')
 ```
 
 Every `_amount_original` is in the source's currency at full units: Ratsit's 57.1 MSEK lands as
@@ -191,13 +193,16 @@ period_months       Nullable(UInt16)        period_months_source  LowCardinality
 currency            LowCardinality(String)  currency_source       LowCardinality(String)   -- '' when no source names one
 <field>_amount_original, <field>_amount_usd, <field>_source   x 20
 employees           Nullable(UInt64)        employees_source      LowCardinality(String)
-sources             Array(String)           -- every source that won at least one field, sorted
+sources             Array(LowCardinality(String))  -- every source that won at least one field, sorted
 active              UInt8                   -- 0 when hidden by a rule or withdrawn
 inactive_reason     LowCardinality(String)  -- '', hidden, withdrawn
 folded_at           DateTime64(3, 'UTC')    -- version
 fold_version        LowCardinality(String)
 source_run_id       String
 ENGINE = ReplacingMergeTree(folded_at) ORDER BY (company_id, scope, period_end)
+CHECK match(company_id, '^([0-9]{10}|[0-9]{12})$')
+CHECK scope IN ('standalone', 'consolidated')
+CHECK period_key = concat(scope, ':', toString(period_end))
 ```
 
 A `_source` column is `''` when the field has no value. There are no row-level fx columns: each
@@ -245,6 +250,7 @@ decided_by   LowCardinality(String) DEFAULT ''
 note         String DEFAULT ''
 decided_at   DateTime64(3, 'UTC')     -- version
 ENGINE = ReplacingMergeTree(decided_at) ORDER BY (company_id, period_key, action)
+CHECK period_key != ''  -- a hide is always per period
 ```
 
 ### 4.6 Kept as is
@@ -552,7 +558,9 @@ the entity.
    0.099585 (2023-12-29); USD revenue agrees with Bolagsverket within 2% on 782,321 of 1,515,731
    pairs (the native rounding share); no leftover join table, no unfinished mutation.
 1. Tables and precedence: migration 000401 with the five tables, `financial/tables.py`,
-   `precedence.py` with the export asset, DDL tests; prod apply and export.
+   `precedence.py` with the export asset, DDL tests; Code complete 2026-09-12 on branch
+   se-financial-entity (plan 2026-09-12-se-company-financial-1-tables-precedence.md); prod
+   apply and export pending.
 2. Extractors: `state_scan.py` lifted from the person package with person switched to it, the
    four extractors, `suggestions.py`, the extract job and the stopped weekly; prod runs with counts
    per source and per skip reason (expected order of magnitude: 3.05M Bolagsverket periods, the

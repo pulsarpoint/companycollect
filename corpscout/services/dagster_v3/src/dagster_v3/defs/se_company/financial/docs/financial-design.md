@@ -1,0 +1,49 @@
+# SE company financial entity — package notes
+
+Spec: `docs/superpowers/specs/2026-09-11-se-company-financial-entity-design.md` (the binding
+document; this note is the package's map and runbook).
+
+## Shape (slice 1)
+
+Five tables, migration 000401, keyed by company, accounting scope (`standalone` |
+`consolidated`) and period end; `period_key` is `'<scope>:<period_end>'` and is what
+suggestions, rules and the backoffice key on.
+
+| Table | Grain | Written by |
+|---|---|---|
+| `se_company_financial_suggestion` | one current row per company, source and period | the extractors (slice 2), the backoffice's reviewer rows (slice 4) |
+| `se_company_financial` | one row per company, scope and period end | the fold (slice 3) |
+| `se_company_financial_history` | one row per change of a published period | the fold |
+| `se_company_financial_precedence` | global rows (`company_id ''`, `period_key ''`) and company rules | the export asset; the backoffice |
+| `se_company_financial_rule` | hide rules per company and period | the backoffice |
+
+`tables.py` is the single place the column order lives and is pinned to the DDL by
+`tests/test_se_company_financial_tables.py`. The twenty monetary fields are pairs
+(`<field>_amount_original` in the source's currency at full units, `<field>_amount_usd` the
+source's own conversion) with a `<field>_source` on the main row; `amount_scale` on the
+suggestion row records the unit the source published in (Ratsit: 1000000).
+
+## Precedence
+
+`precedence.py` holds the spec's section-5 map: Ratsit 1000 first, the registers 900 (they
+never share a scope), the restated Bolagsverket column 800, the reviewer 20000 above a
+company rule's 10000. A source absent from a field's map cannot supply it.
+
+Runbook: after changing the numbers, materialize `se_company_financial_precedence_clickhouse`
+(it writes only when the stored global rows differ from the dictionary, so an idle re-run
+moves no watermark). Its `stale_pairs` metadata counts the global pairs still in ClickHouse
+that the dictionary no longer names; the export never deletes them. To retire such a pair by
+hand, insert a new version at the same key with `removed = 1` and a newer `decided_at`, then
+re-fold every bucket: the export never deletes, and any global-row change is a fold watermark.
+Then re-fold every bucket with `changed_only: false` (slice 3): a precedence change is not a
+per-company change and the fold's per-company watermarks will not notice it on their own.
+
+## Notes for the extractors (slice 2)
+
+- `period_key` must be built from the very same `period_end` value the row inserts (the CHECK
+  compares them server-side; a mismatch aborts the whole INSERT block), and `makeDate32` returns
+  1970-01-01 for years outside Date32's range rather than clamping, so an extractor guards the
+  derived date before keying.
+- `currency` is NULL when a source names none, never '' (the CHECK refuses '' and the fold's
+  gate relies on NULL); `SUGGESTION_VALUE_COLUMNS` is both the tombstone definition (all NULL)
+  and the state-hash column list.
