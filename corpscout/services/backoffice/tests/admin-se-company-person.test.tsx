@@ -32,7 +32,8 @@ const OTHER = "b".repeat(64);
 const SLOT = "r20260910120000123";
 const ROLE_OPTIONS = [{ code: "board_member", label: "Board member", group: "governance" }];
 const EMPTY_DETAIL: SePersonDetail = {
-  published: [], drafts: [], history: [], rules: [], precedence: [], foldPending: false,
+  published: [], drafts: [], history: [], rules: [], precedence: [],
+  possibleMatches: [], foldPending: false,
 };
 const row = {
   company_id: COMPANY, person_key: KEY, display_name: "Anna Svensson",
@@ -54,17 +55,18 @@ const published: SePersonPublished = {
     {
       source: "bolagsverket", slot: "uid-1:sig-1", normalizedId: "n1", name: "Anna Svensson",
       birthYear: "1975", wikidataId: "", data: "{}", current: null, raw: null,
-      refoldPending: false, precedence: 900,
+      refoldPending: false, precedence: 900, match: null,
     },
     {
       source: "esef", slot: "doc-9:cand-1", normalizedId: "n2", name: "Anna Maria Svensson",
       birthYear: "", wikidataId: "", data: "{}", current: null, raw: null,
-      refoldPending: false, precedence: 400,
+      refoldPending: false, precedence: 400, match: null,
     },
   ],
   roles: [{ code: "board_member", year: 2025, sources: ["bolagsverket"] }],
   spellingReason: "precedence",
   rules: [],
+  matchedBy: [],
 };
 const detail: SePersonDetail = { ...EMPTY_DETAIL, published: [published] };
 

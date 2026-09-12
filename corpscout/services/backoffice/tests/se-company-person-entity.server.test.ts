@@ -29,6 +29,7 @@ import {
   mergeSePersons,
   PERSON_HISTORY_SQL,
   PERSON_MAIN_SQL,
+  PERSON_MATCH_SQL,
   PERSON_NORMALIZED_SQL,
   PERSON_PRECEDENCE_SQL,
   PERSON_RAW_SQL,
@@ -43,6 +44,7 @@ import {
   type SePersonRow,
   type SePersonRuleRow,
 } from "~/lib/se-company-person-entity.server";
+import type { SePersonMatch, SePersonMatchRow } from "~/lib/se-person-match";
 
 const COMPANY = "5560000001";
 const MERGED_KEY = "a".repeat(64);
@@ -195,6 +197,39 @@ const PRECEDENCE_ROWS = [
   { company_id: "", field: "name", source: "bolagsverket", precedence: 900, removed: 0, decided_by: "dagster", note: "", decided_at: "2026-09-10 06:00:00.000" },
   { company_id: "", field: "name", source: "esef", precedence: 400, removed: 0, decided_by: "dagster", note: "", decided_at: "2026-09-10 06:00:00.000" },
 ];
+/** The model's answer for this company, as PERSON_MATCH_SQL delivers it. n1 and n2 are
+ * the merged person's two observations, n3 is the Wikidata person's one. */
+const MATCH_ROWS: SePersonMatchRow[] = [
+  {
+    company_id: COMPANY, candidate_a: "n1", candidate_b: "n2",
+    members_a: ["n1"], members_b: ["n2"],
+    name_a: "Anna Svensson", name_b: "Anna Maria Svensson",
+    confidence: 0.93, reason: "call name",
+  },
+  {
+    company_id: COMPANY, candidate_a: "n1", candidate_b: "n3",
+    members_a: ["n1"], members_b: ["n3"],
+    name_a: "Anna Svensson", name_b: "Carl von Essen",
+    confidence: 0.72, reason: "same household",
+  },
+  {
+    company_id: COMPANY, candidate_a: "n2", candidate_b: "n3",
+    members_a: ["n2"], members_b: ["n3"],
+    name_a: "Anna Maria Svensson", name_b: "Carl von Essen",
+    confidence: 0.64, reason: "same surname",
+  },
+  {
+    company_id: COMPANY, candidate_a: "n3", candidate_b: "zz",
+    members_a: ["n3"], members_b: ["zz"],
+    name_a: "Carl von Essen", name_b: "Carla Essen",
+    confidence: 0.66, reason: "an observation no published person holds",
+  },
+];
+/** The one pair at or above the threshold, as the loader derives it. */
+const CALL_NAME_MATCH: SePersonMatch = {
+  nameA: "Anna Svensson", nameB: "Anna Maria Svensson", confidence: 0.93,
+  reason: "call name", members: ["n1", "n2"],
+};
 
 function answer(sql: string): unknown[] {
   if (sql.includes("FROM corpscout.se_company_person AS m FINAL")) return [MERGED_ROW, WIKI_ROW];
@@ -203,6 +238,7 @@ function answer(sql: string): unknown[] {
   if (sql.includes("FROM corpscout.se_company_person_suggestion")) return RAW_ROWS;
   if (sql.includes("FROM corpscout.se_company_person_rule")) return [MERGE_RULE];
   if (sql.includes("FROM corpscout.se_company_person_precedence")) return PRECEDENCE_ROWS;
+  if (sql.includes("FROM corpscout.se_company_person_match AS p FINAL")) return MATCH_ROWS;
   throw new Error(`unexpected SQL: ${sql.slice(0, 60)}`);
 }
 /** The rows one insert call got. */
@@ -258,9 +294,23 @@ describe("se-company-person-entity.server", () => {
     // The global order and the company's own, one read (spec 3.6).
     expect(PERSON_PRECEDENCE_SQL).toContain("FROM corpscout.se_company_person_precedence AS p FINAL");
     expect(PERSON_PRECEDENCE_SQL).toContain("WHERE p.company_id IN ('', {companyId:String}) AND p.field = 'name'");
-    for (const sql of [PERSON_MAIN_SQL, PERSON_HISTORY_SQL, PERSON_NORMALIZED_SQL, PERSON_RAW_SQL, PERSON_RULES_SQL, PERSON_PRECEDENCE_SQL]) {
+    for (const sql of [PERSON_MAIN_SQL, PERSON_HISTORY_SQL, PERSON_NORMALIZED_SQL, PERSON_RAW_SQL, PERSON_RULES_SQL, PERSON_PRECEDENCE_SQL, PERSON_MATCH_SQL]) {
       expect(sql).toContain("{companyId:String}");
     }
+    // The seventh read (spec section 5): the pairs the company's CURRENT input
+    // certifies, exactly the join `batch.py::match_pairs_sql` makes.
+    expect(PERSON_MATCH_SQL).toContain("FROM corpscout.se_company_person_match AS p FINAL");
+    expect(PERSON_MATCH_SQL).toContain("FROM corpscout.se_company_person_match_state FINAL");
+    expect(PERSON_MATCH_SQL).toContain("WHERE company_id = {companyId:String} AND error = ''");
+    expect(PERSON_MATCH_SQL).toContain(
+      "ON s.company_id = p.company_id AND s.input_hash = p.input_hash",
+    );
+    // The floor, not the threshold: the band is what the reviewer acts on.
+    expect(PERSON_MATCH_SQL).toContain("AND p.confidence >= 0.5");
+    expect(PERSON_MATCH_SQL).toContain("toString(p.candidate_a) AS candidate_a");
+    expect(PERSON_MATCH_SQL).toContain("arrayMap(x -> toString(x), p.members_a) AS members_a");
+    expect(PERSON_MATCH_SQL).toContain("arrayMap(x -> toString(x), p.members_b) AS members_b");
+    expect(PERSON_MATCH_SQL).toContain("toFloat64(p.confidence) AS confidence");
   });
 
   it("assembles the published persons, their members, roles, rules and the drafts", async () => {
@@ -273,6 +323,7 @@ describe("se-company-person-entity.server", () => {
         name: "Anna Svensson", birthYear: "1975", wikidataId: "",
         data: '{"role_kind":"board_member"}',
         current: NORMALIZED_ROWS[0], raw: RAW_ROWS[0], refoldPending: false, precedence: 900,
+        match: CALL_NAME_MATCH,
       },
       {
         source: "esef", slot: "doc-9:cand-1", normalizedId: "n2",
@@ -280,6 +331,7 @@ describe("se-company-person-entity.server", () => {
         data: '{"title":"Chair"}',
         // The current normalized version is not the one this row was folded from.
         current: ESEF_NORMALIZED, raw: ESEF_RAW, refoldPending: true, precedence: 400,
+        match: CALL_NAME_MATCH,
       },
     ]);
     // The roles block, zipped out of the three parallel arrays (spec 5.4).
@@ -292,6 +344,9 @@ describe("se-company-person-entity.server", () => {
     expect(detail?.published[1]?.spellingReason).toBe("single source");
     // The active merge rule names both keys, so it is attached to both persons.
     expect(merged?.rules).toEqual([MERGE_RULE]);
+    expect(merged?.matchedBy).toEqual([CALL_NAME_MATCH]);
+    expect(detail?.published[1]?.matchedBy).toEqual([]);
+    expect(detail?.published[1]?.members[0]?.match).toBeNull();
     expect(detail?.published[1]?.rules).toEqual([MERGE_RULE]);
     expect(detail?.history).toEqual([HISTORY_ROW]);
     expect(detail?.rules).toEqual([MERGE_RULE]);
@@ -304,7 +359,7 @@ describe("se-company-person-entity.server", () => {
         name: "Anna Svensson", note: "seen in the annual report", replacesKey: MERGED_KEY,
       },
     ]);
-    for (const sql of [PERSON_MAIN_SQL, PERSON_HISTORY_SQL, PERSON_NORMALIZED_SQL, PERSON_RAW_SQL, PERSON_RULES_SQL, PERSON_PRECEDENCE_SQL]) {
+    for (const sql of [PERSON_MAIN_SQL, PERSON_HISTORY_SQL, PERSON_NORMALIZED_SQL, PERSON_RAW_SQL, PERSON_RULES_SQL, PERSON_PRECEDENCE_SQL, PERSON_MATCH_SQL]) {
       expect(clickhouse.query.mock.calls.find(([text]) => text === sql)?.[1]).toEqual({ companyId: COMPANY });
     }
   });
@@ -381,6 +436,55 @@ describe("se-company-person-entity.server", () => {
       sql === PERSON_RAW_SQL ? [DRAFT_RAW_1] : [],
     );
     expect((await loadSePersonDetail(COMPANY))?.drafts).toHaveLength(1);
+  });
+
+  it("offers the band's cross-person pairs, strongest first, and drops the ones nobody can act on", async () => {
+    const detail = await loadSePersonDetail(COMPANY);
+    // 0.72 and 0.64 join the merged person to the Wikidata person: two Merges the
+    // reviewer can click. 0.93 is already merged (the fold did it), the 0.66 pair
+    // names an observation no published person holds.
+    expect(detail?.possibleMatches).toEqual([
+      {
+        personKeyA: MERGED_KEY, personKeyB: WIKI_KEY,
+        nameA: "Anna Svensson", nameB: "Carl von Essen",
+        confidence: 0.72, reason: "same household",
+      },
+      {
+        personKeyA: MERGED_KEY, personKeyB: WIKI_KEY,
+        nameA: "Anna Maria Svensson", nameB: "Carl von Essen",
+        confidence: 0.64, reason: "same surname",
+      },
+    ]);
+  });
+
+  it("keeps a pair inside one person out of the band, and resolves a side through active persons only", async () => {
+    // One person holding all three observations: every pair is internal now, so there
+    // is nothing to merge -- and the 0.93 pair is still the record of what joined it.
+    const whole = main({
+      sources: ["bolagsverket", "esef", "wikidata"],
+      slots: ["uid-1:sig-1", "doc-9:cand-1", "Q1:P169:Q7"],
+      normalized_ids: ["n1", "n2", "n3"],
+      member_sources: ["bolagsverket", "esef", "wikidata"],
+      member_slots: ["uid-1:sig-1", "doc-9:cand-1", "Q1:P169:Q7"],
+      member_names: ["Anna Svensson", "Anna Maria Svensson", "Carl von Essen"],
+      member_birth_years: ["1975", "", ""], member_wikidata_ids: ["", "", "Q7"],
+      member_data: ["{}", "{}", "{}"],
+    });
+    clickhouse.query.mockImplementation(async (sql: string) =>
+      sql === PERSON_MAIN_SQL ? [whole] : answer(sql),
+    );
+    const one = await loadSePersonDetail(COMPANY);
+    expect(one?.possibleMatches).toEqual([]);
+    expect(one?.published[0]?.matchedBy).toEqual([CALL_NAME_MATCH]);
+
+    // The Wikidata person withdrawn: n3 has no ACTIVE owner, so a Merge naming it
+    // would name a key nothing publishes any more.
+    clickhouse.query.mockImplementation(async (sql: string) =>
+      sql === PERSON_MAIN_SQL
+        ? [MERGED_ROW, { ...WIKI_ROW, active: 0, inactive_reason: "withdrawn" }]
+        : answer(sql),
+    );
+    expect((await loadSePersonDetail(COMPANY))?.possibleMatches).toEqual([]);
   });
 
   it("offers only the catalog's active roles, as code, label and group", async () => {
