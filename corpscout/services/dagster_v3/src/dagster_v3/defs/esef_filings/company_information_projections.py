@@ -29,10 +29,11 @@ def esef_document_people_sql(
     *, target: str = tables.QUALIFIED_ESEF_DOCUMENT_PEOPLE_TABLE
 ) -> str:
     candidate_uid = _person_candidate_uid_sql()
-    # The candidate identity is (name, role_category) per the spec; every item of
-    # one extraction row shares extracted_at, so a tie within a role_category is
-    # broken by the model's own list order (item_index) -- the first-listed role
-    # wins, not ClickHouse's unstable sort.
+    # The candidate identity is (name, role_category, role text) per the 2026-09-12 ruling --
+    # a person's committee seat is its own row, not merged into their other roles; every item
+    # of one extraction row shares extracted_at, so a tie within that identity is broken by
+    # the model's own list order (item_index) -- the first-listed role wins, not ClickHouse's
+    # unstable sort.
     return f"""INSERT INTO {target}
 ({", ".join(tables.ESEF_DOCUMENT_PEOPLE_COLUMNS)})
 SELECT
@@ -159,7 +160,10 @@ def _person_candidate_uid_sql() -> str:
         "lowerUTF8(trim(replaceRegexpAll(JSONExtractString(item_json, 'name'), "
         "'\\\\s+', ' '))), "
         "'\\n', "
-        "JSONExtractString(item_json, 'role_category')"
+        "JSONExtractString(item_json, 'role_category'), "
+        "'\\n', "
+        "lowerUTF8(trim(replaceRegexpAll(JSONExtractString(item_json, 'role'), "
+        "'\\\\s+', ' ')))"
         "))))"
     )
 

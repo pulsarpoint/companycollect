@@ -104,14 +104,17 @@ def test_people_projection_uses_the_spec_identity_and_one_row_per_key() -> None:
     assert "'\\nesef_person\\n'" in sql
     assert "lowerUTF8(trim(replaceRegexpAll(JSONExtractString(item_json, 'name'), '\\\\s+', ' ')))" in sql
     assert "JSONExtractString(item_json, 'role_category')" in sql
+    # 2026-09-12 ruling: the normalised role text joins the identity too -- a person's
+    # committee seat is its own row, not merged into their other roles.
+    assert "lowerUTF8(trim(replaceRegexpAll(JSONExtractString(item_json, 'role'), '\\\\s+', ' ')))" in sql
     assert "esef_typed_candidate" not in sql
     assert "info.extraction_status IN ('extracted', 'reused')" in sql
     assert "LIMIT 1 BY info.lei, info.fiscal_year, info.source_record_uid, candidate_uid" in sql
     assert "multiIf(JSONExtractString(item_json, 'status') = 'current', 0, JSONExtractString(item_json, 'status') = 'historical', 1, 2)" in sql
-    # The identity is (name, role_category); every item of one extraction row shares
-    # extracted_at, so a tie is broken by the model's own list order, not ClickHouse's
-    # unstable sort -- item_index must be zipped alongside item_json in the ARRAY JOIN
-    # and be the ORDER BY's tail.
+    # The identity is (name, role_category, role text); every item of one extraction row
+    # shares extracted_at, so a tie is broken by the model's own list order, not
+    # ClickHouse's unstable sort -- item_index must be zipped alongside item_json in the
+    # ARRAY JOIN and be the ORDER BY's tail.
     assert (
         "arrayEnumerate(JSONExtractArrayRaw(info.people_json)) AS item_index" in sql
     )
