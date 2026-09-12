@@ -12,6 +12,10 @@ from dagster_v3.defs.se_company.financial import tables
 from dagster_v3.defs.se_company.financial.precedence import precedence_rows
 
 GROUP_NAME = "se_company_financial"
+EXTRACTOR_SOURCES: tuple[str, ...] = ("bolagsverket", "bolagsverket_comparative", "esef", "ratsit")
+EXTRACTOR_ASSET_NAMES: tuple[str, ...] = tuple(
+    f"se_company_financial_suggestions_{source}" for source in EXTRACTOR_SOURCES
+)
 
 
 def export_precedence(client: Any, exported_at: datetime) -> tuple[int, int]:
