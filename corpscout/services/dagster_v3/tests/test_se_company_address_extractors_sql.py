@@ -6,8 +6,10 @@ import dagster as dg
 from dagster_v3.defs.se_company.address import assets, bolagsverket, esef, ratsit, scb, tables
 from dagster_v3.defs.se_company.address.normalize import SCRATCH_SCOPE_PREFIX
 from dagster_v3.defs.se_company.address.suggestions import (
+    ADDRESS_LIVE_ROW_PREDICATE,
     ADDRESS_SELECT_COLUMNS,
     ADDRESS_TARGET,
+    ADDRESS_TOMBSTONE_COLUMNS,
     ADDRESS_TRAILING_SELECT_SQL,
 )
 from dagster_v3.defs.se_company.basic_info import bolagsverket as basic_info_bolagsverket
@@ -124,17 +126,175 @@ def test_bolagsverket_record_uid_formula_matches_basic_info() -> None:
     assert bolagsverket.BOLAGSVERKET_ADDRESS_RECORD_UID_SQL == basic_info_bolagsverket.BOLAGSVERKET_RECORD_UID_SQL.replace("register.", "")
 
 
-def test_ratsit_takes_the_newest_report_into_the_company_slot() -> None:
+def test_ratsit_delivers_the_company_row_and_one_workplace_row_per_establishment() -> None:
+    """Spec 2026-09-11 sections 5.1 and 5.2. The company row keeps slot `company` and kind
+    `postal`; every establishment of the SAME report with a street and a postcode adds a
+    `workplace` row in slot `est:<identifier>`, suffixed with the establishment index when
+    one report repeats the identifier (324 rows on 2026-09-10). Both take `post_town` from
+    the SCB register dictionary instead of Ratsit's locality, which is the municipality on
+    260,862 of 928,491 company addresses."""
     sql = ratsit.ratsit_select_sql()
-    assert "'postal' AS kind" in sql and "'company' AS slot" in sql
-    assert "nullIf(trim(ifNull(address_street, '')), '') AS street_address" in sql
-    assert "nullIf(trim(ifNull(address_postal_code, '')), '') AS postal_code" in sql
-    assert "nullIf(trim(ifNull(address_locality, '')), '') AS post_town" in sql
-    assert "nullIf(trim(ifNull(address_county, '')), '') AS county" in sql
-    assert "WHERE normalizer_version = %(normalizer_version)s AND company_id IN %(company_ids)s" in sql
-    assert sql.endswith("ORDER BY normalized_at DESC, result_sha256 DESC\nLIMIT 1 BY company_id")
+
+    # (1) the dictionary: the register's most frequent trimmed town per digits-only postcode,
+    #     ties by the alphabetically first spelling.
+    assert ratsit.TOWNS_SQL == (
+        "SELECT\n"
+        "    replaceRegexpAll(ifNull(postal_code, ''), '[^0-9]', '') AS postal_code_digits,\n"
+        "    trim(ifNull(post_town, '')) AS town\n"
+        "FROM corpscout.se_scb_companies FINAL\n"
+        "WHERE has_company = 1\n"
+        "    AND replaceRegexpAll(ifNull(postal_code, ''), '[^0-9]', '') != ''\n"
+        "    AND trim(ifNull(post_town, '')) != ''\n"
+        "GROUP BY postal_code_digits, town\n"
+        "ORDER BY count() DESC, town\n"
+        "LIMIT 1 BY postal_code_digits"
+    )
+    assert ratsit.TOWNS_SQL in sql
+    assert ") AS towns ON towns.postal_code_digits = r.postal_code_digits" in sql
+    # A postcode the register does not know (none today) keeps Ratsit's own locality.
+    assert ratsit.POST_TOWN_SQL == (
+        "nullIf(if(ifNull(towns.town, '') != '', ifNull(towns.town, ''), r.locality), '')"
+    )
+    assert f"    {ratsit.POST_TOWN_SQL} AS post_town,\n" in sql
+
+    # (2) the two row kinds and their slots.
+    assert "    'company' AS slot,\n" in sql
+    assert "    'postal' AS kind,\n" in sql
+    assert ratsit.EST_ROWS_SQL == "count() OVER (PARTITION BY est.company_id, est.identifier)"
+    assert ratsit.EST_SLOT_SQL == (
+        "if(count() OVER (PARTITION BY est.company_id, est.identifier) > 1, "
+        "concat('est:', est.identifier, ':', toString(est.establishment_index)), "
+        "concat('est:', est.identifier))"
+    )
+    assert f"    {ratsit.EST_SLOT_SQL} AS slot,\n" in sql
+    assert "    'workplace' AS kind,\n" in sql
+    assert "workplace" in tables.KINDS
+    assert "FROM corpscout.se_ratsit_establishments AS e FINAL" in sql
+    assert (
+        "WHERE trim(ifNull(e.address_street, '')) != '' "
+        "AND trim(ifNull(e.address_postal_code, '')) != ''"
+    ) in sql
+
+    # (3) source_record_uid: the report hash, plus the establishment index on a workplace row.
+    assert "    concat('ratsit:', toString(report.result_sha256)) AS source_record_uid,\n" in sql
+    assert (
+        "    concat('ratsit:', toString(est.result_sha256), ':est:', "
+        "toString(est.establishment_index)) AS source_record_uid,\n"
+    ) in sql
+
+    # (4) observed_at is the report's normalized_at on every row (spec 5.2).
+    assert "    toDateTime64(report.normalized_at, 3, 'UTC') AS observed_at,\n" in sql
+    assert "    toDateTime64(est.normalized_at, 3, 'UTC') AS observed_at,\n" in sql
+
+    # (5) raw_address and care_of stay NULL: the normalizer PARSES raw_address (it is
+    #     Bolagsverket's packed string), and Ratsit glues the care-of onto the street for it.
+    assert "    CAST(NULL AS Nullable(String)) AS raw_address,\n" in sql
+    assert "    CAST(NULL AS Nullable(String)) AS care_of,\n" in sql
+    assert "    CAST(NULL AS Nullable(String)) AS country_code\n" in sql
+    assert "    nullIf(r.street_address, '') AS street_address,\n" in sql
+    assert "    nullIf(r.postal_code, '') AS postal_code,\n" in sql
+    assert "    nullIf(r.county, '') AS county,\n" in sql
+
+    # (6) the report is the newest per company and the establishments join ITS key, so a
+    #     superseded scan's workplaces can never appear.
+    assert sql.count(
+        "ORDER BY c.normalized_at DESC, c.result_sha256 DESC\nLIMIT 1 BY c.company_id"
+    ) == 2
+    assert (
+        "    ON report.company_id = e.company_id\n"
+        "    AND report.result_sha256 = e.result_sha256\n"
+        "    AND report.normalizer_version = e.normalizer_version\n"
+    ) in sql
+
+    assert ratsit.ADDRESS_SOURCE == "ratsit"
     assert ratsit.RATSIT_ADDRESS_SELECT_PARAMS == {"normalizer_version": RATSIT_NORMALIZER_VERSION}
-    assert ratsit.RATSIT_ADDRESS_EXTRACTOR_VERSION == "ratsit-address-v1"
+    assert ratsit.RATSIT_ADDRESS_EXTRACTOR_VERSION == "ratsit-address-v2"
+
+
+def test_ratsit_pairs_live_rows_with_tombstones_for_vanished_slots() -> None:
+    """Spec 5.3. One company now has many slots, so a slot the newest report stops
+    delivering must be nulled rather than left behind. The shape is
+    person/suggestions.py::person_select_sql's -- a `live` CTE written once and read twice,
+    LEFT ANTI JOINed against the stored live slots -- plus the one join the address entity
+    needs: its change scan IS the observed_at watermark, so a tombstone carries the current
+    report's observed_at, never the stored row's, or argMax(observed_at, suggested_at) could
+    pick the stale stamp out of the page's tie and re-select the company for ever."""
+    sql = ratsit.ratsit_select_sql()
+    assert sql.startswith("WITH live AS (\n")
+    assert "\nUNION ALL\n" in sql
+    assert ADDRESS_LIVE_ROW_PREDICATE == "street_address IS NOT NULL"
+    assert ADDRESS_TOMBSTONE_COLUMNS == ("slot", "kind")
+    assert (
+        f"WHERE source = 'ratsit' AND {ADDRESS_LIVE_ROW_PREDICATE} "
+        "AND company_id IN %(company_ids)s"
+    ) in sql
+    assert (
+        "LEFT ANTI JOIN (SELECT company_id, slot FROM live) AS live_slots\n"
+        "    ON live_slots.company_id = stored.company_id AND live_slots.slot = stored.slot"
+    ) in sql
+    assert (
+        "INNER JOIN (\n"
+        "SELECT company_id, max(observed_at) AS observed_at FROM live GROUP BY company_id\n"
+        ") AS report ON report.company_id = stored.company_id"
+    ) in sql
+    # The tombstone keeps its slot and its kind and nulls every address column.
+    assert "    stored.company_id AS company_id,\n" in sql
+    assert "    stored.slot AS slot,\n" in sql
+    assert "    stored.kind AS kind,\n" in sql
+    assert "    '' AS source_record_uid,\n" in sql
+    assert "    report.observed_at AS observed_at,\n" in sql
+    for column in tables.RAW_ADDRESS_COLUMNS:
+        assert f"    CAST(NULL AS Nullable(String)) AS {column}" in sql, column
+    # The live branch binds the page once per report occurrence, the stored slots once.
+    assert sql.count("%(company_ids)s") == 3
+    assert sql.count("%(normalizer_version)s") == 2
+    assert ratsit.ratsit_live_sql().count("%(company_ids)s") == 0
+    assert ratsit.ratsit_live_sql(scoped=True).count("%(company_ids)s") == 2
+    # SCB and Bolagsverket keep their own single-slot NULL-row tombstones, untouched.
+    assert "UNION ALL" not in scb.scb_select_sql()
+    assert "UNION ALL" not in bolagsverket.bolagsverket_select_sql()
+
+
+def test_the_ratsit_address_asset_reads_the_two_ratsit_tables_and_the_scb_register() -> None:
+    """Spec 5.1. `se_ratsit_normalized` is the multi-asset's FUNCTION name, not an asset key
+    -- a dep on it makes a phantom node, and that is exactly what the v1 module carried. The
+    keys the multi-asset declares are the table names; `sweden_company_scb_companies_clickhouse`
+    is the key address/scb.py already uses for the register the dictionary reads. The lineage
+    ruling holds: an extractor reads register source tables, never another extractor's output
+    nor a fold."""
+    asset = ratsit.se_company_address_suggestions_ratsit
+    deps = {dep.asset_key for dep in asset.specs_by_key[asset.key].deps}
+    assert deps == {
+        dg.AssetKey("se_ratsit_company"),
+        dg.AssetKey("se_ratsit_establishments"),
+        dg.AssetKey("sweden_company_scb_companies_clickhouse"),
+    }
+    assert dg.AssetKey("se_ratsit_normalized") not in deps
+    assert dg.AssetKey("se_company_basic_info_fold") not in deps
+    assert dg.AssetKey("se_company_address_fold") not in deps
+
+
+def test_the_ratsit_address_current_sql_is_the_reports_own_stamp() -> None:
+    """Spec 5.2: the address module gets its own `ratsit_current_sql` over se_ratsit_company
+    instead of reusing basic info's translation-aware one, whose greatest(normalized_at,
+    business_description_translated_at) stamp exceeds the observed_at this select writes and
+    re-selects the 77k translated companies on every address run."""
+    current = ratsit.ratsit_current_sql()
+    assert current == (
+        "SELECT company_id, observed_at\n"
+        "FROM (\n"
+        "SELECT\n"
+        "    c.company_id AS company_id,\n"
+        "    toDateTime64(c.normalized_at, 3, 'UTC') AS observed_at\n"
+        "FROM corpscout.se_ratsit_company AS c FINAL\n"
+        "WHERE c.normalizer_version = %(normalizer_version)s\n"
+        "ORDER BY c.normalized_at DESC, c.result_sha256 DESC\n"
+        "LIMIT 1 BY c.company_id\n"
+        ")"
+    )
+    assert "se_ratsit_company_translated" not in current
+    assert "se_ratsit_company_translated" not in ratsit.ratsit_select_sql()
+    assert "%(company_ids)s" not in current
 
 
 def test_assets_are_named_grouped_and_declared() -> None:

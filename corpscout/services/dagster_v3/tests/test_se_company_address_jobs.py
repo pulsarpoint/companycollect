@@ -31,7 +31,7 @@ def test_the_weekly_is_registered_stopped_with_execute_and_the_page_size() -> No
     for name in assets.EXTRACTOR_ASSET_NAMES:
         assert ops[name] == {"config": {"execute": True, "page_size": jobs.WEEKLY_PAGE_SIZE}}
     assert ops["se_company_address_normalize"] == {"config": {"changed_only": True}}
-    assert jobs.WEEKLY_PAGE_SIZE == 20_000
+    assert jobs.WEEKLY_PAGE_SIZE == 10_000
 
 
 def test_the_normalize_asset_runs_after_the_extractors() -> None:
