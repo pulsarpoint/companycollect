@@ -50,6 +50,13 @@ import {
   roleLabel,
   type SePersonRoleOption,
 } from "~/lib/se-person-fields";
+import {
+  formatConfidence,
+  matchNote,
+  parseLlmMatch,
+  stripLlmMatch,
+  type SePersonPossibleMatch,
+} from "~/lib/se-person-match";
 import type {
   SePersonDetail,
   SePersonDraft,
@@ -660,6 +667,72 @@ function PersonsCard({
   );
 }
 
+/**
+ * Spec 2026-09-11 section 5: the pairs the model scored between the floor and the
+ * merge threshold whose two sides sit in two different published persons. Nothing was
+ * merged by them -- the reviewer decides, and the Merge writes the SAME merge rule the
+ * Persons card writes (no new intent, no new rule kind), which outranks the threshold
+ * on the next fold. One `<Form>` per row: a single form with several submit buttons
+ * would have to carry every row's keys at once.
+ */
+function PossibleMatchesCard({
+  matches,
+  busy,
+}: {
+  matches: readonly SePersonPossibleMatch[];
+  busy: boolean;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Possible matches</CardTitle>
+        <CardDescription>
+          Pairs the model scored below the merge threshold, each between two published
+          persons. Merge writes a merge rule; Fold now folds them into one person.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <ul className="flex flex-col gap-2 text-sm">
+          {matches.map((match, index) => (
+            <li
+              key={`${match.personKeyA}-${match.personKeyB}-${index}`}
+              className="flex flex-wrap items-center gap-2"
+            >
+              <span className="flex-1">
+                {match.nameA === "" ? EMPTY_VALUE : match.nameA} ↔{" "}
+                {match.nameB === "" ? EMPTY_VALUE : match.nameB}
+                <span className="text-muted-foreground ml-2 text-xs">
+                  {formatConfidence(match.confidence)}
+                  {match.reason === "" ? "" : ` · ${match.reason}`}
+                </span>
+              </span>
+              <Form method="post">
+                <input type="hidden" name="intent" value="merge" />
+                <input type="hidden" name="person_key" value={match.personKeyA} />
+                <input type="hidden" name="person_key" value={match.personKeyB} />
+                <input
+                  type="hidden"
+                  name="note"
+                  value={matchNote(match.confidence, match.reason)}
+                />
+                <Button
+                  type="submit"
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  aria-label={`Merge ${match.nameA} and ${match.nameB}`}
+                >
+                  Merge
+                </Button>
+              </Form>
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
+  );
+}
+
 function DraftsCard({
   detail,
   roleOptions,
@@ -1013,6 +1086,13 @@ function MemberEntry({ member }: { member: SePersonMember }) {
         <span className="font-medium">{personSourceLabel(member.source)}</span>
         <span className="text-muted-foreground font-mono text-xs">{member.slot}</span>
         <Badge variant="outline">precedence {member.precedence}</Badge>
+        {member.match === null ? null : (
+          // The fold merged this observation into the person because the model scored
+          // it against another one; the reason is the model's own sentence.
+          <Badge variant="outline" title={member.match.reason}>
+            matched by LLM · {formatConfidence(member.match.confidence)}
+          </Badge>
+        )}
         {member.refoldPending ? <Badge variant="outline">re-fold pending</Badge> : null}
       </div>
       <p className="mt-1">{member.name === "" ? EMPTY_VALUE : member.name}</p>
@@ -1082,6 +1162,12 @@ function PersonPanel({
     entry.members.length > 0 &&
     entry.members.every((member) => member.source === REVIEWER_SOURCE);
   const order = namePrecedence(precedence);
+  // The fold's own record of what it merged (`fold.py::_with_llm_match`), read from the
+  // published row rather than from the live pair table: this is what was true when the
+  // person was published. The JSON block below shows `data` WITHOUT it -- one fact is
+  // not rendered twice, and a reviewer reading JSON is reading the sources' extras.
+  const llmMatch = entry === null ? null : parseLlmMatch(entry.row.data);
+  const dataWithoutMatch = entry === null ? "" : stripLlmMatch(entry.row.data);
   const decision = (
     intent: PendingPersonDecision["intent"],
     person: SePersonPublished,
@@ -1153,6 +1239,40 @@ function PersonPanel({
             </ul>
           </section>
 
+          {llmMatch === null ? null : (
+            <section>
+              <h3 className="text-muted-foreground text-xs uppercase tracking-wide">
+                LLM match
+              </h3>
+              <ul className="mt-2 flex flex-col gap-1 text-sm">
+                {llmMatch.pairs.map((pair, index) => (
+                  <li key={`${pair.a}-${pair.b}-${index}`}>
+                    <span>
+                      {pair.a} ↔ {pair.b}
+                    </span>
+                    <span className="text-muted-foreground ml-2 text-xs">
+                      {formatConfidence(pair.confidence)}
+                      {pair.reason === "" ? "" : ` · ${pair.reason}`}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              {entry.matchedBy.length === 0 ? (
+                // The fold recorded this pair, but no pair in the CURRENT band still
+                // names this person's observations -- the candidate list changed, or the
+                // model stopped scoring it.
+                <p className="text-muted-foreground mt-1 text-xs">
+                  Recorded by the last fold; the current pairs no longer name these
+                  observations.
+                </p>
+              ) : null}
+              <p className="text-muted-foreground mt-1 text-xs">
+                {llmMatch.model}
+                {llmMatch.promptVersion === "" ? "" : ` · ${llmMatch.promptVersion}`}
+              </p>
+            </section>
+          )}
+
           <section>
             <h3 className="text-muted-foreground text-xs uppercase tracking-wide">Roles</h3>
             {entry.roles.length === 0 ? (
@@ -1182,9 +1302,9 @@ function PersonPanel({
 
           <section>
             <h3 className="text-muted-foreground text-xs uppercase tracking-wide">Data</h3>
-            {hasData(entry.row.data) ? (
+            {hasData(dataWithoutMatch) ? (
               <pre className="bg-muted mt-2 overflow-x-auto rounded-md p-2 text-xs">
-                {prettyJson(entry.row.data)}
+                {prettyJson(dataWithoutMatch)}
               </pre>
             ) : (
               <p className="mt-1 text-sm">none</p>
@@ -1349,6 +1469,9 @@ export function SePersonWorkspace({
           onAdd={openAdd}
           onCorrect={openCorrect}
         />
+        {detail.possibleMatches.length === 0 ? null : (
+          <PossibleMatchesCard matches={detail.possibleMatches} busy={busy} />
+        )}
         {detail.drafts.length === 0 ? null : (
           <DraftsCard
             detail={detail}

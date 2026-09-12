@@ -25,7 +25,8 @@ const COMPANY_ID_PATTERN = /^([0-9]{10}|[0-9]{12})$/;
  * detail rather than a 404; the company layout already 404s a company that does not
  * exist at all. */
 const EMPTY_DETAIL: SePersonDetail = {
-  published: [], drafts: [], history: [], rules: [], precedence: [], foldPending: false,
+  published: [], drafts: [], history: [], rules: [], precedence: [],
+  possibleMatches: [], foldPending: false,
 };
 
 // Only `loader`, `action`, `meta` and the component live here. Any other export that

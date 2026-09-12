@@ -52,6 +52,14 @@ import {
   type SePersonRoleInput,
   type SePersonRoleOption,
 } from "~/lib/se-person-fields";
+import {
+  isMatch,
+  isPossibleMatch,
+  POSSIBLE_MATCH_FLOOR,
+  type SePersonMatch,
+  type SePersonMatchRow,
+  type SePersonPossibleMatch,
+} from "~/lib/se-person-match";
 import { SE_COMPANY_PERSON_TABLE } from "~/lib/se-person-tables";
 
 /* ------------------------------------------------------------------ */
@@ -205,6 +213,9 @@ export interface SePersonMember {
   refoldPending: boolean;
   /** This source's `name` precedence for this company (spec 3.6). */
   precedence: number;
+  /** The strongest pair at or above the threshold that names this observation, `null`
+   * when the model did not join it (spec section 5's member badge). */
+  match: SePersonMatch | null;
 }
 
 /** One entry of the published role block (spec 5.4's parallel triple, zipped). */
@@ -224,6 +235,9 @@ export interface SePersonPublished {
    * before (the fold resolves a re-keyed person through its previous members), or by
    * one of its slots. */
   rules: SePersonRuleRow[];
+  /** The pairs at or above the threshold that joined THIS person, strongest first --
+   * `fold.py::pairs_within` read back out of the pair table. */
+  matchedBy: SePersonMatch[];
 }
 
 /** A reviewer draft: the `reviewer_draft` rows of one group slot that still hold a
@@ -248,6 +262,9 @@ export interface SePersonDetail {
   rules: SePersonRuleRow[];
   /** The global spelling order and this company's own overrides. */
   precedence: SePersonPrecedenceRow[];
+  /** Pairs in `[POSSIBLE_MATCH_FLOOR, MATCH_THRESHOLD)` whose two sides sit in two
+   * DIFFERENT active persons: what the possible-matches card offers a Merge for. */
+  possibleMatches: SePersonPossibleMatch[];
   foldPending: boolean;
 }
 
@@ -338,6 +355,36 @@ FROM corpscout.se_company_person_precedence AS p FINAL
 WHERE p.company_id IN ('', {companyId:String}) AND p.field = 'name'
 ORDER BY p.precedence DESC`;
 
+/**
+ * The LLM's scored pairs for this company (spec 2026-09-11 section 5), certified by the
+ * company's own state row. The join on `input_hash` is the same one the fold makes
+ * (`batch.py::match_pairs_sql`): the state table holds one row per company, so a pair
+ * left behind by an input the company no longer has -- a candidate list that changed,
+ * a pair the model stopped scoring -- is simply never read again. `error = ''` for the
+ * same reason the fold has it: a company whose last call failed certifies nothing.
+ *
+ * The floor is `POSSIBLE_MATCH_FLOOR`, not the threshold: the band between the two is
+ * exactly what the possible-matches card offers, and the pairs above it are what the
+ * member badges report. Only the nine columns the tab renders are read -- the model,
+ * the prompt version and the stamp of a MERGED person are already in its
+ * `data.llm_match`, which the panel reads from the row it has.
+ */
+export const PERSON_MATCH_SQL = `SELECT
+  p.company_id AS company_id, toString(p.candidate_a) AS candidate_a,
+  toString(p.candidate_b) AS candidate_b,
+  arrayMap(x -> toString(x), p.members_a) AS members_a,
+  arrayMap(x -> toString(x), p.members_b) AS members_b,
+  p.name_a AS name_a, p.name_b AS name_b, toFloat64(p.confidence) AS confidence,
+  p.reason AS reason
+FROM corpscout.se_company_person_match AS p FINAL
+INNER JOIN (
+  SELECT company_id, input_hash
+  FROM corpscout.se_company_person_match_state FINAL
+  WHERE company_id = {companyId:String} AND error = ''
+) AS s ON s.company_id = p.company_id AND s.input_hash = p.input_hash
+WHERE p.company_id = {companyId:String} AND p.confidence >= ${POSSIBLE_MATCH_FLOOR}
+ORDER BY p.confidence DESC, p.candidate_a, p.candidate_b`;
+
 /** The parse status the fold publishes (`fold.py::FOLDABLE_STATUS`); a row that scores
  * `partial` or `no_person` never becomes a person, so it never owes a fold. */
 const FOLDABLE_PARSE_STATUS = "ok";
@@ -407,11 +454,122 @@ function spellingReason(
   return "tie-break";
 }
 
+/**
+ * The pairs at or above the threshold that joined THIS person, `fold.py::pairs_within`
+ * in TypeScript: both sides must have at least one member among the row's normalized
+ * ids. A pair with one side only is a pair a split rule pulled apart, or one reaching
+ * into another person -- neither is something this person was merged by. A pair whose
+ * two sides carry conflicting birth years is dropped too, the same veto
+ * `fold.py::pairs_within` applies: a person can hold two different years only through a
+ * reviewer merge rule, never through the model alone.
+ */
+function matchesWithin(row: SePersonRow, pairs: readonly SePersonMatchRow[]): SePersonMatch[] {
+  const ids = new Set(row.normalized_ids);
+  const yearOf = new Map<string, string>();
+  row.normalized_ids.forEach((id, index) => yearOf.set(id, row.member_birth_years[index] ?? ""));
+  const yearsOf = (members: readonly string[]): string[] =>
+    members.map((id) => yearOf.get(id)).filter((year): year is string => !!year);
+  const conflictingYears = (pair: SePersonMatchRow): boolean => {
+    const yearsA = yearsOf(pair.members_a);
+    const yearsB = yearsOf(pair.members_b);
+    return yearsA.some((yearA) => yearsB.some((yearB) => yearA !== yearB));
+  };
+  return pairs
+    .filter(
+      (pair) =>
+        isMatch(pair.confidence) &&
+        pair.members_a.some((id) => ids.has(id)) &&
+        pair.members_b.some((id) => ids.has(id)) &&
+        !conflictingYears(pair),
+    )
+    .map((pair) => ({
+      nameA: pair.name_a,
+      nameB: pair.name_b,
+      confidence: pair.confidence,
+      reason: pair.reason,
+      members: [...pair.members_a, ...pair.members_b],
+    }))
+    .sort((a, b) => b.confidence - a.confidence);
+}
+
+/** Two person keys as one order-independent identity: what the possible-matches card
+ * groups pairs by, and what an active merge rule's `person_keys` is checked against. */
+function personPairKey(a: string, b: string): string {
+  return [a, b].sort().join("|");
+}
+
+/**
+ * The band's pairs the reviewer can actually act on: both sides resolve to exactly ONE
+ * ACTIVE published person, and to two different ones. Active only, because a Merge
+ * names person keys -- a withdrawn row keeps the member arrays of the key it published
+ * under before, so resolving through it would offer a Merge onto a key nothing
+ * publishes. A side is resolved only when EVERY owned member of it agrees on one
+ * person -- a birth-year split or a reviewer split rule can leave a candidate's members
+ * in two different persons, and a side like that names no single Merge target. A pair
+ * inside one person is already one person, and a pair naming a normalized id no
+ * published person holds has nothing to merge. Grouped one row per person pair (the
+ * highest confidence), and dropped entirely when an active merge rule already names
+ * both persons -- the next fold merges them without the reviewer's help. Strongest
+ * first.
+ */
+function possibleMatchesOf(
+  mainRows: readonly SePersonRow[],
+  pairs: readonly SePersonMatchRow[],
+  rules: readonly SePersonRuleRow[],
+): SePersonPossibleMatch[] {
+  const owner = new Map<string, string>();
+  for (const row of mainRows) {
+    if (row.active !== 1) continue;
+    for (const id of row.normalized_ids) owner.set(id, row.person_key);
+  }
+  const keysOf = (members: readonly string[]): Set<string> => {
+    const keys = new Set<string>();
+    for (const id of members) {
+      const key = owner.get(id);
+      if (key !== undefined) keys.add(key);
+    }
+    return keys;
+  };
+  const alreadyMerged = new Set<string>();
+  for (const rule of rules) {
+    if (rule.kind !== MERGE_KIND || rule.active !== 1) continue;
+    for (let i = 0; i < rule.person_keys.length; i++) {
+      for (let j = i + 1; j < rule.person_keys.length; j++) {
+        alreadyMerged.add(personPairKey(rule.person_keys[i], rule.person_keys[j]));
+      }
+    }
+  }
+  const byPair = new Map<string, SePersonPossibleMatch>();
+  for (const pair of pairs) {
+    if (!isPossibleMatch(pair.confidence)) continue;
+    const keysA = keysOf(pair.members_a);
+    const keysB = keysOf(pair.members_b);
+    if (keysA.size !== 1 || keysB.size !== 1) continue;
+    const [personKeyA] = keysA;
+    const [personKeyB] = keysB;
+    if (personKeyA === personKeyB) continue;
+    const pairKey = personPairKey(personKeyA, personKeyB);
+    if (alreadyMerged.has(pairKey)) continue;
+    const existing = byPair.get(pairKey);
+    if (existing !== undefined && existing.confidence >= pair.confidence) continue;
+    byPair.set(pairKey, {
+      personKeyA,
+      personKeyB,
+      nameA: pair.name_a,
+      nameB: pair.name_b,
+      confidence: pair.confidence,
+      reason: pair.reason,
+    });
+  }
+  return [...byPair.values()].sort((a, b) => b.confidence - a.confidence);
+}
+
 function membersOf(
   row: SePersonRow,
   normalizedBySlot: Map<string, SePersonNormalizedRow>,
   rawBySlot: Map<string, SePersonRawRow>,
   precedenceOf: (source: string) => number,
+  matchedBy: readonly SePersonMatch[],
 ): SePersonMember[] {
   return row.member_sources.map((source, index) => {
     const slot = row.member_slots[index] ?? "";
@@ -429,6 +587,8 @@ function membersOf(
       raw: rawBySlot.get(slotKey(source, slot)) ?? null,
       refoldPending: current !== null && current.normalized_id !== normalizedId,
       precedence: precedenceOf(source),
+      // `matchedBy` is confidence-descending, so the first hit is the strongest.
+      match: matchedBy.find((pair) => pair.members.includes(normalizedId)) ?? null,
     };
   });
 }
@@ -536,19 +696,22 @@ function draftsOf(
  * draft -- which the route turns into the workspace's empty state.
  */
 export async function loadSePersonDetail(companyId: string): Promise<SePersonDetail | null> {
-  const [mainRows, history, normalizedRows, rawRows, rules, precedence] = await Promise.all([
-    chQuery<SePersonRow>(PERSON_MAIN_SQL, { companyId }),
-    chQuery<SePersonHistoryRow>(PERSON_HISTORY_SQL, { companyId }),
-    chQuery<SePersonNormalizedRow>(PERSON_NORMALIZED_SQL, { companyId }),
-    chQuery<SePersonRawRow>(PERSON_RAW_SQL, { companyId }),
-    chQuery<SePersonRuleRow>(PERSON_RULES_SQL, { companyId }),
-    chQuery<SePersonPrecedenceRow>(PERSON_PRECEDENCE_SQL, { companyId }),
-  ]);
+  const [mainRows, history, normalizedRows, rawRows, rules, precedence, matchRows] =
+    await Promise.all([
+      chQuery<SePersonRow>(PERSON_MAIN_SQL, { companyId }),
+      chQuery<SePersonHistoryRow>(PERSON_HISTORY_SQL, { companyId }),
+      chQuery<SePersonNormalizedRow>(PERSON_NORMALIZED_SQL, { companyId }),
+      chQuery<SePersonRawRow>(PERSON_RAW_SQL, { companyId }),
+      chQuery<SePersonRuleRow>(PERSON_RULES_SQL, { companyId }),
+      chQuery<SePersonPrecedenceRow>(PERSON_PRECEDENCE_SQL, { companyId }),
+      chQuery<SePersonMatchRow>(PERSON_MATCH_SQL, { companyId }),
+    ]);
   const normalizedBySlot = new Map(normalizedRows.map((row) => [slotKey(row.source, row.slot), row]));
   const rawBySlot = new Map(rawRows.map((row) => [slotKey(row.source, row.slot), row]));
   const precedenceOf = precedenceReader(precedence);
   const published = mainRows.map((row) => {
-    const members = membersOf(row, normalizedBySlot, rawBySlot, precedenceOf);
+    const matchedBy = matchesWithin(row, matchRows);
+    const members = membersOf(row, normalizedBySlot, rawBySlot, precedenceOf, matchedBy);
     return {
       row,
       members,
@@ -559,6 +722,7 @@ export async function loadSePersonDetail(companyId: string): Promise<SePersonDet
       })),
       spellingReason: spellingReason(row, members),
       rules: rulesFor(rules, row, mainRows, history),
+      matchedBy,
     };
   });
   const drafts = draftsOf(rawRows, normalizedRows);
@@ -582,6 +746,7 @@ export async function loadSePersonDetail(companyId: string): Promise<SePersonDet
     history,
     rules,
     precedence,
+    possibleMatches: possibleMatchesOf(mainRows, matchRows, rules),
     foldPending: personFoldPending(
       foldedAt,
       [

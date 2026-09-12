@@ -25,6 +25,7 @@ import {
 } from "~/components/admin/se-person-workspace";
 import { Dialog } from "~/components/ui/dialog";
 import type { SePersonDetail, SePersonPublished } from "~/lib/se-company-person-entity.server";
+import { matchNote } from "~/lib/se-person-match";
 
 const COMPANY = "5560125220";
 const KEY = "a".repeat(64);
@@ -32,7 +33,8 @@ const OTHER = "b".repeat(64);
 const SLOT = "r20260910120000123";
 const ROLE_OPTIONS = [{ code: "board_member", label: "Board member", group: "governance" }];
 const EMPTY_DETAIL: SePersonDetail = {
-  published: [], drafts: [], history: [], rules: [], precedence: [], foldPending: false,
+  published: [], drafts: [], history: [], rules: [], precedence: [],
+  possibleMatches: [], foldPending: false,
 };
 const row = {
   company_id: COMPANY, person_key: KEY, display_name: "Anna Svensson",
@@ -54,19 +56,28 @@ const published: SePersonPublished = {
     {
       source: "bolagsverket", slot: "uid-1:sig-1", normalizedId: "n1", name: "Anna Svensson",
       birthYear: "1975", wikidataId: "", data: "{}", current: null, raw: null,
-      refoldPending: false, precedence: 900,
+      refoldPending: false, precedence: 900, match: null,
     },
     {
       source: "esef", slot: "doc-9:cand-1", normalizedId: "n2", name: "Anna Maria Svensson",
       birthYear: "", wikidataId: "", data: "{}", current: null, raw: null,
-      refoldPending: false, precedence: 400,
+      refoldPending: false, precedence: 400, match: null,
     },
   ],
   roles: [{ code: "board_member", year: 2025, sources: ["bolagsverket"] }],
   spellingReason: "precedence",
   rules: [],
+  matchedBy: [],
 };
 const detail: SePersonDetail = { ...EMPTY_DETAIL, published: [published] };
+/** The strongest pair naming the Bolagsverket observation, as the loader derives it. */
+const MATCH = {
+  nameA: "Anna Svensson", nameB: "Anna Maria Svensson", confidence: 0.93,
+  reason: "call name", members: ["n1", "n2"],
+};
+/** What `fold.py::_with_llm_match` wrote onto the published row. */
+const FOLD_DATA =
+  '{"llm_match":{"model":"deepseek-v4-flash","pairs":[{"a":"Anna Svensson","b":"Anna Maria Svensson","confidence":0.93,"reason":"call name"}],"prompt_version":"se-person-match-v1"},"role_kind":"board_member"}';
 
 function post(body: Record<string, string>, repeated: [string, string][] = []): Request {
   const form = new URLSearchParams();
@@ -157,6 +168,27 @@ describe("admin-se-company-person route", () => {
     expect(server.saveSePersonDraft).toHaveBeenCalledWith(COMPANY, expect.objectContaining({ intent: "save-draft", replacesKey: null }));
   });
 
+  it("takes a possible match's Merge through the existing merge intent, note and all", async () => {
+    // Exactly what PossibleMatchesCard posts: no new intent, two person keys, and the
+    // note `matchNote` built. A note the parser refused would read to the reviewer as
+    // a broken button, so the whole post is pinned here.
+    await action({
+      request: post({ intent: "merge", note: "LLM match 0.64: same surname" }, [
+        ["person_key", KEY],
+        ["person_key", OTHER],
+      ]),
+      params: { companyId: COMPANY },
+    } as never);
+    // Asserted through `matchNote` itself, not a hand-built string: if the note's
+    // format ever changes, the literal payload above (what a real card would have
+    // posted under the OLD format) stops matching this expectation and the test fails.
+    expect(server.mergeSePersons).toHaveBeenCalledWith(COMPANY, {
+      intent: "merge",
+      personKeys: [KEY, OTHER],
+      note: matchNote(0.64, "same surname"),
+    });
+  });
+
   it("launches the fold on Fold now and, per Ruling 6, on Activate too", async () => {
     expect(await action({ request: post({ intent: "fold-now" }), params: { companyId: COMPANY } } as never)).toEqual({
       ok: true, intent: "fold-now", runId: "run-9", url: null,
@@ -207,6 +239,93 @@ describe("admin-se-company-person route", () => {
     );
     expect(empty).toContain("No people published yet");
     expect(empty).toContain("Add person");
+  });
+
+  it("badges the matched member, reads the llm_match record as a list, and offers a Merge for a possible match", () => {
+    const matched: SePersonDetail = {
+      ...detail,
+      published: [
+        {
+          ...published,
+          row: { ...row, data: FOLD_DATA },
+          members: [{ ...published.members[0], match: MATCH }, published.members[1]],
+          matchedBy: [MATCH],
+        },
+      ],
+      possibleMatches: [
+        {
+          personKeyA: KEY, personKeyB: OTHER, nameA: "Anna Maria Svensson",
+          nameB: "Carl von Essen", confidence: 0.64, reason: "same surname",
+        },
+      ],
+    };
+    const html = render(
+      <SePersonWorkspace
+        companyId={COMPANY} detail={matched} roleOptions={ROLE_OPTIONS}
+        selectedKey={KEY} result={null}
+      />,
+    );
+    // The badge and its reason. Asserted in two pieces, not as one string: React puts
+    // the score in its own text node, so the rendered markup may separate them.
+    expect(html).toContain("matched by LLM");
+    expect(html).toContain("0.93");
+    expect(html).toContain('title="call name"');
+    // The fold's record reads as a list -- the model and the prompt version included --
+    // and the raw key never reaches the Data block, while the rest of `data` still does.
+    expect(html).toContain("deepseek-v4-flash");
+    expect(html).toContain("se-person-match-v1");
+    expect(html).not.toContain("llm_match");
+    expect(html).toContain("role_kind");
+    // The card and one Merge, posting the EXISTING merge intent with both keys and the
+    // note spec section 5 prescribes. Sliced to the card's OWN markup so the assertion
+    // fails if the card's intent, its keys or its note format ever change, not merely
+    // if `merge` appears anywhere else on the page.
+    expect(html).toContain("Possible matches");
+    const cardHtml = html.slice(html.indexOf("Possible matches"));
+    expect(cardHtml).toContain("same surname");
+    expect(cardHtml).toContain("0.64");
+    expect(cardHtml).toContain('name="intent" value="merge"');
+    expect(cardHtml).toContain(`name="person_key" value="${KEY}"`);
+    expect(cardHtml).toContain(`name="person_key" value="${OTHER}"`);
+    expect(cardHtml).toContain(`name="note" value="${matchNote(0.64, "same surname")}"`);
+    // F6: an accessible name on the Merge button, the file's `PersonLine` precedent.
+    expect(cardHtml).toContain('aria-label="Merge Anna Maria Svensson and Carl von Essen"');
+    // A company with no pairs shows no card at all.
+    expect(
+      render(
+        <SePersonWorkspace
+          companyId={COMPANY} detail={detail} roleOptions={ROLE_OPTIONS}
+          selectedKey={KEY} result={null}
+        />,
+      ),
+    ).not.toContain("Possible matches");
+  });
+
+  it("marks the LLM match section stale once no current pair still names it", () => {
+    // The fold recorded llm_match, but the CURRENT pairs (matchedBy) no longer confirm
+    // it -- the candidate list moved on since the last fold.
+    const stale: SePersonDetail = {
+      ...detail,
+      published: [{ ...published, row: { ...row, data: FOLD_DATA }, matchedBy: [] }],
+    };
+    const staleHtml = render(
+      <SePersonWorkspace companyId={COMPANY} detail={stale} roleOptions={ROLE_OPTIONS} selectedKey={KEY} result={null} />,
+    );
+    expect(staleHtml).toContain(
+      "Recorded by the last fold; the current pairs no longer name these observations.",
+    );
+
+    // The same llm_match record, but a current pair still names it: no stale note.
+    const current: SePersonDetail = {
+      ...detail,
+      published: [{ ...published, row: { ...row, data: FOLD_DATA }, matchedBy: [MATCH] }],
+    };
+    const currentHtml = render(
+      <SePersonWorkspace companyId={COMPANY} detail={current} roleOptions={ROLE_OPTIONS} selectedKey={KEY} result={null} />,
+    );
+    expect(currentHtml).not.toContain(
+      "Recorded by the last fold; the current pairs no longer name these observations.",
+    );
   });
 
   it("posts a split's checked slots, note and intent, with the caveat in the dialog's own words", () => {
