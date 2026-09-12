@@ -210,6 +210,35 @@ function rolesByYear(roles: readonly SePersonRoleYear[]): [year: number, entries
   return [...years].sort((a, b) => b[0] - a[0]);
 }
 
+/** The roles view (spec section 11) has nothing FOR an inactive person to begin with --
+ * the view's own WHERE is `p.active = 1` -- so an empty read there is not staleness, it
+ * is the view working exactly as designed (F3). Only an ACTIVE person's empty-or-stale
+ * read means "the view has not rebuilt since this fold" (F2). */
+function personRoleFallbackNote(entry: SePersonPublished): string {
+  return entry.row.active === 1
+    ? "the roles view has not rebuilt since this fold"
+    : "hidden and withdrawn persons are not in the roles view";
+}
+
+/** F2: the view's rows lag a fold by up to an hour, so a set of rows can be genuinely
+ * present yet still describe the person as they were BEFORE the fold that is showing on
+ * screen right now -- the empty case and the stale-rows case are the same fallback for
+ * the same reason. Both `folded_at` columns share one format
+ * (`YYYY-MM-DD HH:MM:SS.mmm` UTC), so a plain string compare orders them. */
+function personRoleRowsAreStale(entry: SePersonPublished): boolean {
+  return (
+    entry.roleRows.length === 0 ||
+    entry.roleRows.some((role) => role.folded_at < entry.row.folded_at)
+  );
+}
+
+/** Whether the panel shows the view's own stored rows (spec section 11) rather than the
+ * fold's array summary: only for an ACTIVE person (F3 -- the view holds no row for any
+ * other kind) whose rows are not stale (F2). */
+function showsPersonRoleRows(entry: SePersonPublished): boolean {
+  return entry.row.active === 1 && !personRoleRowsAreStale(entry);
+}
+
 /** `precedence.py::precedence_for` as the panel shows it: the company's own row for a
  * source when one is in force, else the global number, highest first. */
 function namePrecedence(
@@ -1275,7 +1304,7 @@ function PersonPanel({
 
           <section>
             <h3 className="text-muted-foreground text-xs uppercase tracking-wide">Roles</h3>
-            {entry.roleRows.length > 0 ? (
+            {showsPersonRoleRows(entry) ? (
               <ul className="mt-2 flex flex-col gap-1 text-sm">
                 {entry.roleRows.map((role) => (
                   <li
@@ -1286,7 +1315,14 @@ function PersonPanel({
                       {role.role_year === 0 ? EMPTY_VALUE : role.role_year}
                     </span>
                     <span className="flex flex-wrap items-center gap-2">
-                      <Badge variant={role.is_current === 1 ? "default" : "outline"}>
+                      <Badge
+                        variant={role.is_current === 1 ? "default" : "outline"}
+                        title={
+                          role.is_current === 1
+                            ? "On the person's latest observed year"
+                            : undefined
+                        }
+                      >
                         {roleLabel(role.role_code, roleOptions)}
                       </Badge>
                       {role.role_from === "" && role.role_to === "" ? null : (
@@ -1327,8 +1363,7 @@ function PersonPanel({
                   ))}
                 </ul>
                 <p className="text-muted-foreground mt-1 text-xs">
-                  From the person row's own arrays — the roles view has not rebuilt since
-                  this fold.
+                  From the person row's own arrays — {personRoleFallbackNote(entry)}.
                 </p>
               </>
             )}

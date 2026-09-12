@@ -65,16 +65,19 @@ const published: SePersonPublished = {
     },
   ],
   roles: [{ code: "board_member", year: 2025, sources: ["bolagsverket"] }],
+  // Fresh: each row's folded_at matches the person row's own -- not older than it, so
+  // not stale (F2).
   roleRows: [
     {
       company_id: COMPANY, person_key: KEY, role_code: "board_member", role_year: 2025,
       role_from: "", role_to: "", source: "bolagsverket", slot: "uid-1:sig-1",
-      normalized_id: "n1", is_current: 1,
+      normalized_id: "n1", is_current: 1, folded_at: "2026-09-10 09:00:00.000",
     },
     {
       company_id: COMPANY, person_key: KEY, role_code: "auditor", role_year: 0,
       role_from: "2019-05-01", role_to: "2021-03-31", source: "wikidata",
       slot: "Q1:P169:Q7", normalized_id: "n3", is_current: 0,
+      folded_at: "2026-09-10 09:00:00.000",
     },
   ],
   spellingReason: "precedence",
@@ -265,6 +268,10 @@ describe("admin-se-company-person route", () => {
     expect(html).toContain("2021-03-31");
     expect(html).toContain("Wikidata");
     expect(html).not.toContain("the roles view has not rebuilt");
+    // F6: the filled badge (the current role, per code) explains what "current" means
+    // here -- the person's own latest observed year, not "now". renderToStaticMarkup
+    // HTML-escapes the apostrophe in the attribute value.
+    expect(html).toContain('title="On the person&#x27;s latest observed year"');
 
     // No row yet -- a person folded since the view's last :20 rebuild. The panel shows
     // the person row's own arrays and says so, instead of claiming the person has no
@@ -280,6 +287,57 @@ describe("admin-se-company-person route", () => {
     );
     expect(fallback).toContain("Board member");
     expect(fallback).toContain("the roles view has not rebuilt");
+  });
+
+  it("F2: rows that predate the current fold are treated as stale, same fallback as no rows at all", () => {
+    // The view rebuilds at :20 and holds whatever it saw at the last rebuild -- a row
+    // stamped BEFORE the person's own current folded_at describes the person as they
+    // were before this fold, not as the panel is showing them right now.
+    const stale = render(
+      <SePersonWorkspace
+        companyId={COMPANY}
+        detail={{
+          ...detail,
+          published: [
+            {
+              ...published,
+              roleRows: published.roleRows.map((role) => ({
+                ...role,
+                folded_at: "2026-09-10 08:00:00.000",
+              })),
+            },
+          ],
+        }}
+        roleOptions={ROLE_OPTIONS}
+        selectedKey={KEY}
+        result={null}
+      />,
+    );
+    expect(stale).toContain("Board member");
+    expect(stale).toContain("the roles view has not rebuilt");
+  });
+
+  it("F3: an inactive person never gets the stale-view note -- the view holds no row for one by design", () => {
+    // The view's own WHERE is p.active = 1, so a hidden or withdrawn person's empty
+    // roleRows is not staleness: it is the view working as designed, and the note must
+    // say so instead of implying the view is behind.
+    const html = render(
+      <SePersonWorkspace
+        companyId={COMPANY}
+        detail={{
+          ...detail,
+          published: [
+            { ...published, row: { ...row, active: 0, inactive_reason: "hidden" }, roleRows: [] },
+          ],
+        }}
+        roleOptions={ROLE_OPTIONS}
+        selectedKey={KEY}
+        result={null}
+      />,
+    );
+    expect(html).toContain("Board member");
+    expect(html).toContain("hidden and withdrawn persons are not in the roles view");
+    expect(html).not.toContain("the roles view has not rebuilt");
   });
 
   it("badges the matched member, reads the llm_match record as a list, and offers a Merge for a possible match", () => {

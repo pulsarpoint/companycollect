@@ -233,8 +233,12 @@ export interface SePersonRoleYear {
  * `SePersonRoleYear` -- the fold's summary, zipped out of the person row's parallel
  * arrays -- this is a stored row per (role, year, source, slot), so it also carries the
  * span dates and the slot the reviewer can look up. `role_year` is 0 when the
- * observation carried no year at all (the view's `ifNull(role_year, 0)`), and
- * `is_current` is 1 when the code is on the person's `current_roles`. */
+ * observation carried no FISCAL year (Wikidata's spans; not "no year at all" -- the
+ * fold's own arrays expand the span into real years), and `is_current` is 1 when the
+ * code is on the person's `current_roles` as of the person's OWN latest observed year,
+ * not "now" (F6). `folded_at` is the person row's own stamp as of the view's last
+ * refresh: the panel compares it against the live person row's `folded_at` to tell a
+ * fresh set of rows from a stale one (F2). */
 export interface SePersonRoleRow {
   company_id: string;
   person_key: string;
@@ -246,6 +250,9 @@ export interface SePersonRoleRow {
   slot: string;
   normalized_id: string;
   is_current: number;
+  /** `YYYY-MM-DD HH:MM:SS.mmm` UTC, the same format as `SePersonRow.folded_at`, so the
+   * two compare lexicographically. */
+  folded_at: string;
 }
 
 export interface SePersonPublished {
@@ -427,10 +434,29 @@ export const PERSON_ROLE_SQL = `SELECT
   r.role_code AS role_code, toUInt16(r.role_year) AS role_year,
   ifNull(toString(r.role_from), '') AS role_from, ifNull(toString(r.role_to), '') AS role_to,
   toString(r.source) AS source, r.slot AS slot,
-  toString(r.normalized_id) AS normalized_id, toUInt8(r.is_current) AS is_current
+  toString(r.normalized_id) AS normalized_id, toUInt8(r.is_current) AS is_current,
+  toString(r.folded_at) AS folded_at
 FROM ${SE_COMPANY_PERSON_ROLE_TABLE} AS r
 WHERE r.company_id = {companyId:String}
 ORDER BY r.person_key, r.role_year DESC, r.role_code, r.source`;
+
+/**
+ * The eighth read, isolated (F4): an UNKNOWN_TABLE -- the view rolled back, or migration
+ * 000402 has not landed on this database yet -- or any other failure reading the role
+ * view must not take the whole People tab down with it. The other seven reads stay in
+ * the same `Promise.all` and fail the tab as they always have; this one alone degrades
+ * to `[]`, which the panel already renders as "the roles view has not rebuilt since this
+ * fold" (F2) -- exactly the fallback it shows in the ordinary lag window between a fold
+ * and the next :20 refresh.
+ */
+async function loadPersonRoleRows(companyId: string): Promise<SePersonRoleRow[]> {
+  try {
+    return await chQuery<SePersonRoleRow>(PERSON_ROLE_SQL, { companyId });
+  } catch (error) {
+    console.error("[se-person] failed to read corpscout.se_company_person_role", error);
+    return [];
+  }
+}
 
 /** The parse status the fold publishes (`fold.py::FOLDABLE_STATUS`); a row that scores
  * `partial` or `no_person` never becomes a person, so it never owes a fold. */
@@ -752,7 +778,7 @@ export async function loadSePersonDetail(companyId: string): Promise<SePersonDet
       chQuery<SePersonRuleRow>(PERSON_RULES_SQL, { companyId }),
       chQuery<SePersonPrecedenceRow>(PERSON_PRECEDENCE_SQL, { companyId }),
       chQuery<SePersonMatchRow>(PERSON_MATCH_SQL, { companyId }),
-      chQuery<SePersonRoleRow>(PERSON_ROLE_SQL, { companyId }),
+      loadPersonRoleRows(companyId),
     ]);
   const normalizedBySlot = new Map(normalizedRows.map((row) => [slotKey(row.source, row.slot), row]));
   const rawBySlot = new Map(rawRows.map((row) => [slotKey(row.source, row.slot), row]));

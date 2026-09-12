@@ -240,22 +240,23 @@ const ROLE_ROWS: SePersonRoleRow[] = [
   {
     company_id: COMPANY, person_key: MERGED_KEY, role_code: "board_chair", role_year: 2025,
     role_from: "", role_to: "", source: "esef", slot: "doc-9:cand-1", normalized_id: "n2",
-    is_current: 1,
+    is_current: 1, folded_at: "2026-09-10 09:00:00.000",
   },
   {
     company_id: COMPANY, person_key: MERGED_KEY, role_code: "board_member", role_year: 2025,
     role_from: "", role_to: "", source: "bolagsverket", slot: "uid-1:sig-1",
-    normalized_id: "n1", is_current: 1,
+    normalized_id: "n1", is_current: 1, folded_at: "2026-09-10 09:00:00.000",
   },
   {
     company_id: COMPANY, person_key: MERGED_KEY, role_code: "auditor", role_year: 2019,
     role_from: "", role_to: "", source: "bolagsverket", slot: "uid-1:sig-4",
-    normalized_id: "n5", is_current: 0,
+    normalized_id: "n5", is_current: 0, folded_at: "2026-09-10 09:00:00.000",
   },
   {
     company_id: COMPANY, person_key: WIKI_KEY, role_code: "chief_executive_officer",
     role_year: 0, role_from: "2019-05-01", role_to: "", source: "wikidata",
     slot: "Q1:P169:Q7", normalized_id: "n3", is_current: 1,
+    folded_at: "2026-09-10 09:00:00.000",
   },
 ];
 
@@ -349,6 +350,9 @@ describe("se-company-person-entity.server", () => {
     expect(PERSON_ROLE_SQL).toContain("ifNull(toString(r.role_from), '') AS role_from");
     expect(PERSON_ROLE_SQL).toContain("ifNull(toString(r.role_to), '') AS role_to");
     expect(PERSON_ROLE_SQL).toContain("toUInt8(r.is_current) AS is_current");
+    // F2: folded_at travels with every row so the panel can tell a fresh set from a
+    // stale one by comparing it against the live person row's own folded_at.
+    expect(PERSON_ROLE_SQL).toContain("toString(r.folded_at) AS folded_at");
     expect(PERSON_ROLE_SQL).toContain("WHERE r.company_id = {companyId:String}");
     expect(PERSON_ROLE_SQL).toContain(
       "ORDER BY r.person_key, r.role_year DESC, r.role_code, r.source",
@@ -426,6 +430,27 @@ describe("se-company-person-entity.server", () => {
       { code: "board_chair", year: 2025, sources: ["esef"] },
       { code: "board_member", year: 2025, sources: ["bolagsverket"] },
     ]);
+  });
+
+  it("F4: a missing or failing role view degrades to empty roleRows instead of taking the tab down", async () => {
+    // Migration 000402 not yet applied, or rolled back: the eighth read alone rejects
+    // with UNKNOWN_TABLE. The other seven reads still ran (this test's `answer` throws
+    // on any SQL it does not recognise, so the whole detail resolving proves they did),
+    // and the promise as a whole must resolve, not reject.
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const unknownTable = new Error(
+      "Code: 60. DB::Exception: Table corpscout.se_company_person_role doesn't exist (UNKNOWN_TABLE)",
+    );
+    clickhouse.query.mockImplementation(async (sql: string) =>
+      sql === PERSON_ROLE_SQL ? Promise.reject(unknownTable) : answer(sql),
+    );
+
+    const detail = await loadSePersonDetail(COMPANY);
+
+    expect(detail?.published.map((entry) => entry.roleRows)).toEqual([[], []]);
+    expect(detail?.published[0]?.members.length).toBeGreaterThan(0);
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
   });
 
   it("drops a match pair whose two sides carry conflicting birth years", async () => {
