@@ -165,6 +165,8 @@ CHECK match(company_id, '^([0-9]{10}|[0-9]{12})$')
 CHECK scope IN ('standalone', 'consolidated')
 CHECK period_key = concat(scope, ':', toString(period_end))
 CHECK amount_scale IN (1, 1000, 1000000)
+CHECK ifNull(currency, 'x') != ''
+CHECK source IN ('bolagsverket', 'bolagsverket_comparative', 'esef', 'ratsit', 'reviewer', 'reviewer_draft')
 ```
 
 Every `_amount_original` is in the source's currency at full units: Ratsit's 57.1 MSEK lands as
@@ -191,13 +193,16 @@ period_months       Nullable(UInt16)        period_months_source  LowCardinality
 currency            LowCardinality(String)  currency_source       LowCardinality(String)   -- '' when no source names one
 <field>_amount_original, <field>_amount_usd, <field>_source   x 20
 employees           Nullable(UInt64)        employees_source      LowCardinality(String)
-sources             Array(String)           -- every source that won at least one field, sorted
+sources             Array(LowCardinality(String))  -- every source that won at least one field, sorted
 active              UInt8                   -- 0 when hidden by a rule or withdrawn
 inactive_reason     LowCardinality(String)  -- '', hidden, withdrawn
 folded_at           DateTime64(3, 'UTC')    -- version
 fold_version        LowCardinality(String)
 source_run_id       String
 ENGINE = ReplacingMergeTree(folded_at) ORDER BY (company_id, scope, period_end)
+CHECK match(company_id, '^([0-9]{10}|[0-9]{12})$')
+CHECK scope IN ('standalone', 'consolidated')
+CHECK period_key = concat(scope, ':', toString(period_end))
 ```
 
 A `_source` column is `''` when the field has no value. There are no row-level fx columns: each
@@ -245,6 +250,7 @@ decided_by   LowCardinality(String) DEFAULT ''
 note         String DEFAULT ''
 decided_at   DateTime64(3, 'UTC')     -- version
 ENGINE = ReplacingMergeTree(decided_at) ORDER BY (company_id, period_key, action)
+CHECK period_key != ''  -- a hide is always per period
 ```
 
 ### 4.6 Kept as is
