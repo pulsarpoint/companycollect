@@ -560,7 +560,11 @@ the entity.
 1. Tables and precedence: migration 000401 with the five tables, `financial/tables.py`,
    `precedence.py` with the export asset, DDL tests; Code complete 2026-09-12 on branch
    se-financial-entity (plan 2026-09-12-se-company-financial-1-tables-precedence.md); prod
-   apply and export pending.
+   apply and export DONE 2026-09-12: 000401 applied (ledger 401, five empty tables), dagster
+   deployed, export run c703ba99 wrote 82 global rows over 25 fields (in-process on the host,
+   the run queue still held by the ESEF refresh runs), a second run ba47d4e5 wrote nothing
+   (unchanged); revenue reads reviewer 20000, ratsit 1000, bolagsverket 900, esef 900,
+   bolagsverket_comparative 800.
 2. Extractors: `state_scan.py` lifted from the person package with person switched to it, the
    four extractors, `suggestions.py`, the extract job and the stopped weekly; prod runs with counts
    per source and per skip reason (expected order of magnitude: 3.05M Bolagsverket periods, the
