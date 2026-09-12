@@ -8,9 +8,10 @@ names out, and compares them as WHOLE names -- corpscout.se_company_person is a 
 five entries here AND of the six tables the entity keeps, and company_person_role prefixes
 the role catalog that stays.
 
-BOTH SCRIPTS ARE SPENT: they ran on prod on 2026-09-09, and migration 000398 has since given
-the name of their last DROP -- corpscout.se_company_person -- to the entity's live main
-table. Re-running se_person_retirement_drops.sql would destroy it. See REUSED_NAME below.
+BOTH SCRIPTS ARE SPENT: they ran on prod on 2026-09-09, and migrations 000398 and 000402
+have since given TWO of their DROP names -- corpscout.se_company_person and
+corpscout.se_company_person_role -- to live objects. Re-running
+se_person_retirement_drops.sql would destroy them. See REUSED_NAMES below.
 """
 
 import re
@@ -59,6 +60,9 @@ KEPT = (
     "se_company_person_history",
     "se_company_person_rule",
     "se_company_person_precedence",
+    # The slice-5 roles view (migration 000402), living under the name this script's
+    # eleventh DROP took away on 2026-09-09.
+    "se_company_person_role",
     "company_person_role_type",
     "se_financial_report_signatories",
     "esef_document_people",
@@ -68,12 +72,14 @@ KEPT = (
     "se_companies_serving",
 )
 
-# The one name on both lists, and the reason this file exists. corpscout.se_company_person
-# was the 2026-08-19 table this script dropped on 2026-09-09; migration 000398 then gave the
-# freed name to the entity's main table. THE SCRIPT IS SPENT -- running it again today would
-# destroy 1.1M published persons. It stays in the repo as history under the ledger policy and
-# must never be run a second time.
-REUSED_NAME = "se_company_person"
+# The TWO names on both lists, and the reason this file exists. corpscout.se_company_person
+# was the 2026-08-19 table this script dropped on 2026-09-09, and migration 000398 gave the
+# freed name to the entity's main table a day later. corpscout.se_company_person_role was
+# that same model's role table, dropped in the same run, and migration 000402 gave ITS name
+# to the slice-5 roles view. THE SCRIPT IS SPENT -- running it again today would destroy
+# 1.1M published persons and the view built over them. It stays in the repo as history
+# under the ledger policy and must never be run a second time.
+REUSED_NAMES = frozenset({"se_company_person", "se_company_person_role"})
 
 _DROP = re.compile(r"^DROP (TABLE|VIEW) IF EXISTS corpscout\.(\w+);$", re.MULTILINE)
 
@@ -91,14 +97,15 @@ def test_the_drop_script_names_no_kept_object() -> None:
     the entity's se_company_person_rule, or -- written the other way round -- would call
     company_person_role_type unsafe because company_person_role is being dropped.
 
-    REUSED_NAME is excluded rather than the check being weakened: the script's last DROP and
-    the entity's main table spell the same name for different objects, one dropped on
-    2026-09-09 and one created by 000398's rename a day later."""
+    REUSED_NAMES is excluded rather than the check being weakened: two of this script's
+    DROPs and two LIVE objects spell the same name for different objects -- dropped on
+    2026-09-09, recreated by 000398's rename a day later and by 000402's view on
+    2026-09-12."""
     dropped = {name for _, name in _statements(DROPS)}
-    assert dropped.isdisjoint(set(KEPT) - {REUSED_NAME})
+    assert dropped.isdisjoint(set(KEPT) - REUSED_NAMES)
     assert len(dropped) == len(DROP_ORDER)
     assert "se_company_person_v2" not in dropped
-    assert dropped & set(KEPT) == {REUSED_NAME}
+    assert dropped & set(KEPT) == REUSED_NAMES
 
 
 def test_the_three_source_views_are_the_only_drop_views() -> None:

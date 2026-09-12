@@ -575,6 +575,8 @@ flags read empty tables until the first fold.
    first hourly refresh under it (21:45 UTC) succeeded in 14.7 min with no exception and the same 578,289 `has_people` rows; the owner's dev server on the main checkout served the People tab and the list
    from the new name within a minute of the merge; the dagster deploy of main 6e4494f8 went green (four dbt parses, dbt-state refresh, `dg check defs`, ansible ok=35 failed=0) at 21:11 UTC; a targeted fold of 5592501521 through the deployed code (run 92f481ae) read the renamed table and reported its three persons `unchanged` with no history written, so the fold's pins and the FINAL read resolve to the new name.
 
+5. Roles as rows (section 11): the `se_company_person_role` refreshable view and its pin, the
+   People tab's roles panel and the list's year filter.
 Each slice is one plan executed with subagent-driven development, reviewed, merged and deployed
 before the next; shipped records are appended here as for addresses.
 
@@ -595,3 +597,57 @@ catalog `company_person_role_type` (kept). Package
 (reused from the address entity, unchanged); the People list's `app/lib/se-people-filters.ts`,
 `app/lib/se-people-list.server.ts` and `app/components/admin/se-people-table.tsx`; routes
 `admin-se-company-person.tsx` and `admin-se-people.tsx`.
+
+## 11. Roles as rows (owner decision 2026-09-12)
+
+The person row keeps roles as index-parallel arrays (`role_codes`, `role_years`, `role_sources`,
+`current_roles`); that answers "who are the people of company X" but not "what did person Y do
+at company X over time" in plain SQL. The owner's shape: the per-company person stays the identity
+unit (`person_key` is the per-company person id; no cross-company id is claimed — a later link
+table may join persons across companies by LLM, heuristic or reviewer decision), and a roles
+table holds one row per role observation over time.
+
+`corpscout.se_company_person_role` is a refreshable materialized view (the shape of
+`se_companies_serving`: `REFRESH EVERY 1 HOUR OFFSET 20 MINUTE`, created `EMPTY` so the migration
+returns at once and the first build is a `SYSTEM REFRESH VIEW`), rebuilt deterministically from
+the two tables that exist:
+
+```
+SELECT p.company_id, p.person_key, p.display_name, p.birth_year,
+       n.role_code, n.role_year, n.role_from, n.role_to,
+       n.source, n.slot, n.normalized_id,
+       has(p.current_roles, n.role_code) AS is_current, p.folded_at
+FROM corpscout.se_company_person AS p FINAL
+ARRAY JOIN p.normalized_ids AS member_id
+INNER JOIN corpscout.se_company_person_normalized AS n FINAL
+    ON n.company_id = p.company_id AND n.normalized_id = member_id
+WHERE p.active = 1 AND n.role_code IS NOT NULL
+```
+
+Target `ENGINE = MergeTree ORDER BY (company_id, person_key, role_year, role_code, source, slot)`; the
+key columns are made non-nullable (`assumeNotNull(role_code)`, `ifNull(role_year, 0)` — 0 means "no fiscal
+year": Wikidata delivers spans in `role_from`/`role_to` and no fiscal year, so its roles land under 0 while
+the fold expands the span into real years); the refresh carries the memory-bounding SETTINGS block every
+serving refresh has carried since 000347 (grace-hash join, external sort and group-by, a 12 GiB cap), so it
+cannot starve the shared server. `is_current` means "held on the person's latest observed year", not
+today. The refresh is watched by the same `system.view_refreshes` rule as the serving view (an exception, or
+`last_success_time` older than three hours, means stale rows served at full speed); the People tab shows the
+array-derived roles with a note whenever a person's rows are missing or older than its last fold, and a
+missing view degrades to that fallback instead of failing the tab.
+Prod 2026-09-12: the join yields 3,837,006 rows over 1,113,485 persons with a role (160,279 active
+persons carry none and get no row); the arrays are never ragged (3,149,261 (role, year) pairs). The
+per-year summary is a `GROUP BY (company_id, person_key, role_code, role_year)`; the arrays on the
+person row stay as the fold's summary and nothing that reads them changes. The view lags a fold
+by at most an hour; if that ever matters the same SELECT moves into the fold.
+
+Backoffice: the People tab's person panel lists the roles from the table (role, year, from/to,
+source), and the People list gains a `year` filter (`has(p.role_years, {year})` on the person
+row, consistent with the arrays). Names: `tables.ROLE_VIEW = "se_company_person_role"`, migration
+`000402_corpscout_se_company_person_role`, the drift pin `build_se_company_person_role_sql()` in
+`person/tables.py` (the migration's SELECT must equal the builder's rendering, as the serving view
+is pinned).
+
+Slice 5 of section 9: the migration and the pin, the backoffice panel and filter; prod: migrate,
+`SYSTEM REFRESH VIEW`, readouts (3,837,006 rows, Swedbank's Erik Bo Bengtsson: board member 2021
+and 2022 (ESEF, the seat ending 2023-01-18), executive 2023 and 2024, legal representative 2026
+(Ratsit)), the tab.

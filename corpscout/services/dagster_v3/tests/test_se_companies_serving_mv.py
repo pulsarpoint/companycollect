@@ -30,7 +30,9 @@ VIEW = "corpscout.se_companies_serving"
 ENTITY = "corpscout.se_company_person"
 ENTITY_V2 = "corpscout.se_company_person_v2"
 # The 2026-08-19 model's role table, dropped in slice 0. It must never come back into the
-# view's body, and its name is a prefix trap of its own.
+# view's body, and its name is a prefix trap of its own. THE NAME ITSELF IS LIVE AGAIN as of
+# migration 000402 -- a separate object, the slice-5 roles view -- but this view still does
+# not read it, so the assertion below is unchanged.
 RETIRED_ROLE_TABLE = "corpscout.se_company_person_role"
 # The five tables ENTITY is a PREFIX of. No whole-name match on ENTITY may hit one of them.
 SIBLING_TABLES = (

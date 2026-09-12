@@ -9,3 +9,17 @@
  * test, or in a fake client's dispatch -- has to carry the alias that follows it.
  */
 export const SE_COMPANY_PERSON_TABLE = "corpscout.se_company_person";
+
+/**
+ * The roles-as-rows view (migration 000402, spec section 11): one row per published
+ * ACTIVE person and per role-carrying observation the fold built them from, rebuilt
+ * hourly at :20 by a refreshable materialized view.
+ *
+ * READ IT WITHOUT `FINAL`. It is a plain MergeTree that each refresh rebuilds whole, so
+ * it never holds two versions of a row -- and it is NOT a `ReplacingMergeTree`, so
+ * `FINAL` on it would be a plain error.
+ *
+ * MIND THE PREFIX: this name has `SE_COMPANY_PERSON_TABLE` as a prefix, so a match on
+ * either one has to carry the alias that follows it.
+ */
+export const SE_COMPANY_PERSON_ROLE_TABLE = "corpscout.se_company_person_role";

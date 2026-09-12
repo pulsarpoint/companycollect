@@ -415,6 +415,7 @@ EXPECTED_MIGRATIONS = (
     "000399_corpscout_se_company_person_match",
     "000400_corpscout_se_ratsit_financial_periods_usd",
     "000401_corpscout_se_company_financial_entity",
+    "000402_corpscout_se_company_person_role",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -4364,9 +4365,13 @@ SLICE_0_EMPTIED = (
 # a CREATE or an ALTER that DECLARES one of these names, and a RENAME TABLE declares nothing.
 # The entity's DDL still lives in 000396 under se_company_person_v2, which is why that name,
 # not this one, is the kept object asserted below.
+#
+# se_company_person_role IS ALSO LIVE AGAIN, and unlike the main table it is DECLARED by a
+# migration: 000402 creates the slice-5 roles view under the name slice 0 freed, so the
+# name moves to the kept list below. The guard keeps its meaning -- no up migration may
+# declare a name whose object is gone -- and this one is no longer gone.
 SLICE_0_DROPPED_OBJECTS = (
     "se_company_person",
-    "se_company_person_role",
     "se_company_person_role_draft",
     "se_company_person_correction",
     "se_company_person_enrichment_observation",
@@ -4391,6 +4396,7 @@ SLICE_0_KEPT_OBJECTS = (
     "se_company_person_history",
     "se_company_person_rule",
     "se_company_person_precedence",
+    "se_company_person_role",
     "company_person_role_type",
 )
 
