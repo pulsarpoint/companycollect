@@ -25,6 +25,7 @@ import {
 } from "~/components/admin/se-person-workspace";
 import { Dialog } from "~/components/ui/dialog";
 import type { SePersonDetail, SePersonPublished } from "~/lib/se-company-person-entity.server";
+import { matchNote } from "~/lib/se-person-match";
 
 const COMPANY = "5560125220";
 const KEY = "a".repeat(64);
@@ -178,10 +179,13 @@ describe("admin-se-company-person route", () => {
       ]),
       params: { companyId: COMPANY },
     } as never);
+    // Asserted through `matchNote` itself, not a hand-built string: if the note's
+    // format ever changes, the literal payload above (what a real card would have
+    // posted under the OLD format) stops matching this expectation and the test fails.
     expect(server.mergeSePersons).toHaveBeenCalledWith(COMPANY, {
       intent: "merge",
       personKeys: [KEY, OTHER],
-      note: "LLM match 0.64: same surname",
+      note: matchNote(0.64, "same surname"),
     });
   });
 
@@ -273,13 +277,19 @@ describe("admin-se-company-person route", () => {
     expect(html).not.toContain("llm_match");
     expect(html).toContain("role_kind");
     // The card and one Merge, posting the EXISTING merge intent with both keys and the
-    // note spec section 5 prescribes.
+    // note spec section 5 prescribes. Sliced to the card's OWN markup so the assertion
+    // fails if the card's intent, its keys or its note format ever change, not merely
+    // if `merge` appears anywhere else on the page.
     expect(html).toContain("Possible matches");
-    expect(html).toContain("same surname");
-    expect(html).toContain("0.64");
-    expect(html).toContain(`type="hidden" name="person_key" value="${KEY}"`);
-    expect(html).toContain(`type="hidden" name="person_key" value="${OTHER}"`);
-    expect(html).toContain('name="note" value="LLM match 0.64: same surname"');
+    const cardHtml = html.slice(html.indexOf("Possible matches"));
+    expect(cardHtml).toContain("same surname");
+    expect(cardHtml).toContain("0.64");
+    expect(cardHtml).toContain('name="intent" value="merge"');
+    expect(cardHtml).toContain(`name="person_key" value="${KEY}"`);
+    expect(cardHtml).toContain(`name="person_key" value="${OTHER}"`);
+    expect(cardHtml).toContain(`name="note" value="${matchNote(0.64, "same surname")}"`);
+    // F6: an accessible name on the Merge button, the file's `PersonLine` precedent.
+    expect(cardHtml).toContain('aria-label="Merge Anna Maria Svensson and Carl von Essen"');
     // A company with no pairs shows no card at all.
     expect(
       render(
@@ -289,6 +299,33 @@ describe("admin-se-company-person route", () => {
         />,
       ),
     ).not.toContain("Possible matches");
+  });
+
+  it("marks the LLM match section stale once no current pair still names it", () => {
+    // The fold recorded llm_match, but the CURRENT pairs (matchedBy) no longer confirm
+    // it -- the candidate list moved on since the last fold.
+    const stale: SePersonDetail = {
+      ...detail,
+      published: [{ ...published, row: { ...row, data: FOLD_DATA }, matchedBy: [] }],
+    };
+    const staleHtml = render(
+      <SePersonWorkspace companyId={COMPANY} detail={stale} roleOptions={ROLE_OPTIONS} selectedKey={KEY} result={null} />,
+    );
+    expect(staleHtml).toContain(
+      "Recorded by the last fold; the current pairs no longer name these observations.",
+    );
+
+    // The same llm_match record, but a current pair still names it: no stale note.
+    const current: SePersonDetail = {
+      ...detail,
+      published: [{ ...published, row: { ...row, data: FOLD_DATA }, matchedBy: [MATCH] }],
+    };
+    const currentHtml = render(
+      <SePersonWorkspace companyId={COMPANY} detail={current} roleOptions={ROLE_OPTIONS} selectedKey={KEY} result={null} />,
+    );
+    expect(currentHtml).not.toContain(
+      "Recorded by the last fold; the current pairs no longer name these observations.",
+    );
   });
 
   it("posts a split's checked slots, note and intent, with the caveat in the dialog's own words", () => {

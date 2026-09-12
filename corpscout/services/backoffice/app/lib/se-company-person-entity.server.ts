@@ -458,16 +458,29 @@ function spellingReason(
  * The pairs at or above the threshold that joined THIS person, `fold.py::pairs_within`
  * in TypeScript: both sides must have at least one member among the row's normalized
  * ids. A pair with one side only is a pair a split rule pulled apart, or one reaching
- * into another person -- neither is something this person was merged by.
+ * into another person -- neither is something this person was merged by. A pair whose
+ * two sides carry conflicting birth years is dropped too, the same veto
+ * `fold.py::pairs_within` applies: a person can hold two different years only through a
+ * reviewer merge rule, never through the model alone.
  */
 function matchesWithin(row: SePersonRow, pairs: readonly SePersonMatchRow[]): SePersonMatch[] {
   const ids = new Set(row.normalized_ids);
+  const yearOf = new Map<string, string>();
+  row.normalized_ids.forEach((id, index) => yearOf.set(id, row.member_birth_years[index] ?? ""));
+  const yearsOf = (members: readonly string[]): string[] =>
+    members.map((id) => yearOf.get(id)).filter((year): year is string => !!year);
+  const conflictingYears = (pair: SePersonMatchRow): boolean => {
+    const yearsA = yearsOf(pair.members_a);
+    const yearsB = yearsOf(pair.members_b);
+    return yearsA.some((yearA) => yearsB.some((yearB) => yearA !== yearB));
+  };
   return pairs
     .filter(
       (pair) =>
         isMatch(pair.confidence) &&
         pair.members_a.some((id) => ids.has(id)) &&
-        pair.members_b.some((id) => ids.has(id)),
+        pair.members_b.some((id) => ids.has(id)) &&
+        !conflictingYears(pair),
     )
     .map((pair) => ({
       nameA: pair.name_a,
@@ -479,38 +492,67 @@ function matchesWithin(row: SePersonRow, pairs: readonly SePersonMatchRow[]): Se
     .sort((a, b) => b.confidence - a.confidence);
 }
 
+/** Two person keys as one order-independent identity: what the possible-matches card
+ * groups pairs by, and what an active merge rule's `person_keys` is checked against. */
+function personPairKey(a: string, b: string): string {
+  return [a, b].sort().join("|");
+}
+
 /**
- * The band's pairs the reviewer can actually act on: both sides resolve to an ACTIVE
- * published person, and to two different ones. Active only, because a Merge names
- * person keys -- a withdrawn row keeps the member arrays of the key it published under
- * before, so resolving through it would offer a Merge onto a key nothing publishes.
- * A pair inside one person is already one person, and a pair naming a normalized id no
- * published person holds has nothing to merge. Strongest first.
+ * The band's pairs the reviewer can actually act on: both sides resolve to exactly ONE
+ * ACTIVE published person, and to two different ones. Active only, because a Merge
+ * names person keys -- a withdrawn row keeps the member arrays of the key it published
+ * under before, so resolving through it would offer a Merge onto a key nothing
+ * publishes. A side is resolved only when EVERY owned member of it agrees on one
+ * person -- a birth-year split or a reviewer split rule can leave a candidate's members
+ * in two different persons, and a side like that names no single Merge target. A pair
+ * inside one person is already one person, and a pair naming a normalized id no
+ * published person holds has nothing to merge. Grouped one row per person pair (the
+ * highest confidence), and dropped entirely when an active merge rule already names
+ * both persons -- the next fold merges them without the reviewer's help. Strongest
+ * first.
  */
 function possibleMatchesOf(
   mainRows: readonly SePersonRow[],
   pairs: readonly SePersonMatchRow[],
+  rules: readonly SePersonRuleRow[],
 ): SePersonPossibleMatch[] {
   const owner = new Map<string, string>();
   for (const row of mainRows) {
     if (row.active !== 1) continue;
     for (const id of row.normalized_ids) owner.set(id, row.person_key);
   }
-  const keyOf = (members: readonly string[]): string | undefined => {
+  const keysOf = (members: readonly string[]): Set<string> => {
+    const keys = new Set<string>();
     for (const id of members) {
       const key = owner.get(id);
-      if (key !== undefined) return key;
+      if (key !== undefined) keys.add(key);
     }
-    return undefined;
+    return keys;
   };
-  const found: SePersonPossibleMatch[] = [];
+  const alreadyMerged = new Set<string>();
+  for (const rule of rules) {
+    if (rule.kind !== MERGE_KIND || rule.active !== 1) continue;
+    for (let i = 0; i < rule.person_keys.length; i++) {
+      for (let j = i + 1; j < rule.person_keys.length; j++) {
+        alreadyMerged.add(personPairKey(rule.person_keys[i], rule.person_keys[j]));
+      }
+    }
+  }
+  const byPair = new Map<string, SePersonPossibleMatch>();
   for (const pair of pairs) {
     if (!isPossibleMatch(pair.confidence)) continue;
-    const personKeyA = keyOf(pair.members_a);
-    const personKeyB = keyOf(pair.members_b);
-    if (personKeyA === undefined || personKeyB === undefined) continue;
+    const keysA = keysOf(pair.members_a);
+    const keysB = keysOf(pair.members_b);
+    if (keysA.size !== 1 || keysB.size !== 1) continue;
+    const [personKeyA] = keysA;
+    const [personKeyB] = keysB;
     if (personKeyA === personKeyB) continue;
-    found.push({
+    const pairKey = personPairKey(personKeyA, personKeyB);
+    if (alreadyMerged.has(pairKey)) continue;
+    const existing = byPair.get(pairKey);
+    if (existing !== undefined && existing.confidence >= pair.confidence) continue;
+    byPair.set(pairKey, {
       personKeyA,
       personKeyB,
       nameA: pair.name_a,
@@ -519,7 +561,7 @@ function possibleMatchesOf(
       reason: pair.reason,
     });
   }
-  return found.sort((a, b) => b.confidence - a.confidence);
+  return [...byPair.values()].sort((a, b) => b.confidence - a.confidence);
 }
 
 function membersOf(
@@ -704,7 +746,7 @@ export async function loadSePersonDetail(companyId: string): Promise<SePersonDet
     history,
     rules,
     precedence,
-    possibleMatches: possibleMatchesOf(mainRows, matchRows),
+    possibleMatches: possibleMatchesOf(mainRows, matchRows, rules),
     foldPending: personFoldPending(
       foldedAt,
       [

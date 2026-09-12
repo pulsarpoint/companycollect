@@ -364,6 +364,21 @@ describe("se-company-person-entity.server", () => {
     }
   });
 
+  it("drops a match pair whose two sides carry conflicting birth years", async () => {
+    // Same two members as the merged person's default fixture, but now BOTH carry a
+    // non-empty year and they disagree -- a person can hold two years only through a
+    // reviewer merge rule, never through the model alone.
+    const conflicting: SePersonRow = { ...MERGED_ROW, member_birth_years: ["1975", "1980"] };
+    clickhouse.query.mockImplementation(async (sql: string) =>
+      sql === PERSON_MAIN_SQL ? [conflicting, WIKI_ROW] : answer(sql),
+    );
+    const detail = await loadSePersonDetail(COMPANY);
+    const person = detail?.published[0];
+    expect(person?.matchedBy).toEqual([]);
+    expect(person?.members[0]?.match).toBeNull();
+    expect(person?.members[1]?.match).toBeNull();
+  });
+
   it("calls the spelling a tie-break, or the most complete, when two members rank the same", async () => {
     // A REAL tie, the one `fold.py::_text_member` actually resolves by something other
     // than completeness: two Bolagsverket members (precedence 900 each) whose spellings
@@ -438,10 +453,15 @@ describe("se-company-person-entity.server", () => {
     expect((await loadSePersonDetail(COMPANY))?.drafts).toHaveLength(1);
   });
 
-  it("offers the band's cross-person pairs, strongest first, and drops the ones nobody can act on", async () => {
+  it("offers the band's cross-person pairs, strongest first, one row per pair, and drops the ones nobody can act on", async () => {
+    // No active merge rule this time: the reviewer could act on either band, but the
+    // card wants ONE row per person pair -- the higher confidence.
+    clickhouse.query.mockImplementation(async (sql: string) =>
+      sql === PERSON_RULES_SQL ? [] : answer(sql),
+    );
     const detail = await loadSePersonDetail(COMPANY);
-    // 0.72 and 0.64 join the merged person to the Wikidata person: two Merges the
-    // reviewer can click. 0.93 is already merged (the fold did it), the 0.66 pair
+    // 0.72 and 0.64 both join the merged person to the Wikidata person: one row, the
+    // higher confidence. 0.93 is already merged (the fold did it), the 0.66 pair
     // names an observation no published person holds.
     expect(detail?.possibleMatches).toEqual([
       {
@@ -449,12 +469,37 @@ describe("se-company-person-entity.server", () => {
         nameA: "Anna Svensson", nameB: "Carl von Essen",
         confidence: 0.72, reason: "same household",
       },
-      {
-        personKeyA: MERGED_KEY, personKeyB: WIKI_KEY,
-        nameA: "Anna Maria Svensson", nameB: "Carl von Essen",
-        confidence: 0.64, reason: "same surname",
-      },
     ]);
+  });
+
+  it("drops a possible match whose two persons are already named by an active merge rule", async () => {
+    // MERGE_RULE (the default rules answer) already names both MERGED_KEY and
+    // WIKI_KEY: the next fold merges them on its own, so there is nothing left for the
+    // reviewer to act on.
+    const detail = await loadSePersonDetail(COMPANY);
+    expect(detail?.possibleMatches).toEqual([]);
+  });
+
+  it("keeps a possible-match side only when every one of its owned members agrees on one person", async () => {
+    // A candidate whose members a birth-year split (or a reviewer split) left in TWO
+    // persons: n1 is MERGED_KEY's own member, n3 is the Wikidata person's. A side like
+    // that names no single Merge target, so the pair is dropped even though n2 alone
+    // would resolve cleanly.
+    clickhouse.query.mockImplementation(async (sql: string) =>
+      sql === PERSON_MATCH_SQL
+        ? [
+            {
+              company_id: COMPANY, candidate_a: "mixed", candidate_b: "n2",
+              members_a: ["n1", "n3"], members_b: ["n2"],
+              name_a: "Mixed candidate", name_b: "Anna Maria Svensson",
+              confidence: 0.6, reason: "ambiguous split",
+            },
+          ]
+        : sql === PERSON_RULES_SQL
+          ? []
+          : answer(sql),
+    );
+    expect((await loadSePersonDetail(COMPANY))?.possibleMatches).toEqual([]);
   });
 
   it("keeps a pair inside one person out of the band, and resolves a side through active persons only", async () => {

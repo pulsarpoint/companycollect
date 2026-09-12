@@ -715,7 +715,13 @@ function PossibleMatchesCard({
                   name="note"
                   value={matchNote(match.confidence, match.reason)}
                 />
-                <Button type="submit" size="sm" variant="outline" disabled={busy}>
+                <Button
+                  type="submit"
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  aria-label={`Merge ${match.nameA} and ${match.nameB}`}
+                >
                   Merge
                 </Button>
               </Form>
@@ -1251,6 +1257,15 @@ function PersonPanel({
                   </li>
                 ))}
               </ul>
+              {entry.matchedBy.length === 0 ? (
+                // The fold recorded this pair, but no pair in the CURRENT band still
+                // names this person's observations -- the candidate list changed, or the
+                // model stopped scoring it.
+                <p className="text-muted-foreground mt-1 text-xs">
+                  Recorded by the last fold; the current pairs no longer name these
+                  observations.
+                </p>
+              ) : null}
               <p className="text-muted-foreground mt-1 text-xs">
                 {llmMatch.model}
                 {llmMatch.promptVersion === "" ? "" : ` · ${llmMatch.promptVersion}`}
