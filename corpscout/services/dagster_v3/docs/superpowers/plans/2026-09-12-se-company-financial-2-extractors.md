@@ -59,7 +59,7 @@
 - Consumes: `SuggestionTarget`, `define_suggestion_asset` from `dagster_v3.defs.se_company.basic_info.extract`.
 - Produces: `state_scan.StateScan(target, select_columns, state_columns, key_column, live_row_predicate, tombstone_columns, tombstone_values)`; `state_scan.live_select_sql(scan, *, columns, from_sql, where_sql, with_sql="") -> str`; `state_scan.state_sql(scan, alias) -> str`; `state_scan.stored_live_sql(scan, *, source, columns, scoped) -> str`; `state_scan.changed_scope_sql(scan, *, source, live_sql) -> str`; `state_scan.select_sql(scan, *, source, live_sql) -> str`; `state_scan.define_scan_asset(scan, **kwargs)`. The person module keeps `PERSON_SELECT_COLUMNS`, `PERSON_STATE_COLUMNS`, `NULLABLE_PERSON_COLUMNS`, `NULL_SQL`, `LIVE_ROW_PREDICATE`, `PERSON_WITH_SQL`, `PERSON_TRAILING_SELECT_SQL`, `PERSON_TARGET`, `live_select_sql`, `person_state_sql`, `stored_live_sql`, `person_changed_scope_sql`, `person_select_sql`, `define_person_suggestion_asset`.
 
-- [ ] **Step 1: Record the person entity's rendered SQL before touching anything**
+- [x] **Step 1: Record the person entity's rendered SQL before touching anything**
 
 ```bash
 mkdir -p .superpowers-golden && uv run --env-file .env python - <<'PY'
@@ -81,7 +81,7 @@ PY
 
 (`.superpowers-golden/` is a scratch directory in the worktree root; do not commit it. If a wikidata function is named differently, use the names `wikidata.py` exports and note it in the report.)
 
-- [ ] **Step 2: Write the failing test for the generic scan**
+- [x] **Step 2: Write the failing test for the generic scan**
 
 `tests/test_se_company_state_scan.py`:
 
@@ -152,7 +152,7 @@ def test_a_scan_validates_its_tombstone_map_and_key() -> None:
         state_scan.StateScan(target=TARGET, select_columns=("company_id", "source", "k", "v"), state_columns=("k", "v"), key_column="k", live_row_predicate="1", tombstone_columns=(), tombstone_values={"company_id": "1", "source": "'s'", "k": "1", "v": "1"})
 ```
 
-- [ ] **Step 3: Run it to verify it fails**
+- [x] **Step 3: Run it to verify it fails**
 
 ```bash
 uv run --env-file .env pytest tests/test_se_company_state_scan.py -q
@@ -160,7 +160,7 @@ uv run --env-file .env pytest tests/test_se_company_state_scan.py -q
 
 Expected: FAIL at import, `ModuleNotFoundError: No module named 'dagster_v3.defs.se_company.state_scan'`.
 
-- [ ] **Step 4: Write `state_scan.py`**
+- [x] **Step 4: Write `state_scan.py`**
 
 `src/dagster_v3/defs/se_company/state_scan.py`, exactly:
 
@@ -326,7 +326,7 @@ def define_scan_asset(scan: StateScan, **kwargs: Any) -> dg.AssetsDefinition:
     return define_suggestion_asset(target=scan.target, **kwargs)
 ```
 
-- [ ] **Step 5: Replace `person/suggestions.py` with the delegating version**
+- [x] **Step 5: Replace `person/suggestions.py` with the delegating version**
 
 `src/dagster_v3/defs/se_company/person/suggestions.py`, exactly:
 
@@ -465,7 +465,7 @@ def define_person_suggestion_asset(**kwargs: Any) -> dg.AssetsDefinition:
     return state_scan.define_scan_asset(PERSON_SCAN, **kwargs)
 ```
 
-- [ ] **Step 6: Prove nothing moved**
+- [x] **Step 6: Prove nothing moved**
 
 ```bash
 uv run --env-file .env pytest tests/test_se_company_state_scan.py tests/test_se_company_person_extractors_sql.py -q
@@ -489,7 +489,7 @@ uv run ruff check src/dagster_v3/defs/se_company/state_scan.py src/dagster_v3/de
 
 Expected: 6 + the person SQL tests passed; `IDENTICAL`; the person clickhouse-local test green on the engine; ruff clean. `DIFFERENT` is a stop: report the diff, do not adjust the golden file.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-financial-entity
@@ -511,7 +511,7 @@ git commit -m "refactor(se-company): lift the person entity's state-hash scan in
 - Consumes: `state_scan` (Task 1); `tables` and `assets.GROUP_NAME` of the financial package (slice 1).
 - Produces: `STAMPED_COLUMNS`, `FINANCIAL_SELECT_COLUMNS` (59), `FINANCIAL_STATE_COLUMNS` (57), `NULLABLE_COLUMN_TYPES`, `NULL_SQL`, `MONEY_NULL_SQL`, `LIVE_ROW_PREDICATE`, `FINANCIAL_WITH_SQL`, `FINANCIAL_TRAILING_SELECT_SQL`, `FINANCIAL_TARGET`, `universe_join_sql(alias)`, `period_months_sql(start, end)`, `tombstone_values(source)`, `scan_for(source)`, `live_select_sql(*, columns, from_sql, where_sql, with_sql="")`, `financial_changed_scope_sql(*, source, live_sql)`, `financial_select_sql(*, source, live_sql)`, `define_financial_suggestion_asset(**kwargs)`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_se_company_financial_suggestions.py`:
 
@@ -567,7 +567,7 @@ def test_period_months_is_the_rounded_month_count_or_null() -> None:
     assert suggestions.universe_join_sql("m").endswith("ON universe.company_id = m.company_id")
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 ```bash
 uv run --env-file .env pytest tests/test_se_company_financial_suggestions.py -q
@@ -575,7 +575,7 @@ uv run --env-file .env pytest tests/test_se_company_financial_suggestions.py -q
 
 Expected: FAIL at import (`cannot import name 'suggestions'`).
 
-- [ ] **Step 3: Write the module**
+- [x] **Step 3: Write the module**
 
 `src/dagster_v3/defs/se_company/financial/suggestions.py`, exactly:
 
@@ -726,7 +726,7 @@ def define_financial_suggestion_asset(**kwargs: Any) -> dg.AssetsDefinition:
     return state_scan.define_scan_asset(scan_for("x"), **kwargs)
 ```
 
-- [ ] **Step 4: Run the tests and ruff**
+- [x] **Step 4: Run the tests and ruff**
 
 ```bash
 uv run --env-file .env pytest tests/test_se_company_financial_suggestions.py -q
@@ -735,7 +735,7 @@ uv run ruff check src/dagster_v3/defs/se_company/financial tests/test_se_company
 
 Expected: 5 passed; ruff clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-financial-entity
@@ -756,7 +756,7 @@ git commit -m "feat(se-financial): the suggestion target and state-hash scan sha
 - Consumes: Task 2's module.
 - Produces: `SOURCE_REPORTED`, `SOURCE_COMPARATIVE`, `BOLAGSVERKET_EXTRACTOR_VERSION`, `BOLAGSVERKET_COMPARATIVE_EXTRACTOR_VERSION`, `reported_live_sql(scoped=False)`, `comparative_live_sql(scoped=False)`, `bolagsverket_current_sql()`, `reported_changed_scope_sql()`, `reported_select_sql()`, `comparative_changed_scope_sql()`, `comparative_select_sql()`, assets `se_company_financial_suggestions_bolagsverket` and `se_company_financial_suggestions_bolagsverket_comparative`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_se_company_financial_extractors_sql.py` — the whole file below; Tasks 4 and 5 already have their tests in it, so their imports fail until those modules exist. Write the file now with the imports of `esef` and `ratsit` commented out and the two functions that use them (`test_esef_...`, `test_ratsit_...`, and the `esef`/`ratsit` lines of the last two tests) skipped with `pytest.skip` markers; Tasks 4 and 5 remove the skips as they land. The final text is:
 
@@ -863,7 +863,7 @@ def test_the_four_assets_carry_their_sources_and_deps() -> None:
         assert spec.metadata["source"] == source and spec.group_name == "se_company_financial"
 ```
 
-- [ ] **Step 2: Run the bolagsverket tests to verify they fail**
+- [x] **Step 2: Run the bolagsverket tests to verify they fail**
 
 ```bash
 uv run --env-file .env pytest tests/test_se_company_financial_extractors_sql.py -q -k bolagsverket
@@ -871,7 +871,7 @@ uv run --env-file .env pytest tests/test_se_company_financial_extractors_sql.py 
 
 Expected: FAIL at import (`cannot import name 'bolagsverket'`).
 
-- [ ] **Step 3: Write the module**
+- [x] **Step 3: Write the module**
 
 `src/dagster_v3/defs/se_company/financial/bolagsverket.py`, exactly:
 
@@ -1067,7 +1067,7 @@ se_company_financial_suggestions_bolagsverket_comparative = define_financial_sug
 )
 ```
 
-- [ ] **Step 4: Run the tests and ruff**
+- [x] **Step 4: Run the tests and ruff**
 
 ```bash
 uv run --env-file .env pytest tests/test_se_company_financial_extractors_sql.py -q -k bolagsverket
@@ -1076,7 +1076,7 @@ uv run ruff check src/dagster_v3/defs/se_company/financial tests/test_se_company
 
 Expected: 2 passed (the reported and comparative tests); ruff clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-financial-entity
@@ -1096,13 +1096,13 @@ git commit -m "feat(se-financial): Bolagsverket reported and comparative periods
 **Interfaces:**
 - Produces: `SOURCE = "esef"`, `ESEF_EXTRACTOR_VERSION`, `esef_live_sql(scoped=False)`, `esef_current_sql()`, `esef_changed_scope_sql()`, `esef_select_sql()`, asset `se_company_financial_suggestions_esef`.
 
-- [ ] **Step 1: Un-skip the ESEF test, run it, see it fail on the missing module**
+- [x] **Step 1: Un-skip the ESEF test, run it, see it fail on the missing module**
 
 ```bash
 uv run --env-file .env pytest tests/test_se_company_financial_extractors_sql.py -q -k esef
 ```
 
-- [ ] **Step 2: Write the module**
+- [x] **Step 2: Write the module**
 
 `src/dagster_v3/defs/se_company/financial/esef.py`, exactly:
 
@@ -1289,7 +1289,7 @@ se_company_financial_suggestions_esef = define_financial_suggestion_asset(
 )
 ```
 
-- [ ] **Step 3: Run the tests and ruff, then commit**
+- [x] **Step 3: Run the tests and ruff, then commit**
 
 ```bash
 uv run --env-file .env pytest tests/test_se_company_financial_extractors_sql.py -q -k "esef or bolagsverket"
@@ -1310,9 +1310,9 @@ git commit -m "feat(se-financial): ESEF consolidated periods as financial sugges
 **Interfaces:**
 - Produces: `SOURCE = "ratsit"`, `RATSIT_EXTRACTOR_VERSION`, `ratsit_live_sql(scoped=False)`, `ratsit_current_sql()`, `ratsit_changed_scope_sql()`, `ratsit_select_sql()`, asset `se_company_financial_suggestions_ratsit`.
 
-- [ ] **Step 1: Un-skip the Ratsit test, run it, see it fail on the missing module**
+- [x] **Step 1: Un-skip the Ratsit test, run it, see it fail on the missing module**
 
-- [ ] **Step 2: Write the module**
+- [x] **Step 2: Write the module**
 
 `src/dagster_v3/defs/se_company/financial/ratsit.py`, exactly:
 
@@ -1487,7 +1487,7 @@ se_company_financial_suggestions_ratsit = define_financial_suggestion_asset(
 )
 ```
 
-- [ ] **Step 3: Run the whole SQL test file and ruff, then commit**
+- [x] **Step 3: Run the whole SQL test file and ruff, then commit**
 
 ```bash
 uv run --env-file .env pytest tests/test_se_company_financial_extractors_sql.py -q
@@ -1510,7 +1510,7 @@ Expected: 6 passed (no skips left); ruff clean.
 **Interfaces:**
 - Consumes: Tasks 2 to 5; migrations 000377 (basic info) and 000401 (the entity); `build_se_esef_view_sql(SE_ESEF_VIEWS[0])` for `se_esef_filings`.
 
-- [ ] **Step 1: Write the fixture**
+- [x] **Step 1: Write the fixture**
 
 `tests/fixtures/se_company_financial_source_tables.sql` — the production `SHOW CREATE TABLE` snapshot of 2026-09-12 with CODECs and the `index_granularity` SETTINGS stripped (a harness fixture, never a migration). Exactly:
 
@@ -1763,7 +1763,7 @@ ORDER BY (company_id, result_sha256, normalizer_version, financial_report_index,
 ;
 ```
 
-- [ ] **Step 2: Write the test**
+- [x] **Step 2: Write the test**
 
 `tests/test_se_company_financial_extractors_clickhouse_local.py`:
 
@@ -1941,7 +1941,7 @@ def test_the_four_extractors_write_the_expected_periods_and_converge(join_use_nu
     assert [line.split("\t") for line in s["tombstone"]] == [["bolagsverket", A, "standalone:2023-12-31", "standalone", "2023-12-31", "1", "1", "1", "NULL"]]
 ```
 
-- [ ] **Step 3: Run it on the engine**
+- [x] **Step 3: Run it on the engine**
 
 ```bash
 uv run --env-file .env pytest tests/test_se_company_financial_extractors_clickhouse_local.py -q -m integration
@@ -1950,7 +1950,7 @@ uv run ruff check tests/test_se_company_financial_extractors_clickhouse_local.py
 
 Expected: 2 passed (join_use_nulls 0 and 1), about a minute each. This exact scenario produced exactly these rows on 2026-09-12 with the module texts of Tasks 2 to 5; a difference is a transcription slip in one of them, not an expectation to adjust — report it.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-financial-entity
@@ -1971,7 +1971,7 @@ git commit -m "test(se-financial): the four extractors on clickhouse-local again
 **Interfaces:**
 - Produces: `assets.EXTRACTOR_SOURCES`, `assets.EXTRACTOR_ASSET_NAMES`; `jobs.se_company_financial_extract_job`, `jobs.se_company_financial_weekly`, `jobs.WEEKLY_RUN_CONFIG`, `jobs.RATSIT_USD_ASSET`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_se_company_financial_jobs.py`:
 
@@ -2012,7 +2012,7 @@ def test_the_weekly_is_stopped_at_a_free_minute_and_executes() -> None:
         assert config[name] == {"config": {"execute": True, "page_size": 5000}}
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 ```bash
 uv run --env-file .env pytest tests/test_se_company_financial_jobs.py -q
@@ -2020,7 +2020,7 @@ uv run --env-file .env pytest tests/test_se_company_financial_jobs.py -q
 
 Expected: FAIL at import (`cannot import name 'jobs'` / `EXTRACTOR_ASSET_NAMES`).
 
-- [ ] **Step 3: Add the constants and the jobs module**
+- [x] **Step 3: Add the constants and the jobs module**
 
 In `src/dagster_v3/defs/se_company/financial/assets.py`, directly after `GROUP_NAME = "se_company_financial"`:
 
@@ -2069,7 +2069,7 @@ se_company_financial_weekly = dg.ScheduleDefinition(
 )
 ```
 
-- [ ] **Step 4: Run the tests, the definitions check, the cron check and ruff**
+- [x] **Step 4: Run the tests, the definitions check, the cron check and ruff**
 
 ```bash
 uv run --env-file .env pytest tests/test_se_company_financial_jobs.py tests/test_se_company_financial_assets.py -q
@@ -2080,7 +2080,7 @@ uv run ruff check src/dagster_v3/defs/se_company/financial tests/test_se_company
 
 Expected: all passed; `dg check defs` no errors; the rg prints only `financial/jobs.py`; ruff clean. If `job.asset_layer.executable_asset_keys` does not exist on this Dagster version, use `{key for key in job.asset_layer.asset_keys}` instead and note it in the report.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-financial-entity
@@ -2098,7 +2098,7 @@ git commit -m "feat(se-financial): the extract job (Ratsit USD first, four extra
 - Modify: `src/dagster_v3/defs/se_company/financial/docs/financial-design.md`
 - Modify: `docs/superpowers/specs/2026-09-11-se-company-financial-entity-design.md` (section 12 item 2)
 
-- [ ] **Step 1: Add the extractor table to the design note**
+- [x] **Step 1: Add the extractor table to the design note**
 
 Append a section `## Extractors (slice 2)` with this table and paragraph:
 
@@ -2121,11 +2121,11 @@ the four extractors; the weekly `se_company_financial_weekly` (Monday 07:55 UTC)
 STOPPED until the fold (slice 3) exists. Every extractor previews by default (`execute: false`).
 ```
 
-- [ ] **Step 2: Record the slice in the spec**
+- [x] **Step 2: Record the slice in the spec**
 
 Section 12 item 2: append, wrapped like its neighbours: `Code complete 2026-09-12 on branch se-financial-entity (plan 2026-09-12-se-company-financial-2-extractors.md); prod runs pending.`
 
-- [ ] **Step 3: Run the slice's suites and the wider suite once**
+- [x] **Step 3: Run the slice's suites and the wider suite once**
 
 ```bash
 uv run --env-file .env pytest tests/test_se_company_state_scan.py tests/test_se_company_financial_suggestions.py tests/test_se_company_financial_extractors_sql.py tests/test_se_company_financial_jobs.py tests/test_se_company_financial_assets.py tests/test_se_company_person_extractors_sql.py -q
@@ -2134,7 +2134,7 @@ set -a; source .env; set +a; uv run pytest tests -q -p no:cacheprovider --ignore
 
 Expected: all green; the wider run `N passed, 3 skipped, 5 deselected`, no failures.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-financial-entity
@@ -2151,7 +2151,7 @@ git commit -m "docs(se-financial): the extractors in the package note; spec reco
 
 **Preconditions:** the whole-branch review is clean and the branch is merged into main (from the main checkout, `git merge --no-ff se-financial-entity`; the owner's dirty files never overlap the branch's); `git merge --ff-only main` in the worktree so it equals main; prod ledger still 401.
 
-- [ ] **Step 1: Deploy dagster_v3 from the worktree (the deploy recipe, absolute paths)**
+- [x] **Step 1: Deploy dagster_v3 from the worktree (the deploy recipe, absolute paths)**
 
 ```bash
 D=/Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-financial-entity/corpscout/services/dagster_v3
@@ -2166,7 +2166,7 @@ cd "$D/ansible" && ANSIBLE_BECOME_TIMEOUT=60 ansible-playbook -i inventory.ini l
 
 Expected: `RC=0`, `failed=0`. Confirm the four assets are live: the GraphQL `assetNodes` query for `se_company_financial_suggestions_bolagsverket` prints group `se_company_financial` and its two dependency keys.
 
-- [ ] **Step 2: Run each extractor, preview then execute, in-process on the host**
+- [x] **Step 2: Run each extractor, preview then execute, in-process on the host**
 
 The run queue was still held by the ESEF refresh runs on 2026-09-12; run in-process, one source at a time, in this order: `bolagsverket`, `bolagsverket_comparative`, `esef`, `ratsit`. For each, a preview:
 
@@ -2184,7 +2184,7 @@ Then the same command with `\"execute\": true` (unbounded, no `company_ids`) int
 
 Record wall time per source (preview, smoke, execute) in Step 4's record, next to the expected magnitudes.
 
-- [ ] **Step 3: Readouts**
+- [x] **Step 3: Readouts**
 
 ```bash
 ssh -o ConnectTimeout=20 companycollect 'docker exec -i clickhouse-clickhouse-1 clickhouse-client --multiquery --format PrettyCompactMonoBlock' <<'SQL'
@@ -2212,7 +2212,7 @@ predicate now skips instead of writing.
 
 Expected: no tombstones on the first run; `revenue_without_usd` for ratsit equals the 301 pre-2006 rows of slice 0 (their USD is NULL by design); for `5567081699` 2023: bolagsverket 59,016,040 SEK, esef 1,296,506,000 SEK consolidated, ratsit 60,300,000 SEK with scale 1000000.
 
-- [ ] **Step 4: Record**
+- [x] **Step 4: Record**
 
 Append to spec section 12 item 2 the prod record: date, run ids per source, rows and companies per source, the derived count, tombstones 0, the convergence check. Commit on main as `docs(se-financial): slice 2 shipped, prod record`, fast-forward the worktree, update the memory file, then write slice 3's plan (the fold).
 

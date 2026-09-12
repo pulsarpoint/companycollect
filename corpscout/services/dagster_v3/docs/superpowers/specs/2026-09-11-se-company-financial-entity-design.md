@@ -573,7 +573,32 @@ the entity.
    four extractors, `suggestions.py`, the extract job and the stopped weekly; prod runs with
    counts per source and per skip reason (expected order of magnitude: 3.05M Bolagsverket
    periods, the restated periods, 1.3k ESEF, 3.1M Ratsit). Code complete 2026-09-12 on branch
-   se-financial-entity (plan 2026-09-12-se-company-financial-2-extractors.md); prod runs pending.
+   se-financial-entity (plan 2026-09-12-se-company-financial-2-extractors.md); Prod 2026-09-12:
+   merged f7052c4c8, deployed (ansible ok=33, failed=0), ledger 402 (no migration in this slice).
+   Runs in-process on the dagster host (queue held by 30 STARTED esef_filings_refresh_job runs),
+   preview / one-company smoke / execute / second preview per source, wall times in seconds:
+   bolagsverket 158 / 69 / 778 / 94 (runs 5890dd78, 3d664e4b, 0ed4e5e6, c2e90aac; 116 pages,
+   2,029,661 inserted); bolagsverket_comparative 307 / 73 / 630 / 87 (63094eb6, 9aa4d03b,
+   3fff83dd, e7ff90f7; 107 pages, 2,413,558 inserted); esef 80 / 73 / 81 / 81 (0766e82b,
+   c1d36a66, b8b74a9c, 560905f3; 1 page, 1,306 inserted); ratsit 299 / 75 / 1,211 / 105
+   (496d2f07, 429712a3, 83794353, 461b89dc; 145 pages, 3,139,197 inserted). Every second preview
+   scoped 0 companies (converged). Table: bolagsverket 2,029,665 rows / 579,670 companies (period
+   ends 2017-06-30..2026-07-31); bolagsverket_comparative 2,413,565 / 533,075
+   (1919-09-30..2026-12-31); esef 1,309 / 402 (all consolidated, 2 rows with NULL currency,
+   2021-12-31..2025-12-31); ratsit 3,139,202 / 720,298 (7,484 derived period ends, 46,895
+   consolidated, 2000-04-30..2026-12-31); 7,583,741 rows in all; currencies SEK 7,583,473, EUR
+   246, USD 15, NOK 3, NULL 2, SGD 1. Rows with revenue but no USD: ratsit 301 (pre-2006, by
+   design), esef 1 (a NULL-currency row). Tombstones 0 (rows with all 41 values NULL; the
+   five-column heuristic of the plan flags 8 live Bolagsverket rows whose only figure is
+   operating_result 0). Skip counts per outcome: Ratsit periods without a unit 0, without a
+   usable date 0; ESEF rows outside consolidated_ifrs 0 (all 25,060 metric rows are
+   consolidated); Bolagsverket reported and comparative rows with no figure 0; SE ESEF rows with
+   no figure 16 of 1,385 (skipped by the live-row predicate); Ratsit periods with no figure 0.
+   5567081699 for 2023: bolagsverket 59,016,040 SEK (2,100 employees), bolagsverket_comparative
+   59,016,040 (restated by the 2025 filing), esef 1,296,506,000 SEK consolidated, ratsit
+   60,300,000 SEK at scale 1,000,000. Deviation for the owner: spec 7's per-outcome counts are
+   read out here rather than reported by the asset (the shared run_extractor reports companies,
+   pages, candidates, inserted).
 3. Fold: `fold.py`, `batch.py`, the two fold assets; prod 64-bucket backfill and the readouts of
    section 11.
 4. Cutover: the admin workspace, the shared grid on the public page, every re-point of section 10
