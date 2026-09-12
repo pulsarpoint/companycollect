@@ -764,13 +764,21 @@ git commit -m "feat(se-financial): the suggestion target and state-hash scan sha
 """The four financial extractors' SQL (spec section 7): the contracts a fake client cannot
 settle are in the clickhouse-local test; these pin the text each module renders."""
 
-from dagster_v3.defs.se_company.financial import bolagsverket, esef, ratsit, tables
+from dagster_v3.defs.se_company.financial import bolagsverket, esef, ratsit
 from dagster_v3.defs.se_company.financial.suggestions import FINANCIAL_SELECT_COLUMNS, FINANCIAL_TARGET
 from dagster_v3.defs.se_company.basic_info.extract import insert_page_sql
 
 
-def _projection(sql: str) -> str:
-    return sql.split("\nFROM ", 1)[0]
+def _projection(sql: str) -> list[str]:
+    """The aliases of the outer SELECT (the last bare `SELECT` line up to the next unindented line)."""
+    lines = sql.splitlines()
+    start = max(i for i, line in enumerate(lines) if line == "SELECT") + 1
+    aliases = []
+    for line in lines[start:]:
+        if not line.startswith("    "):
+            break
+        aliases.append(line.rsplit(" AS ", 1)[1].rstrip(","))
+    return aliases
 
 
 def test_bolagsverket_reported_picks_the_fuller_statement_per_period() -> None:
@@ -834,8 +842,7 @@ def test_ratsit_scales_by_unit_derives_the_end_date_and_ranks_duplicates() -> No
 
 def test_every_extractor_projects_the_select_columns_in_order_and_inserts_the_target() -> None:
     for live in (bolagsverket.reported_live_sql(), bolagsverket.comparative_live_sql(), esef.esef_live_sql(), ratsit.ratsit_live_sql()):
-        projected = [line.rsplit(" AS ", 1)[1].rstrip(",") for line in _projection(live).splitlines() if line.startswith("    ")]
-        assert projected == list(FINANCIAL_SELECT_COLUMNS)
+        assert _projection(live) == list(FINANCIAL_SELECT_COLUMNS)
     insert = insert_page_sql(select_sql=bolagsverket.reported_select_sql(), target=FINANCIAL_TARGET)
     assert insert.startswith(f"INSERT INTO corpscout.se_company_financial_suggestion ({', '.join(FINANCIAL_TARGET.insert_columns)})\nWITH (SELECT now64(3, 'UTC')) AS stamp\n")
     assert insert.count("live_period_keys") == 3
