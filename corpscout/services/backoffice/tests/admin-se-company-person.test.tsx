@@ -167,6 +167,24 @@ describe("admin-se-company-person route", () => {
     expect(server.saveSePersonDraft).toHaveBeenCalledWith(COMPANY, expect.objectContaining({ intent: "save-draft", replacesKey: null }));
   });
 
+  it("takes a possible match's Merge through the existing merge intent, note and all", async () => {
+    // Exactly what PossibleMatchesCard posts: no new intent, two person keys, and the
+    // note `matchNote` built. A note the parser refused would read to the reviewer as
+    // a broken button, so the whole post is pinned here.
+    await action({
+      request: post({ intent: "merge", note: "LLM match 0.64: same surname" }, [
+        ["person_key", KEY],
+        ["person_key", OTHER],
+      ]),
+      params: { companyId: COMPANY },
+    } as never);
+    expect(server.mergeSePersons).toHaveBeenCalledWith(COMPANY, {
+      intent: "merge",
+      personKeys: [KEY, OTHER],
+      note: "LLM match 0.64: same surname",
+    });
+  });
+
   it("launches the fold on Fold now and, per Ruling 6, on Activate too", async () => {
     expect(await action({ request: post({ intent: "fold-now" }), params: { companyId: COMPANY } } as never)).toEqual({
       ok: true, intent: "fold-now", runId: "run-9", url: null,
