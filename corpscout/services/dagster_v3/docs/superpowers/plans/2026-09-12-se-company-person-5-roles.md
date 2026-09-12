@@ -44,7 +44,7 @@
 
 - The view's SELECT run live yields **3,837,006 rows** over **1,113,485 persons with a role**; 160,279 active persons carry no role and get no row.
 - The person rows hold 3,149,261 distinct `(role_code, role_year)` pairs and the parallel arrays are never ragged.
-- `corpscout.se_company_person` holds about 1,126,408 rows over 578,289 companies; `corpscout.se_company_person_normalized` about 5.57M rows.
+- `corpscout.se_company_person` holds 1,273,764 active persons (about 1.29M rows including the inactive ones) over 578,289 companies; `corpscout.se_company_person_normalized` about 5.57M rows.
 - Readout person for the smoke: Swedbank's **Erik Bo Bengtsson** — board member 2021 and 2022 (ESEF, the seat ending 2023-01-18), executive 2023 and 2024, legal representative 2026 (Ratsit).
 - `corpscout.se_companies_serving` refreshes hourly at **:45** and takes 13-15 minutes; `se_address_geocodes_current` refreshes at **:00**. The new view takes **:20**, which is why spec section 11 chose that offset.
 
@@ -1381,7 +1381,7 @@ git commit -F /tmp/person-roles-task2.txt
 
 No new code. **No dagster deploy is required by this slice** — nothing in the definitions tree reads the view (`ROLE_VIEW` and the builder are used by the migration and the tests only), and no asset, job, schedule or pool changes. The next deploy of `main` for any other reason picks the constants up. The backoffice runs locally from the owner's main checkout (memory `backoffice-runs-locally`), so its "deploy" is the merge.
 
-The order is: merge, migrate, force the first refresh, read it out, smoke the tab.
+The order is: **migrate first, then merge** (final-review ruling: the merge is the backoffice deploy — the owner's dev server serves `main` — and the loader's eighth read would hit UNKNOWN_TABLE in the window; the read now degrades to the fallback, but the migration still goes first: run `make -s -C <worktree>/corpscout clickhouse-migrate-up-one` from this branch's checkout, check the ledger, then merge), force the first refresh, read it out, smoke the tab.
 
 1. [ ] **Whole-branch review, then merge to `main`.** If `main` has taken 000402 in the meantime, renumber FIRST (both migration files, `EXPECTED_MIGRATIONS`, `MIGRATION` in `tests/test_se_company_person_role_view.py`, the `000402` mentions in `person-design.md` and in the spec's section 11), then re-run:
 
@@ -1408,10 +1408,10 @@ The order is: merge, migrate, force the first refresh, read it out, smoke the ta
 
    ```bash
    ssh companycollect "docker exec clickhouse-clickhouse-1 clickhouse-client -q \"SYSTEM REFRESH VIEW corpscout.se_company_person_role\""
-   ssh companycollect "docker exec clickhouse-clickhouse-1 clickhouse-client -q \"SELECT view, status, toString(last_refresh_time), toString(next_refresh_time), exception FROM system.view_refreshes WHERE database = 'corpscout' AND view = 'se_company_person_role'\""
+   ssh companycollect "docker exec clickhouse-clickhouse-1 clickhouse-client -q \"SELECT view, status, toString(last_success_time), toString(last_refresh_time), toString(next_refresh_time), exception FROM system.view_refreshes WHERE database = 'corpscout' AND view = 'se_company_person_role'\""
    ```
 
-   Poll the second command until `status` is `Scheduled` with an empty `exception` and `last_refresh_time` set. **Do not use `SYSTEM WAIT VIEW`** — it blocks for the whole build and is exactly the statement that outlived a client at 000391. If `exception` is `MEMORY_LIMIT_EXCEEDED` or a join error, the fix is a follow-up migration adding `SETTINGS join_algorithm = 'grace_hash,hash'` to the SELECT (the serving view's shape), not an edit to the applied one — and the owner decides.
+   Poll the second command until `status` is `Scheduled` with an empty `exception` and `last_success_time` set (a failed attempt sets only `last_refresh_time`). **Do not use `SYSTEM WAIT VIEW`** — it blocks for the whole build and is exactly the statement that outlived a client at 000391. If `exception` is `MEMORY_LIMIT_EXCEEDED` or a join error, the fix is a follow-up migration adding `SETTINGS join_algorithm = 'grace_hash,hash'` to the SELECT (the serving view's shape), not an edit to the applied one — and the owner decides.
 
 4. [ ] **Read it out.** Four numbers, all of them checkable against spec section 11:
 
