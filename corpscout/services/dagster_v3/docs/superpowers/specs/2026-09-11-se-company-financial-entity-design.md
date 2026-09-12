@@ -139,7 +139,7 @@ One current row per company, source and period.
 company_id          String
 source              LowCardinality(String)  -- bolagsverket, bolagsverket_comparative, esef, ratsit, reviewer, reviewer_draft
 period_key          String                  -- '<scope>:<period_end>', e.g. 'standalone:2023-12-31'
-suggestion_id       String                  -- lineage id, minted by the extractor from one clock read
+suggestion_id       FixedString(64)         -- lineage id (sha256 hex), as address and person carry
 suggested_at        DateTime64(3, 'UTC')    -- version
 source_record_uid   String                  -- statement key; ESEF fxo_id; 'ratsit:<company>:<report index>:<period index>'; '' for reviewer rows
 scope               LowCardinality(String)  -- standalone | consolidated
@@ -552,7 +552,9 @@ the entity.
    0.099585 (2023-12-29); USD revenue agrees with Bolagsverket within 2% on 782,321 of 1,515,731
    pairs (the native rounding share); no leftover join table, no unfinished mutation.
 1. Tables and precedence: migration 000401 with the five tables, `financial/tables.py`,
-   `precedence.py` with the export asset, DDL tests; prod apply and export.
+   `precedence.py` with the export asset, DDL tests; Code complete 2026-09-12 on branch
+   se-financial-entity (plan 2026-09-12-se-company-financial-1-tables-precedence.md); prod
+   apply and export pending.
 2. Extractors: `state_scan.py` lifted from the person package with person switched to it, the
    four extractors, `suggestions.py`, the extract job and the stopped weekly; prod runs with counts
    per source and per skip reason (expected order of magnitude: 3.05M Bolagsverket periods, the
