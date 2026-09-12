@@ -317,7 +317,11 @@ migration returns at once and the first build is an explicit `SYSTEM REFRESH VIE
 engine is declared inside the view, so the name IS the table readers query. Its SELECT
 lives in `tables.py::build_se_company_person_role_sql()` and the migration body is pinned
 against a fresh render by `tests/test_se_company_person_role_view.py`, exactly as the
-serving view is pinned.
+serving view is pinned. The SELECT ends with the same trailing `SETTINGS` block every
+serving refresh has carried since 000347/000391 (grace_hash spill joins, external
+group-by/sort, a 12 GiB `max_memory_usage`) -- an unbounded hourly refresh over 1.1M
+persons and 5.6M normalized rows would face the same shared-server ceiling that block
+already exists to avoid.
 
 One row per published ACTIVE person and per role-carrying normalized observation the fold
 built them from: `ARRAY JOIN` over the main row's `normalized_ids`, `INNER JOIN` back to
@@ -326,22 +330,57 @@ built them from: `ARRAY JOIN` over the main row's `normalized_ids`, `INNER JOIN`
 get no row. Nothing writes it -- the fold, the normalizer, the rules and the precedence do
 not know it exists -- and the person row's role arrays stay the fold's own summary.
 
-Four things to know before reading it:
+Six things to know before reading it:
 
 - **It lags a fold by up to an hour.** The view rebuilds at :20, so a person folded at :25
   keeps their previous rows until the next :20 and a brand-new person has none at all. The
-  backoffice panel falls back to the person row's arrays when the view has no row for a
-  person. If the lag ever stops being acceptable the same SELECT moves into the fold.
+  backoffice panel compares each row's `folded_at` against the live person row's own
+  `folded_at`: empty OR older means stale, and either way the panel falls back to the
+  person row's own arrays and says "the roles view has not rebuilt since this fold" (F2).
+  If the lag ever stops being acceptable the same SELECT moves into the fold.
 - **It follows the FOLD's members, not today's normalized rows.** `normalized_ids` names
   the versions the CURRENT published row was folded from, so an observation re-normalized
   since then (the tab's re-fold-pending badge) drops out until the next fold.
-- **`role_year` 0 means "no year at all".** The column is `UInt16` because the year is in
-  the sort key and `allow_nullable_key` is off. A dateless role (290 of Wikidata's 466 on
-  prod) lands under 0 here, while the fold's `role_years` array puts it under the current
-  year -- "taken as held now" is the fold's ruling, not this view's.
+- **It never holds a row for a hidden or withdrawn person.** The WHERE is `p.active = 1`,
+  so an inactive person's empty read is not staleness -- it is the view working exactly as
+  designed. The panel tells the two apart (F3): only an ACTIVE person's empty-or-stale
+  read gets the "has not rebuilt" note; an inactive one gets "hidden and withdrawn persons
+  are not in the roles view" instead, so the reviewer is never told a rebuild would help.
+- **A missing view degrades, it does not fail the tab.** If migration 000402 has not
+  landed yet, or a rollback dropped the view, the backoffice's eighth read
+  (`loadPersonRoleRows` in `se-company-person-entity.server.ts`) catches the UNKNOWN_TABLE
+  -- or any other failure reading it -- logs it once, and answers `[]` (F4). The panel
+  then renders the same fallback it shows in the ordinary lag window.
+- **`role_year` 0 means "no FISCAL year", not "no year at all".** The column is `UInt16`
+  because the year is in the sort key and `allow_nullable_key` is off. Wikidata delivers a
+  role's span in `role_from`/`role_to` and never a fiscal year, so every Wikidata role (290
+  of 466 on prod) lands under 0 here, while the fold's `role_years` array expands that span
+  into the real years the role was held, taking an open or dateless one as held now.
+- **`is_current` is on the person's OWN latest observed year, not "now".** It is 1 exactly
+  for the codes on `current_roles`, computed at fold time from `last_year` -- a person last
+  seen in 2019 has their 2019 rows flagged current, even years later. The flag is per code,
+  not per person: two roles can differ. The backoffice badge carries this as a `title`.
 - **The name is reused.** It was the 2026-08-19 model's role table, dropped by hand in
   slice 0. The spent script `clickhouse/operations/se_person_retirement_drops.sql` still
   names it and must never be run again.
+
+### Roles view health
+
+`system.view_refreshes` is the runbook check until the person weekly run gets its own
+`companies_current_refresh_is_healthy`-style asset check (`companies_current.py`'s
+pattern for `se_companies_serving`, spec section on refresh health): a refresh that throws
+keeps serving its last good rows at full speed, so a stuck or failing refresh is invisible
+from row counts alone.
+
+```sql
+SELECT view, status, last_success_time, exception
+FROM system.view_refreshes
+WHERE view = 'se_company_person_role'
+```
+
+An exception, or a `last_success_time` older than 3 hours (three refresh intervals), means
+the view is serving stale rows at full speed -- the same failure mode
+`companies_current_refresh_is_healthy` catches for the serving view, not yet wired up here.
 
 ## Known limits
 

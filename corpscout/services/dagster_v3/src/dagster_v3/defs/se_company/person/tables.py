@@ -126,9 +126,17 @@ def build_se_company_person_role_sql() -> str:
     Two expressions differ from the spec's prose SELECT, and both are forced by the sort
     key: `role_code` and `role_year` are Nullable on the normalized row and `ORDER BY`
     cannot hold a Nullable column. `assumeNotNull(n.role_code)` is exact -- the WHERE has
-    already dropped every NULL -- and `ifNull(n.role_year, 0)` publishes a dateless role
-    under year 0, which is how this view says "no year at all" (the person row's
-    `role_years` array says it differently: the fold takes a dateless role as held now).
+    already dropped every NULL -- and `ifNull(n.role_year, 0)` publishes a role that
+    carries no FISCAL year under year 0. Wikidata delivers a role's span in
+    `role_from`/`role_to` and never a fiscal year, so every Wikidata role lands under 0
+    here; `role_year` 0 means "no fiscal year", not "no year at all" -- the fold's own
+    `role_years` array says it differently, expanding that span into the real years the
+    role was held.
+
+    Ends with the same SETTINGS block every serving refresh has carried since 000347/000391:
+    grace_hash spill joins, external group-by/sort, and a 12 GiB memory cap -- an unbounded
+    refresh here would face the same shared-server ceiling that block already exists to
+    avoid.
 
     THE VIEW IS DERIVED AND NOTHING WRITES IT. It lags a fold by at most an hour; the
     person row's role arrays remain the fold's own summary.
@@ -151,4 +159,9 @@ FROM {QUALIFIED_MAIN_TABLE} AS p FINAL
 ARRAY JOIN p.normalized_ids AS member_id
 INNER JOIN {QUALIFIED_NORMALIZED_TABLE} AS n FINAL
   ON n.company_id = p.company_id AND n.normalized_id = member_id
-WHERE p.active = 1 AND n.role_code IS NOT NULL"""
+WHERE p.active = 1 AND n.role_code IS NOT NULL
+SETTINGS join_algorithm = 'grace_hash,hash',
+    grace_hash_join_initial_buckets = 16,
+    max_bytes_before_external_group_by = 8589934592,
+    max_bytes_before_external_sort = 8589934592,
+    max_memory_usage = 12884901888"""

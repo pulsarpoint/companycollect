@@ -12,7 +12,8 @@ Two claims a text pin cannot settle (spec 2026-09-09 section 11):
 2. THE SELECT SAYS WHAT IT MEANS. One row per published ACTIVE person and per
    role-carrying observation the fold built them from: a roleless observation contributes
    nothing, an observation no published person was folded from contributes nothing, an
-   inactive person contributes nothing, a dateless role lands under year 0, and
+   inactive person contributes nothing, a role with no FISCAL year (Wikidata's spans;
+   role_year 0 means "no fiscal year", not "no year at all") lands under year 0, and
    is_current is 1 exactly for the codes on the person's current_roles.
 
 Both join_use_nulls settings run, and here that is not a formality: this SELECT makes a
@@ -42,7 +43,7 @@ N_BOARD = "1" * 64       # Anna, bolagsverket, board_member 2025 -- a current ro
 N_CHAIR = "2" * 64       # Anna, esef, board_chair 2025 -- a current role
 N_AUDIT = "3" * 64       # Anna, bolagsverket, auditor 2019 -- held once, not current
 N_NOROLE = "4" * 64      # Anna, bolagsverket, role_code NULL -- 2.0M such rows on prod
-N_CEO = "5" * 64         # Carl, wikidata, no year at all, an open span from 2019-05-01
+N_CEO = "5" * 64         # Carl, wikidata, no FISCAL year -- an open span from 2019-05-01
 N_HIDDEN = "6" * 64      # Erik's only observation
 N_ORPHAN = "7" * 64      # a normalized row no published person was folded from
 FOLDED_AT = "2026-09-11 09:00:00.000"
@@ -221,8 +222,10 @@ def test_one_row_per_active_person_and_role_carrying_observation(
         (ANNA, "auditor", 2019, "bolagsverket", 0),
         (ANNA, "board_chair", 2025, "esef", 1),
         (ANNA, "board_member", 2025, "bolagsverket", 1),
-        # A role with no year at all lands under 0 -- the view's way of saying "dateless",
-        # where the person row's role_years array says "held now" instead.
+        # role_year 0 means "no FISCAL year" -- Wikidata delivers a span in
+        # role_from/role_to and never a fiscal year -- not "no year at all". The person
+        # row's role_years array says it differently, expanding that span into the real
+        # years held, "held now" included.
         (CARL, "chief_executive_officer", 0, "wikidata", 1),
     ]
     anna = rows[0]

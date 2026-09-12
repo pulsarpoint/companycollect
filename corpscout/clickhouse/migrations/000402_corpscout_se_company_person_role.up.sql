@@ -30,12 +30,21 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 --
 -- THE SORT KEY HOLDS NO NULLABLE COLUMN (allow_nullable_key is off). role_code and
 -- role_year are Nullable on the normalized row, so the SELECT unwraps both:
--- assumeNotNull is exact under the WHERE, and a dateless role lands under year 0.
+-- assumeNotNull is exact under the WHERE, and a role with no FISCAL year lands under
+-- year 0 -- Wikidata delivers a span in role_from/role_to and never a fiscal year, so
+-- every Wikidata role lands here. role_year 0 means "no fiscal year", not "no year at
+-- all": the fold's own role_years array expands that span into the real years held.
 --
 -- THE NAME IS REUSED. corpscout.se_company_person_role was the 2026-08-19 model's role
 -- table, dropped by hand in person slice 0 on 2026-09-09 -- exactly what 000398 did with
 -- se_company_person. The operations script that dropped it is SPENT and must never run
 -- again.
+--
+-- ALSO BOUNDS THE REFRESH ITSELF (F1): the SELECT carries the same trailing SETTINGS
+-- every serving refresh has carried since 000347/000391 -- grace_hash spill joins,
+-- external group-by/sort, and a 12 GiB max_memory_usage -- so this view's hourly
+-- refresh cannot repeat the unbounded-refresh memory spike 000391 fixed on the serving
+-- view. The EMPTY AS SELECT ... SETTINGS ... form parses on 26.5.
 --
 -- THE SELECT BELOW IS NOT HAND-WRITTEN AND MUST NOT BE HAND-EDITED -- exact rendering of
 -- person/tables.py::build_se_company_person_role_sql(), drift-pinned by dagster_v3
@@ -64,4 +73,9 @@ FROM corpscout.se_company_person AS p FINAL
 ARRAY JOIN p.normalized_ids AS member_id
 INNER JOIN corpscout.se_company_person_normalized AS n FINAL
   ON n.company_id = p.company_id AND n.normalized_id = member_id
-WHERE p.active = 1 AND n.role_code IS NOT NULL;
+WHERE p.active = 1 AND n.role_code IS NOT NULL
+SETTINGS join_algorithm = 'grace_hash,hash',
+    grace_hash_join_initial_buckets = 16,
+    max_bytes_before_external_group_by = 8589934592,
+    max_bytes_before_external_sort = 8589934592,
+    max_memory_usage = 12884901888;

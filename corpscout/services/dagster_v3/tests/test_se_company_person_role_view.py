@@ -136,3 +136,24 @@ def test_the_sort_key_carries_no_nullable_column() -> None:
     assert "p.birth_year AS birth_year" in body
     assert "n.role_from AS role_from" in body
     assert "n.role_to AS role_to" in body
+
+
+def test_the_select_carries_the_same_refresh_bounding_settings_since_000347() -> None:
+    """F1: an unbounded hourly refresh over 1.1M persons / 5.6M normalized rows can hit
+    the same shared-server memory ceiling 000391 already fixed for the serving view, so
+    this view's SELECT ends with the identical trailing SETTINGS block -- copied verbatim
+    from 000347/000391, not merely "a" settings clause."""
+    settings_block = (
+        "SETTINGS join_algorithm = 'grace_hash,hash',\n"
+        "    grace_hash_join_initial_buckets = 16,\n"
+        "    max_bytes_before_external_group_by = 8589934592,\n"
+        "    max_bytes_before_external_sort = 8589934592,\n"
+        "    max_memory_usage = 12884901888"
+    )
+    rendered = build_se_company_person_role_sql()
+
+    assert rendered.endswith(settings_block)
+    # The EMPTY AS SELECT ... SETTINGS ... form: the migration's CREATE VIEW body must
+    # carry the identical block, not a hand-typed near-copy.
+    body = _view_body(_sql("up"))
+    assert body.endswith(settings_block)
