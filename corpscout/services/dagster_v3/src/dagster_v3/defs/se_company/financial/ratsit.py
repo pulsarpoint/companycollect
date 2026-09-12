@@ -1,10 +1,17 @@
 """Ratsit financial periods -> financial suggestions (spec 2026-09-11 section 7), after
 slice 0 filled the USD twins.
 
-se_ratsit_financial_periods holds each company's latest report (older report hashes are
-replaced by the normalizer), one row per report period: scope `company` is the entity's
-standalone, `consolidated` stays consolidated, anything else is skipped. Figures are
-published in the row's monetary_unit (MSEK for every row today), so the original is the
+se_ratsit_financial_periods holds each company's latest report of THIS normalizer version
+(older report hashes are replaced by the normalizer within a version, but a scan's raw
+result_sha256 survives every normalizer generation that has processed it, so the report and
+period rows of a superseded generation are not replaced -- they are additive, per migration
+000346), one row per report period: scope `company` is the entity's standalone,
+`consolidated` stays consolidated, anything else is skipped. The key is (company_id,
+result_sha256, normalizer_version): both the report pick and its join to the periods pin
+`normalizer_version` to the running `RATSIT_NORMALIZER_VERSION`, mirroring
+`person/ratsit.py`, so a superseded generation's periods can never leak into a live row or
+flap the state hash by winning `rn = 1` arbitrarily against the current generation. Figures
+are published in the row's monetary_unit (MSEK for every row today), so the original is the
 figure times the unit's scale and amount_scale records it; the USD twins are already
 full-unit dollars. A missing period end becomes Dec 31 of the fiscal year with
 period_end_derived = 1 -- guarded to Date32's range, because makeDate32 returns 1970-01-01
@@ -26,9 +33,13 @@ from dagster_v3.defs.se_company.financial.suggestions import (
     live_select_sql,
     universe_join_sql,
 )
+from dagster_v3.defs.sweden_ratsit.normalization import RATSIT_NORMALIZER_VERSION
 
 SOURCE = "ratsit"
 RATSIT_EXTRACTOR_VERSION = "ratsit-financial-v1"
+# The normalizer version the current report must carry; run_extractor binds select_params
+# into the scope query and into every page select (mirrors person/ratsit.py).
+RATSIT_SELECT_PARAMS = {"normalizer_version": RATSIT_NORMALIZER_VERSION}
 
 # entity field -> periods column stem (seventeen fields; cash_and_bank, personnel_expenses
 # and wages_and_salaries are NULL: Ratsit does not publish them).
@@ -97,10 +108,14 @@ def _ranked_cte_sql(*, scoped: bool) -> str:
     period_filter = "\n        AND p.company_id IN %(company_ids)s" if scoped else ""
     return (
         "WITH report AS (\n"
-        "    SELECT r.company_id AS company_id, argMax(r.result_sha256, r.normalized_at) AS result_sha256\n"
+        "    SELECT\n"
+        "        r.company_id AS company_id,\n"
+        "        argMax(r.result_sha256, (r.normalized_at, r.result_sha256)) AS result_sha256,\n"
+        "        %(normalizer_version)s AS normalizer_version\n"
         "    FROM corpscout.se_ratsit_financial_reports AS r FINAL\n"
         f"    {universe_join_sql('r')}\n"
-        f"    WHERE 1 = 1{company_filter}\n"
+        "    WHERE 1 = 1\n"
+        f"        AND r.normalizer_version = %(normalizer_version)s{company_filter}\n"
         "    GROUP BY r.company_id\n"
         "),\n"
         "ranked AS (\n"
@@ -114,6 +129,7 @@ def _ranked_cte_sql(*, scoped: bool) -> str:
         "        ) AS rn\n"
         "    FROM corpscout.se_ratsit_financial_periods AS p FINAL\n"
         "    INNER JOIN report ON report.company_id = p.company_id AND report.result_sha256 = p.result_sha256\n"
+        "        AND report.normalizer_version = p.normalizer_version\n"
         "    WHERE p.monetary_unit IS NOT NULL\n"
         "        AND p.scope IN ('company', 'consolidated')\n"
         f"        AND (p.period_end IS NOT NULL OR p.fiscal_year BETWEEN 1900 AND 2299){period_filter}\n"
@@ -153,6 +169,7 @@ se_company_financial_suggestions_ratsit = define_financial_suggestion_asset(
     extractor_version=RATSIT_EXTRACTOR_VERSION,
     current_sql=ratsit_current_sql(),
     select_sql=ratsit_select_sql(),
+    select_params=RATSIT_SELECT_PARAMS,
     changed_scope_override=ratsit_changed_scope_sql(),
     deps=[
         dg.AssetKey("se_ratsit_financial_periods_usd"),

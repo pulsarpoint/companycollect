@@ -64,3 +64,8 @@ delivering gets a tombstone that copies scope and period end so the table's CHEC
 The job `se_company_financial_extract_job` runs `se_ratsit_financial_periods_usd` first, then
 the four extractors; the weekly `se_company_financial_weekly` (Monday 07:55 UTC) is defined
 STOPPED until the fold (slice 3) exists. Every extractor previews by default (`execute: false`).
+
+A live row must carry at least one figure or an employee count; a source row with none is
+skipped, never written, on both sides of the state hash. The Ratsit extractor pins
+`normalizer_version` (like the person extractor) so superseded normalizer generations never
+compete for a period.

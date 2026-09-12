@@ -169,6 +169,10 @@ se_company_financial_suggestions_esef = define_financial_suggestion_asset(
     deps=[
         dg.AssetKey("esef_financial_metrics_clickhouse"),
         dg.AssetKey("esef_entity_registry_map_clickhouse"),
+        # corpscout.se_esef_filings is a view over esef_filings (joined to the registry
+        # map); the asset that fills esef_filings belongs in this list too, or a change to
+        # it would not show as a dependency of this extractor.
+        dg.AssetKey("esef_filings_clickhouse"),
         dg.AssetKey("se_company_basic_info_fold"),
     ],
     description=(

@@ -7,8 +7,10 @@ change scan hashes everything a source delivers per company (every column but co
 and source), so a changed figure, a changed date or a vanished period all select the
 company once, and the page writes the live rows plus one tombstone per stored period the
 source no longer delivers. A live row always carries at least one figure or an employee
-count (every extractor filters empty rows out); a tombstone carries none, and copies scope
-and period_end from the stored row so the CHECK on period_key still holds.
+count -- `live_select_sql` below applies `LIVE_ROW_PREDICATE` to every extractor's live rows
+so none can forget it, the same predicate `state_scan.stored_live_sql` applies to the stored
+side; a tombstone carries none, and copies scope and period_end from the stored row so the
+CHECK on period_key still holds.
 
 currency is NULL when a source names none, never '' (the DDL refuses ''); money on a row
 without a currency can never win the fold (spec 6.2).
@@ -49,7 +51,12 @@ MONEY_NULL_SQL: Mapping[str, str] = {
     column: NULL_SQL[column] for column in tables.MONETARY_SUGGESTION_COLUMNS
 }
 
-# A live row has at least one figure or an employee count; a tombstone has none.
+# A live row has at least one figure or an employee count; a tombstone has none. Written in
+# the target's column names (the projection aliases, not any source column of the same
+# name), so it reads correctly in both places it is applied: state_scan.stored_live_sql
+# applies it to the stored suggestion rows, and this module's live_select_sql wrapper below
+# applies the identical text to every extractor's live rows, so a source row with no figure
+# and no employee count is never written on either side of the state hash.
 LIVE_ROW_PREDICATE = "(" + " OR ".join(f"{column} IS NOT NULL" for column in tables.SUGGESTION_VALUE_COLUMNS) + ")"
 
 # One clock read per statement (two now64() calls were measured to differ), hashed into the
@@ -127,8 +134,14 @@ def scan_for(source: str) -> state_scan.StateScan:
 def live_select_sql(
     *, columns: Mapping[str, str], from_sql: str, where_sql: str, with_sql: str = ""
 ) -> str:
+    """Every extractor's live-row select, routed through here so `LIVE_ROW_PREDICATE` is
+    appended to every caller's WHERE: a fifth source cannot forget it (C1)."""
     return state_scan.live_select_sql(
-        scan_for("x"), columns=columns, from_sql=from_sql, where_sql=where_sql, with_sql=with_sql
+        scan_for("x"),
+        columns=columns,
+        from_sql=from_sql,
+        where_sql=f"{where_sql}\n    AND {LIVE_ROW_PREDICATE}",
+        with_sql=with_sql,
     )
 
 

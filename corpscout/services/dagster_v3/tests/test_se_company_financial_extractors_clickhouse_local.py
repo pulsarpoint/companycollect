@@ -10,12 +10,17 @@ fake client cannot settle:
    newest restating filing and carries revenue and total assets only.
 5. ESEF: the newest version wins field by field with the older version filling its gaps; a
    blank currency becomes NULL; a negative employee count becomes NULL; the EUR filer keeps EUR.
-6. Ratsit: only the latest report; MSEK scaled to full units with amount_scale 1000000; the
-   USD twin copied; an undated period keyed on Dec 31 of its fiscal year and flagged; the
-   longer of two periods with one end wins; an employment-only period publishes employees
-   alone; a row without a unit, and a row with neither a date nor a fiscal year in range,
-   are skipped; a consolidated report maps to the consolidated scope.
+6. Ratsit: only the latest report of the running normalizer version (a superseded
+   normalizer generation's report and periods, sharing the same result_sha256, never leak
+   in); MSEK scaled to full units with amount_scale 1000000; the USD twin copied; an undated
+   period keyed on Dec 31 of its fiscal year and flagged; the longer of two periods with one
+   end wins; an employment-only period publishes employees alone; a row without a unit, and
+   a row with neither a date nor a fiscal year in range, are skipped; a consolidated report
+   maps to the consolidated scope.
 7. A company outside se_company_basic_info never reaches the suggestion table.
+8. A source row with no figure and no employee count is skipped, not written, and the scan
+   still converges (C1): a zero-metric Bolagsverket statement, an all-NULL ESEF filing whose
+   only non-NULL source field is a negative employee count, and an all-NULL Ratsit period.
 """
 
 import subprocess
@@ -60,32 +65,46 @@ def _schema() -> list[str]:
 ROWS = [
     f"INSERT INTO corpscout.se_company_basic_info (company_id, legal_name, legal_name_source, status, status_source, folded_at, fold_version, source_run_id) VALUES ('{A}', 'A AB', 'scb', 'active', 'scb', now64(3), 'v1', 'r'), ('{B}', 'B AB', 'scb', 'active', 'scb', now64(3), 'v1', 'r')",
     # Bolagsverket: A reported 2023; 2022 twice (s22a fuller than s22b); 2022 restated by the 2023 and 2024 filings (2024 newest); OUT is not in the universe.
+    # s21 (C1): a reported 2021 statement with every metric and employees NULL -- must be skipped, not written as a pseudo-tombstone.
     f"""INSERT INTO corpscout.se_bolagsverket_financial_metrics (country_iso2, source_slug, source_run_id, source_record_id, statement_key, source_record_uid, company_id, report_period_start, report_period_end, fiscal_year, observation_kind, source_fiscal_year, currency, revenue_amount_original, revenue_amount_usd, operating_profit_loss_amount_original, operating_profit_loss_amount_usd, profit_loss_amount_original, profit_loss_amount_usd, total_assets_amount_original, total_assets_amount_usd, equity_amount_original, equity_amount_usd, employees, fx_rate_to_usd, fx_rate_date, fx_source, mapping_version, resolved_at) VALUES
     ('SE','sweden_financial','r','s23:1','s23','u23','{A}','2023-01-01','2023-12-31',2023,'reported',2023,'SEK',59016040,5876000,946563,94000,946563,94000,54302472,5400000,3379581,336000,2100,0.0996,'2023-12-29','ecb','m1',now64(3)),
     ('SE','sweden_financial','r','s22a:1','s22a','u22a','{A}','2022-01-01','2022-12-31',2022,'reported',2022,'SEK',54910071,5500000,NULL,NULL,64959,6500,39228252,3900000,2433018,243000,1800,0.1,'2022-12-30','ecb','m1',now64(3)),
     ('SE','sweden_financial','r','s22b:1','s22b','u22b','{A}','2022-01-01','2022-12-31',2022,'reported',2022,'SEK',54910071,5500000,NULL,NULL,NULL,NULL,39228252,3900000,NULL,NULL,NULL,0.1,'2022-12-30','ecb','m1',now64(3)),
     ('SE','sweden_financial','r','s23:2','s23','u23','{A}','2022-01-01','2022-12-31',2022,'comparative',2023,'SEK',54910071,5500000,NULL,NULL,NULL,NULL,39228252,3900000,NULL,NULL,NULL,0.1,'2022-12-30','ecb','m1',now64(3)),
     ('SE','sweden_financial','r','s24:2','s24','u24','{A}','2022-01-01','2022-12-31',2022,'comparative',2024,'SEK',54900000,5499000,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,0.1,'2022-12-30','ecb','m1',now64(3)),
-    ('SE','sweden_financial','r','sX:1','sX','uX','{OUT}','2023-01-01','2023-12-31',2023,'reported',2023,'SEK',1,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,0.1,'2023-12-29','ecb','m1',now64(3))""",
+    ('SE','sweden_financial','r','sX:1','sX','uX','{OUT}','2023-01-01','2023-12-31',2023,'reported',2023,'SEK',1,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,0.1,'2023-12-29','ecb','m1',now64(3)),
+    ('SE','sweden_financial','r','s21:1','s21','u21','{A}','2021-01-01','2021-12-31',2021,'reported',2021,'SEK',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,0.1,'2021-12-30','ecb','m1',now64(3))""",
     # ESEF: A has two versions of 2023 (v0 revenue + equity in SEK; v1 revenue + employees, blank currency); B files in EUR with a negative employee count.
+    # B 2022 (C1): every money column NULL and employees -1 -- entirely NULL only after the
+    # negative-employees rule, pinning that the WHERE reads the projection alias (employees),
+    # not the raw source column (e.employees = -1, not NULL).
     f"INSERT INTO corpscout.esef_entity_registry_map (lei, country_iso2, registry_id_raw, registry_id, match_source, link_status, source_run_id, resolved_at) VALUES ('{LEI_A}','SE','{A}','{A}','register','register_verified','r',now64(3)), ('{LEI_B}','SE','{B}','{B}','register','register_verified','r',now64(3))",
-    f"INSERT INTO corpscout.esef_filings (lei, entity_name, fxo_id, country, period_end, date_added, processed_at, json_url, package_url, report_url, viewer_url, package_sha256, error_count, warning_count, inconsistency_count, has_json_facts, source_url, source_run_id, resolved_at) VALUES ('{LEI_A}','A AB','{LEI_A}-2023-12-31-ESEF-SE-0','SE','2023-12-31','2024-04-01',now64(3),'','','','','',0,0,0,1,'','r',now64(3)), ('{LEI_A}','A AB','{LEI_A}-2023-12-31-ESEF-SE-1','SE','2023-12-31','2024-05-01',now64(3),'','','','','',0,0,0,1,'','r',now64(3)), ('{LEI_B}','B AB','{LEI_B}-2023-12-31-ESEF-SE-0','SE','2023-12-31','2024-04-01',now64(3),'','','','','',0,0,0,1,'','r',now64(3))",
+    f"INSERT INTO corpscout.esef_filings (lei, entity_name, fxo_id, country, period_end, date_added, processed_at, json_url, package_url, report_url, viewer_url, package_sha256, error_count, warning_count, inconsistency_count, has_json_facts, source_url, source_run_id, resolved_at) VALUES ('{LEI_A}','A AB','{LEI_A}-2023-12-31-ESEF-SE-0','SE','2023-12-31','2024-04-01',now64(3),'','','','','',0,0,0,1,'','r',now64(3)), ('{LEI_A}','A AB','{LEI_A}-2023-12-31-ESEF-SE-1','SE','2023-12-31','2024-05-01',now64(3),'','','','','',0,0,0,1,'','r',now64(3)), ('{LEI_B}','B AB','{LEI_B}-2023-12-31-ESEF-SE-0','SE','2023-12-31','2024-04-01',now64(3),'','','','','',0,0,0,1,'','r',now64(3)), ('{LEI_B}','B AB','{LEI_B}-2022-12-31-ESEF-SE-0','SE','2022-12-31','2023-04-01',now64(3),'','','','','',0,0,0,1,'','r',now64(3))",
     f"""INSERT INTO corpscout.esef_financial_metrics (lei, entity_name, fxo_id, country, scope, fiscal_year, period_start, period_end, currency, revenue_amount_original, revenue_amount_usd, equity_amount_original, equity_amount_usd, employees, mapped_fact_count, source_fact_count, mapping_version, fx_rate_to_usd, fx_rate_date, fx_source, viewer_url, source_run_id, resolved_at) VALUES
     ('{LEI_A}','A AB','{LEI_A}-2023-12-31-ESEF-SE-0','SE','consolidated_ifrs',2023,'2023-01-01','2023-12-31','SEK',1296506000,129000000,2030344000,202000000,NULL,5,9,'m',0.0996,'2023-12-29','ecb','','r',now64(3)),
     ('{LEI_A}','A AB','{LEI_A}-2023-12-31-ESEF-SE-1','SE','consolidated_ifrs',2023,'2023-01-01','2023-12-31','',1300000000,129400000,NULL,NULL,4200,5,9,'m',0.0996,'2023-12-29','ecb','','r',now64(3)),
-    ('{LEI_B}','B AB','{LEI_B}-2023-12-31-ESEF-SE-0','SE','consolidated_ifrs',2023,'2023-01-01','2023-12-31','EUR',5000000,5400000,NULL,NULL,-1,5,9,'m',1.08,'2023-12-29','ecb','','r',now64(3))""",
+    ('{LEI_B}','B AB','{LEI_B}-2023-12-31-ESEF-SE-0','SE','consolidated_ifrs',2023,'2023-01-01','2023-12-31','EUR',5000000,5400000,NULL,NULL,-1,5,9,'m',1.08,'2023-12-29','ecb','','r',now64(3)),
+    ('{LEI_B}','B AB','{LEI_B}-2022-12-31-ESEF-SE-0','SE','consolidated_ifrs',2022,'2022-01-01','2022-12-31','SEK',NULL,NULL,NULL,NULL,-1,5,9,'m',1.08,'2022-12-29','ecb','','r',now64(3))""",
     # Ratsit: A's latest report is 'a'*64 (the older 'e'*64 must not leak); B's consolidated report.
-    f"INSERT INTO corpscout.se_ratsit_financial_reports (company_id, result_sha256, normalizer_version, financial_report_index, scope, monetary_unit, period_count, normalized_at) VALUES ('{A}', repeat('e',64), 'v2', 0, 'company', 'MSEK', 1, '2026-01-01 00:00:00'), ('{A}', repeat('a',64), 'v2', 0, 'company', 'MSEK', 6, '2026-09-01 00:00:00'), ('{B}', repeat('b',64), 'v2', 0, 'consolidated', 'MSEK', 1, '2026-09-01 00:00:00')",
+    # C2: a v1 report and a v1 period duplicate A's 2023 period under the SAME result_sha256
+    # ('a'*64) but the superseded normalizer_version -- the pinned join must exclude them, so
+    # the expected 2023 row stays the v2 values (60300000 / 6005001.802437), never the v1
+    # revenue (99 / 9900000).
+    # C1: period_index 7 (fiscal_year 2016) has every amount and employee_count NULL -- must
+    # be skipped, not written as a pseudo-tombstone.
+    f"INSERT INTO corpscout.se_ratsit_financial_reports (company_id, result_sha256, normalizer_version, financial_report_index, scope, monetary_unit, period_count, normalized_at) VALUES ('{A}', repeat('e',64), 'ratsit-normalizer-v2', 0, 'company', 'MSEK', 1, '2026-01-01 00:00:00'), ('{A}', repeat('a',64), 'ratsit-normalizer-v2', 0, 'company', 'MSEK', 7, '2026-09-01 00:00:00'), ('{A}', repeat('a',64), 'ratsit-normalizer-v1', 0, 'company', 'MSEK', 1, '2026-09-02 00:00:00'), ('{B}', repeat('b',64), 'ratsit-normalizer-v2', 0, 'consolidated', 'MSEK', 1, '2026-09-01 00:00:00')",
     f"""INSERT INTO corpscout.se_ratsit_financial_periods (company_id, result_sha256, normalizer_version, financial_report_index, period_index, period_kind, scope, monetary_unit, fiscal_year, period_start, period_end, period_months, revenue_amount, revenue_amount_usd, equity_amount, equity_amount_usd, employee_count, fx_rate_to_usd, fx_rate_date, fx_source, normalized_at) VALUES
-    ('{A}', repeat('e',64), 'v2', 0, 0, 'financial_only', 'company', 'MSEK', 2017, '2017-01-01', '2017-12-31', 12, 1, 100000, NULL, NULL, NULL, 0.1, '2017-12-29', 'ecb', '2026-01-01 00:00:00'),
-    ('{A}', repeat('a',64), 'v2', 0, 0, 'financial_and_employment', 'company', 'MSEK', 2023, '2023-01-01', '2023-12-31', 12, 60.3, 6005001.802437, 3.4, 338000, 21, 0.099585436193, '2023-12-29', 'ECB EXR', '2026-09-01 00:00:00'),
-    ('{A}', repeat('a',64), 'v2', 0, 1, 'financial_only', 'company', 'MSEK', 2021, NULL, NULL, NULL, 50, 5000000, NULL, NULL, NULL, 0.1, '2021-12-30', 'ECB EXR', '2026-09-01 00:00:00'),
-    ('{A}', repeat('a',64), 'v2', 0, 2, 'financial_only', 'company', 'MSEK', 2020, '2020-07-01', '2020-12-31', 6, 20, 2000000, NULL, NULL, NULL, 0.1, '2020-12-30', 'ECB EXR', '2026-09-01 00:00:00'),
-    ('{A}', repeat('a',64), 'v2', 0, 3, 'financial_only', 'company', 'MSEK', 2020, '2020-01-01', '2020-12-31', 12, 40, 4000000, NULL, NULL, NULL, 0.1, '2020-12-30', 'ECB EXR', '2026-09-01 00:00:00'),
-    ('{A}', repeat('a',64), 'v2', 0, 4, 'employment_only', 'company', 'MSEK', 2019, '2019-01-01', '2019-12-31', 12, NULL, NULL, NULL, NULL, 15, NULL, NULL, '', '2026-09-01 00:00:00'),
-    ('{A}', repeat('a',64), 'v2', 0, 5, 'financial_only', 'company', NULL, 2018, '2018-01-01', '2018-12-31', 12, 9, NULL, NULL, NULL, NULL, NULL, NULL, '', '2026-09-01 00:00:00'),
-    ('{A}', repeat('a',64), 'v2', 0, 6, 'financial_only', 'company', 'MSEK', 1850, NULL, NULL, NULL, 1, NULL, NULL, NULL, NULL, NULL, NULL, '', '2026-09-01 00:00:00'),
-    ('{B}', repeat('b',64), 'v2', 0, 0, 'financial_only', 'consolidated', 'MSEK', 2023, '2023-01-01', '2023-12-31', 12, 100, 10000000, NULL, NULL, NULL, 0.1, '2023-12-29', 'ECB EXR', '2026-09-01 00:00:00')""",
+    ('{A}', repeat('e',64), 'ratsit-normalizer-v2', 0, 0, 'financial_only', 'company', 'MSEK', 2017, '2017-01-01', '2017-12-31', 12, 1, 100000, NULL, NULL, NULL, 0.1, '2017-12-29', 'ecb', '2026-01-01 00:00:00'),
+    ('{A}', repeat('a',64), 'ratsit-normalizer-v2', 0, 0, 'financial_and_employment', 'company', 'MSEK', 2023, '2023-01-01', '2023-12-31', 12, 60.3, 6005001.802437, 3.4, 338000, 21, 0.099585436193, '2023-12-29', 'ECB EXR', '2026-09-01 00:00:00'),
+    ('{A}', repeat('a',64), 'ratsit-normalizer-v1', 0, 0, 'financial_and_employment', 'company', 'MSEK', 2023, '2023-01-01', '2023-12-31', 12, 99, 9900000, 3.4, 338000, 21, 0.099585436193, '2023-12-29', 'ECB EXR', '2026-09-02 00:00:00'),
+    ('{A}', repeat('a',64), 'ratsit-normalizer-v2', 0, 1, 'financial_only', 'company', 'MSEK', 2021, NULL, NULL, NULL, 50, 5000000, NULL, NULL, NULL, 0.1, '2021-12-30', 'ECB EXR', '2026-09-01 00:00:00'),
+    ('{A}', repeat('a',64), 'ratsit-normalizer-v2', 0, 2, 'financial_only', 'company', 'MSEK', 2020, '2020-07-01', '2020-12-31', 6, 20, 2000000, NULL, NULL, NULL, 0.1, '2020-12-30', 'ECB EXR', '2026-09-01 00:00:00'),
+    ('{A}', repeat('a',64), 'ratsit-normalizer-v2', 0, 3, 'financial_only', 'company', 'MSEK', 2020, '2020-01-01', '2020-12-31', 12, 40, 4000000, NULL, NULL, NULL, 0.1, '2020-12-30', 'ECB EXR', '2026-09-01 00:00:00'),
+    ('{A}', repeat('a',64), 'ratsit-normalizer-v2', 0, 4, 'employment_only', 'company', 'MSEK', 2019, '2019-01-01', '2019-12-31', 12, NULL, NULL, NULL, NULL, 15, NULL, NULL, '', '2026-09-01 00:00:00'),
+    ('{A}', repeat('a',64), 'ratsit-normalizer-v2', 0, 5, 'financial_only', 'company', NULL, 2018, '2018-01-01', '2018-12-31', 12, 9, NULL, NULL, NULL, NULL, NULL, NULL, '', '2026-09-01 00:00:00'),
+    ('{A}', repeat('a',64), 'ratsit-normalizer-v2', 0, 6, 'financial_only', 'company', 'MSEK', 1850, NULL, NULL, NULL, 1, NULL, NULL, NULL, NULL, NULL, NULL, '', '2026-09-01 00:00:00'),
+    ('{A}', repeat('a',64), 'ratsit-normalizer-v2', 0, 7, 'financial_only', 'company', 'MSEK', 2016, '2016-01-01', '2016-12-31', 12, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '', '2026-09-01 00:00:00'),
+    ('{B}', repeat('b',64), 'ratsit-normalizer-v2', 0, 0, 'financial_only', 'consolidated', 'MSEK', 2023, '2023-01-01', '2023-12-31', 12, 100, 10000000, NULL, NULL, NULL, 0.1, '2023-12-29', 'ECB EXR', '2026-09-01 00:00:00')""",
 ]
 
 READ_SQL = (
@@ -112,12 +131,21 @@ SOURCES = (
 )
 
 
+RATSIT_NORMALIZER_VERSION = "ratsit-normalizer-v2"
+
+
 def _scope(scope_sql: str, source: str) -> str:
-    return render(scope_sql, {"source": source}) + "\nORDER BY company_id"
+    # normalizer_version is unused text for the other three sources; render() only
+    # substitutes placeholders that are actually present, so binding it unconditionally here
+    # is harmless for them and required for ratsit's report CTE and periods join.
+    return render(scope_sql, {"source": source, "normalizer_version": RATSIT_NORMALIZER_VERSION}) + "\nORDER BY company_id"
 
 
 def _insert(select_sql: str, ids: list[str], version: str) -> str:
-    return render(insert_page_sql(select_sql=select_sql, target=FINANCIAL_TARGET), {"company_ids": ids, "source_run_id": "run-1", "extractor_version": version})
+    return render(
+        insert_page_sql(select_sql=select_sql, target=FINANCIAL_TARGET),
+        {"company_ids": ids, "source_run_id": "run-1", "extractor_version": version, "normalizer_version": RATSIT_NORMALIZER_VERSION},
+    )
 
 
 def _run(join_use_nulls: int) -> dict[str, list[str]]:

@@ -22,7 +22,9 @@ def test_bolagsverket_reported_picks_the_fuller_statement_per_period() -> None:
     live = bolagsverket.reported_live_sql()
     assert "PARTITION BY m.company_id, m.report_period_end ORDER BY " in live
     assert live.index("toUInt8(m.revenue_amount_original IS NOT NULL) + ") < live.index("DESC, m.statement_key ASC")
-    assert "WHERE m.observation_kind = 'reported'" in live and live.endswith("WHERE m.rn = 1")
+    assert "WHERE m.observation_kind = 'reported'" in live
+    assert "WHERE m.rn = 1\n    AND (revenue_amount_original IS NOT NULL OR " in live
+    assert live.endswith(" OR employees IS NOT NULL)")
     assert "FROM corpscout.se_bolagsverket_financial_metrics AS m FINAL" in live
     assert "ON universe.company_id = m.company_id" in live
     assert "    concat('standalone:', toString(m.report_period_end)) AS period_key" in live
@@ -63,7 +65,9 @@ def test_esef_composes_versions_newest_first_and_maps_scope_and_types() -> None:
 
 def test_ratsit_scales_by_unit_derives_the_end_date_and_ranks_duplicates() -> None:
     live = ratsit.ratsit_live_sql()
-    assert "argMax(r.result_sha256, r.normalized_at) AS result_sha256" in live
+    assert "argMax(r.result_sha256, (r.normalized_at, r.result_sha256)) AS result_sha256" in live
+    assert "AND r.normalizer_version = %(normalizer_version)s" in live
+    assert "AND report.normalizer_version = p.normalizer_version" in live
     assert "multiIf(p.scope = 'company', 'standalone', p.scope = 'consolidated', 'consolidated', '') AS entity_scope" in live
     assert "ifNull(p.period_end, makeDate32(p.fiscal_year, 12, 31)) AS effective_end" in live
     assert "PARTITION BY p.company_id, entity_scope, effective_end\n            ORDER BY ifNull(p.period_months, 0) DESC, p.financial_report_index DESC, p.period_index DESC" in live
@@ -80,6 +84,7 @@ def test_ratsit_scales_by_unit_derives_the_end_date_and_ranks_duplicates() -> No
 def test_every_extractor_projects_the_select_columns_in_order_and_inserts_the_target() -> None:
     for live in (bolagsverket.reported_live_sql(), bolagsverket.comparative_live_sql(), esef.esef_live_sql(), ratsit.ratsit_live_sql()):
         assert _projection(live) == list(FINANCIAL_SELECT_COLUMNS)
+        assert live.count("\n    AND (revenue_amount_original IS NOT NULL OR ") == 1
     insert = insert_page_sql(select_sql=bolagsverket.reported_select_sql(), target=FINANCIAL_TARGET)
     assert insert.startswith(f"INSERT INTO corpscout.se_company_financial_suggestion ({', '.join(FINANCIAL_TARGET.insert_columns)})\nWITH (SELECT now64(3, 'UTC')) AS stamp\n")
     assert insert.count("live_period_keys") == 3

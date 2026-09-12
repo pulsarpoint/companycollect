@@ -15,8 +15,9 @@ and delegates here.
    Writing the tombstone takes the row out of `live`, so the next scan sees equal hashes.
 
 The `live` CTE is referenced twice but written once; each page select binds
-%(company_ids)s exactly twice (the live CTE and the stored-key read), which is why the
-entities page at 5,000 to 10,000 ids under ID_BOUND_QUERY_SETTINGS' 1 MiB max_query_size.
+%(company_ids)s two or three times (the live rows, the stored keys, and any source-side
+pre-filter), which is why the entities page at 5,000 to 10,000 ids under
+ID_BOUND_QUERY_SETTINGS' 1 MiB max_query_size.
 """
 
 from __future__ import annotations

@@ -386,9 +386,12 @@ extractors do, and stamps `suggestion_id` and `suggested_at` from one `WITH (SEL
   `source_record_uid` is `ratsit:<company>:<report index>:<period index>`, stable across
   re-scans.
 
-Each extractor reports counts per outcome (inserted, tombstoned, skipped by reason, unchanged) and
-takes the family's config: `execute` (false = preview), `company_ids`, `max_companies`,
-`page_size`.
+Each extractor asset reports companies, pages, candidates and inserted through the shared
+`run_extractor`, like the basic-info, address and person extractors. Counts per outcome --
+tombstones, rows skipped for a missing unit, an out-of-range fiscal year, a non-consolidated ESEF
+scope, or no figure at all -- are read out from the suggestion table and the sources after each
+prod run and recorded in section 12. Every extractor takes the family's config: `execute` (false =
+preview), `company_ids`, `max_companies`, `page_size`.
 
 ## 8. Dagster
 
