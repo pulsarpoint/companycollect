@@ -4,7 +4,9 @@ TWO ROW KINDS PER COMPANY. The company's own postal address keeps slot `company`
 `postal`; every establishment of the SAME report that carries a street AND a postcode adds a
 row in slot `est:<identifier>` with kind `workplace` (846,718 establishment rows on
 2026-09-10, 732,626 of them with both; `identifier` is on every row and unique within a
-company on all but 324, which get the establishment index appended). 288,840 establishments
+company on all but 2 rows of the CURRENT reports, which get the establishment index appended
+-- the raw table repeats an identifier 324 times, but nearly all of those pairs sit in
+different, superseded scans of one company and never meet in a page). 288,840 establishments
 repeat the company's own postal street and postcode, so the fold merges them into the postal
 address and its `kinds` becomes ['postal', 'workplace']; the rest publish as their own
 addresses. The largest company has 1,718 establishments.
@@ -18,9 +20,10 @@ own key -- the ~26k near-duplicate second addresses of the address entity's foll
 `TOWNS_SQL` rebuilds the register's postcode -> town dictionary per page from the same SCB
 rows address/scb.py reads (15,698 postcodes; 38 carry more than one spelling, 12 a minority
 above 5%), and every delivered row takes its town from there. A postcode the register does
-not know (none today) keeps Ratsit's own locality. Establishment localities are already the
-postal town (4 of 732,626 differ), so the dictionary changes nothing for them; it is applied
-uniformly rather than only to the company row, so one rule explains every published town.
+not know -- about 1,000 of the delivered ones today -- keeps Ratsit's own locality, the only
+town such a row has. Establishment localities are already the postal town (4 of 732,626
+differ), so the dictionary changes nothing for them; it is applied uniformly rather than only
+to the company row, so one rule explains every published town.
 
 THE JOIN KEY IS DIGITS ONLY. `replaceRegexpAll(..., '[^0-9]', '')` on both sides, which is
 what normalize_se.py's `re.sub(r"\\D", "", ...)` does to the postcode it stores, so a
@@ -34,8 +37,8 @@ deletes companies, so there is no whole-company tombstone.
 
 ITS OWN `current_sql`. basic_info/ratsit.py's stamp is `greatest(normalized_at,
 business_description_translated_at)` over se_ratsit_company_translated, which exceeds the
-`observed_at` this select writes and would re-select the 77k translated companies on every
-address run. This module reads se_ratsit_company directly instead.
+`observed_at` this select writes and would re-select the 213,283 translated companies (as of
+2026-09-11) on every address run. This module reads se_ratsit_company directly instead.
 """
 
 import dagster as dg
@@ -53,8 +56,11 @@ RATSIT_ADDRESS_EXTRACTOR_VERSION = "ratsit-address-v2"
 RATSIT_ADDRESS_SELECT_PARAMS = {"normalizer_version": RATSIT_NORMALIZER_VERSION}
 
 # The register's postcode -> postal town dictionary (spec 5.1): the most frequent trimmed
-# spelling per digits-only postcode, ties broken by the alphabetically first spelling.
-# Recomputed per page (1.8M SCB rows, a second or two); no table, no migration. The inner
+# spelling per digits-only postcode, ties broken by the alphabetically first spelling. No
+# table and no migration: it is recomputed from the 1.8M SCB rows every time the text is
+# evaluated, which is about TEN times per page -- the `live` CTE is inlined at each of its
+# three references and the page runs a count and an insert over it. ~7 s per statement,
+# ~20 min over the 95 pages of a full run, comfortably inside max_execution_time. The inner
 # aliases are `postal_code_digits`/`town` rather than the column names they derive from --
 # `expr(postal_code) AS postal_code` is a cyclic alias in ClickHouse.
 TOWNS_SQL = (
@@ -75,9 +81,12 @@ TOWNS_SQL = (
 # the inner subquery's WHERE, so the count covers only the establishments that actually
 # become rows -- the same set the slot is drawn from.
 EST_ROWS_SQL = "count() OVER (PARTITION BY est.company_id, est.identifier)"
-# 324 of 846,718 rows repeat an identifier inside one company; those two rows would otherwise
-# share a slot, collapse in the ReplacingMergeTree and leave the change scan re-selecting the
-# company for ever. The suffix is the establishment index, which is unique by construction.
+# 2 rows of the CURRENT reports repeat an identifier inside one company, and those two rows
+# would otherwise share a slot, collapse in the ReplacingMergeTree and leave the change scan
+# re-selecting the company for ever. (The raw table repeats an identifier 324 times, but the
+# other pairs are the SAME establishment seen in two superseded scans of one company, which
+# the report join keeps apart -- only a repeat inside ONE report can collide.) The suffix is
+# the establishment index, which is unique by construction.
 EST_SLOT_SQL = (
     f"if({EST_ROWS_SQL} > 1, "
     "concat('est:', est.identifier, ':', toString(est.establishment_index)), "
@@ -216,7 +225,7 @@ def ratsit_current_sql() -> str:
     The current report's `normalized_at`, stamped exactly as every live row stamps it. Using
     basic info's translation-aware stamp here (the v1 extractor did) makes `candidate.observed_at`
     permanently greater than the `observed_at` the select writes for the 213,283 translated
-    companies, so the scan re-selects them on every run.
+    companies (as of 2026-09-11), so the scan re-selects them on every run.
     """
     return (
         "SELECT company_id, observed_at\n"

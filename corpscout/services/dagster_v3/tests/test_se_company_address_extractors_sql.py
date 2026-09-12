@@ -130,9 +130,10 @@ def test_ratsit_delivers_the_company_row_and_one_workplace_row_per_establishment
     """Spec 2026-09-11 sections 5.1 and 5.2. The company row keeps slot `company` and kind
     `postal`; every establishment of the SAME report with a street and a postcode adds a
     `workplace` row in slot `est:<identifier>`, suffixed with the establishment index when
-    one report repeats the identifier (324 rows on 2026-09-10). Both take `post_town` from
-    the SCB register dictionary instead of Ratsit's locality, which is the municipality on
-    260,862 of 928,491 company addresses."""
+    one report repeats the identifier (2 rows of the current reports; the raw table's 324
+    repeats are mostly one establishment seen in two superseded scans, which the report join
+    keeps apart). Both take `post_town` from the SCB register dictionary instead of Ratsit's
+    locality, which is the municipality on 260,862 of 928,491 company addresses."""
     sql = ratsit.ratsit_select_sql()
 
     # (1) the dictionary: the register's most frequent trimmed town per digits-only postcode,
@@ -151,7 +152,8 @@ def test_ratsit_delivers_the_company_row_and_one_workplace_row_per_establishment
     )
     assert ratsit.TOWNS_SQL in sql
     assert ") AS towns ON towns.postal_code_digits = r.postal_code_digits" in sql
-    # A postcode the register does not know (none today) keeps Ratsit's own locality.
+    # A postcode the register does not know -- about 1,000 of the delivered ones today --
+    # keeps Ratsit's own locality.
     assert ratsit.POST_TOWN_SQL == (
         "nullIf(if(ifNull(towns.town, '') != '', ifNull(towns.town, ''), r.locality), '')"
     )
@@ -222,7 +224,11 @@ def test_ratsit_pairs_live_rows_with_tombstones_for_vanished_slots() -> None:
     sql = ratsit.ratsit_select_sql()
     assert sql.startswith("WITH live AS (\n")
     assert "\nUNION ALL\n" in sql
-    assert ADDRESS_LIVE_ROW_PREDICATE == "street_address IS NOT NULL"
+    # The liveness test names BOTH columns a source can put an address in. A packed source
+    # fills only raw_address -- all 2.86M live Bolagsverket rows have a NULL street_address --
+    # so `street_address IS NOT NULL` alone would read every one of them as already
+    # tombstoned and the branch could never retire one of their slots.
+    assert ADDRESS_LIVE_ROW_PREDICATE == "(street_address IS NOT NULL OR raw_address IS NOT NULL)"
     assert ADDRESS_TOMBSTONE_COLUMNS == ("slot", "kind")
     assert (
         f"WHERE source = 'ratsit' AND {ADDRESS_LIVE_ROW_PREDICATE} "
@@ -278,7 +284,7 @@ def test_the_ratsit_address_current_sql_is_the_reports_own_stamp() -> None:
     """Spec 5.2: the address module gets its own `ratsit_current_sql` over se_ratsit_company
     instead of reusing basic info's translation-aware one, whose greatest(normalized_at,
     business_description_translated_at) stamp exceeds the observed_at this select writes and
-    re-selects the 77k translated companies on every address run."""
+    re-selects the 213,283 translated companies (as of 2026-09-11) on every address run."""
     current = ratsit.ratsit_current_sql()
     assert current == (
         "SELECT company_id, observed_at\n"

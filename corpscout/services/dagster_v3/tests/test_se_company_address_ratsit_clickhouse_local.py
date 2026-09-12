@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from dagster_v3.defs.se_company.address import ratsit, tables
-from dagster_v3.defs.se_company.address.normalize import RAW_ROW_COLUMNS, changed_rows_sql, normalized_row
+from dagster_v3.defs.se_company.address.normalize import changed_rows_sql, normalized_row
 from dagster_v3.defs.se_company.address.normalize_se import NORMALIZER_VERSION
 from dagster_v3.defs.se_company.address.suggestions import ADDRESS_TARGET
 from dagster_v3.defs.se_company.basic_info.extract import changed_scope_sql, insert_page_sql
@@ -275,8 +275,9 @@ def test_the_company_row_takes_the_registers_postal_town(sections: dict[str, lis
 def test_an_unknown_postcode_keeps_ratsits_locality_and_a_tie_takes_the_first_spelling(
     sections: dict[str, list[list[str]]],
 ) -> None:
-    """Spec 5.1: `when the postcode is unknown to the register (none today) the row keeps
-    Ratsit's locality`, and `ties broken by the alphabetically first spelling`."""
+    """Spec 5.1: a postcode the register does not know -- about 1,000 of the delivered ones
+    today -- keeps Ratsit's locality, and `ties broken by the alphabetically first
+    spelling`."""
     rows = _by_slot(sections["rows_1"])
     assert rows[(COMPANY_UNKNOWN_CODE, "company")]["post_town"] == "Ödeby"
     assert rows[(COMPANY_TIE, "company")]["post_town"] == "ALFA"   # ALFA and BETA tie 1-1

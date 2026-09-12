@@ -46,10 +46,15 @@ ADDRESS_TARGET = SuggestionTarget(
 )
 
 
-# A live address row always carries a street; a tombstone carries none. This is the address
+# A live address row carries a street OR a packed raw_address; a tombstone carries neither,
+# because it nulls every one of the thirteen source columns at once. This is the address
 # entity's LIVE_ROW_PREDICATE (person/suggestions.py has the same idea over its three name
 # columns), and it is what keeps an already-tombstoned slot out of the tombstone branch.
-ADDRESS_LIVE_ROW_PREDICATE = "street_address IS NOT NULL"
+# BOTH columns are tested because a PACKED source has no street column to fill: every one of
+# Bolagsverket's 2.86M live rows carries `raw_address` with a NULL `street_address` (the
+# normalizer splits the packed string), and a street-only predicate would read all of them as
+# already dead -- so a per-slot tombstone branch over that source would never fire.
+ADDRESS_LIVE_ROW_PREDICATE = "(street_address IS NOT NULL OR raw_address IS NOT NULL)"
 
 # What a tombstone copies from the stored row: the slot it retires, and the kind it keeps
 # (spec 2026-09-11 section 5.3).
