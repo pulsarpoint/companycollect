@@ -539,7 +539,18 @@ the entity.
 0. Ratsit USD: migration 000400, `se_ratsit_financial_periods_usd` and its job, tests; prod
    preview and execute over 3.1M rows with the spot check (57.1 MSEK near 5.4M USD for 5567081699
    in 2023 at the ECB rate of that date). Code complete 2026-09-11 on branch se-financial-entity
-   (Tasks 1 to 5 of plan 2026-09-11-se-company-financial-0-ratsit-usd.md); prod rollout pending.
+   (Tasks 1 to 5 of plan 2026-09-11-se-company-financial-0-ratsit-usd.md); prod rollout DONE
+   2026-09-12: migration 000400 applied (ledger 400 clean, 23 columns), dagster deployed, the
+   exchange-rates 2026 partition refreshed first (series 2026-07-06 to 2026-09-11, run 9ebffed4),
+   preview run f1f3e78f then execute run d7dd21bb, both in-process on the host because the run queue
+   was held by thirty ESEF refresh runs waiting on the one-slot esef_arelle pool: rows_pending
+   3,132,295, rate_dates_needed 199, rates_found 175, rows_convertible 3,131,994,
+   rows_rate_date_outside_series 301, rows_unknown_unit 0, rows_converted 3,131,994,
+   rows_still_without_rate 301 (mutation_131.txt; it waited 27 minutes for a merge-pool slot behind
+   the CommonCrawl ingest merges, then rewrote the six parts in three). Verified: revenue unconverted
+   301 = the pre-2006 rows; 5567081699 fiscal 2023 revenue 60.3 MSEK = 6,005,001.80 USD at
+   0.099585 (2023-12-29); USD revenue agrees with Bolagsverket within 2% on 782,321 of 1,515,731
+   pairs (the native rounding share); no leftover join table, no unfinished mutation.
 1. Tables and precedence: migration 000401 with the five tables, `financial/tables.py`,
    `precedence.py` with the export asset, DDL tests; prod apply and export.
 2. Extractors: `state_scan.py` lifted from the person package with person switched to it, the
