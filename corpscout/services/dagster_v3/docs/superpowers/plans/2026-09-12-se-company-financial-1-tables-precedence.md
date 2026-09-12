@@ -1292,7 +1292,7 @@ not notice it on their own.
 
 - [ ] **Step 2: Record the refinement and the slice in the spec**
 
-In section 4.1's code block, change the line `suggestion_id       String                  -- lineage id, minted by the extractor from one clock read` to `suggestion_id       FixedString(64)         -- lineage id (sha256 hex), minted by the extractor from one clock read`.
+In section 4.1's code block, change the line `suggestion_id       String                  -- lineage id, minted by the extractor from one clock read` to `suggestion_id       FixedString(64)         -- lineage id (sha256 hex), as address and person carry`.
 
 In section 12, item 1, append (wrapped like its neighbours): `Code complete 2026-09-12 on branch se-financial-entity (plan 2026-09-12-se-company-financial-1-tables-precedence.md); prod apply and export pending.`
 
