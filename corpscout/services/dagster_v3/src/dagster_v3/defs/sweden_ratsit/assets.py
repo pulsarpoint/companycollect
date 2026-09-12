@@ -13,10 +13,15 @@ from typing import Literal
 
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
+from exchange_rates import ExchangeRateClient
 from pydantic import Field
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.common.resources import ObjectStoreResource
+from dagster_v3.defs.sweden_ratsit.financial_usd import (
+    QUALIFIED_PERIODS_TABLE,
+    convert_ratsit_financial_periods,
+)
 from dagster_v3.defs.sweden_ratsit.normalization import (
     RATSIT_COMPANY_INDUSTRY_CODES_TABLE,
     RATSIT_COMPANY_SUMMARIES_TABLE,
@@ -1547,10 +1552,82 @@ se_ratsit_normalize_job = dg.define_asset_job(
 )
 
 
+class RatsitFinancialUsdConfig(dg.Config):
+    # False previews: counts the pending rows and the rates that exist for them, writes nothing.
+    # True loads the rates into a run-scoped Join table, runs ONE mutation over the pending rows
+    # and waits for it. Same gate as the financial entity's extractors.
+    execute: bool = False
+
+
+@dg.asset(
+    name="se_ratsit_financial_periods_usd",
+    deps=[
+        dg.AssetKey(RATSIT_FINANCIAL_PERIODS_TABLE),
+        dg.AssetDep(
+            dg.AssetKey("exchange_rates_v2_clickhouse"),
+            partition_mapping=dg.AllPartitionMapping(),
+        ),
+    ],
+    group_name="sweden_ratsit",
+    kinds={"python", "clickhouse", "fx", "ratsit"},
+    tags={"country": "sweden", "source": "ratsit", "source_name": "sweden_ratsit", "layer": "normalized"},
+    metadata={"table": QUALIFIED_PERIODS_TABLE},
+    description=(
+        "Fills the USD twins and the fx columns of se_ratsit_financial_periods in place for "
+        "every row still without a rate (financial entity spec 2026-09-11, slice 0): SEK to "
+        "USD at the period end (Dec 31 of the fiscal year for undated rows) through the "
+        "shared exchange-rate client, scaled from the row's MSEK/TSEK unit first. "
+        "Re-runnable: a row is converted once; a row whose rate date lies outside the ECB "
+        "series (before its 2006 start or after its newest rate) is left alone, counted as "
+        "rows_rate_date_outside_series and waits for a later run, as does a row with no "
+        "monetary_unit. The mutation is asynchronous and polled: its join table is dropped "
+        "only once the mutation is done and kept, with the KILL MUTATION recipe, when the "
+        "wait fails; a mutation left unfinished by an earlier run stops the next one. "
+        "Preview by default (config execute)."
+    ),
+)
+def se_ratsit_financial_periods_usd(
+    context: dg.AssetExecutionContext,
+    config: RatsitFinancialUsdConfig,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=RATSIT_CLICKHOUSE_DATABASE,
+        tables=(RATSIT_FINANCIAL_PERIODS_TABLE,),
+    )
+    with clickhouse.get_connection() as client:
+        counts = convert_ratsit_financial_periods(
+            client,
+            ExchangeRateClient.from_env(),
+            run_id=context.run_id,
+            execute=config.execute,
+            log=context.log.info,
+        )
+    return dg.MaterializeResult(
+        metadata={**counts.as_metadata(), "table": QUALIFIED_PERIODS_TABLE}
+    )
+
+
+se_ratsit_financial_usd_job = dg.define_asset_job(
+    name="se_ratsit_financial_usd_job",
+    selection=dg.AssetSelection.assets(se_ratsit_financial_periods_usd),
+    description=(
+        "Fill the USD twins of se_ratsit_financial_periods for every row still without a "
+        "rate. Run with execute: true; the default previews."
+    ),
+)
+
+
 defs = dg.Definitions(
-    assets=[se_ratsit_scan_dispatch, se_ratsit_normalized, sweden_ratsit_translation_load],
+    assets=[
+        se_ratsit_scan_dispatch,
+        se_ratsit_normalized,
+        sweden_ratsit_translation_load,
+        se_ratsit_financial_periods_usd,
+    ],
     asset_checks=[sweden_ratsit_translator_queue_health_check],
-    jobs=[se_ratsit_scan_dispatch_job, se_ratsit_normalize_job],
+    jobs=[se_ratsit_scan_dispatch_job, se_ratsit_normalize_job, se_ratsit_financial_usd_job],
     resources={
         "sweden_ratsit_browser": SwedenRatsitBrowserResource(
             crawl_proxy1=dg.EnvVar("crawl_proxy1"),
