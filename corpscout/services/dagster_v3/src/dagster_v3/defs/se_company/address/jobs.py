@@ -8,9 +8,12 @@ import dagster as dg
 from dagster_v3.defs.se_company.address.assets import EXTRACTOR_ASSET_NAMES
 
 NORMALIZE_ASSET = "se_company_address_normalize"
-# The two register scans are the expensive ones: 20,000 ids per page renders inside the
-# extract helper's ID_BOUND_QUERY_SETTINGS (one binding per statement).
-WEEKLY_PAGE_SIZE = 20_000
+# The Ratsit page select binds %(company_ids)s THREE times (its report subquery appears in
+# both live branches, and the stored-slot read once) and the helper runs every page under
+# ID_BOUND_QUERY_SETTINGS' max_query_size of 1 MiB. 20,000 twelve-digit ids render to about
+# 300 KB per binding -- ~900 KB in one statement, with no headroom. 10,000 is the number the
+# person weekly settled on for its two bindings, and it is what the prod runs use.
+WEEKLY_PAGE_SIZE = 10_000
 
 WEEKLY_RUN_CONFIG = {
     "ops": {

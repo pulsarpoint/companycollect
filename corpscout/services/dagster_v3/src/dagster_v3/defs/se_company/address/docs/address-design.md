@@ -121,9 +121,20 @@ write one raw suggestion row per company per source:
   `post_town` as delivered, kind `visiting_or_postal`, slot `''`.
 - `bolagsverket` reads `se_bolagsverket_companies` FINAL: the packed `postal_address`
   string into `raw_address`, kind `postal`, slot `''` -- the normalizer parses it.
-- `ratsit` reads `se_ratsit_company` FINAL, newest normalized report per company:
-  `address_street`, `address_postal_code`, `address_locality`, `address_county`, kind
-  `postal`, slot `company`.
+- `ratsit` (`ratsit-address-v2`) reads `se_ratsit_company` FINAL and
+  `se_ratsit_establishments` FINAL, newest normalized report per company: the company's
+  `address_street`, `address_postal_code` and `address_county` as delivered, kind `postal`,
+  slot `company`, plus one row per establishment of that report carrying a street and a
+  postcode — kind `workplace`, slot `est:<identifier>` with the establishment index appended
+  when a report repeats the identifier. `post_town` on every row comes from a postcode →
+  town dictionary rebuilt per page from `se_scb_companies` FINAL (`has_company = 1`, the
+  most frequent trimmed spelling per digits-only postcode, ties alphabetically), because
+  Ratsit delivers the municipality as the locality on about 28% of company addresses and the
+  normalizer's `city` is part of both `location_key` and `address_key`. A slot the newest
+  report no longer delivers gets a NULL row through
+  `suggestions.py::address_select_sql`, which pairs the live rows with per-slot tombstones
+  stamped with the current report's `observed_at`; `scb` and `bolagsverket` keep their
+  single-slot tombstone instead.
 - `esef` reads `se_esef_facts` joined to `se_esef_filings`: the
   `AddressOfRegisteredOfficeOfEntity` fact of the company's newest filing with a period end
   no later than today, cleaned (tags, whitespace, trailing punctuation) and re-packed into
@@ -269,6 +280,23 @@ at) or -- where the value is a JOIN KEY, as in the match features -- builds it f
 own components (`Box N`, else street_name + house_number + unit) so a `c/o` prefix cannot
 enter the key. And a row without a street and without a box is location-less: it never takes
 the primary slot from a row that has one.
+
+### The serving view does not publish workplace-only rows (migration 000403)
+
+The serving view publishes a company's addresses as an UNCAPPED JSON array and picks one
+primary address by a tiebreak over `kinds`. Ratsit's establishments (slice 3) put hundreds of
+`workplace` rows on some companies -- one holds 1,607, which is a ~400 KB serving JSON -- and
+355 companies have establishments but no `visiting_or_postal` row at all, so a workplace could
+become the address the companies and geocoding lists print as the company's own. The view's
+`company_addresses` CTE therefore excludes rows whose `kinds` is EXACTLY `['workplace']`, and
+because the array, `address_count` and the primary pick all read that one CTE, they drop those
+rows together. A row the FOLD merged -- an establishment repeating the company's own postal
+street and postcode, `kinds = ['postal', 'workplace']` -- is the company's address and stays.
+This is a serving rule and not a fold rule: every row stays in `se_company_address` and on the
+backoffice Address tab, which reads the entity directly. Migration 000403 carries the
+repointed query on 000393's in-place recipe below (`SYSTEM STOP VIEW`, `ALTER TABLE ... MODIFY
+QUERY`, `SYSTEM START VIEW`, no `_next` and no `SYSTEM WAIT VIEW`), and the same
+interrupted-run recovery applies with `migrate force 403`.
 
 ### If a serving swap is interrupted
 

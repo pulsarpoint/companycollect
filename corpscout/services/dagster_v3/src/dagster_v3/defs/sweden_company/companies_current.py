@@ -6,13 +6,14 @@ address -- without paying the FINAL merges on `se_company_address`/`se_company_b
 and the per-company aggregation on every request. This module is the single source of truth
 for that SELECT; migration 000335 materializes it as a refreshable MV, 000391 repoints its
 company spine at the folded basic-info row, 000392 repoints its address half at the address
-entity, and the backoffice admin companies pages read the materialized table.
+entity, 000403 takes workplace-only rows out of that half, and the backoffice admin companies
+pages read the materialized table.
 
 WHAT IT AGGREGATES.
 
-- One row per company. `se_company_address` FINAL, `active = 1` only, is reduced to a
-  per-company JSON array of its published addresses (companies carry 1-2), plus an
-  `address_count`.
+- One row per company. `se_company_address` FINAL, `active = 1`, workplace-only rows excluded
+  (see below), is reduced to a per-company JSON array of its published addresses (companies
+  carry 1-2), plus an `address_count`.
 - Each address element is a Map(String, String) -- every value stringified so `toJSONString`
   emits a plain JSON object (verified 2026-08-26 to round-trip a/a/o intact). Its geocode
   fields (`geocode_status`, `geocode_precision`, `latitude`, `longitude`) sit ON the entity
@@ -105,6 +106,23 @@ _GEOCODE_PROVIDER_EXPR = (
     "a.latitude IS NULL, '', "
     "'osm')"
 )
+
+# WORKPLACE-ONLY ROWS ARE NOT SERVED (migration 000403, owner ruling on the Ratsit address
+# slice, 2026-09-12). Ratsit publishes one address per ESTABLISHMENT, so a company can hold
+# hundreds of them -- one holds 1,607 -- and `addresses` is an uncapped groupArray: that one
+# company's serving JSON would be ~400 KB, read whole by every admin companies page. Worse,
+# 355 companies have establishments but NO `visiting_or_postal` row, so a workplace could win
+# the primary tiebreak below and the lists would print a branch office as the company's own
+# address. Excluded from the array, from `address_count` and from the primary pick alike:
+# all three read the one CTE this clause sits on.
+#
+# EXACTLY `['workplace']`, not `has(kinds, 'workplace')`. The fold MERGES an establishment
+# that repeats the company's own postal street and postcode into the postal address, and that
+# merged row keeps both kinds (`['postal', 'workplace']`): it IS the company's address and
+# stays. Only a row whose sole kind is workplace is a place the company works but does not
+# publish as itself. The rows stay in `se_company_address` and on the backoffice Address tab
+# -- this is a serving-view rule, not a fold rule.
+_WORKPLACE_ONLY_PREDICATE = "a.kinds = ['workplace']"
 
 # The address element's Map keys, in emission order. Each value is stringified so the Map is
 # homogeneous (Map(String, String)) and toJSONString renders a flat JSON object.
@@ -306,7 +324,7 @@ def build_se_companies_serving_sql() -> str:
     has(a.kinds, 'visiting_or_postal') AS kind_visiting_or_postal,
     has(a.kinds, 'visiting') AS kind_visiting
   FROM {COMPANY_ADDRESS_TABLE} AS a FINAL
-  WHERE a.active = 1
+  WHERE a.active = 1 AND NOT ({_WORKPLACE_ONLY_PREDICATE})
 ),
 primary_address AS (
   SELECT

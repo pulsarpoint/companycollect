@@ -374,6 +374,17 @@ refresh, the Address tab on the owner's dev server for a company with establishm
   and address extractors are unpartitioned, so the 128-vs-64 mapping problem of the
   basic-info lineage does not arise.
 
+- Serving view (ruling at slice 3's final review): rows whose `kinds` is exactly `['workplace']` stay in the
+  address entity and the Address tab but are excluded from `se_companies_serving`'s address array,
+  `address_count` and primary-address selection (migration 000403, the 000398 recipe) — one company holds
+  ~1,607 establishments and 355 companies have establishments but no register address, so a workplace
+  could otherwise become the primary address and the serving JSON balloon. The Address tab rendering
+  hundreds of workplace rows for such a company is a follow-up (grouping or paging).
+- About 1,031 Ratsit postcodes are unknown to SCB; those company rows keep Ratsit's locality (the
+  municipality) — a residue of the town fix, counted in the readouts.
+- The shared address liveness predicate counts a row live when it has a street OR a packed raw address,
+  so a future packed-address source adopting the per-slot tombstone helper tombstones correctly.
+
 ## 7. Names
 
 Modules `se_company/person/ratsit.py` (new), `se_company/address/ratsit.py` (rewritten),
