@@ -1395,6 +1395,21 @@ rm -f "$MSGFILE"
 
 ### Task 4: Prod run (controller)
 
+> **Final-review corrections (2026-09-12):** (1) `null_rows` in the suggestion readouts is ~18,300, not 0 — the company row is
+> emitted without a street for ~18,347 current reports (prod's existing ratsit rows already show 1,668 such rows); the
+> tombstone-only count is `countIf(street_address IS NULL AND source_record_uid = '')`, 0 on the first run. (2) Index-suffixed
+> slots: 2 today, not 324 (the 324/750 figures count the raw table across superseded reports). (3) Step 2(c)'s street+postcode
+> filtered establishment population is 732,303 rows / 662,195 companies / max 1,607 per company (766,313 / 1,718 are the
+> unfiltered spec-2 figures). (4) Step 2(e): ~1,031 postcodes unknown to SCB keep Ratsit's locality; ~261,288 rows get the
+> corrected town. (5) The dictionary is evaluated ~10x per page (~7 s per statement, ~20 min over the run). (6) **Before Step 8
+> (the fold backfill) apply migration 000403** (`se_companies_serving` excludes workplace-only rows from its address array,
+> count and primary selection; the 000398 recipe, no SYSTEM WAIT VIEW; run it outside the :45 refresh window and check
+> `system.view_refreshes` after) — the fold must not publish workplace rows into a serving view that would pick one as
+> primary. (7) Step 10 gains: `max(address_count)`, `max(length(addresses))` and `countIf(primary_kind = 'workplace')`-style
+> checks on `se_companies_serving` (expect no workplace-only primary; the largest company's serving array unchanged in
+> order of magnitude), and a spot check of one of the 355 establishment-only companies.
+
+
 **The controller runs this task; a task subagent never touches prod.** Every step is a Dagster run, a read-only `SELECT`, or a deploy the owner approves. Nothing here is a code change until Step 12.
 
 **Files:**
