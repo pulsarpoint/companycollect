@@ -577,6 +577,26 @@ flags read empty tables until the first fold.
 
 5. Roles as rows (section 11): the `se_company_person_role` refreshable view and its pin, the
    People tab's roles panel and the list's year filter.
+   Shipped 2026-09-12 (plan `2026-09-12-se-company-person-5-roles.md`, main 15229b44): migration
+   000402 created `se_company_person_role` as a refreshable materialized view (EMPTY, engine in the
+   view, `REFRESH EVERY 1 HOUR OFFSET 20 MINUTE`, the 000347 memory-bounding settings block), its
+   SELECT owned by `tables.build_se_company_person_role_sql()` and pinned byte for byte against the
+   migration; the reused name moved from the slice-0 dropped list to the kept list; a clickhouse-local
+   proof; the People tab's Roles section reads the view (eighth loader read; the array-derived roles
+   with a note when a person's rows are missing or older than its last fold, "hidden and withdrawn
+   persons are not in the roles view" for inactive persons, a missing view degrades to the fallback
+   instead of failing the tab; `is_current` titled "on the person's latest observed year"). Two task
+   gates, a final review (unbounded refresh, no health signal, the false note on inactive persons, the
+   UNKNOWN_TABLE window, `role_year` 0 wording, the badge title, plan numbers) fixed in one wave and
+   re-reviewed. Prod: 000402 applied 19:58 UTC (3.0 s; the migration applied from the branch before
+   the merge), `SYSTEM REFRESH VIEW` 19:58:37, first refresh done 20:02:16 (3 min 40 s):
+   3,837,006 rows over 1,113,485 persons — exactly the count derived live from the person and
+   normalized tables — 468 rows without a fiscal year (Wikidata's spans), 3,495,529 rows on a person's
+   latest observed year; Swedbank's Erik Bo Bengtsson shows board member 2021 and 2022 (ESEF, the
+   seat ending 2023-01-18), executive 2023 and 2024, legal representative 2026 (Ratsit, current); the
+   owner's dev server renders the section from the view and the list's `year` filter (shipped in slice
+   3) answers. Health: `system.view_refreshes` for the view (exception, or `last_success_time` older
+   than three hours) is the runbook check until the person weekly runs and can carry an asset check.
 Each slice is one plan executed with subagent-driven development, reviewed, merged and deployed
 before the next; shipped records are appended here as for addresses.
 

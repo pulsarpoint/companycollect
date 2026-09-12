@@ -130,7 +130,7 @@ So this plan has **no list task**. Task 3 step 6 re-checks the filter on prod da
 - Consumes: `tables.QUALIFIED_MAIN_TABLE` (`"corpscout.se_company_person"`), `tables.QUALIFIED_NORMALIZED_TABLE` (`"corpscout.se_company_person_normalized"`), `tests/se_company_ddl.py::table_block`, `tests/clickhouse_local.py::clickhouse_local_command`.
 - Produces: `tables.ROLE_VIEW`, `tables.QUALIFIED_ROLE_VIEW`, `tables.ROLE_VIEW_COLUMNS`, `tables.ROLE_VIEW_ORDER_BY`, `tables.build_se_company_person_role_sql() -> str`, and the migration pair `000402_corpscout_se_company_person_role`.
 
-- [ ] **Step 1: Write the failing pin test**
+- [x] **Step 1: Write the failing pin test**
 
 Create `tests/test_se_company_person_role_view.py`:
 
@@ -275,7 +275,7 @@ def test_the_sort_key_carries_no_nullable_column() -> None:
     assert "n.role_to AS role_to" in body
 ```
 
-- [ ] **Step 2: Run it to watch it fail on the missing builder**
+- [x] **Step 2: Run it to watch it fail on the missing builder**
 
 ```bash
 cd corpscout/services/dagster_v3
@@ -285,7 +285,7 @@ uv run --frozen --no-sync pytest tests/test_se_company_person_role_view.py -q
 
 Expected: collection error — `ImportError: cannot import name 'build_se_company_person_role_sql' from 'dagster_v3.defs.se_company.person.tables'`.
 
-- [ ] **Step 3: Add the constants and the builder to `tables.py`**
+- [x] **Step 3: Add the constants and the builder to `tables.py`**
 
 In `src/dagster_v3/defs/se_company/person/tables.py`, after `MATCH_STATE_TABLE` (line 23) add the view name:
 
@@ -365,7 +365,7 @@ WHERE p.active = 1 AND n.role_code IS NOT NULL"""
 
 Also extend the module docstring's first paragraph with one sentence: `Slice 5 added the derived role view (ROLE_VIEW, build_se_company_person_role_sql), created by migration 000402.`
 
-- [ ] **Step 4: Run the pin test again to watch it fail on the missing migration**
+- [x] **Step 4: Run the pin test again to watch it fail on the missing migration**
 
 ```bash
 uv run --frozen --no-sync pytest tests/test_se_company_person_role_view.py -q
@@ -373,7 +373,7 @@ uv run --frozen --no-sync pytest tests/test_se_company_person_role_view.py -q
 
 Expected: every test errors with `FileNotFoundError: ... 000402_corpscout_se_company_person_role.up.sql`.
 
-- [ ] **Step 5: Write the migration**
+- [x] **Step 5: Write the migration**
 
 Create `corpscout/clickhouse/migrations/000402_corpscout_se_company_person_role.up.sql`. **No `;` anywhere inside a `--` comment**, and the file ends with the statement:
 
@@ -463,7 +463,7 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 DROP VIEW IF EXISTS corpscout.se_company_person_role;
 ```
 
-- [ ] **Step 6: Run the pin test to green**
+- [x] **Step 6: Run the pin test to green**
 
 ```bash
 uv run --frozen --no-sync pytest tests/test_se_company_person_role_view.py -q
@@ -471,7 +471,7 @@ uv run --frozen --no-sync pytest tests/test_se_company_person_role_view.py -q
 
 Expected: 5 passed. If `test_the_view_body_is_the_builder_render_and_has_not_drifted_from_it` fails, the migration body and the builder differ — fix the MIGRATION, never the builder's render, by pasting the builder's output.
 
-- [ ] **Step 7: Run the ledger suites to watch the reused name break them**
+- [x] **Step 7: Run the ledger suites to watch the reused name break them**
 
 ```bash
 uv run --frozen --no-sync pytest tests/test_clickhouse_migrations.py tests/test_se_person_retirement_drops.py -q
@@ -481,7 +481,7 @@ Expected: two failures, both about the name 000402 just brought back —
 `test_clickhouse_migration_files_are_explicit` (the two new files are not in `EXPECTED_MIGRATIONS`) and
 `test_no_up_migration_declares_a_slice_0_dropped_object` (`000402_corpscout_se_company_person_role.up.sql declares se_company_person_role`).
 
-- [ ] **Step 8: Register 000402 and move the reused name in both guards**
+- [x] **Step 8: Register 000402 and move the reused name in both guards**
 
 In `tests/test_clickhouse_migrations.py`, add the entry at the end of `EXPECTED_MIGRATIONS` (after `"000401_corpscout_se_company_financial_entity",`, line 417):
 
@@ -552,7 +552,7 @@ def test_the_drop_script_names_no_kept_object() -> None:
 
 Finally update that file's module docstring: `BOTH SCRIPTS ARE SPENT: they ran on prod on 2026-09-09, and migrations 000398 and 000402 have since given TWO of their DROP names -- corpscout.se_company_person and corpscout.se_company_person_role -- to live objects. Re-running se_person_retirement_drops.sql would destroy them. See REUSED_NAMES below.`
 
-- [ ] **Step 9: Run both suites to green**
+- [x] **Step 9: Run both suites to green**
 
 ```bash
 uv run --frozen --no-sync pytest tests/test_clickhouse_migrations.py tests/test_se_person_retirement_drops.py -q
@@ -560,7 +560,7 @@ uv run --frozen --no-sync pytest tests/test_clickhouse_migrations.py tests/test_
 
 Expected: all green (149 + the migrations file's own count, the same total as the baseline plus nothing new).
 
-- [ ] **Step 10: Pin the constants beside the other DDL pins**
+- [x] **Step 10: Pin the constants beside the other DDL pins**
 
 Add to `tests/test_se_company_person_tables.py`, immediately after `test_the_entity_name_is_a_prefix_of_five_siblings`:
 
@@ -602,7 +602,7 @@ uv run --frozen --no-sync pytest tests/test_se_company_person_tables.py -q
 
 Expected: the file's existing tests plus the new one, all green.
 
-- [ ] **Step 11: Write the clickhouse-local proof**
+- [x] **Step 11: Write the clickhouse-local proof**
 
 Create `tests/test_se_company_person_role_view_clickhouse_local.py`:
 
@@ -859,7 +859,7 @@ def test_roleless_unfolded_and_inactive_observations_contribute_nothing(
     assert all(row["person_key"] != ERIK for row in rows)
 ```
 
-- [ ] **Step 12: Run the clickhouse-local proof**
+- [x] **Step 12: Run the clickhouse-local proof**
 
 ```bash
 uv run --frozen --no-sync pytest tests/test_se_company_person_role_view_clickhouse_local.py -q
@@ -867,7 +867,7 @@ uv run --frozen --no-sync pytest tests/test_se_company_person_role_view_clickhou
 
 Expected: 6 passed (3 tests × 2 `join_use_nulls` settings). Docker must be running — the machine has no `clickhouse-local` binary, so `tests/clickhouse_local.py` pulls `clickhouse/clickhouse-server:26.5`. If the module SKIPS, say it skipped; never report a skip as a pass. If ClickHouse rejects the `ON` clause after `ARRAY JOIN`, or rejects the sort key, fix the BUILDER and re-copy its render into the migration — the pin test in step 6 will tell you if the two halves diverge.
 
-- [ ] **Step 13: Record the view in the package doc**
+- [x] **Step 13: Record the view in the package doc**
 
 In `src/dagster_v3/defs/se_company/person/docs/person-design.md`:
 
@@ -912,7 +912,7 @@ Four things to know before reading it:
   names it and must never be run again.
 ```
 
-- [ ] **Step 14: Run everything this task touches, then commit**
+- [x] **Step 14: Run everything this task touches, then commit**
 
 ```bash
 uv run --frozen --no-sync dg check defs
@@ -980,7 +980,7 @@ The company's People tab (`/admin/se/company/:companyId/people`) loads its whole
 - Consumes from Task 1: the view's name and column list — `corpscout.se_company_person_role` with `company_id, person_key, display_name, birth_year, role_code, role_year, role_from, role_to, source, slot, normalized_id, is_current, folded_at`, `role_year = 0` meaning "no year at all".
 - Produces: `SE_COMPANY_PERSON_ROLE_TABLE`, `SePersonRoleRow`, `PERSON_ROLE_SQL`, `SePersonPublished.roleRows: SePersonRoleRow[]`.
 
-- [ ] **Step 1: Write the failing loader tests**
+- [x] **Step 1: Write the failing loader tests**
 
 In `tests/se-company-person-entity.server.test.ts`, add `PERSON_ROLE_SQL` to the import list (alphabetical, between `PERSON_RAW_SQL` and `PERSON_RULES_SQL`) and `type SePersonRoleRow` to the type imports. Add the fixture right after `CALL_NAME_MATCH`:
 
@@ -1069,7 +1069,7 @@ And add a new test right after it:
   });
 ```
 
-- [ ] **Step 2: Run them to watch them fail**
+- [x] **Step 2: Run them to watch them fail**
 
 ```bash
 cd corpscout/services/backoffice
@@ -1078,7 +1078,7 @@ npx vitest run tests/se-company-person-entity.server.test.ts
 
 Expected: the file fails to typecheck/import — `PERSON_ROLE_SQL` and `SePersonRoleRow` are not exported by `~/lib/se-company-person-entity.server`.
 
-- [ ] **Step 3: Add the table constant**
+- [x] **Step 3: Add the table constant**
 
 In `app/lib/se-person-tables.ts`, after `SE_COMPANY_PERSON_TABLE`:
 
@@ -1098,7 +1098,7 @@ In `app/lib/se-person-tables.ts`, after `SE_COMPANY_PERSON_TABLE`:
 export const SE_COMPANY_PERSON_ROLE_TABLE = "corpscout.se_company_person_role";
 ```
 
-- [ ] **Step 4: Add the row type, the SQL and the eighth read**
+- [x] **Step 4: Add the row type, the SQL and the eighth read**
 
 In `app/lib/se-company-person-entity.server.ts`:
 
@@ -1203,7 +1203,7 @@ and add one line to the object the `mainRows.map` callback returns, right after 
       roleRows: roleRowsByKey.get(row.person_key) ?? [],
 ```
 
-- [ ] **Step 5: Run the loader tests to green**
+- [x] **Step 5: Run the loader tests to green**
 
 ```bash
 npx vitest run tests/se-company-person-entity.server.test.ts
@@ -1211,7 +1211,7 @@ npx vitest run tests/se-company-person-entity.server.test.ts
 
 Expected: the whole file green, including the two new assertions and the fallback test.
 
-- [ ] **Step 6: Write the failing panel test**
+- [x] **Step 6: Write the failing panel test**
 
 In `tests/admin-se-company-person.test.tsx`, add `roleRows` to the `published` fixture, right after its `roles` line:
 
@@ -1263,7 +1263,7 @@ and add this test after `it("renders the workspace: the persons, their sources, 
   });
 ```
 
-- [ ] **Step 7: Run it to watch it fail**
+- [x] **Step 7: Run it to watch it fail**
 
 ```bash
 npx vitest run tests/admin-se-company-person.test.tsx
@@ -1271,7 +1271,7 @@ npx vitest run tests/admin-se-company-person.test.tsx
 
 Expected: the new test fails on `expect(html).toContain("2019-05-01")` (the panel still renders only the array-derived block, which has no dates) and on the missing fallback sentence.
 
-- [ ] **Step 8: Render the view's rows in `PersonPanel`**
+- [x] **Step 8: Render the view's rows in `PersonPanel`**
 
 In `app/components/admin/se-person-workspace.tsx`, replace the whole Roles `<section>` (lines 1275-1300, the one whose heading is `Roles`) with:
 
@@ -1340,7 +1340,7 @@ In `app/components/admin/se-person-workspace.tsx`, replace the whole Roles `<sec
 
 Nothing else in the file changes: `rolesByYear`, `roleLabel`, `personSourceLabel`, `EMPTY_VALUE` and `Badge` are already imported and the fallback branch is the block that was there before, verbatim.
 
-- [ ] **Step 9: Run both suites, typecheck, commit**
+- [x] **Step 9: Run both suites, typecheck, commit**
 
 ```bash
 npx vitest run tests/admin-se-company-person.test.tsx tests/se-company-person-entity.server.test.ts \
@@ -1383,7 +1383,7 @@ No new code. **No dagster deploy is required by this slice** — nothing in the 
 
 The order is: **migrate first, then merge** (final-review ruling: the merge is the backoffice deploy — the owner's dev server serves `main` — and the loader's eighth read would hit UNKNOWN_TABLE in the window; the read now degrades to the fallback, but the migration still goes first: run `make -s -C <worktree>/corpscout clickhouse-migrate-up-one` from this branch's checkout, check the ledger, then merge), force the first refresh, read it out, smoke the tab.
 
-1. [ ] **Whole-branch review, then merge to `main`.** If `main` has taken 000402 in the meantime, renumber FIRST (both migration files, `EXPECTED_MIGRATIONS`, `MIGRATION` in `tests/test_se_company_person_role_view.py`, the `000402` mentions in `person-design.md` and in the spec's section 11), then re-run:
+1. [x] **Whole-branch review, then merge to `main`.** If `main` has taken 000402 in the meantime, renumber FIRST (both migration files, `EXPECTED_MIGRATIONS`, `MIGRATION` in `tests/test_se_company_person_role_view.py`, the `000402` mentions in `person-design.md` and in the spec's section 11), then re-run:
 
    ```bash
    cd corpscout/services/dagster_v3
@@ -1395,7 +1395,7 @@ The order is: **migrate first, then merge** (final-review ruling: the merge is t
 
    Merge from the main checkout when it is on `main`; if it is not, merge through the deploy worktree (`git -C <scratch>/deploy-worktree checkout main && git -C <scratch>/deploy-worktree merge se-person-roles`) and leave the owner's checkout alone.
 
-2. [ ] **Apply the migration from the merged `main` checkout.** No refresh window to dodge: this migration touches no existing view, and `se_companies_serving` (:45) is not named anywhere in it.
+2. [x] **Apply the migration from the merged `main` checkout.** No refresh window to dodge: this migration touches no existing view, and `se_companies_serving` (:45) is not named anywhere in it.
 
    ```bash
    make -s -C corpscout clickhouse-migrate-up-one
@@ -1404,7 +1404,7 @@ The order is: **migrate first, then merge** (final-review ruling: the merge is t
 
    Expected: the first returns in **seconds** (the view is created `EMPTY`, there is no `SYSTEM WAIT VIEW`), and the version reads `402` with no `(dirty)`. If the client ever does drop, check `SELECT name FROM system.tables WHERE database = 'corpscout' AND name = 'se_company_person_role'`: if the view is there, `make -s -C corpscout clickhouse-migrate-force VERSION=402`; if it is not, re-run the up-one.
 
-3. [ ] **Force the first build and watch it land.** The view is empty until this runs (or until the next :20 tick, whichever comes first):
+3. [x] **Force the first build and watch it land.** The view is empty until this runs (or until the next :20 tick, whichever comes first):
 
    ```bash
    ssh companycollect "docker exec clickhouse-clickhouse-1 clickhouse-client -q \"SYSTEM REFRESH VIEW corpscout.se_company_person_role\""
@@ -1413,7 +1413,7 @@ The order is: **migrate first, then merge** (final-review ruling: the merge is t
 
    Poll the second command until `status` is `Scheduled` with an empty `exception` and `last_success_time` set (a failed attempt sets only `last_refresh_time`). **Do not use `SYSTEM WAIT VIEW`** — it blocks for the whole build and is exactly the statement that outlived a client at 000391. If `exception` is `MEMORY_LIMIT_EXCEEDED` or a join error, the fix is a follow-up migration adding `SETTINGS join_algorithm = 'grace_hash,hash'` to the SELECT (the serving view's shape), not an edit to the applied one — and the owner decides.
 
-4. [ ] **Read it out.** Four numbers, all of them checkable against spec section 11:
+4. [x] **Read it out.** Four numbers, all of them checkable against spec section 11:
 
    ```sql
    -- a) the view's own size
@@ -1438,7 +1438,7 @@ The order is: **migrate first, then merge** (final-review ruling: the merge is t
 
    Expected: (a) `rows` ≈ **3,837,006** and `persons` ≈ **1,113,485**; (b) equal to (a) to the rows any fold since 2026-09-12 has changed — a DIFFERENCE here means the stored view is not the SELECT, which is the one thing the refresh exists to guarantee; (c) `active_persons` − `persons` ≈ **160,279**. Record all of them.
 
-5. [ ] **Spot-check one person against the spec's own readout.** Swedbank's Erik Bo Bengtsson:
+5. [x] **Spot-check one person against the spec's own readout.** Swedbank's Erik Bo Bengtsson:
 
    ```sql
    SELECT person_key, display_name, role_code, role_year, role_from, role_to, source, slot, is_current
@@ -1450,7 +1450,7 @@ The order is: **migrate first, then merge** (final-review ruling: the merge is t
 
    Expected (spec section 11): board member 2021 and 2022 from ESEF with the seat ending 2023-01-18, executive 2023 and 2024, legal representative 2026 from Ratsit. Compare each row against the person's own tab in the next step; a mismatch is a finding, not a rounding error.
 
-6. [ ] **Smoke the backoffice on the owner's dev server.** `http://localhost:5183` when the owner's main checkout is on `main` (the merge is the deploy); otherwise run one from this worktree on 5199 (`npm run dev -- --port 5199`) and use that. Check, in order:
+6. [x] **Smoke the backoffice on the owner's dev server.** `http://localhost:5183` when the owner's main checkout is on `main` (the merge is the deploy); otherwise run one from this worktree on 5199 (`npm run dev -- --port 5199`) and use that. Check, in order:
    - the People tab of the Swedbank company id from step 5: the panel's **Roles** section lists the view's rows — role label, year, the ESEF seat's end date, the source labels — and does NOT show "the roles view has not rebuilt";
    - a person folded during the smoke (use **Fold now** on any company): immediately after the fold the panel falls back to the arrays and says so, and after the next :20 refresh it lists rows again;
    - the People list at `/admin/se/people?year=2025` — the pre-existing `year` filter (shipped in slice 3, `has(p.role_years, {year:UInt16})`) still answers, counts strip and all. Nothing in this slice changed it; this is the check that nothing broke it.
@@ -1462,7 +1462,7 @@ The order is: **migrate first, then merge** (final-review ruling: the merge is t
 
    Expected: both `200`.
 
-7. [ ] **Record and archive.**
+7. [x] **Record and archive.**
    - Append the slice-5 shipped record to spec **section 9 item 5**: migration 000402 (the number it actually got), the engine-in-view refreshable form created `EMPTY`, the builder + drift pin, the clickhouse-local proof, the two reused-name guards that moved, the eighth backoffice read and the panel's fallback, and every readout from steps 3 to 6 (row count, persons, dateless rows, the live recomputation, Erik Bo Bengtsson's rows, the tab and the list).
    - Record the two rulings this plan made (they are in the self-review below and belong in the record): the engine-in-view form over a separate target table, and `role_year UInt16` with 0 for "no year" so the spec's ORDER BY survives `allow_nullable_key` being off.
    - Note in the record that the spec's list-filter sentence was ALREADY satisfied by slice 3, so this slice shipped no list change.
