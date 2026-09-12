@@ -121,9 +121,20 @@ write one raw suggestion row per company per source:
   `post_town` as delivered, kind `visiting_or_postal`, slot `''`.
 - `bolagsverket` reads `se_bolagsverket_companies` FINAL: the packed `postal_address`
   string into `raw_address`, kind `postal`, slot `''` -- the normalizer parses it.
-- `ratsit` reads `se_ratsit_company` FINAL, newest normalized report per company:
-  `address_street`, `address_postal_code`, `address_locality`, `address_county`, kind
-  `postal`, slot `company`.
+- `ratsit` (`ratsit-address-v2`) reads `se_ratsit_company` FINAL and
+  `se_ratsit_establishments` FINAL, newest normalized report per company: the company's
+  `address_street`, `address_postal_code` and `address_county` as delivered, kind `postal`,
+  slot `company`, plus one row per establishment of that report carrying a street and a
+  postcode — kind `workplace`, slot `est:<identifier>` with the establishment index appended
+  when a report repeats the identifier. `post_town` on every row comes from a postcode →
+  town dictionary rebuilt per page from `se_scb_companies` FINAL (`has_company = 1`, the
+  most frequent trimmed spelling per digits-only postcode, ties alphabetically), because
+  Ratsit delivers the municipality as the locality on about 28% of company addresses and the
+  normalizer's `city` is part of both `location_key` and `address_key`. A slot the newest
+  report no longer delivers gets a NULL row through
+  `suggestions.py::address_select_sql`, which pairs the live rows with per-slot tombstones
+  stamped with the current report's `observed_at`; `scb` and `bolagsverket` keep their
+  single-slot tombstone instead.
 - `esef` reads `se_esef_facts` joined to `se_esef_filings`: the
   `AddressOfRegisteredOfficeOfEntity` fact of the company's newest filing with a period end
   no later than today, cleaned (tags, whitespace, trailing punctuation) and re-packed into

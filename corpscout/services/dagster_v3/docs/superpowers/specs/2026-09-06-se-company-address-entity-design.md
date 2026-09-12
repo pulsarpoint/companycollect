@@ -41,7 +41,9 @@ Owner decisions, 2026-09-05 and 2026-09-06:
 - Sources in the first cut: SCB, Bolagsverket, Ratsit's company address, the reviewer. ESEF
   joined as a source in slice 3 of the 2026-09-08 ESEF design
   (`2026-09-08-esef-entity-link-people-addresses-design.md`), kind `registered`; Ratsit's
-  establishments come later as kind `workplace`.
+  establishments joined in slice 3 of the 2026-09-11 Ratsit design
+  (`2026-09-11-se-ratsit-source-design.md`), kind `workplace`, slot `est:<identifier>`, in
+  the same slice that took the Ratsit postal town from the SCB register.
 - Build beside the current model, prove parity, switch readers, retire the old chain in an
   owner-gated step.
 
@@ -52,7 +54,8 @@ extractors, the fold with compatibility grouping, rules, set replacement, histor
 in-page geocoding, the geocode cache adoption, the precedence export, the backoffice Address
 tab with its five actions, parity, the reader switch and the retirement list.
 
-Out of scope: the workplace extractor, other countries' normalizers (the normalizer is one
+Out of scope for THIS spec (the workplace extractor shipped later, in the 2026-09-11 Ratsit
+design's slice 3): other countries' normalizers (the normalizer is one
 function per country; only Sweden is written), any change to the matcher, the workbench
 scripts, the centroid tables or the OSM refresh, and the sensor (manual folds first, as for
 basic info).
