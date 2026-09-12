@@ -356,6 +356,27 @@ matches" panel.
    version 2, at the price of re-sending every company.
 2. The backoffice: the match read, the member badge, the `llm_match` rendering, the
    possible-matches panel with its merge; tests; owner smoke.
+   Shipped 2026-09-12 (plan `2026-09-12-se-person-llm-match-2-backoffice.md`, main bd70c46b): the
+   People tab's loader reads the company's current pairs (`se-person-match.ts`, `PERSON_MATCH_SQL`
+   joined to the state row's `input_hash`, confidence at or above 0.5) and derives `matchedBy` per
+   published person (a pair counts when a member of each side is among the person's normalized ids
+   and the sides' birth years do not conflict — the fold's own rule), a per-member match, and
+   `possibleMatches` (pairs in the 0.5–0.8 band whose sides each resolve to exactly one active
+   person, one row per person pair with the strongest confidence, pairs already covered by an
+   active merge rule dropped). The workspace shows `matched by LLM · 0.93` on members (reason as
+   the title), an "LLM match" list from the person's `data.llm_match` (with a muted note when the
+   current pairs no longer name the person's observations), the rest of `data` without that key,
+   and a "Possible matches" card whose Merge buttons (labelled with both names) post the existing
+   `merge` intent with the two person keys and the note `LLM match 0.64: <reason>`; no new intent,
+   no new rule kind. Three task gates, a final review (the birth-year veto on the badge, the
+   one-person resolution of a side, the intent pin in the tests, the stale note, the grouping,
+   the aria labels) fixed in one wave and re-reviewed; typecheck clean, suite 126 files / 1,349
+   tests with the pre-existing failures unchanged. Smoke on a dev server from the worktree (the
+   owner's checkout sat on another session's ESEF branch): Swedbank's selected-person view shows
+   the badges and the match list; the card renders on companies with banded pairs (one to nine
+   rows); a Merge on 5591724678 (`Maher Sami Taha` ↔ `Maher Sami Taha Taha`, 0.60) wrote the
+   reviewer merge rule with the LLM note; the Fold now run (9ea37b97) that applies it was queued behind another session's ESEF refresh backfill holding all 32 run slots (reported to the owner) and applies the rule when it runs; the card already hides the pair because an active merge rule covers it. The People list is untouched. Prod held 10,429
+   banded pairs across 7,703 companies at the time.
 
 Each slice is one plan executed with subagent-driven development, reviewed, merged and run
 on prod before the next; shipped records are appended here.
