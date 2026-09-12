@@ -31,7 +31,8 @@ SOURCE_COMPARATIVE = "bolagsverket_comparative"
 BOLAGSVERKET_EXTRACTOR_VERSION = "bolagsverket-financial-v1"
 BOLAGSVERKET_COMPARATIVE_EXTRACTOR_VERSION = "bolagsverket-comparative-financial-v1"
 
-# entity field -> metrics column stem (the twelve register metrics; the other eight are NULL).
+# entity field -> metrics column stem: eleven of the twelve register metrics (current_receivables
+# has no entity field); the other nine entity fields are NULL.
 BOLAGSVERKET_MONEY: dict[str, str] = {
     "revenue": "revenue",
     "operating_result": "operating_profit_loss",

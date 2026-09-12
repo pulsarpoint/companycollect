@@ -30,7 +30,7 @@ from dagster_v3.defs.se_company.financial.suggestions import (
 SOURCE = "esef"
 ESEF_EXTRACTOR_VERSION = "esef-financial-v1"
 
-# entity field -> metrics column stem (nine fields; the other eleven are NULL).
+# entity field -> metrics column stem (eight fields; the other twelve are NULL).
 ESEF_MONEY: dict[str, str] = {
     "revenue": "revenue",
     "operating_result": "operating_profit",
