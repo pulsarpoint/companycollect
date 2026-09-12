@@ -143,6 +143,33 @@ def test_the_entity_name_is_a_prefix_of_five_siblings() -> None:
         assert name != tables.MAIN_TABLE
 
 
+def test_the_role_view_constants_describe_the_slice_5_view() -> None:
+    """Migration 000402's derived view (spec section 11). It is the SIXTH name with the
+    entity's prefix and the first that is not a table, so whole-name matching applies to
+    it exactly as it does to the five sibling tables above."""
+    assert tables.ROLE_VIEW == "se_company_person_role"
+    assert tables.QUALIFIED_ROLE_VIEW == "corpscout.se_company_person_role"
+    assert tables.ROLE_VIEW.startswith(f"{tables.MAIN_TABLE}_")
+    assert tables.ROLE_VIEW != tables.MAIN_TABLE
+    assert tables.ROLE_VIEW_COLUMNS == (
+        "company_id", "person_key", "display_name", "birth_year", "role_code", "role_year",
+        "role_from", "role_to", "source", "slot", "normalized_id", "is_current", "folded_at",
+    )
+    assert tables.ROLE_VIEW_ORDER_BY == (
+        "company_id", "person_key", "role_year", "role_code", "source", "slot",
+    )
+    # Every key column is one the view publishes, and every column it publishes comes from
+    # one of the two tables it reads -- except is_current, which the SELECT derives.
+    for column in tables.ROLE_VIEW_ORDER_BY:
+        assert column in tables.ROLE_VIEW_COLUMNS, column
+    for column in tables.ROLE_VIEW_COLUMNS:
+        assert (
+            column in tables.MAIN_COLUMNS
+            or column in tables.NORMALIZED_COLUMNS
+            or column == "is_current"
+        ), column
+
+
 def test_match_table_is_one_row_per_unordered_pair() -> None:
     block = table_block("se_company_person_match")
     assert declared_columns("se_company_person_match") == list(tables.MATCH_COLUMNS)

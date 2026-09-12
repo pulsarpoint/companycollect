@@ -1,4 +1,4 @@
-# se_company.person (slices 0-4)
+# se_company.person (slices 0-5)
 
 The shipped part of the 2026-09-09 SE company person entity design
 (`docs/superpowers/specs/2026-09-09-se-company-person-entity-design.md`); read that for
@@ -6,7 +6,7 @@ everything past the modules below -- the backoffice.
 
 | Module | Responsibility |
 | --- | --- |
-| `tables.py` | Table names/column tuples, pinned against migration 000396; main table `se_company_person` since migration 000398 (built as `se_company_person_v2`, because the 2026-08-19 table held the final name until slice 0 dropped it) |
+| `tables.py` | Table names/column tuples, pinned against migration 000396; main table `se_company_person` since migration 000398 (built as `se_company_person_v2`, because the 2026-08-19 table held the final name until slice 0 dropped it); also the slice-5 role view's name and SELECT (ROLE_VIEW, build_se_company_person_role_sql, migration 000402) |
 | `roles.py` | Per-source role maps (`role_code_for`), moved verbatim from `sweden_financial`/`esef_filings`/`wikidata`'s own `roles.py`; an unmapped label publishes as itself, lowercased and trimmed |
 | `normalize_se.py` | `normalize_se_person`: pure Swedish parser -- splits, folds and classifies a delivered name and role; never guesses a missing half |
 | `normalize.py` | The normalize SQL (`changed_scope_sql`, `changed_rows_sql`, `all_scope_sql`, `all_rows_sql`, `normalized_insert_sql`) and the paging/write loop (`normalize_all`, `normalize_companies`) |
@@ -307,6 +307,41 @@ complexity and the reason a sticky error must not add itself to that bill every 
 A normalizer bump changes every `normalized_id`, therefore every candidate hash, therefore
 re-matches every multi-source company on the next run. That is the price of a normalizer
 version change, and it is stated here so it is not a surprise.
+
+## Roles as rows (`se_company_person_role`, slice 5)
+
+`corpscout.se_company_person_role` (migration 000402, spec section 11) is a REFRESHABLE
+materialized view: `REFRESH EVERY 1 HOUR OFFSET 20 MINUTE`, `ENGINE = MergeTree ORDER BY
+(company_id, person_key, role_year, role_code, source, slot)`, created `EMPTY` so the
+migration returns at once and the first build is an explicit `SYSTEM REFRESH VIEW`. The
+engine is declared inside the view, so the name IS the table readers query. Its SELECT
+lives in `tables.py::build_se_company_person_role_sql()` and the migration body is pinned
+against a fresh render by `tests/test_se_company_person_role_view.py`, exactly as the
+serving view is pinned.
+
+One row per published ACTIVE person and per role-carrying normalized observation the fold
+built them from: `ARRAY JOIN` over the main row's `normalized_ids`, `INNER JOIN` back to
+`se_company_person_normalized`, `WHERE p.active = 1 AND n.role_code IS NOT NULL`. Prod
+2026-09-12: 3,837,006 rows over 1,113,485 persons; 160,279 active persons hold no role and
+get no row. Nothing writes it -- the fold, the normalizer, the rules and the precedence do
+not know it exists -- and the person row's role arrays stay the fold's own summary.
+
+Four things to know before reading it:
+
+- **It lags a fold by up to an hour.** The view rebuilds at :20, so a person folded at :25
+  keeps their previous rows until the next :20 and a brand-new person has none at all. The
+  backoffice panel falls back to the person row's arrays when the view has no row for a
+  person. If the lag ever stops being acceptable the same SELECT moves into the fold.
+- **It follows the FOLD's members, not today's normalized rows.** `normalized_ids` names
+  the versions the CURRENT published row was folded from, so an observation re-normalized
+  since then (the tab's re-fold-pending badge) drops out until the next fold.
+- **`role_year` 0 means "no year at all".** The column is `UInt16` because the year is in
+  the sort key and `allow_nullable_key` is off. A dateless role (290 of Wikidata's 466 on
+  prod) lands under 0 here, while the fold's `role_years` array puts it under the current
+  year -- "taken as held now" is the fold's ruling, not this view's.
+- **The name is reused.** It was the 2026-08-19 model's role table, dropped by hand in
+  slice 0. The spent script `clickhouse/operations/se_person_retirement_drops.sql` still
+  names it and must never be run again.
 
 ## Known limits
 

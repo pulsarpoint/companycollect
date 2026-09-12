@@ -3,7 +3,9 @@
 The main table is se_company_person since migration 000398 (slice 4). It was BUILT as
 se_company_person_v2, because the 2026-08-19 table held the final name until slice 0 dropped
 it, and 000396's DDL still declares it under that build name -- the rename is a RENAME TABLE
-on the deployed database, and MAIN_TABLE is the one place this package spells it.
+on the deployed database, and MAIN_TABLE is the one place this package spells it. Slice 5
+added the derived role view (ROLE_VIEW, build_se_company_person_role_sql), created by
+migration 000402.
 """
 
 DATABASE = "corpscout"
@@ -22,6 +24,14 @@ ROLE_TYPE_TABLE = "company_person_role_type"
 MATCH_TABLE = "se_company_person_match"
 MATCH_STATE_TABLE = "se_company_person_match_state"
 
+# Slice 5 (spec section 11): roles as ROWS. A refreshable materialized view over the main
+# table and the normalized rows -- one row per published person and role observation --
+# rebuilt hourly at :20. It is DERIVED: nothing in this package writes it, and the fold
+# never reads it. THE NAME IS REUSED: corpscout.se_company_person_role was the 2026-08-19
+# model's role table, dropped by hand in slice 0 on 2026-09-09, the same freed-name story
+# migration 000398 played out for the main table.
+ROLE_VIEW = "se_company_person_role"
+
 # This entity's own scratch-table prefix (basic_info/extract.py:scope_pages), so a person
 # scan's scratch table can never collide with a basic-info or an address one. Shared by
 # normalize.py's company scan and suggestions.py's extractor scan.
@@ -36,6 +46,7 @@ QUALIFIED_PRECEDENCE_TABLE = f"{DATABASE}.{PRECEDENCE_TABLE}"
 QUALIFIED_ROLE_TYPE_TABLE = f"{DATABASE}.{ROLE_TYPE_TABLE}"
 QUALIFIED_MATCH_TABLE = f"{DATABASE}.{MATCH_TABLE}"
 QUALIFIED_MATCH_STATE_TABLE = f"{DATABASE}.{MATCH_STATE_TABLE}"
+QUALIFIED_ROLE_VIEW = f"{DATABASE}.{ROLE_VIEW}"
 
 SOURCES: tuple[str, ...] = ("bolagsverket", "esef", "wikidata", "ratsit", "reviewer", "reviewer_draft")
 PARSE_STATUSES: tuple[str, ...] = ("ok", "partial", "no_person")
@@ -87,3 +98,57 @@ MATCH_STATE_COLUMNS: tuple[str, ...] = (
     "prompt_version", "prompt_tokens", "completion_tokens", "raw_response", "error",
     "source_run_id", "matched_at",
 )
+
+# The view's columns in DDL order, and its sort key. `is_current` is the only derived
+# column; every other one is a main-table or a normalized-table column carried through.
+ROLE_VIEW_COLUMNS: tuple[str, ...] = (
+    "company_id", "person_key", "display_name", "birth_year", "role_code", "role_year",
+    "role_from", "role_to", "source", "slot", "normalized_id", "is_current", "folded_at",
+)
+# ORDER BY holds no Nullable column (allow_nullable_key is off), which is why the SELECT
+# below unwraps role_code and role_year and nothing else.
+ROLE_VIEW_ORDER_BY: tuple[str, ...] = (
+    "company_id", "person_key", "role_year", "role_code", "source", "slot",
+)
+
+
+def build_se_company_person_role_sql() -> str:
+    """The SELECT behind `corpscout.se_company_person_role` (spec section 11).
+
+    One row per published ACTIVE person and per role-carrying observation the fold built
+    them from: `ARRAY JOIN` over the main row's `normalized_ids` -- the normalized
+    versions the CURRENT published row was folded from -- back to the normalized table,
+    keeping the rows that carry a role code. A person with no role at all (160,279 of
+    them on prod) gets no row; an observation re-normalized since the last fold drops out
+    until the next one, because its `normalized_id` is no longer the one the person row
+    names.
+
+    Two expressions differ from the spec's prose SELECT, and both are forced by the sort
+    key: `role_code` and `role_year` are Nullable on the normalized row and `ORDER BY`
+    cannot hold a Nullable column. `assumeNotNull(n.role_code)` is exact -- the WHERE has
+    already dropped every NULL -- and `ifNull(n.role_year, 0)` publishes a dateless role
+    under year 0, which is how this view says "no year at all" (the person row's
+    `role_years` array says it differently: the fold takes a dateless role as held now).
+
+    THE VIEW IS DERIVED AND NOTHING WRITES IT. It lags a fold by at most an hour; the
+    person row's role arrays remain the fold's own summary.
+    """
+    return f"""SELECT
+  p.company_id AS company_id,
+  p.person_key AS person_key,
+  p.display_name AS display_name,
+  p.birth_year AS birth_year,
+  assumeNotNull(n.role_code) AS role_code,
+  ifNull(n.role_year, 0) AS role_year,
+  n.role_from AS role_from,
+  n.role_to AS role_to,
+  n.source AS source,
+  n.slot AS slot,
+  n.normalized_id AS normalized_id,
+  has(p.current_roles, assumeNotNull(n.role_code)) AS is_current,
+  p.folded_at AS folded_at
+FROM {QUALIFIED_MAIN_TABLE} AS p FINAL
+ARRAY JOIN p.normalized_ids AS member_id
+INNER JOIN {QUALIFIED_NORMALIZED_TABLE} AS n FINAL
+  ON n.company_id = p.company_id AND n.normalized_id = member_id
+WHERE p.active = 1 AND n.role_code IS NOT NULL"""
