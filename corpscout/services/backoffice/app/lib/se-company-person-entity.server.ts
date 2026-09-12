@@ -60,7 +60,10 @@ import {
   type SePersonMatchRow,
   type SePersonPossibleMatch,
 } from "~/lib/se-person-match";
-import { SE_COMPANY_PERSON_TABLE } from "~/lib/se-person-tables";
+import {
+  SE_COMPANY_PERSON_ROLE_TABLE,
+  SE_COMPANY_PERSON_TABLE,
+} from "~/lib/se-person-tables";
 
 /* ------------------------------------------------------------------ */
 /* The rows, as the six reads deliver them                              */
@@ -225,10 +228,34 @@ export interface SePersonRoleYear {
   sources: string[];
 }
 
+/** One row of `corpscout.se_company_person_role` (spec section 11): one role
+ * observation of one published person, with the observation that carried it. Unlike
+ * `SePersonRoleYear` -- the fold's summary, zipped out of the person row's parallel
+ * arrays -- this is a stored row per (role, year, source, slot), so it also carries the
+ * span dates and the slot the reviewer can look up. `role_year` is 0 when the
+ * observation carried no year at all (the view's `ifNull(role_year, 0)`), and
+ * `is_current` is 1 when the code is on the person's `current_roles`. */
+export interface SePersonRoleRow {
+  company_id: string;
+  person_key: string;
+  role_code: string;
+  role_year: number;
+  role_from: string;
+  role_to: string;
+  source: string;
+  slot: string;
+  normalized_id: string;
+  is_current: number;
+}
+
 export interface SePersonPublished {
   row: SePersonRow;
   members: SePersonMember[];
   roles: SePersonRoleYear[];
+  /** The same roles as stored ROWS, from the refreshable view (spec section 11). Empty
+   * when the view has not rebuilt since this person was folded -- the panel then falls
+   * back to `roles`. */
+  roleRows: SePersonRoleRow[];
   /** Why the published spelling came from `row.text_source` (spec 5.3's sort). */
   spellingReason: "precedence" | "most complete" | "tie-break" | "single source";
   /** The active rules that name this person: by its key, by a key it published under
@@ -384,6 +411,26 @@ INNER JOIN (
 ) AS s ON s.company_id = p.company_id AND s.input_hash = p.input_hash
 WHERE p.company_id = {companyId:String} AND p.confidence >= ${POSSIBLE_MATCH_FLOOR}
 ORDER BY p.confidence DESC, p.candidate_a, p.candidate_b`;
+
+/**
+ * The eighth read (spec section 11): this company's role rows, from the refreshable
+ * view migration 000402 creates. NO `FINAL` -- the view's storage is a plain MergeTree
+ * that every refresh rebuilds whole, so it holds exactly one version of every row and
+ * `FINAL` would be an error, not a precaution.
+ *
+ * The view lags a fold by at most an hour (it rebuilds at :20), so a company folded
+ * moments ago can answer with nothing. That is why the panel keeps the person row's own
+ * role arrays as a fallback rather than showing an empty Roles section.
+ */
+export const PERSON_ROLE_SQL = `SELECT
+  r.company_id AS company_id, toString(r.person_key) AS person_key,
+  r.role_code AS role_code, toUInt16(r.role_year) AS role_year,
+  ifNull(toString(r.role_from), '') AS role_from, ifNull(toString(r.role_to), '') AS role_to,
+  toString(r.source) AS source, r.slot AS slot,
+  toString(r.normalized_id) AS normalized_id, toUInt8(r.is_current) AS is_current
+FROM ${SE_COMPANY_PERSON_ROLE_TABLE} AS r
+WHERE r.company_id = {companyId:String}
+ORDER BY r.person_key, r.role_year DESC, r.role_code, r.source`;
 
 /** The parse status the fold publishes (`fold.py::FOLDABLE_STATUS`); a row that scores
  * `partial` or `no_person` never becomes a person, so it never owes a fold. */
@@ -696,7 +743,7 @@ function draftsOf(
  * draft -- which the route turns into the workspace's empty state.
  */
 export async function loadSePersonDetail(companyId: string): Promise<SePersonDetail | null> {
-  const [mainRows, history, normalizedRows, rawRows, rules, precedence, matchRows] =
+  const [mainRows, history, normalizedRows, rawRows, rules, precedence, matchRows, roleRows] =
     await Promise.all([
       chQuery<SePersonRow>(PERSON_MAIN_SQL, { companyId }),
       chQuery<SePersonHistoryRow>(PERSON_HISTORY_SQL, { companyId }),
@@ -705,10 +752,19 @@ export async function loadSePersonDetail(companyId: string): Promise<SePersonDet
       chQuery<SePersonRuleRow>(PERSON_RULES_SQL, { companyId }),
       chQuery<SePersonPrecedenceRow>(PERSON_PRECEDENCE_SQL, { companyId }),
       chQuery<SePersonMatchRow>(PERSON_MATCH_SQL, { companyId }),
+      chQuery<SePersonRoleRow>(PERSON_ROLE_SQL, { companyId }),
     ]);
   const normalizedBySlot = new Map(normalizedRows.map((row) => [slotKey(row.source, row.slot), row]));
   const rawBySlot = new Map(rawRows.map((row) => [slotKey(row.source, row.slot), row]));
   const precedenceOf = precedenceReader(precedence);
+  // One pass over the company's role rows, keyed by person: the view returns them in
+  // (person, year desc, code, source) order and the panel renders them in that order.
+  const roleRowsByKey = new Map<string, SePersonRoleRow[]>();
+  for (const role of roleRows) {
+    const rows = roleRowsByKey.get(role.person_key);
+    if (rows === undefined) roleRowsByKey.set(role.person_key, [role]);
+    else rows.push(role);
+  }
   const published = mainRows.map((row) => {
     const matchedBy = matchesWithin(row, matchRows);
     const members = membersOf(row, normalizedBySlot, rawBySlot, precedenceOf, matchedBy);
@@ -720,6 +776,7 @@ export async function loadSePersonDetail(companyId: string): Promise<SePersonDet
         year: row.role_years[index] ?? 0,
         sources: row.role_sources[index] ?? [],
       })),
+      roleRows: roleRowsByKey.get(row.person_key) ?? [],
       spellingReason: spellingReason(row, members),
       rules: rulesFor(rules, row, mainRows, history),
       matchedBy,

@@ -33,6 +33,7 @@ import {
   PERSON_NORMALIZED_SQL,
   PERSON_PRECEDENCE_SQL,
   PERSON_RAW_SQL,
+  PERSON_ROLE_SQL,
   PERSON_RULES_SQL,
   removeSePerson,
   resetSePersonRules,
@@ -41,6 +42,7 @@ import {
   splitSePersonSlots,
   type SePersonNormalizedRow,
   type SePersonRawRow,
+  type SePersonRoleRow,
   type SePersonRow,
   type SePersonRuleRow,
 } from "~/lib/se-company-person-entity.server";
@@ -231,8 +233,35 @@ const CALL_NAME_MATCH: SePersonMatch = {
   reason: "call name", members: ["n1", "n2"],
 };
 
+/** The roles view's rows for this company (spec section 11), in the view's own order:
+ * the merged person's two current roles and one she no longer holds, then the Wikidata
+ * person's DATELESS role, which the view publishes under year 0. */
+const ROLE_ROWS: SePersonRoleRow[] = [
+  {
+    company_id: COMPANY, person_key: MERGED_KEY, role_code: "board_chair", role_year: 2025,
+    role_from: "", role_to: "", source: "esef", slot: "doc-9:cand-1", normalized_id: "n2",
+    is_current: 1,
+  },
+  {
+    company_id: COMPANY, person_key: MERGED_KEY, role_code: "board_member", role_year: 2025,
+    role_from: "", role_to: "", source: "bolagsverket", slot: "uid-1:sig-1",
+    normalized_id: "n1", is_current: 1,
+  },
+  {
+    company_id: COMPANY, person_key: MERGED_KEY, role_code: "auditor", role_year: 2019,
+    role_from: "", role_to: "", source: "bolagsverket", slot: "uid-1:sig-4",
+    normalized_id: "n5", is_current: 0,
+  },
+  {
+    company_id: COMPANY, person_key: WIKI_KEY, role_code: "chief_executive_officer",
+    role_year: 0, role_from: "2019-05-01", role_to: "", source: "wikidata",
+    slot: "Q1:P169:Q7", normalized_id: "n3", is_current: 1,
+  },
+];
+
 function answer(sql: string): unknown[] {
   if (sql.includes("FROM corpscout.se_company_person AS m FINAL")) return [MERGED_ROW, WIKI_ROW];
+  if (sql.includes("FROM corpscout.se_company_person_role AS r")) return ROLE_ROWS;
   if (sql.includes("FROM corpscout.se_company_person_history")) return [HISTORY_ROW];
   if (sql.includes("FROM corpscout.se_company_person_normalized")) return NORMALIZED_ROWS;
   if (sql.includes("FROM corpscout.se_company_person_suggestion")) return RAW_ROWS;
@@ -294,7 +323,7 @@ describe("se-company-person-entity.server", () => {
     // The global order and the company's own, one read (spec 3.6).
     expect(PERSON_PRECEDENCE_SQL).toContain("FROM corpscout.se_company_person_precedence AS p FINAL");
     expect(PERSON_PRECEDENCE_SQL).toContain("WHERE p.company_id IN ('', {companyId:String}) AND p.field = 'name'");
-    for (const sql of [PERSON_MAIN_SQL, PERSON_HISTORY_SQL, PERSON_NORMALIZED_SQL, PERSON_RAW_SQL, PERSON_RULES_SQL, PERSON_PRECEDENCE_SQL, PERSON_MATCH_SQL]) {
+    for (const sql of [PERSON_MAIN_SQL, PERSON_HISTORY_SQL, PERSON_NORMALIZED_SQL, PERSON_RAW_SQL, PERSON_RULES_SQL, PERSON_PRECEDENCE_SQL, PERSON_MATCH_SQL, PERSON_ROLE_SQL]) {
       expect(sql).toContain("{companyId:String}");
     }
     // The seventh read (spec section 5): the pairs the company's CURRENT input
@@ -311,6 +340,19 @@ describe("se-company-person-entity.server", () => {
     expect(PERSON_MATCH_SQL).toContain("arrayMap(x -> toString(x), p.members_a) AS members_a");
     expect(PERSON_MATCH_SQL).toContain("arrayMap(x -> toString(x), p.members_b) AS members_b");
     expect(PERSON_MATCH_SQL).toContain("toFloat64(p.confidence) AS confidence");
+    // The eighth read (spec section 11): the roles view. NO FINAL -- every refresh
+    // rebuilds a plain MergeTree whole, so it holds exactly one version of every row.
+    expect(PERSON_ROLE_SQL).toContain("FROM corpscout.se_company_person_role AS r");
+    expect(PERSON_ROLE_SQL).not.toContain("FINAL");
+    expect(PERSON_ROLE_SQL).toContain("toString(r.person_key) AS person_key");
+    expect(PERSON_ROLE_SQL).toContain("toUInt16(r.role_year) AS role_year");
+    expect(PERSON_ROLE_SQL).toContain("ifNull(toString(r.role_from), '') AS role_from");
+    expect(PERSON_ROLE_SQL).toContain("ifNull(toString(r.role_to), '') AS role_to");
+    expect(PERSON_ROLE_SQL).toContain("toUInt8(r.is_current) AS is_current");
+    expect(PERSON_ROLE_SQL).toContain("WHERE r.company_id = {companyId:String}");
+    expect(PERSON_ROLE_SQL).toContain(
+      "ORDER BY r.person_key, r.role_year DESC, r.role_code, r.source",
+    );
   });
 
   it("assembles the published persons, their members, roles, rules and the drafts", async () => {
@@ -339,6 +381,11 @@ describe("se-company-person-entity.server", () => {
       { code: "board_chair", year: 2025, sources: ["esef"] },
       { code: "board_member", year: 2025, sources: ["bolagsverket"] },
     ]);
+    // The view's own rows, grouped by person and left in the view's order. The
+    // array-derived `roles` block above is untouched: it stays the fold's summary and
+    // the panel's fallback.
+    expect(merged?.roleRows).toEqual(ROLE_ROWS.slice(0, 3));
+    expect(detail?.published[1]?.roleRows).toEqual([ROLE_ROWS[3]]);
     // Bolagsverket 900 beats ESEF 400 outright, so precedence explains the spelling.
     expect(merged?.spellingReason).toBe("precedence");
     expect(detail?.published[1]?.spellingReason).toBe("single source");
@@ -359,9 +406,26 @@ describe("se-company-person-entity.server", () => {
         name: "Anna Svensson", note: "seen in the annual report", replacesKey: MERGED_KEY,
       },
     ]);
-    for (const sql of [PERSON_MAIN_SQL, PERSON_HISTORY_SQL, PERSON_NORMALIZED_SQL, PERSON_RAW_SQL, PERSON_RULES_SQL, PERSON_PRECEDENCE_SQL, PERSON_MATCH_SQL]) {
+    for (const sql of [PERSON_MAIN_SQL, PERSON_HISTORY_SQL, PERSON_NORMALIZED_SQL, PERSON_RAW_SQL, PERSON_RULES_SQL, PERSON_PRECEDENCE_SQL, PERSON_MATCH_SQL, PERSON_ROLE_SQL]) {
       expect(clickhouse.query.mock.calls.find(([text]) => text === sql)?.[1]).toEqual({ companyId: COMPANY });
     }
+  });
+
+  it("leaves roleRows empty when the view has not rebuilt since the fold", async () => {
+    // The view refreshes at :20 and a fold can land at any minute, so a freshly folded
+    // person legitimately has no row for up to an hour -- and a brand-new person has
+    // none at all. That is a fallback, never an error.
+    clickhouse.query.mockImplementation(async (sql: string) =>
+      sql === PERSON_ROLE_SQL ? [] : answer(sql),
+    );
+
+    const detail = await loadSePersonDetail(COMPANY);
+
+    expect(detail?.published.map((entry) => entry.roleRows)).toEqual([[], []]);
+    expect(detail?.published[0]?.roles).toEqual([
+      { code: "board_chair", year: 2025, sources: ["esef"] },
+      { code: "board_member", year: 2025, sources: ["bolagsverket"] },
+    ]);
   });
 
   it("drops a match pair whose two sides carry conflicting birth years", async () => {

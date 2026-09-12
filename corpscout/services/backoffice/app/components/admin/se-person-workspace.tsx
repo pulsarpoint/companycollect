@@ -1275,28 +1275,62 @@ function PersonPanel({
 
           <section>
             <h3 className="text-muted-foreground text-xs uppercase tracking-wide">Roles</h3>
-            {entry.roles.length === 0 ? (
-              <p className="mt-1 text-sm">none</p>
-            ) : (
+            {entry.roleRows.length > 0 ? (
               <ul className="mt-2 flex flex-col gap-1 text-sm">
-                {rolesByYear(entry.roles).map(([year, entries]) => (
-                  <li key={year} className="grid gap-x-3 sm:grid-cols-[4rem_1fr]">
+                {entry.roleRows.map((role) => (
+                  <li
+                    key={`${role.source}|${role.slot}|${role.role_code}|${role.role_year}`}
+                    className="grid gap-x-3 sm:grid-cols-[4rem_1fr]"
+                  >
                     <span className="text-muted-foreground font-mono text-xs">
-                      {year === 0 ? EMPTY_VALUE : year}
+                      {role.role_year === 0 ? EMPTY_VALUE : role.role_year}
                     </span>
                     <span className="flex flex-wrap items-center gap-2">
-                      {entries.map((role) => (
-                        <span key={role.code} className="flex items-center gap-1">
-                          <Badge variant="outline">{roleLabel(role.code, roleOptions)}</Badge>
-                          <span className="text-muted-foreground text-xs">
-                            {role.sources.map(personSourceLabel).join(", ")}
-                          </span>
+                      <Badge variant={role.is_current === 1 ? "default" : "outline"}>
+                        {roleLabel(role.role_code, roleOptions)}
+                      </Badge>
+                      {role.role_from === "" && role.role_to === "" ? null : (
+                        <span className="text-muted-foreground font-mono text-xs">
+                          {role.role_from === "" ? "?" : role.role_from}
+                          {" – "}
+                          {role.role_to === "" ? "" : role.role_to}
                         </span>
-                      ))}
+                      )}
+                      <span className="text-muted-foreground text-xs">
+                        {personSourceLabel(role.source)}
+                      </span>
                     </span>
                   </li>
                 ))}
               </ul>
+            ) : entry.roles.length === 0 ? (
+              <p className="mt-1 text-sm">none</p>
+            ) : (
+              <>
+                <ul className="mt-2 flex flex-col gap-1 text-sm">
+                  {rolesByYear(entry.roles).map(([year, entries]) => (
+                    <li key={year} className="grid gap-x-3 sm:grid-cols-[4rem_1fr]">
+                      <span className="text-muted-foreground font-mono text-xs">
+                        {year === 0 ? EMPTY_VALUE : year}
+                      </span>
+                      <span className="flex flex-wrap items-center gap-2">
+                        {entries.map((role) => (
+                          <span key={role.code} className="flex items-center gap-1">
+                            <Badge variant="outline">{roleLabel(role.code, roleOptions)}</Badge>
+                            <span className="text-muted-foreground text-xs">
+                              {role.sources.map(personSourceLabel).join(", ")}
+                            </span>
+                          </span>
+                        ))}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="text-muted-foreground mt-1 text-xs">
+                  From the person row's own arrays — the roles view has not rebuilt since
+                  this fold.
+                </p>
+              </>
             )}
           </section>
 

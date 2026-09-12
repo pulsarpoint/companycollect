@@ -65,6 +65,18 @@ const published: SePersonPublished = {
     },
   ],
   roles: [{ code: "board_member", year: 2025, sources: ["bolagsverket"] }],
+  roleRows: [
+    {
+      company_id: COMPANY, person_key: KEY, role_code: "board_member", role_year: 2025,
+      role_from: "", role_to: "", source: "bolagsverket", slot: "uid-1:sig-1",
+      normalized_id: "n1", is_current: 1,
+    },
+    {
+      company_id: COMPANY, person_key: KEY, role_code: "auditor", role_year: 0,
+      role_from: "2019-05-01", role_to: "2021-03-31", source: "wikidata",
+      slot: "Q1:P169:Q7", normalized_id: "n3", is_current: 0,
+    },
+  ],
   spellingReason: "precedence",
   rules: [],
   matchedBy: [],
@@ -239,6 +251,35 @@ describe("admin-se-company-person route", () => {
     );
     expect(empty).toContain("No people published yet");
     expect(empty).toContain("Add person");
+  });
+
+  it("lists the roles view's rows in the panel, and falls back to the row's arrays when the view has none", () => {
+    const html = render(
+      <SePersonWorkspace companyId={COMPANY} detail={detail} roleOptions={ROLE_OPTIONS} selectedKey={KEY} result={null} />,
+    );
+    // A stored row per (role, year, source, slot): the catalog label, the year, the
+    // span when the observation carried one, and the source that saw it.
+    expect(html).toContain("Board member");
+    expect(html).toContain("2025");
+    expect(html).toContain("2019-05-01");
+    expect(html).toContain("2021-03-31");
+    expect(html).toContain("Wikidata");
+    expect(html).not.toContain("the roles view has not rebuilt");
+
+    // No row yet -- a person folded since the view's last :20 rebuild. The panel shows
+    // the person row's own arrays and says so, instead of claiming the person has no
+    // role at all.
+    const fallback = render(
+      <SePersonWorkspace
+        companyId={COMPANY}
+        detail={{ ...detail, published: [{ ...published, roleRows: [] }] }}
+        roleOptions={ROLE_OPTIONS}
+        selectedKey={KEY}
+        result={null}
+      />,
+    );
+    expect(fallback).toContain("Board member");
+    expect(fallback).toContain("the roles view has not rebuilt");
   });
 
   it("badges the matched member, reads the llm_match record as a list, and offers a Merge for a possible match", () => {
