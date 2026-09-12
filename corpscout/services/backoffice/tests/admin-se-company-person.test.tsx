@@ -69,6 +69,14 @@ const published: SePersonPublished = {
   matchedBy: [],
 };
 const detail: SePersonDetail = { ...EMPTY_DETAIL, published: [published] };
+/** The strongest pair naming the Bolagsverket observation, as the loader derives it. */
+const MATCH = {
+  nameA: "Anna Svensson", nameB: "Anna Maria Svensson", confidence: 0.93,
+  reason: "call name", members: ["n1", "n2"],
+};
+/** What `fold.py::_with_llm_match` wrote onto the published row. */
+const FOLD_DATA =
+  '{"llm_match":{"model":"deepseek-v4-flash","pairs":[{"a":"Anna Svensson","b":"Anna Maria Svensson","confidence":0.93,"reason":"call name"}],"prompt_version":"se-person-match-v1"},"role_kind":"board_member"}';
 
 function post(body: Record<string, string>, repeated: [string, string][] = []): Request {
   const form = new URLSearchParams();
@@ -209,6 +217,60 @@ describe("admin-se-company-person route", () => {
     );
     expect(empty).toContain("No people published yet");
     expect(empty).toContain("Add person");
+  });
+
+  it("badges the matched member, reads the llm_match record as a list, and offers a Merge for a possible match", () => {
+    const matched: SePersonDetail = {
+      ...detail,
+      published: [
+        {
+          ...published,
+          row: { ...row, data: FOLD_DATA },
+          members: [{ ...published.members[0], match: MATCH }, published.members[1]],
+          matchedBy: [MATCH],
+        },
+      ],
+      possibleMatches: [
+        {
+          personKeyA: KEY, personKeyB: OTHER, nameA: "Anna Maria Svensson",
+          nameB: "Carl von Essen", confidence: 0.64, reason: "same surname",
+        },
+      ],
+    };
+    const html = render(
+      <SePersonWorkspace
+        companyId={COMPANY} detail={matched} roleOptions={ROLE_OPTIONS}
+        selectedKey={KEY} result={null}
+      />,
+    );
+    // The badge and its reason. Asserted in two pieces, not as one string: React puts
+    // the score in its own text node, so the rendered markup may separate them.
+    expect(html).toContain("matched by LLM");
+    expect(html).toContain("0.93");
+    expect(html).toContain('title="call name"');
+    // The fold's record reads as a list -- the model and the prompt version included --
+    // and the raw key never reaches the Data block, while the rest of `data` still does.
+    expect(html).toContain("deepseek-v4-flash");
+    expect(html).toContain("se-person-match-v1");
+    expect(html).not.toContain("llm_match");
+    expect(html).toContain("role_kind");
+    // The card and one Merge, posting the EXISTING merge intent with both keys and the
+    // note spec section 5 prescribes.
+    expect(html).toContain("Possible matches");
+    expect(html).toContain("same surname");
+    expect(html).toContain("0.64");
+    expect(html).toContain(`type="hidden" name="person_key" value="${KEY}"`);
+    expect(html).toContain(`type="hidden" name="person_key" value="${OTHER}"`);
+    expect(html).toContain('name="note" value="LLM match 0.64: same surname"');
+    // A company with no pairs shows no card at all.
+    expect(
+      render(
+        <SePersonWorkspace
+          companyId={COMPANY} detail={detail} roleOptions={ROLE_OPTIONS}
+          selectedKey={KEY} result={null}
+        />,
+      ),
+    ).not.toContain("Possible matches");
   });
 
   it("posts a split's checked slots, note and intent, with the caveat in the dialog's own words", () => {
