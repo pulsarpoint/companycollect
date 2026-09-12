@@ -1,17 +1,26 @@
-"""Migration 000398: the SE person entity takes its final name and the serving view follows.
+"""Migration 000403: workplace-only address rows leave the serving view.
 
 `corpscout.se_companies_serving` is the ONE wide per-company row every admin companies list
 page reads: the info-list columns, the presence and source flags, the address JSON + primary
 geocode summary, and (since 000338) the registered-activity translation, status-reason label
 and spine fields absorbed from the retired `se_companies_translated` view.
 
-WHAT 000398 CHANGES (person slice 4). `corpscout.se_company_person_v2` -- created by 000396,
-filled by slice 2's fold and read by slice 3's backoffice -- is renamed
-`corpscout.se_company_person`, and `has_people`, `people_bolagsverket` and `people_esef` read
-it under the new name. ONE pair in the RENAME: slice 0 dropped the 2026-08-19 table that held
-that name, so nothing has to be parked. The definition is otherwise UNCHANGED, so this is the
-in-place `ALTER TABLE ... MODIFY QUERY` of 000393 and 000396, not the staged swap of
-000391/000392: no `_next`, no `SYSTEM WAIT VIEW`, no drop.
+WHAT 000403 CHANGES (Ratsit address slice 3). The Ratsit extractor publishes one address per
+ESTABLISHMENT, so the address entity now holds hundreds of rows for some companies -- one
+holds 1,607 -- and 355 companies have establishments but no `visiting_or_postal` row at all.
+The `addresses` array is an uncapped `groupArray` and the primary address is picked by a
+tiebreak over kinds, so unchanged this view would publish a ~400 KB JSON blob for that one
+company and could print a branch office as another company's own address. The
+`company_addresses` CTE therefore gains `AND NOT (a.kinds = ['workplace'])` -- one CTE, so the
+array, `address_count` and the primary pick drop those rows together. A row the FOLD merged
+(an establishment repeating the company's own postal street and postcode, kinds
+`['postal', 'workplace']`) is the company's address and stays. Nothing is deleted: the rows
+remain in `se_company_address` and on the backoffice Address tab.
+
+The definition changes and nothing else does, so this is the in-place `ALTER TABLE ... MODIFY
+QUERY` of 000393, 000396 and 000398, not the staged swap of 000391/000392: no `_next`, no
+`SYSTEM WAIT VIEW` (a refresh takes 13 to 15 minutes against a 300-second client read
+timeout), no drop.
 
 The drift pin couples the migration's MODIFY QUERY body to a fresh render of
 companies_current.build_se_companies_serving_sql -- editing either half alone turns this red.
@@ -24,14 +33,20 @@ from dagster_v3.defs.sweden_company.companies_current import (
 )
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
-MIGRATION = "000398_corpscout_se_company_person_rename"
-PREVIOUS_MIGRATION = "000396_corpscout_se_company_person_entity"
+MIGRATION = "000403_corpscout_se_companies_serving_no_workplace"
+PREVIOUS_MIGRATION = "000398_corpscout_se_company_person_rename"
 VIEW = "corpscout.se_companies_serving"
 ENTITY = "corpscout.se_company_person"
 ENTITY_V2 = "corpscout.se_company_person_v2"
-# The 2026-08-19 model's role table, dropped in slice 0. It must never come back into the
-# view's body, and its name is a prefix trap of its own. THE NAME ITSELF IS LIVE AGAIN as of
-# migration 000402 -- a separate object, the slice-5 roles view -- but this view still does
+# The row source of the address half, with the slice-3 exclusion on it. The array, the count
+# and the primary pick all read this ONE CTE, which is why the exclusion is written once.
+ADDRESS_ROW_SOURCE = (
+    "  FROM corpscout.se_company_address AS a FINAL\n"
+    "  WHERE a.active = 1 AND NOT (a.kinds = ['workplace'])"
+)
+# The 2026-08-19 model's role table, dropped in person slice 0. It must never come back into
+# the view's body, and its name is a prefix trap of its own. THE NAME ITSELF IS LIVE AGAIN as
+# of migration 000402 -- a separate object, the slice-5 roles view -- but this view still does
 # not read it, so the assertion below is unchanged.
 RETIRED_ROLE_TABLE = "corpscout.se_company_person_role"
 # The five tables ENTITY is a PREFIX of. No whole-name match on ENTITY may hit one of them.
@@ -86,12 +101,29 @@ def test_the_view_body_is_the_builder_render_and_has_not_drifted_from_it() -> No
     )
 
 
+def test_the_builder_serves_no_workplace_only_address_row() -> None:
+    """Slice 3's ruling, on the builder rather than on the file: the exclusion sits on the
+    row source the address half reads, so one clause takes those rows out of `addresses`, out
+    of `address_count` and out of the primary tiebreak at once. It tests the WHOLE kinds
+    array for equality and never `has(kinds, 'workplace')`: a merged `['postal', 'workplace']`
+    row is the company's own published address and must survive."""
+    sql = build_se_companies_serving_sql()
+
+    assert ADDRESS_ROW_SOURCE in sql
+    assert sql.count("kinds = ['workplace']") == 1
+    assert "has(a.kinds, 'workplace')" not in sql
+    # The address half is read once: the CTE the exclusion sits on is the only place the
+    # entity is named, so neither the aggregate nor the primary pick can bypass it.
+    assert sql.count("corpscout.se_company_address") == 1
+    assert sql.count("FROM company_addresses") == 2
+
+
 def test_the_pin_is_not_vacuous() -> None:
     body = _modify_query_body(_sql("up"))
     assert len(body) > 2000
     assert "groupArray" in body
     assert "primary_geocode_class" in body
-    assert "corpscout.se_company_address AS a FINAL" in body
+    assert ADDRESS_ROW_SOURCE in body
     # Whole-name matching: ENTITY prefixes all five siblings, so the count is taken on the
     # name PLUS the token that follows it in the three people subqueries.
     assert body.count(f"{ENTITY} FINAL") == 3
@@ -104,39 +136,46 @@ def test_the_pin_is_not_vacuous() -> None:
     assert "max_memory_usage = 12884901888" in body
 
 
-def test_the_up_migration_stops_renames_repoints_and_starts() -> None:
+def test_the_up_migration_stops_repoints_and_starts() -> None:
     statements = _statements(_sql("up"))
 
-    assert len(statements) == 5
+    assert len(statements) == 4
     assert statements[0] == "CREATE DATABASE IF NOT EXISTS corpscout"
     assert _body(statements[1]) == f"SYSTEM STOP VIEW {VIEW}"
-    assert _body(statements[2]) == f"RENAME TABLE {ENTITY_V2} TO {ENTITY}"
-    assert _body(statements[3]).startswith(f"ALTER TABLE {VIEW}\nMODIFY QUERY\n")
-    assert _body(statements[4]) == f"SYSTEM START VIEW {VIEW}"
-    # A rename, nothing else: no staged swap, no new table, no drop on either side.
-    assert "SYSTEM WAIT VIEW" not in _sql("up")
-    assert "CREATE MATERIALIZED VIEW" not in _sql("up")
-    assert "CREATE TABLE" not in _sql("up")
+    assert _body(statements[2]).startswith(f"ALTER TABLE {VIEW}\nMODIFY QUERY\n")
+    assert _body(statements[3]) == f"SYSTEM START VIEW {VIEW}"
+    # A repoint, nothing else: no staged swap, no rename, no new table, no drop on either
+    # side. The refresh this view runs takes 13 to 15 minutes and the migrate client's read
+    # timeout is 300 seconds, so a SYSTEM WAIT VIEW here would drop the client mid-migration.
+    # Taken on the EXECUTABLE text, because the file's comments name every one of these to
+    # say it is not here.
+    executable = _executable(_sql("up"))
+    assert "SYSTEM WAIT VIEW" not in executable
+    assert "RENAME TABLE" not in executable
+    assert "CREATE MATERIALIZED VIEW" not in executable
+    assert "CREATE TABLE" not in executable
     for suffix in ("up", "down"):
         assert "DROP" not in _executable(_sql(suffix)).upper(), suffix
 
 
-def test_the_down_migration_renames_back_and_restores_000396s_render() -> None:
+def test_the_down_migration_restores_000398s_render() -> None:
     statements = _statements(_sql("down"))
 
-    assert len(statements) == 5
+    assert len(statements) == 4
     assert statements[0] == "CREATE DATABASE IF NOT EXISTS corpscout"
     assert _body(statements[1]) == f"SYSTEM STOP VIEW {VIEW}"
-    assert _body(statements[2]) == f"RENAME TABLE {ENTITY} TO {ENTITY_V2}"
-    assert _body(statements[4]) == f"SYSTEM START VIEW {VIEW}"
-    # The restored query is 000396's, modulo whitespace (_normalized collapses runs of
-    # whitespace before comparing, so this is not a character-for-character check).
+    assert _body(statements[3]) == f"SYSTEM START VIEW {VIEW}"
+    assert "SYSTEM WAIT VIEW" not in _executable(_sql("down"))
+    # The restored query is 000398's, modulo whitespace (_normalized collapses runs of
+    # whitespace before comparing, so this is not a character-for-character check) -- and it
+    # is the render in which a workplace-only row still counts.
     assert _normalized(_modify_query_body(_sql("down"))) == _normalized(
         _modify_query_body(_sql_of(PREVIOUS_MIGRATION, "up"))
     )
+    assert "kinds = ['workplace']" not in _modify_query_body(_sql("down"))
 
 
 def test_the_up_migration_documents_the_interrupted_repoint_recovery() -> None:
     up = _sql("up")
     assert "SYSTEM START VIEW" in up
-    assert "migrate force 398" in up
+    assert "migrate force 403" in up

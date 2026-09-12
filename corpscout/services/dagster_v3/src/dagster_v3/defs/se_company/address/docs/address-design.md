@@ -281,6 +281,23 @@ own components (`Box N`, else street_name + house_number + unit) so a `c/o` pref
 enter the key. And a row without a street and without a box is location-less: it never takes
 the primary slot from a row that has one.
 
+### The serving view does not publish workplace-only rows (migration 000403)
+
+The serving view publishes a company's addresses as an UNCAPPED JSON array and picks one
+primary address by a tiebreak over `kinds`. Ratsit's establishments (slice 3) put hundreds of
+`workplace` rows on some companies -- one holds 1,607, which is a ~400 KB serving JSON -- and
+355 companies have establishments but no `visiting_or_postal` row at all, so a workplace could
+become the address the companies and geocoding lists print as the company's own. The view's
+`company_addresses` CTE therefore excludes rows whose `kinds` is EXACTLY `['workplace']`, and
+because the array, `address_count` and the primary pick all read that one CTE, they drop those
+rows together. A row the FOLD merged -- an establishment repeating the company's own postal
+street and postcode, `kinds = ['postal', 'workplace']` -- is the company's address and stays.
+This is a serving rule and not a fold rule: every row stays in `se_company_address` and on the
+backoffice Address tab, which reads the entity directly. Migration 000403 carries the
+repointed query on 000393's in-place recipe below (`SYSTEM STOP VIEW`, `ALTER TABLE ... MODIFY
+QUERY`, `SYSTEM START VIEW`, no `_next` and no `SYSTEM WAIT VIEW`), and the same
+interrupted-run recovery applies with `migrate force 403`.
+
 ### If a serving swap is interrupted
 
 Migration 000392 (like 000344/000347 before it) is a staged swap: `DROP TABLE IF EXISTS
