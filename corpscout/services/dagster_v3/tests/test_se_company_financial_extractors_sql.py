@@ -2,8 +2,7 @@
 settle are in the clickhouse-local test; these pin the text each module renders."""
 
 from dagster_v3.defs.se_company.financial import bolagsverket
-# TODO(task 4)
-# from dagster_v3.defs.se_company.financial import esef
+from dagster_v3.defs.se_company.financial import esef
 # TODO(task 5)
 # from dagster_v3.defs.se_company.financial import ratsit
 from dagster_v3.defs.se_company.financial.suggestions import FINANCIAL_SELECT_COLUMNS, FINANCIAL_TARGET
@@ -52,23 +51,19 @@ def test_bolagsverket_comparative_takes_the_newest_restating_filing_and_two_figu
     assert "    'bolagsverket_comparative' AS source" in live
 
 
-@pytest.mark.skip(reason="Task 4")
 def test_esef_composes_versions_newest_first_and_maps_scope_and_types() -> None:
-    # TODO(task 4)
-    # from dagster_v3.defs.se_company.financial import esef
-    # live = esef.esef_live_sql()
-    # assert "toUInt32OrZero(extract(m.fxo_id, '-([0-9]+)$')) AS version" in live
-    # assert "INNER JOIN corpscout.se_esef_filings AS f\n        ON f.lei = m.lei AND f.period_end = m.period_end AND f.fxo_id = m.fxo_id" in live
-    # assert "WHERE m.scope = 'consolidated_ifrs'" in live and "GROUP BY m.company_id, m.period_end" in live
-    # assert "argMaxIf(m.revenue_amount_original, m.version, m.revenue_amount_original IS NOT NULL) AS revenue_amount_original" in live
-    # assert "argMaxIf(m.currency, m.version, m.currency != '') AS currency" in live
-    # assert "    concat('consolidated:', toString(e.period_end)) AS period_key" in live
-    # assert "    CAST(e.cash_and_bank_amount_original AS Nullable(Decimal(38, 6))) AS cash_and_bank_amount_original" in live
-    # assert "    CAST(if(e.employees < 0, NULL, e.employees) AS Nullable(UInt64)) AS employees" in live
-    # assert "    CAST(e.fx_rate_to_usd AS Nullable(Decimal(38, 12))) AS fx_rate_to_usd" in live
-    # assert "    nullIf(toString(e.currency), '') AS currency" in live
-    # assert "AND f.company_id IN %(company_ids)s" in esef.esef_live_sql(scoped=True)
-    pass
+    live = esef.esef_live_sql()
+    assert "toUInt32OrZero(extract(m.fxo_id, '-([0-9]+)$')) AS version" in live
+    assert "INNER JOIN corpscout.se_esef_filings AS f\n        ON f.lei = m.lei AND f.period_end = m.period_end AND f.fxo_id = m.fxo_id" in live
+    assert "WHERE m.scope = 'consolidated_ifrs'" in live and "GROUP BY m.company_id, m.period_end" in live
+    assert "argMaxIf(m.revenue_amount_original, m.version, m.revenue_amount_original IS NOT NULL) AS revenue_amount_original" in live
+    assert "argMaxIf(m.currency, m.version, m.currency != '') AS currency" in live
+    assert "    concat('consolidated:', toString(e.period_end)) AS period_key" in live
+    assert "    CAST(e.cash_and_bank_amount_original AS Nullable(Decimal(38, 6))) AS cash_and_bank_amount_original" in live
+    assert "    CAST(if(e.employees < 0, NULL, e.employees) AS Nullable(UInt64)) AS employees" in live
+    assert "    CAST(e.fx_rate_to_usd AS Nullable(Decimal(38, 12))) AS fx_rate_to_usd" in live
+    assert "    nullIf(toString(e.currency), '') AS currency" in live
+    assert "AND f.company_id IN %(company_ids)s" in esef.esef_live_sql(scoped=True)
 
 
 @pytest.mark.skip(reason="Task 5")
@@ -92,7 +87,7 @@ def test_ratsit_scales_by_unit_derives_the_end_date_and_ranks_duplicates() -> No
 
 
 def test_every_extractor_projects_the_select_columns_in_order_and_inserts_the_target() -> None:
-    for live in (bolagsverket.reported_live_sql(), bolagsverket.comparative_live_sql()):  # TODO(task 4) TODO(task 5) Add esef.esef_live_sql(), ratsit.ratsit_live_sql()
+    for live in (bolagsverket.reported_live_sql(), bolagsverket.comparative_live_sql(), esef.esef_live_sql()):  # TODO(task 5) Add ratsit.ratsit_live_sql()
         assert _projection(live) == list(FINANCIAL_SELECT_COLUMNS)
     insert = insert_page_sql(select_sql=bolagsverket.reported_select_sql(), target=FINANCIAL_TARGET)
     assert insert.startswith(f"INSERT INTO corpscout.se_company_financial_suggestion ({', '.join(FINANCIAL_TARGET.insert_columns)})\nWITH (SELECT now64(3, 'UTC')) AS stamp\n")
@@ -104,7 +99,7 @@ def test_the_four_assets_carry_their_sources_and_deps() -> None:
     assets = {
         bolagsverket.se_company_financial_suggestions_bolagsverket: ("bolagsverket", "se_bolagsverket_financial_metrics_clickhouse"),
         bolagsverket.se_company_financial_suggestions_bolagsverket_comparative: ("bolagsverket_comparative", "se_bolagsverket_financial_metrics_clickhouse"),
-        # TODO(task 4) esef.se_company_financial_suggestions_esef: ("esef", "esef_financial_metrics_clickhouse"),
+        esef.se_company_financial_suggestions_esef: ("esef", "esef_financial_metrics_clickhouse"),
         # TODO(task 5) ratsit.se_company_financial_suggestions_ratsit: ("ratsit", "se_ratsit_financial_periods_usd"),
     }
     for asset, (source, dep) in assets.items():
