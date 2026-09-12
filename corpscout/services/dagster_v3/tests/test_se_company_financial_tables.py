@@ -42,6 +42,12 @@ def test_suggestion_table_is_one_current_row_per_company_source_and_period() -> 
     for check in (COMPANY_ID_CHECK, SCOPE_CHECK, PERIOD_KEY_CHECK):
         assert check in block, check
     assert "CONSTRAINT valid_amount_scale CHECK amount_scale IN (1, 1000, 1000000)" in block
+    assert "CONSTRAINT valid_currency CHECK ifNull(currency, 'x') != ''" in block
+    assert (
+        "CONSTRAINT valid_source CHECK source IN ("
+        + ", ".join(f"'{s}'" for s in tables.SOURCES)
+        + ")"
+    ) in block
     assert "    suggestion_id FixedString(64)," in block
     assert "    period_end Date32," in block
     assert "    period_end_derived UInt8 DEFAULT 0," in block
@@ -115,6 +121,7 @@ def test_rule_table_hides_a_period() -> None:
     assert "ORDER BY (company_id, period_key, action)" in block
     assert COMPANY_ID_CHECK in block
     assert "CONSTRAINT valid_action CHECK action IN ('hide')" in block
+    assert "CONSTRAINT valid_hide_period CHECK period_key != ''" in block
     assert tables.RULE_ACTIONS == ("hide",)
     assert tables.INACTIVE_REASONS == ("", "hidden", "withdrawn")
     assert tables.CHANGE_KINDS == ("created", "updated", "hidden", "withdrawn", "reactivated")

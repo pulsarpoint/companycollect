@@ -3875,6 +3875,12 @@ def test_se_company_financial_entity_migration_declares_five_period_keyed_tables
     assert "CONSTRAINT valid_amount_scale CHECK amount_scale IN (1, 1000, 1000000)" in up_sql
     assert "CONSTRAINT valid_action CHECK action IN ('hide')" in up_sql
     assert "CONSTRAINT valid_global_scope CHECK company_id != '' OR period_key = ''" in up_sql
+    assert "CONSTRAINT valid_currency CHECK ifNull(currency, 'x') != ''" in up_sql
+    assert (
+        "CONSTRAINT valid_source CHECK source IN "
+        "('bolagsverket', 'bolagsverket_comparative', 'esef', 'ratsit', 'reviewer', 'reviewer_draft')"
+    ) in up_sql
+    assert "CONSTRAINT valid_hide_period CHECK period_key != ''" in up_sql
     # Twenty USD twins on the suggestion row and on each of main and history.
     assert up_sql.count("_amount_usd Nullable(Decimal(38, 6))") == 60
     # No reader moves in slice 1: no serving view is touched.

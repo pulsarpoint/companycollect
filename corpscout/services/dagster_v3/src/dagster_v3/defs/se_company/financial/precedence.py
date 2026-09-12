@@ -31,6 +31,8 @@ _RATSIT_AND_BOLAGSVERKET = {"reviewer": 20000, "ratsit": 1000, "bolagsverket": 9
 _BOLAGSVERKET_ONLY = {"reviewer": 20000, "bolagsverket": 900}
 _RATSIT_ONLY = {"reviewer": 20000, "ratsit": 1000}
 
+# Grouped by source set for readability, NOT in fold order: iterate tables.FOLDED_FIELDS or
+# precedence_rows(), never this dict, when order matters.
 FINANCIAL_PRECEDENCE: dict[str, dict[str, int]] = {
     # Period attributes and the currency: every source that delivers a period has them.
     "period_start": dict(_FULL),
@@ -73,6 +75,15 @@ if set(FINANCIAL_PRECEDENCE) != set(tables.FOLDED_FIELDS):
         f"FINANCIAL_PRECEDENCE keys {sorted(FINANCIAL_PRECEDENCE)} "
         f"must equal FOLDED_FIELDS {sorted(tables.FOLDED_FIELDS)}"
     )
+
+_UNKNOWN_SOURCES = {
+    (field, source)
+    for field, by_source in FINANCIAL_PRECEDENCE.items()
+    for source in by_source
+    if source not in tables.SOURCES
+}
+if _UNKNOWN_SOURCES:
+    raise ValueError(f"FINANCIAL_PRECEDENCE names sources outside tables.SOURCES: {sorted(_UNKNOWN_SOURCES)}")
 
 
 def precedence_for(field: str, source: str) -> int | None:

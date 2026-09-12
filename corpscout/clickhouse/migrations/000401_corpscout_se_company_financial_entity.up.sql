@@ -90,10 +90,13 @@ CREATE TABLE IF NOT EXISTS corpscout.se_company_financial_suggestion
     note String DEFAULT '',
     source_run_id String,
     extractor_version LowCardinality(String),
+    -- currency is NULL when a source names none, never '' -- the fold's currency gate (spec 6) relies on it.
     CONSTRAINT valid_company_id CHECK match(company_id, '^([0-9]{10}|[0-9]{12})$'),
+    CONSTRAINT valid_source CHECK source IN ('bolagsverket', 'bolagsverket_comparative', 'esef', 'ratsit', 'reviewer', 'reviewer_draft'),
     CONSTRAINT valid_scope CHECK scope IN ('standalone', 'consolidated'),
     CONSTRAINT valid_period_key CHECK period_key = concat(scope, ':', toString(period_end)),
-    CONSTRAINT valid_amount_scale CHECK amount_scale IN (1, 1000, 1000000)
+    CONSTRAINT valid_amount_scale CHECK amount_scale IN (1, 1000, 1000000),
+    CONSTRAINT valid_currency CHECK ifNull(currency, 'x') != ''
 )
 ENGINE = ReplacingMergeTree(suggested_at)
 ORDER BY (company_id, source, period_key);
@@ -317,7 +320,8 @@ CREATE TABLE IF NOT EXISTS corpscout.se_company_financial_rule
     note String DEFAULT '',
     decided_at DateTime64(3, 'UTC'),
     CONSTRAINT valid_company_id CHECK match(company_id, '^([0-9]{10}|[0-9]{12})$'),
-    CONSTRAINT valid_action CHECK action IN ('hide')
+    CONSTRAINT valid_action CHECK action IN ('hide'),
+    CONSTRAINT valid_hide_period CHECK period_key != ''
 )
 ENGINE = ReplacingMergeTree(decided_at)
 ORDER BY (company_id, period_key, action);

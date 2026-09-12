@@ -1,7 +1,9 @@
 """Spec section 5: Ratsit first, the registers at 900 (they never share a scope), the
 restated column last; the reviewer on top of everything including company rules."""
 
-from dagster_v3.defs.se_company.financial import tables
+import inspect
+
+from dagster_v3.defs.se_company.financial import precedence, tables
 from dagster_v3.defs.se_company.financial.precedence import (
     FINANCIAL_PRECEDENCE,
     REVIEWER_PRECEDENCE,
@@ -64,6 +66,12 @@ def test_the_comparative_source_appears_only_where_bolagsverket_restates() -> No
     assert precedence_for("revenue", "bolagsverket_comparative") == 800
     assert precedence_for("net_result", "bolagsverket_comparative") is None
     assert precedence_for("no_such_field", "ratsit") is None
+
+
+def test_the_import_time_guard_also_rejects_a_source_outside_tables_sources() -> None:
+    for field, by_source in FINANCIAL_PRECEDENCE.items():
+        assert set(by_source) <= set(tables.SOURCES), field
+    assert "names sources outside tables.SOURCES" in inspect.getsource(precedence)
 
 
 def test_rows_are_fields_in_fold_order_highest_first_ties_by_source_name() -> None:
