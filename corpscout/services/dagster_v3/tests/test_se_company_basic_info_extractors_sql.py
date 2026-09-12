@@ -97,6 +97,10 @@ def test_esef_select_takes_the_newest_filing_per_company() -> None:
     assert "toDateTime64(resolved_at, 3, 'UTC') AS observed_at" in sql
     assert "nullIf(upperUTF8(trim(lei)), '') AS lei" in sql
     assert "if(toString(description_language) = '', 'en', toString(description_language)) AS description_language" in sql
+    # Ruling B (2026-09-12): a filing with a period end after today() must never win "the
+    # newest filing" -- period_end is a String on the view, so an unparsable value is
+    # excluded (NULL-safe ifNull) rather than propagating NULL through the surrounding AND.
+    assert "ifNull(toDate32OrNull(period_end) <= today(), false)" in sql
     # source_record_uid is a hash over package_sha256, so it cannot separate two
     # extractions of the same package: prompt_version and model_name make the winner
     # deterministic, the way the old publisher ordered.
@@ -108,6 +112,7 @@ def test_esef_select_takes_the_newest_filing_per_company() -> None:
     assert "max(toDateTime64(resolved_at, 3, 'UTC')) AS observed_at" in current and "GROUP BY company_id" in current
     assert "FROM corpscout.se_esef_document_company_information" in current
     assert "country_iso2" not in current
+    assert "ifNull(toDate32OrNull(period_end) <= today(), false)" in current
 
 
 def test_esef_suggestion_asset_depends_on_the_entity_registry_map() -> None:
