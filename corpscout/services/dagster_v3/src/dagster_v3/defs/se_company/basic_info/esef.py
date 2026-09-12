@@ -17,7 +17,12 @@ ESEF_EXTRACTOR_VERSION = "esef-v1"
 
 _FILTER = (
     f"WHERE match(company_id, '{SE_COMPANY_ID_PATTERN}')\n"
-    "  AND trim(company_description) != ''"
+    "  AND trim(company_description) != ''\n"
+    # Ruling B (2026-09-12): a filing dated after today() must never win "the newest
+    # filing" -- period_end is a String here, so an unparsable value is excluded
+    # (NULL-safe ifNull) rather than propagating NULL through the surrounding AND. Shared
+    # by esef_current_sql() and esef_select_sql() so both texts stay consistent.
+    "  AND ifNull(toDate32OrNull(period_end) <= today(), false)"
 )
 
 

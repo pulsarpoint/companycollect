@@ -560,6 +560,7 @@ def test_selection_is_per_lei_and_admits_leis_through_the_map() -> None:
         "WHERE link_status IN %(link_statuses)s AND country_iso2 IN %(country_iso2s)s "
         "AND registry_id IN %(company_ids)s)"
     ) in sql
+    assert "ifNull(toDate32OrNull(disclosures.period_end) <= today(), false)" in sql
     assert params["link_statuses"] == ("register_verified",)
 
 
@@ -752,6 +753,12 @@ def test_latest_document_selector_uses_one_final_xbrl_per_lei() -> None:
     assert "corpscout.esef_disclosures AS disclosures FINAL" not in sql
     assert "FROM corpscout.esef_document_company_information FINAL" not in sql
     assert "disclosures.segment IN" in sql
+    # Ruling B (2026-09-12): a filing with a period end after today() (the filing index
+    # carries a 2029-05-01 period end for LEI 549300GU5OHTR1T5IY68) must never win a "latest
+    # filing" choice.
+    assert (
+        "ifNull(toDate32OrNull(disclosures.period_end) <= today(), false)" in sql
+    )
     assert "esef_document_company_information" in sql
     assert "esef_source_documents" not in sql
     assert parameters["model_name"] == "deepseek-v4-flash"

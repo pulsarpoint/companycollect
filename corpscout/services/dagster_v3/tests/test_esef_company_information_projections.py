@@ -61,6 +61,21 @@ def test_projections_write_lei_and_no_stamps() -> None:
         assert "info.country_iso2" not in sql and "info.company_id" not in sql
 
 
+_PERIOD_END_GUARD = (
+    "ifNull(toDate32OrNull(info.period_end), toDate32('1970-01-01')) <= today()"
+)
+
+
+def test_projections_guard_against_a_period_end_after_today() -> None:
+    # Ruling B (2026-09-12): the filing index carries a 2029-05-01 period end for LEI
+    # 549300GU5OHTR1T5IY68, which must never win a "latest filing" choice; an unparsable
+    # period_end is kept (folded to the epoch, which is never after today()), only a future
+    # one is dropped.
+    assert _PERIOD_END_GUARD in esef_document_people_sql()
+    assert _PERIOD_END_GUARD in esef_document_business_items_sql()
+    assert _PERIOD_END_GUARD in esef_document_group_relationships_sql()
+
+
 def test_esef_company_information_projections_are_separate_esef_assets() -> None:
     from dagster_v3.definitions import defs as load_defs
 
@@ -104,14 +119,17 @@ def test_people_projection_uses_the_spec_identity_and_one_row_per_key() -> None:
     assert "'\\nesef_person\\n'" in sql
     assert "lowerUTF8(trim(replaceRegexpAll(JSONExtractString(item_json, 'name'), '\\\\s+', ' ')))" in sql
     assert "JSONExtractString(item_json, 'role_category')" in sql
+    # 2026-09-12 ruling: the normalised role text joins the identity too -- a person's
+    # committee seat is its own row, not merged into their other roles.
+    assert "lowerUTF8(trim(replaceRegexpAll(JSONExtractString(item_json, 'role'), '\\\\s+', ' ')))" in sql
     assert "esef_typed_candidate" not in sql
     assert "info.extraction_status IN ('extracted', 'reused')" in sql
     assert "LIMIT 1 BY info.lei, info.fiscal_year, info.source_record_uid, candidate_uid" in sql
     assert "multiIf(JSONExtractString(item_json, 'status') = 'current', 0, JSONExtractString(item_json, 'status') = 'historical', 1, 2)" in sql
-    # The identity is (name, role_category); every item of one extraction row shares
-    # extracted_at, so a tie is broken by the model's own list order, not ClickHouse's
-    # unstable sort -- item_index must be zipped alongside item_json in the ARRAY JOIN
-    # and be the ORDER BY's tail.
+    # The identity is (name, role_category, role text); every item of one extraction row
+    # shares extracted_at, so a tie is broken by the model's own list order, not
+    # ClickHouse's unstable sort -- item_index must be zipped alongside item_json in the
+    # ARRAY JOIN and be the ORDER BY's tail.
     assert (
         "arrayEnumerate(JSONExtractArrayRaw(info.people_json)) AS item_index" in sql
     )

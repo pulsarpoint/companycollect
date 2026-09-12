@@ -29,10 +29,11 @@ def esef_document_people_sql(
     *, target: str = tables.QUALIFIED_ESEF_DOCUMENT_PEOPLE_TABLE
 ) -> str:
     candidate_uid = _person_candidate_uid_sql()
-    # The candidate identity is (name, role_category) per the spec; every item of
-    # one extraction row shares extracted_at, so a tie within a role_category is
-    # broken by the model's own list order (item_index) -- the first-listed role
-    # wins, not ClickHouse's unstable sort.
+    # The candidate identity is (name, role_category, role text) per the 2026-09-12 ruling --
+    # a person's committee seat is its own row, not merged into their other roles; every item
+    # of one extraction row shares extracted_at, so a tie within that identity is broken by
+    # the model's own list order (item_index) -- the first-listed role wins, not ClickHouse's
+    # unstable sort.
     return f"""INSERT INTO {target}
 ({", ".join(tables.ESEF_DOCUMENT_PEOPLE_COLUMNS)})
 SELECT
@@ -63,6 +64,7 @@ WHERE info.extraction_status IN ('extracted', 'reused')
   AND info.source_record_uid != ''
   AND JSONExtractString(item_json, 'name') != ''
   AND JSONExtractString(item_json, 'role') != ''
+  AND ifNull(toDate32OrNull(info.period_end), toDate32('1970-01-01')) <= today()
 ORDER BY multiIf(JSONExtractString(item_json, 'status') = 'current', 0, JSONExtractString(item_json, 'status') = 'historical', 1, 2), info.extracted_at DESC, item_index
 LIMIT 1 BY info.lei, info.fiscal_year, info.source_record_uid, candidate_uid"""
 
@@ -102,7 +104,8 @@ SELECT
     info.source_run_id,
     {_EXTRACTED_AT_SQL}
 FROM ({business_rows}) AS info
-WHERE JSONExtractString(item_json, 'name') != ''"""
+WHERE JSONExtractString(item_json, 'name') != ''
+  AND ifNull(toDate32OrNull(info.period_end), toDate32('1970-01-01')) <= today()"""
 
 
 def esef_document_group_relationships_sql() -> str:
@@ -130,7 +133,8 @@ FROM {tables.QUALIFIED_ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE} AS info
 ARRAY JOIN JSONExtractArrayRaw(info.material_group_relationships_json) AS item_json
 WHERE info.extraction_status IN ('enriched', 'reused')
   AND info.source_record_uid != ''
-  AND JSONExtractString(item_json, 'related_company_name') != ''"""
+  AND JSONExtractString(item_json, 'related_company_name') != ''
+  AND ifNull(toDate32OrNull(info.period_end), toDate32('1970-01-01')) <= today()"""
 
 
 def _candidate_uid_sql(*, item_kind_expression: str) -> str:
@@ -159,7 +163,10 @@ def _person_candidate_uid_sql() -> str:
         "lowerUTF8(trim(replaceRegexpAll(JSONExtractString(item_json, 'name'), "
         "'\\\\s+', ' '))), "
         "'\\n', "
-        "JSONExtractString(item_json, 'role_category')"
+        "JSONExtractString(item_json, 'role_category'), "
+        "'\\n', "
+        "lowerUTF8(trim(replaceRegexpAll(JSONExtractString(item_json, 'role'), "
+        "'\\\\s+', ' ')))"
         "))))"
     )
 

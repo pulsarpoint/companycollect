@@ -160,6 +160,9 @@ def test_esef_takes_the_registered_office_of_the_newest_filing_and_repacks_it() 
     assert "toDateTime64(filings.processed_at, 3, 'UTC') AS observed_at" in sql
     assert "ORDER BY filings.period_end DESC, filings.processed_at DESC, facts.language DESC, facts.fact_id\nLIMIT 1 BY facts.company_id" in sql
     assert "company_id IN %(company_ids)s" in sql
+    # Ruling B (2026-09-12): a filing dated after today() must never win "the newest
+    # filing" -- consistent with esef_current_sql()'s own guard, below.
+    assert "AND filings.period_end <= today()\n" in sql
     # The packed form the normaliser parses; the unparsed remainder goes to street_address.
     assert esef.ESEF_PACKED_ADDRESS_SQL in sql
     assert "AS raw_address" in sql and "AS street_address" in sql
@@ -173,5 +176,6 @@ def test_esef_takes_the_registered_office_of_the_newest_filing_and_repacks_it() 
         "FROM corpscout.se_esef_facts AS facts\n"
         "INNER JOIN corpscout.se_esef_filings AS filings ON filings.fxo_id = facts.fxo_id\n"
         "WHERE facts.concept_local_name = 'AddressOfRegisteredOfficeOfEntity' AND filings.processed_at IS NOT NULL\n"
+        "  AND filings.period_end <= today()\n"
         "GROUP BY facts.company_id"
     )

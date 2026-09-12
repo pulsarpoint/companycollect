@@ -238,11 +238,17 @@ def test_esef_takes_the_newest_filing_and_upper_cases_the_lei() -> None:
         "('doc-2', 'p2', '5493001kjtiigc8y1r12', '2025-12-31', 2025, 'ok', 'New filing text', '', 'p', 'm', 'v', 'r', '', toDateTime64('2026-09-01 00:00:00', 3)), "
         # doc-3 carries a different lei that never appears in the map, so it never joins into
         # the Swedish view -- the same exclusion the old country_iso2 = 'FI' predicate gave.
-        "('doc-3', 'p3', 'X', '2025-12-31', 2025, 'ok', 'Finnish', 'en', 'p', 'm', 'v', 'r', '', toDateTime64('2026-09-02 00:00:00', 3))"
+        "('doc-3', 'p3', 'X', '2025-12-31', 2025, 'ok', 'Finnish', 'en', 'p', 'm', 'v', 'r', '', toDateTime64('2026-09-02 00:00:00', 3)), "
+        # Ruling B (2026-09-12): doc-4's period_end is after today() (the same shape as the
+        # real 2029-dated Castellum document) and carries the newest resolved_at of the
+        # bunch -- it must lose to doc-2 (the newest ELIGIBLE filing), not win by resolved_at.
+        "('doc-4', 'p4', '5493001kjtiigc8y1r12', '2029-05-01', 2029, 'ok', 'Future filing text', 'en', 'p', 'm', 'v', 'r', '', toDateTime64('2026-09-03 00:00:00', 3))"
     )
     script = _schema() + [esef_map_row, esef_rows, _scope(esef.esef_current_sql(), "esef"), _insert(esef.esef_select_sql(), ["5560000000"]),
                           f"SELECT lei, description, description_language, toString(observed_at) FROM {tables.QUALIFIED_SUGGESTION_TABLE} FINAL"]
     lines = _run(script, join_use_nulls=0)
+    # doc-2 (period_end 2025-12-31) wins, not doc-4 (period_end 2029-05-01, the newest by
+    # resolved_at) -- the period_end <= today() guard on esef_current_sql()/esef_select_sql().
     assert lines == ["5560000000", "5493001KJTIIGC8Y1R12\tNew filing text\ten\t2026-09-01 00:00:00.000"]
 
 

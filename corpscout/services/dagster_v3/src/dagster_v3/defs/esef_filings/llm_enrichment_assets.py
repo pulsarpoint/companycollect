@@ -1034,6 +1034,12 @@ def _selection_query(
         "%(evidence_segments)s) OR "
         "(disclosures.disclosure_kind = 'visible_section' AND "
         "disclosures.section_type IN %(visible_section_types)s))",
+        # Ruling B (2026-09-12): the filing index carries a 2029-05-01 period end for LEI
+        # 549300GU5OHTR1T5IY68, so a filing dated after today() must never win a "latest
+        # filing" choice in either pass. period_end is a String column here; the ifNull
+        # makes the comparison NULL-safe so an unparsable value is excluded rather than
+        # propagating NULL through the surrounding AND.
+        "ifNull(toDate32OrNull(disclosures.period_end) <= today(), false)",
     ]
     parameters: dict[str, object] = {
         "model_provider": provider,

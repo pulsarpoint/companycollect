@@ -125,11 +125,12 @@ write one raw suggestion row per company per source:
   `address_street`, `address_postal_code`, `address_locality`, `address_county`, kind
   `postal`, slot `company`.
 - `esef` reads `se_esef_facts` joined to `se_esef_filings`: the
-  `AddressOfRegisteredOfficeOfEntity` fact of the company's newest filing, cleaned (tags,
-  whitespace, trailing punctuation) and re-packed into the Bolagsverket packed format when a
-  Swedish postcode is found, otherwise delivered as street and town components split at the
-  last comma; kind `registered`, slot `''`. `source_record_uid` is the filing package's uid;
-  address precedence carries `esef: 500` (display order only).
+  `AddressOfRegisteredOfficeOfEntity` fact of the company's newest filing with a period end
+  no later than today, cleaned (tags, whitespace, trailing punctuation) and re-packed into
+  the Bolagsverket packed format when a Swedish postcode is found, otherwise delivered as
+  street and town components split at the last comma; kind `registered`, slot `''`.
+  `source_record_uid` is the filing package's uid; address precedence carries `esef: 500`
+  (display order only).
 
 A company a source stops delivering writes a tombstone: a NULL row, not a deleted one.
 `suggestion_id` is stamped from a `WITH (SELECT now64(3, 'UTC')) AS stamp` scalar subquery
