@@ -121,7 +121,7 @@ export const PERSON_MATCH_SQL: string;
 - Consumes: nothing from earlier tasks. `MAX_NOTE_LENGTH` (500) from `~/lib/se-person-fields`; `chQuery` from `~/lib/clickhouse.server`.
 - Produces: every name in the Interfaces block above. Task 2 imports `formatConfidence`, `matchNote`, `parseLlmMatch`, `stripLlmMatch` and `type SePersonPossibleMatch` from `~/lib/se-person-match`, and reads `member.match`, `entry.matchedBy` and `detail.possibleMatches`.
 
-- [ ] **Step 1: Write the failing test for the client-safe module**
+- [x] **Step 1: Write the failing test for the client-safe module**
 
 Create `corpscout/services/backoffice/tests/se-person-match.test.ts`:
 
@@ -204,7 +204,7 @@ describe("se-person-match", () => {
 });
 ```
 
-- [ ] **Step 2: Run it to make sure it fails**
+- [x] **Step 2: Run it to make sure it fails**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/backoffice
@@ -212,7 +212,7 @@ CI=1 pnpm exec vitest run tests/se-person-match.test.ts --reporter=dot
 ```
 Expected: FAIL — `Failed to resolve import "~/lib/se-person-match"`.
 
-- [ ] **Step 3: Write the module**
+- [x] **Step 3: Write the module**
 
 Create `corpscout/services/backoffice/app/lib/se-person-match.ts`:
 
@@ -366,7 +366,7 @@ export function stripLlmMatch(data: string): string {
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/backoffice
@@ -374,7 +374,7 @@ CI=1 pnpm exec vitest run tests/se-person-match.test.ts --reporter=dot
 ```
 Expected: PASS, 5 tests.
 
-- [ ] **Step 5: Write the failing loader tests**
+- [x] **Step 5: Write the failing loader tests**
 
 Four edits to `corpscout/services/backoffice/tests/se-company-person-entity.server.test.ts`.
 
@@ -515,7 +515,7 @@ Then the two new tests, after "returns null only when there is no main row...":
   });
 ```
 
-- [ ] **Step 6: Run the loader tests to verify they fail**
+- [x] **Step 6: Run the loader tests to verify they fail**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/backoffice
@@ -523,7 +523,7 @@ CI=1 pnpm exec vitest run tests/se-company-person-entity.server.test.ts --report
 ```
 Expected: FAIL — `PERSON_MATCH_SQL` is not exported, so the whole file errors on import.
 
-- [ ] **Step 7: Add the read and the derivations**
+- [x] **Step 7: Add the read and the derivations**
 
 Four edits to `corpscout/services/backoffice/app/lib/se-company-person-entity.server.ts`.
 
@@ -731,7 +731,7 @@ and in the returned object, after `precedence,`:
     possibleMatches: possibleMatchesOf(mainRows, matchRows),
 ```
 
-- [ ] **Step 8: Run the loader tests to verify they pass**
+- [x] **Step 8: Run the loader tests to verify they pass**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/backoffice
@@ -739,7 +739,7 @@ CI=1 pnpm exec vitest run tests/se-company-person-entity.server.test.ts tests/se
 ```
 Expected: PASS, both files (25 tests in the entity file, 5 in the match file).
 
-- [ ] **Step 9: Give the two other `SePersonDetail` literals their new field**
+- [x] **Step 9: Give the two other `SePersonDetail` literals their new field**
 
 `SePersonDetail` and `SePersonPublished` gained required fields, so the two hand-built
 literals must carry them or `tsc` fails. In
@@ -765,7 +765,7 @@ const EMPTY_DETAIL: SePersonDetail = {
 each of the two members in `published.members` gains `match: null` as its last field,
 and `published` itself gains `matchedBy: []` after `rules: []`.
 
-- [ ] **Step 10: Typecheck and run the three files**
+- [x] **Step 10: Typecheck and run the three files**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/backoffice
@@ -774,7 +774,7 @@ CI=1 pnpm exec vitest run tests/se-person-match.test.ts tests/se-company-person-
 ```
 Expected: typecheck silent (exit 0); all three files PASS.
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info
@@ -818,7 +818,7 @@ rm -f "$MSGFILE"
 - Consumes from Task 1: `formatConfidence`, `matchNote`, `parseLlmMatch`, `stripLlmMatch` and `type SePersonPossibleMatch` from `~/lib/se-person-match`; `member.match: SePersonMatch | null`, `detail.possibleMatches: SePersonPossibleMatch[]` from the loader. (`entry.matchedBy` is NOT rendered: the panel's list comes from the person's own `data.llm_match`, which is what the fold recorded at merge time — `matchedBy` exists for the member lookup and for a future column.)
 - Produces: nothing another task imports. The card posts the `merge` intent that `app/lib/se-person-decision-form.ts` already parses: one `intent`, two `person_key` values, one `note`.
 
-- [ ] **Step 1: Write the failing component test**
+- [x] **Step 1: Write the failing component test**
 
 In `corpscout/services/backoffice/tests/admin-se-company-person.test.tsx`, add two fixtures
 after `const detail: SePersonDetail = { ...EMPTY_DETAIL, published: [published] };`:
@@ -892,7 +892,7 @@ and one test after "renders the workspace: the persons, their sources, roles and
   });
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/backoffice
@@ -901,7 +901,7 @@ CI=1 pnpm exec vitest run tests/admin-se-company-person.test.tsx --reporter=dot
 Expected: FAIL on the new test — `expect(html).toContain("matched by LLM")` finds nothing
 (the other tests in the file still pass).
 
-- [ ] **Step 3: Import the helpers in the workspace**
+- [x] **Step 3: Import the helpers in the workspace**
 
 In `corpscout/services/backoffice/app/components/admin/se-person-workspace.tsx`, add an
 import after the `~/lib/se-person-fields` block:
@@ -916,7 +916,7 @@ import {
 } from "~/lib/se-person-match";
 ```
 
-- [ ] **Step 4: Badge the matched member**
+- [x] **Step 4: Badge the matched member**
 
 In `MemberEntry`, inside the first `<div className="flex flex-wrap items-center gap-2">`,
 between the precedence badge and the re-fold badge:
@@ -933,7 +933,7 @@ between the precedence badge and the re-fold badge:
         {member.refoldPending ? <Badge variant="outline">re-fold pending</Badge> : null}
 ```
 
-- [ ] **Step 5: Render the `llm_match` record as a list, and keep it out of the JSON block**
+- [x] **Step 5: Render the `llm_match` record as a list, and keep it out of the JSON block**
 
 In `PersonPanel`, after `const order = namePrecedence(precedence);`:
 
@@ -987,7 +987,7 @@ and the Data section reads the stripped text — two words changed, nothing else
             )}
 ```
 
-- [ ] **Step 6: The Possible matches card**
+- [x] **Step 6: The Possible matches card**
 
 Add the component directly after `PersonsCard` (before `DraftsCard`):
 
@@ -1053,7 +1053,7 @@ function PossibleMatchesCard({
 }
 ```
 
-- [ ] **Step 7: Put the card under the persons list**
+- [x] **Step 7: Put the card under the persons list**
 
 In `SePersonWorkspace`'s left column, between `<PersonsCard ... />` and the drafts block:
 
@@ -1066,7 +1066,7 @@ In `SePersonWorkspace`'s left column, between `<PersonsCard ... />` and the draf
 The success alert needs nothing: `SUCCESS_COPY.merge` ("Merge rule written. Fold now folds
 them into one person.") already answers this form, because it posts the `merge` intent.
 
-- [ ] **Step 8: Run the component tests**
+- [x] **Step 8: Run the component tests**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/backoffice
@@ -1075,7 +1075,7 @@ pnpm typecheck
 ```
 Expected: PASS, 10 tests in the file (the 9 it had plus this one); typecheck silent.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info
@@ -1117,7 +1117,7 @@ rm -f "$MSGFILE"
 - Produces: nothing. This task is the gate: the route needs no new code, and the suite's
   counts move only by the tests this slice added.
 
-- [ ] **Step 1: Write the failing route test**
+- [x] **Step 1: Write the failing route test**
 
 The card's Merge is only worth shipping if the post it makes survives the parser — the
 note it carries is model text, and `parseSePersonDecision` runs every note through
@@ -1144,7 +1144,7 @@ after "dispatches every intent to its function with the parsed decision":
   });
 ```
 
-- [ ] **Step 2: Run it**
+- [x] **Step 2: Run it**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/backoffice
@@ -1155,7 +1155,7 @@ the route and the parser already carry the card's post, so no route change is ne
 it fails, the card is posting something the parser refuses; fix the card (Task 2), never
 the parser (Global Constraints: no new intent).
 
-- [ ] **Step 3: Read the route back and confirm it needs nothing else**
+- [x] **Step 3: Read the route back and confirm it needs nothing else**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/backoffice
@@ -1167,7 +1167,7 @@ untouched, so nothing else in the route knows about matches. The route test's
 `expect(missing.detail).toEqual(EMPTY_DETAIL)` is what would catch the two `EMPTY_DETAIL`
 literals drifting apart.
 
-- [ ] **Step 4: Typecheck and run the whole suite**
+- [x] **Step 4: Typecheck and run the whole suite**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/backoffice
@@ -1183,7 +1183,7 @@ the two pre-existing files, `tests/queries.server.test.ts` and
 from 1,349, find out why before committing: a test file that failed to import counts as
 one failed file, not as missing tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info
@@ -1218,7 +1218,7 @@ reading prod ClickHouse.
 
 **Files:** `corpscout/services/dagster_v3/docs/superpowers/specs/2026-09-11-se-company-person-llm-matching-design.md` (the shipped record, step 6) and this plan (the ticks).
 
-- [ ] **Step 1: Review the branch and merge it**
+- [x] **Step 1: Review the branch and merge it**
 
 ```bash
 git -C /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info diff main...se-person-llm-match-2
@@ -1226,7 +1226,7 @@ git -C /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-bas
 Read it end to end, then merge to `main`. If the main checkout sits on another branch,
 merge through a worktree that has `main` checked out (memory `se-worktree-deploy-recipe`).
 
-- [ ] **Step 2: Start the dev server on the main checkout**
+- [x] **Step 2: Start the dev server on the main checkout**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/backoffice
@@ -1235,7 +1235,7 @@ pnpm dev
 It serves `http://localhost:5183` (`vite.config.ts` pins the port) against prod
 ClickHouse.
 
-- [ ] **Step 3: Swedbank — the badges and the record**
+- [x] **Step 3: Swedbank — the badges and the record**
 
 Open `http://localhost:5183/admin/se/company/5020177753/people`.
 
@@ -1249,7 +1249,7 @@ expect, on the panel:
 - a **Data** block that no longer contains the `llm_match` key, while the sources' own
   extras (`role_kind`, `title`, `age`, …) are still there.
 
-- [ ] **Step 4: A company with a possible match — one Merge, then Fold now**
+- [x] **Step 4: A company with a possible match — one Merge, then Fold now**
 
 Find candidates (the query approximates the loader by taking each side's FIRST member; the
 tab itself is the authority on which pairs are cross-person):
@@ -1307,13 +1307,13 @@ SQL
 ```
 Expect one `merge` row, `active = 1`, `created_by = 'backoffice'`, the `LLM match …` note.
 
-- [ ] **Step 5: The People list is untouched**
+- [x] **Step 5: The People list is untouched**
 
 Open `http://localhost:5183/admin/se/people`. Expect 200, the same columns as before (spec
 section 5: "The People list gets no new column; the Source filter is unchanged"), and the
 Source filter still working.
 
-- [ ] **Step 6: The shipped record, the ticks, the memory**
+- [x] **Step 6: The shipped record, the ticks, the memory**
 
 1. Append the shipped record to spec section 10 item 2, in the shape item 1 uses: this
    plan's filename, the merge commit, what shipped (`PERSON_MATCH_SQL` and the three
