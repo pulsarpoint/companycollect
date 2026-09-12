@@ -52,6 +52,16 @@ The fixture is nine companies, each a different shape of the primary-class or ra
               box) and Bolagsverket's `postal` row with a real street. The kind ranks alone
               would serve the postcode-only row and print an EMPTY street; the has_location
               rank runs first, so the street row is the primary.
+  WORKPLACE   three active rows in the shape Ratsit slice 3 produces: the company's own
+              `postal` address, an establishment the fold MERGED into a published address
+              (`['postal', 'workplace']`) and a standalone establishment whose ONLY kind is
+              `workplace`. Migration 000403 keeps that last one out of the array, out of
+              address_count and out of the primary pick -- and every rank above the key ties
+              across the three, with the workplace-only key sorting FIRST, so without the
+              exclusion it would be the primary and the count would read 3.
+  WORKPLACE_ONLY  one active row, workplace-only. 355 companies look like this after slice 3
+              (establishments but no visiting_or_postal row), and they must serve the same
+              empty address summary an addressless company does.
 """
 
 import json
@@ -79,6 +89,8 @@ HIDDEN = "5560000066"
 VISITING = "5560000077"
 POSTCODE = "5560000088"
 LOCATIONLESS = "5560000099"
+WORKPLACE = "5560000111"
+WORKPLACE_ONLY = "5560000122"
 
 ADDRESSED = (
     COARSE,
@@ -89,7 +101,11 @@ ADDRESSED = (
     VISITING,
     POSTCODE,
     LOCATIONLESS,
+    WORKPLACE,
 )
+# Published companies whose serving row carries NO address: one with no address row at all,
+# one whose only address row is workplace-only and therefore not served (migration 000403).
+UNSERVED_ADDRESS = (NOADDRESS, WORKPLACE_ONLY)
 
 PRECISE_LAT, PRECISE_LON = 59.3300, 18.0600
 COARSE_LAT, COARSE_LON = 55.6050, 13.0000
@@ -98,6 +114,8 @@ HIDDEN_LAT, HIDDEN_LON = 57.7080, 11.9740
 VISITING_LAT, VISITING_LON = 63.8250, 20.2630
 POSTCODE_LAT, POSTCODE_LON = 59.3320, 18.0640
 LOCATIONLESS_STREET_LAT, LOCATIONLESS_STREET_LON = 59.3390, 18.0580
+WORKPLACE_ONLY_LAT, WORKPLACE_ONLY_LON = 57.5060, 12.6930
+WORKPLACE_MERGED_LAT, WORKPLACE_MERGED_LON = 57.5080, 12.6950
 
 # The entity's own keys ARE the serving JSON's address_id since slice 4a. Each is 64 chars,
 # the FixedString(64) width, and the leading letter fixes its sort position for the tiebreak.
@@ -118,6 +136,13 @@ POSTCODE_KEY = "k" + "8" * 63
 # the has_location rank can keep the street row primary.
 LOCATIONLESS_EMPTY_KEY = "a" + "9" * 63
 LOCATIONLESS_STREET_KEY = "s" + "9" * 63
+# All three WORKPLACE rows carry a street and none is visiting_or_postal or visiting, so
+# every rank above the key ties and the KEY decides the primary. The workplace-only row's
+# key sorts first of the three: without 000403's exclusion it would take the primary pick.
+WORKPLACE_EXCLUDED_KEY = "a" + "0" * 63
+WORKPLACE_MERGED_KEY = "m" + "0" * 63
+WORKPLACE_POSTAL_KEY = "p" + "0" * 63
+WORKPLACE_ONLY_KEY = "w" + "0" * 63
 
 
 BASIC_INFO_COLUMNS = (
@@ -381,6 +406,68 @@ ADDRESS_ROWS = (
         latitude=LOCATIONLESS_STREET_LAT,
         longitude=LOCATIONLESS_STREET_LON,
     ),
+    # WORKPLACE: the shape Ratsit slice 3 folds. The standalone establishment is a real,
+    # geocoded, street-carrying row -- nothing about the row itself disqualifies it, only
+    # the fact that `workplace` is its ONLY kind -- and its key sorts ahead of both served
+    # rows, so it would be the primary if 000403's exclusion were missing.
+    _address_row(
+        company_id=WORKPLACE,
+        address_key=WORKPLACE_EXCLUDED_KEY,
+        kinds=("workplace",),
+        line="Fabriksgatan 3, 511 54 Kinna",
+        street_name="Fabriksgatan",
+        house_number="3",
+        postal_code="511 54",
+        city="Kinna",
+        geocode_status="matched_exact",
+        geocode_precision="building",
+        latitude=WORKPLACE_ONLY_LAT,
+        longitude=WORKPLACE_ONLY_LON,
+        source="ratsit",
+    ),
+    # The establishment the fold MERGED into the register's published address: it keeps BOTH
+    # kinds, it IS the company's own address, and it must stay.
+    _address_row(
+        company_id=WORKPLACE,
+        address_key=WORKPLACE_MERGED_KEY,
+        kinds=("postal", "workplace"),
+        line="Verkstadsgatan 8, 511 55 Kinna",
+        street_name="Verkstadsgatan",
+        house_number="8",
+        postal_code="511 55",
+        city="Kinna",
+        geocode_status="matched_exact",
+        geocode_precision="building",
+        latitude=WORKPLACE_MERGED_LAT,
+        longitude=WORKPLACE_MERGED_LON,
+    ),
+    _address_row(
+        company_id=WORKPLACE,
+        address_key=WORKPLACE_POSTAL_KEY,
+        kinds=("postal",),
+        line="Box 12, 511 01 Kinna",
+        postal_code="511 01",
+        city="Kinna",
+        geocode_status="unmatched",
+        box="12",
+    ),
+    # WORKPLACE_ONLY: establishments and nothing else -- every published row is excluded, so
+    # the company serves the empty address summary an addressless company serves.
+    _address_row(
+        company_id=WORKPLACE_ONLY,
+        address_key=WORKPLACE_ONLY_KEY,
+        kinds=("workplace",),
+        line="Industrivägen 2, 511 56 Kinna",
+        street_name="Industrivägen",
+        house_number="2",
+        postal_code="511 56",
+        city="Kinna",
+        geocode_status="matched_exact",
+        geocode_precision="building",
+        latitude=WORKPLACE_ONLY_LAT,
+        longitude=WORKPLACE_ONLY_LON,
+        source="ratsit",
+    ),
 )
 
 
@@ -447,6 +534,8 @@ def _script(*, join_use_nulls: int) -> str:
                 _basic_info_row(VISITING, "Visiting AB"),
                 _basic_info_row(POSTCODE, "Postcode Only AB"),
                 _basic_info_row(LOCATIONLESS, "Locationless AB"),
+                _basic_info_row(WORKPLACE, "Workplace Rows AB"),
+                _basic_info_row(WORKPLACE_ONLY, "Workplace Only AB"),
             )
         )
         + ";",
@@ -490,8 +579,9 @@ def _addresses(row: dict) -> dict[str, dict]:
 
 
 def test_one_row_per_company_including_the_addressless(rows: dict[str, dict]) -> None:
-    # The widened base: a published company with NO published address still gets a row.
-    assert set(rows) == {*ADDRESSED, NOADDRESS}
+    # The widened base: a published company with NO published address still gets a row --
+    # and so does one whose only address row the serving view does not publish.
+    assert set(rows) == {*ADDRESSED, *UNSERVED_ADDRESS}
 
 
 def test_an_addressless_company_serves_an_empty_address_summary(
@@ -765,6 +855,50 @@ def test_primary_pick_prefers_a_row_that_has_a_location(rows: dict[str, dict]) -
     # Both rows still travel in the JSON -- the rank decides the primary, not the population.
     assert set(_addresses(row)) == {LOCATIONLESS_EMPTY_KEY, LOCATIONLESS_STREET_KEY}
     assert _addresses(row)[LOCATIONLESS_EMPTY_KEY]["street_address"] == ""
+
+
+def test_a_workplace_only_row_is_never_published_or_made_primary(
+    rows: dict[str, dict],
+) -> None:
+    """Migration 000403, the Ratsit slice-3 ruling. WORKPLACE carries three ACTIVE rows: its
+    own postal address, an establishment the fold merged into a published address (kinds
+    `['postal', 'workplace']`) and a standalone establishment whose ONLY kind is `workplace`.
+    Just the last one leaves -- the merged row IS the company's address. The exclusion sits on
+    the one CTE the array, the count and the primary pick all read, so this proves all three
+    at once: every rank above the key ties across the three rows and the workplace-only key
+    sorts FIRST, so without the exclusion the count would read 3 and that row would be the
+    primary, printing a branch office as the company's own address."""
+    row = rows[WORKPLACE]
+    assert row["has_address"] == 1
+    assert row["address_count"] == 2
+    assert set(_addresses(row)) == {WORKPLACE_MERGED_KEY, WORKPLACE_POSTAL_KEY}
+    assert WORKPLACE_EXCLUDED_KEY not in _addresses(row)
+    # The primary is the merged row -- the key tiebreak among what is left -- and never the
+    # workplace-only row, whose key would otherwise have won it.
+    assert row["primary_street_address"] == "Verkstadsgatan 8"
+    assert row["primary_postal_code"] == "511 55"
+    assert row["primary_geocode_class"] == "geocoded"
+    assert float(row["primary_latitude"]) == pytest.approx(WORKPLACE_MERGED_LAT)
+    assert row["primary_street_address"] != "Fabriksgatan 3"
+    assert float(row["primary_latitude"]) != pytest.approx(WORKPLACE_ONLY_LAT)
+
+
+def test_a_company_whose_only_rows_are_workplaces_serves_no_address(
+    rows: dict[str, dict],
+) -> None:
+    """After slice 3, 355 companies have establishments and no `visiting_or_postal` row at
+    all. When EVERY published row is workplace-only the company still gets its serving row,
+    with the same empty address summary an addressless company gets -- no array, no count,
+    no primary -- rather than a branch office standing in for the company's address."""
+    row = rows[WORKPLACE_ONLY]
+    assert row["has_address"] == 0
+    assert row["address_count"] == 0
+    assert json.loads(row["addresses"]) == []
+    assert row["primary_street_address"] == ""
+    assert row["primary_city"] == ""
+    assert row["primary_geocode_class"] == ""
+    assert row["primary_latitude"] is None
+    assert row["primary_longitude"] is None
 
 
 def test_primary_class_falls_back_to_the_base_status_without_a_coordinate(
