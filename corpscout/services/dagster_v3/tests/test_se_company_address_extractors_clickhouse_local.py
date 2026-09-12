@@ -108,6 +108,18 @@ ESEF_REORDER_NEWER_ADDRESS = "Nya vägen 2, 222 22 Göteborg"
 ESEF_REORDER_EXPECTED_RAW_ADDRESS = "Nya vägen 2$$Göteborg$22222$"
 ESEF_REORDER_EXPECTED_OBSERVED_AT = "2025-05-10 00:00:00.000"
 
+# A company whose newest filing has a period_end after today() (2029-05-01 -- the same shape
+# as the real bug on LEI 549300GU5OHTR1T5IY68, ruling B 2026-09-12). That filing must never
+# win "the newest filing": both esef_current_sql()'s scope signature and esef_select_sql()'s
+# picked row must fall back to the older filing (2024-12-31), the newest one that has
+# actually happened.
+COMPANY_ESEF_FUTURE_PERIOD = "5569999999"
+ESEF_FUTURE_PERIOD_LEI = "ESEFLEI0000000000010"
+ESEF_FUTURE_PERIOD_FUTURE_ADDRESS = "Framtidsvägen 1, 999 99 Framtidsstad"
+ESEF_FUTURE_PERIOD_PAST_ADDRESS = "Gammalgatan 5, 111 22 Stockholm"
+ESEF_FUTURE_PERIOD_EXPECTED_RAW_ADDRESS = "Gammalgatan 5$$Stockholm$11122$"
+ESEF_FUTURE_PERIOD_EXPECTED_OBSERVED_AT = "2025-06-01 00:00:00.000"
+
 RAW_ROW_CHECK_COLUMNS = (
     "company_id", "source", "slot", "kind", "raw_address", "care_of", "street_address",
     "postal_code", "post_town", "county", "extractor_version", "decided_by", "note",
@@ -144,6 +156,11 @@ ESEF_REORDER_ROW_SQL = (
     "SELECT raw_address, toString(observed_at) "
     f"FROM {tables.QUALIFIED_SUGGESTION_TABLE} FINAL "
     f"WHERE company_id = '{COMPANY_ESEF_REORDER}' AND source = 'esef' AND slot = ''"
+)
+ESEF_FUTURE_PERIOD_ROW_SQL = (
+    "SELECT raw_address, toString(observed_at) "
+    f"FROM {tables.QUALIFIED_SUGGESTION_TABLE} FINAL "
+    f"WHERE company_id = '{COMPANY_ESEF_FUTURE_PERIOD}' AND source = 'esef' AND slot = ''"
 )
 
 
@@ -273,6 +290,34 @@ def _esef_reorder_seed_statements() -> list[str]:
     ]
 
 
+def _esef_future_period_seed_statements() -> list[str]:
+    """COMPANY_ESEF_FUTURE_PERIOD's two filings: a period_end after today() (2029-05-01) that
+    must never win, and an older period_end (2024-12-31) that is the newest ELIGIBLE filing --
+    ruling B's period_end <= today() guard on esef_current_sql()/esef_select_sql()."""
+    return [
+        "INSERT INTO corpscout.esef_entity_registry_map "
+        "(lei, country_iso2, registry_id_raw, registry_id, match_source, link_status, source_run_id) VALUES "
+        f"('{ESEF_FUTURE_PERIOD_LEI}', 'SE', '{COMPANY_ESEF_FUTURE_PERIOD}', '{COMPANY_ESEF_FUTURE_PERIOD}', "
+        "'gleif_registered_as', 'register_verified', 'r')",
+        "INSERT INTO corpscout.esef_filings (lei, entity_name, fxo_id, country, period_end, processed_at, "
+        "package_sha256) VALUES "
+        f"('{ESEF_FUTURE_PERIOD_LEI}', 'Esef Future Period AB', 'fxo-future-newer', 'SE', toDate32('2029-05-01'), "
+        f"toDateTime64('2026-07-01 00:00:00', 6, 'UTC'), '{'e' * 64}')",
+        "INSERT INTO corpscout.esef_filings (lei, entity_name, fxo_id, country, period_end, processed_at, "
+        "package_sha256) VALUES "
+        f"('{ESEF_FUTURE_PERIOD_LEI}', 'Esef Future Period AB', 'fxo-future-older', 'SE', toDate32('2024-12-31'), "
+        f"toDateTime64('2025-06-01 00:00:00', 6, 'UTC'), '{'f' * 64}')",
+        "INSERT INTO corpscout.esef_facts (lei, fxo_id, period_end, fact_id, concept_local_name, raw_value, "
+        "language, processed_week) VALUES "
+        f"('{ESEF_FUTURE_PERIOD_LEI}', 'fxo-future-newer', toDate32('2029-05-01'), 'fact-future-newer', "
+        f"'AddressOfRegisteredOfficeOfEntity', '{ESEF_FUTURE_PERIOD_FUTURE_ADDRESS}', 'sv', toDate('2026-09-01'))",
+        "INSERT INTO corpscout.esef_facts (lei, fxo_id, period_end, fact_id, concept_local_name, raw_value, "
+        "language, processed_week) VALUES "
+        f"('{ESEF_FUTURE_PERIOD_LEI}', 'fxo-future-older', toDate32('2024-12-31'), 'fact-future-older', "
+        f"'AddressOfRegisteredOfficeOfEntity', '{ESEF_FUTURE_PERIOD_PAST_ADDRESS}', 'sv', toDate('2026-09-01'))",
+    ]
+
+
 def _sections(lines: list[str]) -> dict[str, list[list[str]]]:
     """Split _run()'s flat line list on the `SELECT '@@name'` markers in the script."""
     result: dict[str, list[list[str]]] = {}
@@ -378,10 +423,14 @@ def _statements() -> list[str]:
         # COMPANY_ESEF_REORDER's two filings seed alongside the ESEF_CASES ones so it shows up
         # in the same before/after scope pair -- finding 2's argMax fix.
         *_esef_reorder_seed_statements(),
+        # COMPANY_ESEF_FUTURE_PERIOD's two filings seed alongside them too -- ruling B's
+        # period_end <= today() guard.
+        *_esef_future_period_seed_statements(),
         "SELECT '@@esef_scope_before_insert'",
         _scope(esef.esef_current_sql(), "esef"),
         _insert(
-            esef.esef_select_sql(), [*ESEF_COMPANY_IDS, COMPANY_ESEF_REORDER],
+            esef.esef_select_sql(),
+            [*ESEF_COMPANY_IDS, COMPANY_ESEF_REORDER, COMPANY_ESEF_FUTURE_PERIOD],
             extractor_version=esef.ESEF_ADDRESS_EXTRACTOR_VERSION,
         ),
         "SELECT '@@esef_scope_after_insert'",
@@ -390,6 +439,8 @@ def _statements() -> list[str]:
         ESEF_RAW_ROWS_SQL,
         "SELECT '@@esef_reorder_row'",
         ESEF_REORDER_ROW_SQL,
+        "SELECT '@@esef_future_period_row'",
+        ESEF_FUTURE_PERIOD_ROW_SQL,
         "SELECT '@@esef_changed_rows'",
         esef_changed_rows,
     ]
@@ -453,11 +504,15 @@ def test_all_four_scopes_converge_after_insert(sections: dict[str, list[list[str
     # scb/bolagsverket/ratsit converge through the shared `reconverged` UNION ALL (computed
     # right after their own inserts); esef converges on its own scope_before/scope_after pair,
     # computed later in the script (after the pre-existing changed_rows section -- see the
-    # comment in _statements() for why). COMPANY_ESEF_REORDER is seeded alongside the
-    # ESEF_CASES companies (see _esef_reorder_seed_statements()), so it is expected in both.
+    # comment in _statements() for why). COMPANY_ESEF_REORDER and COMPANY_ESEF_FUTURE_PERIOD
+    # are seeded alongside the ESEF_CASES companies (see _esef_reorder_seed_statements() and
+    # _esef_future_period_seed_statements()), so both are expected in both scopes.
     assert sections["reconverged"] == []
     assert sections["esef_scope_before_insert"] == [
-        [company_id] for company_id in sorted((*ESEF_COMPANY_IDS, COMPANY_ESEF_REORDER))
+        [company_id]
+        for company_id in sorted(
+            (*ESEF_COMPANY_IDS, COMPANY_ESEF_REORDER, COMPANY_ESEF_FUTURE_PERIOD)
+        )
     ]
     assert sections["esef_scope_after_insert"] == []
 
@@ -518,13 +573,30 @@ def test_normalize_hand_off_gives_the_expected_parse_statuses(sections: dict[str
 
 def test_esef_raw_rows_hold_the_cleaned_and_repacked_address(sections: dict[str, list[list[str]]]) -> None:
     # source = 'esef' also carries COMPANY_ESEF_REORDER's row (checked separately by
-    # test_esef_reorder_company_stamps_the_selected_filings_observed_at), so this counts and
+    # test_esef_reorder_company_stamps_the_selected_filings_observed_at) and
+    # COMPANY_ESEF_FUTURE_PERIOD's row (checked by
+    # test_esef_future_period_company_ignores_the_filing_after_today), so this counts and
     # indexes only the ESEF_CASES ids.
     rows = {fields[0]: tuple(fields[1:]) for fields in sections["esef_raw_rows"]}
-    assert len(rows) == len(ESEF_CASES) + 1
+    assert len(rows) == len(ESEF_CASES) + 2
     for company_id, _lei, _raw_value, raw_address, street_address, post_town, country_code in ESEF_CASES:
         expected = tuple(value if value is not None else "NULL" for value in (raw_address, street_address, post_town, country_code))
         assert rows[company_id] == expected, company_id
+
+
+def test_esef_future_period_company_ignores_the_filing_after_today(
+    sections: dict[str, list[list[str]]],
+) -> None:
+    """Ruling B (2026-09-12): a filing with a period_end after today() (2029-05-01) must
+    never win a "latest filing" choice. esef_current_sql()'s scope signature and
+    esef_select_sql()'s picked row must both fall back to the newest ELIGIBLE filing
+    (2024-12-31) -- test_all_four_scopes_converge_after_insert already proves the company
+    drops out of scope after the insert (the two guarded stamps agree); this proves which
+    filing's content won."""
+    assert len(sections["esef_future_period_row"]) == 1
+    raw_address, observed_at = sections["esef_future_period_row"][0]
+    assert raw_address == ESEF_FUTURE_PERIOD_EXPECTED_RAW_ADDRESS
+    assert observed_at == ESEF_FUTURE_PERIOD_EXPECTED_OBSERVED_AT
 
 
 def test_esef_normalize_hand_off_gives_the_expected_parse_statuses(sections: dict[str, list[list[str]]]) -> None:

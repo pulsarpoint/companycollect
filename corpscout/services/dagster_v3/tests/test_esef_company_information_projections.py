@@ -61,6 +61,21 @@ def test_projections_write_lei_and_no_stamps() -> None:
         assert "info.country_iso2" not in sql and "info.company_id" not in sql
 
 
+_PERIOD_END_GUARD = (
+    "ifNull(toDate32OrNull(info.period_end), toDate32('1970-01-01')) <= today()"
+)
+
+
+def test_projections_guard_against_a_period_end_after_today() -> None:
+    # Ruling B (2026-09-12): the filing index carries a 2029-05-01 period end for LEI
+    # 549300GU5OHTR1T5IY68, which must never win a "latest filing" choice; an unparsable
+    # period_end is kept (folded to the epoch, which is never after today()), only a future
+    # one is dropped.
+    assert _PERIOD_END_GUARD in esef_document_people_sql()
+    assert _PERIOD_END_GUARD in esef_document_business_items_sql()
+    assert _PERIOD_END_GUARD in esef_document_group_relationships_sql()
+
+
 def test_esef_company_information_projections_are_separate_esef_assets() -> None:
     from dagster_v3.definitions import defs as load_defs
 

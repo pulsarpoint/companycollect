@@ -64,6 +64,7 @@ WHERE info.extraction_status IN ('extracted', 'reused')
   AND info.source_record_uid != ''
   AND JSONExtractString(item_json, 'name') != ''
   AND JSONExtractString(item_json, 'role') != ''
+  AND ifNull(toDate32OrNull(info.period_end), toDate32('1970-01-01')) <= today()
 ORDER BY multiIf(JSONExtractString(item_json, 'status') = 'current', 0, JSONExtractString(item_json, 'status') = 'historical', 1, 2), info.extracted_at DESC, item_index
 LIMIT 1 BY info.lei, info.fiscal_year, info.source_record_uid, candidate_uid"""
 
@@ -103,7 +104,8 @@ SELECT
     info.source_run_id,
     {_EXTRACTED_AT_SQL}
 FROM ({business_rows}) AS info
-WHERE JSONExtractString(item_json, 'name') != ''"""
+WHERE JSONExtractString(item_json, 'name') != ''
+  AND ifNull(toDate32OrNull(info.period_end), toDate32('1970-01-01')) <= today()"""
 
 
 def esef_document_group_relationships_sql() -> str:
@@ -131,7 +133,8 @@ FROM {tables.QUALIFIED_ESEF_DOCUMENT_COMPANY_INFORMATION_TABLE} AS info
 ARRAY JOIN JSONExtractArrayRaw(info.material_group_relationships_json) AS item_json
 WHERE info.extraction_status IN ('enriched', 'reused')
   AND info.source_record_uid != ''
-  AND JSONExtractString(item_json, 'related_company_name') != ''"""
+  AND JSONExtractString(item_json, 'related_company_name') != ''
+  AND ifNull(toDate32OrNull(info.period_end), toDate32('1970-01-01')) <= today()"""
 
 
 def _candidate_uid_sql(*, item_kind_expression: str) -> str:

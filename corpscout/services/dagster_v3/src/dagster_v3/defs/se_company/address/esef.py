@@ -63,6 +63,7 @@ def esef_current_sql() -> str:
         "FROM corpscout.se_esef_facts AS facts\n"
         "INNER JOIN corpscout.se_esef_filings AS filings ON filings.fxo_id = facts.fxo_id\n"
         "WHERE facts.concept_local_name = 'AddressOfRegisteredOfficeOfEntity' AND filings.processed_at IS NOT NULL\n"
+        "  AND filings.period_end <= today()\n"
         "GROUP BY facts.company_id"
     )
 
@@ -88,6 +89,7 @@ def esef_select_sql() -> str:
         "WHERE facts.concept_local_name = 'AddressOfRegisteredOfficeOfEntity'\n"
         "  AND filings.processed_at IS NOT NULL\n"
         "  AND facts.company_id IN %(company_ids)s\n"
+        "  AND filings.period_end <= today()\n"
         # The newest filing wins; inside one filing the Swedish text wins over an English twin.
         "ORDER BY filings.period_end DESC, filings.processed_at DESC, facts.language DESC, facts.fact_id\n"
         "LIMIT 1 BY facts.company_id"

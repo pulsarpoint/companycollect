@@ -300,12 +300,17 @@ def test_people_selection_takes_every_filing_newest_first_and_looks_up_its_own_t
     assert parameters["evidence_segments"] == ("people_and_audit",)
     assert parameters["visible_section_types"] == PEOPLE_VISIBLE_SECTION_TYPES
     assert parameters["prompt_version"] == "esef-people-v1"
+    # Ruling B (2026-09-12): a filing with a period end after today() must never win a
+    # "latest filing" choice -- this pass extracts every filing, so the guard is the only
+    # thing keeping the 2029-05-01-dated filing from being processed as if it had happened.
+    assert "ifNull(toDate32OrNull(disclosures.period_end) <= today(), false)" in sql
     enrichment_sql, enrichment_parameters = _selection_query(
         model="m", link_statuses={"register_verified"}, country_iso2s=set(), company_ids=set(), source_document_ids=set(),
     )
     assert "latest_lei_report_rank = 1" in enrichment_sql
     assert "FROM corpscout.esef_document_company_information" in enrichment_sql
     assert enrichment_parameters["evidence_segments"][0] == "identity"
+    assert "ifNull(toDate32OrNull(disclosures.period_end) <= today(), false)" in enrichment_sql
 
 
 def test_people_config_requires_provider_and_model() -> None:
