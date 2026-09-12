@@ -85,6 +85,32 @@ const published: SePersonPublished = {
   matchedBy: [],
 };
 const detail: SePersonDetail = { ...EMPTY_DETAIL, published: [published] };
+/** Plan `2026-09-12-se-company-person-5-roles.md`'s readout person, Swedbank's Erik Bo
+ * Bengtsson: board member 2021 and 2022 (ESEF), executive 2023 and 2024 (ESEF), legal
+ * representative 2026 (Ratsit, the person's own current role) -- five role-year rows
+ * across three role codes, the shape the grouped Roles section (owner request
+ * 2026-09-12) folds down to one line per role. Fresh: every row's folded_at matches the
+ * person row's own. */
+const ERIK_ROLE_ROWS = [
+  { company_id: COMPANY, person_key: KEY, role_code: "board_member", role_year: 2021, role_from: "", role_to: "", source: "esef", slot: "doc-1:cand-1", normalized_id: "n1", is_current: 0, folded_at: row.folded_at },
+  { company_id: COMPANY, person_key: KEY, role_code: "board_member", role_year: 2022, role_from: "", role_to: "", source: "esef", slot: "doc-2:cand-1", normalized_id: "n1", is_current: 0, folded_at: row.folded_at },
+  { company_id: COMPANY, person_key: KEY, role_code: "executive", role_year: 2023, role_from: "", role_to: "", source: "esef", slot: "doc-3:cand-1", normalized_id: "n1", is_current: 0, folded_at: row.folded_at },
+  { company_id: COMPANY, person_key: KEY, role_code: "executive", role_year: 2024, role_from: "", role_to: "", source: "esef", slot: "doc-4:cand-1", normalized_id: "n1", is_current: 0, folded_at: row.folded_at },
+  { company_id: COMPANY, person_key: KEY, role_code: "legal_representative", role_year: 2026, role_from: "", role_to: "", source: "ratsit", slot: "doc-5:cand-1", normalized_id: "n1", is_current: 1, folded_at: row.folded_at },
+];
+const ERIK_ROLES = [
+  { code: "board_member", year: 2021, sources: ["esef"] },
+  { code: "board_member", year: 2022, sources: ["esef"] },
+  { code: "executive", year: 2023, sources: ["esef"] },
+  { code: "executive", year: 2024, sources: ["esef"] },
+  { code: "legal_representative", year: 2026, sources: ["ratsit"] },
+];
+const erikPublished: SePersonPublished = {
+  ...published,
+  row: { ...row, current_roles: ["legal_representative"] },
+  roles: ERIK_ROLES,
+  roleRows: ERIK_ROLE_ROWS,
+};
 /** The strongest pair naming the Bolagsverket observation, as the loader derives it. */
 const MATCH = {
   nameA: "Anna Svensson", nameB: "Anna Maria Svensson", confidence: 0.93,
@@ -287,6 +313,87 @@ describe("admin-se-company-person route", () => {
     );
     expect(fallback).toContain("Board member");
     expect(fallback).toContain("the roles view has not rebuilt");
+  });
+
+  it("groups a person's roles by role, years compressed into ranges -- for the roles view's rows and the array fallback alike", () => {
+    // Erik's five rows fold into three lines: board_member 2021-2022 as one compressed
+    // range, executive 2023-2024, legal_representative 2026 -- not five per-year rows.
+    const html = render(
+      <SePersonWorkspace
+        companyId={COMPANY}
+        detail={{ ...detail, published: [erikPublished] }}
+        roleOptions={ROLE_OPTIONS}
+        selectedKey={KEY}
+        result={null}
+      />,
+    );
+    expect(html).toContain("2021–2022");
+    expect((html.match(/Board member/g) ?? []).length).toBe(1);
+    expect(html).toContain("2026");
+    expect(html).toContain("legal_representative");
+    expect(html).not.toContain("the roles view has not rebuilt");
+
+    // The array fallback (no roles-view rows yet) groups the very same way.
+    const fallback = render(
+      <SePersonWorkspace
+        companyId={COMPANY}
+        detail={{ ...detail, published: [{ ...erikPublished, roleRows: [] }] }}
+        roleOptions={ROLE_OPTIONS}
+        selectedKey={KEY}
+        result={null}
+      />,
+    );
+    expect(fallback).toContain("2021–2022");
+    expect((fallback.match(/Board member/g) ?? []).length).toBe(1);
+    expect(fallback).toContain("2026");
+    expect(fallback).toContain("the roles view has not rebuilt");
+
+    // F2's stale-rows fallback still renders grouped and still says stale.
+    const stale = render(
+      <SePersonWorkspace
+        companyId={COMPANY}
+        detail={{
+          ...detail,
+          published: [
+            {
+              ...erikPublished,
+              roleRows: erikPublished.roleRows.map((role) => ({
+                ...role,
+                folded_at: "2019-01-01 00:00:00.000",
+              })),
+            },
+          ],
+        }}
+        roleOptions={ROLE_OPTIONS}
+        selectedKey={KEY}
+        result={null}
+      />,
+    );
+    expect(stale).toContain("2021–2022");
+    expect(stale).toContain("the roles view has not rebuilt");
+
+    // F3's inactive-person fallback still renders grouped and gets the OTHER note.
+    const inactive = render(
+      <SePersonWorkspace
+        companyId={COMPANY}
+        detail={{
+          ...detail,
+          published: [
+            {
+              ...erikPublished,
+              row: { ...erikPublished.row, active: 0, inactive_reason: "hidden" },
+              roleRows: [],
+            },
+          ],
+        }}
+        roleOptions={ROLE_OPTIONS}
+        selectedKey={KEY}
+        result={null}
+      />,
+    );
+    expect(inactive).toContain("2021–2022");
+    expect(inactive).toContain("hidden and withdrawn persons are not in the roles view");
+    expect(inactive).not.toContain("the roles view has not rebuilt");
   });
 
   it("F2: rows that predate the current fold are treated as stale, same fallback as no rows at all", () => {

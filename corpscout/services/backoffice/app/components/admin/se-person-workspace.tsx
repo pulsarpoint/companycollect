@@ -57,6 +57,11 @@ import {
   stripLlmMatch,
   type SePersonPossibleMatch,
 } from "~/lib/se-person-match";
+import {
+  groupPersonRoles,
+  personRoleYearsToRows,
+  type SePersonRoleGroup,
+} from "~/lib/se-person-roles";
 import type {
   SePersonDetail,
   SePersonDraft,
@@ -65,7 +70,6 @@ import type {
   SePersonPrecedenceRow,
   SePersonPublished,
   SePersonRawRow,
-  SePersonRoleYear,
   SePersonRow,
 } from "~/lib/se-company-person-entity.server";
 import { cn } from "~/lib/utils";
@@ -196,18 +200,6 @@ function draftRole(row: SePersonRawRow): SePersonEditRole | null {
   const toYear = single ? row.fiscal_year : row.role_to.slice(0, 4);
   if (code === "" && fromYear === "" && toYear === "") return null;
   return { code, fromYear, toYear };
-}
-
-/** The published role block, year by year, newest first (spec 5.4's parallel triple,
- * already zipped by the loader). */
-function rolesByYear(roles: readonly SePersonRoleYear[]): [year: number, entries: SePersonRoleYear[]][] {
-  const years = new Map<number, SePersonRoleYear[]>();
-  for (const role of roles) {
-    const entries = years.get(role.year);
-    if (entries === undefined) years.set(role.year, [role]);
-    else entries.push(role);
-  }
-  return [...years].sort((a, b) => b[0] - a[0]);
 }
 
 /** The roles view (spec section 11) has nothing FOR an inactive person to begin with --
@@ -1168,6 +1160,47 @@ function MemberEntry({ member }: { member: SePersonMember }) {
   );
 }
 
+/** The Roles section's grouped form (owner request 2026-09-12: "show all roles and, for
+ * each role, its years"), one line per role -- shared by the roles view's own rows and
+ * the array fallback, which `groupPersonRoles` already folded down to one entry per
+ * `role_code`. A group with no real year (only role_year-0 rows, e.g. Wikidata's spans)
+ * says so in words rather than rendering an empty range; its from/to span, when it has
+ * one, renders either way. */
+function RoleGroupList({
+  groups,
+  roleOptions,
+}: {
+  groups: readonly SePersonRoleGroup[];
+  roleOptions: readonly SePersonRoleOption[];
+}) {
+  return (
+    <ul className="mt-2 flex flex-col gap-1 text-sm">
+      {groups.map((group) => (
+        <li key={group.role_code} className="flex flex-wrap items-center gap-2">
+          <Badge
+            variant={group.current ? "default" : "outline"}
+            title={group.current ? "On the person's latest observed year" : undefined}
+          >
+            {roleLabel(group.role_code, roleOptions)}
+          </Badge>
+          <span className="text-muted-foreground font-mono text-xs">
+            {group.years.length === 0 && group.noFiscalYear ? "no fiscal year" : group.yearRanges}
+          </span>
+          {group.from === "" ? null : (
+            <span className="text-muted-foreground font-mono text-xs">from {group.from}</span>
+          )}
+          {group.to === "" ? null : (
+            <span className="text-muted-foreground font-mono text-xs">to {group.to}</span>
+          )}
+          <span className="text-muted-foreground text-xs">
+            {group.sources.map(personSourceLabel).join(", ")}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function PersonPanel({
   entry,
   precedence,
@@ -1305,63 +1338,15 @@ function PersonPanel({
           <section>
             <h3 className="text-muted-foreground text-xs uppercase tracking-wide">Roles</h3>
             {showsPersonRoleRows(entry) ? (
-              <ul className="mt-2 flex flex-col gap-1 text-sm">
-                {entry.roleRows.map((role) => (
-                  <li
-                    key={`${role.source}|${role.slot}|${role.role_code}|${role.role_year}`}
-                    className="grid gap-x-3 sm:grid-cols-[4rem_1fr]"
-                  >
-                    <span className="text-muted-foreground font-mono text-xs">
-                      {role.role_year === 0 ? EMPTY_VALUE : role.role_year}
-                    </span>
-                    <span className="flex flex-wrap items-center gap-2">
-                      <Badge
-                        variant={role.is_current === 1 ? "default" : "outline"}
-                        title={
-                          role.is_current === 1
-                            ? "On the person's latest observed year"
-                            : undefined
-                        }
-                      >
-                        {roleLabel(role.role_code, roleOptions)}
-                      </Badge>
-                      {role.role_from === "" && role.role_to === "" ? null : (
-                        <span className="text-muted-foreground font-mono text-xs">
-                          {role.role_from === "" ? "?" : role.role_from}
-                          {" – "}
-                          {role.role_to === "" ? "" : role.role_to}
-                        </span>
-                      )}
-                      <span className="text-muted-foreground text-xs">
-                        {personSourceLabel(role.source)}
-                      </span>
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              <RoleGroupList groups={groupPersonRoles(entry.roleRows)} roleOptions={roleOptions} />
             ) : entry.roles.length === 0 ? (
               <p className="mt-1 text-sm">none</p>
             ) : (
               <>
-                <ul className="mt-2 flex flex-col gap-1 text-sm">
-                  {rolesByYear(entry.roles).map(([year, entries]) => (
-                    <li key={year} className="grid gap-x-3 sm:grid-cols-[4rem_1fr]">
-                      <span className="text-muted-foreground font-mono text-xs">
-                        {year === 0 ? EMPTY_VALUE : year}
-                      </span>
-                      <span className="flex flex-wrap items-center gap-2">
-                        {entries.map((role) => (
-                          <span key={role.code} className="flex items-center gap-1">
-                            <Badge variant="outline">{roleLabel(role.code, roleOptions)}</Badge>
-                            <span className="text-muted-foreground text-xs">
-                              {role.sources.map(personSourceLabel).join(", ")}
-                            </span>
-                          </span>
-                        ))}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+                <RoleGroupList
+                  groups={groupPersonRoles(personRoleYearsToRows(entry.roles, entry.row.current_roles))}
+                  roleOptions={roleOptions}
+                />
                 <p className="text-muted-foreground mt-1 text-xs">
                   From the person row's own arrays — {personRoleFallbackNote(entry)}.
                 </p>
