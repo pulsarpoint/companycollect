@@ -47,3 +47,25 @@ per-company change and the fold's per-company watermarks will not notice it on t
 - `currency` is NULL when a source names none, never '' (the CHECK refuses '' and the fold's
   gate relies on NULL); `SUGGESTION_VALUE_COLUMNS` is both the tombstone definition (all NULL)
   and the state-hash column list.
+
+## Extractors (slice 2)
+
+| Module | Source | Reads | Key rule |
+|---|---|---|---|
+| `bolagsverket.py` | `bolagsverket` | `se_bolagsverket_financial_metrics` reported rows | one row per period end, the fuller statement wins, then the smaller statement key |
+| `bolagsverket.py` | `bolagsverket_comparative` | the same table's comparative rows | revenue and total assets from the newest restating filing; `filing_fiscal_year` names it |
+| `esef.py` | `esef` | `esef_financial_metrics` through `se_esef_filings` | `consolidated_ifrs` only; newest `fxo_id` version wins field by field, older versions fill gaps |
+| `ratsit.py` | `ratsit` | `se_ratsit_financial_periods` for the latest `se_ratsit_financial_reports` hash | figures scaled from `monetary_unit`, USD twins copied, undated periods keyed on Dec 31 and flagged, the longer duplicate wins |
+
+All four use `suggestions.py`'s target and the shared `se_company/state_scan.py` (the person
+entity's per-company state hash, lifted in this slice): a company is visited when what the
+source delivers now differs from its stored live rows, and a period the source stopped
+delivering gets a tombstone that copies scope and period end so the table's CHECK holds.
+The job `se_company_financial_extract_job` runs `se_ratsit_financial_periods_usd` first, then
+the four extractors; the weekly `se_company_financial_weekly` (Monday 07:55 UTC) is defined
+STOPPED until the fold (slice 3) exists. Every extractor previews by default (`execute: false`).
+
+A live row must carry at least one figure or an employee count; a source row with none is
+skipped, never written, on both sides of the state hash. The Ratsit extractor pins
+`normalizer_version` (like the person extractor) so superseded normalizer generations never
+compete for a period.

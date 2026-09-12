@@ -355,11 +355,12 @@ extractors do, and stamps `suggestion_id` and `suggested_at` from one `WITH (SEL
 - **bolagsverket** (`financial/bolagsverket.py`): `se_bolagsverket_financial_metrics FINAL WHERE
   observation_kind = 'reported'`, period key `standalone:<report_period_end>`. Where a period has
   two statements (14 groups today, identical figures archived twice) the one with more non-NULL
-  figures wins, then the smaller `statement_key`. Maps the twelve register metrics
+  figures wins, then the smaller `statement_key`. Maps eleven of the twelve register metrics
   (`operating_profit_loss` to `operating_result`, `profit_loss` to `net_result`, the rest by
-  name), copies the USD twins and the fx columns, `period_months` as the rounded month count
-  between the two dates, `filing_fiscal_year` from `source_fiscal_year`, `amount_scale` 1,
-  `source_record_uid` from the metrics row. Version `bolagsverket-financial-v1`.
+  name; current_receivables has no entity field), copies the USD twins and the fx columns,
+  `period_months` as the rounded month count between the two dates, `filing_fiscal_year` from
+  `source_fiscal_year`, `amount_scale` 1, `source_record_uid` from the metrics row. Version
+  `bolagsverket-financial-v1`.
 - **bolagsverket_comparative**: comparative rows of the same table, one per represented period,
   from the newest restating filing (greatest `source_fiscal_year`, then the smaller statement
   key). Revenue and total assets only, whichever the row carries; `filing_fiscal_year` names the
@@ -385,9 +386,12 @@ extractors do, and stamps `suggestion_id` and `suggested_at` from one `WITH (SEL
   `source_record_uid` is `ratsit:<company>:<report index>:<period index>`, stable across
   re-scans.
 
-Each extractor reports counts per outcome (inserted, tombstoned, skipped by reason, unchanged) and
-takes the family's config: `execute` (false = preview), `company_ids`, `max_companies`,
-`page_size`.
+Each extractor asset reports companies, pages, candidates and inserted through the shared
+`run_extractor`, like the basic-info, address and person extractors. Counts per outcome --
+tombstones, rows skipped for a missing unit, an out-of-range fiscal year, a non-consolidated ESEF
+scope, or no figure at all -- are read out from the suggestion table and the sources after each
+prod run and recorded in section 12. Every extractor takes the family's config: `execute` (false =
+preview), `company_ids`, `max_companies`, `page_size`.
 
 ## 8. Dagster
 
@@ -566,9 +570,10 @@ the entity.
    (unchanged); revenue reads reviewer 20000, ratsit 1000, bolagsverket 900, esef 900,
    bolagsverket_comparative 800.
 2. Extractors: `state_scan.py` lifted from the person package with person switched to it, the
-   four extractors, `suggestions.py`, the extract job and the stopped weekly; prod runs with counts
-   per source and per skip reason (expected order of magnitude: 3.05M Bolagsverket periods, the
-   restated periods, 1.3k ESEF, 3.1M Ratsit).
+   four extractors, `suggestions.py`, the extract job and the stopped weekly; prod runs with
+   counts per source and per skip reason (expected order of magnitude: 3.05M Bolagsverket
+   periods, the restated periods, 1.3k ESEF, 3.1M Ratsit). Code complete 2026-09-12 on branch
+   se-financial-entity (plan 2026-09-12-se-company-financial-2-extractors.md); prod runs pending.
 3. Fold: `fold.py`, `batch.py`, the two fold assets; prod 64-bucket backfill and the readouts of
    section 11.
 4. Cutover: the admin workspace, the shared grid on the public page, every re-point of section 10
