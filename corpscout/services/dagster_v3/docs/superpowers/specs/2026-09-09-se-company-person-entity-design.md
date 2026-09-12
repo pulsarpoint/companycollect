@@ -624,7 +624,16 @@ INNER JOIN corpscout.se_company_person_normalized AS n FINAL
 WHERE p.active = 1 AND n.role_code IS NOT NULL
 ```
 
-Target `ENGINE = MergeTree ORDER BY (company_id, person_key, role_year, role_code, source, slot)`.
+Target `ENGINE = MergeTree ORDER BY (company_id, person_key, role_year, role_code, source, slot)`; the
+key columns are made non-nullable (`assumeNotNull(role_code)`, `ifNull(role_year, 0)` — 0 means "no fiscal
+year": Wikidata delivers spans in `role_from`/`role_to` and no fiscal year, so its roles land under 0 while
+the fold expands the span into real years); the refresh carries the memory-bounding SETTINGS block every
+serving refresh has carried since 000347 (grace-hash join, external sort and group-by, a 12 GiB cap), so it
+cannot starve the shared server. `is_current` means "held on the person's latest observed year", not
+today. The refresh is watched by the same `system.view_refreshes` rule as the serving view (an exception, or
+`last_success_time` older than three hours, means stale rows served at full speed); the People tab shows the
+array-derived roles with a note whenever a person's rows are missing or older than its last fold, and a
+missing view degrades to that fallback instead of failing the tab.
 Prod 2026-09-12: the join yields 3,837,006 rows over 1,113,485 persons with a role (160,279 active
 persons carry none and get no row); the arrays are never ragged (3,149,261 (role, year) pairs). The
 per-year summary is a `GROUP BY (company_id, person_key, role_code, role_year)`; the arrays on the
