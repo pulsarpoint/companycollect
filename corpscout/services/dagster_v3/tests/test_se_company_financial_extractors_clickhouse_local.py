@@ -33,6 +33,7 @@ from dagster_v3.defs.esef_filings.country_views import build_se_esef_view_sql
 from dagster_v3.defs.se_company.basic_info.extract import insert_page_sql
 from dagster_v3.defs.se_company.financial import bolagsverket, esef, ratsit
 from dagster_v3.defs.se_company.financial.suggestions import FINANCIAL_TARGET
+from dagster_v3.defs.sweden_ratsit.normalization import RATSIT_NORMALIZER_VERSION
 from tests.clickhouse_local import clickhouse_local_command, render
 
 pytestmark = pytest.mark.integration
@@ -92,11 +93,16 @@ ROWS = [
     # revenue (99 / 9900000).
     # C1: period_index 7 (fiscal_year 2016) has every amount and employee_count NULL -- must
     # be skipped, not written as a pseudo-tombstone.
-    f"INSERT INTO corpscout.se_ratsit_financial_reports (company_id, result_sha256, normalizer_version, financial_report_index, scope, monetary_unit, period_count, normalized_at) VALUES ('{A}', repeat('e',64), 'ratsit-normalizer-v2', 0, 'company', 'MSEK', 1, '2026-01-01 00:00:00'), ('{A}', repeat('a',64), 'ratsit-normalizer-v2', 0, 'company', 'MSEK', 7, '2026-09-01 00:00:00'), ('{A}', repeat('a',64), 'ratsit-normalizer-v1', 0, 'company', 'MSEK', 1, '2026-09-02 00:00:00'), ('{B}', repeat('b',64), 'ratsit-normalizer-v2', 0, 'consolidated', 'MSEK', 1, '2026-09-01 00:00:00')",
+    # The v1 report 'c'*64 is NEWER than every v2 report and carries a DIFFERENT hash: without
+    # the report CTE's version filter argMax would pick it, the version-pinned join would find
+    # its v1 period, and A's 2023 revenue would read 77 -- so this row pins the CTE filter
+    # behaviourally, where the 'a'*64 v1 duplicate above pins only the join.
+    f"INSERT INTO corpscout.se_ratsit_financial_reports (company_id, result_sha256, normalizer_version, financial_report_index, scope, monetary_unit, period_count, normalized_at) VALUES ('{A}', repeat('e',64), 'ratsit-normalizer-v2', 0, 'company', 'MSEK', 1, '2026-01-01 00:00:00'), ('{A}', repeat('a',64), 'ratsit-normalizer-v2', 0, 'company', 'MSEK', 7, '2026-09-01 00:00:00'), ('{A}', repeat('a',64), 'ratsit-normalizer-v1', 0, 'company', 'MSEK', 1, '2026-09-02 00:00:00'), ('{A}', repeat('c',64), 'ratsit-normalizer-v1', 0, 'company', 'MSEK', 1, '2026-09-03 00:00:00'), ('{B}', repeat('b',64), 'ratsit-normalizer-v2', 0, 'consolidated', 'MSEK', 1, '2026-09-01 00:00:00')",
     f"""INSERT INTO corpscout.se_ratsit_financial_periods (company_id, result_sha256, normalizer_version, financial_report_index, period_index, period_kind, scope, monetary_unit, fiscal_year, period_start, period_end, period_months, revenue_amount, revenue_amount_usd, equity_amount, equity_amount_usd, employee_count, fx_rate_to_usd, fx_rate_date, fx_source, normalized_at) VALUES
     ('{A}', repeat('e',64), 'ratsit-normalizer-v2', 0, 0, 'financial_only', 'company', 'MSEK', 2017, '2017-01-01', '2017-12-31', 12, 1, 100000, NULL, NULL, NULL, 0.1, '2017-12-29', 'ecb', '2026-01-01 00:00:00'),
     ('{A}', repeat('a',64), 'ratsit-normalizer-v2', 0, 0, 'financial_and_employment', 'company', 'MSEK', 2023, '2023-01-01', '2023-12-31', 12, 60.3, 6005001.802437, 3.4, 338000, 21, 0.099585436193, '2023-12-29', 'ECB EXR', '2026-09-01 00:00:00'),
     ('{A}', repeat('a',64), 'ratsit-normalizer-v1', 0, 0, 'financial_and_employment', 'company', 'MSEK', 2023, '2023-01-01', '2023-12-31', 12, 99, 9900000, 3.4, 338000, 21, 0.099585436193, '2023-12-29', 'ECB EXR', '2026-09-02 00:00:00'),
+    ('{A}', repeat('c',64), 'ratsit-normalizer-v1', 0, 0, 'financial_and_employment', 'company', 'MSEK', 2023, '2023-01-01', '2023-12-31', 12, 77, 7700000, 3.4, 338000, 21, 0.099585436193, '2023-12-29', 'ECB EXR', '2026-09-03 00:00:00'),
     ('{A}', repeat('a',64), 'ratsit-normalizer-v2', 0, 1, 'financial_only', 'company', 'MSEK', 2021, NULL, NULL, NULL, 50, 5000000, NULL, NULL, NULL, 0.1, '2021-12-30', 'ECB EXR', '2026-09-01 00:00:00'),
     ('{A}', repeat('a',64), 'ratsit-normalizer-v2', 0, 2, 'financial_only', 'company', 'MSEK', 2020, '2020-07-01', '2020-12-31', 6, 20, 2000000, NULL, NULL, NULL, 0.1, '2020-12-30', 'ECB EXR', '2026-09-01 00:00:00'),
     ('{A}', repeat('a',64), 'ratsit-normalizer-v2', 0, 3, 'financial_only', 'company', 'MSEK', 2020, '2020-01-01', '2020-12-31', 12, 40, 4000000, NULL, NULL, NULL, 0.1, '2020-12-30', 'ECB EXR', '2026-09-01 00:00:00'),
@@ -130,8 +136,6 @@ SOURCES = (
     ("ratsit", ratsit.ratsit_changed_scope_sql(), ratsit.ratsit_select_sql(), ratsit.RATSIT_EXTRACTOR_VERSION),
 )
 
-
-RATSIT_NORMALIZER_VERSION = "ratsit-normalizer-v2"
 
 
 def _scope(scope_sql: str, source: str) -> str:
