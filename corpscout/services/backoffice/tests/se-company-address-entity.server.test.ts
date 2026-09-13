@@ -20,11 +20,20 @@ vi.mock("~/lib/dagster.server", () => ({
 
 import {
   activateSeAddressDraft,
+  ADDRESS_DRAFT_NORMALIZED_SQL,
+  ADDRESS_DRAFT_RAW_SQL,
+  ADDRESS_FOLD_STATE_SQL,
   ADDRESS_HISTORY_SQL,
+  ADDRESS_LIST_SQL,
   ADDRESS_MAIN_SQL,
+  ADDRESS_MEMBER_NORMALIZED_SQL,
+  ADDRESS_MEMBER_RAW_SQL,
   ADDRESS_NORMALIZED_SQL,
   ADDRESS_RAW_SQL,
   ADDRESS_RULES_SQL,
+  ADDRESS_SELECTED_SQL,
+  ADDRESS_WORKPLACES_COUNT_SQL,
+  ADDRESS_WORKPLACES_SQL,
   discardSeAddressDraft,
   launchSeAddressFold,
   loadSeAddressDetail,
@@ -32,6 +41,7 @@ import {
   resetSeAddress,
   saveSeAddressDraft,
   SeAddressDecisionError,
+  type SeAddressDetailOptions,
   type SeAddressNormalizedRow,
   type SeAddressRawRow,
   type SeAddressRow,
@@ -311,13 +321,121 @@ const BOX_HIDE_RULE: SeAddressRuleRow = {
   note: "a box is not where they sit",
   decided_at: "2026-09-06 12:00:00.000",
 };
-function answer(sql: string): unknown[] {
-  if (sql.includes("FROM corpscout.se_company_address AS m FINAL")) return [MERGED_ROW, BOX_ROW];
-  if (sql.includes("FROM corpscout.se_company_address_history")) return [HISTORY_ROW];
-  if (sql.includes("FROM corpscout.se_company_address_normalized")) return NORMALIZED_ROWS;
-  if (sql.includes("FROM corpscout.se_company_address_suggestion")) return RAW_ROWS;
-  if (sql.includes("FROM corpscout.se_company_address_rule")) return [BOX_HIDE_RULE];
+/** An establishment row: `kinds` is EXACTLY `['workplace']`, so it belongs to
+ * the Workplaces card and not to the Addresses card (migration 000403's split).
+ * Its member's current normalized version (n5b) is not the one it was folded
+ * from (n5), so ClickHouse marks the row re-fold pending. */
+const WORKPLACE_KEY = "f".repeat(64);
+const WORKPLACE_ROW = main({
+  address_key: WORKPLACE_KEY,
+  street_name: "Verkstadsgatan",
+  house_number: "3",
+  postal_code: "11124",
+  city: "Stockholm",
+  normalized_address: "Verkstadsgatan 3, 111 24 Stockholm",
+  kinds: ["workplace"],
+  sources: ["ratsit"],
+  slots: ["est:9"],
+  normalized_ids: ["n5"],
+  text_source: "ratsit",
+});
+const WORKPLACE_NORMALIZED = normalized({
+  source: "ratsit",
+  slot: "est:9",
+  normalized_id: "n5b",
+  suggestion_id: "sid9",
+  kind: "workplace",
+  street_name: "Verkstadsgatan",
+  house_number: "3",
+  postal_code: "11124",
+  city: "Stockholm",
+  normalized_address: "Verkstadsgatan 3, 111 24 Stockholm",
+  address_key: WORKPLACE_KEY,
+});
+const WORKPLACE_RAW = raw({
+  source: "ratsit",
+  slot: "est:9",
+  suggestion_id: "sid9",
+  kind: "workplace",
+  street_address: "Verkstadsgatan 3",
+  postal_code: "11124",
+  post_town: "Stockholm",
+  source_run_id: "run-ratsit",
+  extractor_version: "ratsit-address-v2",
+});
+
+/** One row of the list / workplace queries: the published columns plus the
+ * `refold_pending` UInt8 ClickHouse computes per row. */
+function listRow(row: SeAddressRow, refoldPending: 0 | 1): Record<string, unknown> {
+  return { ...row, refold_pending: refoldPending };
+}
+
+/** The one row `ADDRESS_FOLD_STATE_SQL` returns: the newest fold, the newest
+ * non-draft normalized and raw stamps, whether any non-draft normalized row is
+ * publishable, and how many normalized rows the company has at all. */
+const FOLD_STATE = {
+  folded_at: "2026-09-07 09:00:00.000",
+  newest_normalized_at: "2026-09-07 10:00:00.000",
+  has_publishable: 1,
+  newest_suggested_at: "2026-09-06 07:00:00.000",
+  normalized_rows: 4,
+};
+function foldState(over: Record<string, unknown>): Record<string, unknown> {
+  return { ...FOLD_STATE, ...over };
+}
+
+function answer(sql: string, params?: Record<string, unknown>): unknown[] {
+  // The tab's reads, each dispatched by identity: several of them select from
+  // the same table, so a substring match would answer the wrong one.
+  if (sql === ADDRESS_LIST_SQL) return [listRow(MERGED_ROW, 0), listRow(BOX_ROW, 0)];
+  if (sql === ADDRESS_WORKPLACES_SQL) return [listRow(WORKPLACE_ROW, 1)];
+  if (sql === ADDRESS_WORKPLACES_COUNT_SQL) return [{ total: 1 }];
+  if (sql === ADDRESS_SELECTED_SQL) {
+    const row = [MERGED_ROW, BOX_ROW, WORKPLACE_ROW].find(
+      (candidate) => candidate.address_key === params?.addressKey,
+    );
+    return row === undefined ? [] : [row];
+  }
+  if (sql === ADDRESS_MEMBER_NORMALIZED_SQL) {
+    const wanted = new Set((params?.memberSlots as string[]) ?? []);
+    return [SCB_NORMALIZED, BV_NORMALIZED, RATSIT_NORMALIZED, WORKPLACE_NORMALIZED].filter((row) =>
+      wanted.has(row.slot),
+    );
+  }
+  if (sql === ADDRESS_MEMBER_RAW_SQL) {
+    const wanted = new Set((params?.memberSlots as string[]) ?? []);
+    return [SCB_RAW, BV_RAW, RATSIT_RAW, WORKPLACE_RAW].filter((row) => wanted.has(row.slot));
+  }
+  if (sql === ADDRESS_DRAFT_RAW_SQL) return [DRAFT_RAW];
+  if (sql === ADDRESS_DRAFT_NORMALIZED_SQL) return [DRAFT_NORMALIZED];
+  if (sql === ADDRESS_FOLD_STATE_SQL) return [FOLD_STATE];
+  if (sql === ADDRESS_HISTORY_SQL) return [HISTORY_ROW];
+  if (sql === ADDRESS_RULES_SQL) return [BOX_HIDE_RULE];
+  // The five reviewer writes still read the company whole.
+  if (sql === ADDRESS_MAIN_SQL) return [MERGED_ROW, BOX_ROW, WORKPLACE_ROW];
+  if (sql === ADDRESS_NORMALIZED_SQL) return NORMALIZED_ROWS;
+  if (sql === ADDRESS_RAW_SQL) return RAW_ROWS;
   throw new Error(`unexpected SQL: ${sql.slice(0, 60)}`);
+}
+
+/** The loader's options, with the tab's defaults. */
+const DEFAULT_OPTIONS: SeAddressDetailOptions = {
+  selectedKey: null,
+  workplacePage: 1,
+  workplaceQuery: "",
+};
+function load(over: Partial<SeAddressDetailOptions> = {}) {
+  return loadSeAddressDetail(COMPANY, { ...DEFAULT_OPTIONS, ...over });
+}
+
+/** Every `chQuery` call that ran this SQL, with the params it was given. */
+function paramsOf(sql: string): Record<string, unknown> | undefined {
+  return clickhouse.query.mock.calls.find(([text]) => text === sql)?.[1] as
+    | Record<string, unknown>
+    | undefined;
+}
+function ranSql(sql: string): boolean {
+  return clickhouse.query.mock.calls.some(([text]) => text === sql);
 }
 
 /** The rows one `chInsertSeCompanyAddressSuggestions` / `...Rules` call got. */
@@ -328,7 +446,9 @@ function inserted(mock: { mock: { calls: unknown[][] } }, call = 0): Record<stri
 describe("se-company-address-entity.server", () => {
   beforeEach(() => {
     clickhouse.query.mockReset();
-    clickhouse.query.mockImplementation(async (sql: string) => answer(sql));
+    clickhouse.query.mockImplementation(async (sql: string, params?: Record<string, unknown>) =>
+      answer(sql, params),
+    );
     clickhouse.insertSuggestions.mockReset();
     clickhouse.insertRules.mockReset();
     dagster.launchRun.mockReset();
@@ -371,13 +491,98 @@ describe("se-company-address-entity.server", () => {
     }
   });
 
-  it("assembles published rows, members, the text-source reason, the hide rule and the drafts", async () => {
-    const detail = await loadSeAddressDetail(COMPANY);
-    expect(detail).not.toBeNull();
-    expect(detail?.published.map((entry) => entry.row.address_key)).toEqual([MERGED_KEY, BOX_KEY]);
+  it("pins the new reads to the workplace split, the filter, the page and one row's pairs", () => {
+    // The list is everything EXCEPT an active workplace-only row -- the exact
+    // predicate migration 000403 gave the serving view.
+    expect(ADDRESS_LIST_SQL).toContain("FROM corpscout.se_company_address AS m FINAL");
+    expect(ADDRESS_LIST_SQL).toContain("WHERE m.company_id = {companyId:String}");
+    expect(ADDRESS_LIST_SQL).toContain("AND NOT (m.active = 1 AND m.kinds = ['workplace'])");
+    expect(ADDRESS_LIST_SQL).toContain("AS refold_pending");
+    // The re-fold mark is computed in ClickHouse against the company's current
+    // normalized versions: pending only when the slot HAS a current version and
+    // it is not the one the row was folded from.
+    expect(ADDRESS_LIST_SQL).toContain("groupArray(concat(toString(n.source), '\\n', n.slot))");
+    expect(ADDRESS_LIST_SQL).toContain("has(current_pairs,");
+    expect(ADDRESS_LIST_SQL).toContain("AND NOT has(current_triples,");
 
-    const merged = detail?.published[0];
-    expect(merged?.members).toEqual([
+    // The workplaces are the other half of the same split, paged and filtered.
+    expect(ADDRESS_WORKPLACES_SQL).toContain("AND m.active = 1");
+    expect(ADDRESS_WORKPLACES_SQL).toContain("AND m.kinds = ['workplace']");
+    expect(ADDRESS_WORKPLACES_SQL).toContain(
+      "positionCaseInsensitiveUTF8(m.normalized_address, {workplaceQuery:String}) > 0",
+    );
+    expect(ADDRESS_WORKPLACES_SQL).toContain("ORDER BY m.normalized_address, m.address_key");
+    expect(ADDRESS_WORKPLACES_SQL).toContain("LIMIT {limit:UInt32} OFFSET {offset:UInt32}");
+    // The count carries the same WHERE, and comes back as a NUMBER: a bare
+    // count() is UInt64, which ClickHouse quotes as a string in JSONEachRow.
+    expect(ADDRESS_WORKPLACES_COUNT_SQL).toContain("SELECT toUInt32(count()) AS total");
+    expect(ADDRESS_WORKPLACES_COUNT_SQL).toContain("AND m.kinds = ['workplace']");
+    expect(ADDRESS_WORKPLACES_COUNT_SQL).not.toContain("LIMIT");
+
+    // The members of ONE row, by the pairs that row carries.
+    for (const sql of [ADDRESS_MEMBER_NORMALIZED_SQL, ADDRESS_MEMBER_RAW_SQL]) {
+      expect(sql).toContain(
+        "has(arrayZip({memberSources:Array(String)}, {memberSlots:Array(String)}),",
+      );
+    }
+    expect(ADDRESS_SELECTED_SQL).toContain("toString(m.address_key) = {addressKey:String}");
+    expect(ADDRESS_SELECTED_SQL).toContain("LIMIT 1");
+    // Drafts stand on their own, filtered in SQL.
+    expect(ADDRESS_DRAFT_RAW_SQL).toContain("AND s.source = 'reviewer_draft'");
+    expect(ADDRESS_DRAFT_NORMALIZED_SQL).toContain("AND n.source = 'reviewer_draft'");
+    // Fold state: five scalar aggregates, drafts excluded from the stamps.
+    expect(ADDRESS_FOLD_STATE_SQL).toContain("AS folded_at");
+    expect(ADDRESS_FOLD_STATE_SQL).toContain("AS newest_normalized_at");
+    expect(ADDRESS_FOLD_STATE_SQL).toContain("AS has_publishable");
+    expect(ADDRESS_FOLD_STATE_SQL).toContain("AS newest_suggested_at");
+    expect(ADDRESS_FOLD_STATE_SQL).toContain("AS normalized_rows");
+    expect(ADDRESS_FOLD_STATE_SQL).toContain("n.source != 'reviewer_draft'");
+    expect(ADDRESS_FOLD_STATE_SQL).toContain("s.source != 'reviewer_draft'");
+  });
+
+  it("returns slim list rows -- no members anywhere but the selected row", async () => {
+    const detail = await load();
+    expect(detail?.published).toEqual([
+      { row: MERGED_ROW, refoldPending: false, hideRule: null },
+      { row: BOX_ROW, refoldPending: false, hideRule: BOX_HIDE_RULE },
+    ]);
+    expect(detail?.published[0]).not.toHaveProperty("members");
+    expect(detail?.workplaces).toEqual({
+      rows: [{ row: WORKPLACE_ROW, refoldPending: true, hideRule: null }],
+      total: 1,
+      page: 1,
+      pageSize: 50,
+      query: "",
+    });
+    expect(detail?.drafts).toEqual([
+      { slot: DRAFT_SLOT, raw: DRAFT_RAW, normalized: DRAFT_NORMALIZED, replacesKey: MERGED_KEY },
+    ]);
+    expect(detail?.history).toEqual([HISTORY_ROW]);
+    expect(detail?.rules).toEqual([BOX_HIDE_RULE]);
+    // The whole-company reads are what made the kommun 7.8 MB. The tab's
+    // loader must not run any of them any more.
+    expect(ranSql(ADDRESS_NORMALIZED_SQL)).toBe(false);
+    expect(ranSql(ADDRESS_RAW_SQL)).toBe(false);
+    expect(ranSql(ADDRESS_MAIN_SQL)).toBe(false);
+    expect(paramsOf(ADDRESS_LIST_SQL)).toEqual({ companyId: COMPANY });
+    expect(clickhouse.query.mock.calls.some(([text]) =>
+      String(text).includes("se_company_address_precedence"),
+    )).toBe(false);
+  });
+
+  it("resolves the selected row's members from that row's own (source, slot) pairs", async () => {
+    const detail = await load({ selectedKey: MERGED_KEY });
+    expect(paramsOf(ADDRESS_SELECTED_SQL)).toEqual({
+      companyId: COMPANY,
+      addressKey: MERGED_KEY,
+    });
+    // Two parallel Array(String) parameters, zipped back into pairs in
+    // ClickHouse: the merged row's two members and nobody else's.
+    const memberParams = { companyId: COMPANY, memberSources: ["scb", "bolagsverket"], memberSlots: ["s1", "b1"] };
+    expect(paramsOf(ADDRESS_MEMBER_NORMALIZED_SQL)).toEqual(memberParams);
+    expect(paramsOf(ADDRESS_MEMBER_RAW_SQL)).toEqual(memberParams);
+    expect(detail?.selected?.row).toEqual(MERGED_ROW);
+    expect(detail?.selected?.members).toEqual([
       {
         source: "scb",
         slot: "s1",
@@ -398,38 +603,123 @@ describe("se-company-address-entity.server", () => {
         completeness: 4,
       },
     ]);
-    expect(merged?.textSourceReason).toBe("most complete");
-    expect(merged?.hideRule).toBeNull();
+    expect(detail?.selected?.textSourceReason).toBe("most complete");
+    expect(detail?.selected?.hideRule).toBeNull();
+  });
 
-    const box = detail?.published[1];
-    expect(box?.members).toHaveLength(1);
-    expect(box?.textSourceReason).toBe("single source");
-    expect(box?.hideRule).toEqual(BOX_HIDE_RULE);
-
-    expect(detail?.drafts).toEqual([
-      { slot: DRAFT_SLOT, raw: DRAFT_RAW, normalized: DRAFT_NORMALIZED, replacesKey: MERGED_KEY },
+  it("selects a workplace row exactly as it selects a company address", async () => {
+    const detail = await load({ selectedKey: WORKPLACE_KEY });
+    expect(paramsOf(ADDRESS_MEMBER_NORMALIZED_SQL)).toEqual({
+      companyId: COMPANY,
+      memberSources: ["ratsit"],
+      memberSlots: ["est:9"],
+    });
+    expect(detail?.selected?.row).toEqual(WORKPLACE_ROW);
+    expect(detail?.selected?.members).toEqual([
+      {
+        source: "ratsit",
+        slot: "est:9",
+        normalizedId: "n5",
+        current: WORKPLACE_NORMALIZED,
+        raw: WORKPLACE_RAW,
+        refoldPending: true,
+        completeness: 4,
+      },
     ]);
-    expect(detail?.history).toEqual([HISTORY_ROW]);
-    expect(detail?.rules).toEqual([BOX_HIDE_RULE]);
-    // Bolagsverket's normalized_at (10:00) is newer than the fold (09:00).
-    expect(detail?.foldPending).toBe(true);
-    for (const sql of [ADDRESS_MAIN_SQL, ADDRESS_HISTORY_SQL, ADDRESS_NORMALIZED_SQL, ADDRESS_RAW_SQL, ADDRESS_RULES_SQL]) {
-      expect(clickhouse.query.mock.calls.find(([text]) => text === sql)?.[1]).toEqual({ companyId: COMPANY });
-    }
-    // Nothing reads the source-precedence table: no query goes near it.
-    expect(clickhouse.query.mock.calls.some(([text]) => String(text).includes("se_company_address_precedence"))).toBe(false);
+    expect(detail?.selected?.textSourceReason).toBe("single source");
+  });
+
+  it("falls back to the first active company address for no key, a foreign key and a malformed one", async () => {
+    // Owner ruling 2026-09-13: the tab keeps today's default. With no
+    // `?address=` the panel describes the first active row of the Addresses
+    // card -- `ADDRESS_LIST_SQL` sorts `active DESC` first, so that is the
+    // first active entry of the list already read -- and its members load
+    // exactly as they would for an explicit key. No extra row read: the row is
+    // already in hand.
+    const none = await load();
+    expect(ranSql(ADDRESS_SELECTED_SQL)).toBe(false);
+    expect(none?.selected?.row).toEqual(MERGED_ROW);
+    expect(paramsOf(ADDRESS_MEMBER_NORMALIZED_SQL)).toEqual({
+      companyId: COMPANY,
+      memberSources: ["scb", "bolagsverket"],
+      memberSlots: ["s1", "b1"],
+    });
+    expect(paramsOf(ADDRESS_MEMBER_RAW_SQL)).toEqual({
+      companyId: COMPANY,
+      memberSources: ["scb", "bolagsverket"],
+      memberSlots: ["s1", "b1"],
+    });
+    expect(none?.selected?.members).toHaveLength(2);
+
+    // A well-formed key that is not this company's: the row read comes back
+    // empty, and the fallback takes over rather than leaving the panel blank.
+    clickhouse.query.mockClear();
+    const foreign = await load({ selectedKey: UNKNOWN_KEY });
+    expect(paramsOf(ADDRESS_SELECTED_SQL)).toEqual({ companyId: COMPANY, addressKey: UNKNOWN_KEY });
+    expect(foreign?.selected?.row).toEqual(MERGED_ROW);
+
+    // A malformed key never reaches ClickHouse at all, and falls back too.
+    clickhouse.query.mockClear();
+    const malformed = await load({ selectedKey: "not-a-key" });
+    expect(ranSql(ADDRESS_SELECTED_SQL)).toBe(false);
+    expect(malformed?.selected?.row).toEqual(MERGED_ROW);
+  });
+
+  it("selects nothing when the company has no active company address", async () => {
+    // A workplace-only company (or one whose every company address is
+    // withdrawn): there is no first active row to fall back to, so the panel
+    // says nothing is published and no member read runs at all.
+    clickhouse.query.mockImplementation(async (sql: string, params?: Record<string, unknown>) =>
+      sql === ADDRESS_LIST_SQL ? [listRow(BOX_ROW, 0)] : answer(sql, params),
+    );
+    const detail = await load();
+    expect(detail?.published).toEqual([{ row: BOX_ROW, refoldPending: false, hideRule: BOX_HIDE_RULE }]);
+    expect(detail?.selected).toBeNull();
+    expect(ranSql(ADDRESS_SELECTED_SQL)).toBe(false);
+    expect(ranSql(ADDRESS_MEMBER_NORMALIZED_SQL)).toBe(false);
+    expect(ranSql(ADDRESS_MEMBER_RAW_SQL)).toBe(false);
+  });
+
+  it("binds the workplace page, its offset and its filter, and echoes them back", async () => {
+    const detail = await load({ workplacePage: 3, workplaceQuery: "storgatan" });
+    expect(paramsOf(ADDRESS_WORKPLACES_SQL)).toEqual({
+      companyId: COMPANY,
+      workplaceQuery: "storgatan",
+      limit: 50,
+      offset: 100,
+    });
+    expect(paramsOf(ADDRESS_WORKPLACES_COUNT_SQL)).toEqual({
+      companyId: COMPANY,
+      workplaceQuery: "storgatan",
+    });
+    expect(detail?.workplaces.page).toBe(3);
+    expect(detail?.workplaces.pageSize).toBe(50);
+    expect(detail?.workplaces.query).toBe("storgatan");
+    expect(detail?.workplaces.total).toBe(1);
+
+    // Page 1 is offset 0, and the count is what `total` reports.
+    clickhouse.query.mockClear();
+    clickhouse.query.mockImplementation(async (sql: string, params?: Record<string, unknown>) =>
+      sql === ADDRESS_WORKPLACES_COUNT_SQL ? [{ total: 1502 }] : answer(sql, params),
+    );
+    const first = await load();
+    expect(paramsOf(ADDRESS_WORKPLACES_SQL)).toEqual({
+      companyId: COMPANY,
+      workplaceQuery: "",
+      limit: 50,
+      offset: 0,
+    });
+    expect(first?.workplaces.total).toBe(1502);
   });
 
   it("calls the text source a tie-break when another member is just as complete", async () => {
-    clickhouse.query.mockImplementation(async (sql: string) => {
-      if (sql === ADDRESS_NORMALIZED_SQL) {
-        return [{ ...SCB_NORMALIZED, unit: "" }, BV_NORMALIZED, RATSIT_NORMALIZED];
-      }
-      return answer(sql);
+    clickhouse.query.mockImplementation(async (sql: string, params?: Record<string, unknown>) => {
+      if (sql === ADDRESS_MEMBER_NORMALIZED_SQL) return [{ ...SCB_NORMALIZED, unit: "" }, BV_NORMALIZED];
+      return answer(sql, params);
     });
-    const detail = await loadSeAddressDetail(COMPANY);
-    expect(detail?.published[0]?.members.map((member) => member.completeness)).toEqual([4, 4]);
-    expect(detail?.published[0]?.textSourceReason).toBe("tie-break");
+    const detail = await load({ selectedKey: MERGED_KEY });
+    expect(detail?.selected?.members.map((member) => member.completeness)).toEqual([4, 4]);
+    expect(detail?.selected?.textSourceReason).toBe("tie-break");
   });
 
   it("attributes the published text to the most complete member of the text source", async () => {
@@ -442,118 +732,120 @@ describe("se-company-address-entity.server", () => {
       normalized_ids: ["n6", "n7"],
       text_source: "scb",
     });
-    clickhouse.query.mockImplementation(async (sql: string) => {
-      if (sql === ADDRESS_MAIN_SQL) return [twoScb];
-      if (sql === ADDRESS_NORMALIZED_SQL) {
+    clickhouse.query.mockImplementation(async (sql: string, params?: Record<string, unknown>) => {
+      if (sql === ADDRESS_SELECTED_SQL) return [twoScb];
+      if (sql === ADDRESS_MEMBER_NORMALIZED_SQL) {
         return [
           // The first member is the thinner one: picking it would read as a tie.
           normalized({ slot: "", normalized_id: "n6", postal_code: "11122", city: "Stockholm" }),
           normalized({ ...SCB_NORMALIZED, slot: "x", normalized_id: "n7" }),
         ];
       }
-      return answer(sql);
+      if (sql === ADDRESS_MEMBER_RAW_SQL) return [];
+      return answer(sql, params);
     });
-    const detail = await loadSeAddressDetail(COMPANY);
-    expect(detail?.published[0]?.members.map((member) => member.completeness)).toEqual([2, 5]);
-    expect(detail?.published[0]?.textSourceReason).toBe("most complete");
+    const detail = await load({ selectedKey: MERGED_KEY });
+    expect(paramsOf(ADDRESS_MEMBER_NORMALIZED_SQL)).toEqual({
+      companyId: COMPANY,
+      memberSources: ["scb", "scb"],
+      memberSlots: ["", "x"],
+    });
+    expect(detail?.selected?.members.map((member) => member.completeness)).toEqual([2, 5]);
+    expect(detail?.selected?.textSourceReason).toBe("most complete");
   });
 
-  it("keeps a draft out of fold-pending and reports no fold when every stamp is older", async () => {
-    clickhouse.query.mockImplementation(async (sql: string) => {
-      // Only the draft (21:00) is newer than the fold now.
-      if (sql === ADDRESS_NORMALIZED_SQL) {
-        return [SCB_NORMALIZED, { ...BV_NORMALIZED, normalized_at: "2026-09-07 08:00:00.000" }, RATSIT_NORMALIZED, DRAFT_NORMALIZED];
-      }
-      return answer(sql);
-    });
-    expect((await loadSeAddressDetail(COMPANY))?.foldPending).toBe(false);
-  });
+  it("reads fold-pending from the fold-state row, with the drafts already excluded", async () => {
+    // Newest non-draft normalized stamp (10:00) is newer than the fold (09:00).
+    expect((await load())?.foldPending).toBe(true);
 
-  it("is fold-pending when a rule is newer than the fold, and when nothing has been folded yet", async () => {
-    clickhouse.query.mockImplementation(async (sql: string) => {
-      if (sql === ADDRESS_NORMALIZED_SQL) {
-        return [SCB_NORMALIZED, { ...BV_NORMALIZED, normalized_at: "2026-09-07 08:00:00.000" }, RATSIT_NORMALIZED];
-      }
-      if (sql === ADDRESS_RULES_SQL) return [{ ...BOX_HIDE_RULE, removed: 1, decided_at: "2026-09-07 12:00:00.000" }];
-      return answer(sql);
-    });
-    // A release (removed = 1) still counts: it is not applied until the fold runs.
-    expect((await loadSeAddressDetail(COMPANY))?.foldPending).toBe(true);
+    const state = (over: Record<string, unknown>) => async (sql: string, params?: Record<string, unknown>) =>
+      sql === ADDRESS_FOLD_STATE_SQL ? [foldState(over)] : answer(sql, params);
 
-    clickhouse.query.mockImplementation(async (sql: string) =>
-      sql === ADDRESS_MAIN_SQL || sql === ADDRESS_HISTORY_SQL ? [] : answer(sql),
+    // Every non-draft stamp older than the fold: settled. The draft's own
+    // 21:00 normalized_at is not in the fold state at all (the SQL excludes
+    // `reviewer_draft`), so it cannot raise the flag.
+    clickhouse.query.mockImplementation(
+      state({ newest_normalized_at: "2026-09-07 08:00:00.000", newest_suggested_at: "2026-09-06 07:00:00.000" }),
     );
-    const unfolded = await loadSeAddressDetail(COMPANY);
-    expect(unfolded?.published).toEqual([]);
-    expect(unfolded?.foldPending).toBe(true);
-  });
+    expect((await load())?.foldPending).toBe(false);
 
-  it("is fold-pending when a non-draft raw row is newer than the fold, normalized or not", async () => {
-    // What an Activate (or a Remove's tombstone) leaves behind: a reviewer raw
-    // row the normalize step has not seen yet, so no normalized version speaks
-    // for it and only its own suggested_at says a fold is owed.
-    clickhouse.query.mockImplementation(async (sql: string) => {
-      if (sql === ADDRESS_NORMALIZED_SQL) {
-        return [SCB_NORMALIZED, { ...BV_NORMALIZED, normalized_at: "2026-09-07 08:00:00.000" }, RATSIT_NORMALIZED, DRAFT_NORMALIZED];
+    // A rule newer than the fold counts, released or not: the release is not
+    // applied until the fold runs.
+    clickhouse.query.mockImplementation(async (sql: string, params?: Record<string, unknown>) => {
+      if (sql === ADDRESS_FOLD_STATE_SQL) {
+        return [foldState({ newest_normalized_at: "2026-09-07 08:00:00.000", newest_suggested_at: "" })];
       }
-      if (sql === ADDRESS_RAW_SQL) {
-        return [...RAW_ROWS, { ...REVIEWER_RAW, slot: "rev9", suggested_at: "2026-09-07 20:33:55.123" }];
+      if (sql === ADDRESS_RULES_SQL) {
+        return [{ ...BOX_HIDE_RULE, removed: 1, decided_at: "2026-09-07 12:00:00.000" }];
       }
-      return answer(sql);
+      return answer(sql, params);
     });
-    expect((await loadSeAddressDetail(COMPANY))?.foldPending).toBe(true);
+    expect((await load())?.foldPending).toBe(true);
+
+    // A reviewer raw row the normalize step has not seen yet -- what an
+    // Activate or a Remove tombstone leaves -- speaks through its own stamp.
+    clickhouse.query.mockImplementation(
+      state({ newest_normalized_at: "2026-09-07 08:00:00.000", newest_suggested_at: "2026-09-07 20:33:55.123" }),
+    );
+    expect((await load())?.foldPending).toBe(true);
+
+    // Nothing folded yet, but a publishable normalized row exists.
+    clickhouse.query.mockImplementation(
+      state({ folded_at: "", newest_normalized_at: "", newest_suggested_at: "", has_publishable: 1 }),
+    );
+    expect((await load())?.foldPending).toBe(true);
+
+    // Nothing folded and nothing publishable (every row parses `no_address`):
+    // no fold is owed.
+    clickhouse.query.mockImplementation(
+      state({ folded_at: "", newest_normalized_at: "", newest_suggested_at: "", has_publishable: 0 }),
+    );
+    expect((await load())?.foldPending).toBe(false);
   });
 
-  it("is not fold-pending for an unfolded company whose rows all parse no_address", async () => {
-    // Spec 5.5: a company with no main row is selected only when a current
-    // normalized row is publishable, so nothing is waiting on a fold here.
-    const unpublishable = normalized({
-      source: "ratsit",
-      slot: "x1",
-      normalized_id: "n3",
-      parse_status: "no_address",
-      normalized_address: "",
-    });
-    clickhouse.query.mockImplementation(async (sql: string) => {
-      if (sql === ADDRESS_MAIN_SQL || sql === ADDRESS_HISTORY_SQL || sql === ADDRESS_RULES_SQL) return [];
-      if (sql === ADDRESS_NORMALIZED_SQL) return [unpublishable];
-      if (sql === ADDRESS_RAW_SQL) return [SCB_RAW];
-      return answer(sql);
-    });
-    const nothingToPublish = await loadSeAddressDetail(COMPANY);
-    expect(nothingToPublish).not.toBeNull();
-    expect(nothingToPublish?.foldPending).toBe(false);
-
-    clickhouse.query.mockImplementation(async (sql: string) => {
-      if (sql === ADDRESS_MAIN_SQL || sql === ADDRESS_HISTORY_SQL || sql === ADDRESS_RULES_SQL) return [];
-      if (sql === ADDRESS_NORMALIZED_SQL) return [unpublishable, SCB_NORMALIZED];
-      if (sql === ADDRESS_RAW_SQL) return [SCB_RAW];
-      return answer(sql);
-    });
-    expect((await loadSeAddressDetail(COMPANY))?.foldPending).toBe(true);
-  });
-
-  it("returns null only when there is no main row, no normalized row and no draft", async () => {
-    clickhouse.query.mockImplementation(async () => []);
-    expect(await loadSeAddressDetail(COMPANY)).toBeNull();
+  it("returns null only when there is no list row, no workplace, no normalized row and no draft", async () => {
+    clickhouse.query.mockImplementation(async (sql: string) =>
+      sql === ADDRESS_WORKPLACES_COUNT_SQL
+        ? [{ total: 0 }]
+        : sql === ADDRESS_FOLD_STATE_SQL
+          ? [foldState({ folded_at: "", newest_normalized_at: "", newest_suggested_at: "", has_publishable: 0, normalized_rows: 0 })]
+          : [],
+    );
+    expect(await load()).toBeNull();
 
     // A typed draft alone is enough to open the tab.
-    clickhouse.query.mockImplementation(async (sql: string) => (sql === ADDRESS_RAW_SQL ? [DRAFT_RAW] : []));
-    const draftOnly = await loadSeAddressDetail(COMPANY);
+    clickhouse.query.mockImplementation(async (sql: string) => {
+      if (sql === ADDRESS_DRAFT_RAW_SQL) return [DRAFT_RAW];
+      if (sql === ADDRESS_WORKPLACES_COUNT_SQL) return [{ total: 0 }];
+      if (sql === ADDRESS_FOLD_STATE_SQL) {
+        return [foldState({ folded_at: "", newest_normalized_at: "", newest_suggested_at: "", has_publishable: 0, normalized_rows: 0 })];
+      }
+      return [];
+    });
+    const draftOnly = await load();
     expect(draftOnly?.drafts).toEqual([
       { slot: DRAFT_SLOT, raw: DRAFT_RAW, normalized: null, replacesKey: MERGED_KEY },
     ]);
     expect(draftOnly?.foldPending).toBe(false);
+
+    // A company whose only rows are workplaces has an empty Addresses card and
+    // is still very much a company with addresses.
+    clickhouse.query.mockImplementation(async (sql: string, params?: Record<string, unknown>) =>
+      sql === ADDRESS_LIST_SQL ? [] : answer(sql, params),
+    );
+    const workplacesOnly = await load();
+    expect(workplacesOnly?.published).toEqual([]);
+    expect(workplacesOnly?.workplaces.total).toBe(1);
   });
 
   it("ignores a cleared reviewer_draft row: it is a tombstone, not a draft", async () => {
-    clickhouse.query.mockImplementation(async (sql: string) => {
-      if (sql === ADDRESS_RAW_SQL) {
+    clickhouse.query.mockImplementation(async (sql: string, params?: Record<string, unknown>) => {
+      if (sql === ADDRESS_DRAFT_RAW_SQL) {
         return [{ ...DRAFT_RAW, care_of: "", street_address: "", postal_code: "", post_town: "", note: "discarded" }];
       }
-      return answer(sql);
+      return answer(sql, params);
     });
-    expect((await loadSeAddressDetail(COMPANY))?.drafts).toEqual([]);
+    expect((await load())?.drafts).toEqual([]);
   });
 
   it("saves a draft under a new slot as one raw row with the stamp's id", async () => {

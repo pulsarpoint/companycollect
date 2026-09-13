@@ -51,8 +51,9 @@ import type {
   SeAddressComponents,
   SeAddressDetail,
   SeAddressDraft,
+  SeAddressListEntry,
   SeAddressMember,
-  SeAddressPublished,
+  SeAddressPublishedDetail,
   SeAddressRawRow,
   SeAddressRow,
 } from "~/lib/se-company-address-entity.server";
@@ -157,19 +158,6 @@ export function mapPoint(row: SeAddressRow): AddressMapPoint | null {
 function openStreetMapUrl(point: AddressMapPoint): string {
   const zoom = point.approximate ? 13 : 18;
   return `https://www.openstreetmap.org/?mlat=${point.lat}&mlon=${point.lon}#map=${zoom}/${point.lat}/${point.lon}`;
-}
-
-/** The address the panel describes: the one the query string names, else the
- * first active row, else the first row at all. */
-function selectAddress(
-  detail: SeAddressDetail,
-  selectedKey: string | null,
-): SeAddressPublished | null {
-  if (selectedKey !== null) {
-    const named = detail.published.find((entry) => entry.row.address_key === selectedKey);
-    if (named) return named;
-  }
-  return detail.published.find((entry) => entry.row.active === 1) ?? detail.published[0] ?? null;
 }
 
 function initialFromRow(row: SeAddressRow): SeAddressEditInitial {
@@ -341,10 +329,10 @@ function AddressLine({
   busy,
   onCorrect,
 }: {
-  entry: SeAddressPublished;
+  entry: SeAddressListEntry;
   selectedKey: string | null;
   busy: boolean;
-  onCorrect: (entry: SeAddressPublished) => void;
+  onCorrect: (entry: SeAddressListEntry) => void;
 }) {
   const { row } = entry;
   const selected = row.address_key === selectedKey;
@@ -400,7 +388,7 @@ function AddressesCard({
   detail: SeAddressDetail;
   selectedKey: string | null;
   busy: boolean;
-  onCorrect: (entry: SeAddressPublished) => void;
+  onCorrect: (entry: SeAddressListEntry) => void;
 }) {
   const navigate = useNavigate();
   const active = detail.published.filter((entry) => entry.row.active === 1);
@@ -515,7 +503,7 @@ function DraftsCard({
             const replaced =
               draft.replacesKey === ""
                 ? null
-                : (detail.published.find(
+                : ([...detail.published, ...detail.workplaces.rows].find(
                     (entry) => entry.row.address_key === draft.replacesKey,
                   ) ?? null);
             return (
@@ -821,7 +809,7 @@ function AddressPanel({
   onAdd,
   onDecide,
 }: {
-  entry: SeAddressPublished | null;
+  entry: SeAddressPublishedDetail | null;
   busy: boolean;
   onAdd: () => void;
   onDecide: (pending: PendingAddressDecision) => void;
@@ -1049,7 +1037,10 @@ export function SeAddressWorkspace({
     // identity, this runs once per action round trip.
     if (result?.ok && result.intent === "save-draft") setSheet(null);
   }, [result]);
-  const selected = selectAddress(detail, selectedKey);
+  // The loader made the selection: the `?address=` row when the key names one
+  // of this company's, else the first active row -- the same default the
+  // deleted `selectAddress` applied -- and only that row carries members.
+  const selected = detail.selected;
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(20rem,1fr)]">
       <div className="flex flex-col gap-6">

@@ -23,9 +23,11 @@ import { removeSuccessCopy, SeAddressWorkspace } from "~/components/admin/se-add
 import type {
   SeAddressDetail,
   SeAddressDraft,
-  SeAddressPublished,
+  SeAddressListEntry,
+  SeAddressPublishedDetail,
   SeAddressRawRow,
   SeAddressRow,
+  SeAddressWorkplacePage,
 } from "~/lib/se-company-address-entity.server";
 
 const COMPANY = "5560125220";
@@ -89,7 +91,11 @@ const rawRow: SeAddressRawRow = {
   extractor_version: "bolagsverket-v2",
 };
 
-const published: SeAddressPublished = {
+/** The company's one published address, as the Addresses card gets it. */
+const listEntry: SeAddressListEntry = { row, refoldPending: false, hideRule: null };
+
+/** The same address as the panel gets it, with its one member. */
+const selectedDetail: SeAddressPublishedDetail = {
   row,
   members: [
     {
@@ -109,8 +115,8 @@ const published: SeAddressPublished = {
 /** A second active address of the same company, geocoded no finer than its
  * postcode -- two rows for the list's one map to carry. */
 const SECOND_KEY = "b".repeat(64);
-const secondPublished: SeAddressPublished = {
-  ...published,
+const secondListEntry: SeAddressListEntry = {
+  ...listEntry,
   row: {
     ...row,
     address_key: SECOND_KEY,
@@ -124,8 +130,44 @@ const secondPublished: SeAddressPublished = {
   },
 };
 
+/** An establishment: `kinds` is exactly `['workplace']`, so it lives in the
+ * Workplaces card and never in the Addresses card. */
+const WORKPLACE_KEY = "c".repeat(64);
+const workplaceEntry: SeAddressListEntry = {
+  row: {
+    ...row,
+    address_key: WORKPLACE_KEY,
+    street_name: "Verkstadsgatan",
+    house_number: "3",
+    postal_code: "11124",
+    normalized_address: "verkstadsgatan 3|11124|stockholm|se",
+    kinds: ["workplace"],
+    sources: ["ratsit"],
+    slots: ["est:9"],
+    normalized_ids: ["norm-9"],
+    text_source: "ratsit",
+    latitude: 59.35,
+    longitude: 18.08,
+  },
+  refoldPending: false,
+  hideRule: null,
+};
+
+/** No workplaces at all: the card is absent (Task 2). Typed, not `as const`:
+ * `as const` would make `rows` a `readonly []`, which no `SeAddressDetail`
+ * accepts. */
+const NO_WORKPLACES: SeAddressWorkplacePage = {
+  rows: [],
+  total: 0,
+  page: 1,
+  pageSize: 50,
+  query: "",
+};
+
 const detail: SeAddressDetail = {
-  published: [published],
+  published: [listEntry],
+  selected: selectedDetail,
+  workplaces: { ...NO_WORKPLACES },
   drafts: [],
   history: [],
   rules: [],
@@ -136,6 +178,8 @@ const detail: SeAddressDetail = {
  * for (and what `loadSeAddressDetail` returning null becomes). */
 const EMPTY_DETAIL: SeAddressDetail = {
   published: [],
+  selected: null,
+  workplaces: { ...NO_WORKPLACES },
   drafts: [],
   history: [],
   rules: [],
@@ -240,7 +284,7 @@ describe("SeAddressWorkspace", () => {
     const html = render(
       <SeAddressWorkspace
         companyId={COMPANY}
-        detail={{ ...detail, published: [published, secondPublished] }}
+        detail={{ ...detail, published: [listEntry, secondListEntry] }}
         selectedKey={KEY}
         result={null}
       />,
@@ -297,15 +341,27 @@ describe("admin-se-company-address route", () => {
       params: { companyId: COMPANY },
     } as never);
     expect(response).toEqual({ detail, selectedKey: null });
+    // The tab's three parameters, at their defaults.
+    expect(server.loadSeAddressDetail).toHaveBeenCalledWith(COMPANY, {
+      selectedKey: null,
+      workplacePage: 1,
+      workplaceQuery: "",
+    });
 
     // No 404: Add address must stay reachable for a company nothing has
     // suggested an address for. The company layout 404s an unknown company.
     server.loadSeAddressDetail.mockResolvedValueOnce(null);
     const missing = await loader({
-      request: new Request(`http://x/admin/se/company/${COMPANY}/address`),
+      request: new Request(`http://x/admin/se/company/${COMPANY}/address?workplaces=3&workplace_q=box`),
       params: { companyId: COMPANY },
     } as never);
-    expect(missing).toEqual({ detail: EMPTY_DETAIL, selectedKey: null });
+    expect(missing).toEqual({
+      detail: {
+        ...EMPTY_DETAIL,
+        workplaces: { rows: [], total: 0, page: 3, pageSize: 50, query: "box" },
+      },
+      selectedKey: null,
+    });
     const html = render(
       <SeAddressWorkspace
         companyId={COMPANY}
@@ -318,18 +374,32 @@ describe("admin-se-company-address route", () => {
     expect(html).toContain("Add address");
   });
 
-  it("passes the selected key from ?address=, ignoring anything malformed", async () => {
+  it("passes the selected key and the workplace page and filter through, ignoring anything malformed", async () => {
     const selected = await loader({
-      request: new Request(`http://x/admin/se/company/${COMPANY}/address?address=${KEY}`),
+      request: new Request(
+        `http://x/admin/se/company/${COMPANY}/address?address=${KEY}&workplaces=4&workplace_q=+Box+1+`,
+      ),
       params: { companyId: COMPANY },
     } as never);
     expect(selected).toEqual({ detail, selectedKey: KEY });
+    expect(server.loadSeAddressDetail).toHaveBeenLastCalledWith(COMPANY, {
+      selectedKey: KEY,
+      workplacePage: 4,
+      workplaceQuery: "Box 1",
+    });
 
     const malformed = await loader({
-      request: new Request(`http://x/admin/se/company/${COMPANY}/address?address=not-a-key`),
+      request: new Request(
+        `http://x/admin/se/company/${COMPANY}/address?address=not-a-key&workplaces=zero`,
+      ),
       params: { companyId: COMPANY },
     } as never);
     expect(malformed).toEqual({ detail, selectedKey: null });
+    expect(server.loadSeAddressDetail).toHaveBeenLastCalledWith(COMPANY, {
+      selectedKey: null,
+      workplacePage: 1,
+      workplaceQuery: "",
+    });
   });
 
   function post(entries: Record<string, string>) {
