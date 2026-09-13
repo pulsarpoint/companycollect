@@ -42,7 +42,7 @@ The fixture is nine companies, each a different shape of the primary-class or ra
               one INACTIVE visiting_or_postal address that outranks it. Only the active row may
               reach the serving row: address_count == 1, class 'geocoded', and the JSON element
               carries the active row's key as its address_id.
-  NOADDRESS   no address row at all -- still one serving row, with an empty address summary.
+  NOADDRESS   no address row at all -- still one serving row, with an empty address summary. Its one entity period is ESEF-sourced.
   POSTCODE    one POSTCODE-ONLY address: normalizer v3 publishes `100 11 Stockholm` -- a
               valid postcode and a town, no street and no box -- and the line therefore has
               no comma for the street expression to cut at. `street_address` must come out
@@ -61,7 +61,7 @@ The fixture is nine companies, each a different shape of the primary-class or ra
               exclusion it would be the primary and the count would read 3.
   WORKPLACE_ONLY  one active row, workplace-only. 355 companies look like this after slice 3
               (establishments but no visiting_or_postal row), and they must serve the same
-              empty address summary an addressless company does.
+              empty address summary an addressless company does. Its one entity period is sourced from the restated Bolagsverket column.
 """
 
 import json
@@ -507,9 +507,15 @@ def _script(*, join_use_nulls: int) -> str:
         + ", ".join((_bolagsverket_row(COARSE, reason="'konkurs avslutad'"), _bolagsverket_row(PRECISE)))
         + ";",
         "INSERT INTO corpscout.se_code_labels VALUES ('status_reason', 'konkurs avslutad', 'Bankruptcy concluded', '', 1), ('legal_form', '49', 'Limited company (aktiebolag)', 'Aktiebolag', 1);",
-        # PRECISE has an active folded period from Bolagsverket and Ratsit; UNGEOCODED's only
-        # period is hidden (active 0), which must not light has_financial.
-        f"INSERT INTO corpscout.se_company_financial VALUES ('{PRECISE}', ['bolagsverket', 'ratsit'], 1, 'standalone'), ('{UNGEOCODED}', ['ratsit'], 0, 'standalone');",
+        # PRECISE has an active folded period from Bolagsverket and Ratsit; NOADDRESS's only
+        # period is ESEF-sourced and WORKPLACE_ONLY's is the restated Bolagsverket column, so
+        # each register-specific arm is proven on its own; UNGEOCODED's only period is
+        # hidden (active 0) and carries esef, which must light neither has_financial nor E.
+        f"INSERT INTO corpscout.se_company_financial VALUES "
+        f"('{PRECISE}', ['bolagsverket', 'ratsit'], 1, 'standalone'), "
+        f"('{NOADDRESS}', ['esef'], 1, 'standalone'), "
+        f"('{WORKPLACE_ONLY}', ['bolagsverket_comparative'], 1, 'standalone'), "
+        f"('{UNGEOCODED}', ['esef', 'ratsit'], 0, 'standalone');",
         f"INSERT INTO corpscout.se_financial_reports VALUES ('{COARSE}');",
         f"INSERT INTO corpscout.se_company_person VALUES ('{PRECISE}', ['esef'], 1);",
         # The SE filter must hold: UNGEOCODED's domain is Norwegian and must not count.
@@ -601,10 +607,12 @@ def test_an_addressless_company_serves_an_empty_address_summary(
 
 
 def test_presence_flags_come_from_the_child_tables(rows: dict[str, dict]) -> None:
-    # has_financial: PRECISE via an active financial-entity row, COARSE via a filed report --
-    # the owner's 2026-08-25 widening -- and nothing else; UNGEOCODED's hidden period does
-    # not count.
+    # has_financial: PRECISE, NOADDRESS and WORKPLACE_ONLY via an active financial-entity
+    # row, COARSE via a filed report -- the owner's 2026-08-25 widening -- and nothing
+    # else; UNGEOCODED's hidden period does not count.
     assert rows[PRECISE]["has_financial"] == 1
+    assert rows[NOADDRESS]["has_financial"] == 1
+    assert rows[WORKPLACE_ONLY]["has_financial"] == 1
     assert rows[COARSE]["has_financial"] == 1
     assert rows[UNGEOCODED]["has_financial"] == 0
     assert rows[POSTAL_BOX]["has_financial"] == 0
@@ -661,12 +669,23 @@ def test_market_flags_come_from_their_own_tables(rows: dict[str, dict]) -> None:
 
 def test_source_flags_or_their_arms_together(rows: dict[str, dict]) -> None:
     # Every addressed fixture row's address is sourced from bolagsverket -> B; PRECISE
-    # also earns B via its metrics arm. The addressless company has no B arm at all.
+    # also earns B via its entity arm. The addressless company has no B arm at all: its
+    # only entity period is ESEF-sourced.
     for company in ADDRESSED:
         assert rows[company]["source_bolagsverket"] == 1
     assert rows[NOADDRESS]["source_bolagsverket"] == 0
-    # E: PRECISE via its esef role evidence; nothing else has an arm.
+    # B via the entity arm ALONE: WORKPLACE_ONLY has no published address and no person,
+    # and its one active period is sourced from the restated column, which lights the
+    # Bolagsverket flag (ruling in the slice 4a plan: bolagsverket_comparative counts).
+    assert rows[WORKPLACE_ONLY]["has_address"] == 0
+    assert rows[WORKPLACE_ONLY]["has_people"] == 0
+    assert rows[WORKPLACE_ONLY]["source_bolagsverket"] == 1
+    # E: PRECISE via its esef role evidence; NOADDRESS via the entity arm ALONE (no
+    # description, no LEI, no person); a HIDDEN esef period (UNGEOCODED) lights nothing.
     assert rows[PRECISE]["source_esef"] == 1
+    assert rows[NOADDRESS]["source_esef"] == 1
+    assert rows[NOADDRESS]["has_people"] == 0
+    assert rows[UNGEOCODED]["source_esef"] == 0
     assert rows[COARSE]["source_esef"] == 0
     # W: no fixture row carries wikidata evidence.
     for company in rows:
