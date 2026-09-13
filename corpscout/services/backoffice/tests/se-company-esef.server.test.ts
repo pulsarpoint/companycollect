@@ -60,6 +60,15 @@ describe("SQL contracts", () => {
     expect(ESEF_TAB_DOMAINS_SQL).toContain("company_id = {companyId:String}");
     expect(ESEF_TAB_DOMAINS_SQL).toContain("extraction_status = 'ok'");
     expect(ESEF_TAB_DOMAINS_SQL).not.toContain("FINAL");
+    // Two filings in one fiscal year collapse to one row per domain.
+    expect(ESEF_TAB_DOMAINS_SQL).toContain(
+      "GROUP BY fiscal_year, registrable_domain",
+    );
+    expect(ESEF_TAB_DOMAINS_SQL).toContain(
+      "toJSONString(arrayDistinct(arrayFlatten(groupArray(JSONExtract(roles_json, 'Array(String)'))))) AS roles_json",
+    );
+    expect(ESEF_TAB_DOMAINS_SQL).toContain("max(evidence_count) AS evidence_count");
+    expect(ESEF_TAB_DOMAINS_SQL).toContain("max(corroborated) AS corroborated");
     // Websites are domains now (se_esef_domains); the contacts card shows the rest.
     expect(ESEF_TAB_CONTACTS_SQL).toContain("candidate_kind != 'website'");
   });

@@ -81,13 +81,19 @@ ORDER BY fiscal_year DESC, candidate_kind, normalized_value`;
 // The esef_domains extractor's rows (se_esef_domains): one per filing and
 // registrable domain. Marker rows (registrable_domain '', a document without
 // domains or a failed extraction) are filtered out here.
+// One row per (fiscal year, domain): two filings in one fiscal year (an amended
+// report, a second LEI) would otherwise list the same website twice.
 export const ESEF_TAB_DOMAINS_SQL = `
 SELECT
-  fiscal_year, registrable_domain, roles_json, evidence_count, corroborated
+  fiscal_year, registrable_domain,
+  toJSONString(arrayDistinct(arrayFlatten(groupArray(JSONExtract(roles_json, 'Array(String)'))))) AS roles_json,
+  max(evidence_count) AS evidence_count,
+  max(corroborated) AS corroborated
 FROM corpscout.se_esef_domains
 WHERE company_id = {companyId:String}
   AND extraction_status = 'ok'
   AND registrable_domain != ''
+GROUP BY fiscal_year, registrable_domain
 ORDER BY fiscal_year DESC, registrable_domain`;
 
 export const ESEF_TAB_RELATIONSHIPS_SQL = `
