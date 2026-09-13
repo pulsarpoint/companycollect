@@ -142,6 +142,17 @@ def test_sensor_launches_a_run_request_per_stale_week_when_nothing_is_running() 
     assert "corpscout.esef_disclosures" in executed_sql
 
 
+def test_sensor_skips_a_week_that_is_not_a_valid_partition_key() -> None:
+    client = FakeClient(rows=[("2024-01-07",), ("2029-13-45",)])
+    context = _context(client)
+
+    execution_data = esef_stale_weeks_sensor.evaluate_tick(context)
+
+    assert execution_data.run_requests is not None
+    assert len(execution_data.run_requests) == 1
+    assert execution_data.run_requests[0].partition_key == "2024-01-07"
+
+
 def test_sensor_skips_when_no_weeks_are_stale() -> None:
     client = FakeClient(rows=[])
     context = _context(client)

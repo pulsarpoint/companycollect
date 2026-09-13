@@ -25,9 +25,14 @@ from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.esef_filings import tables
 from dagster_v3.defs.esef_filings.artifact_contract import ARTIFACT_SCHEMA_VERSION
-from dagster_v3.defs.esef_filings.assets import esef_filings_refresh_job
+from dagster_v3.defs.esef_filings.assets import (
+    ESEF_PROCESSED_WEEK_PARTITIONS,
+    esef_filings_refresh_job,
+)
 
-ESEF_FILINGS_REFRESH_JOB_NAME = "esef_filings_refresh_job"
+# Derived from the job object (not a separate literal) so a job rename can't
+# silently defeat the in-flight/cooldown RunsFilter queries below.
+ESEF_FILINGS_REFRESH_JOB_NAME = esef_filings_refresh_job.name
 
 # How many stale weeks the sensor keeps in flight at once. Each
 # esef_filings_refresh_job run also holds the shared esef_arelle pool (limit
@@ -120,7 +125,24 @@ def esef_stale_weeks_sensor(
             stale_weeks_sql(),
             {"schema_version": ARTIFACT_SCHEMA_VERSION},
         )
-    stale_weeks = [str(row[0]) for row in rows]
+    queried_weeks = [str(row[0]) for row in rows]
+
+    # Dagster resolves every yielded RunRequest's partition key against the
+    # job's partitions def during tick resolution, so one malformed or
+    # future week string from ClickHouse would fail the WHOLE tick (every
+    # stale week, not just the bad one) on every 30-minute evaluation.
+    # Filter defensively before weeks_to_launch ever sees these.
+    stale_weeks: list[str] = []
+    for week in queried_weeks:
+        if ESEF_PROCESSED_WEEK_PARTITIONS.has_partition_key(week):
+            stale_weeks.append(week)
+        else:
+            context.log.warning(
+                "ESEF stale weeks sensor: skipping %r -- not a valid "
+                "%s partition key",
+                week,
+                ESEF_FILINGS_REFRESH_JOB_NAME,
+            )
 
     active_records = context.instance.get_run_records(
         dg.RunsFilter(
@@ -168,6 +190,9 @@ def esef_stale_weeks_sensor(
         yield dg.SkipReason("no stale ESEF weeks")
         return
 
+    # Fresh per evaluation on purpose (not context.cursor): dedup against an
+    # already-running week relies on the in-flight query above, taken fresh
+    # in this same tick, which is safe at the 30-minute evaluation interval.
     tick = datetime.now(UTC).isoformat()
     for week in launch_weeks:
         yield dg.RunRequest(
