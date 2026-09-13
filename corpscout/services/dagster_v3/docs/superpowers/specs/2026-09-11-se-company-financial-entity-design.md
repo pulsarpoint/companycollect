@@ -333,10 +333,11 @@ the number warrants it.
    converges (the basic-info decision of 2026-09-04); append one history row per period whose
    values, sources or activity changed, with its `change_kind`.
 
-Pages of 5,000 companies (config, not 20,000): a company carries about 13 suggestion rows across
-its sources and periods and each row is 65 values wide, so a page is about 65k rows in memory. The
-64-bucket backfill is about 12k companies per bucket, three pages each. Reads use the family's
-`max_query_size` settings for id-bound statements.
+Pages of 5,000 companies (config, not 20,000): a company carries about five suggestion rows
+across its sources and periods (7.58M rows over 1.4M companies on 2026-09-12) and each row is 52
+values wide, so a page is about 27k rows, roughly 300 MB in memory. The 64-bucket backfill is
+about 12k companies per bucket, three pages each (measured 2026-09-13: 12,362 companies, 3 pages,
+203 s for bucket_00). Reads use the family's `max_query_size` settings for id-bound statements.
 
 ## 7. Extractors
 
@@ -603,7 +604,30 @@ the entity.
    pages, candidates, inserted).
 3. Fold: `fold.py`, `batch.py`, the two fold assets; prod 64-bucket backfill and the readouts of
    section 11. Code complete 2026-09-13 on branch se-financial-entity (plan
-   2026-09-13-se-company-financial-3-fold.md); prod backfill pending.
+   2026-09-13-se-company-financial-3-fold.md); Prod 2026-09-13: merged acaffbf95, deployed
+   (ansible ok=35, failed=0), ledger 403 (no migration in this slice). Smoke run b0b50d1a on
+   5567081699 (84 s): 11 periods created, 8 standalone + 3 consolidated; 2023 standalone revenue
+   60,300,000 / 6,005,001.80 from ratsit, employees 2,100 from bolagsverket (Ratsit's row has
+   none), sources bolagsverket,ratsit; comparative-only rows 2018-2020; ESEF alone on the
+   consolidated scope. The 64 buckets ran in-process one after the other (the run queue held 83
+   asset jobs): 14,029 s in all (160-401 s per bucket, 3 pages each), 795,434 companies handed
+   in, 795,433 considered, 4,180,584 periods created, 0 unpublished, no failures. Convergence:
+   buckets 00, 31 and 63 re-run with changed_only considered 0 and wrote nothing. Table:
+   standalone 4,133,569 rows / 795,403 companies, consolidated 47,026 / 10,293 (Ratsit's
+   consolidated reports plus ESEF), every row active, 4,180,595 rows in all; history 4,180,595
+   created. Companies with a standalone period 795,403 against the 579,766 rows of
+   se_company_financials_latest (the Ratsit-only companies are the difference). Source share:
+   currency ratsit 3,139,202 / comparative 654,239 / bolagsverket 387,023 / esef 130 / none 1;
+   revenue ratsit 3,131,555 / comparative 647,999 / bolagsverket 354,470 / esef 140 / none
+   46,431; total_assets ratsit 3,130,989 / bolagsverket 386,214 / comparative 91,825 / esef 153 /
+   none 571,414; equity ratsit 3,131,094 / bolagsverket 386,795 / esef 150 / none 662,556;
+   employees bolagsverket 897,786 / ratsit 759,584 / none 2,523,225. Currencies: SEK 4,180,558,
+   EUR 26, USD 6, NOK 3, DKK 1, none 1. Rows whose only source is an undated Ratsit period:
+   7,452. Companies with two active standalone periods ending within seven days of each other:
+   696 (0.09% of 795,403) — a merge rule is not warranted yet. Rows with one winning source
+   2,541,631, with two 1,638,964. Revenue rows a non-SEK source lost to the currency gate: 201.
+   Owner observation: with Ratsit first on employees, 5567081699's 2025 row shows 19 employees
+   (Ratsit) over Bolagsverket's 1,900.
 4. Cutover: the admin workspace, the shared grid on the public page, every re-point of section 10
    with migration 000402, the deletions, the owner-run view drops, the smoke.
 
