@@ -55,7 +55,7 @@
 - Consumes: `tables.MONETARY_FIELDS`, `tables.PERIOD_FIELDS`, `tables.FOLDED_FIELDS`, `tables.MAIN_COLUMNS`, `tables.HISTORY_COLUMNS`, `tables.original_column/usd_column/source_column`; `precedence.precedence_for(field, source) -> int | None`.
 - Produces: `FOLD_VERSION = "financial-fold-v1"`, `EXCLUDED_SOURCES`, `HIDDEN`, `WITHDRAWN`, `CREATED`, `UPDATED`, `REACTIVATED`, `COMPANY_WIDE = ""`, `UNGATED_FIELDS`, types `Rules`, `RulesByPeriod`, dataclasses `Money(original, usd)`, `Suggestion(company_id, source, period_key, scope, period_end, source_record_uid, suggested_at, period_start, fiscal_year, period_months, currency, money, employees)`, `MoneyCell(original, usd, source)`, `EMPTY_CELL`, `FinancialRow(...)` with `field_value`, `as_values`, `as_tuple(folded_at)`, `history_tuple(*, changed_fields, changed_at, change_kind, fold_run_id)`, `changed_fields_against(other)`, `activity_changed_against(other)`; `HistoryEntry(row, changed_fields, change_kind)`; `FoldResult(rows, history, published, created, updated, hidden, withdrawn, reactivated, unchanged, unpublished)`; functions `resolve_rules(rules_by_period, period_key) -> Rules`, `fold_financial(company_id, period_key, suggestions, rules=None, hidden=False, *, source_run_id) -> FinancialRow | None`, `withdrawn_row(previous, *, source_run_id)`, `change_kind_for(previous, new) -> str`, `fold_company_periods(company_id, suggestions, previous, rules_by_period, hidden_periods, *, source_run_id) -> FoldResult`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_se_company_financial_fold.py`:
 
@@ -336,7 +336,7 @@ def test_fold_company_periods_refuses_foreign_rows() -> None:
         fold_company_periods(COMPANY, [foreign], [], None, set(), source_run_id=RUN)
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 ```bash
 uv run --env-file .env pytest tests/test_se_company_financial_fold.py -q
@@ -344,7 +344,7 @@ uv run --env-file .env pytest tests/test_se_company_financial_fold.py -q
 
 Expected: FAIL at import, `cannot import name 'fold'` / `ModuleNotFoundError`.
 
-- [ ] **Step 3: Write the module**
+- [x] **Step 3: Write the module**
 
 `src/dagster_v3/defs/se_company/financial/fold.py`, exactly:
 
@@ -725,7 +725,7 @@ def fold_company_periods(
     )
 ```
 
-- [ ] **Step 4: Run the tests and ruff**
+- [x] **Step 4: Run the tests and ruff**
 
 ```bash
 uv run --env-file .env pytest tests/test_se_company_financial_fold.py -q
@@ -734,7 +734,7 @@ uv run ruff check src/dagster_v3/defs/se_company/financial/fold.py tests/test_se
 
 Expected: 16 passed; ruff clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-financial-entity
@@ -756,7 +756,7 @@ git commit -m "feat(se-financial): the pure per-period fold, currency first, mon
 - Consumes: Task 1's module; `tables.LIVE_ROW_PREDICATE` (added here); `common.normalized_se_company_ids`.
 - Produces: `BUCKET_COUNT = 64`, `PAGE_SIZE = 5_000`, `FOLD_ID_BOUND_QUERY_SETTINGS`, `SUGGESTION_SELECT_COLUMNS` (52), `MAIN_COMPARE_COLUMNS` (77), `RULE_SELECT_COLUMNS`, `FoldCounts` with `as_metadata()`, SQL text functions `bucket_company_ids_sql`, `suggestion_watermarks_sql`, `main_watermarks_sql`, `rule_watermarks_sql`, `hide_watermarks_sql`, `current_suggestions_sql`, `current_main_rows_sql`, `company_rules_sql`, `hidden_periods_sql`, `main_insert_sql`, `history_insert_sql`; converters `suggestion_from_row`, `main_row_from_row`, `rules_by_company`; `fold_companies(client, company_ids, *, changed_only, source_run_id, folded_at, page_size=PAGE_SIZE, log=None) -> FoldCounts`; `fold_bucket(client, bucket, *, changed_only, source_run_id, folded_at, page_size=PAGE_SIZE, log=None) -> FoldCounts`.
 
-- [ ] **Step 1: Move the live-row predicate to `tables.py` (breaks the import cycle assets → batch → suggestions → assets)**
+- [x] **Step 1: Move the live-row predicate to `tables.py` (breaks the import cycle assets → batch → suggestions → assets)**
 
 In `src/dagster_v3/defs/se_company/financial/tables.py`, replace exactly
 
@@ -790,7 +790,7 @@ LIVE_ROW_PREDICATE = tables.LIVE_ROW_PREDICATE
 
 Run `uv run --env-file .env pytest tests/test_se_company_financial_suggestions.py tests/test_se_company_financial_extractors_sql.py tests/test_se_company_financial_tables.py -q` — expected: all passed (the text is identical).
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 `tests/test_se_company_financial_batch.py`:
 
@@ -1045,7 +1045,7 @@ def test_fold_bucket_reads_the_bucket_ids_then_folds_them() -> None:
     assert client.calls[0][1] == {"bucket": 7} and (counts.companies, counts.considered, counts.periods) == (2, 1, 1)
 ```
 
-- [ ] **Step 3: Run them to verify they fail**
+- [x] **Step 3: Run them to verify they fail**
 
 ```bash
 uv run --env-file .env pytest tests/test_se_company_financial_batch.py -q
@@ -1053,7 +1053,7 @@ uv run --env-file .env pytest tests/test_se_company_financial_batch.py -q
 
 Expected: FAIL at import (`cannot import name 'batch'`).
 
-- [ ] **Step 4: Write the module**
+- [x] **Step 4: Write the module**
 
 `src/dagster_v3/defs/se_company/financial/batch.py`, exactly:
 
@@ -1427,7 +1427,7 @@ def fold_bucket(
     )
 ```
 
-- [ ] **Step 5: Run the tests and ruff**
+- [x] **Step 5: Run the tests and ruff**
 
 ```bash
 uv run --env-file .env pytest tests/test_se_company_financial_batch.py tests/test_se_company_financial_suggestions.py tests/test_se_company_financial_extractors_sql.py tests/test_se_company_financial_tables.py -q
@@ -1436,7 +1436,7 @@ uv run ruff check src/dagster_v3/defs/se_company/financial tests/test_se_company
 
 Expected: 9 batch tests passed plus the three existing files green; ruff clean.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-financial-entity
@@ -1456,7 +1456,7 @@ git commit -m "feat(se-financial): the fold's batch layer, five FINAL reads per 
 - Consumes: Task 2's `BUCKET_COUNT`, `PAGE_SIZE`, `FoldCounts`, `fold_bucket`, `fold_companies`; `common.normalized_se_company_ids`.
 - Produces: `FOLD_POOL = "se_company_financial_fold"`, `FINANCIAL_FOLD_PARTITIONS`, `financial_bucket_index(partition_key) -> int`, `FinancialFoldConfig(changed_only=True, page_size=5000)`, `FinancialFoldCompaniesConfig(company_ids, changed_only=False, page_size=5000)`, assets `se_company_financial_fold` (partitioned, pooled, deps on the four extractor asset keys) and `se_company_financial_fold_companies`.
 
-- [ ] **Step 1: Write the test file (the whole file)**
+- [x] **Step 1: Write the test file (the whole file)**
 
 `tests/test_se_company_financial_assets.py`, exactly:
 
@@ -1601,7 +1601,7 @@ def test_bucket_keys_parse_and_bad_ones_are_refused() -> None:
         financial_bucket_index("bucket_64")
 ```
 
-- [ ] **Step 2: Run it to verify the new tests fail**
+- [x] **Step 2: Run it to verify the new tests fail**
 
 ```bash
 uv run --env-file .env pytest tests/test_se_company_financial_assets.py -q
@@ -1609,7 +1609,7 @@ uv run --env-file .env pytest tests/test_se_company_financial_assets.py -q
 
 Expected: FAIL at import (`cannot import name 'FOLD_POOL'`).
 
-- [ ] **Step 3: Write the assets module (the whole file)**
+- [x] **Step 3: Write the assets module (the whole file)**
 
 `src/dagster_v3/defs/se_company/financial/assets.py`, exactly:
 
@@ -1834,7 +1834,7 @@ def se_company_financial_fold_companies(
     return dg.MaterializeResult(metadata=_fold_metadata(counts, config))
 ```
 
-- [ ] **Step 4: Run the tests, the definitions check and ruff**
+- [x] **Step 4: Run the tests, the definitions check and ruff**
 
 ```bash
 uv run --env-file .env pytest tests/test_se_company_financial_assets.py tests/test_se_company_financial_jobs.py -q
@@ -1844,7 +1844,7 @@ uv run ruff check src/dagster_v3/defs/se_company/financial/assets.py tests/test_
 
 Expected: 9 + 3 passed; `All definitions loaded successfully.`; ruff clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-financial-entity
@@ -1862,7 +1862,7 @@ git commit -m "feat(se-financial): the 64-bucket fold asset and the targeted fol
 **Interfaces:**
 - Consumes: Tasks 1 to 3; migration `000401`; `tests/clickhouse_local.py`'s `clickhouse_local_command`.
 
-- [ ] **Step 1: Write the test**
+- [x] **Step 1: Write the test**
 
 `tests/test_se_company_financial_fold_clickhouse_local.py`, exactly:
 
@@ -2185,7 +2185,7 @@ def test_the_precedence_export_wrote_the_global_rows(folded) -> None:
     assert rows == [["82", "25"]]                                   # 3 period fields + currency + 20 money + employees
 ```
 
-- [ ] **Step 2: Run it on the engine and ruff**
+- [x] **Step 2: Run it on the engine and ruff**
 
 ```bash
 uv run --env-file .env pytest tests/test_se_company_financial_fold_clickhouse_local.py -q -m integration
@@ -2194,7 +2194,7 @@ uv run ruff check tests/test_se_company_financial_fold_clickhouse_local.py
 
 Expected: 12 passed (six tests under each `join_use_nulls` setting), about 30 s. This exact scenario produced exactly these rows on 2026-09-13 with the module texts of Tasks 1 to 3; a difference is a transcription slip, not an expectation to adjust — report it.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-financial-entity
@@ -2210,7 +2210,7 @@ git commit -m "test(se-financial): the fold end to end on clickhouse-local, four
 - Modify: `tests/test_se_company_financial_extractors_sql.py` (replace the whole file with the text below: one import and one test added)
 - Modify: `tests/test_se_company_financial_extractors_clickhouse_local.py` (replace the whole file with the text below: the normalizer version is imported instead of hardcoded, and a v1 report under a different hash pins the report CTE's version filter behaviourally)
 
-- [ ] **Step 1: Write both files**
+- [x] **Step 1: Write both files**
 
 `tests/test_se_company_financial_extractors_sql.py`, exactly:
 
@@ -2541,7 +2541,7 @@ def test_the_four_extractors_write_the_expected_periods_and_converge(join_use_nu
     assert [line.split("\t") for line in s["tombstone"]] == [["bolagsverket", A, "standalone:2023-12-31", "standalone", "2023-12-31", "1", "1", "1", "NULL"]]
 ```
 
-- [ ] **Step 2: Run them, then prove the new fixture row is load-bearing**
+- [x] **Step 2: Run them, then prove the new fixture row is load-bearing**
 
 ```bash
 uv run --env-file .env pytest tests/test_se_company_financial_extractors_sql.py -q
@@ -2550,7 +2550,7 @@ uv run --env-file .env pytest tests/test_se_company_financial_extractors_clickho
 
 Expected: 7 passed; 2 passed. Then TEMPORARILY delete the text `AND r.normalizer_version = %(normalizer_version)s` from the report CTE in `src/dagster_v3/defs/se_company/financial/ratsit.py` (it occurs once), re-run the clickhouse-local test — expected: 2 FAILED (company A drops out of the Ratsit live rows, so the scope assertion fails) — then restore the file (`git checkout -- src/dagster_v3/defs/se_company/financial/ratsit.py`) and re-run green. Paste both outcomes in the report. `uv run ruff check` on both test files must be clean.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-financial-entity
@@ -2566,7 +2566,7 @@ git commit -m "test(se-financial): pin the Ratsit asset's select_params and the 
 - Modify: `src/dagster_v3/defs/se_company/financial/docs/financial-design.md`
 - Modify: `docs/superpowers/specs/2026-09-11-se-company-financial-entity-design.md` (section 12 item 3)
 
-- [ ] **Step 1: Append the fold section to the design note**
+- [x] **Step 1: Append the fold section to the design note**
 
 Append at the end of `financial-design.md`:
 
@@ -2598,11 +2598,11 @@ the dagster host, one after the other (the plan's Task 7 script), then re-run th
 with `changed_only: true` and expect `considered 0`.
 ```
 
-- [ ] **Step 2: Record code completion in the spec**
+- [x] **Step 2: Record code completion in the spec**
 
 Section 12 item 3 (`3. Fold: ...`): append `Code complete 2026-09-13 on branch se-financial-entity (plan 2026-09-13-se-company-financial-3-fold.md); prod backfill pending.` and re-wrap the item at the surrounding width (three-space continuation indent).
 
-- [ ] **Step 3: Run the slice's suites and the wider suite once**
+- [x] **Step 3: Run the slice's suites and the wider suite once**
 
 ```bash
 uv run --env-file .env pytest tests/test_se_company_financial_fold.py tests/test_se_company_financial_batch.py tests/test_se_company_financial_assets.py tests/test_se_company_financial_jobs.py tests/test_se_company_financial_suggestions.py tests/test_se_company_financial_tables.py tests/test_se_company_financial_extractors_sql.py tests/test_se_company_state_scan.py tests/test_se_company_person_extractors_sql.py -q
@@ -2612,7 +2612,7 @@ set -a; source .env; set +a; uv run pytest tests -q -p no:cacheprovider --ignore
 
 Expected: all green; the wider run `N passed, 3 skipped, 5 deselected`, no failures (about 8 minutes).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-financial-entity
@@ -2628,7 +2628,7 @@ git commit -m "docs(se-financial): the fold in the package note; spec records sl
 
 **Preconditions:** the whole-branch review is clean and the branch is merged into main (`git merge --no-ff` from the main checkout, having checked the owner's dirty files do not overlap the branch's and re-checked overlap if main moved); the worktree fast-forwarded to main; prod ledger 403 (the address track's 000403 is applied; this slice has no migration); the run queue state noted (if still held by the ESEF refresh runs, everything below runs in-process).
 
-- [ ] **Step 1: Deploy dagster_v3 from the worktree**
+- [x] **Step 1: Deploy dagster_v3 from the worktree**
 
 ```bash
 D=/Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-financial-entity/corpscout/services/dagster_v3
@@ -2643,7 +2643,7 @@ cd "$D/ansible" && ANSIBLE_BECOME_TIMEOUT=60 ansible-playbook -i inventory.ini l
 
 Expected: `RC=0`, `failed=0`. Confirm through GraphQL `assetNodes` that `se_company_financial_fold` is live with 64 partition keys and `se_company_financial_fold_companies` exists. Confirm the 82 global precedence rows are still there (`SELECT count() FROM corpscout.se_company_financial_precedence FINAL WHERE company_id = ''`).
 
-- [ ] **Step 2: Smoke on one company with the targeted fold**
+- [x] **Step 2: Smoke on one company with the targeted fold**
 
 In-process on the host (the runner script `/tmp/fin_host_run.sh` from slice 2 selects by asset name; write a sibling `/tmp/fin_fold_one.sh` or call the CLI directly):
 
@@ -2666,7 +2666,7 @@ SELECT source, period_key, currency, employees, revenue_amount_original, total_a
 
 Expected: 8 standalone periods (2018-08-31 to 2025-12-31) and 3 consolidated (2022 to 2024); standalone 2023: currency SEK from ratsit, revenue 60,300,000 / 6,005,001.80 from ratsit, employees 2,100 from bolagsverket (Ratsit outranks Bolagsverket for employees at 1000 over 900, but Ratsit's 2023 row carries no employee count on prod; where it does, Ratsit's count wins), sources `bolagsverket,ratsit`; 2018-08-31 has sources `bolagsverket_comparative` alone; consolidated 2023: revenue 1,296,506,000 from esef; history: 11 `created`.
 
-- [ ] **Step 3: The 64-bucket backfill, in-process, one bucket at a time**
+- [x] **Step 3: The 64-bucket backfill, in-process, one bucket at a time**
 
 Upload and launch this host script (as root, detached), then poll `/tmp/fin_fold_all.status` with a remote sleep loop inside one ssh call (a local background poller gets killed for memory on the Mac):
 
@@ -2692,11 +2692,11 @@ echo "ALL DONE" >> /tmp/fin_fold_all.status
 
 Launch: `ssh dagster 'sudo -n nohup bash /tmp/fin_fold_all.sh 0 > /tmp/fin_fold_all.launch 2>&1 < /dev/null &'`. Time bucket_00 alone first: at tens of seconds to a few minutes per bucket, proceed; above about five minutes per bucket, stop and raise page_size in the script (the config allows up to 20,000, which turns five full FINAL scans per bucket into two). Expected: about 22k companies per bucket (1.4M / 64), five pages, tens of seconds to a few minutes per bucket; record the total wall time. A bucket that fails stops the loop: read its log, fix or rule, and relaunch with the bucket number as the argument (`bash /tmp/fin_fold_all.sh 17`), which resumes from that bucket and appends to the status file. A non-zero exit can leave a claimed slot on the pool se_company_financial_fold (the run was SIGTERMed by timeout); before relaunching, run scripts/dagster-health-check.py --fix on the host (uv run python scripts/dagster-health-check.py --fix from the project directory with the .env sourced) so the leaked slot cannot block the next bucket. Every bucket's metadata comes back through GraphQL `assetMaterializations(limit: 64)` on `se_company_financial_fold`: sum `periods`, `published`, `created`, `considered`, `unpublished` over the 64 partitions for the record.
 
-- [ ] **Step 4: Convergence check**
+- [x] **Step 4: Convergence check**
 
 Re-run buckets 00, 31 and 63 the same way (`changed_only: true`). Expected: `considered = 0`, `periods = 0` on each.
 
-- [ ] **Step 5: Readouts (spec section 11)**
+- [x] **Step 5: Readouts (spec section 11)**
 
 ```sql
 SELECT scope, count() AS rows, uniqExact(company_id) AS companies, countIf(active = 1) AS active_rows, countIf(inactive_reason = 'hidden') AS hidden, countIf(inactive_reason = 'withdrawn') AS withdrawn FROM corpscout.se_company_financial FINAL GROUP BY scope ORDER BY scope;
@@ -2712,13 +2712,13 @@ SELECT count() AS derived_only_rows FROM corpscout.se_company_financial AS m FIN
 SELECT count(DISTINCT a.company_id) AS companies_with_two_standalone_ends_within_7_days FROM corpscout.se_company_financial AS a FINAL INNER JOIN corpscout.se_company_financial AS b FINAL ON a.company_id = b.company_id AND a.scope = b.scope WHERE a.scope = 'standalone' AND a.active = 1 AND b.active = 1 AND a.period_end < b.period_end AND dateDiff('day', a.period_end, b.period_end) <= 7;
 SELECT change_kind, count() FROM corpscout.se_company_financial_history GROUP BY change_kind ORDER BY change_kind;
 SELECT length(sources) AS source_count, count() FROM corpscout.se_company_financial FINAL GROUP BY source_count ORDER BY source_count;
-SELECT count() AS money_rows_discarded_by_the_currency_gate FROM corpscout.se_company_financial_suggestion AS s FINAL INNER JOIN corpscout.se_company_financial AS m FINAL ON m.company_id = s.company_id AND m.period_key = s.period_key WHERE s.currency IS NOT NULL AND s.currency != m.currency AND s.revenue_amount_original IS NOT NULL;
+SELECT count() AS revenue_rows_discarded_by_the_currency_gate FROM corpscout.se_company_financial_suggestion AS s FINAL INNER JOIN corpscout.se_company_financial AS m FINAL ON m.company_id = s.company_id AND m.period_key = s.period_key WHERE s.currency IS NOT NULL AND s.currency != m.currency AND s.revenue_amount_original IS NOT NULL;
 -- unpublished: sum the 'unpublished' metadata over the 64 partitions of se_company_financial_fold (GraphQL assetMaterializations limit 64); expected 0.
 ```
 
 Expected shape: history only `created` on the first backfill; the standalone company count in the same range as the 579,766 rows `se_company_financials_latest` holds (Bolagsverket companies) plus the Ratsit-only ones (about 1.09M company-years are Ratsit-only, spec 5) — record the numbers; the seven-day readout decides whether a merge rule is worth designing later (spec 6).
 
-- [ ] **Step 6: Record**
+- [x] **Step 6: Record**
 
 Append to spec section 12 item 3 the prod record: date, deploy, the smoke, the 64 buckets' totals and wall time, the convergence check, every readout number, and the seven-day count with the ruling it implies. Commit on the branch as `docs(se-financial): slice 3 shipped, prod record; plan ticked`, merge into main (`--no-ff`, after re-checking overlap), fast-forward the worktree, update the memory file, then write slice 4's plan (the cutover; its migration is 000404 (the spec's 000402 went to the person-roles track and 000403 to the address track)).
 
