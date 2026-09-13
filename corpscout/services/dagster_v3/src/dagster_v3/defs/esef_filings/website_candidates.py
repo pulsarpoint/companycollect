@@ -153,6 +153,11 @@ _REFERRAL_PHRASE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _REFERRAL_SE_SEE_PATTERN = re.compile(r"\b(?:se|see)\b", re.IGNORECASE)
+# Known false-positive mode: an uncorroborated, single-mention domain that
+# happens to sit after the word "se"/"see" in its sentence, with no
+# company-website signal word nearby, is misclassified `external_reference`
+# even when it is genuinely the company's own site. Accepted -- the role is
+# advisory (it only informs downstream confidence), not a correctness gate.
 _SENTENCE_BOUNDARY_PATTERN = re.compile(r"(?<=[.!?])\s+|\s*[|•]\s*")
 _LEADING_PUNCTUATION = "([{\"'"
 
@@ -319,7 +324,14 @@ def _extract_report_websites(
     #     classified `external_reference` (a domain seen only once, in a
     #     referral-shaped sentence, is more likely a third-party mention).
     mention_counts = _unbroken_domain_mention_counts(blocks)
-    hyphen_corroborating_domains = corroborating_domains | set(mention_counts)
+    # `tagged_fact_domains` must corroborate a hyphen-drop too -- an XBRL
+    # WebsitesOfLegalEntity tag is at least as strong a signal as a plain
+    # unbroken text mention, and omitting it here left a tagged domain's own
+    # hyphenated line-break split unrejoined (a spurious extra candidate
+    # alongside the tagged one).
+    hyphen_corroborating_domains = (
+        corroborating_domains | tagged_fact_domains | set(mention_counts)
+    )
     corroborated_domains = (
         corroborating_domains
         | tagged_fact_domains
@@ -525,6 +537,9 @@ def _dehyphenated_or_kept(
         dropped_normalized is not None
         and dropped_normalized.registrable_domain in corroborating_domains
     ):
+        # Checked first and returned immediately: even if `hyphen_kept` is
+        # ALSO a normalizable (or independently corroborated) domain, the
+        # dehyphenated reading wins on purpose once it has its own evidence.
         return hyphen_dropped
     return hyphen_kept
 
@@ -673,6 +688,9 @@ def _rejoin_hyphenated_block(
         dropped_normalized is not None
         and dropped_normalized.registrable_domain in corroborating_domains
     ):
+        # Checked first and returned immediately: even if `hyphen_kept` is
+        # ALSO a normalizable domain, the dehyphenated reading wins on
+        # purpose once it has its own corroborating evidence.
         return [hyphen_dropped], remainder
     if _normalize_website(hyphen_kept) is not None:
         return [hyphen_kept], remainder
@@ -718,7 +736,10 @@ def _unbroken_domain_mentions(text: str, *, skip_leading_match: bool) -> list[st
     for match in _BARE_DOMAIN_PATTERN.finditer(text):
         if skip_leading_match and match.start() == 0:
             continue
-        if re.search(r"-\s*$", text[: match.start()]) is not None:
+        # Same guard shape as `_website_values`: a hyphen followed by
+        # whitespace right before this match means it is the second half of
+        # a same-line `_SPLIT_DOMAIN_PATTERN` join, already counted there.
+        if re.search(r"-\s+$", text[: match.start()]) is not None:
             continue
         if any(
             match.start() >= start and match.end() <= end

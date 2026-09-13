@@ -95,6 +95,11 @@ rather than ever emit the bare continuation fragment on its own. A candidate
 whose domain is uncorroborated and mentioned only in a referral-shaped
 sentence (e.g. "läs mer på", "read more at") with no company-website signal
 word is tagged `external_reference` rather than an unknown or company role.
+Known false-positive mode: the bare "se"/"see" trigger can misclassify a
+company's own uncorroborated, single-mention domain as `external_reference`
+when it happens to follow that word with no signal word nearby -- accepted
+because the role is advisory (it lowers downstream confidence, not a hard
+exclusion).
 
 ## ClickHouse publication
 

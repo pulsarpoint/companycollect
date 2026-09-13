@@ -286,6 +286,47 @@ def test_tagged_website_fact_with_lone_referral_mention_stays_company_website(
     assert by_domain["sample-oils.se"].suggested_roles == ["company_website"]
 
 
+def test_tagged_website_fact_corroborates_hyphen_rejoin_for_its_own_domain(
+    tmp_path: Path,
+) -> None:
+    # Reviewer-reported regression: a WebsitesOfLegalEntity tag corroborates
+    # its own domain for role purposes, but omitting tagged_fact_domains from
+    # hyphen_corroborating_domains left a hyphenated line-break split of that
+    # SAME domain elsewhere in the body unrejoined -- surviving as a second,
+    # spurious hyphenated candidate instead of merging into the tagged one.
+    report_path = tmp_path / "report.xhtml"
+    report_path.write_text(
+        """<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <body>
+    <p>Besök vår hemsida (www.sample-</p>
+    <p>oils.se) för mer information.</p>
+  </body>
+</html>
+""",
+        encoding="utf-8",
+    )
+
+    candidates = extract_website_candidates(
+        {"reports/report.xhtml": report_path},
+        tagged_values=[
+            TaggedWebsiteValue(
+                report_member="reports/report.xhtml",
+                concept_local_name="WebsitesOfLegalEntity",
+                value="www.sampleoils.se",
+            ),
+        ],
+        known_email_domains=[],
+    )
+
+    by_domain = {candidate.registrable_domain: candidate for candidate in candidates}
+    assert set(by_domain) == {"sampleoils.se"}
+    assert by_domain["sampleoils.se"].suggested_roles == ["company_website"]
+    assert {
+        evidence.extraction_method for evidence in by_domain["sampleoils.se"].evidence
+    } == {"tagged_fact", "visible_text_reconstructed"}
+
+
 # --- End-to-end check against the real 2022 Handelsbanken filing ---
 
 
@@ -301,14 +342,35 @@ def test_end_to_end_handelsbanken_2022_report_website_candidates() -> None:
     )
     by_domain = {candidate.registrable_domain: candidate for candidate in candidates}
 
-    assert "handelsbanken.com" in by_domain
+    # `handelsbanken.se/ir` (an investor-relations path, mentioned unbroken
+    # twice) is a real, legitimate candidate in this report -- unrelated to
+    # the hyphen-rejoin/external_reference fix, included here so the set
+    # comparison below is exact rather than a partial membership check.
+    assert set(by_domain) == {
+        "handelsbanken.com",
+        "handelsbanken.se",
+        "handelsbankenfonder.se",
+        "svanen.se",
+        "ipcc.ch",
+    }
+
+    assert by_domain["handelsbanken.com"].suggested_roles == [
+        "company_website",
+        "report_disclosure",
+    ]
+    assert len(by_domain["handelsbanken.com"].evidence) == 19
+
+    assert by_domain["handelsbanken.se"].suggested_roles == ["unknown"]
+    assert len(by_domain["handelsbanken.se"].evidence) == 2
+
+    assert by_domain["handelsbankenfonder.se"].suggested_roles == ["unknown"]
+    assert len(by_domain["handelsbankenfonder.se"].evidence) == 2
+
+    assert by_domain["svanen.se"].suggested_roles == ["external_reference"]
+    assert len(by_domain["svanen.se"].evidence) == 1
+
+    assert by_domain["ipcc.ch"].suggested_roles == ["external_reference"]
+    assert len(by_domain["ipcc.ch"].evidence) == 1
+
     assert "banken.com" not in by_domain
-
-    assert "handelsbankenfonder.se" in by_domain
     assert "bankenfonder.se" not in by_domain
-
-    assert "svanen.se" in by_domain
-    assert "external_reference" in by_domain["svanen.se"].suggested_roles
-
-    assert "ipcc.ch" in by_domain
-    assert "external_reference" in by_domain["ipcc.ch"].suggested_roles
