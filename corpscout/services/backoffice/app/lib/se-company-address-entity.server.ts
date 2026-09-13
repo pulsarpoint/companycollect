@@ -27,7 +27,13 @@ import {
   SE_COMPANY_ADDRESS_FOLD_COMPANIES_ASSET,
 } from "~/lib/dagster.server";
 import type { SeAddressDecision } from "~/lib/se-address-decision-form";
-import { addressFoldPending, isAddressKey } from "~/lib/se-address-fields";
+import {
+  addressFoldPending,
+  isAddressKey,
+  MAX_WORKPLACE_PAGE,
+  MAX_WORKPLACE_QUERY_LENGTH,
+  WORKPLACE_PAGE_SIZE,
+} from "~/lib/se-address-fields";
 import { SE_COMPANY_ADDRESS_TABLE } from "~/lib/se-address-tables";
 import { clickhouseStamp } from "~/lib/se-basic-info.server";
 
@@ -148,15 +154,6 @@ export interface SeAddressMember {
   completeness: number;
 }
 
-export interface SeAddressPublished {
-  row: SeAddressRow;
-  members: SeAddressMember[];
-  /** Why the published text came from `row.text_source` (spec 5.2's sort). */
-  textSourceReason: "most complete" | "tie-break" | "single source";
-  /** The hide rule in force for this key, `null` when there is none. */
-  hideRule: SeAddressRuleRow | null;
-}
-
 /** A reviewer draft: a `reviewer_draft` raw row that still holds an address. */
 export interface SeAddressDraft {
   slot: string;
@@ -167,13 +164,84 @@ export interface SeAddressDraft {
   replacesKey: string;
 }
 
+/**
+ * One row of a list -- the Addresses card or the Workplaces card -- WITHOUT its
+ * members (spec 8, amended 2026-09-13, rule 1). A kommun publishes 1,503 of
+ * these; shipping each one's normalized and raw rows is what made the page 7.8
+ * MB. The panel asks for the selected row's members on its own.
+ */
+export interface SeAddressListEntry {
+  row: SeAddressRow;
+  /** Some member's slot has a current normalized version that is not the one
+   * this row was folded from -- computed in ClickHouse, per row. */
+  refoldPending: boolean;
+  /** The hide rule in force for this key, `null` when there is none. */
+  hideRule: SeAddressRuleRow | null;
+}
+
+/** The `?address=<key>` row with everything the right-hand panel shows. */
+export interface SeAddressPublishedDetail {
+  row: SeAddressRow;
+  members: SeAddressMember[];
+  /** Why the published text came from `row.text_source` (spec 5.2's sort). */
+  textSourceReason: "most complete" | "tie-break" | "single source";
+  /** The hide rule in force for this key, `null` when there is none. */
+  hideRule: SeAddressRuleRow | null;
+}
+
+/** One page of the company's workplace-only addresses (spec 8, rule 2). */
+export interface SeAddressWorkplacePage {
+  rows: SeAddressListEntry[];
+  /** Matching rows in the whole company, not on this page. */
+  total: number;
+  /** 1-based, as asked for -- echoed back so the card can build its links. */
+  page: number;
+  pageSize: number;
+  /** The filter in force, `''` when there is none. */
+  query: string;
+}
+
+/** What the tab's URL asks the loader for. */
+export interface SeAddressDetailOptions {
+  /** The `?address=` key; a malformed one is treated as no selection. */
+  selectedKey: string | null;
+  /** `?workplaces=`, 1-based. */
+  workplacePage: number;
+  /** `?workplace_q=`, already trimmed and capped. */
+  workplaceQuery: string;
+}
+
 export interface SeAddressDetail {
-  published: SeAddressPublished[];
+  /** The company's own addresses: every row except an ACTIVE workplace-only one. */
+  published: SeAddressListEntry[];
+  /** The row the panel describes, with its members: the `?address=` row when
+   * the key names one of this company's, else the FIRST ACTIVE row of
+   * `published`, else the first published row of ANY activity (owner ruling
+   * 2026-09-13 -- the tab keeps the default it has always had, and the panel,
+   * with Reset, stays reachable even when every address is withdrawn or
+   * hidden). Null only when `published` is empty: a workplace-only company. */
+  selected: SeAddressPublishedDetail | null;
+  workplaces: SeAddressWorkplacePage;
   drafts: SeAddressDraft[];
   history: SeAddressHistoryRow[];
   /** Every current rule version of this company, released ones included. */
   rules: SeAddressRuleRow[];
   foldPending: boolean;
+}
+
+/** A list row as ClickHouse returns it: the published columns plus the flag. */
+interface SeAddressListRow extends SeAddressRow {
+  refold_pending: number;
+}
+
+/** The one row `ADDRESS_FOLD_STATE_SQL` returns. Stamps are `''` when the
+ * aggregate had no row to take a maximum of. */
+interface SeAddressFoldStateRow {
+  folded_at: string;
+  newest_normalized_at: string;
+  has_publishable: number;
+  newest_suggested_at: string;
+  normalized_rows: number;
 }
 
 const COMPONENTS_SQL = (a: string) => `  ifNull(${a}.care_of, '') AS care_of, ifNull(${a}.box, '') AS box, ifNull(${a}.street_name, '') AS street_name,
@@ -207,24 +275,28 @@ WHERE h.company_id = {companyId:String}
 ORDER BY h.folded_at DESC
 LIMIT 200`;
 
-export const ADDRESS_NORMALIZED_SQL = `SELECT
-  n.company_id AS company_id, toString(n.source) AS source, n.slot AS slot, toString(n.normalized_id) AS normalized_id,
+const NORMALIZED_COLUMNS_SQL = `  n.company_id AS company_id, toString(n.source) AS source, n.slot AS slot, toString(n.normalized_id) AS normalized_id,
   toString(n.suggestion_id) AS suggestion_id, toString(n.suggested_at) AS suggested_at, toString(n.kind) AS kind,
 ${COMPONENTS_SQL("n")},
   n.normalized_address AS normalized_address, toString(n.address_key) AS address_key, toString(n.parse_status) AS parse_status,
-  n.parse_notes AS parse_notes, toString(n.normalizer_version) AS normalizer_version, toString(n.normalized_at) AS normalized_at
+  n.parse_notes AS parse_notes, toString(n.normalizer_version) AS normalizer_version, toString(n.normalized_at) AS normalized_at`;
+
+export const ADDRESS_NORMALIZED_SQL = `SELECT
+${NORMALIZED_COLUMNS_SQL}
 FROM corpscout.se_company_address_normalized AS n FINAL
 WHERE n.company_id = {companyId:String}
 ORDER BY n.source, n.slot`;
 
-export const ADDRESS_RAW_SQL = `SELECT
-  s.company_id AS company_id, toString(s.source) AS source, s.slot AS slot, toString(s.suggestion_id) AS suggestion_id,
+const RAW_COLUMNS_SQL = `  s.company_id AS company_id, toString(s.source) AS source, s.slot AS slot, toString(s.suggestion_id) AS suggestion_id,
   s.source_record_uid AS source_record_uid, toString(s.observed_at) AS observed_at, toString(s.kind) AS kind,
   ifNull(s.raw_address, '') AS raw_address, ifNull(s.care_of, '') AS care_of, ifNull(s.street_address, '') AS street_address,
   ifNull(s.postal_code, '') AS postal_code, ifNull(s.post_town, '') AS post_town, ifNull(s.county, '') AS county,
   ifNull(s.country_code, '') AS country_code, ifNull(s.decided_by, '') AS decided_by, ifNull(s.note, '') AS note,
   ifNull(toString(s.replaces_key), '') AS replaces_key, toString(s.suggested_at) AS suggested_at,
-  s.source_run_id AS source_run_id, toString(s.extractor_version) AS extractor_version
+  s.source_run_id AS source_run_id, toString(s.extractor_version) AS extractor_version`;
+
+export const ADDRESS_RAW_SQL = `SELECT
+${RAW_COLUMNS_SQL}
 FROM corpscout.se_company_address_suggestion AS s FINAL
 WHERE s.company_id = {companyId:String}
 ORDER BY s.source, s.slot`;
@@ -235,6 +307,158 @@ export const ADDRESS_RULES_SQL = `SELECT
 FROM corpscout.se_company_address_rule AS r FINAL
 WHERE r.company_id = {companyId:String}
 ORDER BY r.decided_at DESC`;
+
+/**
+ * The company's CURRENT normalized versions as two arrays of join keys: one of
+ * `source \n slot`, one of `source \n slot \n normalized_id`. A published row is
+ * re-fold pending when one of its members' slots HAS a current version (the
+ * first array) that is not the version the row was folded from (the second) --
+ * exactly what the detail used to decide in TypeScript after reading every
+ * normalized row of the company.
+ *
+ * Concatenated keys rather than tuples: `concat` over a `LowCardinality(String)`
+ * column yields a plain `String`, so `has` never has to reconcile a
+ * LowCardinality element type with a String one. No source (a catalogue value)
+ * and no slot (`''`, `company`, `est:<id>`, `r<17 digits>`) holds a newline, so
+ * the keys cannot collide.
+ */
+const CURRENT_PAIRS_SQL = `  (SELECT groupArray(concat(toString(n.source), '\\n', n.slot))
+   FROM corpscout.se_company_address_normalized AS n FINAL
+   WHERE n.company_id = {companyId:String}) AS current_pairs`;
+
+const CURRENT_TRIPLES_SQL = `  (SELECT groupArray(concat(toString(n.source), '\\n', n.slot, '\\n', toString(n.normalized_id)))
+   FROM corpscout.se_company_address_normalized AS n FINAL
+   WHERE n.company_id = {companyId:String}) AS current_triples`;
+
+/** `sources`, `slots` and `normalized_ids` are index-parallel, so the flag is
+ * an `arrayExists` over the row's own member indexes. An index past the end of
+ * a shorter array yields that type's default, which matches no key. */
+const REFOLD_PENDING_SQL = (a: string) => `  toUInt8(arrayExists(
+    i -> has(current_pairs, concat(toString(${a}.sources[i]), '\\n', ${a}.slots[i]))
+      AND NOT has(current_triples, concat(toString(${a}.sources[i]), '\\n', ${a}.slots[i], '\\n', toString(${a}.normalized_ids[i]))),
+    range(1, length(${a}.sources) + 1))) AS refold_pending`;
+
+/**
+ * The Addresses card's rows: everything this company has published EXCEPT an
+ * active row whose `kinds` are exactly `['workplace']` -- the split migration
+ * 000403 gave the serving view (`a.kinds = ['workplace']`). A merged row that
+ * carries `workplace` beside another kind is the company's address and stays.
+ * A withdrawn or hidden workplace row stays too, in the collapsed group, so a
+ * reviewer can still see what a Remove did. No members: the panel loads those
+ * for the selected row alone. `active DESC` first, so the first entry of this
+ * list is also the row the panel falls back to with no `?address=`.
+ */
+export const ADDRESS_LIST_SQL = `WITH
+${CURRENT_PAIRS_SQL},
+${CURRENT_TRIPLES_SQL}
+SELECT
+${MAIN_COLUMNS_SQL("m")},
+${REFOLD_PENDING_SQL("m")}
+FROM ${SE_COMPANY_ADDRESS_TABLE} AS m FINAL
+WHERE m.company_id = {companyId:String}
+  AND NOT (m.active = 1 AND m.kinds = ['workplace'])
+ORDER BY m.active DESC, m.inactive_reason, m.normalized_address`;
+
+/** The other half of the split, filtered. `positionCaseInsensitiveUTF8` takes
+ * its needle as a LITERAL, so `%` and `_` are ordinary characters and there is
+ * nothing to escape -- an `ilike` would have to escape both before binding. */
+const WORKPLACE_WHERE_SQL = `WHERE m.company_id = {companyId:String}
+  AND m.active = 1
+  AND m.kinds = ['workplace']
+  AND ({workplaceQuery:String} = '' OR positionCaseInsensitiveUTF8(m.normalized_address, {workplaceQuery:String}) > 0)`;
+
+export const ADDRESS_WORKPLACES_SQL = `WITH
+${CURRENT_PAIRS_SQL},
+${CURRENT_TRIPLES_SQL}
+SELECT
+${MAIN_COLUMNS_SQL("m")},
+${REFOLD_PENDING_SQL("m")}
+FROM ${SE_COMPANY_ADDRESS_TABLE} AS m FINAL
+${WORKPLACE_WHERE_SQL}
+ORDER BY m.normalized_address, m.address_key
+LIMIT {limit:UInt32} OFFSET {offset:UInt32}`;
+
+/** `toUInt32`, not a bare `count()`: ClickHouse quotes 64-bit integers in
+ * JSONEachRow, so an unwrapped count would reach the page as the string
+ * "1502" and every arithmetic on it would be string arithmetic. */
+export const ADDRESS_WORKPLACES_COUNT_SQL = `SELECT toUInt32(count()) AS total
+FROM ${SE_COMPANY_ADDRESS_TABLE} AS m FINAL
+${WORKPLACE_WHERE_SQL}`;
+
+/** The selected row itself, whichever card it belongs to. `toString` on the key
+ * rather than a FixedString comparison: `company_id` has already narrowed the
+ * read to this company's few rows, so nothing is lost by not matching the key
+ * against the index. */
+export const ADDRESS_SELECTED_SQL = `SELECT
+${MAIN_COLUMNS_SQL("m")}
+FROM ${SE_COMPANY_ADDRESS_TABLE} AS m FINAL
+WHERE m.company_id = {companyId:String} AND toString(m.address_key) = {addressKey:String}
+LIMIT 1`;
+
+/** The selected row's members, by the `(source, slot)` pairs the row carries:
+ * two parallel `Array(String)` parameters zipped back into pairs in ClickHouse.
+ * `CAST(... AS String)` drops the column's LowCardinality wrapper so both sides
+ * of `has` are the same tuple type. */
+const MEMBER_PAIRS_PREDICATE_SQL = (a: string) =>
+  `  AND has(arrayZip({memberSources:Array(String)}, {memberSlots:Array(String)}), (CAST(${a}.source AS String), ${a}.slot))`;
+
+export const ADDRESS_MEMBER_NORMALIZED_SQL = `SELECT
+${NORMALIZED_COLUMNS_SQL}
+FROM corpscout.se_company_address_normalized AS n FINAL
+WHERE n.company_id = {companyId:String}
+${MEMBER_PAIRS_PREDICATE_SQL("n")}
+ORDER BY n.source, n.slot`;
+
+export const ADDRESS_MEMBER_RAW_SQL = `SELECT
+${RAW_COLUMNS_SQL}
+FROM corpscout.se_company_address_suggestion AS s FINAL
+WHERE s.company_id = {companyId:String}
+${MEMBER_PAIRS_PREDICATE_SQL("s")}
+ORDER BY s.source, s.slot`;
+
+/** The reviewer's drafts, filtered in SQL rather than in the page: a company
+ * has at most a handful of them, however many addresses it publishes. */
+export const ADDRESS_DRAFT_RAW_SQL = `SELECT
+${RAW_COLUMNS_SQL}
+FROM corpscout.se_company_address_suggestion AS s FINAL
+WHERE s.company_id = {companyId:String} AND s.source = 'reviewer_draft'
+ORDER BY s.slot`;
+
+export const ADDRESS_DRAFT_NORMALIZED_SQL = `SELECT
+${NORMALIZED_COLUMNS_SQL}
+FROM corpscout.se_company_address_normalized AS n FINAL
+WHERE n.company_id = {companyId:String} AND n.source = 'reviewer_draft'
+ORDER BY n.slot`;
+
+/**
+ * Everything "Fold pending" needs, in one row of five scalar aggregates, so the
+ * page never has to read a company's normalized and raw rows to decide it: the
+ * newest fold, the newest non-draft normalized stamp, whether any non-draft
+ * normalized row is publishable (spec 5.5), the newest non-draft raw stamp (an
+ * activated reviewer address or a Remove tombstone the normalize step has not
+ * seen yet), and how many normalized rows the company has at all -- which is
+ * what tells an empty tab from a company that exists at no layer.
+ *
+ * Drafts are excluded from the stamps because they are never folded (spec 5.5),
+ * and each `max` is guarded by its own `count()`: a maximum over no rows is the
+ * type's zero value, not NULL, and `1970-01-01` would read as a real stamp.
+ */
+export const ADDRESS_FOLD_STATE_SQL = `SELECT
+  (SELECT if(count() = 0, '', toString(max(m.folded_at)))
+   FROM ${SE_COMPANY_ADDRESS_TABLE} AS m FINAL
+   WHERE m.company_id = {companyId:String}) AS folded_at,
+  (SELECT if(count() = 0, '', toString(max(n.normalized_at)))
+   FROM corpscout.se_company_address_normalized AS n FINAL
+   WHERE n.company_id = {companyId:String} AND n.source != 'reviewer_draft') AS newest_normalized_at,
+  (SELECT toUInt8(countIf(n.parse_status IN ('ok', 'partial', 'foreign')) > 0)
+   FROM corpscout.se_company_address_normalized AS n FINAL
+   WHERE n.company_id = {companyId:String} AND n.source != 'reviewer_draft') AS has_publishable,
+  (SELECT if(count() = 0, '', toString(max(s.suggested_at)))
+   FROM corpscout.se_company_address_suggestion AS s FINAL
+   WHERE s.company_id = {companyId:String} AND s.source != 'reviewer_draft') AS newest_suggested_at,
+  (SELECT toUInt32(count())
+   FROM corpscout.se_company_address_normalized AS n FINAL
+   WHERE n.company_id = {companyId:String}) AS normalized_rows`;
 
 const DRAFT_SOURCE = "reviewer_draft";
 const REVIEWER_SOURCE = "reviewer";
@@ -252,9 +476,6 @@ const COMPONENT_FIELDS = [
 /** A `reviewer_draft` row still holding one of these is a live draft; a row
  * with all four empty is the tombstone an Activate or a Discard left behind. */
 const DRAFT_TEXT_FIELDS = ["street_address", "care_of", "postal_code", "post_town"] as const;
-/** The parse statuses the fold publishes (spec 5.2); anything else -- today
- * `no_address` -- never produces a published row, so it never makes a fold. */
-const PUBLISHABLE_PARSE_STATUS = new Set(["ok", "partial", "foreign"]);
 
 function slotKey(source: string, slot: string): string {
   return `${source}|${slot}`;
@@ -285,7 +506,7 @@ function activeHideRule(rules: readonly SeAddressRuleRow[], addressKey: string):
 function textSourceReason(
   row: SeAddressRow,
   members: readonly SeAddressMember[],
-): SeAddressPublished["textSourceReason"] {
+): SeAddressPublishedDetail["textSourceReason"] {
   if (members.length === 1) return "single source";
   const fromTextSource = members.filter((member) => member.source === row.text_source);
   const chosen = fromTextSource.reduce<SeAddressMember | undefined>(
@@ -299,83 +520,188 @@ function textSourceReason(
   return outright ? "most complete" : "tie-break";
 }
 
-/**
- * The whole tab in one round trip: the published rows with their members, the
- * drafts, the history and the rules. Null when the company has no address at
- * any layer -- no published row, no normalized row and no draft -- which the
- * route turns into the workspace's empty state.
- */
-export async function loadSeAddressDetail(companyId: string): Promise<SeAddressDetail | null> {
-  const [mainRows, history, normalizedRows, rawRows, rules] = await Promise.all([
-    chQuery<SeAddressRow>(ADDRESS_MAIN_SQL, { companyId }),
-    chQuery<SeAddressHistoryRow>(ADDRESS_HISTORY_SQL, { companyId }),
-    chQuery<SeAddressNormalizedRow>(ADDRESS_NORMALIZED_SQL, { companyId }),
-    chQuery<SeAddressRawRow>(ADDRESS_RAW_SQL, { companyId }),
-    chQuery<SeAddressRuleRow>(ADDRESS_RULES_SQL, { companyId }),
+const EMPTY_FOLD_STATE: SeAddressFoldStateRow = {
+  folded_at: "",
+  newest_normalized_at: "",
+  has_publishable: 0,
+  newest_suggested_at: "",
+  normalized_rows: 0,
+};
+
+/** A list row as the page wants it: the published columns, the ClickHouse flag
+ * as a boolean, and the rule in force for its key. */
+function listEntry(
+  queryRow: SeAddressListRow,
+  rules: readonly SeAddressRuleRow[],
+): SeAddressListEntry {
+  const { refold_pending, ...row } = queryRow;
+  return {
+    row,
+    refoldPending: refold_pending === 1,
+    hideRule: activeHideRule(rules, row.address_key),
+  };
+}
+
+/** One published row's `(source, slot)` pairs, as the two parallel array
+ * parameters the member reads bind. */
+function memberPairParams(
+  companyId: string,
+  row: SeAddressRow,
+): { companyId: string; memberSources: string[]; memberSlots: string[] } {
+  return {
+    companyId,
+    memberSources: [...row.sources],
+    memberSlots: row.sources.map((_, index) => row.slots[index] ?? ""),
+  };
+}
+
+/** The selected address's panel: two reads, both bound to that row's own pairs,
+ * then the members assembled through `normalized_ids` exactly as before. */
+async function loadSelectedDetail(
+  companyId: string,
+  row: SeAddressRow,
+  rules: readonly SeAddressRuleRow[],
+): Promise<SeAddressPublishedDetail> {
+  const params = memberPairParams(companyId, row);
+  const [normalizedRows, rawRows] = await Promise.all([
+    chQuery<SeAddressNormalizedRow>(ADDRESS_MEMBER_NORMALIZED_SQL, params),
+    chQuery<SeAddressRawRow>(ADDRESS_MEMBER_RAW_SQL, params),
   ]);
-  const normalizedBySlot = new Map(normalizedRows.map((row) => [slotKey(row.source, row.slot), row]));
-  const rawBySlot = new Map(rawRows.map((row) => [slotKey(row.source, row.slot), row]));
-  const published = mainRows.map((row) => {
-    const members = row.sources.map((source, index) => {
-      const slot = row.slots[index] ?? "";
-      const normalizedId = row.normalized_ids[index] ?? "";
-      const current = normalizedBySlot.get(slotKey(source, slot)) ?? null;
-      return {
-        source,
-        slot,
-        normalizedId,
-        current,
-        raw: rawBySlot.get(slotKey(source, slot)) ?? null,
-        refoldPending: current !== null && current.normalized_id !== normalizedId,
-        completeness: completenessOf(current),
-      };
-    });
+  const normalizedBySlot = new Map(normalizedRows.map((entry) => [slotKey(entry.source, entry.slot), entry]));
+  const rawBySlot = new Map(rawRows.map((entry) => [slotKey(entry.source, entry.slot), entry]));
+  const members = row.sources.map((source, index) => {
+    const slot = row.slots[index] ?? "";
+    const normalizedId = row.normalized_ids[index] ?? "";
+    const current = normalizedBySlot.get(slotKey(source, slot)) ?? null;
     return {
-      row,
-      members,
-      textSourceReason: textSourceReason(row, members),
-      hideRule: activeHideRule(rules, row.address_key),
+      source,
+      slot,
+      normalizedId,
+      current,
+      raw: rawBySlot.get(slotKey(source, slot)) ?? null,
+      refoldPending: current !== null && current.normalized_id !== normalizedId,
+      completeness: completenessOf(current),
     };
   });
-  const drafts = rawRows
-    .filter(
-      (row) => row.source === DRAFT_SOURCE && DRAFT_TEXT_FIELDS.some((field) => row[field] !== ""),
-    )
+  return {
+    row,
+    members,
+    textSourceReason: textSourceReason(row, members),
+    hideRule: activeHideRule(rules, row.address_key),
+  };
+}
+
+/**
+ * The tab in two round trips (spec 8, amended 2026-09-13). The first runs nine
+ * small reads in parallel: the Addresses list without members, one page of the
+ * workplaces with its count, history, rules, the drafts, the fold state, and --
+ * only when `?address=` carried a well-formed key -- that one row. The second
+ * resolves the selected row's members from its own `(source, slot)` pairs: the
+ * `?address=` row when it is this company's, else the first active row of the
+ * list, else the first published row of any activity, both already in hand
+ * and needing no read of their own (owner ruling 2026-09-13: the panel keeps
+ * the default selection it has always had, and stays reachable even when
+ * every address is withdrawn or hidden).
+ *
+ * Null when the company has no address at any layer -- no list row, no
+ * workplace, no draft and no normalized row -- which the route turns into the
+ * workspace's empty state.
+ */
+export async function loadSeAddressDetail(
+  companyId: string,
+  options: SeAddressDetailOptions,
+): Promise<SeAddressDetail | null> {
+  // A hand-typed key never reaches ClickHouse: the route already filters one,
+  // and this is the store's own guard. `workplacePage` and `workplaceQuery`
+  // get the same treatment -- the route's own parsers already clamp them, but
+  // the store re-validates every option itself rather than trusting a caller.
+  const selectedKey =
+    options.selectedKey !== null && isAddressKey(options.selectedKey) ? options.selectedKey : null;
+  const page = Math.min(Math.max(1, Math.trunc(options.workplacePage) || 1), MAX_WORKPLACE_PAGE);
+  const query = options.workplaceQuery.trim().slice(0, MAX_WORKPLACE_QUERY_LENGTH);
+  const offset = (page - 1) * WORKPLACE_PAGE_SIZE;
+  const [
+    listRows,
+    workplaceRows,
+    workplaceCount,
+    history,
+    rules,
+    draftRawRows,
+    draftNormalizedRows,
+    foldStateRows,
+    selectedRows,
+  ] = await Promise.all([
+    chQuery<SeAddressListRow>(ADDRESS_LIST_SQL, { companyId }),
+    chQuery<SeAddressListRow>(ADDRESS_WORKPLACES_SQL, {
+      companyId,
+      workplaceQuery: query,
+      limit: WORKPLACE_PAGE_SIZE,
+      offset,
+    }),
+    chQuery<{ total: number }>(ADDRESS_WORKPLACES_COUNT_SQL, { companyId, workplaceQuery: query }),
+    chQuery<SeAddressHistoryRow>(ADDRESS_HISTORY_SQL, { companyId }),
+    chQuery<SeAddressRuleRow>(ADDRESS_RULES_SQL, { companyId }),
+    chQuery<SeAddressRawRow>(ADDRESS_DRAFT_RAW_SQL, { companyId }),
+    chQuery<SeAddressNormalizedRow>(ADDRESS_DRAFT_NORMALIZED_SQL, { companyId }),
+    chQuery<SeAddressFoldStateRow>(ADDRESS_FOLD_STATE_SQL, { companyId }),
+    selectedKey === null
+      ? Promise.resolve([] as SeAddressRow[])
+      : chQuery<SeAddressRow>(ADDRESS_SELECTED_SQL, { companyId, addressKey: selectedKey }),
+  ]);
+  const published = listRows.map((row) => listEntry(row, rules));
+  const workplaces: SeAddressWorkplacePage = {
+    rows: workplaceRows.map((row) => listEntry(row, rules)),
+    total: workplaceCount[0]?.total ?? 0,
+    page,
+    pageSize: WORKPLACE_PAGE_SIZE,
+    query,
+  };
+  const draftNormalizedBySlot = new Map(draftNormalizedRows.map((row) => [row.slot, row]));
+  const drafts = draftRawRows
+    .filter((row) => DRAFT_TEXT_FIELDS.some((field) => row[field] !== ""))
     .map((raw) => ({
       slot: raw.slot,
       raw,
-      normalized: normalizedBySlot.get(slotKey(DRAFT_SOURCE, raw.slot)) ?? null,
+      normalized: draftNormalizedBySlot.get(raw.slot) ?? null,
       replacesKey: raw.replaces_key,
     }));
-  if (published.length === 0 && drafts.length === 0 && normalizedRows.length === 0) return null;
-  // Drafts are never folded and never published, so they must not raise "Fold
-  // pending" on their own -- Dagster's own selection (spec 5.5) excludes them.
-  const foldable = normalizedRows.filter((row) => row.source !== DRAFT_SOURCE);
-  // A raw row the normalize step has not seen yet has no normalized version to
-  // speak for it -- an activated reviewer address, or a Remove's tombstone --
-  // so its own `suggested_at` is what says a fold is owed.
-  const foldableRaw = rawRows.filter((row) => row.source !== DRAFT_SOURCE);
-  const foldedAt = mainRows.reduce<string | null>(
-    (newest, row) => (newest === null || row.folded_at > newest ? row.folded_at : newest),
-    null,
-  );
+  const state = foldStateRows[0] ?? EMPTY_FOLD_STATE;
+  // A filter that matches nothing cannot make a company read as empty: normalized_rows === 0
+  // means no published row exists at all, so the filtered total is 0 regardless of the query.
+  if (
+    published.length === 0 &&
+    workplaces.total === 0 &&
+    drafts.length === 0 &&
+    state.normalized_rows === 0
+  ) {
+    return null;
+  }
+  // The `?address=` row, else the first active company address (the list is
+  // sorted `active DESC` first), else the first published row of ANY
+  // activity -- the pre-branch tab's own fallback, restored so the panel and
+  // Reset stay reachable for a company whose every address is withdrawn or
+  // hidden. A key that is absent, malformed or not this company's lands on
+  // the same fallback chain; only a workplace-only company (`published` is
+  // empty) leaves the panel with nothing to describe.
+  const selectedRow =
+    selectedRows[0] ??
+    published.find((entry) => entry.row.active === 1)?.row ??
+    published[0]?.row ??
+    null;
   return {
     published,
+    selected: selectedRow === null ? null : await loadSelectedDetail(companyId, selectedRow, rules),
+    workplaces,
     drafts,
     history,
     rules,
     foldPending: addressFoldPending(
-      foldedAt,
+      state.folded_at === "" ? null : state.folded_at,
       // A released rule counts too: the release is not applied until the fold.
-      [
-        ...foldable.map((row) => row.normalized_at),
-        ...foldableRaw.map((row) => row.suggested_at),
-        ...rules.map((rule) => rule.decided_at),
-      ],
-      // Spec 5.5 (amended): a company with no main row is selected only when a
-      // current normalized row is publishable, so a company whose rows all
-      // parse `no_address` never reads as pending.
-      foldable.some((row) => PUBLISHABLE_PARSE_STATUS.has(row.parse_status)),
+      [state.newest_normalized_at, state.newest_suggested_at, ...rules.map((rule) => rule.decided_at)].filter(
+        (stamp) => stamp !== "",
+      ),
+      state.has_publishable === 1,
     ),
   };
 }

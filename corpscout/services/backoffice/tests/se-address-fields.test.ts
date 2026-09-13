@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  ADDRESS_KINDS, ADDRESS_SOURCES, REVIEWER_KINDS, addressFoldPending, addressKindLabel, addressSourceLabel,
-  geocodeStatusLabel, isAddressKind, isAddressSource, selectedAddressFromSearch, validateSeAddressInput,
+  ADDRESS_KINDS, ADDRESS_SOURCES, REVIEWER_KINDS, addressFoldPending, addressKindLabel, addressSearchString,
+  addressSourceLabel, geocodeStatusLabel, isAddressKind, isAddressSource, MAX_WORKPLACE_PAGE,
+  MAX_WORKPLACE_QUERY_LENGTH, selectedAddressFromSearch, validateSeAddressInput, WORKPLACE_PAGE_SIZE,
+  workplacePageFromSearch, workplaceQueryFromSearch,
 } from "~/lib/se-address-fields";
 
 const KEY = "a".repeat(64);
@@ -69,5 +71,64 @@ describe("addressFoldPending", () => {
     expect(addressFoldPending("2026-09-07 10:00:00.000", ["2026-09-07 11:00:00.000"], true)).toBe(true);
     expect(addressFoldPending(null, [], true)).toBe(true);
     expect(addressFoldPending(null, [], false)).toBe(false);
+  });
+});
+
+describe("workplace paging search params", () => {
+  it("pages fifty rows at a time", () => {
+    // Spec 8 (amended 2026-09-13): the Workplaces card is paged server-side,
+    // fifty rows a page. The number is a contract between the loader's OFFSET
+    // and the card's "<from>-<to> of <total>" footer, so it is pinned here.
+    expect(WORKPLACE_PAGE_SIZE).toBe(50);
+    expect(MAX_WORKPLACE_QUERY_LENGTH).toBe(100);
+  });
+
+  it("reads a 1-based page and calls anything that is not a whole number page 1", () => {
+    expect(workplacePageFromSearch(new URLSearchParams("workplaces=3"))).toBe(3);
+    expect(workplacePageFromSearch(new URLSearchParams("workplaces=31"))).toBe(31);
+    expect(workplacePageFromSearch(new URLSearchParams())).toBe(1);
+    for (const raw of ["0", "-2", "2.5", "abc", "", "%20", "1e3", "01x"]) {
+      expect(workplacePageFromSearch(new URLSearchParams(`workplaces=${raw}`))).toBe(1);
+    }
+  });
+
+  it("clamps a page past MAX_WORKPLACE_PAGE rather than overflowing the loader's UInt32 offset", () => {
+    // The loader binds `(page - 1) * WORKPLACE_PAGE_SIZE` as `{offset:UInt32}`;
+    // an unclamped hand-typed page would overflow that and 500 the route.
+    expect(MAX_WORKPLACE_PAGE).toBe(100_000);
+    expect(workplacePageFromSearch(new URLSearchParams("workplaces=90000000"))).toBe(100_000);
+    expect(workplacePageFromSearch(new URLSearchParams("workplaces=100001"))).toBe(100_000);
+    expect(workplacePageFromSearch(new URLSearchParams("workplaces=100000"))).toBe(100_000);
+  });
+
+  it("trims the filter and caps it at a hundred characters", () => {
+    // `+` is a space in a query string, so this is the filter box's own posting.
+    expect(workplaceQueryFromSearch(new URLSearchParams("workplace_q=+storgatan+"))).toBe("storgatan");
+    expect(workplaceQueryFromSearch(new URLSearchParams("workplace_q=Box%20123"))).toBe("Box 123");
+    expect(workplaceQueryFromSearch(new URLSearchParams())).toBe("");
+    expect(workplaceQueryFromSearch(new URLSearchParams("workplace_q=   "))).toBe("");
+    const long = workplaceQueryFromSearch(new URLSearchParams(`workplace_q=${"x".repeat(150)}`));
+    expect(long).toHaveLength(100);
+  });
+
+  it("builds the tab's whole search string and leaves the defaults out", () => {
+    expect(addressSearchString({ address: null, workplacePage: 1, workplaceQuery: "" })).toBe("");
+    expect(addressSearchString({ address: KEY, workplacePage: 1, workplaceQuery: "" })).toBe(
+      `?address=${KEY}`,
+    );
+    expect(addressSearchString({ address: null, workplacePage: 4, workplaceQuery: "" })).toBe(
+      "?workplaces=4",
+    );
+    // Everything at once, in a stable order: the selected address, the page, the filter.
+    expect(addressSearchString({ address: KEY, workplacePage: 2, workplaceQuery: "Box 1" })).toBe(
+      `?address=${KEY}&workplaces=2&workplace_q=Box+1`,
+    );
+    // What it builds is what the readers read back.
+    const round = new URLSearchParams(
+      addressSearchString({ address: KEY, workplacePage: 2, workplaceQuery: "Box 1" }).slice(1),
+    );
+    expect(selectedAddressFromSearch(round)).toBe(KEY);
+    expect(workplacePageFromSearch(round)).toBe(2);
+    expect(workplaceQueryFromSearch(round)).toBe("Box 1");
   });
 });

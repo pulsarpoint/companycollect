@@ -59,6 +59,60 @@ export function selectedAddressFromSearch(params: URLSearchParams): string | nul
   return isAddressKey(key) ? key : null;
 }
 
+/** The Workplaces card's page size (spec 8, amended 2026-09-13): fifty rows a
+ * page, counted and cut in ClickHouse, never in the browser. */
+export const WORKPLACE_PAGE_SIZE = 50;
+/** No company has anywhere near this many workplace rows; the ceiling exists
+ * so a hand-typed `?workplaces=` cannot push `(page - 1) * WORKPLACE_PAGE_SIZE`
+ * past `UInt32`'s range -- the loader binds the offset as `{offset:UInt32}`,
+ * and ClickHouse rejects an overflowing one rather than clamping it. */
+export const MAX_WORKPLACE_PAGE = 100_000;
+/** The filter box is a contains search, not a query language: a hundred
+ * characters is longer than any `normalized_address` and caps what a
+ * hand-typed URL can push into the query parameter. */
+export const MAX_WORKPLACE_QUERY_LENGTH = 100;
+
+/** `?workplaces=<page>`, 1-based and capped at `MAX_WORKPLACE_PAGE`. Anything
+ * that is not a whole number of at least 1 -- absent, empty, `0`, `-2`, `2.5`,
+ * `abc` -- is page 1. */
+export function workplacePageFromSearch(params: URLSearchParams): number {
+  const raw = (params.get("workplaces") ?? "").trim();
+  if (!/^[0-9]+$/.test(raw)) return 1;
+  const page = Number(raw);
+  return Number.isSafeInteger(page) && page >= 1 ? Math.min(page, MAX_WORKPLACE_PAGE) : 1;
+}
+
+/** `?workplace_q=<text>`: trimmed and capped. The loader hands it to ClickHouse
+ * as a query parameter, so it is never SQL. */
+export function workplaceQueryFromSearch(params: URLSearchParams): string {
+  return (params.get("workplace_q") ?? "").trim().slice(0, MAX_WORKPLACE_QUERY_LENGTH);
+}
+
+/** The three parameters the Address tab keeps in its URL. */
+export interface SeAddressSearchState {
+  /** The `?address=` key, or null for no selection. */
+  address: string | null;
+  /** 1-based; page 1 is the absent parameter. */
+  workplacePage: number;
+  /** The workplace filter; `''` is the absent parameter. */
+  workplaceQuery: string;
+}
+
+/**
+ * The tab's whole query string, leading `?` included (`''` when everything is
+ * at its default). Every link on the page builds its search here -- selecting
+ * an address keeps the workplace page and its filter, paging keeps the selected
+ * address -- so there is one place where the parameter names live.
+ */
+export function addressSearchString(state: SeAddressSearchState): string {
+  const params = new URLSearchParams();
+  if (state.address !== null && state.address !== "") params.set("address", state.address);
+  if (state.workplacePage > 1) params.set("workplaces", String(state.workplacePage));
+  if (state.workplaceQuery !== "") params.set("workplace_q", state.workplaceQuery);
+  const search = params.toString();
+  return search === "" ? "" : `?${search}`;
+}
+
 export interface SeAddressInput {
   careOf: string;
   streetLine: string;

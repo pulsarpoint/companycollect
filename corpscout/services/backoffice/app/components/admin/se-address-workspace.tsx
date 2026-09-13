@@ -43,18 +43,22 @@ import {
 import { AddressMap, type AddressMapPoint } from "~/components/detail/address-map";
 import {
   addressKindLabel,
+  addressSearchString,
   addressSourceLabel,
   geocodeStatusLabel,
   MAX_NOTE_LENGTH,
+  MAX_WORKPLACE_QUERY_LENGTH,
 } from "~/lib/se-address-fields";
 import type {
   SeAddressComponents,
   SeAddressDetail,
   SeAddressDraft,
+  SeAddressListEntry,
   SeAddressMember,
-  SeAddressPublished,
+  SeAddressPublishedDetail,
   SeAddressRawRow,
   SeAddressRow,
+  SeAddressWorkplacePage,
 } from "~/lib/se-company-address-entity.server";
 import { cn } from "~/lib/utils";
 
@@ -152,24 +156,26 @@ export function mapPoint(row: SeAddressRow): AddressMapPoint | null {
   };
 }
 
+/** Every point the list's one map carries: the company's ACTIVE addresses and
+ * the workplace page's rows (spec 8, amended -- "the map shows the company
+ * addresses and the current workplace page"). A withdrawn or hidden row is not
+ * where this company is, and a row with no usable geocode has nothing to put on
+ * a map, so the map may hold fewer points than the cards hold rows. Exported
+ * for the test: the map itself never renders server-side. */
+export function listMapPoints(
+  published: readonly SeAddressListEntry[],
+  workplaces: readonly SeAddressListEntry[],
+): AddressMapPoint[] {
+  return [...published.filter((entry) => entry.row.active === 1), ...workplaces]
+    .map((entry) => mapPoint(entry.row))
+    .filter((point): point is AddressMapPoint => point !== null);
+}
+
 /** OpenStreetMap's marker permalink: close in on an exact position, further
  * out on an approximate one, where the reviewer can judge the surroundings. */
 function openStreetMapUrl(point: AddressMapPoint): string {
   const zoom = point.approximate ? 13 : 18;
   return `https://www.openstreetmap.org/?mlat=${point.lat}&mlon=${point.lon}#map=${zoom}/${point.lat}/${point.lon}`;
-}
-
-/** The address the panel describes: the one the query string names, else the
- * first active row, else the first row at all. */
-function selectAddress(
-  detail: SeAddressDetail,
-  selectedKey: string | null,
-): SeAddressPublished | null {
-  if (selectedKey !== null) {
-    const named = detail.published.find((entry) => entry.row.address_key === selectedKey);
-    if (named) return named;
-  }
-  return detail.published.find((entry) => entry.row.active === 1) ?? detail.published[0] ?? null;
 }
 
 function initialFromRow(row: SeAddressRow): SeAddressEditInitial {
@@ -334,24 +340,29 @@ function AddressDecisionDialog({
 }
 
 /** One published address: the line links to its panel, Correct sits outside
- * the link (an anchor may not wrap a button). */
+ * the link (an anchor may not wrap a button). The same row renders in the
+ * Addresses card and in the Workplaces card. */
 function AddressLine({
   entry,
   selectedKey,
+  addressHref,
   busy,
   onCorrect,
 }: {
-  entry: SeAddressPublished;
+  entry: SeAddressListEntry;
   selectedKey: string | null;
+  /** The search string that selects this row, with the workplace page and its
+   * filter kept. */
+  addressHref: (addressKey: string) => string;
   busy: boolean;
-  onCorrect: (entry: SeAddressPublished) => void;
+  onCorrect: (entry: SeAddressListEntry) => void;
 }) {
   const { row } = entry;
   const selected = row.address_key === selectedKey;
   return (
     <li className="flex items-center gap-1" data-address-key={row.address_key}>
       <Link
-        to={{ search: `?address=${row.address_key}` }}
+        to={{ search: addressHref(row.address_key) }}
         preventScrollReset
         aria-current={selected ? "true" : undefined}
         className={cn(
@@ -375,6 +386,7 @@ function AddressLine({
             {geocodeStatusLabel(row.geocode_status)}
             {row.geocode_precision === "" ? "" : ` · ${row.geocode_precision}`}
           </Badge>
+          {entry.refoldPending ? <Badge variant="outline">re-fold pending</Badge> : null}
           {row.inactive_reason === "hidden" ? <Badge variant="destructive">hidden</Badge> : null}
         </span>
       </Link>
@@ -394,13 +406,18 @@ function AddressLine({
 function AddressesCard({
   detail,
   selectedKey,
+  mapPoints,
+  addressHref,
   busy,
   onCorrect,
 }: {
   detail: SeAddressDetail;
   selectedKey: string | null;
+  /** The company's addresses AND the current workplace page. */
+  mapPoints: readonly AddressMapPoint[];
+  addressHref: (addressKey: string) => string;
   busy: boolean;
-  onCorrect: (entry: SeAddressPublished) => void;
+  onCorrect: (entry: SeAddressListEntry) => void;
 }) {
   const navigate = useNavigate();
   const active = detail.published.filter((entry) => entry.row.active === 1);
@@ -408,12 +425,6 @@ function AddressesCard({
   // A withdrawn or hidden address the panel is describing must be visible in
   // the list too: linking to one opens the group it hides in.
   const selectedIsInactive = inactive.some((entry) => entry.row.address_key === selectedKey);
-  // Only the active addresses are mapped -- a withdrawn or hidden one is not
-  // where this company is. Some of them have no usable geocode, so the map may
-  // hold fewer points than the list holds rows.
-  const activePoints = active
-    .map((entry) => mapPoint(entry.row))
-    .filter((point): point is AddressMapPoint => point !== null);
   return (
     <Card>
       <CardHeader>
@@ -438,16 +449,14 @@ function AddressesCard({
             </EmptyHeader>
           </Empty>
         ) : null}
-        {/* Nothing active, nothing to map -- not even the empty frame, which
-            would only repeat what the empty state above already says. */}
-        {active.length === 0 ? null : (
+        {/* Nothing active and nothing on the map -- not even the empty frame,
+            which would only repeat what the empty state above already says. */}
+        {active.length === 0 && mapPoints.length === 0 ? null : (
           <div className="mb-3">
             <AddressMap
-              points={activePoints}
+              points={mapPoints}
               selectedKey={selectedKey}
-              onSelect={(key) =>
-                navigate({ search: `?address=${key}` }, { preventScrollReset: true })
-              }
+              onSelect={(key) => navigate({ search: addressHref(key) }, { preventScrollReset: true })}
             />
           </div>
         )}
@@ -458,6 +467,7 @@ function AddressesCard({
               key={entry.row.address_key}
               entry={entry}
               selectedKey={selectedKey}
+              addressHref={addressHref}
               busy={busy}
               onCorrect={onCorrect}
             />
@@ -474,6 +484,7 @@ function AddressesCard({
                       key={entry.row.address_key}
                       entry={entry}
                       selectedKey={selectedKey}
+                      addressHref={addressHref}
                       busy={busy}
                       onCorrect={onCorrect}
                     />
@@ -483,6 +494,113 @@ function AddressesCard({
             </AccordionItem>
           </Accordion>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * The company's workplace addresses (spec 8, amended 2026-09-13, rule 2): rows
+ * whose kinds are exactly `['workplace']`. Ratsit's establishments put hundreds
+ * of them on some companies -- a kommun has 1,502 -- so they are counted, cut
+ * and filtered in ClickHouse, fifty a page, and every link here keeps both the
+ * page and the filter. The card is absent when the company has none and no
+ * filter is in force; with a filter and no hit it stays, and says so.
+ */
+function WorkplacesCard({
+  workplaces,
+  selectedKey,
+  addressHref,
+  busy,
+  onCorrect,
+}: {
+  workplaces: SeAddressWorkplacePage;
+  selectedKey: string | null;
+  addressHref: (addressKey: string) => string;
+  busy: boolean;
+  onCorrect: (entry: SeAddressListEntry) => void;
+}) {
+  const { rows, total, page, pageSize, query } = workplaces;
+  if (total === 0 && query === "") return null;
+  const lastPage = Math.max(1, Math.ceil(total / pageSize));
+  const from = rows.length === 0 ? 0 : (page - 1) * pageSize + 1;
+  const to = (page - 1) * pageSize + rows.length;
+  const pageSearch = (nextPage: number) =>
+    addressSearchString({ address: selectedKey, workplacePage: nextPage, workplaceQuery: query });
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{`Workplaces (${total})`}</CardTitle>
+        <CardDescription>
+          Establishments this company runs, from Ratsit. They are the entity's addresses but
+          not the address it publishes as itself, so they are listed apart -- and the serving
+          view leaves them out.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {/* A GET form REPLACES the search, which is exactly how a new filter
+            resets to page 1; the selected address rides along in a hidden field
+            so filtering does not empty the panel. */}
+        <Form method="get" className="mb-3 flex flex-wrap items-center gap-2">
+          {selectedKey === null ? null : <input type="hidden" name="address" value={selectedKey} />}
+          <Input
+            name="workplace_q"
+            defaultValue={query}
+            maxLength={MAX_WORKPLACE_QUERY_LENGTH}
+            placeholder="Filter by address"
+            aria-label="Filter workplaces"
+            className="max-w-xs"
+          />
+          <Button type="submit" size="sm" variant="outline" disabled={busy}>
+            Filter
+          </Button>
+          {query === "" ? null : (
+            <Link
+              className="text-muted-foreground text-xs underline"
+              to={{
+                search: addressSearchString({
+                  address: selectedKey,
+                  workplacePage: 1,
+                  workplaceQuery: "",
+                }),
+              }}
+              preventScrollReset
+            >
+              Clear
+            </Link>
+          )}
+        </Form>
+        {rows.length === 0 ? (
+          <p className="text-muted-foreground text-sm">No workplace matches.</p>
+        ) : (
+          <ul className="grid grid-cols-1 gap-y-1 text-sm">
+            {rows.map((entry) => (
+              <AddressLine
+                key={entry.row.address_key}
+                entry={entry}
+                selectedKey={selectedKey}
+                addressHref={addressHref}
+                busy={busy}
+                onCorrect={onCorrect}
+              />
+            ))}
+          </ul>
+        )}
+        <div className="text-muted-foreground mt-3 flex items-center justify-between text-xs">
+          <span>{`${from}–${to} of ${total}`}</span>
+          <span className="flex gap-3">
+            {page > 1 ? (
+              <Link className="underline" to={{ search: pageSearch(page - 1) }} preventScrollReset>
+                Previous
+              </Link>
+            ) : null}
+            {page < lastPage ? (
+              <Link className="underline" to={{ search: pageSearch(page + 1) }} preventScrollReset>
+                Next
+              </Link>
+            ) : null}
+          </span>
+        </div>
       </CardContent>
     </Card>
   );
@@ -515,7 +633,7 @@ function DraftsCard({
             const replaced =
               draft.replacesKey === ""
                 ? null
-                : (detail.published.find(
+                : ([...detail.published, ...detail.workplaces.rows].find(
                     (entry) => entry.row.address_key === draft.replacesKey,
                   ) ?? null);
             return (
@@ -821,7 +939,7 @@ function AddressPanel({
   onAdd,
   onDecide,
 }: {
-  entry: SeAddressPublished | null;
+  entry: SeAddressPublishedDetail | null;
   busy: boolean;
   onAdd: () => void;
   onDecide: (pending: PendingAddressDecision) => void;
@@ -1009,13 +1127,10 @@ interface AddressSheetState {
 export function SeAddressWorkspace({
   companyId,
   detail,
-  selectedKey,
   result,
 }: {
   companyId: string;
   detail: SeAddressDetail;
-  /** The `?address=` key, when it is a well-formed one. */
-  selectedKey: string | null;
   result: SeAddressResult;
 }) {
   const navigation = useNavigation();
@@ -1049,26 +1164,47 @@ export function SeAddressWorkspace({
     // identity, this runs once per action round trip.
     if (result?.ok && result.intent === "save-draft") setSheet(null);
   }, [result]);
-  const selected = selectAddress(detail, selectedKey);
+  // The loader made the selection: the `?address=` row when the key names one
+  // of this company's, else the first active row -- the same default the
+  // deleted `selectAddress` applied -- and only that row carries members.
+  const selected = detail.selected;
+  const selectedAddressKey = selected?.row.address_key ?? null;
+  // One builder for every link on the page: selecting an address keeps the
+  // workplace page and its filter, paging keeps the selected address.
+  const addressHref = (addressKey: string) =>
+    addressSearchString({
+      address: addressKey,
+      workplacePage: detail.workplaces.page,
+      workplaceQuery: detail.workplaces.query,
+    });
+  const correct = (entry: SeAddressListEntry) =>
+    setSheet({
+      mode: "correct",
+      initial: initialFromRow(entry.row),
+      slot: null,
+      replacesKey: entry.row.address_key,
+    });
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(20rem,1fr)]">
       <div className="flex flex-col gap-6">
         <ResultAlert result={result} removedReviewerOnly={removedReviewerOnly} />
         <AddressesCard
           detail={detail}
-          // The effective selection, not the raw query string: with no
-          // `?address=` the panel describes the first active row, and that is
-          // the row the list must mark.
-          selectedKey={selected?.row.address_key ?? null}
+          // The effective selection, not the raw query string: the loader's
+          // resolved row, default included, so the list marks what the panel
+          // describes.
+          selectedKey={selectedAddressKey}
+          mapPoints={listMapPoints(detail.published, detail.workplaces.rows)}
+          addressHref={addressHref}
           busy={busy}
-          onCorrect={(entry) =>
-            setSheet({
-              mode: "correct",
-              initial: initialFromRow(entry.row),
-              slot: null,
-              replacesKey: entry.row.address_key,
-            })
-          }
+          onCorrect={correct}
+        />
+        <WorkplacesCard
+          workplaces={detail.workplaces}
+          selectedKey={selectedAddressKey}
+          addressHref={addressHref}
+          busy={busy}
+          onCorrect={correct}
         />
         {detail.drafts.length === 0 ? null : (
           <DraftsCard

@@ -19,13 +19,19 @@ const server = vi.hoisted(() => ({
 vi.mock("~/lib/se-company-address-entity.server", () => server);
 
 import { action, loader } from "~/routes/admin-se-company-address";
-import { removeSuccessCopy, SeAddressWorkspace } from "~/components/admin/se-address-workspace";
+import {
+  listMapPoints,
+  removeSuccessCopy,
+  SeAddressWorkspace,
+} from "~/components/admin/se-address-workspace";
 import type {
   SeAddressDetail,
   SeAddressDraft,
-  SeAddressPublished,
+  SeAddressListEntry,
+  SeAddressPublishedDetail,
   SeAddressRawRow,
   SeAddressRow,
+  SeAddressWorkplacePage,
 } from "~/lib/se-company-address-entity.server";
 
 const COMPANY = "5560125220";
@@ -89,7 +95,11 @@ const rawRow: SeAddressRawRow = {
   extractor_version: "bolagsverket-v2",
 };
 
-const published: SeAddressPublished = {
+/** The company's one published address, as the Addresses card gets it. */
+const listEntry: SeAddressListEntry = { row, refoldPending: false, hideRule: null };
+
+/** The same address as the panel gets it, with its one member. */
+const selectedDetail: SeAddressPublishedDetail = {
   row,
   members: [
     {
@@ -109,8 +119,8 @@ const published: SeAddressPublished = {
 /** A second active address of the same company, geocoded no finer than its
  * postcode -- two rows for the list's one map to carry. */
 const SECOND_KEY = "b".repeat(64);
-const secondPublished: SeAddressPublished = {
-  ...published,
+const secondListEntry: SeAddressListEntry = {
+  ...listEntry,
   row: {
     ...row,
     address_key: SECOND_KEY,
@@ -124,8 +134,44 @@ const secondPublished: SeAddressPublished = {
   },
 };
 
+/** An establishment: `kinds` is exactly `['workplace']`, so it lives in the
+ * Workplaces card and never in the Addresses card. */
+const WORKPLACE_KEY = "c".repeat(64);
+const workplaceEntry: SeAddressListEntry = {
+  row: {
+    ...row,
+    address_key: WORKPLACE_KEY,
+    street_name: "Verkstadsgatan",
+    house_number: "3",
+    postal_code: "11124",
+    normalized_address: "verkstadsgatan 3|11124|stockholm|se",
+    kinds: ["workplace"],
+    sources: ["ratsit"],
+    slots: ["est:9"],
+    normalized_ids: ["norm-9"],
+    text_source: "ratsit",
+    latitude: 59.35,
+    longitude: 18.08,
+  },
+  refoldPending: false,
+  hideRule: null,
+};
+
+/** No workplaces at all: the card is absent (Task 2). Typed, not `as const`:
+ * `as const` would make `rows` a `readonly []`, which no `SeAddressDetail`
+ * accepts. */
+const NO_WORKPLACES: SeAddressWorkplacePage = {
+  rows: [],
+  total: 0,
+  page: 1,
+  pageSize: 50,
+  query: "",
+};
+
 const detail: SeAddressDetail = {
-  published: [published],
+  published: [listEntry],
+  selected: selectedDetail,
+  workplaces: { ...NO_WORKPLACES },
   drafts: [],
   history: [],
   rules: [],
@@ -136,6 +182,8 @@ const detail: SeAddressDetail = {
  * for (and what `loadSeAddressDetail` returning null becomes). */
 const EMPTY_DETAIL: SeAddressDetail = {
   published: [],
+  selected: null,
+  workplaces: { ...NO_WORKPLACES },
   drafts: [],
   history: [],
   rules: [],
@@ -175,7 +223,7 @@ function render(element: React.ReactElement, search = ""): string {
 describe("SeAddressWorkspace", () => {
   it("renders the published address line with its kind, source and geocode badges, and marks the selected row", () => {
     const html = render(
-      <SeAddressWorkspace companyId={COMPANY} detail={detail} selectedKey={KEY} result={null} />,
+      <SeAddressWorkspace companyId={COMPANY} detail={detail} result={null} />,
     );
     expect(html).toContain("storgatan 5|11122|stockholm|se");
     expect(html).toContain("Postal");
@@ -189,13 +237,12 @@ describe("SeAddressWorkspace", () => {
       <SeAddressWorkspace
         companyId={COMPANY}
         detail={{ ...detail, foldPending: true }}
-        selectedKey={null}
         result={null}
       />,
     );
     expect(pending).toContain("Fold pending");
     const settled = render(
-      <SeAddressWorkspace companyId={COMPANY} detail={detail} selectedKey={null} result={null} />,
+      <SeAddressWorkspace companyId={COMPANY} detail={detail} result={null} />,
     );
     expect(settled).not.toContain("Fold pending");
   });
@@ -205,7 +252,6 @@ describe("SeAddressWorkspace", () => {
       <SeAddressWorkspace
         companyId={COMPANY}
         detail={EMPTY_DETAIL}
-        selectedKey={null}
         result={null}
       />,
     );
@@ -218,7 +264,6 @@ describe("SeAddressWorkspace", () => {
       <SeAddressWorkspace
         companyId={COMPANY}
         detail={{ ...detail, drafts: [draft] }}
-        selectedKey={KEY}
         result={null}
       />,
     );
@@ -240,8 +285,7 @@ describe("SeAddressWorkspace", () => {
     const html = render(
       <SeAddressWorkspace
         companyId={COMPANY}
-        detail={{ ...detail, published: [published, secondPublished] }}
-        selectedKey={KEY}
+        detail={{ ...detail, published: [listEntry, secondListEntry] }}
         result={null}
       />,
     );
@@ -264,13 +308,158 @@ describe("SeAddressWorkspace", () => {
       <SeAddressWorkspace
         companyId={COMPANY}
         detail={detail}
-        selectedKey={KEY}
         result={{ ok: true, intent: "remove" }}
       />,
     );
     expect(html).toContain("Address hidden; fold to apply.");
     expect(removeSuccessCopy(false)).toBe("Address hidden; fold to apply.");
     expect(removeSuccessCopy(true)).toBe("Reviewer address withdrawn; fold to apply.");
+  });
+
+  /** The page as a kommun sees it: 1,502 workplaces, page 2, a filter in force
+   * and a company address selected. */
+  const PAGED_SEARCH = `?address=${KEY}&workplaces=2&workplace_q=verkstad`;
+  const paged: SeAddressDetail = {
+    ...detail,
+    workplaces: { rows: [workplaceEntry], total: 1502, page: 2, pageSize: 50, query: "verkstad" },
+  };
+  const BASE = `/admin/se/company/${COMPANY}/address`;
+
+  it("renders the Workplaces card with its total, its rows and its page footer", () => {
+    const html = render(
+      <SeAddressWorkspace companyId={COMPANY} detail={paged} result={null} />,
+      PAGED_SEARCH,
+    );
+    expect(html).toContain("Workplaces (1502)");
+    expect(html).toContain(`data-address-key="${WORKPLACE_KEY}"`);
+    expect(html).toContain("verkstadsgatan 3|11124|stockholm|se");
+    expect(html).toContain("Workplace");
+    // Page 2 of fifty, one row on it.
+    expect(html).toContain("51–51 of 1502");
+    expect(html).toContain("Previous");
+    expect(html).toContain("Next");
+  });
+
+  it("keeps the selected address and the filter in every workplace link, and the page in every address link", () => {
+    const html = render(
+      <SeAddressWorkspace companyId={COMPANY} detail={paged} result={null} />,
+      PAGED_SEARCH,
+    );
+    // Previous and Next move only the page. `&` is escaped in an attribute.
+    // Page 1 is the canonical, absent `workplaces=` value (addressSearchString's
+    // own contract, tests/se-address-fields.test.ts), so Previous back to page 1
+    // omits the parameter rather than spelling out `workplaces=1`.
+    expect(html).toContain(`href="${BASE}?address=${KEY}&amp;workplace_q=verkstad"`);
+    expect(html).toContain(`href="${BASE}?address=${KEY}&amp;workplaces=3&amp;workplace_q=verkstad"`);
+    // Selecting a workplace row keeps the page and the filter.
+    expect(html).toContain(
+      `href="${BASE}?address=${WORKPLACE_KEY}&amp;workplaces=2&amp;workplace_q=verkstad"`,
+    );
+    // So does selecting a company address in the card above.
+    expect(html).toContain(`href="${BASE}?address=${KEY}&amp;workplaces=2&amp;workplace_q=verkstad"`);
+    // The filter form is a GET that carries the selection and drops the page:
+    // a new filter starts at the top.
+    expect(html).toContain('name="workplace_q"');
+    expect(html).toContain('value="verkstad"');
+    expect(html).toContain(`name="address" value="${KEY}"`);
+    // Every POST (Fold now, Remove, Activate, Discard, Save draft) defaults its
+    // action to the current URL, search included, so the round trip comes back
+    // to this page of workplaces.
+    expect(html).toContain(
+      `action="${BASE}?address=${KEY}&amp;workplaces=2&amp;workplace_q=verkstad"`,
+    );
+  });
+
+  it("hides the Workplaces card when there are none, and says so when a filter finds none", () => {
+    const none = render(
+      <SeAddressWorkspace companyId={COMPANY} detail={detail} result={null} />,
+    );
+    expect(none).not.toContain("Workplaces (");
+
+    const filtered = render(
+      <SeAddressWorkspace
+        companyId={COMPANY}
+        detail={{
+          ...detail,
+          workplaces: { rows: [], total: 0, page: 1, pageSize: 50, query: "nowhere" },
+        }}
+        result={null}
+      />,
+      "?workplace_q=nowhere",
+    );
+    expect(filtered).toContain("Workplaces (0)");
+    expect(filtered).toContain("No workplace matches.");
+  });
+
+  it("keeps a merged postal+workplace row in the Addresses card", () => {
+    // The fold merges an establishment that repeats the company's own street
+    // and postcode: `kinds` carries both, so the row IS the company's address
+    // (migration 000403's rule) and never moves to the Workplaces card.
+    const MERGED_KEY = "d".repeat(64);
+    const merged: SeAddressListEntry = {
+      ...listEntry,
+      row: {
+        ...row,
+        address_key: MERGED_KEY,
+        kinds: ["postal", "workplace"],
+        sources: ["bolagsverket", "ratsit"],
+        slots: ["", "est:4"],
+        normalized_ids: ["norm-1", "norm-4"],
+        normalized_address: "storgatan 5|11122|stockholm|se",
+      },
+    };
+    const html = render(
+      <SeAddressWorkspace
+        companyId={COMPANY}
+        detail={{ ...detail, published: [listEntry, merged] }}
+        result={null}
+      />,
+    );
+    expect(html).toContain(`data-address-key="${MERGED_KEY}"`);
+    expect(html).toContain("Postal");
+    expect(html).toContain("Workplace");
+    expect(html).not.toContain("Workplaces (");
+  });
+
+  it("maps the company's active addresses and the current workplace page, once", () => {
+    expect(listMapPoints([listEntry, secondListEntry], [workplaceEntry]).map((point) => point.key)).toEqual([
+      KEY,
+      SECOND_KEY,
+      WORKPLACE_KEY,
+    ]);
+    // A withdrawn row is not where the company is, and a row without a usable
+    // geocode has nothing to put on a map.
+    expect(
+      listMapPoints([{ ...listEntry, row: { ...row, active: 0, inactive_reason: "hidden" } }], []),
+    ).toEqual([]);
+    expect(
+      listMapPoints([], [{ ...workplaceEntry, row: { ...workplaceEntry.row, geocode_status: "" } }]),
+    ).toEqual([]);
+
+    const html = render(
+      <SeAddressWorkspace
+        companyId={COMPANY}
+        detail={{ ...paged, published: [listEntry, secondListEntry] }}
+        result={null}
+      />,
+      PAGED_SEARCH,
+    );
+    // The map is client-only, so what renders is its placeholder: one for the
+    // whole list -- not one per row, and not one per card -- and one for the
+    // panel's single point.
+    const placeholders = html.match(/bg-muted text-muted-foreground flex h-56/g) ?? [];
+    expect(placeholders).toHaveLength(2);
+  });
+
+  it("marks a list row the fold has yet to catch up with", () => {
+    const html = render(
+      <SeAddressWorkspace
+        companyId={COMPANY}
+        detail={{ ...detail, published: [{ ...listEntry, refoldPending: true }] }}
+        result={null}
+      />,
+    );
+    expect(html).toContain("re-fold pending");
   });
 });
 
@@ -296,21 +485,31 @@ describe("admin-se-company-address route", () => {
       request: new Request(`http://x/admin/se/company/${COMPANY}/address`),
       params: { companyId: COMPANY },
     } as never);
-    expect(response).toEqual({ detail, selectedKey: null });
+    expect(response).toEqual({ detail });
+    // The tab's three parameters, at their defaults.
+    expect(server.loadSeAddressDetail).toHaveBeenCalledWith(COMPANY, {
+      selectedKey: null,
+      workplacePage: 1,
+      workplaceQuery: "",
+    });
 
     // No 404: Add address must stay reachable for a company nothing has
     // suggested an address for. The company layout 404s an unknown company.
     server.loadSeAddressDetail.mockResolvedValueOnce(null);
     const missing = await loader({
-      request: new Request(`http://x/admin/se/company/${COMPANY}/address`),
+      request: new Request(`http://x/admin/se/company/${COMPANY}/address?workplaces=3&workplace_q=box`),
       params: { companyId: COMPANY },
     } as never);
-    expect(missing).toEqual({ detail: EMPTY_DETAIL, selectedKey: null });
+    expect(missing).toEqual({
+      detail: {
+        ...EMPTY_DETAIL,
+        workplaces: { rows: [], total: 0, page: 3, pageSize: 50, query: "box" },
+      },
+    });
     const html = render(
       <SeAddressWorkspace
         companyId={COMPANY}
         detail={missing.detail}
-        selectedKey={missing.selectedKey}
         result={null}
       />,
     );
@@ -318,18 +517,32 @@ describe("admin-se-company-address route", () => {
     expect(html).toContain("Add address");
   });
 
-  it("passes the selected key from ?address=, ignoring anything malformed", async () => {
+  it("passes the selected key and the workplace page and filter through, ignoring anything malformed", async () => {
     const selected = await loader({
-      request: new Request(`http://x/admin/se/company/${COMPANY}/address?address=${KEY}`),
+      request: new Request(
+        `http://x/admin/se/company/${COMPANY}/address?address=${KEY}&workplaces=4&workplace_q=+Box+1+`,
+      ),
       params: { companyId: COMPANY },
     } as never);
-    expect(selected).toEqual({ detail, selectedKey: KEY });
+    expect(selected).toEqual({ detail });
+    expect(server.loadSeAddressDetail).toHaveBeenLastCalledWith(COMPANY, {
+      selectedKey: KEY,
+      workplacePage: 4,
+      workplaceQuery: "Box 1",
+    });
 
     const malformed = await loader({
-      request: new Request(`http://x/admin/se/company/${COMPANY}/address?address=not-a-key`),
+      request: new Request(
+        `http://x/admin/se/company/${COMPANY}/address?address=not-a-key&workplaces=zero`,
+      ),
       params: { companyId: COMPANY },
     } as never);
-    expect(malformed).toEqual({ detail, selectedKey: null });
+    expect(malformed).toEqual({ detail });
+    expect(server.loadSeAddressDetail).toHaveBeenLastCalledWith(COMPANY, {
+      selectedKey: null,
+      workplacePage: 1,
+      workplaceQuery: "",
+    });
   });
 
   function post(entries: Record<string, string>) {
