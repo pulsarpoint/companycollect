@@ -46,7 +46,7 @@ From prod on 2026-09-11 and 2026-09-13, and from the code as it stands on `main`
 
 | fact | value |
 | --- | --- |
-| v1 full match run | 122,837 companies called, 159,789 pairs (149,334 at or above 0.8), 107.8M prompt + 7.8M completion tokens (≈ 878 + 64 per company), 108 transient errors |
+| v1 full match run | 122,837 companies called, 159,789 pairs (149,334 at or above 0.8; the tables hold 162,192 pair rows and 124,646 state rows on 2026-09-13 after the targeted folds), 107.8M prompt + 7.8M completion tokens (≈ 878 + 64 per company), 108 transient errors |
 | v2 fold result | 47,423 duplicate persons merged; active persons 1,321,187 → 1,273,764; persons carrying `data.llm_match` 124,451 |
 | residual gap after v1 | call-name 3,258 pairs (from 26,356), double-surname 2,380 pairs (from 7,190) |
 | the 0.5–0.8 band | 9,529 pairs — the People tab's Possible-matches panel |
@@ -64,7 +64,7 @@ From prod on 2026-09-11 and 2026-09-13, and from the code as it stands on `main`
 | person tokens | `normalize_se.py` lowercases, strips diacritics to `[a-z0-9]`, splits on `.`/`-`, glues particles (`von af de van der la le`) to the last name; `first_tokens`, `middle_tokens`, `last_tokens` are the identity, `display_*` the spelling |
 | `se_company_person` | `ReplacingMergeTree(folded_at) ORDER BY (company_id, person_key)`; `birth_year Nullable(UInt16)`, `sources Array(LowCardinality(String))`, `normalized_ids Array(FixedString(64))`, `active UInt8` — and NO token columns (the tokens live on the normalized row) |
 | refreshable-MV pattern | 000402: engine declared inside the view, `REFRESH EVERY 1 HOUR OFFSET <n> MINUTE`, `EMPTY` (first build by hand), trailing `SETTINGS join_algorithm='grace_hash,hash', grace_hash_join_initial_buckets=16, max_bytes_before_external_group_by=8589934592, max_bytes_before_external_sort=8589934592, max_memory_usage=12884901888`; the SELECT is the exact rendering of a builder in `person/tables.py`, drift-pinned by a test |
-| refresh offsets in use | `:00` geocodes, `:20` `se_company_person_role`, `:45` `se_companies_serving` (13–15 min) |
+| refresh offsets in use | `:20` `se_company_person_role`, `:45` `se_companies_serving` (13–15 min); the geocode view is no longer refreshable |
 | highest migration in this branch | `000404_corpscout_se_financial_readers_entity`; `EXPECTED_MIGRATIONS` in `tests/test_clickhouse_migrations.py` ends with it |
 | backoffice writes | `app/lib/clickhouse.server.ts` — a read client at `readonly=2` and a write client with `async_insert=1, wait_for_async_insert=1`; one exported `chInsert…` helper per table |
 | backoffice identity | there is NO sign-in. `admin-esef.tsx` stamps `process.env.BACKOFFICE_OPERATOR?.trim() || "backoffice"`; the person entity stamps `decided_by = "backoffice"` |
@@ -180,14 +180,17 @@ recent run's. To compare two prompts, queue two requests.
 
 ```sql
 ALTER TABLE corpscout.se_company_person_match
-    ADD COLUMN IF NOT EXISTS request_id String DEFAULT '',
+    ADD COLUMN IF NOT EXISTS request_id String,
     MODIFY ORDER BY (company_id, candidate_a, candidate_b, request_id);
 
 ALTER TABLE corpscout.se_company_person_match_state
     ADD COLUMN IF NOT EXISTS request_id String DEFAULT '';
 ```
 
-The pair table's alter is ONE statement on purpose. ClickHouse extends a sorting key only
+The pair table's new column carries NO `DEFAULT ''` clause: a column that enters the sorting key
+may not have a default expression (ClickHouse refuses the combined statement with code 36,
+proven on 26.5 while writing the slice-1 plan); a plain `String` column fills with `''` for the
+existing rows anyway, which is the value the design wants. The pair table's alter is ONE statement on purpose. ClickHouse extends a sorting key only
 with columns added by the same `ALTER`, with the type's zero default — here `''` — because
 that is what keeps the existing parts sorted by the new key (every stored row's new column
 is the same empty string, so the order cannot change). Two separate statements are refused.
