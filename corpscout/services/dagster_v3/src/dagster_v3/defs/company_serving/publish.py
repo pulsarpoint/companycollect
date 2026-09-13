@@ -311,11 +311,14 @@ def _validate_presence_counts(
             "SELECT countDistinct(tuple(company_id, contract_ref)) "
             f"FROM {stages[tables.CONTRACTS.name]}"
         ),
+        # The financial entity (spec 2026-09-11 section 10, slice 4a): the presence model
+        # counts companies with an ACTIVE folded period, read FINAL, anchored like addresses.
         "financials": (
             "SELECT countDistinct(financials.company_id) "
-            "FROM corpscout.se_company_financials_latest AS financials "
+            "FROM corpscout.se_company_financial AS financials FINAL "
             f"INNER JOIN (SELECT DISTINCT company_id FROM {stages[tables.EXTERNAL_IDENTIFIERS.name]}) AS anchors "
-            "ON anchors.company_id = financials.company_id"
+            "ON anchors.company_id = financials.company_id "
+            "WHERE financials.active = 1"
         ),
         "industries": (
             "SELECT countDistinct(tuple(company_id, classification_code)) "
