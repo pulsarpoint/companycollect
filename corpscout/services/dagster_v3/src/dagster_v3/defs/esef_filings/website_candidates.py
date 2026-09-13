@@ -51,6 +51,9 @@ _WEBSITE_FACT_ROLES = {
     "WebsiteAtWhichTheFinancialStatementsOfTheEntityAreDisclosedTogetherWithTheAuditorsReport": "report_disclosure",
     "WebsiteOfTheAuditEntity": "auditor",
 }
+# The tagged concepts the extractor reads as website facts; the esef_domains
+# extractor filters corpscout.esef_facts on these.
+WEBSITE_FACT_CONCEPTS = frozenset(_WEBSITE_FACT_ROLES)
 _INFRASTRUCTURE_DOMAINS = frozenset(
     {"europa.eu", "ifrs.org", "iso.org", "w3.org", "xbrl.org"}
 )
@@ -223,6 +226,26 @@ def extract_website_candidates(
     known_email_domains: Iterable[str],
 ) -> list[EsefWebsiteCandidate]:
     """Extract auditable URL evidence grouped by registrable domain."""
+    candidates, _corroborated = extract_website_candidates_with_corroboration(
+        report_paths,
+        tagged_values=tagged_values,
+        known_email_domains=known_email_domains,
+    )
+    return candidates
+
+
+def extract_website_candidates_with_corroboration(
+    report_paths: Mapping[str, Path],
+    *,
+    tagged_values: Iterable[TaggedWebsiteValue],
+    known_email_domains: Iterable[str],
+) -> tuple[list[EsefWebsiteCandidate], frozenset[str]]:
+    """As `extract_website_candidates`, plus the registrable domains the
+    extraction treated as corroborated: backed by a tagged website fact, a
+    known e-mail domain, or more than one unbroken mention in one report
+    member. `esef_domains` persists membership as a row's `corroborated`
+    flag; the artifact's candidate shape is unchanged.
+    """
     corroborating_domains = {
         domain
         for value in known_email_domains
@@ -248,8 +271,9 @@ def extract_website_candidates(
     # classified `external_reference`.
     tagged_fact_domains = frozenset(accumulators)
 
+    corroborated: set[str] = set(corroborating_domains) | set(tagged_fact_domains)
     for report_member, report_path in sorted(report_paths.items()):
-        _extract_report_websites(
+        corroborated |= _extract_report_websites(
             report_member=report_member,
             report_path=report_path,
             corroborating_domains=corroborating_domains,
@@ -257,10 +281,13 @@ def extract_website_candidates(
             accumulators=accumulators,
         )
 
-    return [
-        _finalize_candidate(accumulator)
-        for _, accumulator in sorted(accumulators.items())
-    ]
+    return (
+        [
+            _finalize_candidate(accumulator)
+            for _, accumulator in sorted(accumulators.items())
+        ],
+        frozenset(corroborated),
+    )
 
 
 def _extract_tagged_value(
@@ -300,7 +327,7 @@ def _extract_report_websites(
     corroborating_domains: set[str],
     tagged_fact_domains: frozenset[str],
     accumulators: dict[str, _WebsiteAccumulator],
-) -> None:
+) -> frozenset[str]:
     tree = etree.parse(
         report_path,
         etree.XMLParser(
@@ -384,6 +411,8 @@ def _extract_report_websites(
             },
             accumulators=accumulators,
         )
+
+    return frozenset(corroborated_domains)
 
 
 def _add_website_candidate(

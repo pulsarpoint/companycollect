@@ -1,5 +1,9 @@
 # ESEF: documents plus independent extractors, first slice `esef_domains`
 
+**Status (2026-09-13):** implemented on branch `esef-domains-extractor` (plan
+`docs/superpowers/plans/2026-09-13-esef-domains-extractor.md`); rollout pending the owner's
+migration + deploy.
+
 Owner ruling 2026-09-13: "static parsing needs to be separate tasks. We have documents, and
 many parsers that can parse that document to extract some information — not one big parser
 with a version. Domain extraction is one asset connected to the `esef_domains` table, that's
@@ -52,8 +56,8 @@ referrals promoted to company domains).
 
 ## 2. `esef_domains`
 
-Migration `000404_corpscout_esef_domains` (ledger at 403 on 2026-09-13; the SE financial track
-also plans a 000404 — re-check main and the prod ledger at merge time and renumber if needed):
+Migration `000405_corpscout_esef_domains` (renumbered 2026-09-13 evening: the SE financial track
+took 000404 (`se_financial_readers_entity`, applied on prod before this branch merged); re-check main and the prod ledger again at merge time):
 
 ```
 CREATE TABLE IF NOT EXISTS corpscout.esef_domains
@@ -105,14 +109,20 @@ delay=60, EXPONENTIAL)`, deps: `esef_filings_clickhouse`, `esef_facts_clickhouse
 - `ESEF_DOMAINS_EXTRACTOR_VERSION = "esef-domains-v1"` (in `domains_extraction.py`).
 - Config `EsefDomainsConfig`: `max_documents: int | None` (1..100 000), `source_document_ids:
   list[str]` (re-extract exactly these, stale or not), `refresh_existing: bool = False`,
-  `workers: int = 4` (1..8), `batch_size: int = 250` (documents per replace),
-  `parse_timeout_seconds: int = 300` (60..3600).
+  `retry_failed: bool = False` (re-extract the documents whose rows at the current version are
+  `failed` / `timed_out`: one query on `esef_domains FINAL`, routed through the listed-ids path
+  and unioned with `source_document_ids`), `workers: int = 4` (1..8), `batch_size: int = 250`
+  (1..1000, documents per replace), `parse_timeout_seconds: int = 300` (60..3600).
 - Selection (pure `stale_documents_sql()`): documents of `esef_filings FINAL` with
-  `package_sha256 != ''` and `period_end <= today()` that have rows in `esef_facts`, LEFT JOIN
-  `esef_domains` grouped by document (`max(extractor_version)`), keeping those with no row or
-  a version different from the current one (or all when `refresh_existing` or listed), ordered
-  by `period_end DESC, fxo_id`; `max_documents` applied in Python; `fiscal_year =
-  period_end.year`.
+  `package_sha256 != ''` and `period_end <= today()` whose `esef_facts` rows have settled
+  (newest `resolved_at` older than one hour: the publish multi-asset writes `esef_facts` before
+  `esef_document_contact_candidates`, and a document extracted in between would lose its
+  e-mail domains for good at this version), LEFT JOIN `esef_domains` grouped by document
+  (`max(extractor_version)`, `any(package_sha256)`), keeping those with no row, a version
+  different from the current one, or a `package_sha256` different from the index's (a changed
+  package is stale too) -- or all when `refresh_existing` or listed. Listed ids are selected
+  per 500-id chunk. Ordered by `period_end DESC, fxo_id` (re-sorted in Python after merging
+  the chunks); `max_documents` applied in Python; `fiscal_year = period_end.year`.
 - Inputs per run (one query each, ids chunked): the tagged website facts from `esef_facts`
   (`concept_local_name IN` the three website concepts of `website_candidates`, `raw_value`,
   deduplicated; `esef_facts` does not record the report member, so their evidence carries
@@ -127,8 +137,16 @@ delay=60, EXPONENTIAL)`, deps: `esef_filings_clickhouse`, `esef_facts_clickhouse
   `website_candidates.extract_website_candidates_with_corroboration` (the merged fix: hyphen
   rejoin with corroboration, `external_reference`) returns the candidates plus the set of
   corroborated registrable domains (tagged fact, e-mail domain, or more than one unbroken
-  mention); `corroborated` on a row is membership in that set. A download failure, a timed-out
-  or failed child yields the marker row described in section 1 and the run continues.
+  mention); `corroborated` on a row is membership in that set. Downloads: only a package
+  missing from the object store (`NoSuchKey` / 404 / `NotFound`, the codes
+  `ObjectStoreResource.exists` treats as missing) or a SHA-256 mismatch is the document's own
+  terminal problem and yields a `failed` marker row; any other object-store or disk error
+  fails the run (the retry policy re-runs it; unwritten documents stay stale). A timed-out or
+  failed child yields the marker row described in section 1 and the run continues.
+- Circuit breaker: after a batch settles and before it is written, if at least max(10,
+  ceil(25 % of the batch)) documents timed out or lost their child "without a result"
+  (OOM-kill), the run raises ("host incident suspected") and writes nothing for that batch;
+  the retry policy and the sensor's failure cooldown take over.
 - Rows are written per `batch_size` documents so progress survives a mid-run failure; the
   temp package is removed as soon as its extraction settles.
 - Metadata: `candidate_document_count`, `attempted_document_count`, `processed_document_count`
@@ -154,33 +172,47 @@ The stale-weeks sensor stays as it is for the facts parse.
 
 - `defs/company_serving/dbt/models/company_domains_build.sql`, `esef_sources` leg: reads
   `se_esef_domains` (new source in `sources.yml`, asset key `esef_domains_clickhouse`), rows
-  with `extraction_status = 'ok'`, `registrable_domain != ''` and roles other than exactly
-  `["external_reference"]`. Confidence: `company_website` among the roles → 0.95
+  with `extraction_status = 'ok'`, `registrable_domain != ''` and at least one role outside
+  `auditor` / `social_media` / `external_reference` (`NOT arrayAll(role -> role IN (...))`,
+  amended at the final review: a company's auditor, its social-media profile and a one-off
+  third-party referral are not its own domains -- an auditor tagged via
+  `WebsiteOfTheAuditEntity` was corroborated → 0.90 and could win the primary pick; an `ok` row
+  always carries a role, `unknown` when nothing else; a row mixing one of these with another
+  role keeps the confidence rule). Confidence: `company_website` among the roles → 0.95
   (`explicit_company_website`); else `corroborated = 1 OR evidence_count >= 2` → 0.90
   (`repeated_filing_website`); else 0.50 (`filing_website_mention`). `observed_at` stays the
   view's `resolved_at`. Everything else in the model unchanged.
+- `company_section_item_source_links_build.sql`, `esef_domains` CTE: the `esef_filing` domain
+  provenance reads `se_esef_domains` too (the same `ok` / non-empty rows and role exclusion),
+  no longer the website rows of `se_esef_document_contact_candidates`; its output columns are
+  unchanged.
 - `company_contact_current_build.sql`: excludes `candidate_kind = 'website'` from the contact
   candidates (websites are domains now, not contacts).
 - Backoffice ESEF tab (`se-company-esef.server.ts` + `admin-se-company-esef.tsx`): a new
   "Websites" card reads `se_esef_domains` (domain, roles, evidence count, corroborated, fiscal
-  year); the contact-candidates query excludes website rows. Other backoffice readers are
+  year), one row per fiscal year and domain (roles merged, highest evidence count and
+  corroborated flag) so two filings in one year do not list a website twice; the
+  contact-candidates query excludes website rows. Other backoffice readers are
   untouched.
 
 ## 6. Rollout
 
-1. Owner applies 000404 (`make clickhouse-migrate-up-one`), verifies `esef_domains` and
+1. Owner applies 000405 (`make clickhouse-migrate-up-one`), verifies `esef_domains` and
    `se_esef_domains` exist.
 2. Owner deploys from main after `dg utils refresh-defs-state` (the dbt source and model
    change) — the deploy also ships the extraction fix merged on 2026-09-13 (636f30042) to the
    weekly parse.
 3. The sensor starts RUNNING and extracts every available document (about 15,600) in runs of
-   up to 5,000, lxml only, roughly 2–3 hours at 4 workers; the bad domains disappear as each
+   up to 5,000, lxml only, roughly 3.5 hours at 4 workers; the bad domains disappear as each
    batch lands. Verify: `se_esef_domains` for Handelsbanken (5020077862) lists
    `handelsbanken.com` (company_website), `handelsbanken.se`, `handelsbankenfonder.se`, and
    `svanen.se`/`ipcc.ch` only as `external_reference`; no `banken.com` / `bankenfonder.se`
    anywhere in the table.
 4. The company_serving build + publish (the owner's or the serving track's launch) picks up
-   the new leg; verify no `esef_filing` domain row for Handelsbanken carries `banken.com`.
+   the new leg; verify against the current, active domains -- `corpscout.company_domain_current`
+   (or `company_domains FINAL` with `is_active = 1`) -- that Handelsbanken (5020077862) has no
+   `banken.com` / `bankenfonder.se` domain. Not plain `company_domains`: it keeps now-inactive
+   rows with their old `source_names`.
 
 ## 7. Testing
 
@@ -195,7 +227,7 @@ The stale-weeks sensor stays as it is for the facts parse.
   export columns in order, `corroborated`, batch replace statements, a missing package counted
   as failed with a marker row); the sensor's pure decision and its `evaluate_tick` with fakes;
   migration column-order contract and `SE_ESEF_VIEWS` drift pins (the new view pinned to
-  000404); the dbt model's SQL-text pins plus the existing `dbt parse` test; the backoffice
+  000405); the dbt model's SQL-text pins plus the existing `dbt parse` test; the backoffice
   reader's query pin and loader mapping.
 
 ## 8. Out of scope (later slices)

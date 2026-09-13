@@ -1065,7 +1065,7 @@ Wait for the serving view's refresh to have finished (`SELECT view, status, last
 
 The deploy recipe (uv sync, the two dbt parses, `dg utils refresh-defs-state` — mandatory here because `sources.yml` changed — `dg check defs`, ansible light sync); expected `RC=0`, `failed=0`. Confirm through GraphQL `assetNodes` that `se_company_financials_latest_clickhouse` now depends on `se_company_financial_fold`.
 
-- [ ] **Step 3: Rebuild the two derived tables**
+- [x] **Step 3: Rebuild the two derived tables**
 
 In-process on the host if the run queue is still held (`/tmp/fin_asset_run.sh <asset> <tag> <config.json>` from slice 3 with `{}` as the config): first `se_company_financials_latest_clickhouse` (expected `row_count` about 795,403, the companies with an active standalone period, against 579,766 before), then `company_serving_current` (the dbt build + publish; its reconciliation must report the financials count matching the presence model). Readouts:
 
@@ -1087,7 +1087,7 @@ SELECT count() AS rows, countIf(has_financial = 1) AS with_financial, countIf(so
 
 Record the `with_financial` count before (read it in Step 1 before migrating) and after; the entity covers 795,403 companies with an active standalone period plus the filed-report-only companies, so the count should rise from the Bolagsverket-and-report population to roughly that.
 
-- [ ] **Step 5: Record**
+- [x] **Step 5: Record**
 
 Append the prod record to spec section 12 item 4 (ledger 404, deploy, the three rebuild counts, the smoke company's latest row, the serving counts before/after), commit on the branch as `docs(se-financial): slice 4a shipped, prod record; plan ticked`, merge through a temporary worktree on main, fast-forward, update the memory file, then write slice 4b's plan (the backoffice cutover; the owner-run drops and the ledger emptying of 000286/000364 belong to it).
 

@@ -16,12 +16,12 @@ def _normalized(sql: str) -> str:
     return re.sub(r"\s+", " ", sql).strip().rstrip(";")
 
 
-def test_eight_views_one_per_swedish_consumer() -> None:
+def test_nine_views_one_per_swedish_consumer() -> None:
     assert [v.view for v in tables.SE_ESEF_VIEWS] == [
         "se_esef_filings", "se_esef_facts", "se_esef_disclosures",
         "se_esef_document_contact_candidates", "se_esef_document_company_information",
         "se_esef_document_people", "se_esef_document_business_items",
-        "se_esef_document_group_relationships",
+        "se_esef_document_group_relationships", "se_esef_domains",
     ]
     for view in tables.SE_ESEF_VIEWS:
         assert view.view == f"se_{view.table}"  # se_ + esef_<table>
@@ -47,10 +47,20 @@ def test_view_sql_joins_the_verified_swedish_link_and_reads_replacing_tables_fin
     assert "AS t INNER JOIN" in _normalized(build_se_esef_view_sql(disclosures))  # MergeTree: no FINAL
 
 
-def test_migration_000395_embeds_every_rendered_view() -> None:
-    up = _normalized(MIGRATION.read_text(encoding="utf-8"))
+MIGRATION_000405 = MIGRATION.parent / "000405_corpscout_esef_domains.up.sql"
+# Views added after the country-agnostic cutover live in their own migration.
+VIEW_MIGRATIONS = {"se_esef_domains": MIGRATION_000405}
+
+
+def test_every_rendered_view_is_embedded_in_its_migration() -> None:
     for view in tables.SE_ESEF_VIEWS:
+        migration = VIEW_MIGRATIONS.get(view.view, MIGRATION)
+        up = _normalized(migration.read_text(encoding="utf-8"))
         assert _normalized(build_se_esef_view_sql(view)) in up, view.view
+
+
+def test_migration_000395_adds_the_link_status_column() -> None:
+    up = _normalized(MIGRATION.read_text(encoding="utf-8"))
     assert "ALTER TABLE corpscout.esef_entity_registry_map ADD COLUMN IF NOT EXISTS link_status LowCardinality(String) DEFAULT 'gleif' AFTER match_source" in up
 
 

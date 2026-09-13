@@ -106,7 +106,7 @@ class ObjectStoreResource(dg.ConfigurableResource):
             self.client().head_object(Bucket=target_bucket, Key=key)
             return True
         except Exception as exc:
-            if _error_code(exc) in {"404", "NoSuchBucket", "NoSuchKey", "NotFound"}:
+            if is_missing_object_error(exc):
                 return False
             raise
 
@@ -196,6 +196,19 @@ class ObjectStoreResource(dg.ConfigurableResource):
             )
             deleted_count += len(key_batch)
         return deleted_count
+
+
+# botocore ClientError codes that mean "the object (or its bucket) is not there".
+_MISSING_OBJECT_ERROR_CODES = frozenset(
+    {"404", "NoSuchBucket", "NoSuchKey", "NotFound"}
+)
+
+
+def is_missing_object_error(exc: Exception) -> bool:
+    """True when an object-store call failed because the object does not exist
+    -- the same test ``ObjectStoreResource.exists`` uses. Anything else
+    (connection refused, timeouts, 5xx) is infrastructure trouble."""
+    return _error_code(exc) in _MISSING_OBJECT_ERROR_CODES
 
 
 def _error_code(exc: Exception) -> str:

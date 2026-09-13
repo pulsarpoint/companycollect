@@ -37,6 +37,7 @@ ESEF_DOCUMENT_PEOPLE_EXTRACTION_TABLE = "esef_document_people_extraction"
 ESEF_DOCUMENT_PEOPLE_TABLE = "esef_document_people"
 ESEF_DOCUMENT_BUSINESS_ITEMS_TABLE = "esef_document_business_items"
 ESEF_DOCUMENT_GROUP_RELATIONSHIPS_TABLE = "esef_document_group_relationships"
+ESEF_DOMAINS_TABLE = "esef_domains"
 ESEF_DISCLOSURES_TABLE = "esef_disclosures"
 QUALIFIED_DISCLOSURES_TABLE = f"{DLT_DATASET_NAME}.{ESEF_DISCLOSURES_TABLE}"
 
@@ -67,6 +68,7 @@ QUALIFIED_ESEF_DOCUMENT_BUSINESS_ITEMS_TABLE = (
 QUALIFIED_ESEF_DOCUMENT_GROUP_RELATIONSHIPS_TABLE = (
     f"{ESEF_DATABASE}.{ESEF_DOCUMENT_GROUP_RELATIONSHIPS_TABLE}"
 )
+QUALIFIED_ESEF_DOMAINS_TABLE = f"{ESEF_DATABASE}.{ESEF_DOMAINS_TABLE}"
 QUALIFIED_ESEF_DISCLOSURES_TABLE = f"{ESEF_DATABASE}.{ESEF_DISCLOSURES_TABLE}"
 
 # corpscout.esef_filings column order minus resolved_at (CH default).
@@ -272,6 +274,31 @@ ESEF_DOCUMENT_PEOPLE_EXTRACTION_EXPORT_COLUMNS = (
     "extracted_at",
 )
 
+# One row per (document, registrable domain) from the esef_domains extractor
+# (migration 000405, spec 2026-09-13), or one marker row per document without
+# domains. source_record_uid and resolved_at are DEFAULT-expression columns
+# there and never part of the INSERT tuple, so both are excluded from this list.
+ESEF_DOMAINS_EXPORT_COLUMNS = (
+    "domain_id",
+    "source_document_id",
+    "package_sha256",
+    "lei",
+    "period_end",
+    "fiscal_year",
+    "extraction_status",
+    "registrable_domain",
+    "hosts_json",
+    "normalized_urls_json",
+    "roles_json",
+    "evidence_json",
+    "evidence_count",
+    "corroborated",
+    "error_message",
+    "extractor_version",
+    "source_run_id",
+    "extracted_at",
+)
+
 # Typed serving projections derived independently from one ESEF document's
 # company-information result. Their order matches migration 000244.
 ESEF_DOCUMENT_PEOPLE_COLUMNS = (
@@ -438,6 +465,13 @@ _ESEF_DOCUMENT_COMPANY_INFORMATION_VIEW_COLUMNS = (
     *ESEF_DOCUMENT_COMPANY_INFORMATION_EXPORT_COLUMNS[1:],
     "resolved_at",
 )
+_ESEF_DOMAINS_VIEW_COLUMNS = (
+    ESEF_DOMAINS_EXPORT_COLUMNS[0],
+    ESEF_DOMAINS_EXPORT_COLUMNS[1],
+    "source_record_uid",
+    *ESEF_DOMAINS_EXPORT_COLUMNS[2:],
+    "resolved_at",
+)
 
 SE_ESEF_VIEWS: tuple[SeEsefView, ...] = (
     SeEsefView("esef_filings", _ESEF_FILINGS_COLUMNS, final=True),
@@ -448,4 +482,5 @@ SE_ESEF_VIEWS: tuple[SeEsefView, ...] = (
     SeEsefView("esef_document_people", (*ESEF_DOCUMENT_PEOPLE_COLUMNS, "person_profile_hash", "person_role_hash"), final=True),
     SeEsefView("esef_document_business_items", ESEF_DOCUMENT_BUSINESS_ITEM_COLUMNS, final=True),
     SeEsefView("esef_document_group_relationships", ESEF_DOCUMENT_GROUP_RELATIONSHIP_COLUMNS, final=True),
+    SeEsefView("esef_domains", _ESEF_DOMAINS_VIEW_COLUMNS, final=True),
 )

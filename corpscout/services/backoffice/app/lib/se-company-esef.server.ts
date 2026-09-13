@@ -75,7 +75,26 @@ SELECT
   fiscal_year, candidate_kind, normalized_value, registrable_domain
 FROM corpscout.se_esef_document_contact_candidates
 WHERE company_id = {companyId:String}
+  AND candidate_kind != 'website'
 ORDER BY fiscal_year DESC, candidate_kind, normalized_value`;
+
+// The esef_domains extractor's rows (se_esef_domains): one per filing and
+// registrable domain. Marker rows (registrable_domain '', a document without
+// domains or a failed extraction) are filtered out here.
+// One row per (fiscal year, domain): two filings in one fiscal year (an amended
+// report, a second LEI) would otherwise list the same website twice.
+export const ESEF_TAB_DOMAINS_SQL = `
+SELECT
+  fiscal_year, registrable_domain,
+  toJSONString(arrayDistinct(arrayFlatten(groupArray(JSONExtract(roles_json, 'Array(String)'))))) AS roles_json,
+  max(evidence_count) AS evidence_count,
+  max(corroborated) AS corroborated
+FROM corpscout.se_esef_domains
+WHERE company_id = {companyId:String}
+  AND extraction_status = 'ok'
+  AND registrable_domain != ''
+GROUP BY fiscal_year, registrable_domain
+ORDER BY fiscal_year DESC, registrable_domain`;
 
 export const ESEF_TAB_RELATIONSHIPS_SQL = `
 SELECT
@@ -148,6 +167,14 @@ interface EsefTabRelationshipQueryRow {
   confidence: number;
 }
 
+interface EsefTabDomainQueryRow {
+  fiscal_year: number;
+  registrable_domain: string;
+  roles_json: string;
+  evidence_count: number;
+  corroborated: number;
+}
+
 // Public API interfaces (camelCase)
 export interface EsefTabFiling {
   fxoId: string;
@@ -210,6 +237,14 @@ export interface EsefTabRelationship {
   confidence: number;
 }
 
+export interface EsefTabDomain {
+  fiscalYear: number;
+  registrableDomain: string;
+  roles: string[];
+  evidenceCount: number;
+  corroborated: boolean;
+}
+
 export interface SeCompanyEsefDetail {
   filings: EsefTabFiling[];
   information: EsefTabInformation[];
@@ -217,6 +252,16 @@ export interface SeCompanyEsefDetail {
   businessItems: EsefTabBusinessItem[];
   contacts: EsefTabContact[];
   relationships: EsefTabRelationship[];
+  domains: EsefTabDomain[];
+}
+
+function parseRoles(json: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(json);
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return [];
+  }
 }
 
 function mapFilingRow(r: EsefTabFilingQueryRow): EsefTabFiling {
@@ -250,7 +295,7 @@ export async function loadSeCompanyEsef(
   companyId: string,
 ): Promise<SeCompanyEsefDetail | null> {
   const params = { companyId };
-  const [filings, information, people, items, contacts, relationships] =
+  const [filings, information, people, items, contacts, relationships, domains] =
     await Promise.all([
       chQuery<EsefTabFilingQueryRow>(ESEF_TAB_FILINGS_SQL, params),
       chQuery<EsefTabInformationQueryRow>(ESEF_TAB_INFORMATION_SQL, params),
@@ -258,6 +303,7 @@ export async function loadSeCompanyEsef(
       chQuery<EsefTabBusinessItemQueryRow>(ESEF_TAB_BUSINESS_ITEMS_SQL, params),
       chQuery<EsefTabContactQueryRow>(ESEF_TAB_CONTACTS_SQL, params),
       chQuery<EsefTabRelationshipQueryRow>(ESEF_TAB_RELATIONSHIPS_SQL, params),
+      chQuery<EsefTabDomainQueryRow>(ESEF_TAB_DOMAINS_SQL, params),
     ]);
 
   if (filings.length === 0 && information.length === 0) return null;
@@ -305,6 +351,13 @@ export async function loadSeCompanyEsef(
       ownershipPercentage: r.ownership_percentage,
       jurisdiction: r.jurisdiction,
       confidence: Number(r.confidence),
+    })),
+    domains: domains.map((r) => ({
+      fiscalYear: Number(r.fiscal_year),
+      registrableDomain: r.registrable_domain,
+      roles: parseRoles(r.roles_json),
+      evidenceCount: Number(r.evidence_count),
+      corroborated: Number(r.corroborated) === 1,
     })),
   };
 }

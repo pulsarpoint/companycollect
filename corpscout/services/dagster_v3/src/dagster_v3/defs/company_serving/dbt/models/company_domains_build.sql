@@ -66,22 +66,19 @@ wikidata_sources AS (
 esef_sources AS (
     SELECT
         '{{ var("country_code") }}' AS country_code,
-        candidates.company_id AS company_id,
-        candidates.registrable_domain AS root_domain,
-        concat('https://', candidates.registrable_domain) AS website_url,
-        candidates.registrable_domain AS website_host,
+        domains.company_id AS company_id,
+        domains.registrable_domain AS root_domain,
+        concat('https://', domains.registrable_domain) AS website_url,
+        domains.registrable_domain AS website_host,
         'esef_filing' AS source_name,
         toFloat32(multiIf(
-            positionCaseInsensitiveUTF8(
-                candidates.suggested_roles_json,
-                'company_website'
-            ) > 0,
+            has(JSONExtract(domains.roles_json, 'Array(String)'), 'company_website'),
             0.95,
-            candidates.evidence_count >= 2,
+            domains.corroborated = 1 OR domains.evidence_count >= 2,
             0.90,
-            0.75
+            0.50
         )) AS source_confidence,
-        candidates.source_document_id AS source_record_id,
+        domains.source_document_id AS source_record_id,
         coalesce(
             nullIf(filings.viewer_url, ''),
             nullIf(filings.report_url, ''),
@@ -89,24 +86,36 @@ esef_sources AS (
             ''
         ) AS source_url,
         multiIf(
-            positionCaseInsensitiveUTF8(
-                candidates.suggested_roles_json,
-                'company_website'
-            ) > 0,
+            has(JSONExtract(domains.roles_json, 'Array(String)'), 'company_website'),
             'explicit_company_website',
-            candidates.evidence_count >= 2,
+            domains.corroborated = 1 OR domains.evidence_count >= 2,
             'repeated_filing_website',
             'filing_website_mention'
         ) AS confidence_basis,
         toUInt8(0) AS source_suggested_primary,
-        candidates.resolved_at AS observed_at
-    FROM {{ source('corpscout', 'se_esef_document_contact_candidates') }} AS candidates
+        domains.resolved_at AS observed_at
+    FROM {{ source('corpscout', 'se_esef_domains') }} AS domains
     INNER JOIN companies
-        ON companies.company_id = candidates.company_id
+        ON companies.company_id = domains.company_id
     LEFT ANY JOIN {{ source('corpscout', 'se_esef_filings') }} AS filings
-        ON filings.fxo_id = candidates.source_document_id
-    WHERE candidates.candidate_kind = 'website'
-      AND candidates.registrable_domain != ''
+        ON filings.fxo_id = domains.source_document_id
+    -- The extractor (dagster_v3.defs.esef_filings.domains_extraction) writes one
+    -- marker row per document without domains (registrable_domain '') -- not a
+    -- website. A domain whose roles are all auditor / social_media /
+    -- external_reference is the auditor's, a social-media profile or a third-party
+    -- referral, not the company's own (spec 2026-09-13 section 5, final-review
+    -- ruling: an auditor tagged via WebsiteOfTheAuditEntity is corroborated and
+    -- would otherwise reach 0.90). An ok row always carries at least one role
+    -- (unknown when nothing else), so arrayAll never sees an empty array on a real
+    -- row; a row mixing one of these with another role keeps the confidence rule.
+    -- A tagged WebsitesOfLegalEntity fact, a known e-mail domain or a repeated
+    -- mention (corroborated = 1) lifts a mention to 0.90.
+    WHERE domains.extraction_status = 'ok'
+      AND domains.registrable_domain != ''
+      AND NOT arrayAll(
+          role -> role IN ('auditor', 'social_media', 'external_reference'),
+          JSONExtract(domains.roles_json, 'Array(String)')
+      )
 ),
 
 common_crawl_evidence AS (

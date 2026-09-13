@@ -27,6 +27,10 @@ sources:
         meta:
           dagster:
             asset_key: [esef_document_contact_candidates_clickhouse]
+      - name: se_esef_domains
+        meta:
+          dagster:
+            asset_key: [esef_domains_clickhouse]
       - name: se_esef_filings
         meta:
           dagster:
