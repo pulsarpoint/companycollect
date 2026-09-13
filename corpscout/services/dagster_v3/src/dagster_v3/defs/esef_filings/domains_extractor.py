@@ -22,6 +22,7 @@ from concurrent.futures import Future, ProcessPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from hashlib import sha256
+from math import ceil
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -31,7 +32,10 @@ from dagster_clickhouse import ClickhouseResource
 from pydantic import Field
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
-from dagster_v3.defs.common.resources import ObjectStoreResource
+from dagster_v3.defs.common.resources import (
+    ObjectStoreResource,
+    is_missing_object_error,
+)
 from dagster_v3.defs.esef_filings import tables
 from dagster_v3.defs.esef_filings.document_rows import replace_document_rows
 from dagster_v3.defs.esef_filings.domains_extraction import (
@@ -61,6 +65,11 @@ _DOWNLOAD_AHEAD_PER_WORKER = 2
 # fxo_ids per IN-list: the native driver inlines parameters into the query
 # text, and ClickHouse's max_query_size defaults to 256 KiB.
 _ID_CHUNK = 500
+# Circuit breaker: a batch where at least max(_BREAKER_MIN_DOCUMENTS,
+# ceil(_BREAKER_BATCH_SHARE * batch)) documents timed out or lost their child
+# without a result is a host incident, not that many bad documents.
+_BREAKER_MIN_DOCUMENTS = 10
+_BREAKER_BATCH_SHARE = 0.25
 
 ExtractFn = Callable[
     [str, tuple[tuple[str, str], ...], tuple[str, ...], int, str], DocumentDomains
@@ -81,6 +90,13 @@ class EsefDomainsConfig(dg.Config):
     refresh_existing: bool = Field(
         default=False,
         description="Re-extract every available document, not only the stale ones.",
+    )
+    retry_failed: bool = Field(
+        default=False,
+        description=(
+            "Re-extract the documents whose rows at the current extractor version are "
+            "failed or timed_out (added to source_document_ids); nothing else."
+        ),
     )
     workers: int = Field(default=4, ge=1, le=8)
     batch_size: int = Field(
@@ -156,6 +172,18 @@ def email_domains_sql() -> str:
     )
 
 
+def retry_failed_documents_sql() -> str:
+    """Documents whose rows at the current version record a failed or timed-out
+    extraction -- what `retry_failed` re-runs. Parameter: extractor_version."""
+    return (
+        "SELECT DISTINCT source_document_id "
+        f"FROM {tables.QUALIFIED_ESEF_DOMAINS_TABLE} FINAL "
+        "WHERE extractor_version = %(extractor_version)s "
+        "AND extraction_status IN ('failed', 'timed_out') "
+        "ORDER BY source_document_id"
+    )
+
+
 # --- selection and inputs ---------------------------------------------------------
 
 
@@ -172,21 +200,46 @@ def _chunks(items: Sequence[Any], size: int) -> Iterator[Sequence[Any]]:
         yield items[start : start + size]
 
 
+def load_retry_failed_document_ids(clickhouse: ClickhouseResource) -> list[str]:
+    with clickhouse.get_connection() as client:
+        rows = client.execute(
+            retry_failed_documents_sql(),
+            {"extractor_version": ESEF_DOMAINS_EXTRACTOR_VERSION},
+        )
+    return [str(row[0]) for row in rows]
+
+
 def select_documents(
     clickhouse: ClickhouseResource, config: EsefDomainsConfig
 ) -> list[DomainsDocument]:
-    listed = tuple(sorted(set(config.source_document_ids)))
-    sql = stale_documents_sql(
-        all_available=config.refresh_existing or bool(listed),
-        only_listed=bool(listed),
-    )
-    parameters: dict[str, object] = {}
-    if not (config.refresh_existing or listed):
-        parameters["extractor_version"] = ESEF_DOMAINS_EXTRACTOR_VERSION
-    if listed:
-        parameters["source_document_ids"] = listed
+    """The documents this run extracts, newest period_end first, at most
+    `max_documents`. Listed ids -- `source_document_ids`, plus the failed and
+    timed-out documents when `retry_failed` -- are selected stale or not,
+    `_ID_CHUNK` ids per query (never one unbounded IN-list); otherwise the
+    stale set, or every available document with `refresh_existing`."""
+    listed = set(config.source_document_ids)
+    if config.retry_failed:
+        listed.update(load_retry_failed_document_ids(clickhouse))
+    rows: list[Sequence[object]] = []
     with clickhouse.get_connection() as client:
-        rows = client.execute(sql, parameters)
+        if config.source_document_ids or config.retry_failed:
+            listed_sql = stale_documents_sql(all_available=True, only_listed=True)
+            for chunk in _chunks(sorted(listed), _ID_CHUNK):
+                rows.extend(
+                    client.execute(listed_sql, {"source_document_ids": tuple(chunk)})
+                )
+        else:
+            parameters: dict[str, object] = {}
+            if not config.refresh_existing:
+                parameters["extractor_version"] = ESEF_DOMAINS_EXTRACTOR_VERSION
+            rows.extend(
+                client.execute(
+                    stale_documents_sql(
+                        all_available=config.refresh_existing, only_listed=False
+                    ),
+                    parameters,
+                )
+            )
     documents = []
     for row in rows:
         period_end = _as_date(row[3])
@@ -199,6 +252,13 @@ def select_documents(
                 fiscal_year=period_end.year,
             )
         )
+    # The SQL orders each query; chunks are merged here.
+    documents.sort(
+        key=lambda document: (
+            -document.period_end.toordinal(),
+            document.source_document_id,
+        )
+    )
     if config.max_documents is not None:
         documents = documents[: config.max_documents]
     return documents
@@ -256,6 +316,42 @@ class _Outcome:
     result: DocumentDomains
 
 
+def _download_package(
+    object_store: ObjectStoreResource,
+    document: DomainsDocument,
+    package_path: Path,
+) -> str:
+    """Write the document's archived package to `package_path`.
+
+    Returns '' on success, or the document's own terminal problem -- the
+    package is missing from the object store, or its SHA-256 differs from the
+    index -- which becomes its `failed` marker row. Anything else (the object
+    store unreachable, a 5xx, a full disk) is infrastructure trouble and
+    raises: the op fails, Dagster's retry policy re-runs it, the batches
+    already written persist and this batch's documents are still stale.
+    """
+    key = report_package_object_key(document.package_sha256)
+    try:
+        body = object_store.read_bytes(key, bucket=ESEF_DOCUMENT_BUCKET)
+    except Exception as exc:
+        if is_missing_object_error(exc):
+            return f"package missing from the object store: {key}"
+        raise
+    digest = sha256(body).hexdigest()
+    if digest != document.package_sha256:
+        return (
+            "package SHA-256 mismatch: "
+            f"expected={document.package_sha256} actual={digest}"
+        )
+    try:
+        package_path.write_bytes(body)
+    except BaseException:
+        # A partial file (disk full) must not outlive the failure.
+        package_path.unlink(missing_ok=True)
+        raise
+    return ""
+
+
 def _extract_batch(
     batch: Sequence[DomainsDocument],
     *,
@@ -269,7 +365,8 @@ def _extract_batch(
     extract: ExtractFn,
 ) -> list[_Outcome]:
     """Download each package, hand it to the pool, keep at most `max_ahead`
-    packages in flight; a download failure is that document's failure."""
+    packages in flight. A missing or corrupt package is that document's
+    failure; object-store or disk trouble raises (`_download_package`)."""
     outcomes: list[_Outcome] = []
     pending: deque[tuple[DomainsDocument, Path, Future[DocumentDomains]]] = deque()
 
@@ -284,22 +381,8 @@ def _extract_batch(
     for document in batch:
         package_path = temp_root / f"{uuid.uuid4().hex}.zip"
         started = perf_counter()
-        try:
-            body = object_store.read_bytes(
-                report_package_object_key(document.package_sha256),
-                bucket=ESEF_DOCUMENT_BUCKET,
-            )
-            digest = sha256(body).hexdigest()
-            if digest != document.package_sha256:
-                raise ValueError(
-                    "package SHA-256 mismatch: "
-                    f"expected={document.package_sha256} actual={digest}"
-                )
-            package_path.write_bytes(body)
-        except Exception as exc:  # noqa: BLE001 - a bad or missing package is this document's failure, not the run's
-            # write_bytes can raise after partially creating the file (e.g. disk full);
-            # never leave a partial package behind for the temp root's caller to trip over.
-            package_path.unlink(missing_ok=True)
+        problem = _download_package(object_store, document, package_path)
+        if problem:
             outcomes.append(
                 _Outcome(
                     document,
@@ -307,7 +390,7 @@ def _extract_batch(
                         STATUS_FAILED,
                         (),
                         frozenset(),
-                        f"package download failed: {type(exc).__name__}: {exc}",
+                        problem,
                         perf_counter() - started,
                     ),
                 )
@@ -332,6 +415,42 @@ def _extract_batch(
     while pending:
         settle_oldest()
     return outcomes
+
+
+def _is_infrastructure_shaped(result: DocumentDomains) -> bool:
+    return result.status == STATUS_TIMED_OUT or (
+        result.status == STATUS_FAILED and "without a result" in result.error_message
+    )
+
+
+def _raise_if_host_incident(batch_index: int, outcomes: Sequence[_Outcome]) -> None:
+    """Refuse to write a batch whose failures look like the host, not the documents.
+
+    A starved or swapping host times out, or OOM-kills (exit -9, "without a
+    result"), every document it touches; writing those markers would park
+    healthy documents at this version. At or above max(10, 25% of the batch)
+    the run fails instead -- nothing of this batch is written, the retry
+    policy and the sensor's cooldown take over. Fewer (a handful of genuinely
+    pathological documents) still get their markers.
+    """
+    suspicious = [
+        outcome for outcome in outcomes if _is_infrastructure_shaped(outcome.result)
+    ]
+    threshold = max(_BREAKER_MIN_DOCUMENTS, ceil(_BREAKER_BATCH_SHARE * len(outcomes)))
+    if len(suspicious) < threshold:
+        return
+    timed_out = sum(
+        1 for outcome in suspicious if outcome.result.status == STATUS_TIMED_OUT
+    )
+    first_ids = ", ".join(
+        outcome.document.source_document_id for outcome in suspicious[:5]
+    )
+    raise RuntimeError(
+        f"esef_domains batch {batch_index}: {len(suspicious)} of {len(outcomes)} "
+        f"documents timed out ({timed_out}) or their child died without a result "
+        f"({len(suspicious) - timed_out}) -- host incident suspected; not writing "
+        f"markers for this batch (first: {first_ids})"
+    )
 
 
 def run_esef_domains_extraction(
@@ -412,6 +531,7 @@ def run_esef_domains_extraction(
                     max_ahead=config.workers * _DOWNLOAD_AHEAD_PER_WORKER,
                     extract=extract,
                 )
+                _raise_if_host_incident(batch_index, outcomes)
                 extracted_at = datetime.now(UTC)
                 rows = [
                     row

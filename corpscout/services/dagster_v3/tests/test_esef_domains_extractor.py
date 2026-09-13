@@ -9,12 +9,16 @@ from hashlib import sha256
 from pathlib import Path
 
 import pytest
+from botocore.exceptions import ClientError
 
 from dagster_v3.defs.esef_filings import tables
 from dagster_v3.defs.esef_filings.domains_extraction import (
     ESEF_DOMAINS_EXTRACTOR_VERSION,
+    STATUS_EMPTY,
     STATUS_FAILED,
     STATUS_OK,
+    STATUS_TIMED_OUT,
+    DocumentDomains,
     DomainsDocument,
 )
 from dagster_v3.defs.esef_filings.domains_extractor import (
@@ -25,6 +29,7 @@ from dagster_v3.defs.esef_filings.domains_extractor import (
     esef_domains_job,
     load_email_domains,
     load_tagged_website_facts,
+    retry_failed_documents_sql,
     run_esef_domains_extraction,
     select_documents,
     stale_document_count_sql,
@@ -46,6 +51,68 @@ REPORT = """<html xmlns="http://www.w3.org/1999/xhtml"
 </body></html>"""
 
 TABLES_EXIST = [("esef_domains",)]
+
+
+class _S3LikeObjectStore(_FakeObjectStore):
+    """A missing key raises what botocore raises: a NoSuchKey ClientError."""
+
+    def read_bytes(self, key: str, bucket: str | None = None) -> bytes:
+        if (bucket, key) not in self.objects:
+            raise ClientError(
+                {"Error": {"Code": "NoSuchKey", "Message": "The key does not exist."}},
+                "GetObject",
+            )
+        return super().read_bytes(key, bucket)
+
+
+class _UnreachableObjectStore(_FakeObjectStore):
+    def read_bytes(self, key: str, bucket: str | None = None) -> bytes:
+        raise ConnectionError("rustfs down")
+
+
+# Injected `extract` functions: module-level so the process pool can unpickle them.
+def _always_timed_out(
+    package_path: str,
+    tagged_values: tuple[tuple[str, str], ...],
+    known_email_domains: tuple[str, ...],
+    timeout_seconds: int,
+    work_root: str,
+) -> DocumentDomains:
+    return DocumentDomains(
+        STATUS_TIMED_OUT,
+        (),
+        frozenset(),
+        f"child exceeded its {timeout_seconds}s budget and was killed",
+        0.0,
+    )
+
+
+def _timed_out_when_tagged(
+    package_path: str,
+    tagged_values: tuple[tuple[str, str], ...],
+    known_email_domains: tuple[str, ...],
+    timeout_seconds: int,
+    work_root: str,
+) -> DocumentDomains:
+    if tagged_values:
+        return _always_timed_out(
+            package_path, tagged_values, known_email_domains, timeout_seconds, work_root
+        )
+    return DocumentDomains(STATUS_EMPTY, (), frozenset(), "", 0.0)
+
+
+def _numbered_packages(
+    count: int,
+) -> tuple[dict[tuple[str, str], bytes], list[tuple[object, ...]]]:
+    """`count` distinct package bodies in the store and their selection rows."""
+    objects: dict[tuple[str, str], bytes] = {}
+    rows: list[tuple[object, ...]] = []
+    for index in range(count):
+        body = f"package-{index}".encode()
+        digest = sha256(body).hexdigest()
+        objects[(ESEF_DOCUMENT_BUCKET, report_package_object_key(digest))] = body
+        rows.append((f"doc-{index:02d}", digest, "LEI1", date(2024, 12, 31)))
+    return objects, rows
 
 
 def _package_bytes(tmp_path: Path) -> bytes:
@@ -122,6 +189,87 @@ def test_select_documents_listed_ids_are_re_extracted_stale_or_not() -> None:
     assert "%(extractor_version)s" not in sql
     assert "filings.fxo_id IN %(source_document_ids)s" in sql
     assert parameters["source_document_ids"] == ("doc-1", "doc-9")
+
+
+def test_select_documents_chunks_listed_ids_and_orders_the_merged_rows() -> None:
+    ids = [f"doc-{index:04d}" for index in range(1200)]
+    clickhouse = _FakeClickHouse(
+        [
+            [("doc-0001", "a" * 64, "LEI1", date(2022, 12, 31))],
+            [("doc-0600", "b" * 64, "LEI2", date(2024, 12, 31))],
+            [
+                ("doc-1199", "d" * 64, "LEI4", date(2023, 12, 31)),
+                ("doc-1100", "c" * 64, "LEI3", date(2024, 12, 31)),
+            ],
+        ]
+    )
+
+    documents = select_documents(
+        clickhouse,
+        EsefDomainsConfig(source_document_ids=ids, max_documents=3, workers=1),
+    )
+
+    calls = clickhouse.client.calls
+    assert [len(parameters["source_document_ids"]) for _, parameters in calls] == [
+        500,
+        500,
+        200,
+    ]
+    assert all("filings.fxo_id IN %(source_document_ids)s" in sql for sql, _ in calls)
+    # period_end DESC, fxo_id across the merged chunks, then max_documents.
+    assert [document.source_document_id for document in documents] == [
+        "doc-0600",
+        "doc-1100",
+        "doc-1199",
+    ]
+
+
+def test_retry_failed_documents_sql_reads_failed_rows_at_the_current_version() -> None:
+    sql = retry_failed_documents_sql()
+    assert "FROM corpscout.esef_domains FINAL" in sql
+    assert "extractor_version = %(extractor_version)s" in sql
+    assert "extraction_status IN ('failed', 'timed_out')" in sql
+
+
+def test_select_documents_retry_failed_routes_those_ids_through_the_listed_path() -> (
+    None
+):
+    clickhouse = _FakeClickHouse(
+        [
+            [("doc-failed",), ("doc-timed-out",)],
+            [("doc-failed", "a" * 64, "LEI1", date(2024, 12, 31))],
+        ]
+    )
+
+    documents = select_documents(
+        clickhouse,
+        EsefDomainsConfig(
+            retry_failed=True, source_document_ids=["doc-listed"], workers=1
+        ),
+    )
+
+    retry_sql, retry_parameters = clickhouse.client.calls[0]
+    assert retry_sql == retry_failed_documents_sql()
+    assert retry_parameters == {"extractor_version": ESEF_DOMAINS_EXTRACTOR_VERSION}
+    listed_sql, listed_parameters = clickhouse.client.calls[1]
+    assert "%(extractor_version)s" not in listed_sql
+    assert "filings.fxo_id IN %(source_document_ids)s" in listed_sql
+    assert listed_parameters == {
+        "source_document_ids": ("doc-failed", "doc-listed", "doc-timed-out")
+    }
+    assert [document.source_document_id for document in documents] == ["doc-failed"]
+
+
+def test_select_documents_retry_failed_alone_selects_only_the_failed_documents() -> (
+    None
+):
+    clickhouse = _FakeClickHouse([[]])
+
+    assert (
+        select_documents(clickhouse, EsefDomainsConfig(retry_failed=True, workers=1))
+        == []
+    )
+    assert len(clickhouse.client.calls) == 1  # the retry query; no stale selection
 
 
 def test_loaders_group_by_document_and_dedupe() -> None:
@@ -211,7 +359,7 @@ def test_run_extracts_writes_batches_and_marks_a_missing_package(
 ) -> None:
     body = _package_bytes(tmp_path)
     digest = sha256(body).hexdigest()
-    object_store = _FakeObjectStore(
+    object_store = _S3LikeObjectStore(
         {(ESEF_DOCUMENT_BUCKET, report_package_object_key(digest)): body}
     )
     clickhouse = _FakeClickHouse(
@@ -264,7 +412,9 @@ def test_run_extracts_writes_batches_and_marks_a_missing_package(
     assert missing_row["source_document_id"] == "doc-missing"
     assert missing_row["extraction_status"] == STATUS_FAILED
     assert missing_row["registrable_domain"] == ""
-    assert "package download failed" in missing_row["error_message"]
+    assert missing_row["error_message"] == (
+        f"package missing from the object store: {report_package_object_key('c' * 64)}"
+    )
     # The run's temp dir is gone.
     assert not [
         p for p in Path(tmp_path).iterdir() if p.name.startswith("esef-domains-")
@@ -302,7 +452,7 @@ def test_run_warns_about_requested_documents_that_were_not_selected(
     with caplog.at_level(logging.WARNING):
         run_esef_domains_extraction(
             clickhouse=clickhouse,
-            object_store=_FakeObjectStore({}),
+            object_store=_S3LikeObjectStore({}),
             config=EsefDomainsConfig(source_document_ids=["doc-1", "doc-9"], workers=1),
             source_run_id="run-1",
             log=logging.getLogger("test"),
@@ -313,6 +463,125 @@ def test_run_warns_about_requested_documents_that_were_not_selected(
     ]
     assert "doc-9" in message
     assert "doc-1" not in message
+
+
+def test_run_marks_a_package_whose_sha256_does_not_match(tmp_path: Path) -> None:
+    indexed = "a" * 64
+    body = b"not the indexed package"
+    clickhouse = _FakeClickHouse(
+        [TABLES_EXIST, [("doc-corrupt", indexed, "LEI1", date(2024, 12, 31))], [], []]
+    )
+
+    summary = run_esef_domains_extraction(
+        clickhouse=clickhouse,
+        object_store=_S3LikeObjectStore(
+            {(ESEF_DOCUMENT_BUCKET, report_package_object_key(indexed)): body}
+        ),
+        config=EsefDomainsConfig(workers=1),
+        source_run_id="run-1",
+        log=logging.getLogger("test"),
+        work_dir=str(tmp_path),
+    )
+
+    assert summary["failed_document_count"] == 1
+    [insert] = [
+        parameters
+        for sql, parameters in clickhouse.client.calls
+        if sql.endswith("VALUES")
+    ]
+    row = dict(zip(tables.ESEF_DOMAINS_EXPORT_COLUMNS, insert[0], strict=True))
+    assert row["extraction_status"] == STATUS_FAILED
+    assert row["error_message"] == (
+        f"package SHA-256 mismatch: expected={indexed} "
+        f"actual={sha256(body).hexdigest()}"
+    )
+
+
+def test_run_fails_on_object_store_trouble_and_writes_nothing(tmp_path: Path) -> None:
+    clickhouse = _FakeClickHouse(
+        [TABLES_EXIST, [("doc-1", "a" * 64, "LEI1", date(2024, 12, 31))], [], []]
+    )
+
+    with pytest.raises(ConnectionError, match="rustfs down"):
+        run_esef_domains_extraction(
+            clickhouse=clickhouse,
+            object_store=_UnreachableObjectStore({}),
+            config=EsefDomainsConfig(workers=1),
+            source_run_id="run-1",
+            log=logging.getLogger("test"),
+            work_dir=str(tmp_path),
+        )
+
+    statements = [sql for sql, _ in clickhouse.client.calls]
+    assert not any(sql.endswith("VALUES") for sql in statements)
+    assert not any(sql.startswith("CREATE TABLE") for sql in statements)
+    assert not [p for p in tmp_path.iterdir() if p.name.startswith("esef-domains-")]
+
+
+def test_run_refuses_to_write_a_batch_that_looks_like_a_host_incident(
+    tmp_path: Path,
+) -> None:
+    objects, rows = _numbered_packages(12)
+    clickhouse = _FakeClickHouse([TABLES_EXIST, rows, [], []])
+
+    with pytest.raises(RuntimeError, match="host incident suspected") as excinfo:
+        run_esef_domains_extraction(
+            clickhouse=clickhouse,
+            object_store=_FakeObjectStore(objects),
+            config=EsefDomainsConfig(workers=1, batch_size=12),
+            source_run_id="run-1",
+            log=logging.getLogger("test"),
+            work_dir=str(tmp_path),
+            extract=_always_timed_out,
+        )
+
+    assert "12 of 12 documents timed out (12)" in str(excinfo.value)
+    assert "doc-00" in str(excinfo.value)
+    statements = [sql for sql, _ in clickhouse.client.calls]
+    assert not any(sql.endswith("VALUES") for sql in statements)
+    assert not any(sql.startswith("CREATE TABLE") for sql in statements)
+
+
+def test_run_writes_markers_for_a_few_pathological_documents(tmp_path: Path) -> None:
+    objects, rows = _numbered_packages(12)
+    clickhouse = _FakeClickHouse(
+        [
+            TABLES_EXIST,
+            rows,
+            [
+                ("doc-03", "WebsitesOfLegalEntity", "https://slow.example"),
+                ("doc-07", "WebsitesOfLegalEntity", "https://slow.example"),
+            ],
+            [],
+        ]
+    )
+
+    summary = run_esef_domains_extraction(
+        clickhouse=clickhouse,
+        object_store=_FakeObjectStore(objects),
+        config=EsefDomainsConfig(workers=1, batch_size=12),
+        source_run_id="run-1",
+        log=logging.getLogger("test"),
+        work_dir=str(tmp_path),
+        extract=_timed_out_when_tagged,
+    )
+
+    assert summary["timed_out_document_count"] == 2
+    assert summary["documents_without_domains"] == 10
+    [insert] = [
+        parameters
+        for sql, parameters in clickhouse.client.calls
+        if sql.endswith("VALUES")
+    ]
+    columns = tables.ESEF_DOMAINS_EXPORT_COLUMNS
+    statuses = {
+        record["source_document_id"]: record["extraction_status"]
+        for record in (dict(zip(columns, row, strict=True)) for row in insert)
+    }
+    assert len(statuses) == 12
+    assert {
+        document for document, status in statuses.items() if status == STATUS_TIMED_OUT
+    } == {"doc-03", "doc-07"}
 
 
 # --- definitions ------------------------------------------------------------------
