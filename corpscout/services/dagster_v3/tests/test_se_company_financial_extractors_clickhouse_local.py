@@ -137,7 +137,6 @@ SOURCES = (
 )
 
 
-
 def _scope(scope_sql: str, source: str) -> str:
     # normalizer_version is unused text for the other three sources; render() only
     # substitutes placeholders that are actually present, so binding it unconditionally here

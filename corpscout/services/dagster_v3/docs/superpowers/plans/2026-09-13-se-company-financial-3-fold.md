@@ -2626,7 +2626,7 @@ git commit -m "docs(se-financial): the fold in the package note; spec records sl
 
 **Files:** none. Runs against the dagster and companycollect hosts.
 
-**Preconditions:** the whole-branch review is clean and the branch is merged into main (`git merge --no-ff` from the main checkout, having checked the owner's dirty files do not overlap the branch's and re-checked overlap if main moved); the worktree fast-forwarded to main; prod ledger 402; the run queue state noted (if still held by the ESEF refresh runs, everything below runs in-process).
+**Preconditions:** the whole-branch review is clean and the branch is merged into main (`git merge --no-ff` from the main checkout, having checked the owner's dirty files do not overlap the branch's and re-checked overlap if main moved); the worktree fast-forwarded to main; prod ledger 403 (the address track's 000403 is applied; this slice has no migration); the run queue state noted (if still held by the ESEF refresh runs, everything below runs in-process).
 
 - [ ] **Step 1: Deploy dagster_v3 from the worktree**
 
@@ -2658,7 +2658,13 @@ SELECT period_key, currency, currency_source, revenue_amount_original, revenue_a
 SELECT change_kind, count() FROM corpscout.se_company_financial_history WHERE company_id = '5567081699' GROUP BY change_kind;
 ```
 
-Expected: 8 standalone periods (2018-08-31 to 2025-12-31) and 3 consolidated (2022 to 2024); standalone 2023: currency SEK from ratsit, revenue 60,300,000 / 6,005,001.80 from ratsit, employees 2,100 from bolagsverket, sources `bolagsverket,ratsit`; 2018-08-31 has sources `bolagsverket_comparative` alone; consolidated 2023: revenue 1,296,506,000 from esef; history: 11 `created`.
+Derive the expectation from the source rows first — the fold's answer must follow the precedence map applied to what the suggestion table actually holds, not this prose:
+
+```sql
+SELECT source, period_key, currency, employees, revenue_amount_original, total_assets_amount_original FROM corpscout.se_company_financial_suggestion FINAL WHERE company_id = '5567081699' ORDER BY period_key, source;
+```
+
+Expected: 8 standalone periods (2018-08-31 to 2025-12-31) and 3 consolidated (2022 to 2024); standalone 2023: currency SEK from ratsit, revenue 60,300,000 / 6,005,001.80 from ratsit, employees 2,100 from bolagsverket (Ratsit outranks Bolagsverket for employees at 1000 over 900, but Ratsit's 2023 row carries no employee count on prod; where it does, Ratsit's count wins), sources `bolagsverket,ratsit`; 2018-08-31 has sources `bolagsverket_comparative` alone; consolidated 2023: revenue 1,296,506,000 from esef; history: 11 `created`.
 
 - [ ] **Step 3: The 64-bucket backfill, in-process, one bucket at a time**
 
@@ -2684,7 +2690,7 @@ done
 echo "ALL DONE" >> /tmp/fin_fold_all.status
 ```
 
-Launch: `ssh dagster 'sudo -n nohup bash /tmp/fin_fold_all.sh 0 > /tmp/fin_fold_all.launch 2>&1 < /dev/null &'`. Expected: about 22k companies per bucket (1.4M / 64), five pages, tens of seconds to a few minutes per bucket; record the total wall time. A bucket that fails stops the loop: read its log, fix or rule, and relaunch with the bucket number as the argument (`bash /tmp/fin_fold_all.sh 17`), which resumes from that bucket and appends to the status file. Every bucket's metadata comes back through GraphQL `assetMaterializations(limit: 64)` on `se_company_financial_fold`: sum `periods`, `published`, `created`, `considered`, `unpublished` over the 64 partitions for the record.
+Launch: `ssh dagster 'sudo -n nohup bash /tmp/fin_fold_all.sh 0 > /tmp/fin_fold_all.launch 2>&1 < /dev/null &'`. Time bucket_00 alone first: at tens of seconds to a few minutes per bucket, proceed; above about five minutes per bucket, stop and raise page_size in the script (the config allows up to 20,000, which turns five full FINAL scans per bucket into two). Expected: about 22k companies per bucket (1.4M / 64), five pages, tens of seconds to a few minutes per bucket; record the total wall time. A bucket that fails stops the loop: read its log, fix or rule, and relaunch with the bucket number as the argument (`bash /tmp/fin_fold_all.sh 17`), which resumes from that bucket and appends to the status file. A non-zero exit can leave a claimed slot on the pool se_company_financial_fold (the run was SIGTERMed by timeout); before relaunching, run scripts/dagster-health-check.py --fix on the host (uv run python scripts/dagster-health-check.py --fix from the project directory with the .env sourced) so the leaked slot cannot block the next bucket. Every bucket's metadata comes back through GraphQL `assetMaterializations(limit: 64)` on `se_company_financial_fold`: sum `periods`, `published`, `created`, `considered`, `unpublished` over the 64 partitions for the record.
 
 - [ ] **Step 4: Convergence check**
 
@@ -2706,13 +2712,15 @@ SELECT count() AS derived_only_rows FROM corpscout.se_company_financial AS m FIN
 SELECT count(DISTINCT a.company_id) AS companies_with_two_standalone_ends_within_7_days FROM corpscout.se_company_financial AS a FINAL INNER JOIN corpscout.se_company_financial AS b FINAL ON a.company_id = b.company_id AND a.scope = b.scope WHERE a.scope = 'standalone' AND a.active = 1 AND b.active = 1 AND a.period_end < b.period_end AND dateDiff('day', a.period_end, b.period_end) <= 7;
 SELECT change_kind, count() FROM corpscout.se_company_financial_history GROUP BY change_kind ORDER BY change_kind;
 SELECT length(sources) AS source_count, count() FROM corpscout.se_company_financial FINAL GROUP BY source_count ORDER BY source_count;
+SELECT count() AS money_rows_discarded_by_the_currency_gate FROM corpscout.se_company_financial_suggestion AS s FINAL INNER JOIN corpscout.se_company_financial AS m FINAL ON m.company_id = s.company_id AND m.period_key = s.period_key WHERE s.currency IS NOT NULL AND s.currency != m.currency AND s.revenue_amount_original IS NOT NULL;
+-- unpublished: sum the 'unpublished' metadata over the 64 partitions of se_company_financial_fold (GraphQL assetMaterializations limit 64); expected 0.
 ```
 
 Expected shape: history only `created` on the first backfill; the standalone company count in the same range as the 579,766 rows `se_company_financials_latest` holds (Bolagsverket companies) plus the Ratsit-only ones (about 1.09M company-years are Ratsit-only, spec 5) — record the numbers; the seven-day readout decides whether a merge rule is worth designing later (spec 6).
 
 - [ ] **Step 6: Record**
 
-Append to spec section 12 item 3 the prod record: date, deploy, the smoke, the 64 buckets' totals and wall time, the convergence check, every readout number, and the seven-day count with the ruling it implies. Commit on the branch as `docs(se-financial): slice 3 shipped, prod record; plan ticked`, merge into main (`--no-ff`, after re-checking overlap), fast-forward the worktree, update the memory file, then write slice 4's plan (the cutover; its migration is 000403, not the spec's 000402, which the person-roles track took).
+Append to spec section 12 item 3 the prod record: date, deploy, the smoke, the 64 buckets' totals and wall time, the convergence check, every readout number, and the seven-day count with the ruling it implies. Commit on the branch as `docs(se-financial): slice 3 shipped, prod record; plan ticked`, merge into main (`--no-ff`, after re-checking overlap), fast-forward the worktree, update the memory file, then write slice 4's plan (the cutover; its migration is 000404 (the spec's 000402 went to the person-roles track and 000403 to the address track)).
 
 ---
 

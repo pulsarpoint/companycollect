@@ -4,7 +4,8 @@ history then main (spec 2026-09-11 section 6, batch layer).
 Every SELECT is a function returning its exact text, so the clickhouse-local harness runs the
 same SQL the asset runs. Parameters bind client-side through clickhouse-driver's %(name)s
 syntax, which is why the partition filter says modulo(...) rather than the % operator. The page
-is five reads (watermarks aside), a pure fold per company and two inserts.
+is four reads under FINAL (live suggestions, main rows, company rules, hide rules) after four
+watermark reads (one of them FINAL), a pure fold per company and two inserts.
 """
 
 from collections import defaultdict
@@ -28,9 +29,10 @@ from dagster_v3.defs.se_company.financial.fold import (
 
 BUCKET_COUNT = 64
 # Pages of 5,000 companies, not the siblings' 20,000 (spec 6): a company carries about
-# thirteen suggestion rows across its sources and periods and each row is 65 values wide, so a
-# page is about 65k rows in memory; the 64-bucket backfill is about 12k companies per bucket,
-# three pages each.
+# five suggestion rows across its sources and periods (7.58M rows over 1.4M companies on
+# 2026-09-12) and each row is 52 values wide, so a page is about 27k rows, roughly 300 MB in
+# memory with the driver tuples and the fold's objects; the 64-bucket backfill is about 12k
+# companies per bucket, three pages each.
 PAGE_SIZE = 5_000
 
 # clickhouse-driver renders %(company_ids)s into the statement text; a 5,000-id page is about

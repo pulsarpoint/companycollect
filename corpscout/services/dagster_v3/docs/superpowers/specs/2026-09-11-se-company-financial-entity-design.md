@@ -321,8 +321,10 @@ the number warrants it.
    grouped by company and period.
 2. With `changed_only`, keep a company when its newest `suggested_at`, its newest rule or hide
    decision (`decided_at`, removed versions included) is later than its newest `folded_at`, or it
-   has no main row. Selection is per company: all of a company's periods fold together. The global
-   precedence export never selects a company on its own (the person ruling 7).
+   has no main row and at least one live suggestion row (a company with only tombstones and no
+   main row is never selected). Selection is per company: all of a company's periods fold
+   together. The global precedence export never selects a company on its own (the person ruling
+   7).
 3. Fold every period; read the company's current main rows; compare values and sources per
    period. A period with a main row and no live suggestion gets a `withdrawn` version that keeps
    the last values with `active = 0`; a hidden period whose rule was released comes back as

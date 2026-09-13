@@ -82,8 +82,9 @@ rows: `created`, `updated`, `hidden`, `withdrawn` (no live row left; the last va
 `active 0`) and `reactivated`; an unchanged period is still returned so the batch can advance
 its `folded_at`.
 
-`batch.py` folds pages of 5,000 companies: five FINAL reads (live suggestions, main rows,
-company rules, hide rules; the watermarks aside), the pure fold, then history BEFORE main.
+`batch.py` folds pages of 5,000 companies: four reads under FINAL (live suggestions, main rows,
+company rules, hide rules) after four watermark reads, one of them FINAL, the pure fold, then
+history BEFORE main.
 `changed_only` selects a company when its newest suggestion, precedence decision or hide
 decision (released versions included) is newer than its newest `folded_at`, or it was never
 folded and has a live row. The global precedence export is NOT a watermark: after changing
@@ -94,4 +95,8 @@ Assets: `se_company_financial_fold` (64 hash buckets, one partition per run, poo
 `se_company_financial_fold_companies` (`company_ids`, the backoffice's Fold now target).
 Runbook for a full backfill while the run queue is held: run the 64 partitions in-process on
 the dagster host, one after the other (the plan's Task 7 script), then re-run three buckets
-with `changed_only: true` and expect `considered 0`.
+with `changed_only: true` and expect `considered 0`. The targeted fold is unpooled, so it can
+race a bucket fold on the same company; both compute from the same suggestions and the larger
+folded_at wins, at worst two history rows for one change. The selection runs per page, so a
+quiet bucket still pays its watermark reads five times: computing the changed set once per
+bucket is the planned optimisation before the fold gets a schedule.
