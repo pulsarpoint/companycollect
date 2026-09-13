@@ -98,7 +98,8 @@ def test_sweden_latest_reads_the_entitys_newest_active_standalone_period() -> No
     """Spec 2026-09-11 section 10: the Sweden leg reads corpscout.se_company_financial (the
     fold's output), active standalone rows under FINAL, newest period end first with the
     fold stamp as the qualified tiebreak; the USD twins are the winners' own conversions, so
-    no fx fallback; years_count counts distinct fiscal years before LIMIT 1 BY."""
+    no fx fallback; years_count counts distinct fiscal years before LIMIT 1 BY; a period end outside the Date range is
+    NULL, never a wrapped toDate() (the engine test proves the wrap)."""
     from dagster_v3.defs.company_financials_latest.assets import UPSTREAM_KEYS
     from dagster_v3.defs.company_financials_latest.sql import SOURCES, build_latest_insert_sql
 
@@ -106,6 +107,8 @@ def test_sweden_latest_reads_the_entitys_newest_active_standalone_period() -> No
 
     assert "FROM corpscout.se_company_financial FINAL" in sql
     assert "WHERE active = 1 AND scope = 'standalone'" in sql
+    assert "if(period_end BETWEEN toDate32('1970-01-01') AND toDate32('2149-06-06'), toDate(period_end), NULL) AS period_end_date" in sql
+    assert "toDate(period_end) AS period_end_date" not in sql
     assert "ORDER BY period_end DESC, `se_company_financial`.folded_at DESC" in sql
     assert "LIMIT 1 BY company_id" in sql
     assert "fx_rate_to_usd" not in sql and "se_bolagsverket_financial_metrics" not in sql

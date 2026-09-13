@@ -216,13 +216,17 @@ LIMIT 1 BY cnpj_basico
 # winning source's own conversion, copied by the fold -- the entity carries no row-level fx
 # rate, so there is no `original * fx_rate` fallback here. `years_count` counts the company's
 # distinct fiscal years over its active standalone rows, computed BEFORE `LIMIT 1 BY`
-# collapses to the newest period. The tiebreak on folded_at is qualified with the table name
-# for the same reason the wide template qualifies resolved_at (a bare alias would shadow it).
+# collapses to the newest period. `period_end_date` is NULL when the period end lies outside
+# the Date range (1970-01-01 .. 2149-06-06): the entity holds comparative periods back to 1919
+# and toDate() of such a Date32 WRAPS on 26.5 (1919-09-30 -> 2099-03-05) instead of clamping;
+# the ORDER BY still ranks by the unguarded period_end. The tiebreak on folded_at is qualified
+# with the table name to match the wide template's convention; nothing in this select list
+# aliases folded_at, so the qualification is consistency, not a shadowing fix.
 _SE_SELECT = """
 SELECT
   company_id AS company_id,
   toInt32(fiscal_year) AS fiscal_year,
-  toDate(period_end) AS period_end_date,
+  if(period_end BETWEEN toDate32('1970-01-01') AND toDate32('2149-06-06'), toDate(period_end), NULL) AS period_end_date,
   toString(currency) AS currency,
   toFloat64(revenue_amount_original) AS revenue_amount_original,
   toFloat64(revenue_amount_usd) AS revenue_amount_usd,
