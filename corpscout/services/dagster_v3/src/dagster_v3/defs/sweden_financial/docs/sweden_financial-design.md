@@ -275,18 +275,23 @@ se_ratsit_financial_periods       -> se_company_financial_suggestion (source rat
 se_company_financial_suggestion   -> se_company_financial (the fold) -> every Swedish reader
 ```
 
-Every Swedish reader -- the backoffice Financial tab and the public financials
-page, `se_company_financials_latest`, the serving view's `has_financial` and
-per-register flags, the section-presence model and the filing-status view --
-reads the entity's active rows. `se_company_financials_latest`'s
-`period_end_date` is NULL when the entity period end falls outside ClickHouse's
-Date range 1970-01-01..2149-06-06, since `toDate()` on such a `Date32` wraps
-rather than clamps and the entity holds comparative periods back to 1919. The
-serving view's Bolagsverket flag is lit by rows sourced from either
-`bolagsverket` or `bolagsverket_comparative`. The two Sweden-only source views
-`se_financials_bolagsverket_current` and `se_financials_esef_current` were
-retired in slice 4 (owner-run drops, `se_financial_views_retirement_*.sql`).
-Precedence between sources is the entity's
+Every data-side Swedish reader -- `se_company_financials_latest`, the serving
+view's `has_financial` and per-register flags, the section-presence model and
+the filing-status view -- reads the entity's active rows (slice 4a of the spec,
+migration 000404); the backoffice Financial tab and the public financials page
+follow in slice 4b. `se_company_financials_latest`'s `period_end_date` is NULL
+when the entity period end falls outside ClickHouse's Date range
+1970-01-01..2149-06-06, since `toDate()` on such a `Date32` wraps rather than
+clamps and the entity holds comparative periods back to 1919. The serving
+view's Bolagsverket flag is lit by rows sourced from either `bolagsverket` or
+`bolagsverket_comparative`. The filing-status view's `data_available` row keeps
+Bolagsverket provenance only when the newest period's winning sources include a
+Bolagsverket source; otherwise its source is the entity itself
+(`se_company_financial`). The two Sweden-only source views
+`se_financials_bolagsverket_current` and `se_financials_esef_current` still
+serve the backoffice until slice 4b moves it to the entity; the owner-run drops
+(`corpscout/clickhouse/operations/se_financial_views_retirement_*.sql`) retire
+them after that. Precedence between sources is the entity's
 (`se_company/financial/precedence.py`, Ratsit first); this module never chooses
 a winner.
 

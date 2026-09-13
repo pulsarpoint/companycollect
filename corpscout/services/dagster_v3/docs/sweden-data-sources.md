@@ -175,15 +175,18 @@ the backoffice facts drill-down.
 
 ### Financial serving boundary
 
-The Financials page reads the Swedish financial ENTITY (spec 2026-09-11):
-`corpscout.se_company_financial`, one row per company, accounting scope
+The data-side readers of Swedish financials -- `se_company_financials_latest`,
+the serving view's financial flags, the section-presence model and the
+filing-status view -- read the Swedish financial ENTITY (spec 2026-09-11, slice
+4a): `corpscout.se_company_financial`, one row per company, accounting scope
 (`standalone` | `consolidated`) and period end, folded from Bolagsverket's
 reported rows, its restated column, ESEF and Ratsit with a source beside every
 figure, and `corpscout.se_company_financial_suggestion` for every source's own
 row. A standalone (legal-entity) figure never merges with a consolidated (group)
-one: the scope is inside the row key. The former same-shape views
-`se_financials_bolagsverket_current` and `se_financials_esef_current` were
-retired in slice 4 of that spec.
+one: the scope is inside the row key. The Financials page and the backoffice
+Financial tab still read the same-shape views `se_financials_bolagsverket_current`
+and `se_financials_esef_current` until slice 4b of that spec moves them to the
+entity; the owner-run drops retire the two views after that.
 
 ### Jobs and schedules
 
