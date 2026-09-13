@@ -68,7 +68,7 @@ Not touched, deliberately: `address/scb.py` and `address/bolagsverket.py` (their
 - Consumes: `define_address_suggestion_asset(**kwargs)` forwarding to `define_suggestion_asset(source, extractor_version, current_sql, select_sql, select_params, deps, description, target, changed_scope_override)`; `ADDRESS_SELECT_COLUMNS` (`("company_id", "source", "slot", "source_record_uid", "observed_at", "kind", "raw_address", "care_of", "street_address", "postal_code", "post_town", "county", "country_code")`); `tables.RAW_ADDRESS_COLUMNS`, `tables.QUALIFIED_SUGGESTION_TABLE`; `RATSIT_NORMALIZER_VERSION` from `dagster_v3.defs.sweden_ratsit.normalization`.
 - Produces, for Tasks 2-4: `suggestions.ADDRESS_LIVE_ROW_PREDICATE: str`, `suggestions.ADDRESS_TOMBSTONE_COLUMNS: tuple[str, ...]`, `suggestions.address_select_sql(*, live_sql: str, source: str) -> str`; `ratsit.ADDRESS_SOURCE: str`, `ratsit.RATSIT_ADDRESS_EXTRACTOR_VERSION: str`, `ratsit.RATSIT_ADDRESS_SELECT_PARAMS: dict[str, str]`, `ratsit.TOWNS_SQL: str`, `ratsit.EST_ROWS_SQL: str`, `ratsit.EST_SLOT_SQL: str`, `ratsit.POST_TOWN_SQL: str`, `ratsit.ratsit_report_sql(*, scoped: bool = False) -> str`, `ratsit.ratsit_establishments_sql(*, scoped: bool = False) -> str`, `ratsit.ratsit_rows_sql(*, scoped: bool = False) -> str`, `ratsit.ratsit_live_sql(*, scoped: bool = False) -> str`, `ratsit.ratsit_current_sql() -> str`, `ratsit.ratsit_select_sql() -> str`, `ratsit.se_company_address_suggestions_ratsit` (asset key `se_company_address_suggestions_ratsit`).
 
-- [ ] **Step 1: Write the failing SQL contract tests**
+- [x] **Step 1: Write the failing SQL contract tests**
 
 In `tests/test_se_company_address_extractors_sql.py`, extend the import from `suggestions` (it currently pulls three names):
 
@@ -256,7 +256,7 @@ def test_the_ratsit_address_current_sql_is_the_reports_own_stamp() -> None:
     assert "%(company_ids)s" not in current
 ```
 
-- [ ] **Step 2: Run the tests and watch them fail**
+- [x] **Step 2: Run the tests and watch them fail**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/dagster_v3
@@ -265,7 +265,7 @@ uv run pytest tests/test_se_company_address_extractors_sql.py -v
 
 Expected: `ImportError: cannot import name 'ADDRESS_LIVE_ROW_PREDICATE' from 'dagster_v3.defs.se_company.address.suggestions'` — the whole module fails to collect, which is the right failure for a contract that does not exist yet.
 
-- [ ] **Step 3: Add the tombstone helper to `address/suggestions.py`**
+- [x] **Step 3: Add the tombstone helper to `address/suggestions.py`**
 
 Append after the `ADDRESS_TARGET` definition and before `define_address_suggestion_asset`:
 
@@ -341,7 +341,7 @@ def address_select_sql(*, live_sql: str, source: str) -> str:
 
 `tables` is already imported at the top of the file (`from dagster_v3.defs.se_company.address import tables`); no new import is needed.
 
-- [ ] **Step 4: Rewrite `address/ratsit.py`**
+- [x] **Step 4: Rewrite `address/ratsit.py`**
 
 Replace the whole file (52 lines today) with:
 
@@ -612,7 +612,7 @@ se_company_address_suggestions_ratsit = define_address_suggestion_asset(
 )
 ```
 
-- [ ] **Step 5: Lower the STOPPED weekly's page size**
+- [x] **Step 5: Lower the STOPPED weekly's page size**
 
 The Ratsit page select now binds `%(company_ids)s` three times, and `run_extractor` runs every page under `ID_BOUND_QUERY_SETTINGS`' `max_query_size` of 1,048,576 bytes. At 20,000 twelve-digit ids (~300 KB per binding) the rendered statement is ~900 KB — inside the limit today, with no headroom. In `src/dagster_v3/defs/se_company/address/jobs.py`, replace lines 11-13:
 
@@ -639,7 +639,7 @@ And in `tests/test_se_company_address_jobs.py:34`, replace `assert jobs.WEEKLY_P
     assert jobs.WEEKLY_PAGE_SIZE == 10_000
 ```
 
-- [ ] **Step 6: Run the unit tests**
+- [x] **Step 6: Run the unit tests**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/dagster_v3
@@ -653,7 +653,7 @@ Expected: all pass. The two that matter most are `test_every_select_yields_the_t
 
 If `_aliases` returns the report subquery's columns instead, the live SQL grew a leading `WITH` — it must not: the CTEs live inside the `FROM` subqueries precisely so the first `SELECT` of the rendered text is the thirteen-column projection.
 
-- [ ] **Step 7: Check the definitions still load**
+- [x] **Step 7: Check the definitions still load**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/dagster_v3
@@ -663,7 +663,7 @@ uv run dg check defs
 
 Expected: `All components validated successfully` / no errors. This is also what proves the three dep keys resolve to real assets rather than creating phantom nodes.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect
@@ -709,7 +709,7 @@ rm -f "$MSGFILE"
 - Consumes: everything Task 1 produced (`ratsit.ratsit_current_sql()`, `ratsit.ratsit_select_sql()`, `ratsit.RATSIT_ADDRESS_SELECT_PARAMS`, `ratsit.RATSIT_ADDRESS_EXTRACTOR_VERSION`), plus the existing helpers `changed_scope_sql(current_sql, target)`, `insert_page_sql(select_sql, target)`, `ADDRESS_TARGET`, `changed_rows_sql()`, `normalized_row(raw_row, normalized_at)`, `RAW_ROW_COLUMNS`, `NORMALIZER_VERSION`, `clickhouse_local_command()`, `_bind(sql, **params)` from `tests.test_se_company_basic_info_clickhouse_local`, and `tests/test_se_company_address_fold.py`'s own `row(...)` / `fold(...)` helpers.
 - Produces: nothing other tasks import. The new fixture file is loaded by two test modules.
 
-- [ ] **Step 1: Create the establishments fixture**
+- [x] **Step 1: Create the establishments fixture**
 
 `corpscout/services/dagster_v3/tests/fixtures/se_company_address_source_tables.sql`:
 
@@ -752,7 +752,7 @@ CREATE TABLE IF NOT EXISTS corpscout.se_ratsit_establishments (
 ORDER BY (company_id, result_sha256, normalizer_version, establishment_index);
 ```
 
-- [ ] **Step 2: Let the existing four-extractor test see the table**
+- [x] **Step 2: Let the existing four-extractor test see the table**
 
 `tests/test_se_company_address_extractors_clickhouse_local.py` builds its schema from `MIGRATIONS` plus one `FIXTURE`; the Ratsit select now reads `se_ratsit_establishments`, so the file must exist or every Ratsit statement in that script fails to parse. Replace lines 35-42:
 
@@ -803,7 +803,7 @@ with:
 
 Nothing else in that file changes: it seeds no establishments, its one Ratsit postcode (`11122`) is absent from its one SCB register row (`13134 NACKA`), so the dictionary leaves `post_town` as Ratsit's `Stockholm`, and every existing assertion — `ratsit_scope_1 == [[COMPANY_RATSIT]]`, `len(rows) == 3`, `reconverged == []`, the `parse_status == "ok"` / `care_of == "anna svensson"` hand-off — still holds.
 
-- [ ] **Step 3: Write the failing Ratsit integration test**
+- [x] **Step 3: Write the failing Ratsit integration test**
 
 `corpscout/services/dagster_v3/tests/test_se_company_address_ratsit_clickhouse_local.py`:
 
@@ -1192,7 +1192,7 @@ def test_the_normalize_hand_off_files_the_tombstones_as_no_address(
         assert result["city"] is None and result["street_name"] is None, slot
 ```
 
-- [ ] **Step 4: Run the integration tests**
+- [x] **Step 4: Run the integration tests**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/dagster_v3
@@ -1202,7 +1202,7 @@ uv run pytest tests/test_se_company_address_ratsit_clickhouse_local.py \
 
 Expected: both files pass, twice each (`join_use_nulls_off` and `join_use_nulls_on`). The first `docker run` pulls `clickhouse/clickhouse-server:26.5` if the machine has no `clickhouse-local` binary; each script takes well under the 900 s timeout. If `clickhouse-local` is missing AND docker is not running, both files `skip` — that is a machine problem, not a failure, but the task is not done until they have actually run.
 
-- [ ] **Step 5: Write the fold's `workplace` test**
+- [x] **Step 5: Write the fold's `workplace` test**
 
 Append to `tests/test_se_company_address_fold.py` (it already has `row(...)`, `fold(...)`, `C`, `T1`):
 
@@ -1238,7 +1238,7 @@ def test_a_workplace_establishment_elsewhere_publishes_its_own_row() -> None:
     assert {published.slots for published in result.rows} == {("company",), ("est:EST-2",)}
 ```
 
-- [ ] **Step 6: Run the fold tests**
+- [x] **Step 6: Run the fold tests**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/dagster_v3
@@ -1247,7 +1247,7 @@ uv run pytest tests/test_se_company_address_fold.py -v
 
 Expected: every test passes, including the two new ones.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect
@@ -1287,7 +1287,7 @@ rm -f "$MSGFILE"
 - Consumes: the names Task 1 produced (`ratsit-address-v2`, kind `workplace`, slots `company` and `est:<identifier>`).
 - Produces: nothing code depends on.
 
-- [ ] **Step 1: Find every "comes later" claim**
+- [x] **Step 1: Find every "comes later" claim**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/dagster_v3
@@ -1297,7 +1297,7 @@ rg -n "workplace" src/dagster_v3/defs/se_company/address/docs/address-design.md 
 
 Expected, before the edits: three hits, all in the 2026-09-06 spec — line 44 ("establishments come later as kind `workplace`"), line 55 ("Out of scope: the workplace extractor, …") and line 78 (the `kind` column comment, which is a list of allowed values and is **correct as it stands** — do not touch it). `address-design.md` has no hit, which is itself the problem: its `ratsit` bullet describes only the company row.
 
-- [ ] **Step 2: Update the address package's design doc**
+- [x] **Step 2: Update the address package's design doc**
 
 In `src/dagster_v3/defs/se_company/address/docs/address-design.md`, replace the `ratsit` bullet (lines 124-126):
 
@@ -1326,7 +1326,7 @@ with:
   single-slot tombstone instead.
 ```
 
-- [ ] **Step 3: Update the 2026-09-06 address spec**
+- [x] **Step 3: Update the 2026-09-06 address spec**
 
 In `docs/superpowers/specs/2026-09-06-se-company-address-entity-design.md`, replace lines 41-44:
 
@@ -1361,7 +1361,7 @@ Out of scope for THIS spec (the workplace extractor shipped later, in the 2026-0
 design's slice 3): other countries' normalizers (the normalizer is one
 ```
 
-- [ ] **Step 4: Confirm nothing else claims the extractor is missing**
+- [x] **Step 4: Confirm nothing else claims the extractor is missing**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/dagster_v3
@@ -1370,7 +1370,7 @@ rg -n "come later|comes later|workplace extractor" docs/superpowers/specs src/da
 
 Expected: no hit that refers to the address entity's establishments. (Hits from other entities' docs are not this slice's business.)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect
@@ -1420,7 +1420,7 @@ rm -f "$MSGFILE"
 - Consumes: Tasks 1-3, merged to `main` and deployed. Assets: `se_company_address_suggestions_ratsit` (`ExtractConfig`: `execute`, `company_ids`, `max_companies`, `since`, `page_size` ≤ 20,000), `se_company_address_normalize` (`AddressNormalizeConfig`: `changed_only`, `company_ids`, `page_size` ≤ 50,000), `se_address_geocodes_warm` (`AddressWarmConfig`: `chunk_size` 10,000-5,000,000 default 150,000, `limit` default 0 = every key; pool `sweden_address_osm_duckdb`), `se_company_address_fold` (64 static partitions `bucket_00`..`bucket_63`, `AddressFoldConfig`: `changed_only` default true, `page_size` default 20,000; pool `sweden_address_osm_duckdb`, limit 1).
 - Produces: the Shipped record under spec section 8 item 3.
 
-- [ ] **Step 1: Review, merge, deploy**
+- [x] **Step 1: Review, merge, deploy**
 
 1. Review the branch end to end: `git -C /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info diff main...se-ratsit-addresses`.
 2. The owner merges to `main`. If the main checkout sits on another branch, merge through a worktree that has `main` checked out (memory `se-worktree-deploy-recipe`).
@@ -1452,7 +1452,7 @@ ssh dagster "curl -s -H 'content-type: application/json' --data-binary @- http:/
 
 Expected: one node whose `dependencyKeys` are exactly `se_ratsit_company`, `se_ratsit_establishments` and `sweden_company_scb_companies_clickhouse` — **no `se_ratsit_normalized`** (the phantom the v1 module carried) — and whose description mentions the workplace rows and the register dictionary.
 
-- [ ] **Step 2: Confirm prod's state before anything runs**
+- [x] **Step 2: Confirm prod's state before anything runs**
 
 ```bash
 cat > /tmp/instigators.json <<'JSON'
@@ -1573,7 +1573,7 @@ Expected, against spec section 2 (prod 2026-09-10): (a) `rows` ≈ 3,761,803 / `
 
 Record (a), (b) and (c): the AFTER steps subtract from these numbers, not from the spec's.
 
-- [ ] **Step 3: Preview the extract with `since`**
+- [x] **Step 3: Preview the extract with `since`**
 
 Spec 5.6: the town fix changes rows **without moving `observed_at`**, so the change scan alone would skip the 83,696 already-visited companies. `since: "2000-01-01T00:00:00Z"` puts every company with a report in scope. The asset's default is a preview (`execute: false`): the same scope and the same per-page count, nothing written.
 
@@ -1606,7 +1606,7 @@ Expected (`ExtractCounts.as_metadata`): `execute` false, `companies` ≈ **947,2
 
 **If `candidates` is under 1,200,000 or over 2,200,000, stop and reconcile against Step 2(c) before writing anything.** The preview runs the full select once per page, so it costs roughly half of the execute; expect tens of minutes, not seconds.
 
-- [ ] **Step 4: Execute the extract**
+- [x] **Step 4: Execute the extract**
 
 The same launch with the gate open — only `"execute": true` differs.
 
@@ -1619,7 +1619,7 @@ ssh dagster "curl -s -H 'content-type: application/json' --data-binary @- http:/
 
 Poll with `/tmp/run.json` until `SUCCESS`, then re-read the metadata. Expected: `execute` true, `companies` and `candidates` as in the preview, `inserted` **equal to `candidates`**, `stopped_at_cap` false (the cap is 5,000,000 companies). Record the wall time — the basic-info Ratsit run wrote 863,504 rows over 87 pages in 4 minutes; this one writes about twice as many rows through a much heavier select (two report picks, an establishments join and the 1.8M-row dictionary per page), so budget 30-120 minutes.
 
-- [ ] **Step 5: Read out the suggestions and prove convergence**
+- [x] **Step 5: Read out the suggestions and prove convergence**
 
 ```bash
 ssh companycollect 'docker exec -i clickhouse-clickhouse-1 clickhouse-client --database corpscout --format PrettyCompact' <<'SQL'
@@ -1683,7 +1683,7 @@ ssh dagster "curl -s -H 'content-type: application/json' --data-binary @- http:/
 
 Expected: `companies` **0**, `pages` **0**, `candidates` **0**. A non-zero count means the stamp the select writes and the stamp `ratsit_current_sql` reports disagree — exactly the bug this slice removed from the translation-aware `current_sql`. Find out which before normalizing.
 
-- [ ] **Step 6: Normalize**
+- [x] **Step 6: Normalize**
 
 ```bash
 cat > /tmp/address-normalize.json <<'JSON'
@@ -1720,7 +1720,7 @@ SQL
 
 Expected: `kind` splits into `postal` ≈947,200 and `workplace` ≈732,600; the shared-key count is the number to watch — it was small before the slice and should now be in the hundreds of thousands. Record the before value by running the same query **before Step 4** if the controller wants the exact delta; otherwise record only the after number and say so.
 
-- [ ] **Step 7: Warm the geocode cache**
+- [x] **Step 7: Warm the geocode cache**
 
 New location keys (every establishment somewhere new, plus the corrected-town company rows whose key now equals the register's) must be matched in bulk before the fold, or every fold page pays the matcher.
 
@@ -1737,7 +1737,7 @@ Poll with `/tmp/run.json`; read the metadata with the asset key `se_address_geoc
 
 **Also check the freshness asset check** that runs with it (`osm_snapshot_fresh`): a WARN means the OSM extract is over nine days old, which is worth telling the owner but is not a reason to stop the fold.
 
-- [ ] **Step 8: Back-fill the fold over all 64 buckets**
+- [x] **Step 8: Back-fill the fold over all 64 buckets**
 
 `se_company_address_fold` is `StaticPartitionsDefinition(["bucket_00" … "bucket_63"])` with `BackfillPolicy.multi_run(max_partitions_per_run=1)` and pool `sweden_address_osm_duckdb` (instance default limit 1), so the backfill produces one run per partition and the pool serializes them. A backfill carries no run config, which is what the defaults want: `changed_only: true` (the fold's watermark sees the newer normalized rows), `page_size: 20000`.
 
@@ -1785,7 +1785,7 @@ Expected per bucket (`FoldCounts.as_metadata` plus the asset's `bucket`, `change
 
 Expect 64/64 `SUCCESS`. The last full address backfill ran ~74 s per bucket over a much smaller changed set; this one folds ~14,800 companies per bucket with up to 1,718 members each, so budget 2-6 hours for all 64 and record the real total. The 131 companies with over 100 establishments cost seconds, not minutes (spec section 6).
 
-- [ ] **Step 9: Read out the entity (the spec 5.6 numbers)**
+- [x] **Step 9: Read out the entity (the spec 5.6 numbers)**
 
 ```bash
 ssh companycollect 'docker exec -i clickhouse-clickhouse-1 clickhouse-client --database corpscout --format PrettyCompact' <<'SQL'
@@ -1858,7 +1858,7 @@ Acceptance, against Step 2(a):
 - (e) is dominated by `''` (re-published rows) and `withdrawn`; the withdrawn count is expected to be large (the old municipality-town sets) and is one of the numbers spec 5.6 asks for.
 - (i): most workplace rows should carry a matcher status rather than a miss, because Step 7 warmed them.
 
-- [ ] **Step 10: Let the serving refresh land**
+- [x] **Step 10: Let the serving refresh land**
 
 `corpscout.se_companies_serving` is a refreshable materialized view (hourly, migration 000392 for the address block). `has_address`, `address_count` and the `addresses` JSON all read `se_company_address FINAL`.
 
@@ -1879,7 +1879,7 @@ SQL
 
 Expected: `with_an_address` roughly unchanged (Ratsit companies mostly already had an SCB address), `total_addresses` up by the establishments that publish on their own, `rows_naming_a_workplace` above zero, and `exception` empty on the refresh that ran after the backfill finished. A refresh that overlaps a half-finished backfill still succeeds; the next hour's carries the rest (the same thing happened in slice 1).
 
-- [ ] **Step 11: Smoke the Address tab**
+- [x] **Step 11: Smoke the Address tab**
 
 On the owner's dev server (`localhost:5183`, the **main** checkout — the backoffice is not deployed; memory `backoffice-runs-locally`), open the Address tab for a company from Step 9(h) (many establishments) and one from Step 9(f) (the Oxie sample):
 
@@ -1889,7 +1889,7 @@ On the owner's dev server (`localhost:5183`, the **main** checkout — the backo
 
 Record what was seen. If the Workplace label is missing or the kind renders raw, that is a backoffice bug to raise with the owner — not something this slice fixes.
 
-- [ ] **Step 12: Write the Shipped record and tick the plan**
+- [x] **Step 12: Write the Shipped record and tick the plan**
 
 Append to `corpscout/services/dagster_v3/docs/superpowers/specs/2026-09-11-se-ratsit-source-design.md`, under section 8 item 3 (which today ends at "prod re-extract with `since`, normalize, warm, fold."), in the same voice as items 1 and 2: the plan file name and the merge commit; what the code change was; the review outcome; then the prod numbers — the preview's companies/pages/candidates, the execute's inserted and wall time, the convergence preview, the suggestion readout (postal/workplace rows, index-suffixed slots, null rows), the normalize counts by `parse_status` and `kind`, the warm's keys/chunks/cache_hits/matched, the backfill id with 64/64 and the wall time, the entity before → after for `ratsit_rows`, `workplace_rows`, `withdrawn_rows` and addresses per company, the Oxie and Bromma samples, the serving numbers, and the Address-tab smoke. Close with any finding worth carrying (as slice 1 did with the Bolagsverket-description duplication) and confirm the weeklies stayed STOPPED.
 
