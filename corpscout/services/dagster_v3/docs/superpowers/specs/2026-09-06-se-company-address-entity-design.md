@@ -527,6 +527,12 @@ rows). Two rules:
 No schema change. Target: the 1,502-workplace kommun renders under 400 KB; every other
 company gets the lighter loader as a side effect.
 
+Shipped 2026-09-13 (plan `2026-09-13-se-address-tab-paging.md`): the loader returns list
+rows without members and resolves the selected row's members -- the `?address=` row, else
+the first active one -- from that row's own `(source, slot)` pairs; workplace-only rows moved to a 50-a-page "Workplaces" card with a
+`normalized_address` filter, `?workplaces=` and `?workplace_q=` joining `?address=` in every
+link; fold-pending became one row of scalar aggregates. No schema change.
+
 ## 9. Slices, parity, cutover
 
 0. Tables and normalizer: migrations, the `se_company/address` package skeleton, the

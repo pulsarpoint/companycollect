@@ -266,6 +266,35 @@ default releases the hide rule (`removed=1`). Fold now (`launchSeAddressFold`) l
 that company's raw rows first (Task 1's `targeted_fold`), so a draft saved a moment earlier
 parses before it folds.
 
+### The tab is slim, and the workplaces are paged (2026-09-13)
+
+Ratsit's establishments put 1,502 `workplace` rows on one kommun, and the tab rendered them
+as 7.8 MB of HTML: markup for every row plus a hydration payload carrying every row's
+members with their normalized and raw rows. `loadSeAddressDetail(companyId, {selectedKey,
+workplacePage, workplaceQuery})` now returns list rows WITHOUT members -- the row's own
+columns, the hide rule in force and a re-fold-pending flag computed in ClickHouse
+(`has(current_pairs, …) AND NOT has(current_triples, …)` over the company's current
+normalized versions, `groupArray`-ed once per query) -- and resolves members, the
+`text_source` reason and the raw text for ONE row, from two reads bound to that row's own
+`(source, slot)` pairs (`arrayZip({memberSources:Array(String)}, {memberSlots:Array(String)})`).
+That row is the `?address=<key>` row when the key names one of the company's, else the first
+active row of the list -- the default the tab has always had -- and there is none only when
+the company has no active company address at all. "Fold pending" is one row of five scalar aggregates
+(`ADDRESS_FOLD_STATE_SQL`) instead of two whole-company reads. Drafts load on their own
+(`source = 'reviewer_draft'`), History keeps its cap of 200.
+
+Rows whose `kinds` are exactly `['workplace']` and that are active leave the Addresses card
+for a "Workplaces (<total>)" card below it -- migration 000403's split, so the tab and the
+serving view draw the same line -- paged 50 a page and filtered over `normalized_address`
+with `positionCaseInsensitiveUTF8` (a literal needle: nothing to escape). Page and filter
+live in the URL as `?workplaces=<page>` and `?workplace_q=<text>` beside `?address=`, and
+`addressSearchString` in `app/lib/se-address-fields.ts` builds every link on the page from
+all three, so selecting an address keeps the workplace page and paging keeps the selected
+address; a POST keeps both through React Router's default form action. The map shows the
+company's active addresses plus the current workplace page. The five reviewer writes still
+read the company whole -- they are one POST per click, and Remove must be able to find a
+workplace row by key.
+
 ## Readers (slice 4a, 2026-09-08)
 
 The entity's four readers are the serving view (`sweden_company/companies_current.py`,

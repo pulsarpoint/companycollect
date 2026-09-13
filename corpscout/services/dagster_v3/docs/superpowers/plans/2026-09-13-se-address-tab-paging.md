@@ -65,7 +65,7 @@ Not touched, deliberately: `app/lib/se-address-decision-form.ts` (the six intent
   - `se-address-fields.ts`: `WORKPLACE_PAGE_SIZE: number` (50), `MAX_WORKPLACE_QUERY_LENGTH: number` (100), `workplacePageFromSearch(params: URLSearchParams): number`, `workplaceQueryFromSearch(params: URLSearchParams): string`, `interface SeAddressSearchState { address: string | null; workplacePage: number; workplaceQuery: string }`, `addressSearchString(state: SeAddressSearchState): string`.
   - `se-company-address-entity.server.ts`: `interface SeAddressListEntry { row: SeAddressRow; refoldPending: boolean; hideRule: SeAddressRuleRow | null }`; `interface SeAddressPublishedDetail { row: SeAddressRow; members: SeAddressMember[]; textSourceReason: "most complete" | "tie-break" | "single source"; hideRule: SeAddressRuleRow | null }` (the former `SeAddressPublished`); `interface SeAddressWorkplacePage { rows: SeAddressListEntry[]; total: number; page: number; pageSize: number; query: string }`; `interface SeAddressDetail { published: SeAddressListEntry[]; selected: SeAddressPublishedDetail | null; workplaces: SeAddressWorkplacePage; drafts: SeAddressDraft[]; history: SeAddressHistoryRow[]; rules: SeAddressRuleRow[]; foldPending: boolean }`; `interface SeAddressDetailOptions { selectedKey: string | null; workplacePage: number; workplaceQuery: string }`; `loadSeAddressDetail(companyId: string, options: SeAddressDetailOptions): Promise<SeAddressDetail | null>`; the exported SQL constants `ADDRESS_LIST_SQL`, `ADDRESS_WORKPLACES_SQL`, `ADDRESS_WORKPLACES_COUNT_SQL`, `ADDRESS_SELECTED_SQL`, `ADDRESS_MEMBER_NORMALIZED_SQL`, `ADDRESS_MEMBER_RAW_SQL`, `ADDRESS_DRAFT_RAW_SQL`, `ADDRESS_DRAFT_NORMALIZED_SQL`, `ADDRESS_FOLD_STATE_SQL`.
 
-- [ ] **Step 1: Record the suite's pre-existing failures**
+- [x] **Step 1: Record the suite's pre-existing failures**
 
 From `corpscout/services/backoffice`:
 
@@ -75,7 +75,7 @@ npm test 2>&1 | tail -40
 
 Write the failing test file names into the task's notes. Every later "no new failures" check compares against this list. Do not fix any of them.
 
-- [ ] **Step 2: Write the failing search-helper tests**
+- [x] **Step 2: Write the failing search-helper tests**
 
 In `tests/se-address-fields.test.ts`, extend the import list at the top with the five new names:
 
@@ -142,7 +142,7 @@ describe("workplace paging search params", () => {
 });
 ```
 
-- [ ] **Step 3: Run the helper tests and watch them fail**
+- [x] **Step 3: Run the helper tests and watch them fail**
 
 ```bash
 npm test -- tests/se-address-fields.test.ts
@@ -150,7 +150,7 @@ npm test -- tests/se-address-fields.test.ts
 
 Expected: FAIL — `workplacePageFromSearch is not a function` (and the other four names undefined).
 
-- [ ] **Step 4: Add the three helpers to `se-address-fields.ts`**
+- [x] **Step 4: Add the three helpers to `se-address-fields.ts`**
 
 Append after `selectedAddressFromSearch` (line 60), before `export interface SeAddressInput`:
 
@@ -204,7 +204,7 @@ export function addressSearchString(state: SeAddressSearchState): string {
 }
 ```
 
-- [ ] **Step 5: Run the helper tests and watch them pass**
+- [x] **Step 5: Run the helper tests and watch them pass**
 
 ```bash
 npm test -- tests/se-address-fields.test.ts
@@ -212,7 +212,7 @@ npm test -- tests/se-address-fields.test.ts
 
 Expected: PASS, the whole file.
 
-- [ ] **Step 6: Write the failing loader tests**
+- [x] **Step 6: Write the failing loader tests**
 
 In `tests/se-company-address-entity.server.test.ts`, three edits.
 
@@ -740,7 +740,7 @@ function ranSql(sql: string): boolean {
   });
 ```
 
-- [ ] **Step 7: Run the loader tests and watch them fail**
+- [x] **Step 7: Run the loader tests and watch them fail**
 
 ```bash
 npm test -- tests/se-company-address-entity.server.test.ts
@@ -748,7 +748,7 @@ npm test -- tests/se-company-address-entity.server.test.ts
 
 Expected: FAIL at import time — `ADDRESS_LIST_SQL` and the eight other constants are not exported yet (vitest reports `SyntaxError: The requested module does not provide an export named 'ADDRESS_LIST_SQL'`, or `undefined` in the SQL-shape test).
 
-- [ ] **Step 8: Give `se-company-address-entity.server.ts` its new types and its new SQL**
+- [x] **Step 8: Give `se-company-address-entity.server.ts` its new types and its new SQL**
 
 **(a)** Replace the `SeAddressPublished` interface (lines 151-158) and the `SeAddressDetail` interface (lines 170-177) with these five. `SeAddressComponents`, `SeAddressRow`, `SeAddressHistoryRow`, `SeAddressNormalizedRow`, `SeAddressRawRow`, `SeAddressRuleRow`, `SeAddressMember` and `SeAddressDraft` above them do not change:
 
@@ -1026,7 +1026,7 @@ export const ADDRESS_FOLD_STATE_SQL = `SELECT
 // const PUBLISHABLE_PARSE_STATUS = new Set(["ok", "partial", "foreign"]);
 ```
 
-- [ ] **Step 9: Rewrite `loadSeAddressDetail`**
+- [x] **Step 9: Rewrite `loadSeAddressDetail`**
 
 Replace lines 302-381 — the doc comment and the whole function — with these four pieces. `slotKey`, `completenessOf`, `activeHideRule` and `textSourceReason` above them stay as they are and are all used:
 
@@ -1212,7 +1212,7 @@ Finally, extend the module's import from `~/lib/se-address-fields` (line 30) wit
 import { addressFoldPending, isAddressKey, WORKPLACE_PAGE_SIZE } from "~/lib/se-address-fields";
 ```
 
-- [ ] **Step 10: Let the route read the three parameters**
+- [x] **Step 10: Let the route read the three parameters**
 
 In `app/routes/admin-se-company-address.tsx`, replace the `selectedAddressFromSearch` import (line 4), the `EMPTY_DETAIL` constant with its comment (lines 20-31) and the `loader` (lines 37-41):
 
@@ -1269,7 +1269,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 }
 ```
 
-- [ ] **Step 11: Follow the new shape through the workspace component**
+- [x] **Step 11: Follow the new shape through the workspace component**
 
 `app/components/admin/se-address-workspace.tsx`, six edits. The Workplaces card, the map wiring and the parameter-preserving links are Task 2; this step only makes the component compile against the split loader and keeps the panel's copy honest.
 
@@ -1372,7 +1372,7 @@ The panel call (line 1092) needs no change at all: `entry={selected}` already re
 
 The `AddressesCard` call keeps `selectedKey={selected?.row.address_key ?? null}` — the effective selection, which is now exactly what the loader resolved, default included, so the list marks the row the panel describes just as it did before. The route still passes its own `selectedKey` prop to the workspace; it stays in the signature and is unused by the render, so prefix nothing and change nothing there: Task 2 uses it for the links.
 
-- [ ] **Step 12: Make the route/component test fixtures the new shape**
+- [x] **Step 12: Make the route/component test fixtures the new shape**
 
 In `tests/admin-se-company-address.test.tsx`:
 
@@ -1573,7 +1573,7 @@ const EMPTY_DETAIL: SeAddressDetail = {
   });
 ```
 
-- [ ] **Step 13: Run the address tests, then the whole suite and the typecheck**
+- [x] **Step 13: Run the address tests, then the whole suite and the typecheck**
 
 ```bash
 npm test -- tests/se-company-address-entity.server.test.ts tests/admin-se-company-address.test.tsx tests/se-address-fields.test.ts
@@ -1583,7 +1583,7 @@ npm test 2>&1 | tail -40
 
 Expected: the three address files PASS in full; `typecheck` prints nothing and exits 0; the suite shows the Step 1 failures and no others. The Workplaces card does not exist yet, so a company's workplace rows are simply absent from the page — Task 2 gives them their card.
 
-- [ ] **Step 14: Commit**
+- [x] **Step 14: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info
@@ -1633,7 +1633,7 @@ rm -f "$MSGFILE"
 - Consumes, from Task 1: `addressSearchString(state: SeAddressSearchState): string`, `MAX_WORKPLACE_QUERY_LENGTH`, `workplacePageFromSearch`/`workplaceQueryFromSearch` (through the route, not here), and the types `SeAddressListEntry`, `SeAddressPublishedDetail`, `SeAddressWorkplacePage`, `SeAddressDetail` with its `published` / `selected` / `workplaces` fields. The fixtures `listEntry`, `secondListEntry`, `workplaceEntry`, `NO_WORKPLACES`, `detail`, `EMPTY_DETAIL` and the `render(element, search)` helper already exist in the test file from Task 1.
 - Produces: `listMapPoints(published: readonly SeAddressListEntry[], workplaces: readonly SeAddressListEntry[]): AddressMapPoint[]` (exported from `se-address-workspace.tsx`); the module-internal `WorkplacesCard` and the `addressHref: (addressKey: string) => string` prop carried by `AddressLine`, `AddressesCard` and `WorkplacesCard`.
 
-- [ ] **Step 1: Write the failing component tests**
+- [x] **Step 1: Write the failing component tests**
 
 In `tests/admin-se-company-address.test.tsx`, extend the component import (line 22) with the map helper:
 
@@ -1796,7 +1796,7 @@ and add these six tests at the end of the `describe("SeAddressWorkspace")` block
   });
 ```
 
-- [ ] **Step 2: Run the component tests and watch them fail**
+- [x] **Step 2: Run the component tests and watch them fail**
 
 ```bash
 npm test -- tests/admin-se-company-address.test.tsx
@@ -1804,7 +1804,7 @@ npm test -- tests/admin-se-company-address.test.tsx
 
 Expected: FAIL — `listMapPoints is not a function`, and the six new tests miss "Workplaces (1502)", the hrefs and the badge.
 
-- [ ] **Step 3: Add the card, the map helper and the link builder**
+- [x] **Step 3: Add the card, the map helper and the link builder**
 
 `app/components/admin/se-address-workspace.tsx`, seven edits.
 
@@ -2092,7 +2092,7 @@ function WorkplacesCard({
         />
 ```
 
-- [ ] **Step 4: Run the component tests and watch them pass**
+- [x] **Step 4: Run the component tests and watch them pass**
 
 ```bash
 npm test -- tests/admin-se-company-address.test.tsx
@@ -2100,7 +2100,7 @@ npm test -- tests/admin-se-company-address.test.tsx
 
 Expected: PASS, the whole file — the six new tests and the seven that were already there.
 
-- [ ] **Step 5: Run the whole suite and the typecheck**
+- [x] **Step 5: Run the whole suite and the typecheck**
 
 ```bash
 npm run typecheck
@@ -2109,7 +2109,7 @@ npm test 2>&1 | tail -40
 
 Expected: `typecheck` exits 0; the suite shows the Task 1 Step 1 failures and no others.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info
@@ -2154,7 +2154,7 @@ rm -f "$MSGFILE"
 
 **The owner's own dev server is on `[::1]:5183` and serves `main` from the main checkout. Never stop it, never restart it, never `pkill -f "react-router dev"`.** It is useful exactly as it is: it is the "before" measurement. The worktree's server goes on 5184.
 
-- [ ] **Step 1: Start a dev server over the worktree's code on 5184**
+- [x] **Step 1: Start a dev server over the worktree's code on 5184**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/backoffice
@@ -2172,7 +2172,7 @@ timeout 180 bash -c 'until curl -6 -sf -o /dev/null "http://[::1]:5184/admin/se/
 
 Expected: `UP`. If it never comes up, read `/tmp/se-address-paging-dev.log`.
 
-- [ ] **Step 2: Measure the kommun, before and after**
+- [x] **Step 2: Measure the kommun, before and after**
 
 Company 2120000142 has 1,503 active rows, 1,502 of them workplace-only. Request each URL twice and record the SECOND number: the first request through a dev server pays for compilation.
 
@@ -2190,7 +2190,7 @@ Expected: port 5183 (main, the "before") around 7.8 MB and several seconds; port
 
 If 5184 is still megabytes, the loader is still shipping members: check that `ADDRESS_LIST_SQL` — not `ADDRESS_MAIN_SQL` — is what the page ran, and that `detail.published` holds no `members` key.
 
-- [ ] **Step 3: Measure the two ordinary companies and check the merged row**
+- [x] **Step 3: Measure the two ordinary companies and check the merged row**
 
 ```bash
 for company in 5594121039 5592303829; do
@@ -2209,7 +2209,7 @@ curl -6 -s "http://[::1]:5184/admin/se/company/5594121039/address" | grep -o 'Wo
 
 Expected: both companies render in tens of kilobytes; the Oxie page shows both badges on one row. Record what the `grep` printed.
 
-- [ ] **Step 4: Page, filter and select a workplace**
+- [x] **Step 4: Page, filter and select a workplace**
 
 ```bash
 BASE="http://[::1]:5184/admin/se/company/2120000142/address"
@@ -2231,7 +2231,7 @@ curl -6 -s "$BASE?address=$KEY&workplaces=2" | grep -o 'aria-current="true"\|Pub
 
 Expected: the totals and footers line up (1,502 with no filter, smaller with `gatan`), the empty filter says `No workplace matches.`, and the selected page still weighs under 400 KB while showing `aria-current="true"`, the panel's `Published text` heading and page 2's footer.
 
-- [ ] **Step 5: Correct a workplace row, then discard the draft**
+- [x] **Step 5: Correct a workplace row, then discard the draft**
 
 This writes two `reviewer_draft` versions (a draft, then its tombstone) for company 2120000142 on prod ClickHouse. Nothing publishes: the fold is not run, and a `reviewer_draft` row is never folded.
 
@@ -2260,7 +2260,7 @@ curl -6 -s -X POST "$POST" \
 
 Expected: the first POST answers with `Draft saved…`, a `data-slot-id`, and `workplaces=2` still in the page's links (the action round trip kept the page); the second answers `Draft discarded.` and no `data-slot-id` at all. Record the slot in the task notes.
 
-- [ ] **Step 6: Stop the worktree's dev server only**
+- [x] **Step 6: Stop the worktree's dev server only**
 
 ```bash
 lsof -nP -iTCP:5184 -sTCP:LISTEN -t | xargs -r kill
@@ -2269,7 +2269,7 @@ lsof -nP -iTCP:5183 -sTCP:LISTEN | head -2   # the owner's server is still up
 
 Expected: 5184 is free, 5183 still listening. **Do not use `pkill -f "react-router dev"`** — it would take the owner's server with it.
 
-- [ ] **Step 7: Write the address package's design-doc paragraph**
+- [x] **Step 7: Write the address package's design-doc paragraph**
 
 In `corpscout/services/dagster_v3/src/dagster_v3/defs/se_company/address/docs/address-design.md`, insert this section at the end of "Backoffice (slice 3, 2026-09-07)" — after the paragraph ending "so a draft saved a moment earlier parses before it folds." and before `## Readers (slice 4a, 2026-09-08)`:
 
@@ -2304,7 +2304,7 @@ read the company whole -- they are one POST per click, and Remove must be able t
 workplace row by key.
 ```
 
-- [ ] **Step 8: Write the spec's Shipped line**
+- [x] **Step 8: Write the spec's Shipped line**
 
 In `corpscout/services/dagster_v3/docs/superpowers/specs/2026-09-06-se-company-address-entity-design.md`, append this paragraph immediately after the amendment's last line ("…every other company gets the lighter loader as a side effect.") and before `## 9. Slices, parity, cutover`:
 
@@ -2318,7 +2318,7 @@ link; fold-pending became one row of scalar aggregates. No schema change.
 
 Leave the measured prod/smoke record to the controller: it appends the sizes and times after the merge.
 
-- [ ] **Step 9: Verify the whole suite one last time and tick this plan**
+- [x] **Step 9: Verify the whole suite one last time and tick this plan**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info/corpscout/services/backoffice
@@ -2328,7 +2328,7 @@ npm test 2>&1 | tail -40
 
 Expected: `typecheck` exits 0; the suite shows exactly the failures recorded in Task 1 Step 1. Then tick every `- [ ]` box in this plan that the work actually did.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 The five `<…>` marks in the message below are the numbers Steps 2, 3 and 5 printed: substitute each one for the measurement before committing. They are the reason the slice exists, so the commit must carry them rather than the marks.
 
