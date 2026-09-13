@@ -33,6 +33,10 @@ def _exit_hard() -> None:
     os._exit(3)
 
 
+def _large(n: int) -> bytes:
+    return b"x" * n
+
+
 def test_returns_the_child_result() -> None:
     assert run_in_child_with_timeout(_double, (21,), timeout_seconds=60) == 42
 
@@ -55,6 +59,16 @@ def test_reports_a_child_that_died_without_a_result() -> None:
     with pytest.raises(ChildFailedError) as excinfo:
         run_in_child_with_timeout(_exit_hard, (), timeout_seconds=60)
     assert "code 3" in excinfo.value.detail
+
+
+def test_returns_a_result_larger_than_the_pipe_buffer() -> None:
+    # A pickled result bigger than the OS pipe buffer (~64 KiB) blocks the child in
+    # send() until the parent reads; joining before reading would deadlock until the
+    # budget kills the child (final review 2026-09-13).
+    started = time.monotonic()
+    result = run_in_child_with_timeout(_large, (500_000,), timeout_seconds=30)
+    assert result == b"x" * 500_000
+    assert time.monotonic() - started < 20
 
 
 def test_errors_survive_pickling() -> None:

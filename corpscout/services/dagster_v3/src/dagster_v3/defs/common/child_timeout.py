@@ -7,11 +7,24 @@ pathological input can never wedge a worker. Always a ``spawn`` context so the
 child is independently killable even from inside a ProcessPoolExecutor worker
 (nested spawn is fine). ``fn`` and ``args`` must be picklable; keep ``fn`` in a
 light module -- every call pays that module's import cost in the child.
+
+The parent waits on the result pipe AND the child's sentinel and reads the
+result as soon as it is available, and only then joins the child. A pickled
+result larger than the OS pipe buffer (~64 KiB) blocks the child in ``send()``
+until the parent reads, so joining first deadlocks until the budget kills the
+child (final review 2026-09-13: a 70,000-byte result timed out; the domains
+child returns every candidate with its full evidence). The artifact parser's
+own guard (``segment_assets._parse_document_package_worker``) still has that
+join-before-read shape; it is safe there only because its child sends a small
+result (the parse payload goes to a file). Moving it onto this helper is a
+spec section 8 follow-up.
 """
 
 from collections.abc import Callable
 from multiprocessing import get_context
-from multiprocessing.connection import Connection
+from multiprocessing.connection import Connection, wait
+from multiprocessing.process import BaseProcess
+from time import monotonic
 from typing import Any
 
 DEFAULT_TERMINATE_GRACE_SECONDS = 5.0
@@ -58,6 +71,29 @@ def _child_main(
         connection.close()
 
 
+def _receive(connection: Connection) -> tuple[Any, ...] | None:
+    """The child's message, or None when it died without (fully) sending one."""
+    try:
+        return connection.recv()
+    except EOFError:
+        # The child died without calling send(): the pipe only looks ready
+        # because the read end hit EOF.
+        return None
+    except OSError:
+        # "got end of file during message": the child was killed mid-send
+        # (an OOM-kill while writing a large result).
+        return None
+
+
+def _stop(child: BaseProcess, grace_seconds: float) -> None:
+    """Terminate the child, then kill it if it ignores SIGTERM for the grace."""
+    child.terminate()
+    child.join(timeout=grace_seconds)
+    if child.is_alive():
+        child.kill()
+        child.join()
+
+
 def run_in_child_with_timeout(
     fn: Callable[..., Any],
     args: tuple[Any, ...],
@@ -76,28 +112,34 @@ def run_in_child_with_timeout(
     child = ctx.Process(target=_child_main, args=(fn, args, child_connection))
     child.start()
     child_connection.close()
-    child.join(timeout=timeout_seconds)
-
-    if child.is_alive():
-        child.terminate()
-        child.join(timeout=terminate_grace_seconds)
-        if child.is_alive():
-            child.kill()
-            child.join()
-        parent_connection.close()
-        raise ChildTimeoutError(timeout_seconds)
+    deadline = monotonic() + timeout_seconds
 
     message: tuple[Any, ...] | None
-    if parent_connection.poll():
-        try:
-            message = parent_connection.recv()
-        except EOFError:
-            # The child died without calling send(): the pipe only looks
-            # ready because the read end hit EOF.
-            message = None
-    else:
-        message = None
-    parent_connection.close()
+    try:
+        while True:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                _stop(child, terminate_grace_seconds)
+                raise ChildTimeoutError(timeout_seconds)
+            ready = wait([parent_connection, child.sentinel], timeout=remaining)
+            if parent_connection in ready:
+                # Read now, before joining: a large result only finishes
+                # sending once the parent drains the pipe.
+                message = _receive(parent_connection)
+                break
+            if child.sentinel in ready:
+                # The child exited; a message may have raced the exit.
+                message = (
+                    _receive(parent_connection) if parent_connection.poll() else None
+                )
+                break
+            # Nothing ready: the deadline passed; the loop head decides.
+    finally:
+        parent_connection.close()
+
+    child.join(timeout=terminate_grace_seconds)
+    if child.is_alive():
+        _stop(child, terminate_grace_seconds)
 
     if message is None:
         raise ChildFailedError(
