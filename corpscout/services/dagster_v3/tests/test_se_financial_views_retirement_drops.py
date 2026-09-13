@@ -73,6 +73,11 @@ def test_the_precheck_gates_on_zero_readers_the_engine_the_counts_and_the_repoin
     sql = PRECHECK.read_text(encoding="utf-8")
     assert "count() = 0 AS no_readers" in sql and "(FROM|JOIN)" in sql
     assert "engine" in sql and "FROM system.tables" in sql
+    # Gate 1b: the backoffice reads the views at request time, invisible to system.tables.
+    assert "FROM system.query_log" in sql
+    assert "hasAny(tables, ['corpscout.se_financials_bolagsverket_current', 'corpscout.se_financials_esef_current'])" in sql
+    assert "log_comment != 'se_financial_views_retirement'" in sql
+    assert sql.count("SETTINGS log_comment = 'se_financial_views_retirement'") == 2
     for view in ("bolagsverket", "esef"):
         assert f"SELECT count() AS se_financials_{view}_current_rows" in sql
         assert f"FROM corpscout.se_financials_{view}_current" in sql

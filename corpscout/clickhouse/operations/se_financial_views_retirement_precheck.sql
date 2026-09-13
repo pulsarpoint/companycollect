@@ -15,6 +15,23 @@ WHERE database = 'corpscout'
   AND match(create_table_query,
       '(FROM|JOIN)\\s+(corpscout\\.)?(se_financials_bolagsverket_current|se_financials_esef_current)([^_a-zA-Z0-9]|$)');
 
+-- Gate 1b: nothing QUERIED either view in the retained query log. The backoffice reads the
+-- views at request time (queries.server.ts until slice 4b), which system.tables cannot see,
+-- so this is the gate that catches a reader that still exists. Expect no_recent_readers = 1
+-- and a log_window_start older than the last backoffice session that matters. The count
+-- statements of Gate 2 below tag themselves with a log_comment and are excluded here, so
+-- running this precheck twice does not trip its own gate.
+SELECT
+    count() = 0 AS no_recent_readers,
+    count() AS reader_queries,
+    min(event_time) AS log_window_start,
+    groupUniqArray(3)(substring(query, 1, 160)) AS sample
+FROM system.query_log
+WHERE type = 'QueryFinish'
+  AND event_date >= today() - 30
+  AND log_comment != 'se_financial_views_retirement'
+  AND hasAny(tables, ['corpscout.se_financials_bolagsverket_current', 'corpscout.se_financials_esef_current']);
+
 -- Gate 2: engine of both objects about to go (expect View, View) and their row counts, so
 -- the ledger records a real number for every object destroyed. total_rows is NULL for a
 -- plain View, which is why the two SELECT count() follow.
@@ -24,9 +41,9 @@ WHERE database = 'corpscout'
   AND name IN ('se_financials_bolagsverket_current', 'se_financials_esef_current')
 ORDER BY name;
 
-SELECT count() AS se_financials_bolagsverket_current_rows FROM corpscout.se_financials_bolagsverket_current;
+SELECT count() AS se_financials_bolagsverket_current_rows FROM corpscout.se_financials_bolagsverket_current SETTINGS log_comment = 'se_financial_views_retirement';
 
-SELECT count() AS se_financials_esef_current_rows FROM corpscout.se_financials_esef_current;
+SELECT count() AS se_financials_esef_current_rows FROM corpscout.se_financials_esef_current SETTINGS log_comment = 'se_financial_views_retirement';
 
 -- Gate 3: the entity that replaced them is live and read by the serving view (migration
 -- 000404), and the view is healthy at its last refresh. If serving_reads_entity is 0, 000404
