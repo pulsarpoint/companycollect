@@ -489,7 +489,7 @@ def _script(*, join_use_nulls: int) -> str:
         # The financial entity's main table (migration 000401) -- read FINAL, active rows only;
         # only the columns the three financial IN-subqueries touch. ReplacingMergeTree so the
         # stub accepts the FINAL modifier the real engine does.
-        "CREATE TABLE corpscout.se_company_financial (company_id String, sources Array(String), active UInt8, scope String) ENGINE = ReplacingMergeTree ORDER BY company_id;",
+        "CREATE TABLE corpscout.se_company_financial (company_id String, sources Array(LowCardinality(String)), active UInt8, scope String) ENGINE = ReplacingMergeTree ORDER BY company_id;",
         "CREATE TABLE corpscout.se_financial_reports (company_id String) ENGINE = MergeTree ORDER BY company_id;",
         # The person entity's main table (migration 000396, renamed by 000398) -- read
         # FINAL, active rows only. Only the three columns the serving SELECT's IN-subqueries
@@ -511,10 +511,13 @@ def _script(*, join_use_nulls: int) -> str:
         # period is ESEF-sourced and WORKPLACE_ONLY's is the restated Bolagsverket column, so
         # each register-specific arm is proven on its own; UNGEOCODED's only period is
         # hidden (active 0) and carries esef, which must light neither has_financial nor E.
+        # VISITING's only period is consolidated and ESEF-sourced: the flags carry no scope
+        # filter by spec, so it lights has_financial and E.
         f"INSERT INTO corpscout.se_company_financial VALUES "
         f"('{PRECISE}', ['bolagsverket', 'ratsit'], 1, 'standalone'), "
         f"('{NOADDRESS}', ['esef'], 1, 'standalone'), "
         f"('{WORKPLACE_ONLY}', ['bolagsverket_comparative'], 1, 'standalone'), "
+        f"('{VISITING}', ['esef'], 1, 'consolidated'), "
         f"('{UNGEOCODED}', ['esef', 'ratsit'], 0, 'standalone');",
         f"INSERT INTO corpscout.se_financial_reports VALUES ('{COARSE}');",
         f"INSERT INTO corpscout.se_company_person VALUES ('{PRECISE}', ['esef'], 1);",
@@ -613,6 +616,7 @@ def test_presence_flags_come_from_the_child_tables(rows: dict[str, dict]) -> Non
     assert rows[PRECISE]["has_financial"] == 1
     assert rows[NOADDRESS]["has_financial"] == 1
     assert rows[WORKPLACE_ONLY]["has_financial"] == 1
+    assert rows[VISITING]["has_financial"] == 1
     assert rows[COARSE]["has_financial"] == 1
     assert rows[UNGEOCODED]["has_financial"] == 0
     assert rows[POSTAL_BOX]["has_financial"] == 0
@@ -684,6 +688,7 @@ def test_source_flags_or_their_arms_together(rows: dict[str, dict]) -> None:
     # description, no LEI, no person); a HIDDEN esef period (UNGEOCODED) lights nothing.
     assert rows[PRECISE]["source_esef"] == 1
     assert rows[NOADDRESS]["source_esef"] == 1
+    assert rows[VISITING]["source_esef"] == 1
     assert rows[NOADDRESS]["has_people"] == 0
     assert rows[UNGEOCODED]["source_esef"] == 0
     assert rows[COARSE]["source_esef"] == 0
