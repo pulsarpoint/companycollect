@@ -465,6 +465,13 @@ _ESEF_DOCUMENT_COMPANY_INFORMATION_VIEW_COLUMNS = (
     *ESEF_DOCUMENT_COMPANY_INFORMATION_EXPORT_COLUMNS[1:],
     "resolved_at",
 )
+_ESEF_DOMAINS_VIEW_COLUMNS = (
+    ESEF_DOMAINS_EXPORT_COLUMNS[0],
+    ESEF_DOMAINS_EXPORT_COLUMNS[1],
+    "source_record_uid",
+    *ESEF_DOMAINS_EXPORT_COLUMNS[2:],
+    "resolved_at",
+)
 
 SE_ESEF_VIEWS: tuple[SeEsefView, ...] = (
     SeEsefView("esef_filings", _ESEF_FILINGS_COLUMNS, final=True),
@@ -475,4 +482,5 @@ SE_ESEF_VIEWS: tuple[SeEsefView, ...] = (
     SeEsefView("esef_document_people", (*ESEF_DOCUMENT_PEOPLE_COLUMNS, "person_profile_hash", "person_role_hash"), final=True),
     SeEsefView("esef_document_business_items", ESEF_DOCUMENT_BUSINESS_ITEM_COLUMNS, final=True),
     SeEsefView("esef_document_group_relationships", ESEF_DOCUMENT_GROUP_RELATIONSHIP_COLUMNS, final=True),
+    SeEsefView("esef_domains", _ESEF_DOMAINS_VIEW_COLUMNS, final=True),
 )
