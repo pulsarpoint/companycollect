@@ -58,6 +58,19 @@ then:
 The report package and the versioned artifact are the replayable source. There
 is no second raw-fact or rendered-report archive path.
 
+A parser schema bump (`ARTIFACT_SCHEMA_VERSION`) leaves every already-processed
+week whose documents predate the new version stale under the reuse rule above.
+These weeks drain themselves: `esef_stale_weeks_sensor` polls
+`corpscout.esef_disclosures` for processed weeks with a stored
+`artifact_schema_version` below the parser's current version and launches
+`esef_filings_refresh_job` partition runs for them, oldest first, two in
+flight at a time, with 8 parse workers per run. A week whose run fails is left
+alone for a one-hour cooldown before the sensor retries it, so a transient
+failure isn't retried every tick. No manual backfill is needed after a schema
+bump -- the sensor is the scheduled-time mechanism the owner asked for
+("when we change the parsing version we should re-parse on the next run; we
+can do that on scheduled time"), and it depends on nothing outside the server.
+
 ## Independent DuckDB assets
 
 The weekly result object fans out to four independently materializable assets:
