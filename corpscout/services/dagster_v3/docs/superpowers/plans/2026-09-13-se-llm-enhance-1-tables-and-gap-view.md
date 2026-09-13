@@ -146,7 +146,7 @@ The ALTER's formatting is load-bearing for that replay: `_column_changes` matche
 - Consumes: `tables.QUALIFIED_MAIN_TABLE`, `tables.QUALIFIED_NORMALIZED_TABLE`, `tables.QUALIFIED_MATCH_TABLE`, `tables.QUALIFIED_MATCH_STATE_TABLE`, `match.MACHINE_SOURCES`, `fold.FOLDABLE_STATUS`, `fold.MATCH_THRESHOLD`, `tests/se_company_ddl.py::table_block` and `::declared_columns`.
 - Produces: everything in the Interfaces block above.
 
-- [ ] **Step 1: Gate — prove 000406 is free on `main` AND on the prod ledger before anything is written**
+- [x] **Step 1: Gate — prove 000406 is free on `main` AND on the prod ledger before anything is written**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-basic-info
@@ -168,7 +168,7 @@ bash $S/ch.sh $S/llm1_gate.sql
 
 Expected: `404	0`. A number **at or above 406** means the name is taken on prod — renumber as above. A `dirty = 1` at the head means a previous migration failed mid-flight: stop and tell the owner, never migrate over a dirty ledger.
 
-- [ ] **Step 2: Write the failing pin test**
+- [x] **Step 2: Write the failing pin test**
 
 Create `corpscout/services/dagster_v3/tests/test_se_company_person_match_gap_view.py`:
 
@@ -425,7 +425,7 @@ def test_the_select_carries_the_same_refresh_bounding_settings_since_000347() ->
     assert _view_body(_sql("up")).endswith(settings_block)
 ```
 
-- [ ] **Step 3: Run it to watch it fail on the missing builder**
+- [x] **Step 3: Run it to watch it fail on the missing builder**
 
 ```bash
 cd corpscout/services/dagster_v3
@@ -435,7 +435,7 @@ uv run --frozen --no-sync pytest tests/test_se_company_person_match_gap_view.py 
 
 Expected: a collection error — `ImportError: cannot import name 'build_se_company_person_match_gap_sql' from 'dagster_v3.defs.se_company.person.tables'`.
 
-- [ ] **Step 4: Add the names, the widened tuples and the builder to `tables.py`**
+- [x] **Step 4: Add the names, the widened tuples and the builder to `tables.py`**
 
 In `src/dagster_v3/defs/se_company/person/tables.py`, replace the module docstring's final sentence (the two lines beginning `Slice 5 added the derived role view`) and the closing `"""` with — this block is a docstring fragment, not a statement:
 
@@ -674,7 +674,7 @@ SETTINGS join_algorithm = 'grace_hash,hash',
     max_memory_usage = 12884901888"""
 ```
 
-- [ ] **Step 5: Give `match.py`'s two row builders the new column**
+- [x] **Step 5: Give `match.py`'s two row builders the new column**
 
 `match_row` and `match_state_row` build their tuple as `tuple(values[column] for column in tables.MATCH_COLUMNS)`, so a column added to the tuple without a value raises `KeyError`. In `src/dagster_v3/defs/se_company/person/match.py`, add one keyword-only parameter and one dict entry to each — nothing else in the file moves.
 
@@ -718,7 +718,7 @@ and in its `values` dict, after `"source_run_id": source_run_id, "matched_at": m
         "request_id": request_id,
 ```
 
-- [ ] **Step 6: Run the pin test again to watch it fail on the missing migration**
+- [x] **Step 6: Run the pin test again to watch it fail on the missing migration**
 
 ```bash
 cd corpscout/services/dagster_v3
@@ -728,7 +728,7 @@ uv run --frozen --no-sync pytest tests/test_se_company_person_match_gap_view.py 
 
 Expected: every test in the file errors with `FileNotFoundError: … 000406_corpscout_se_company_person_llm_enhance.up.sql` — the builder now imports, and the migration is what is missing.
 
-- [ ] **Step 7: Write the migration**
+- [x] **Step 7: Write the migration**
 
 Create `corpscout/clickhouse/migrations/000406_corpscout_se_company_person_llm_enhance.up.sql`. **No `;` may appear in any `--` comment**, the file must end with a statement, and the `ADD COLUMN` clauses must each sit alone on their line (`tests/se_company_ddl.py::_column_changes` replays them line by line):
 
@@ -1002,7 +1002,7 @@ ALTER TABLE corpscout.se_company_person_match_state
     DROP COLUMN IF EXISTS request_id;
 ```
 
-- [ ] **Step 8: Run the pin test to green**
+- [x] **Step 8: Run the pin test to green**
 
 ```bash
 cd corpscout/services/dagster_v3
@@ -1012,7 +1012,7 @@ uv run --frozen --no-sync pytest tests/test_se_company_person_match_gap_view.py 
 
 Expected: **10 passed**. A failure in `test_the_view_body_is_the_builder_render_and_has_not_drifted_from_it` means the migration's SELECT and the builder's render differ — fix the MIGRATION by pasting the render, never the builder.
 
-- [ ] **Step 9: Watch the ledger and table suites break, then register 000406**
+- [x] **Step 9: Watch the ledger and table suites break, then register 000406**
 
 ```bash
 cd corpscout/services/dagster_v3
@@ -1091,7 +1091,7 @@ def test_000406_pairs_the_llm_queue_and_response_and_widens_the_match_sort_key()
     assert "ALTER TABLE corpscout.se_company_person_match\n" not in executable_down
 ```
 
-- [ ] **Step 10: Pin the two new tables and the view's constants beside the other DDL pins**
+- [x] **Step 10: Pin the two new tables and the view's constants beside the other DDL pins**
 
 In `tests/test_se_company_person_tables.py`, update the two tuple literals inside `test_the_match_tables_join_the_entitys_column_tuples` so they end with `"request_id"`:
 
@@ -1208,7 +1208,7 @@ def test_the_match_gap_view_constants_describe_the_slice_1_view() -> None:
         assert column in tables.MATCH_GAP_VIEW_COLUMNS, column
 ```
 
-- [ ] **Step 11: Replay 000406's alters in the fold's clickhouse-local test**
+- [x] **Step 11: Replay 000406's alters in the fold's clickhouse-local test**
 
 `tests/test_se_company_person_fold_clickhouse_local.py` builds its match INSERTs from `tables.MATCH_COLUMNS` / `MATCH_STATE_COLUMNS` but replays only 000396's and 000399's `CREATE TABLE`s, so it now names a column its fixture schema does not have. Add the migration beside the other two, near `MATCH_MIGRATION_FILE`:
 
@@ -1267,7 +1267,7 @@ and `_match_state_insert`:
 
 The empty string is what every pre-000406 row carries and what the match asset keeps writing: this fixture is v1's world, and the fold must behave in it exactly as it did before the key grew.
 
-- [ ] **Step 12: Run everything this task touches, then commit**
+- [x] **Step 12: Run everything this task touches, then commit**
 
 ```bash
 cd corpscout/services/dagster_v3
@@ -1340,7 +1340,7 @@ git commit -F /tmp/llm-enhance-task1.txt
 
 > **This is the test spec section 12 calls for before prod.** It proves the combined `ALTER` against a POPULATED pair table, and it proves both of section 5.1's definitions and all four of its exclusions. What it does NOT prove is slice 2's business: `batch.py::match_pairs_sql()` is untouched here, so "two versions of a pair come back as ONE row carrying the higher confidence" is slice 2's test, in `tests/test_se_company_person_fold_clickhouse_local.py`, where spec section 11 puts it.
 
-- [ ] **Step 1: Write the proof**
+- [x] **Step 1: Write the proof**
 
 Create `corpscout/services/dagster_v3/tests/test_se_company_person_match_gap_clickhouse_local.py`:
 
@@ -1768,7 +1768,7 @@ def test_the_gap_view_finds_exactly_the_two_open_pairs(run) -> None:
     assert all(len(row) == 4 and row[3] for row in run["gap"])
 ```
 
-- [ ] **Step 2: Run it**
+- [x] **Step 2: Run it**
 
 ```bash
 cd corpscout/services/dagster_v3
@@ -1781,7 +1781,7 @@ Expected: **10 passed** (five tests × two `join_use_nulls` settings). The first
 If `test_the_combined_alter_widens_the_sort_key_on_a_populated_table` fails with
 `Code: 36 … Newly added column request_id has a default expression`, the migration has re-acquired a `DEFAULT ''` on the pair table's `ADD COLUMN`. Remove the clause; the stored value is the same.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 cd corpscout/services/dagster_v3
@@ -1839,7 +1839,7 @@ git commit -F /tmp/llm-enhance-task2.txt
 >
 > **If one happens anyway it must come AFTER the migration**, and that ordering is not negotiable: `match.match_insert_sql()` renders its column list from `tables.MATCH_COLUMNS`, so deployed-but-unmigrated code would insert into a `request_id` column that does not exist yet and every `se_company_person_match` run would fail. Migrated-but-undeployed is harmless in both directions (the old code writes 15 columns, the 16th takes its zero value). The `se_company_person_match` weekly is STOPPED and stays so, which removes the window entirely — verify that in Step 2 rather than assuming it.
 
-- [ ] **Step 1: Re-check the number, review, merge**
+- [x] **Step 1: Re-check the number, review, merge**
 
 Spec section 12's standing rule, run again at merge time — `main` moves daily and another session holds `000405_corpscout_esef_domains`:
 
@@ -1866,7 +1866,7 @@ uv run --frozen --no-sync pytest tests/test_clickhouse_migrations.py \
 
 Review the branch end to end (`git diff main...se-llm-enhance`), then the owner merges to `main`. If the main checkout sits on another branch, merge through a worktree that has `main` checked out (memory `se-worktree-deploy-recipe`).
 
-- [ ] **Step 2: Confirm prod's state before anything moves**
+- [x] **Step 2: Confirm prod's state before anything moves**
 
 ```bash
 S=/private/tmp/claude-501/-Users-graovic-pulsarpoint-ppoint-companycollect/62b23c62-a06d-4dca-84a0-a4a0f3f72968/scratchpad/basic-info-0
@@ -1922,7 +1922,7 @@ ssh dagster "curl -s -H 'content-type: application/json' --data-binary @- http:/
 
 Expected: `se_company_person_weekly … STOPPED`. **RUNNING here means stop and tell the owner.**
 
-- [ ] **Step 3: Apply the migration from the merged `main` checkout**
+- [x] **Step 3: Apply the migration from the merged `main` checkout**
 
 No refresh window to dodge: this migration touches no existing view, and `se_companies_serving` (`:45`) is not named anywhere in it. The alter is metadata-only, so there is no window to dodge on the pair table either — but run it outside `:20` and `:45` anyway, to keep the readouts clean.
 
@@ -1949,7 +1949,7 @@ bash $S/ch.sh $S/llm1_landed.sql
 
 All three names present and the key already four columns → `make -s -C corpscout clickhouse-migrate-force VERSION=406`. Anything missing → re-run the up-one; every statement is `IF NOT EXISTS`, so a partial replay is safe.
 
-- [ ] **Step 4: Read the alter back**
+- [x] **Step 4: Read the alter back**
 
 ```bash
 cat > $S/llm1_after.sql <<'SQL'
@@ -1981,7 +1981,7 @@ bash $S/ch.sh $S/llm1_after.sql | tee $S/llm1_after.out
 
 Expected: `company_id, candidate_a, candidate_b, request_id` on the pair table and `(company_id)` unchanged on the state table; `pairs` and `state_rows` **exactly** the numbers step 2 read, with `empty_request` equal to each count; the part count, row count and on-disk size unchanged from step 2(c) — **that equality is the proof the `MODIFY ORDER BY` was metadata-only**; both new tables present with 0 rows. A part count or byte size that MOVED means ClickHouse rewrote the table: record it, it is a finding worth the spec's risk note being updated.
 
-- [ ] **Step 5: Force the view's first build and TIME it**
+- [x] **Step 5: Force the view's first build and TIME it**
 
 The view is empty until this runs (or until the next `:30` tick, whichever comes first). Note the wall clock before and after — spec section 12 puts a ten-minute ceiling on this build.
 
@@ -2005,14 +2005,14 @@ bash $S/ch.sh $S/llm1_refresh_poll.sql
 
 If `exception` is `MEMORY_LIMIT_EXCEEDED` or a join error, do NOT edit the applied migration and do NOT raise the cap: spec section 12's ruling is that the refresh moves to every 6 hours, which is a follow-up migration, and the owner decides.
 
-- [ ] **Step 6: The first gap baseline — the numbers this slice exists to produce**
+- [x] **Step 6: The first gap baseline — the numbers this slice exists to produce**
 
 ```bash
 cat > $S/llm1_baseline.sql <<'SQL'
 -- (a) the headline baseline
 SELECT count() AS companies_with_a_gap,
-       sum(call_name_pairs) AS call_name_pairs,
-       sum(double_surname_pairs) AS double_surname_pairs,
+       sum(call_name_pairs) AS call_name_pairs_total,
+       sum(double_surname_pairs) AS double_surname_pairs_total,
        countIf(call_name_pairs > 0) AS companies_call_name,
        countIf(double_surname_pairs > 0) AS companies_double_surname,
        countIf(call_name_pairs > 0 AND double_surname_pairs > 0) AS companies_both,
@@ -2060,7 +2060,11 @@ Expected shape, not expected values: (a) a five-figure company count with `call_
 
 **If the numbers are absurd** (zero companies, or more than a few hundred thousand), do not rerun blindly: read (d) first, then re-run the same SELECT live against the four tables and compare — a difference between the stored view and a live run of its own SELECT is the one thing the refresh exists to prevent.
 
-- [ ] **Step 7: Deploy only if the owner wants the constants on the host now**
+> **Correction (2026-09-13 prod run):** the query-log readout of this step matches the status polls, not the
+> refresh. Read the refresh as the `QueryFinish` row with `query_kind = 'Insert'` into the view's
+> `.tmp.inner_id…` table in the refresh window (it was 425.6 s, peak 2.05 GiB).
+
+- [x] **Step 7: Deploy only if the owner wants the constants on the host now**
 
 Not required by this slice (see the box at the top of this task). If it is done anyway, it happens AFTER step 3, from a **pristine worktree at the merge commit** — `light_sync` rsyncs the working tree with `--delete-after`, so a dirty tree ships another session's WIP:
 
@@ -2082,7 +2086,7 @@ cd ansible && ANSIBLE_BECOME_TIMEOUT=60 ansible-playbook -i inventory.ini light_
 
 The `.env` copy is mandatory — the scratch worktree's gitignored `.env` is deleted by the overnight `/private/tmp` cleanup, and without it `dg utils refresh-defs-state` and `dg check defs` fail with a cryptic YAML/column error and ansible stops at its localhost pre-task. The dbt-state refresh is mandatory too (the playbook asserts the manifests exist, never that they are fresh). `RC=` is captured explicitly — piping the playbook to `tail` masks its exit code. The `company_domain_suggestions` adapter traceback during `refresh-defs-state` is known non-fatal noise.
 
-- [ ] **Step 8: Record and archive**
+- [x] **Step 8: Record and archive**
 
 - Append the slice-1 **Shipped** record to spec **section 14 slice 1**: the migration number it actually got; the two new tables and their key; the pair table's widened sorting key **and the deviation that got it there** (the `DEFAULT ''` clause spec section 4.3 writes is refused on a key column with code 36, so the migration omits it and the stored value is unchanged); the before/after row, part and byte counts proving the alter was metadata-only; the view's offset, its first-build duration and peak memory; the **first gap baseline** (companies with a gap, call-name pairs, double-surname pairs, the split and the worst company) as the new baseline the 3,258 / 2,380 figures are explicitly NOT compared against; the sample of 20 the owner eyeballed; and the consequence this slice absorbed (`MATCH_COLUMNS` / `MATCH_STATE_COLUMNS` gained `request_id` because `se_company_ddl.declared_columns` replays ALTERs, and `match_row` / `match_state_row` gained a defaulted keyword).
 - Note explicitly whether the Dagster host was deployed, and that the ordering rule is migrate-then-deploy.
