@@ -212,6 +212,36 @@ export function SeCompanyEsefView({
         </Card>
       ) : null}
 
+      {detail.domains.length > 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Websites</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ul className="flex flex-col gap-1">
+              {detail.domains.map((domain) => (
+                <li
+                  key={`${domain.fiscalYear}-${domain.registrableDomain}`}
+                  className="flex flex-wrap items-center gap-2"
+                >
+                  <span>{domain.registrableDomain}</span>
+                  {domain.roles.map((role) => (
+                    <Badge key={role} variant="outline">
+                      {role}
+                    </Badge>
+                  ))}
+                  <Badge variant="outline">fiscal {domain.fiscalYear}</Badge>
+                  <Badge variant="outline">
+                    {domain.evidenceCount} evidence
+                    {domain.corroborated ? ", corroborated" : ""}
+                  </Badge>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      ) : null}
+
       {detail.contacts.length > 0 ? (
         <Card>
           <CardHeader>

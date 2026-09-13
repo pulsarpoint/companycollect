@@ -10,6 +10,7 @@ import {
   ESEF_TAB_BUSINESS_ITEMS_SQL,
   ESEF_TAB_CONTACTS_SQL,
   ESEF_TAB_RELATIONSHIPS_SQL,
+  ESEF_TAB_DOMAINS_SQL,
   loadSeCompanyEsef,
 } from "~/lib/se-company-esef.server";
 
@@ -55,6 +56,21 @@ describe("SQL contracts", () => {
     expect(ESEF_TAB_INFORMATION_SQL).toContain(
       "LIMIT 1 BY source_document_id",
     );
+    expect(ESEF_TAB_DOMAINS_SQL).toContain("FROM corpscout.se_esef_domains");
+    expect(ESEF_TAB_DOMAINS_SQL).toContain("company_id = {companyId:String}");
+    expect(ESEF_TAB_DOMAINS_SQL).toContain("extraction_status = 'ok'");
+    expect(ESEF_TAB_DOMAINS_SQL).not.toContain("FINAL");
+    // Two filings in one fiscal year collapse to one row per domain.
+    expect(ESEF_TAB_DOMAINS_SQL).toContain(
+      "GROUP BY fiscal_year, registrable_domain",
+    );
+    expect(ESEF_TAB_DOMAINS_SQL).toContain(
+      "toJSONString(arrayDistinct(arrayFlatten(groupArray(JSONExtract(roles_json, 'Array(String)'))))) AS roles_json",
+    );
+    expect(ESEF_TAB_DOMAINS_SQL).toContain("max(evidence_count) AS evidence_count");
+    expect(ESEF_TAB_DOMAINS_SQL).toContain("max(corroborated) AS corroborated");
+    // Websites are domains now (se_esef_domains); the contacts card shows the rest.
+    expect(ESEF_TAB_CONTACTS_SQL).toContain("candidate_kind != 'website'");
   });
 });
 
@@ -123,7 +139,16 @@ describe("loadSeCompanyEsef", () => {
           registrable_domain: "handelsbanken.se",
         },
       ])
-      .mockResolvedValueOnce([]);
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          fiscal_year: 2024,
+          registrable_domain: "handelsbanken.com",
+          roles_json: '["company_website","report_disclosure"]',
+          evidence_count: 19,
+          corroborated: 1,
+        },
+      ]);
 
     const detail = await loadSeCompanyEsef("5020077862");
     expect(detail?.filings[0].noteCount).toBe(144);
@@ -133,5 +158,14 @@ describe("loadSeCompanyEsef", () => {
       "sustainability@handelsbanken.se",
     );
     expect(detail?.relationships).toEqual([]);
+    expect(detail?.domains).toEqual([
+      {
+        fiscalYear: 2024,
+        registrableDomain: "handelsbanken.com",
+        roles: ["company_website", "report_disclosure"],
+        evidenceCount: 19,
+        corroborated: true,
+      },
+    ]);
   });
 });

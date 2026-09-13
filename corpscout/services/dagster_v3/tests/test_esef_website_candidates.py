@@ -13,12 +13,14 @@ import pytest
 from lxml import etree
 
 from dagster_v3.defs.esef_filings.website_candidates import (
+    WEBSITE_FACT_CONCEPTS,
     TaggedWebsiteValue,
     _block_context,
     _block_website_values,
     _visible_blocks,
     _website_values,
     extract_website_candidates,
+    extract_website_candidates_with_corroboration,
 )
 
 # The real 2022 Handelsbanken filing (LEI NHBDILHZTYCNBV5UYZ31) used for the
@@ -374,3 +376,58 @@ def test_end_to_end_handelsbanken_2022_report_website_candidates() -> None:
 
     assert "banken.com" not in by_domain
     assert "bankenfonder.se" not in by_domain
+
+
+def test_corroboration_set_names_tagged_email_and_repeated_domains(
+    tmp_path: Path,
+) -> None:
+    report = tmp_path / "report.xhtml"
+    report.write_text(
+        """<html xmlns="http://www.w3.org/1999/xhtml"><body>
+        <p>Mer information finns på www.example.com.</p>
+        <p>Delårsrapporter publiceras på www.example.com/ir.</p>
+        <p>Läs mer på www.once-only.org om ramverket.</p>
+        </body></html>""",
+        encoding="utf-8",
+    )
+    report_paths = {"reports/report.xhtml": report}
+    tagged = [
+        TaggedWebsiteValue(
+            report_member="",
+            concept_local_name="WebsitesOfLegalEntity",
+            value="https://www.tagged.example.net",
+        )
+    ]
+
+    candidates, corroborated = extract_website_candidates_with_corroboration(
+        report_paths,
+        tagged_values=tagged,
+        known_email_domains=["mail.example.se"],
+    )
+
+    assert corroborated == frozenset({"example.com", "example.net", "example.se"})
+    assert "once-only.org" not in corroborated
+    assert [c.registrable_domain for c in candidates] == [
+        "example.com",
+        "example.net",
+        "once-only.org",
+    ]
+    tagged_candidate = candidates[1]
+    assert tagged_candidate.suggested_roles == ["company_website"]
+    # The plain accessor is the same extraction.
+    assert (
+        extract_website_candidates(
+            report_paths, tagged_values=tagged, known_email_domains=["mail.example.se"]
+        )
+        == candidates
+    )
+
+
+def test_website_fact_concepts_are_the_three_tagged_website_roles() -> None:
+    assert WEBSITE_FACT_CONCEPTS == frozenset(
+        {
+            "WebsitesOfLegalEntity",
+            "WebsiteAtWhichTheFinancialStatementsOfTheEntityAreDisclosedTogetherWithTheAuditorsReport",
+            "WebsiteOfTheAuditEntity",
+        }
+    )

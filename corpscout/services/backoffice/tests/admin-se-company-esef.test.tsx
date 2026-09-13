@@ -76,6 +76,7 @@ const DETAIL = {
     },
   ],
   relationships: [],
+  domains: [],
 };
 
 const DETAIL_WITH_INVALID_JSON = {

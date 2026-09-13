@@ -23,7 +23,7 @@
 - `ESEF_DOMAINS_EXTRACTOR_VERSION = "esef-domains-v1"` — the only version constant of this extractor.
 - Light modules (`defs/common/child_timeout.py`, `defs/esef_filings/report_package.py`, `defs/esef_filings/domains_extraction.py`) must not import `dagster`, `arelle` or `dagster_v3.defs.esef_filings.segment_parser`/`segment_assets` (a subprocess test pins this).
 - The artifact parser's output does not change: `EsefWebsiteCandidate` keeps its five fields; `segment_parser.py` keeps the names it imports today (`_extract_report_package`, `_contains_inline_xbrl_namespace`, `MAX_PACKAGE_*`).
-- Migration number `000404_corpscout_esef_domains` — before merge, re-check `ls corpscout/clickhouse/migrations | tail -3` and the prod ledger; renumber if another 000404 landed first.
+- Migration number `000405_corpscout_esef_domains` — before merge, re-check `ls corpscout/clickhouse/migrations | tail -3` and the prod ledger; renumber if another 000405 landed first (000404 went to the SE financial track, applied on prod 2026-09-13).
 - Tests: `uv run pytest <files> -q`. Definitions check: `WEBTECH_API_URL=http://localhost:1 WEBTECH_S3_PATH=s3://bucket/prefix uv run dg check defs`. Lint: `uv run ruff check <files>` and `uv run ruff format <files>`.
 - Owner-run steps (migration apply, deploy, prod launches) are NOT part of any task: the plan ends with a rollout checklist the owner executes.
 
@@ -1060,12 +1060,12 @@ git commit -m "feat(esef): per-document domain extraction in a killable child"
 
 ---
 
-### Task 4: Table constants, migration 000404 and the `se_esef_domains` view
+### Task 4: Table constants, migration 000405 and the `se_esef_domains` view
 
 **Files:**
 - Modify: `corpscout/services/dagster_v3/src/dagster_v3/defs/esef_filings/tables.py` (table constants near lines 28-51; export tuples near line 247; `SE_ESEF_VIEWS` at lines 442-451)
-- Create: `corpscout/clickhouse/migrations/000404_corpscout_esef_domains.up.sql`
-- Create: `corpscout/clickhouse/migrations/000404_corpscout_esef_domains.down.sql`
+- Create: `corpscout/clickhouse/migrations/000405_corpscout_esef_domains.up.sql`
+- Create: `corpscout/clickhouse/migrations/000405_corpscout_esef_domains.down.sql`
 - Modify: `corpscout/services/dagster_v3/tests/test_esef_country_views.py` (the view list at lines 19-25; the 000395 pin at lines 50-54)
 - Modify: `corpscout/services/dagster_v3/tests/test_clickhouse_migrations.py` (`EXPECTED_MIGRATIONS` after line 419)
 - Test: `corpscout/services/dagster_v3/tests/test_esef_domains_tables.py`
@@ -1078,7 +1078,7 @@ git commit -m "feat(esef): per-document domain extraction in a killable child"
 `tests/test_esef_domains_tables.py`:
 
 ```python
-"""corpscout.esef_domains (migration 000404): the export-column tuple pins the
+"""corpscout.esef_domains (migration 000405): the export-column tuple pins the
 CREATE TABLE's column order, the view entry renders into the same migration."""
 
 import re
@@ -1088,8 +1088,8 @@ from dagster_v3.defs.esef_filings import tables
 from dagster_v3.defs.esef_filings.country_views import build_se_esef_view_sql
 
 MIGRATIONS = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
-UP = MIGRATIONS / "000404_corpscout_esef_domains.up.sql"
-DOWN = MIGRATIONS / "000404_corpscout_esef_domains.down.sql"
+UP = MIGRATIONS / "000405_corpscout_esef_domains.up.sql"
+DOWN = MIGRATIONS / "000405_corpscout_esef_domains.down.sql"
 
 
 def _normalized(sql: str) -> str:
@@ -1167,7 +1167,7 @@ After `ESEF_DOCUMENT_PEOPLE_EXTRACTION_EXPORT_COLUMNS`:
 
 ```python
 # One row per (document, registrable domain) from the esef_domains extractor
-# (migration 000404, spec 2026-09-13), or one marker row per document without
+# (migration 000405, spec 2026-09-13), or one marker row per document without
 # domains. source_record_uid and resolved_at are DEFAULT-expression columns
 # there and never part of the INSERT tuple, so both are excluded from this list.
 ESEF_DOMAINS_EXPORT_COLUMNS = (
@@ -1218,7 +1218,7 @@ Render the view with:
 uv run python -c "from dagster_v3.defs.esef_filings import tables; from dagster_v3.defs.esef_filings.country_views import build_se_esef_view_sql; v = next(v for v in tables.SE_ESEF_VIEWS if v.table == 'esef_domains'); print(build_se_esef_view_sql(v) + ';')"
 ```
 
-`000404_corpscout_esef_domains.up.sql`:
+`000405_corpscout_esef_domains.up.sql`:
 
 ```sql
 CREATE DATABASE IF NOT EXISTS corpscout;
@@ -1265,12 +1265,12 @@ ORDER BY (lei, source_document_id, registrable_domain);
 <paste the rendered CREATE OR REPLACE VIEW statement here, ending with ;>
 ```
 
-`000404_corpscout_esef_domains.down.sql`:
+`000405_corpscout_esef_domains.down.sql`:
 
 ```sql
 CREATE DATABASE IF NOT EXISTS corpscout;
 
--- Undoes 000404. The extractor's asset (esef_domains_clickhouse) and sensor must be undeployed
+-- Undoes 000405. The extractor's asset (esef_domains_clickhouse) and sensor must be undeployed
 -- with it, or the next sensor tick fails on the missing table.
 DROP VIEW IF EXISTS corpscout.se_esef_domains;
 DROP TABLE IF EXISTS corpscout.esef_domains;
@@ -1278,14 +1278,14 @@ DROP TABLE IF EXISTS corpscout.esef_domains;
 
 - [ ] **Step 5: Update the existing pins**
 
-`tests/test_clickhouse_migrations.py`: add `"000404_corpscout_esef_domains",` after the 000403 entry of `EXPECTED_MIGRATIONS`.
+`tests/test_clickhouse_migrations.py`: add `"000405_corpscout_esef_domains",` after the 000403 entry of `EXPECTED_MIGRATIONS`.
 
 `tests/test_esef_country_views.py`: rename `test_eight_views_one_per_swedish_consumer` to `test_nine_views_one_per_swedish_consumer` and append `"se_esef_domains"` to the expected list. Replace `test_migration_000395_embeds_every_rendered_view` with:
 
 ```python
-MIGRATION_000404 = MIGRATION.parent / "000404_corpscout_esef_domains.up.sql"
+MIGRATION_000405 = MIGRATION.parent / "000405_corpscout_esef_domains.up.sql"
 # Views added after the country-agnostic cutover live in their own migration.
-VIEW_MIGRATIONS = {"se_esef_domains": MIGRATION_000404}
+VIEW_MIGRATIONS = {"se_esef_domains": MIGRATION_000405}
 
 
 def test_every_rendered_view_is_embedded_in_its_migration() -> None:
@@ -1310,13 +1310,13 @@ Expected: all pass.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add corpscout/clickhouse/migrations/000404_corpscout_esef_domains.up.sql \
-        corpscout/clickhouse/migrations/000404_corpscout_esef_domains.down.sql \
+git add corpscout/clickhouse/migrations/000405_corpscout_esef_domains.up.sql \
+        corpscout/clickhouse/migrations/000405_corpscout_esef_domains.down.sql \
         corpscout/services/dagster_v3/src/dagster_v3/defs/esef_filings/tables.py \
         corpscout/services/dagster_v3/tests/test_esef_domains_tables.py \
         corpscout/services/dagster_v3/tests/test_esef_country_views.py \
         corpscout/services/dagster_v3/tests/test_clickhouse_migrations.py
-git commit -m "feat(clickhouse): esef_domains table and se_esef_domains view (000404)"
+git commit -m "feat(clickhouse): esef_domains table and se_esef_domains view (000405)"
 ```
 
 ---
@@ -1696,7 +1696,7 @@ def replace_document_rows(
 
 First extractor of the documents-plus-independent-extractors architecture
 (spec 2026-09-13): one asset, one table (corpscout.esef_domains, migration
-000404), one version constant. It selects documents whose esef_domains rows
+000405), one version constant. It selects documents whose esef_domains rows
 are missing or carry another extractor version, streams each archived package
 from the object store into a process pool whose workers run the deterministic
 website extraction in a killable child, and replaces the table's rows batch
@@ -2824,7 +2824,7 @@ extractor: one asset, one table, one version constant, its own sensor.
 | Asset + job + selection SQL | `defs/esef_filings/domains_extractor.py` (`esef_domains_clickhouse`, `esef_domains_job`) |
 | Writer (stage + EXCHANGE, per document set) | `defs/esef_filings/document_rows.py` |
 | Sensor | `defs/esef_filings/domains_sensor.py` (`esef_domains_stale_sensor`, 30 min, one run of ≤ 5,000 documents at a time) |
-| Table + view | migration 000404: `corpscout.esef_domains`, `corpscout.se_esef_domains` |
+| Table + view | migration 000405: `corpscout.esef_domains`, `corpscout.se_esef_domains` |
 
 Stale = an available document (package archived, facts present, `period_end <= today()`)
 whose rows are missing or carry another `extractor_version`. Every attempted document leaves a
@@ -2892,10 +2892,10 @@ git commit -m "docs(esef): the extractor pattern and the esef_domains slice"
 
 ## Rollout (owner-run, after the final review and the merge to main)
 
-1. [ ] Re-check the migration number against main and the prod ledger (`ls corpscout/clickhouse/migrations | tail -3`; `SELECT version FROM corpscout.schema_migrations`); renumber before merging if 000404 is taken.
-2. [ ] `make clickhouse-migrate-up-one` (000404); verify `EXISTS TABLE corpscout.esef_domains` and `EXISTS VIEW corpscout.se_esef_domains`.
+1. [ ] Re-check the migration number against main and the prod ledger (`ls corpscout/clickhouse/migrations | tail -3`; `SELECT version FROM corpscout.schema_migrations`); renumber before merging if 000405 is taken.
+2. [ ] `make clickhouse-migrate-up-one` (000405); verify `EXISTS TABLE corpscout.esef_domains` and `EXISTS VIEW corpscout.se_esef_domains`.
 3. [ ] Deploy dagster_v3 from main: on the host `uv run --frozen --no-sync dg utils refresh-defs-state` (dbt source/model change), then `cd corpscout/services/dagster_v3/ansible && ANSIBLE_BECOME_TIMEOUT=60 ansible-playbook -i inventory.ini light_sync.yml`; confirm `esef_domains_clickhouse` and `esef_domains_stale_sensor` (RUNNING) appear in the UI. This deploy also ships the website-extraction fix (636f30042) to the weekly parse.
 4. [ ] Watch the first sensor run (≤ 5,000 documents, 4 workers): metadata `failed_document_count` / `timed_out_document_count` near zero; `SELECT extraction_status, count() FROM corpscout.esef_domains GROUP BY 1`.
 5. [ ] After the drain (`stale_document_count_sql()` → 0): verify Handelsbanken (5020077862) in `se_esef_domains` — `handelsbanken.com` with `company_website`, `handelsbanken.se`, `handelsbankenfonder.se`, `svanen.se`/`ipcc.ch` only as `external_reference`; `SELECT count() FROM corpscout.esef_domains WHERE registrable_domain IN ('banken.com', 'bankenfonder.se')` → 0.
-6. [ ] company_serving build + publish (the serving track's launch); verify no `esef_filing` row for Handelsbanken carries `banken.com` in `company_domains`.
+6. [ ] company_serving build + publish (the serving track's launch); verify against the current, active domains: `SELECT root_domain FROM corpscout.company_domain_current WHERE country_code = 'SE' AND company_id = '5020077862'` (or `company_domains FINAL` with `is_active = 1`) lists no `banken.com` / `bankenfonder.se`. Not plain `company_domains`: it keeps now-inactive rows with their old `source_names`.
 7. [ ] Backoffice: open the ESEF tab of 5020077862 locally, confirm the Websites card.
