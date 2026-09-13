@@ -93,10 +93,10 @@ ROWS = [
     # revenue (99 / 9900000).
     # C1: period_index 7 (fiscal_year 2016) has every amount and employee_count NULL -- must
     # be skipped, not written as a pseudo-tombstone.
-    # The v1 report 'c'*64 is NEWER than every v2 report and carries a DIFFERENT hash: without
-    # the report CTE's version filter argMax would pick it, the version-pinned join would find
-    # its v1 period, and A's 2023 revenue would read 77 -- so this row pins the CTE filter
-    # behaviourally, where the 'a'*64 v1 duplicate above pins only the join.
+    # the 'c' v1 report is newer than every v2 report under a different hash; without the CTE's
+    # version filter argMax picks it, the version-pinned join finds no v2 period under it, and A
+    # vanishes from the Ratsit live rows, which the scope assertion catches -- so this row pins
+    # the CTE filter behaviourally, where the 'a'*64 v1 duplicate pins only the join.
     f"INSERT INTO corpscout.se_ratsit_financial_reports (company_id, result_sha256, normalizer_version, financial_report_index, scope, monetary_unit, period_count, normalized_at) VALUES ('{A}', repeat('e',64), 'ratsit-normalizer-v2', 0, 'company', 'MSEK', 1, '2026-01-01 00:00:00'), ('{A}', repeat('a',64), 'ratsit-normalizer-v2', 0, 'company', 'MSEK', 7, '2026-09-01 00:00:00'), ('{A}', repeat('a',64), 'ratsit-normalizer-v1', 0, 'company', 'MSEK', 1, '2026-09-02 00:00:00'), ('{A}', repeat('c',64), 'ratsit-normalizer-v1', 0, 'company', 'MSEK', 1, '2026-09-03 00:00:00'), ('{B}', repeat('b',64), 'ratsit-normalizer-v2', 0, 'consolidated', 'MSEK', 1, '2026-09-01 00:00:00')",
     f"""INSERT INTO corpscout.se_ratsit_financial_periods (company_id, result_sha256, normalizer_version, financial_report_index, period_index, period_kind, scope, monetary_unit, fiscal_year, period_start, period_end, period_months, revenue_amount, revenue_amount_usd, equity_amount, equity_amount_usd, employee_count, fx_rate_to_usd, fx_rate_date, fx_source, normalized_at) VALUES
     ('{A}', repeat('e',64), 'ratsit-normalizer-v2', 0, 0, 'financial_only', 'company', 'MSEK', 2017, '2017-01-01', '2017-12-31', 12, 1, 100000, NULL, NULL, NULL, 0.1, '2017-12-29', 'ecb', '2026-01-01 00:00:00'),

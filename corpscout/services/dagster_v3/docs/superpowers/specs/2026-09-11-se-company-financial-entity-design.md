@@ -600,7 +600,8 @@ the entity.
    read out here rather than reported by the asset (the shared run_extractor reports companies,
    pages, candidates, inserted).
 3. Fold: `fold.py`, `batch.py`, the two fold assets; prod 64-bucket backfill and the readouts of
-   section 11.
+   section 11. Code complete 2026-09-13 on branch se-financial-entity (plan
+   2026-09-13-se-company-financial-3-fold.md); prod backfill pending.
 4. Cutover: the admin workspace, the shared grid on the public page, every re-point of section 10
    with migration 000402, the deletions, the owner-run view drops, the smoke.
 

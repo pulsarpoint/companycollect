@@ -69,3 +69,29 @@ A live row must carry at least one figure or an employee count; a source row wit
 skipped, never written, on both sides of the state hash. The Ratsit extractor pins
 `normalizer_version` (like the person extractor) so superseded normalizer generations never
 compete for a period.
+
+## Fold (slice 3)
+
+`fold.py` is pure and decides ONE period: `fold_financial` picks the currency first (highest
+effective precedence among the rows naming one; ties to the smaller source name, then uid),
+lets each of the twenty figures compete only among rows in that currency (the winner brings
+its own USD twin), lets employees and the period attributes compete ungated, and returns None
+when no field has a winner. `resolve_rules` overlays a period's rules on the company-wide ones
+on the global map. `fold_company_periods` walks a company's periods against its current main
+rows: `created`, `updated`, `hidden`, `withdrawn` (no live row left; the last values stay with
+`active 0`) and `reactivated`; an unchanged period is still returned so the batch can advance
+its `folded_at`.
+
+`batch.py` folds pages of 5,000 companies: five FINAL reads (live suggestions, main rows,
+company rules, hide rules; the watermarks aside), the pure fold, then history BEFORE main.
+`changed_only` selects a company when its newest suggestion, precedence decision or hide
+decision (released versions included) is newer than its newest `folded_at`, or it was never
+folded and has a live row. The global precedence export is NOT a watermark: after changing
+the dictionary, export it and re-fold every bucket with `changed_only: false`.
+
+Assets: `se_company_financial_fold` (64 hash buckets, one partition per run, pool
+`se_company_financial_fold`, downstream of the four extractors) and
+`se_company_financial_fold_companies` (`company_ids`, the backoffice's Fold now target).
+Runbook for a full backfill while the run queue is held: run the 64 partitions in-process on
+the dagster host, one after the other (the plan's Task 7 script), then re-run three buckets
+with `changed_only: true` and expect `considered 0`.
