@@ -46,6 +46,8 @@ WEBTECH_CANDIDATE_ASSET_KEY = dg.AssetKey(
 WEBTECH_REMOTE_SCAN_ASSET_KEY = dg.AssetKey("commoncrawl_webtech_remote_scan")
 WEBTECH_RESULT_ASSET_KEY = dg.AssetKey("commoncrawl_webtech_results_clickhouse")
 WEBTECH_MONITOR_INTERVAL_SECONDS = 2
+WEBTECH_STALL_TIMEOUT_SECONDS = 900.0
+WEBTECH_STATUS_LOG_EVERY_POLLS = 30
 WEBTECH_PARTITIONS = dg.StaticPartitionsDefinition(WEBTECH_PARTITION_KEYS)
 
 
@@ -369,9 +371,17 @@ def monitor_webtech_scan(
     destination: WebtechS3Destination,
     poll_interval_seconds: int = WEBTECH_MONITOR_INTERVAL_SECONDS,
     sleep: Callable[[float], None] = time.sleep,
+    stall_timeout_seconds: float = WEBTECH_STALL_TIMEOUT_SECONDS,
 ) -> RemoteScanSnapshot:
-    """Poll with short requests until one submitted remote scan is terminal."""
+    """Poll with short requests until one submitted remote scan is terminal.
+
+    A running scan that reports no progress for ``stall_timeout_seconds`` is
+    cancelled remotely and the step fails, so a run retry resubmits it and the
+    scanner resumes from the results already stored in RustFS.
+    """
     latest_event_sequence = 0
+    last_logged_state: tuple[str, int, int] | None = None
+    polls_since_log = 0
     while True:
         try:
             snapshot = webtech_api.poll(
@@ -403,23 +413,45 @@ def monitor_webtech_scan(
             continue
 
         _validate_monitored_snapshot(submission, snapshot)
-        context.log.info(
-            "Webtech scan status: scan_id=%s partition=%s status=%s "
-            "completed=%s/%s outcomes=%s technologies=%s "
-            "progress_age_seconds=%.1f elapsed_seconds=%.1f "
-            "rate_per_minute=%.2f",
-            snapshot.scan_id,
-            snapshot.partition_key,
+        state = (
             snapshot.status,
             snapshot.completed_count,
-            snapshot.total_count,
-            snapshot.outcome_counts,
-            snapshot.technology_count,
-            snapshot.progress_age_seconds,
-            snapshot.elapsed_seconds,
-            snapshot.domains_per_minute,
+            snapshot.latest_event_sequence,
         )
+        polls_since_log += 1
+        if (
+            state != last_logged_state
+            or polls_since_log >= WEBTECH_STATUS_LOG_EVERY_POLLS
+        ):
+            context.log.info(
+                "Webtech scan status: scan_id=%s partition=%s status=%s "
+                "completed=%s/%s outcomes=%s technologies=%s "
+                "progress_age_seconds=%.1f elapsed_seconds=%.1f "
+                "rate_per_minute=%.2f",
+                snapshot.scan_id,
+                snapshot.partition_key,
+                snapshot.status,
+                snapshot.completed_count,
+                snapshot.total_count,
+                snapshot.outcome_counts,
+                snapshot.technology_count,
+                snapshot.progress_age_seconds,
+                snapshot.elapsed_seconds,
+                snapshot.domains_per_minute,
+            )
+            last_logged_state = state
+            polls_since_log = 0
         latest_event_sequence = snapshot.latest_event_sequence
+        if (
+            snapshot.status == "running"
+            and snapshot.progress_age_seconds >= stall_timeout_seconds
+        ):
+            _abandon_stalled_scan(
+                context=context,
+                webtech_api=webtech_api,
+                snapshot=snapshot,
+                stall_timeout_seconds=stall_timeout_seconds,
+            )
         if snapshot.status == "completed":
             reference = _final_reference(snapshot)
             final_manifest = read_final_manifest(
@@ -442,6 +474,42 @@ def monitor_webtech_scan(
                 f"status={snapshot.status}: {snapshot.error_message}"
             )
         sleep(poll_interval_seconds)
+
+
+def _abandon_stalled_scan(
+    *,
+    context: dg.AssetExecutionContext,
+    webtech_api: WebtechApiResource,
+    snapshot: RemoteScanSnapshot,
+    stall_timeout_seconds: float,
+) -> None:
+    """Cancel a remote scan that stopped progressing, then fail this step."""
+    context.log.warning(
+        "Webtech scan stalled; cancelling remote scan so a retry can resume it: "
+        "scan_id=%s partition=%s completed=%s/%s progress_age_seconds=%.1f "
+        "limit_seconds=%.0f",
+        snapshot.scan_id,
+        snapshot.partition_key,
+        snapshot.completed_count,
+        snapshot.total_count,
+        snapshot.progress_age_seconds,
+        stall_timeout_seconds,
+    )
+    try:
+        webtech_api.cancel(snapshot.scan_id)
+    except (UnknownRemoteScanError, WebtechApiUnavailableError, RuntimeError) as error:
+        context.log.warning(
+            "Webtech scan cancel request failed; failing the step anyway: "
+            "scan_id=%s error=%s",
+            snapshot.scan_id,
+            error,
+        )
+    raise RuntimeError(
+        f"Remote Webtech scan {snapshot.scan_id} stalled: no progress for "
+        f"{snapshot.progress_age_seconds:.0f}s "
+        f"(completed {snapshot.completed_count}/{snapshot.total_count}); "
+        "the remote scan was cancelled so a retry can resume from RustFS"
+    )
 
 
 def _latest_candidate_manifest(

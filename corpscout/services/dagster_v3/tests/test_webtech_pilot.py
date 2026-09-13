@@ -1,7 +1,9 @@
 import hashlib
 import json
+import logging
 from contextlib import contextmanager
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 
 import dagster as dg
@@ -12,6 +14,7 @@ from pydantic import ValidationError
 from dagster_v3.components.webtech_scanner_component import (
     WebtechScannerComponent,
 )
+from dagster_v3.defs.webtech import assets as webtech_assets
 from dagster_v3.defs.webtech.assets import (
     WEBTECH_DOMAIN_LIMIT,
     WEBTECH_PARTITION_COUNT,
@@ -289,6 +292,127 @@ def test_webtech_remote_asset_fails_when_remote_scan_fails() -> None:
             )
 
 
+def test_webtech_remote_asset_cancels_and_fails_a_stalled_scan() -> None:
+    instance = dg.DagsterInstance.ephemeral()
+    submission = _submission("scan-stalled")
+    stalled = _remote_snapshot(
+        "running",
+        scan_id="scan-stalled",
+        completed_count=7_688,
+        total_count=7_689,
+        progress_age_seconds=601,
+    )
+    api = FakeWebtechApi(stalled)
+
+    with dg.build_asset_context(
+        instance=instance,
+        partition_key=PARTITION_KEY,
+    ) as context:
+        with pytest.raises(RuntimeError, match="stalled.*601s.*7688/7689"):
+            monitor_webtech_scan(
+                context=context,
+                submission=submission,
+                webtech_api=api,
+                webtech_object_store=FakeObjectStore(),
+                destination=WebtechS3Destination(
+                    bucket="webtech",
+                    prefix="webtech",
+                ),
+                sleep=lambda _: None,
+                stall_timeout_seconds=600,
+            )
+
+    assert api.cancel_calls == ["scan-stalled"]
+    assert len(api.poll_calls) == 1
+
+
+def test_webtech_remote_asset_keeps_waiting_while_a_slow_scan_still_progresses() -> (
+    None
+):
+    instance = dg.DagsterInstance.ephemeral()
+    submission = _submission("scan-slow")
+    slow = _remote_snapshot(
+        "running",
+        scan_id="scan-slow",
+        completed_count=0,
+        total_count=1,
+        progress_age_seconds=599,
+    )
+    completed = _remote_snapshot(
+        "completed",
+        scan_id="scan-slow",
+        completed_count=1,
+        total_count=1,
+    )
+    api = FakeWebtechApi([slow, completed])
+    object_store = FakeObjectStore()
+    _store_final_manifest(object_store, completed)
+
+    with dg.build_asset_context(
+        instance=instance,
+        partition_key=PARTITION_KEY,
+    ) as context:
+        snapshot = monitor_webtech_scan(
+            context=context,
+            submission=submission,
+            webtech_api=api,
+            webtech_object_store=object_store,
+            destination=WebtechS3Destination(bucket="webtech", prefix="webtech"),
+            sleep=lambda _: None,
+            stall_timeout_seconds=600,
+        )
+
+    assert snapshot == completed
+    assert api.cancel_calls == []
+
+
+def test_webtech_remote_asset_logs_status_only_on_change_or_periodically(
+    caplog, monkeypatch
+) -> None:
+    monkeypatch.setattr(webtech_assets, "WEBTECH_STATUS_LOG_EVERY_POLLS", 3)
+    logger_name = "test_webtech_monitor"
+    caplog.set_level(logging.INFO, logger=logger_name)
+    submission = _submission("scan-quiet")
+    unchanged = _remote_snapshot(
+        "running",
+        scan_id="scan-quiet",
+        completed_count=0,
+        total_count=1,
+    )
+    completed = _remote_snapshot(
+        "completed",
+        scan_id="scan-quiet",
+        completed_count=1,
+        total_count=1,
+    )
+    api = FakeWebtechApi([unchanged] * 5 + [completed])
+    object_store = FakeObjectStore()
+    _store_final_manifest(object_store, completed)
+    # Dagster's log manager does not propagate to caplog, so hand the monitor a
+    # plain logger through the only context attribute it uses.
+    context = SimpleNamespace(log=logging.getLogger(logger_name))
+
+    monitor_webtech_scan(
+        context=context,
+        submission=submission,
+        webtech_api=api,
+        webtech_object_store=object_store,
+        destination=WebtechS3Destination(bucket="webtech", prefix="webtech"),
+        sleep=lambda _: None,
+    )
+
+    status_lines = [
+        record.getMessage()
+        for record in caplog.records
+        if "Webtech scan status:" in record.getMessage()
+    ]
+    assert len(api.poll_calls) == 6
+    assert len(status_lines) == 3
+    assert "status=running completed=0/1" in status_lines[0]
+    assert "status=running completed=0/1" in status_lines[1]
+    assert "status=completed completed=1/1" in status_lines[2]
+
+
 def test_legacy_remote_scan_metadata_can_be_indexed_without_local_output() -> None:
     instance = dg.DagsterInstance.ephemeral()
     instance.report_runless_asset_event(
@@ -328,6 +452,7 @@ class FakeWebtechApi:
         else:
             self.snapshots = [snapshots]
         self.poll_calls: list[tuple[str, int, int]] = []
+        self.cancel_calls: list[str] = []
 
     def poll(
         self,
@@ -341,6 +466,10 @@ class FakeWebtechApi:
         if len(self.snapshots) > 1:
             self.snapshots.pop(0)
         return RemoteScanPollResponse(scan=snapshot, events=[])
+
+    def cancel(self, scan_id: str) -> RemoteScanSnapshot:
+        self.cancel_calls.append(scan_id)
+        return self.snapshots[0].model_copy(update={"status": "cancelled"})
 
 
 def _submission(scan_id: str) -> SubmittedScanReference:
@@ -365,6 +494,7 @@ def _remote_snapshot(
     scan_id: str | None = None,
     completed_count: int,
     total_count: int = 1_000,
+    progress_age_seconds: float = 5,
 ) -> RemoteScanSnapshot:
     return RemoteScanSnapshot(
         scan_id=scan_id or f"scan-{status}",
@@ -383,7 +513,7 @@ def _remote_snapshot(
         finished_at=SCANNED_AT if status == "completed" else None,
         last_progress_at=SCANNED_AT,
         elapsed_seconds=120,
-        progress_age_seconds=5,
+        progress_age_seconds=progress_age_seconds,
         domains_per_minute=50,
         latest_event_sequence=completed_count // 20,
         error_message="",

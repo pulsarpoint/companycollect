@@ -373,6 +373,69 @@ def test_resubmit_recovers_stored_domains_after_a_failed_scan() -> None:
     ]
 
 
+def test_scan_stalled_beyond_limit_is_failed_and_releases_the_slot(
+    caplog, monkeypatch
+) -> None:
+    caplog.set_level(logging.INFO, logger="uvicorn.error")
+    monkeypatch.setattr(scan_coordinator, "SCAN_HEARTBEAT_SECONDS", 0.01)
+    monkeypatch.setattr(scan_coordinator, "SCAN_STALLED_AFTER_SECONDS", 0.02)
+    monkeypatch.setattr(scan_coordinator, "SCAN_STALL_FAIL_AFTER_SECONDS", 0.05)
+    store = InMemoryRustfsStore()
+    body = candidate_manifest()
+    store.objects[parse_s3_uri(MANIFEST_URI).key] = body
+    attempts: list[int] = []
+
+    async def stuck_then_complete(candidates, *, settings, progress_callback):
+        del settings
+        attempts.append(len(candidates))
+        if len(attempts) == 1:
+            await asyncio.sleep(3600)
+        results = []
+        for candidate in candidates:
+            result = completed_result(candidate)
+            callback_result = progress_callback(result)
+            if callback_result is not None:
+                await callback_result
+            results.append(result)
+        return tuple(results)
+
+    app = create_app(
+        settings=service_settings(),
+        store=store,
+        scan_function=stuck_then_complete,
+    )
+    headers = {"Authorization": f"Bearer {API_TOKEN}"}
+    with TestClient(app) as client:
+        submitted = client.post(
+            "/v1/scans",
+            json=scan_request(body),
+            headers=headers,
+        ).json()
+        scan_id = submitted["scan_id"]
+        failed = _wait_for_terminal(client, scan_id, headers)
+        assert failed["status"] == "failed"
+        assert "stalled" in failed["error_message"]
+        assert "3 domains remaining" in failed["error_message"]
+        assert client.get("/healthz").json()["active_scan"] is False
+
+        resumed = client.post(
+            "/v1/scans",
+            json=scan_request(body),
+            headers=headers,
+        ).json()
+        assert resumed["scan_id"] == scan_id
+        completed = _wait_for_terminal(client, scan_id, headers)
+
+    assert completed["status"] == "completed"
+    assert attempts == [3, 3]
+    assert any(
+        record.levelno == logging.ERROR
+        and "Webtech scan stalled beyond limit" in record.getMessage()
+        and "completed=0/3" in record.getMessage()
+        for record in caplog.records
+    )
+
+
 def _wait_for_terminal(
     client: TestClient,
     scan_id: str,
