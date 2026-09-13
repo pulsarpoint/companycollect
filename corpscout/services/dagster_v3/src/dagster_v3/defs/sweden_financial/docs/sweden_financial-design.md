@@ -257,24 +257,43 @@ Every monetary metric keeps native and USD values. The full fact table remains
 the comprehensive representation for concepts that do not belong in the stable
 cross-country metric projection.
 
-## Source-specific serving views
+## Serving: the financial entity
 
 The physical metrics table is named
 `corpscout.se_bolagsverket_financial_metrics` because every row is derived from
-Bolagsverket annual-account facts. It is not a cross-source canonical table.
-The shared financial UI reads two independent same-shape views:
+Bolagsverket annual-account facts. It is not a cross-source canonical table: it
+is one SOURCE of the Swedish financial entity (spec 2026-09-11), whose fold
+publishes one row per company, accounting scope and period end in
+`corpscout.se_company_financial` from Bolagsverket's reported rows, its restated
+column (`bolagsverket_comparative`), ESEF and Ratsit, with a source beside every
+figure.
 
 ```text
-se_bolagsverket_financial_metrics -> se_financials_bolagsverket_current
-esef_financial_metrics            -> se_financials_esef_current
+se_bolagsverket_financial_metrics -> se_company_financial_suggestion (source bolagsverket, bolagsverket_comparative)
+esef_financial_metrics            -> se_company_financial_suggestion (source esef)
+se_ratsit_financial_periods       -> se_company_financial_suggestion (source ratsit)
+se_company_financial_suggestion   -> se_company_financial (the fold) -> every Swedish reader
 ```
 
-`se_financials_bolagsverket_current` uses the reported/comparative and filing
-tiebreak rules to select one row per company and represented year.
-`se_financials_esef_current` resolves the LEI through `company_identifier` and
-keeps per-metric amendment composition. Unsupported ESEF presentation fields
-are typed nulls. Consumers query the views separately; they never union,
-coalesce, compare, or choose a winner across the two accounting scopes.
+Every data-side Swedish reader -- `se_company_financials_latest`, the serving
+view's `has_financial` and per-register flags, the section-presence model and
+the filing-status view -- reads the entity's active rows (slice 4a of the spec,
+migration 000404); the backoffice Financial tab and the public financials page
+follow in slice 4b. `se_company_financials_latest`'s `period_end_date` is NULL
+when the entity period end falls outside ClickHouse's Date range
+1970-01-01..2149-06-06, since `toDate()` on such a `Date32` wraps rather than
+clamps and the entity holds comparative periods back to 1919. The serving
+view's Bolagsverket flag is lit by rows sourced from either `bolagsverket` or
+`bolagsverket_comparative`. The filing-status view's `data_available` row keeps
+Bolagsverket provenance only when the newest period's winning sources include a
+Bolagsverket source; otherwise its source is the entity itself
+(`se_company_financial`). The two Sweden-only source views
+`se_financials_bolagsverket_current` and `se_financials_esef_current` still
+serve the backoffice until slice 4b moves it to the entity; the owner-run drops
+(`corpscout/clickhouse/operations/se_financial_views_retirement_*.sql`) retire
+them after that. Precedence between sources is the entity's
+(`se_company/financial/precedence.py`, Ratsit first); this module never chooses
+a winner.
 
 The ordered concept mappings are code-owned in
 `defs/common/financial_metric_mappings.py`. Canonical presentation keys map to
