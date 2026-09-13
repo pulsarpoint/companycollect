@@ -639,15 +639,16 @@ the entity.
    se_annual_report_filing_status_current data_available 795,403 (533,228 with Bolagsverket
    provenance, 262,175 entity); se_companies_serving after its 14:45 refresh: has_financial
    795,635 (was 580,832), source_bolagsverket 2,855,160 and source_esef 403 unchanged.
-   company_section_presence_current NOT republished: the 13 company_serving_dbt models were
-   rebuilt (stale since 2026-09-09; the presence build now carries financials 795,434 and no
-   management section) but the publish's domains reconciliation counts an inactive domain row
-   (5566692850 johnjohns.se, is_active 0 from main's ESEF website commits) that the presence
-   model excludes: publish.py's expected queries for domains and technology lack
-   company_domain_current_build's is_active = 1 AND review_status != 'rejected' filter, a latent
-   bug outside this slice, fix pending the owner; live presence still shows financials 579,735.
-   main fast-forwards to the branch (the owner's checkout sat on main, so the merge commit was
-   built in a detached worktree).
+company_section_presence_current republished 18:00Z after the owner's 'do it': the 13
+   company_serving_dbt models were rebuilt first (stale since 2026-09-09, still carrying the
+   retired management section), then the publish failed by one on the domains reconciliation
+   because publish.py's expected queries for domains and technology counted the unfiltered
+   company_domains_build stage while the presence model reads company_domain_current_build
+   (is_active = 1 AND review_status != 'rejected'); fixed with PUBLISHED_DOMAIN_FILTER
+   (b02930fb4, merged 0eaf677b9, deployed), publish green: presence financials 795,434 companies
+   (was 579,735), no management section, source links 23,675,463 (was 29,239,599). The merge
+   commit had been built in a detached worktree while the owner's checkout sat on main; main was
+   fast-forwarded later the same day.
 
 Later, separate specs: a fold-aware weekly, USD twins on the other Ratsit tables, a merge rule for
 near-identical period ends if the readout warrants it, Wikidata employees as a source.
