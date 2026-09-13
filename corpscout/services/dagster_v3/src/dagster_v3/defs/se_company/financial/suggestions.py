@@ -57,7 +57,7 @@ MONEY_NULL_SQL: Mapping[str, str] = {
 # applies it to the stored suggestion rows, and this module's live_select_sql wrapper below
 # applies the identical text to every extractor's live rows, so a source row with no figure
 # and no employee count is never written on either side of the state hash.
-LIVE_ROW_PREDICATE = "(" + " OR ".join(f"{column} IS NOT NULL" for column in tables.SUGGESTION_VALUE_COLUMNS) + ")"
+LIVE_ROW_PREDICATE = tables.LIVE_ROW_PREDICATE
 
 # One clock read per statement (two now64() calls were measured to differ), hashed into the
 # lineage id with the row's key.

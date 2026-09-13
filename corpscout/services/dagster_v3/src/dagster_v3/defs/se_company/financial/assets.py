@@ -1,17 +1,33 @@
-"""Dagster assets of the financial entity. Slice 1 ships the precedence export; the
-extractors and the extract job (slice 2), the fold (slice 3) follow in their own modules."""
+"""Dagster assets of the financial entity: the precedence export (slice 1) and the two fold
+assets (slice 3). The extractors and the extract job live in their own modules (slice 2)."""
 
+import re
 from datetime import UTC, datetime
 from typing import Any
 
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
+from pydantic import Field, field_validator
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
+from dagster_v3.defs.se_company.common import normalized_se_company_ids
 from dagster_v3.defs.se_company.financial import tables
+from dagster_v3.defs.se_company.financial.batch import (
+    BUCKET_COUNT,
+    PAGE_SIZE as FOLD_PAGE_SIZE,
+    FoldCounts,
+    fold_bucket,
+    fold_companies,
+)
 from dagster_v3.defs.se_company.financial.precedence import precedence_rows
 
 GROUP_NAME = "se_company_financial"
+# The bucket fold's page reads are primary-key seeks scattered over the whole suggestion table
+# (the bucket hash spreads a page's ids across every granule); the instance defaults every pool
+# to limit 1 (dagster.yaml), so this pool runs the 64 buckets one at a time and a backfill
+# can never put sixty-four FINAL reads on the server at once (spec section 8). The targeted
+# fold below (a few ids) stays unpooled.
+FOLD_POOL = "se_company_financial_fold"
 EXTRACTOR_SOURCES: tuple[str, ...] = ("bolagsverket", "bolagsverket_comparative", "esef", "ratsit")
 EXTRACTOR_ASSET_NAMES: tuple[str, ...] = tuple(
     f"se_company_financial_suggestions_{source}" for source in EXTRACTOR_SOURCES
@@ -92,3 +108,111 @@ def se_company_financial_precedence_clickhouse(
             "table": tables.QUALIFIED_PRECEDENCE_TABLE,
         }
     )
+
+
+FINANCIAL_FOLD_PARTITIONS = dg.StaticPartitionsDefinition(
+    [f"bucket_{bucket:02d}" for bucket in range(BUCKET_COUNT)]
+)
+_FOLD_TABLES = (
+    tables.SUGGESTION_TABLE, tables.MAIN_TABLE, tables.HISTORY_TABLE,
+    tables.PRECEDENCE_TABLE, tables.RULE_TABLE,
+)
+
+
+def financial_bucket_index(partition_key: str) -> int:
+    match = re.fullmatch(r"bucket_(\d{2})", partition_key)
+    if match is None:
+        raise ValueError(f"invalid financial fold partition key: {partition_key!r}")
+    bucket = int(match.group(1))
+    if not 0 <= bucket < BUCKET_COUNT:
+        raise ValueError(f"financial fold bucket out of range: {bucket}")
+    return bucket
+
+
+class FinancialFoldConfig(dg.Config):
+    # True: only companies whose newest suggestion, precedence decision or hide decision is
+    # newer than their last fold, plus companies never folded that have a live row. False
+    # re-folds the whole bucket (what a precedence change needs, spec 5); history rows are
+    # written either way only where values, sources or activity changed.
+    changed_only: bool = True
+    # Companies per page (spec 6: 5,000, about 65k suggestion rows in memory).
+    page_size: int = Field(default=FOLD_PAGE_SIZE, ge=1, le=20_000)
+
+
+class FinancialFoldCompaniesConfig(dg.Config):
+    company_ids: list[str] = Field(min_length=1)
+    changed_only: bool = False
+    page_size: int = Field(default=FOLD_PAGE_SIZE, ge=1, le=20_000)
+
+    @field_validator("company_ids")
+    @classmethod
+    def _valid_ids(cls, value: list[str]) -> list[str]:
+        return list(normalized_se_company_ids(value))
+
+
+def _fold_metadata(counts: FoldCounts, config: dg.Config, **extra: Any) -> dict[str, Any]:
+    return {
+        **counts.as_metadata(),
+        "changed_only": config.changed_only,
+        "page_size": config.page_size,
+        "table": tables.QUALIFIED_MAIN_TABLE,
+        "history_table": tables.QUALIFIED_HISTORY_TABLE,
+        **extra,
+    }
+
+
+@dg.asset(
+    name="se_company_financial_fold",
+    partitions_def=FINANCIAL_FOLD_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    group_name=GROUP_NAME,
+    pool=FOLD_POOL,
+    deps=[dg.AssetKey(name) for name in EXTRACTOR_ASSET_NAMES],
+    kinds={"clickhouse", "python"},
+    metadata={"table": tables.QUALIFIED_MAIN_TABLE, "history_table": tables.QUALIFIED_HISTORY_TABLE},
+    description=(
+        "Folds the current financial suggestion rows of the companies in one of 64 hash buckets "
+        "into se_company_financial, one row per company, scope and period end: the currency is "
+        "decided first by precedence (Ratsit, then the registers), each figure competes only "
+        "among rows in that currency and brings its own USD twin, employees and the period "
+        "attributes compete ungated, reviewer rules re-rank and hide rules deactivate, a period "
+        "the sources stopped delivering is withdrawn, and every change is appended to "
+        "se_company_financial_history first. changed_only=false re-folds the whole bucket (run "
+        "over all 64 after a precedence change). Pooled at FOLD_POOL (instance default limit 1), "
+        "so a backfill runs one bucket at a time. Manual: launch a partition or a backfill."
+    ),
+)
+def se_company_financial_fold(
+    context: dg.AssetExecutionContext, config: FinancialFoldConfig, clickhouse: ClickhouseResource
+) -> dg.MaterializeResult:
+    assert_clickhouse_tables_exist(clickhouse, database=tables.DATABASE, tables=_FOLD_TABLES)
+    bucket = financial_bucket_index(context.partition_key)
+    with clickhouse.get_connection() as client:
+        counts = fold_bucket(
+            client, bucket, changed_only=config.changed_only, source_run_id=context.run_id,
+            folded_at=datetime.now(UTC), page_size=config.page_size, log=context.log.info,
+        )
+    return dg.MaterializeResult(metadata=_fold_metadata(counts, config, bucket=bucket))
+
+
+@dg.asset(
+    name="se_company_financial_fold_companies",
+    group_name=GROUP_NAME,
+    kinds={"clickhouse", "python"},
+    metadata={"table": tables.QUALIFIED_MAIN_TABLE, "history_table": tables.QUALIFIED_HISTORY_TABLE},
+    description=(
+        "The targeted financial fold: the companies named in config.company_ids, whatever their "
+        "bucket, changed_only false by default. The backoffice's Fold now button (slice 4) "
+        "launches this asset for one company."
+    ),
+)
+def se_company_financial_fold_companies(
+    context: dg.AssetExecutionContext, config: FinancialFoldCompaniesConfig, clickhouse: ClickhouseResource
+) -> dg.MaterializeResult:
+    assert_clickhouse_tables_exist(clickhouse, database=tables.DATABASE, tables=_FOLD_TABLES)
+    with clickhouse.get_connection() as client:
+        counts = fold_companies(
+            client, config.company_ids, changed_only=config.changed_only, source_run_id=context.run_id,
+            folded_at=datetime.now(UTC), page_size=config.page_size, log=context.log.info,
+        )
+    return dg.MaterializeResult(metadata=_fold_metadata(counts, config))

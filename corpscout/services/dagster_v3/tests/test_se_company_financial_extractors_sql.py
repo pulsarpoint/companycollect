@@ -2,6 +2,7 @@
 settle are in the clickhouse-local test; these pin the text each module renders."""
 
 from dagster_v3.defs.se_company.financial import bolagsverket, esef, ratsit
+from dagster_v3.defs.sweden_ratsit.normalization import RATSIT_NORMALIZER_VERSION
 from dagster_v3.defs.se_company.financial.suggestions import FINANCIAL_SELECT_COLUMNS, FINANCIAL_TARGET
 from dagster_v3.defs.se_company.basic_info.extract import insert_page_sql
 
@@ -103,3 +104,13 @@ def test_the_four_assets_carry_their_sources_and_deps() -> None:
         assert dg.AssetKey(dep) in asset.dependency_keys and dg.AssetKey("se_company_basic_info_fold") in asset.dependency_keys
         spec = next(iter(asset.specs))
         assert spec.metadata["source"] == source and spec.group_name == "se_company_financial"
+
+
+def test_the_ratsit_asset_binds_the_running_normalizer_version() -> None:
+    """The report CTE and the periods join both read %(normalizer_version)s; the asset must
+    bind it, or the first prod page fails on an unbound placeholder (the address entity pins
+    its params the same way)."""
+    assert ratsit.RATSIT_SELECT_PARAMS == {"normalizer_version": RATSIT_NORMALIZER_VERSION}
+    assert RATSIT_NORMALIZER_VERSION == "ratsit-normalizer-v2"
+    assert ratsit.ratsit_live_sql().count("%(normalizer_version)s") == 2   # selected as the report's version, and the CTE filter
+    assert "AND report.normalizer_version = p.normalizer_version" in ratsit.ratsit_live_sql()

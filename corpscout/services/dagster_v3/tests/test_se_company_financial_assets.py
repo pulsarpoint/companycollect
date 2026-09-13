@@ -1,12 +1,24 @@
 """The precedence export (spec section 8): global rows only, idempotent, and registered
-without dependencies."""
+without dependencies; the two fold assets (slice 3): 64 static buckets, one partition per run,
+the serial pool, the extractor deps, the configs."""
 
 from datetime import UTC, datetime
 
 import dagster as dg
+import pytest
 
 from dagster_v3.defs.se_company.financial import tables
-from dagster_v3.defs.se_company.financial.assets import GROUP_NAME, export_precedence
+from dagster_v3.defs.se_company.financial.assets import (
+    EXTRACTOR_ASSET_NAMES,
+    FOLD_POOL,
+    GROUP_NAME,
+    FinancialFoldCompaniesConfig,
+    FinancialFoldConfig,
+    export_precedence,
+    financial_bucket_index,
+    se_company_financial_fold,
+    se_company_financial_fold_companies,
+)
 from dagster_v3.defs.se_company.financial.precedence import precedence_rows
 from dagster_v3.definitions import defs as load_project_defs
 
@@ -83,3 +95,44 @@ def test_the_export_asset_is_registered_without_dependencies() -> None:
     assert node.parent_keys == set()
     assert node.partitions_def is None
     assert node.group_name == GROUP_NAME == "se_company_financial"
+
+
+def test_the_bucket_fold_is_partitioned_pooled_and_downstream_of_the_four_extractors() -> None:
+    asset = se_company_financial_fold
+    assert asset.key == dg.AssetKey("se_company_financial_fold")
+    keys = asset.partitions_def.get_partition_keys()
+    assert len(keys) == 64 and keys[0] == "bucket_00" and keys[-1] == "bucket_63"
+    assert asset.backfill_policy.max_partitions_per_run == 1
+    assert asset.op.pool == FOLD_POOL == "se_company_financial_fold"
+    assert asset.dependency_keys == {dg.AssetKey(name) for name in EXTRACTOR_ASSET_NAMES}
+    spec = next(iter(asset.specs))
+    assert spec.group_name == GROUP_NAME
+    assert spec.metadata["table"] == tables.QUALIFIED_MAIN_TABLE
+    keys = load_project_defs().get_repository_def().asset_graph.get_all_asset_keys()
+    assert dg.AssetKey("se_company_financial_fold") in keys
+    assert dg.AssetKey("se_company_financial_fold_companies") in keys
+
+
+def test_the_targeted_fold_is_unpartitioned_and_unpooled() -> None:
+    asset = se_company_financial_fold_companies
+    assert asset.partitions_def is None and asset.op.pool is None
+    assert asset.dependency_keys == set()
+    assert next(iter(asset.specs)).group_name == GROUP_NAME
+
+
+def test_the_fold_configs_default_to_the_spec_and_validate_ids() -> None:
+    assert (FinancialFoldConfig().changed_only, FinancialFoldConfig().page_size) == (True, 5000)
+    targeted = FinancialFoldCompaniesConfig(company_ids=[" 5567081699 ", "5567081699"])
+    assert (targeted.company_ids, targeted.changed_only, targeted.page_size) == (["5567081699"], False, 5000)
+    with pytest.raises(ValueError):
+        FinancialFoldCompaniesConfig(company_ids=[])
+    with pytest.raises(ValueError, match="10 or 12 digits"):
+        FinancialFoldCompaniesConfig(company_ids=["abc"])
+
+
+def test_bucket_keys_parse_and_bad_ones_are_refused() -> None:
+    assert financial_bucket_index("bucket_00") == 0 and financial_bucket_index("bucket_63") == 63
+    with pytest.raises(ValueError, match="invalid financial fold partition key"):
+        financial_bucket_index("bucket_7")
+    with pytest.raises(ValueError, match="out of range"):
+        financial_bucket_index("bucket_64")

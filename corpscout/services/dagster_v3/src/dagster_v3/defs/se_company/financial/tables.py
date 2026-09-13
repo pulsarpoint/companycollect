@@ -102,6 +102,10 @@ SUGGESTION_COLUMNS: tuple[str, ...] = (
 )
 # The value columns a live suggestion row may carry; a tombstone has every one NULL.
 SUGGESTION_VALUE_COLUMNS: tuple[str, ...] = (*MONETARY_SUGGESTION_COLUMNS, "employees")
+# A live suggestion row carries at least one of them. Applied on both sides of the extractors'
+# state hash (suggestions.py) and to the rows the fold reads (batch.py); defined here, below
+# every other module of the package, so both can import it without a cycle.
+LIVE_ROW_PREDICATE = "(" + " OR ".join(f"{column} IS NOT NULL" for column in SUGGESTION_VALUE_COLUMNS) + ")"
 
 # The main row, in DDL order: each folded field followed by its _source (the money as
 # original, usd, source).
