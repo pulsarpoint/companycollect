@@ -1209,7 +1209,29 @@ Prod: re-check the migration number, apply, `SYSTEM REFRESH VIEW` by hand and ti
 record the first gap counts (companies, call-name pairs, double-surname pairs) as the new
 baseline.
 
-**Shipped:**
+**Shipped:** 2026-09-13 (plan `2026-09-13-se-llm-enhance-1-tables-and-gap-view.md`, main 236183762).
+Code: migration 000406 (the queue and response tables, `request_id` in the pair table's sort
+key with no DEFAULT and on the state table, the hourly `:30` gap view), the `tables.py` names and
+the view builder drift-pinned against the migration, a defaulted `request_id` on `match.py`'s two
+row builders, and a clickhouse-local proof on a populated pair table with seven fixture companies,
+one of them a birth year on only one side. Prod: main had meanwhile taken 000405 (esef_domains,
+applied, ledger 405), so main was merged into the branch (`EXPECTED_MIGRATIONS` 000405 then
+000406), and 000406 was applied from the branch BEFORE the merge to main, 20:08:27-20:09:05Z,
+37.8 s, ledger 406 clean. The owner chose to deploy without waiting for the final whole-branch
+review. Read-back: pair sort key `(company_id, candidate_a, candidate_b, request_id)`; 162,192
+pair rows and 124,646 state rows, all with `request_id = ''`; the pair table still 2 parts,
+96.60 MiB (metadata-only); queue and response empty. Merged to main 236183762 and deployed
+20:12:58-20:15:45Z once another session's deploy released the deploy lock (light_sync ok=35
+changed=15); the code location loaded and the live code carries the new names. First refresh
+20:10:04-20:17:19Z: 425.6 s, peak 2.05 GiB, read 11.37 GiB / 38.7M rows, under the ten-minute
+line, so hourly stays. Baseline: 4,377 companies with a gap; 4,479 call-name pairs in 4,369
+companies; 8 double-surname pairs in 8 companies; none with both; at most 3 pairs a company. A
+read-only breakdown against the v1 records: 4,342 of these companies were sent with the same
+people and got no pair at 0.8 or above (1,743 of them hold a 0.5-0.8 pair; the model's reasons
+cite a birth year on only one record and differing role years), 35 failed with an HTTP error and
+were never retried, none were never sent. Runbook defects fixed in the plan text: the baseline's
+first SELECT shadowed `call_name_pairs` with its own sum (code 184), and the query-log readout
+matched the status polls instead of the refresh's INSERT.
 
 ### Slice 2 — the assets and prompt v2
 
