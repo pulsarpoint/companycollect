@@ -418,6 +418,7 @@ EXPECTED_MIGRATIONS = (
     "000402_corpscout_se_company_person_role",
     "000403_corpscout_se_companies_serving_no_workplace",
     "000404_corpscout_se_financial_readers_entity",
+    "000406_corpscout_se_company_person_llm_enhance",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -4459,3 +4460,59 @@ def test_000404_repoints_the_two_financial_readers_to_the_entity() -> None:
     assert "se_company_financials_latest" not in executable_up
     assert "SYSTEM WAIT VIEW" not in executable_up and "DROP" not in executable_up.upper()
     assert "FROM corpscout.se_company_financials_latest" in down
+
+
+def test_000406_pairs_the_llm_queue_and_response_and_widens_the_match_sort_key() -> None:
+    """LLM-enhance slice 1 (spec 2026-09-13 sections 4 and 5): two tables of the pattern, two
+    alters and one refreshable view, in that order. The pair-table alter is ONE statement --
+    ClickHouse extends a sorting key only with a column added by the same ALTER, and refuses
+    one that carries a DEFAULT expression -- and the view is created EMPTY with the hourly
+    refresh, so the migrate client's 300 s read timeout can never leave the ledger dirty. The
+    view's body is drift-pinned in test_se_company_person_match_gap_view.py."""
+    up = _migration_sql("000406_corpscout_se_company_person_llm_enhance.up.sql")
+    down = _migration_sql("000406_corpscout_se_company_person_llm_enhance.down.sql")
+    executable_up = "\n".join(line.split("--")[0] for line in up.splitlines())
+
+    assert up.startswith("CREATE DATABASE IF NOT EXISTS corpscout;")
+    for table in ("llm_queue_se_company_person", "llm_response_se_company_person"):
+        assert f"CREATE TABLE IF NOT EXISTS corpscout.{table}\n" in up, table
+        assert f"DROP TABLE IF EXISTS corpscout.{table};" in down, table
+    assert executable_up.count("CREATE TABLE IF NOT EXISTS") == 2
+    assert executable_up.count("ORDER BY (request_id, company_id)") == 2
+    assert "ENGINE = ReplacingMergeTree\n" in up            # the queue has no version column
+    assert "ENGINE = ReplacingMergeTree(responded_at)" in up
+    assert up.count(
+        "CONSTRAINT valid_company_id CHECK match(company_id, '^([0-9]{10}|[0-9]{12})$')"
+    ) == 2
+
+    # ONE statement for the pair table, with both clauses and no DEFAULT expression.
+    [pair_alter] = [
+        statement
+        for statement in executable_up.split(";")
+        if "ALTER TABLE corpscout.se_company_person_match\n" in statement
+    ]
+    assert "ADD COLUMN IF NOT EXISTS request_id String," in pair_alter
+    assert "MODIFY ORDER BY (company_id, candidate_a, candidate_b, request_id)" in pair_alter
+    assert "DEFAULT" not in pair_alter
+    # The state table gains the column and keeps its one-row-per-company key.
+    assert (
+        "ALTER TABLE corpscout.se_company_person_match_state\n"
+        "    ADD COLUMN IF NOT EXISTS request_id String DEFAULT '';"
+    ) in up
+    assert executable_up.count("MODIFY ORDER BY") == 1
+
+    # The refreshable view, created EMPTY at :30, never waited on.
+    assert "CREATE MATERIALIZED VIEW corpscout.se_company_person_match_gap\n" in up
+    assert "REFRESH EVERY 1 HOUR OFFSET 30 MINUTE\n" in up
+    assert "\nEMPTY\nAS WITH\n" in up
+    assert "SYSTEM WAIT VIEW" not in up
+    assert "DROP" not in executable_up.upper()
+
+    # The down file removes what it can and says why the pair column stays.
+    assert "DROP VIEW IF EXISTS corpscout.se_company_person_match_gap;" in down
+    assert (
+        "ALTER TABLE corpscout.se_company_person_match_state\n"
+        "    DROP COLUMN IF EXISTS request_id;"
+    ) in down
+    executable_down = "\n".join(line.split("--")[0] for line in down.splitlines())
+    assert "ALTER TABLE corpscout.se_company_person_match\n" not in executable_down

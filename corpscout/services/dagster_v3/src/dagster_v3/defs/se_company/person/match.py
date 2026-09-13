@@ -662,8 +662,15 @@ def match_row(
     prompt_version: str,
     input_hash: str,
     matched_at: datetime,
+    request_id: str = "",
 ) -> tuple[Any, ...]:
-    """One insert tuple in tables.MATCH_COLUMNS order."""
+    """One insert tuple in tables.MATCH_COLUMNS order.
+
+    `request_id` is the fourth component of the pair table's sorting key since migration
+    000406: the match asset leaves it empty, which is what every v1 row carries, and the
+    LLM-enhance apply passes the request it is applying so that request's pairs are their
+    own rows and can be reverted on their own.
+    """
     left, right = by_id[pair.candidate_a], by_id[pair.candidate_b]
     values: dict[str, Any] = {
         "company_id": company_id,
@@ -674,6 +681,7 @@ def match_row(
         "confidence": float(pair.confidence), "reason": pair.reason,
         "model": model, "prompt_version": prompt_version,
         "input_hash": input_hash, "matched_at": matched_at,
+        "request_id": request_id,
     }
     return tuple(values[column] for column in tables.MATCH_COLUMNS)
 
@@ -693,14 +701,20 @@ def match_state_row(
     error: str,
     source_run_id: str,
     matched_at: datetime,
+    request_id: str = "",
 ) -> tuple[Any, ...]:
-    """One insert tuple in tables.MATCH_STATE_COLUMNS order."""
+    """One insert tuple in tables.MATCH_STATE_COLUMNS order.
+
+    `request_id` records which request certified the company (migration 000406). It is NOT
+    in this table's key -- one row per company, replaced by whoever certifies it last.
+    """
     values: dict[str, Any] = {
         "company_id": company_id, "input_hash": input_hash, "candidates": candidates,
         "sources": sources, "pairs": pairs, "model": model, "prompt_version": prompt_version,
         "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
         "raw_response": raw_response, "error": error, "source_run_id": source_run_id,
         "matched_at": matched_at,
+        "request_id": request_id,
     }
     return tuple(values[column] for column in tables.MATCH_STATE_COLUMNS)
 

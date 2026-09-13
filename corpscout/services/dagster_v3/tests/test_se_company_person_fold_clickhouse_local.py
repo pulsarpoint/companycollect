@@ -45,6 +45,7 @@ pytestmark = pytest.mark.integration
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
 MIGRATION_FILE = "000396_corpscout_se_company_person_entity.up.sql"
 MATCH_MIGRATION_FILE = "000399_corpscout_se_company_person_match.up.sql"
+ENHANCE_MIGRATION_FILE = "000406_corpscout_se_company_person_llm_enhance.up.sql"
 
 COMPANY = "5561552760"          # two persons: Anna Svensson (2 members) and Håkan Öberg
 HIDE_CO = "5560000003"          # one person, hidden by a rule in round 3
@@ -100,14 +101,17 @@ def _literal(value: Any) -> str:
 
 
 def _schema_statements() -> list[str]:
-    """CREATE DATABASE plus the six CREATE TABLEs of 000396 and the two of 000399 -- never
-    000396's SYSTEM STOP/START VIEW or ALTER TABLE ... MODIFY QUERY, which name
-    se_companies_serving, a view this fixture does not build. 000396 declares the main table
-    under its build name and 000398 renames the DEPLOYED table without touching that file, so
-    the rename is replayed here: batch.py reads tables.QUALIFIED_MAIN_TABLE, which is the
-    renamed name."""
+    """CREATE DATABASE plus the six CREATE TABLEs of 000396 and the two of 000399, then the
+    two ALTER TABLEs of 000406 -- never 000396's SYSTEM STOP/START VIEW or ALTER TABLE ...
+    MODIFY QUERY, which name se_companies_serving, a view this fixture does not build, and
+    never 000406's two new tables or its refreshable view, which the fold never reads.
+    000396 declares the main table under its build name and 000398 renames the DEPLOYED table
+    without touching that file, so the rename is replayed here: batch.py reads
+    tables.QUALIFIED_MAIN_TABLE, which is the renamed name. The 000406 alters matter because
+    tables.MATCH_COLUMNS and MATCH_STATE_COLUMNS are the DEPLOYED column lists and both end
+    with request_id."""
     statements: list[str] = []
-    for name in (MIGRATION_FILE, MATCH_MIGRATION_FILE):
+    for name in (MIGRATION_FILE, MATCH_MIGRATION_FILE, ENHANCE_MIGRATION_FILE):
         text = (MIGRATIONS_DIR / name).read_text(encoding="utf-8")
         for raw in text.split(";"):
             statement = "\n".join(
@@ -115,7 +119,10 @@ def _schema_statements() -> list[str]:
             ).strip()
             if statement.upper().startswith("CREATE DATABASE") or (
                 "CREATE TABLE IF NOT EXISTS corpscout.se_company_person_" in statement
-            ):
+            ) or statement.startswith((
+                f"ALTER TABLE {tables.QUALIFIED_MATCH_TABLE}\n",
+                f"ALTER TABLE {tables.QUALIFIED_MATCH_STATE_TABLE}\n",
+            )):
                 statements.append(
                     statement.replace(
                         "corpscout.se_company_person_v2", tables.QUALIFIED_MAIN_TABLE
@@ -434,7 +441,7 @@ def _match_insert(company_id: str, ratsit_id: str, esef_id: str) -> str:
     sources = {ratsit_id: "ratsit", esef_id: "esef"}
     row = (company_id, low, high, [low], [high], sources[low], sources[high],
            names[low], names[high], 0.93, "call name",
-           "deepseek-v4-flash", "se-person-match-v1", MATCH_HASH, MATCHED_AT)
+           "deepseek-v4-flash", "se-person-match-v1", MATCH_HASH, MATCHED_AT, "")
     return (
         f"INSERT INTO {tables.QUALIFIED_MATCH_TABLE} "
         f"({', '.join(tables.MATCH_COLUMNS)}) VALUES {_literal(row)}"
@@ -443,7 +450,7 @@ def _match_insert(company_id: str, ratsit_id: str, esef_id: str) -> str:
 
 def _match_state_insert(company_id: str) -> str:
     row = (company_id, MATCH_HASH, 2, 2, 1, "deepseek-v4-flash", "se-person-match-v1",
-           480, 60, MATCH_ANSWER, "", "run-match", MATCHED_AT)
+           480, 60, MATCH_ANSWER, "", "run-match", MATCHED_AT, "")
     return (
         f"INSERT INTO {tables.QUALIFIED_MATCH_STATE_TABLE} "
         f"({', '.join(tables.MATCH_STATE_COLUMNS)}) VALUES {_literal(row)}"

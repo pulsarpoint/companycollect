@@ -5,7 +5,9 @@ se_company_person_v2, because the 2026-08-19 table held the final name until sli
 it, and 000396's DDL still declares it under that build name -- the rename is a RENAME TABLE
 on the deployed database, and MAIN_TABLE is the one place this package spells it. Slice 5
 added the derived role view (ROLE_VIEW, build_se_company_person_role_sql), created by
-migration 000402.
+migration 000402. The LLM-enhance slice 1 (migration 000406) added the per-source-table LLM
+pair -- LLM_QUEUE_TABLE and LLM_RESPONSE_TABLE -- the request_id column on both match tables,
+and the match-gap view (MATCH_GAP_VIEW, build_se_company_person_match_gap_sql).
 """
 
 DATABASE = "corpscout"
@@ -23,6 +25,23 @@ ROLE_TYPE_TABLE = "company_person_role_type"
 # string match on a table name compares whole names.
 MATCH_TABLE = "se_company_person_match"
 MATCH_STATE_TABLE = "se_company_person_match_state"
+
+# The LLM-enhancement pattern (spec 2026-09-13 sections 3 and 4, migration 000406): one
+# queue table and one response table PER SOURCE TABLE that needs an LLM pass, mapped to that
+# table's own unit id -- here company_id, the unit a person-match prompt is built over.
+# THESE ARE THE ONLY TWO corpscout TABLES WHOSE NAMES DO NOT START WITH THEIR ENTITY'S
+# PREFIX, and that is the pattern's name rather than an oversight: `llm_<step>_<source
+# table>` reads as "the LLM queue OF se_company_person". Every string match on a table name
+# in this repo compares whole names, so the new prefix breaks nothing.
+LLM_QUEUE_TABLE = "llm_queue_se_company_person"
+LLM_RESPONSE_TABLE = "llm_response_se_company_person"
+
+# Slice 1 of the same spec (section 5): the companies that still carry a deterministic
+# call-name or double-surname gap no stored match has closed. A refreshable materialized
+# view over the main table, the normalized rows and the two match tables, rebuilt hourly at
+# :30 -- the free half of the hour between the role view's :20 and the serving view's :45.
+# DERIVED: nothing in this package writes it, and the fold never reads it.
+MATCH_GAP_VIEW = "se_company_person_match_gap"
 
 # Slice 5 (spec section 11): roles as ROWS. A refreshable materialized view over the main
 # table and the normalized rows -- one row per published person and role observation --
@@ -47,6 +66,9 @@ QUALIFIED_ROLE_TYPE_TABLE = f"{DATABASE}.{ROLE_TYPE_TABLE}"
 QUALIFIED_MATCH_TABLE = f"{DATABASE}.{MATCH_TABLE}"
 QUALIFIED_MATCH_STATE_TABLE = f"{DATABASE}.{MATCH_STATE_TABLE}"
 QUALIFIED_ROLE_VIEW = f"{DATABASE}.{ROLE_VIEW}"
+QUALIFIED_LLM_QUEUE_TABLE = f"{DATABASE}.{LLM_QUEUE_TABLE}"
+QUALIFIED_LLM_RESPONSE_TABLE = f"{DATABASE}.{LLM_RESPONSE_TABLE}"
+QUALIFIED_MATCH_GAP_VIEW = f"{DATABASE}.{MATCH_GAP_VIEW}"
 
 SOURCES: tuple[str, ...] = ("bolagsverket", "esef", "wikidata", "ratsit", "reviewer", "reviewer_draft")
 PARSE_STATUSES: tuple[str, ...] = ("ok", "partial", "no_person")
@@ -88,15 +110,23 @@ RULE_COLUMNS: tuple[str, ...] = (
 PRECEDENCE_COLUMNS: tuple[str, ...] = (
     "company_id", "field", "source", "precedence", "removed", "decided_by", "note", "decided_at",
 )
+# request_id is last on BOTH, which is where migration 000406's ADD COLUMN puts it (no
+# AFTER clause), and tests/se_company_ddl.py replays that ALTER -- so these tuples are the
+# DEPLOYED column lists, not 000399's. On the pair table the column is also the fourth
+# component of the sorting key: v1's rows carry '' and every request's rows carry its id, so
+# two prompt versions of one candidate pair coexist instead of replacing each other.
 MATCH_COLUMNS: tuple[str, ...] = (
     "company_id", "candidate_a", "candidate_b", "members_a", "members_b",
     "source_a", "source_b", "name_a", "name_b", "confidence", "reason",
-    "model", "prompt_version", "input_hash", "matched_at",
+    "model", "prompt_version", "input_hash", "matched_at", "request_id",
 )
+# On the state table request_id is NOT in the key: that table is one row per company by
+# design -- the certification the fold joins on -- and an apply REPLACES it. The column
+# records which request certified the company, which is what a revert deletes by.
 MATCH_STATE_COLUMNS: tuple[str, ...] = (
     "company_id", "input_hash", "candidates", "sources", "pairs", "model",
     "prompt_version", "prompt_tokens", "completion_tokens", "raw_response", "error",
-    "source_run_id", "matched_at",
+    "source_run_id", "matched_at", "request_id",
 )
 
 # The view's columns in DDL order, and its sort key. `is_current` is the only derived
@@ -160,6 +190,178 @@ ARRAY JOIN p.normalized_ids AS member_id
 INNER JOIN {QUALIFIED_NORMALIZED_TABLE} AS n FINAL
   ON n.company_id = p.company_id AND n.normalized_id = member_id
 WHERE p.active = 1 AND n.role_code IS NOT NULL
+SETTINGS join_algorithm = 'grace_hash,hash',
+    grace_hash_join_initial_buckets = 16,
+    max_bytes_before_external_group_by = 8589934592,
+    max_bytes_before_external_sort = 8589934592,
+    max_memory_usage = 12884901888"""
+
+
+# The queue holds the UNIT IDS of one request and nothing else. No version column: within a
+# request a company appears once (both minters de-duplicate before inserting) and every
+# other column is identical for every row of a request, so there is nothing for a version to
+# choose between. request_id leads the key because every read is "this request's companies".
+LLM_QUEUE_COLUMNS: tuple[str, ...] = (
+    "request_id", "company_id", "queued_at", "queued_by", "note",
+)
+# One row per company per request, the newest answer winning. `candidates` is the list length
+# the answer was produced for (the apply's sanity check and the cost readout) and
+# `source_run_id` is the Dagster run that wrote the row.
+LLM_RESPONSE_COLUMNS: tuple[str, ...] = (
+    "request_id", "company_id", "provider", "model", "prompt_version", "input_hash",
+    "candidates", "prompt_tokens", "completion_tokens", "raw_response", "error",
+    "attempts", "source_run_id", "responded_at",
+)
+# The gap view's columns in DDL order, and its sort key. One row per company; the two
+# counters are the number of UNCLOSED pairs of each kind.
+MATCH_GAP_VIEW_COLUMNS: tuple[str, ...] = (
+    "company_id", "call_name_pairs", "double_surname_pairs", "computed_at",
+)
+MATCH_GAP_VIEW_ORDER_BY: tuple[str, ...] = ("company_id",)
+
+
+def build_se_company_person_match_gap_sql() -> str:
+    """The SELECT behind `corpscout.se_company_person_match_gap` (spec section 5.2).
+
+    One row per company that still carries a deterministic gap the stored matches have not
+    closed. Both rules are computed over the MEMBER SPELLINGS of two ACTIVE published
+    persons of one company whose source sets are DISJOINT -- the normalized rows the fold
+    built each person from, joined back through `normalized_ids` exactly as the role view
+    does, because the person row carries the precedence-chosen SPELLING and never the
+    tokens. The tokens are the normalizer's: lowercased, diacritic-free, hyphen-split,
+    particles glued to the surname.
+
+    - CALL NAME: the two members' surname token lists are EQUAL and one member's set of
+      given-name tokens is a STRICT SUPERSET of the other's. Ratsit's `erik bo bengtsson`
+      against Bolagsverket's `bo bengtsson`.
+    - DOUBLE SURNAME: the two members' given-name token SETS are equal, one member's surname
+      is TWO tokens and the other's is ONE, and the single token is one of the two.
+      `anna ek svensson` against `anna svensson`.
+
+    A pair counts only when NO stored pair at or above 0.8 already joins the two persons for
+    the company's current, error-free input -- that LEFT ANTI JOIN is what makes this a
+    "still needs work" list rather than a name-rule report.
+
+    Four things the SQL does on purpose. `least`/`greatest` normalize every pair to one
+    direction, so the anti-join lines up whichever side the superset (or the two-token
+    surname) sat on. The self-join produces each unordered pair twice; both rules are
+    asymmetric, so only one direction survives the WHERE and DISTINCT absorbs the rest. A
+    pair cannot be both kinds -- one rule needs equal surnames, the other different ones --
+    so the counters never double-count. And a reviewer-only person has no `ok` machine
+    member, so it contributes no member row at all, while a reviewer person that carries
+    machine members takes part as a person like any other.
+
+    THREE LITERALS ARE SPELLED OUT HERE rather than imported: the four machine sources
+    (`match.MACHINE_SOURCES`), the foldable parse status (`fold.FOLDABLE_STATUS`) and the
+    0.8 threshold (`fold.MATCH_THRESHOLD`). Both of those modules import THIS one, so the
+    import cannot go the other way; tests/test_se_company_person_match_gap_view.py holds the
+    equalities instead.
+
+    Ends with the same SETTINGS block every serving refresh has carried since
+    000347/000391/000402: grace_hash spill joins, external group-by/sort and a 12 GiB cap.
+    This is the heaviest hourly refresh the entity owns and that block is why it fits.
+
+    THE VIEW IS DERIVED AND NOTHING WRITES IT. It lags a fold by at most an hour, and until
+    the first manual refresh lands it answers with zero rows -- which every reader treats as
+    "no gap".
+    """
+    return f"""WITH
+members AS (
+    SELECT
+        p.company_id AS company_id,
+        p.person_key AS person_key,
+        p.birth_year AS birth_year,
+        p.sources AS sources,
+        arrayStringConcat(n.last_tokens, ' ') AS surname,
+        arraySort(arrayDistinct(arrayConcat(n.first_tokens, n.middle_tokens))) AS given_set,
+        arrayStringConcat(arraySort(arrayDistinct(arrayConcat(n.first_tokens, n.middle_tokens))), ' ') AS given,
+        n.last_tokens AS last_tokens
+    FROM {QUALIFIED_MAIN_TABLE} AS p FINAL
+    ARRAY JOIN p.normalized_ids AS member_id
+    INNER JOIN {QUALIFIED_NORMALIZED_TABLE} AS n FINAL
+      ON n.company_id = p.company_id AND n.normalized_id = member_id
+    WHERE p.active = 1 AND n.parse_status = 'ok'
+      AND n.source IN ('bolagsverket', 'esef', 'wikidata', 'ratsit')
+),
+member_person AS (
+    SELECT p.company_id AS company_id, member_id AS normalized_id, p.person_key AS person_key
+    FROM {QUALIFIED_MAIN_TABLE} AS p FINAL
+    ARRAY JOIN p.normalized_ids AS member_id
+    WHERE p.active = 1
+),
+matched AS (
+    SELECT m.company_id AS company_id, m.members_a AS members_a, m.members_b AS members_b
+    FROM {QUALIFIED_MATCH_TABLE} AS m FINAL
+    INNER JOIN (
+        SELECT company_id, input_hash
+        FROM {QUALIFIED_MATCH_STATE_TABLE} FINAL
+        WHERE error = ''
+    ) AS s ON s.company_id = m.company_id AND s.input_hash = m.input_hash
+    WHERE m.confidence >= 0.8
+),
+matched_left AS (
+    SELECT company_id, member_a, members_b FROM matched ARRAY JOIN members_a AS member_a
+),
+matched_ids AS (
+    SELECT company_id, member_a, member_b FROM matched_left ARRAY JOIN members_b AS member_b
+),
+matched_pairs AS (
+    SELECT DISTINCT
+        ka.company_id AS company_id,
+        least(ka.person_key, kb.person_key) AS person_key_a,
+        greatest(ka.person_key, kb.person_key) AS person_key_b
+    FROM matched_ids AS mi
+    INNER JOIN member_person AS ka
+      ON ka.company_id = mi.company_id AND ka.normalized_id = mi.member_a
+    INNER JOIN member_person AS kb
+      ON kb.company_id = mi.company_id AND kb.normalized_id = mi.member_b
+    WHERE ka.person_key != kb.person_key
+),
+call_name AS (
+    SELECT DISTINCT
+        a.company_id AS company_id,
+        least(a.person_key, b.person_key) AS person_key_a,
+        greatest(a.person_key, b.person_key) AS person_key_b
+    FROM members AS a
+    INNER JOIN members AS b ON a.company_id = b.company_id AND a.surname = b.surname
+    WHERE a.person_key != b.person_key
+      AND empty(arrayIntersect(a.sources, b.sources))
+      AND hasAll(a.given_set, b.given_set)
+      AND length(a.given_set) > length(b.given_set)
+      AND (a.birth_year IS NULL OR b.birth_year IS NULL OR a.birth_year = b.birth_year)
+),
+double_surname AS (
+    SELECT DISTINCT
+        a.company_id AS company_id,
+        least(a.person_key, b.person_key) AS person_key_a,
+        greatest(a.person_key, b.person_key) AS person_key_b
+    FROM members AS a
+    INNER JOIN members AS b ON a.company_id = b.company_id AND a.given = b.given
+    WHERE a.person_key != b.person_key
+      AND empty(arrayIntersect(a.sources, b.sources))
+      AND length(a.last_tokens) = 2
+      AND length(b.last_tokens) = 1
+      AND has(a.last_tokens, b.last_tokens[1])
+      AND (a.birth_year IS NULL OR b.birth_year IS NULL OR a.birth_year = b.birth_year)
+),
+gap AS (
+    SELECT company_id, person_key_a, person_key_b, 1 AS is_call_name, 0 AS is_double_surname
+    FROM call_name
+    UNION ALL
+    SELECT company_id, person_key_a, person_key_b, 0 AS is_call_name, 1 AS is_double_surname
+    FROM double_surname
+)
+SELECT
+    g.company_id AS company_id,
+    toUInt32(countIf(g.is_call_name = 1)) AS call_name_pairs,
+    toUInt32(countIf(g.is_double_surname = 1)) AS double_surname_pairs,
+    now64(3, 'UTC') AS computed_at
+FROM gap AS g
+LEFT ANTI JOIN matched_pairs AS m
+  ON m.company_id = g.company_id
+ AND m.person_key_a = g.person_key_a
+ AND m.person_key_b = g.person_key_b
+GROUP BY g.company_id
 SETTINGS join_algorithm = 'grace_hash,hash',
     grace_hash_join_initial_buckets = 16,
     max_bytes_before_external_group_by = 8589934592,
