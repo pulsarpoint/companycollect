@@ -1,6 +1,6 @@
 """Migration 000406 on a real ClickHouse (spec 2026-09-13 sections 4.3 and 5).
 
-Four claims a fake client cannot settle:
+Five claims a fake client cannot settle:
 
 1. The pair table's combined `ADD COLUMN ... , MODIFY ORDER BY ...` applies to a POPULATED
    table: it is accepted, `system.tables.sorting_key` gains request_id, every stored row
@@ -10,13 +10,15 @@ Four claims a fake client cannot settle:
    row under FINAL rather than a replacement. That is the whole reason the key grew.
 3. The gap view's SELECT -- the builder's render, run as a plain SELECT -- finds exactly the
    companies spec section 5.1 defines: a call-name pair no stored match closed, and a
-   double-surname pair.
+   double-surname pair, and a call-name pair with birth year on only one side (production shape).
 4. And it excludes the four cases that must never appear: a call-name pair already matched at
    or above 0.8, a pair whose persons share a source, a pair whose birth years conflict, and
    a company with a single machine source. A reviewer member is not a member at all.
 5. The two new tables accept a row built from `tables.LLM_QUEUE_COLUMNS` and
    `tables.LLM_RESPONSE_COLUMNS` -- every type, the company-id constraint and both defaults --
-   and read back under FINAL as one row per (request, company).
+   and read back under FINAL as one row per (request, company). The defaults are verified:
+   a queue INSERT without `note` and a response INSERT without `error` both land with '',
+   and system.columns declares both with default_kind = 'DEFAULT' and default_expression = '\'\''.
 
 Both `join_use_nulls` settings run: the SELECT joins six times, so the parametrization is a
 live risk here rather than a guard.
@@ -49,6 +51,7 @@ SHARED_SOURCE = "5560000004"      # the persons' source sets overlap on ratsit
 BIRTH_CONFLICT = "5560000005"     # 1970 against 1980
 SINGLE_SOURCE = "5560000006"      # both persons come from bolagsverket alone
 PAIR_ONLY = "5560000007"          # a pair row and no persons: the alter's second company
+BIRTH_YEAR_ONLY_RATSIT = "5560000008"  # erik bo lindqvist (ratsit, 1966) vs bo lindqvist (bolagsverket, NULL)
 
 
 def _id(tag: str) -> str:
@@ -100,6 +103,10 @@ PEOPLE = (
      [("n6a", "bolagsverket", ["erik"], ["bo"], ["bengtsson"])]),
     (SINGLE_SOURCE, "p6b", None, ["bolagsverket"],
      [("n6b", "bolagsverket", ["bo"], [], ["bengtsson"])]),
+    (BIRTH_YEAR_ONLY_RATSIT, "p8a", 1966, ["ratsit"],
+     [("n8a", "ratsit", ["erik"], ["bo"], ["lindqvist"])]),
+    (BIRTH_YEAR_ONLY_RATSIT, "p8b", None, ["bolagsverket"],
+     [("n8b", "bolagsverket", ["bo"], [], ["lindqvist"])]),
 )
 
 
@@ -169,26 +176,39 @@ def _pattern_tables() -> list[str]:
     return creates
 
 
-def _queue_insert() -> str:
-    """One queue row in tables.LLM_QUEUE_COLUMNS order -- `note` takes its DEFAULT."""
+def _queue_insert(*, request_id_suffix: str = "", omit_note: bool = False) -> str:
+    """One queue row in tables.LLM_QUEUE_COLUMNS order.
+
+    If omit_note=True, the `note` column is omitted from the INSERT, proving that
+    the DEFAULT clause works (the column will read back as ''). The request_id_suffix
+    allows distinct rows when multiple inserts are needed for the same company.
+    """
+    request_id = "'0123456789abcdef0123456789abcdef" + request_id_suffix + "'"
     values = {
-        "request_id": "'0123456789abcdef0123456789abcdef'",
+        "request_id": request_id,
         "company_id": f"'{GAP_CALL_NAME}'",
         "queued_at": STAMP,
         "queued_by": "'backoffice'",
         "note": "'se-person-match-v2 gap'",
     }
+    columns = [col for col in tables.LLM_QUEUE_COLUMNS if not (omit_note and col == "note")]
     return (
         f"INSERT INTO {tables.QUALIFIED_LLM_QUEUE_TABLE} "
-        f"({', '.join(tables.LLM_QUEUE_COLUMNS)}) VALUES "
-        f"({', '.join(values[column] for column in tables.LLM_QUEUE_COLUMNS)})"
+        f"({', '.join(columns)}) VALUES "
+        f"({', '.join(values[column] for column in columns)})"
     )
 
 
-def _response_insert() -> str:
-    """One response row in tables.LLM_RESPONSE_COLUMNS order."""
+def _response_insert(*, request_id_suffix: str = "", omit_error: bool = False) -> str:
+    """One response row in tables.LLM_RESPONSE_COLUMNS order.
+
+    If omit_error=True, the `error` column is omitted from the INSERT, proving that
+    the DEFAULT clause works (the column will read back as ''). The request_id_suffix
+    allows distinct rows when multiple inserts are needed for the same company.
+    """
+    request_id = "'0123456789abcdef0123456789abcdef" + request_id_suffix + "'"
     values = {
-        "request_id": "'0123456789abcdef0123456789abcdef'",
+        "request_id": request_id,
         "company_id": f"'{GAP_CALL_NAME}'",
         "provider": "'deepseek'",
         "model": "'deepseek-v4-flash'",
@@ -206,10 +226,11 @@ def _response_insert() -> str:
         "source_run_id": "'run-enhance-1'",
         "responded_at": V2_AT,
     }
+    columns = [col for col in tables.LLM_RESPONSE_COLUMNS if not (omit_error and col == "error")]
     return (
         f"INSERT INTO {tables.QUALIFIED_LLM_RESPONSE_TABLE} "
-        f"({', '.join(tables.LLM_RESPONSE_COLUMNS)}) VALUES "
-        f"({', '.join(values[column] for column in tables.LLM_RESPONSE_COLUMNS)})"
+        f"({', '.join(columns)}) VALUES "
+        f"({', '.join(values[column] for column in columns)})"
     )
 
 
@@ -317,14 +338,24 @@ def _script(join_use_nulls: int) -> str:
         # The pattern's own two tables, written from the column tuples they own.
         _queue_insert(),
         _response_insert(),
+        # Two more rows omitting the DEFAULT columns, to prove they default to ''.
+        # Different request_ids to avoid deduplication under FINAL.
+        _queue_insert(request_id_suffix="1", omit_note=True),
+        _response_insert(request_id_suffix="1", omit_error=True),
         "SELECT '@@queue'",
         f"SELECT request_id, company_id, queued_by, note "
-        f"FROM {tables.QUALIFIED_LLM_QUEUE_TABLE} FINAL ORDER BY request_id, company_id",
+        f"FROM {tables.QUALIFIED_LLM_QUEUE_TABLE} FINAL ORDER BY request_id",
         "SELECT '@@response'",
         f"SELECT request_id, company_id, provider, model, prompt_version, "
         f"toString(input_hash), candidates, prompt_tokens, completion_tokens, "
         f"raw_response, error, attempts, source_run_id "
-        f"FROM {tables.QUALIFIED_LLM_RESPONSE_TABLE} FINAL ORDER BY request_id, company_id",
+        f"FROM {tables.QUALIFIED_LLM_RESPONSE_TABLE} FINAL ORDER BY request_id",
+        "SELECT '@@queue_defaults'",
+        f"SELECT name, default_kind, default_expression FROM system.columns "
+        f"WHERE database = 'corpscout' AND table = '{tables.LLM_QUEUE_TABLE}' AND name = 'note'",
+        "SELECT '@@response_defaults'",
+        f"SELECT name, default_kind, default_expression FROM system.columns "
+        f"WHERE database = 'corpscout' AND table = '{tables.LLM_RESPONSE_TABLE}' AND name = 'error'",
         "SELECT '@@gap'",
         tables.build_se_company_person_match_gap_sql(),
     ]
@@ -386,24 +417,38 @@ def test_the_two_new_tables_accept_the_pattern_insert_tuples(run) -> None:
     """Spec sections 4.1 and 4.2, proved against the real DDL: a row built from
     tables.LLM_QUEUE_COLUMNS and one from tables.LLM_RESPONSE_COLUMNS are accepted by the
     types, the valid_company_id constraint and both DEFAULT clauses, and each reads back as
-    one row per (request, company) under FINAL."""
-    assert run["queue"] == [[
-        "0123456789abcdef0123456789abcdef", GAP_CALL_NAME, "backoffice",
-        "se-person-match-v2 gap",
-    ]]
-    assert run["response"] == [[
-        "0123456789abcdef0123456789abcdef", GAP_CALL_NAME, "deepseek", "deepseek-v4-flash",
-        "se-person-match-v2", _id("hash1"), "2", "1128", "64", "no pairs", "", "1",
-        "run-enhance-1",
-    ]]
+    one row per (request, company) under FINAL. The DEFAULT clauses are verified: inserts
+    omitting `note` and `error` columns read back with '' (the default), and system.columns
+    declares both columns with default_kind = 'DEFAULT' and default_expression = '\'\''."""
+    # Two rows in queue: one with note supplied, one where it defaults to ''.
+    # Ordered by request_id, so the shorter request_id comes first, then the one with suffix "1".
+    assert run["queue"] == [
+        ["0123456789abcdef0123456789abcdef", GAP_CALL_NAME, "backoffice",
+         "se-person-match-v2 gap"],
+        ["0123456789abcdef0123456789abcdef1", GAP_CALL_NAME, "backoffice", ""],
+    ]
+    # Two rows in response: one with error supplied, one where it defaults to ''.
+    assert run["response"] == [
+        ["0123456789abcdef0123456789abcdef", GAP_CALL_NAME, "deepseek", "deepseek-v4-flash",
+         "se-person-match-v2", _id("hash1"), "2", "1128", "64", "no pairs", "", "1",
+         "run-enhance-1"],
+        ["0123456789abcdef0123456789abcdef1", GAP_CALL_NAME, "deepseek", "deepseek-v4-flash",
+         "se-person-match-v2", _id("hash1"), "2", "1128", "64", "no pairs", "", "1",
+         "run-enhance-1"],
+    ]
+    # Verify the DEFAULT declarations in system.columns.
+    # The server returns the default_expression as escaped single quotes: \'\'.
+    assert run["queue_defaults"] == [["note", "DEFAULT", "\\'\\'"]]
+    assert run["response_defaults"] == [["error", "DEFAULT", "\\'\\'"]]
 
 
-def test_the_gap_view_finds_exactly_the_two_open_pairs(run) -> None:
+def test_the_gap_view_finds_exactly_the_three_open_pairs(run) -> None:
     """Spec section 5.1's two definitions, and all four of its exclusions, in one readout.
 
-    Included: the call-name company (one pair, no double surname) and the double-surname
-    company (one pair, no call name) -- and never both counters for one pair, because the two
-    rules disagree about the surnames by construction.
+    Included: two call-name companies (one with birth year on both sides, one with birth year
+    only on the ratsit side -- the production shape) and one double-surname company (one pair,
+    no call name) -- and never both counters for one pair, because the two rules disagree about
+    the surnames by construction.
 
     Excluded: the company whose call-name pair a stored 0.9 match already closed; the company
     whose two persons share `ratsit`; the company whose birth years conflict; and the company
@@ -415,6 +460,7 @@ def test_the_gap_view_finds_exactly_the_two_open_pairs(run) -> None:
     assert rows == [
         [GAP_CALL_NAME, "1", "0"],
         [GAP_DOUBLE, "0", "1"],
+        [BIRTH_YEAR_ONLY_RATSIT, "1", "0"],
     ]
     # computed_at is the fourth column and is stamped by now64, so it is only checked for
     # presence -- a missing value here would mean the SELECT lost a column.
