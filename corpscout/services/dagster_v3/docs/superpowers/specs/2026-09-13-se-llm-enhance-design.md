@@ -394,6 +394,33 @@ Notes the plan must not lose:
 
 ## 6. The Dagster assets
 
+> **Amended 2026-09-13 (owner ruling before slice 2): no new assets.** "We already have the
+> `se_company_person_match` asset and that is enough." Sections 6.1-6.4 below are SUPERSEDED and
+> kept only as the record of what was designed. Slice 2 extends the existing asset instead:
+>
+> - `PersonMatchProfile` gains `request_id: str = ""` (empty, or 1-64 characters of
+>   `[A-Za-z0-9_-]`), and `prompt_version` stops being pinned to v1: it accepts any key of the
+>   `SYSTEM_PROMPTS` registry (`se-person-match-v1`, `se-person-match-v2`). Every other field is
+>   unchanged.
+> - `request_id` empty: behaviour unchanged (the multi-source change scan, or `company_ids`).
+> - `request_id` set: the scope is exactly the company ids queued in
+>   `llm_queue_se_company_person` under that request that have no response row for it yet, or
+>   only a transient one (the prefixes `is_transient_error` recognises); `company_ids` must then
+>   be empty (validated), and the unchanged-hash skip is off, because a request is an explicit
+>   re-send. For each company the run writes the raw answer to `llm_response_se_company_person`
+>   and, under the same page stamp, the parsed pairs to `se_company_person_match` and the state
+>   row to `se_company_person_match_state`, both carrying `request_id` and `prompt_version`.
+>   There is no separate apply step; re-running the same request retries only what failed
+>   transiently.
+> - Queue rows come from the backoffice (sections 9.1 and 9.2). A selection the backoffice
+>   cannot express is one `INSERT INTO corpscout.llm_queue_se_company_person … SELECT … FROM
+>   corpscout.se_company_person_match_gap` run by the controller.
+> - Cleanup is a backoffice action, not an asset: a lightweight `DELETE` of the request's queue
+>   and response rows, and with "revert" also its pair and state rows (section 6.4's semantics).
+> - Section 9.3 keeps Run (it launches `se_company_person_match` with `request_id`,
+>   `prompt_version` and the model) and Cleanup; Apply is gone. Section 13's four asset names and
+>   section 14's slice 2 read accordingly.
+
 New module `dagster_v3/defs/se_company/person/llm_enhance.py` (SQL builders, config classes
 and the run loops), four assets in `person/assets.py`, group `se_company_person`. Table names
 and column tuples go in `person/tables.py` beside the others. No asset here is added to
@@ -878,6 +905,8 @@ sum above zero: a `Badge` reading `needs LLM reprocessing`, the two counts spell
 
 ### 9.3 The Requests page `/admin/se/llm/people`
 
+> **Amended 2026-09-13:** Run launches `se_company_person_match` with `request_id`; Apply is removed; Cleanup is a ClickHouse `DELETE` from the backoffice. See the section 6 amendment.
+
 Route `route("se/llm/people", "routes/admin-se-llm-people.tsx")` inside the existing
 `admin` layout, beside `se/people`.
 
@@ -1171,6 +1200,8 @@ are the gates before each slice's merge.
 
 ## 13. Names
 
+> **Amended 2026-09-13:** the four `se_company_person_llm_*` assets are not built; the existing `se_company_person_match` asset takes `request_id` (section 6 amendment).
+
 Module `se_company/person/llm_enhance.py`; assets `se_company_person_llm_queue`,
 `se_company_person_llm_enhance`, `se_company_person_llm_apply`,
 `se_company_person_llm_cleanup`; config classes `PersonLlmQueueConfig`,
@@ -1234,6 +1265,8 @@ first SELECT shadowed `call_name_pairs` with its own sum (code 184), and the que
 matched the status polls instead of the refresh's INSERT.
 
 ### Slice 2 — the assets and prompt v2
+
+> **Amended 2026-09-13:** slice 2 is the `request_id` mode of `se_company_person_match`, the `SYSTEM_PROMPTS` registry with v2, the response-table write and the `match_pairs_sql` maximum across versions; no new assets (section 6 amendment).
 
 `person/llm_enhance.py` with the four run functions and their configs, the four assets in
 `assets.py`, the `SYSTEM_PROMPTS` registry and `SYSTEM_PROMPT_V2` in `match.py`, the
