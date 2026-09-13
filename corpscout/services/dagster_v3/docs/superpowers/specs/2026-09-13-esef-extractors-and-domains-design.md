@@ -1,5 +1,9 @@
 # ESEF: documents plus independent extractors, first slice `esef_domains`
 
+**Status (2026-09-13):** implemented on branch `esef-domains-extractor` (plan
+`docs/superpowers/plans/2026-09-13-esef-domains-extractor.md`); rollout pending the owner's
+migration + deploy.
+
 Owner ruling 2026-09-13: "static parsing needs to be separate tasks. We have documents, and
 many parsers that can parse that document to extract some information — not one big parser
 with a version. Domain extraction is one asset connected to the `esef_domains` table, that's
