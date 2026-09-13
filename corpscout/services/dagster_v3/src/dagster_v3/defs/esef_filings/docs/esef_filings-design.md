@@ -91,7 +91,10 @@ Website candidate extraction (`website_candidates.py`) reconstructs a domain
 split across a PDF-derived line break (e.g. `www.handels-` / `banken.com`)
 into its dehyphenated form only when that form is corroborated elsewhere in
 the report or by a known contact domain, and otherwise keeps the hyphen
-rather than ever emit the bare continuation fragment on its own.
+rather than ever emit the bare continuation fragment on its own. A candidate
+whose domain is uncorroborated and mentioned only in a referral-shaped
+sentence (e.g. "läs mer på", "read more at") with no company-website signal
+word is tagged `external_reference` rather than an unknown or company role.
 
 ## ClickHouse publication
 

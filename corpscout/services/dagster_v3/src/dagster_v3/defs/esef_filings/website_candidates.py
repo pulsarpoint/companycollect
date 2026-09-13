@@ -30,7 +30,6 @@ _SPLIT_DOMAIN_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _HOST_LABEL_PATTERN = re.compile(r"(?!-)[a-z0-9-]{1,63}(?<!-)$")
-_LEADING_PUNCTUATION = "([{\"'"
 _EXCLUDED_ELEMENTS = frozenset(
     {
         "canvas",
@@ -142,7 +141,20 @@ _ROLE_ORDER = (
     "corporate_responsibility",
     "report_disclosure",
     "social_media",
+    "external_reference",
 )
+# Multi-word referral phrases are distinctive enough to search for anywhere in
+# the sentence. Bare "se"/"see" are extremely common words (Swedish "se" =
+# "see"/"look"), so they only count when the domain follows them within the
+# same sentence -- see `_mentions_referral_phrase`.
+_REFERRAL_PHRASE_PATTERN = re.compile(
+    r"\b(?:läs\s+mer\s+på|read\s+more\s+at|more\s+information\s+at|"
+    r"mer\s+information\s+på|available\s+at|finns\s+på)\b",
+    re.IGNORECASE,
+)
+_REFERRAL_SE_SEE_PATTERN = re.compile(r"\b(?:se|see)\b", re.IGNORECASE)
+_SENTENCE_BOUNDARY_PATTERN = re.compile(r"(?<=[.!?])\s+|\s*[|•]\s*")
+_LEADING_PUNCTUATION = "([{\"'"
 
 
 @dataclass(frozen=True)
@@ -225,12 +237,18 @@ def extract_website_candidates(
             corroborating_domains=corroborating_domains,
             accumulators=accumulators,
         )
+    # Every domain in `accumulators` at this checkpoint came from a tagged
+    # fact (report bodies haven't been parsed yet) -- used below so a
+    # domain independently confirmed by an XBRL website tag is never
+    # classified `external_reference`.
+    tagged_fact_domains = frozenset(accumulators)
 
     for report_member, report_path in sorted(report_paths.items()):
         _extract_report_websites(
             report_member=report_member,
             report_path=report_path,
             corroborating_domains=corroborating_domains,
+            tagged_fact_domains=tagged_fact_domains,
             accumulators=accumulators,
         )
 
@@ -275,6 +293,7 @@ def _extract_report_websites(
     report_member: str,
     report_path: Path,
     corroborating_domains: set[str],
+    tagged_fact_domains: frozenset[str],
     accumulators: dict[str, _WebsiteAccumulator],
 ) -> None:
     tree = etree.parse(
@@ -290,15 +309,21 @@ def _extract_report_websites(
     )
     blocks = _visible_blocks(tree)
 
-    # Computed once per report: registrable domains mentioned as a
-    # genuinely unbroken URL/bare domain anywhere in the report's visible
-    # text (excluding a block's own leading hyphen-break fragment, which
-    # isn't a real mention). This corroborates the dehyphenated reading of
-    # a hyphenated line-break join elsewhere in the same report -- e.g.
-    # "handelsbanken.com" appearing unbroken once is enough to confirm that
-    # a "handels-" / "banken.com" split elsewhere should drop its hyphen.
-    hyphen_corroborating_domains = corroborating_domains | set(
-        _unbroken_domain_mention_counts(blocks)
+    # Computed once per report: how many times each registrable domain is
+    # mentioned as a genuinely unbroken URL/bare domain anywhere in the
+    # report's visible text (excluding a block's own leading hyphen-break
+    # fragment, which isn't a real mention). Two uses:
+    #   - any presence (>=1) corroborates the dehyphenated reading of a
+    #     hyphenated line-break join elsewhere in the same report;
+    #   - more than one mention corroborates a candidate against being
+    #     classified `external_reference` (a domain seen only once, in a
+    #     referral-shaped sentence, is more likely a third-party mention).
+    mention_counts = _unbroken_domain_mention_counts(blocks)
+    hyphen_corroborating_domains = corroborating_domains | set(mention_counts)
+    corroborated_domains = (
+        corroborating_domains
+        | tagged_fact_domains
+        | {domain for domain, count in mention_counts.items() if count > 1}
     )
 
     for index, block in enumerate(blocks):
@@ -323,6 +348,7 @@ def _extract_report_websites(
                     "surrounding_text": context,
                     "candidate_context": block.value,
                     "role_context": block.value,
+                    "corroborated_domains": corroborated_domains,
                 },
                 accumulators=accumulators,
             )
@@ -342,6 +368,7 @@ def _extract_report_websites(
                 "source_line": element.sourceline,
                 "page_id": _page_id(element),
                 "surrounding_text": context,
+                "corroborated_domains": corroborated_domains,
             },
             accumulators=accumulators,
         )
@@ -367,12 +394,20 @@ def _add_website_candidate(
     ):
         return
     role_context = str(evidence_arguments.get("role_context", context))
+    corroborated_domains_argument = evidence_arguments.get("corroborated_domains")
+    corroborated_domains = (
+        corroborated_domains_argument
+        if isinstance(corroborated_domains_argument, (set, frozenset))
+        else frozenset[str]()
+    )
     suggested_role = str(
         evidence_arguments.get(
             "suggested_role",
             _suggested_role(
                 role_context,
                 registrable_domain=normalized.registrable_domain,
+                corroborated=normalized.registrable_domain in corroborated_domains,
+                referral_context=context,
             ),
         )
     )
@@ -779,14 +814,53 @@ def _is_visible(element: etree._Element) -> bool:
     return True
 
 
-def _suggested_role(context: str, *, registrable_domain: str) -> str:
+def _suggested_role(
+    role_context: str,
+    *,
+    registrable_domain: str,
+    corroborated: bool,
+    referral_context: str,
+) -> str:
     if registrable_domain in _SOCIAL_MEDIA_DOMAINS:
         return "social_media"
-    search_text = f"{context} {registrable_domain}"
+    search_text = f"{role_context} {registrable_domain}"
     for role, pattern in _ROLE_PATTERNS:
         if pattern.search(search_text) is not None:
             return role
+    if not corroborated and _is_external_reference(
+        referral_context, registrable_domain=registrable_domain
+    ):
+        return "external_reference"
     return "unknown"
+
+
+def _is_external_reference(context: str, *, registrable_domain: str) -> bool:
+    sentence = _sentence_mentioning_domain(
+        context, registrable_domain=registrable_domain
+    )
+    if _BARE_DOMAIN_SIGNAL_PATTERN.search(sentence) is not None:
+        return False
+    return _mentions_referral_phrase(sentence, registrable_domain=registrable_domain)
+
+
+def _sentence_mentioning_domain(context: str, *, registrable_domain: str) -> str:
+    normalized_domain = registrable_domain.lower()
+    for sentence in _SENTENCE_BOUNDARY_PATTERN.split(context):
+        if normalized_domain in sentence.lower():
+            return sentence
+    return context
+
+
+def _mentions_referral_phrase(sentence: str, *, registrable_domain: str) -> bool:
+    if _REFERRAL_PHRASE_PATTERN.search(sentence) is not None:
+        return True
+    domain_match = re.search(re.escape(registrable_domain), sentence, re.IGNORECASE)
+    if domain_match is None:
+        return False
+    # Bare "se"/"see" only count as a referral trigger when they precede the
+    # domain within the same sentence (see the comment above
+    # `_REFERRAL_SE_SEE_PATTERN` for why they can't be matched anywhere).
+    return _REFERRAL_SE_SEE_PATTERN.search(sentence[: domain_match.start()]) is not None
 
 
 def _finalize_candidate(

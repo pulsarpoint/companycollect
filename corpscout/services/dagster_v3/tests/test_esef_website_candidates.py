@@ -7,13 +7,24 @@ segment parser); this module holds the bounded fix's tests instead of growing
 that unrelated file further.
 """
 
+from pathlib import Path
+
+import pytest
 from lxml import etree
 
 from dagster_v3.defs.esef_filings.website_candidates import (
+    TaggedWebsiteValue,
     _block_context,
     _block_website_values,
     _visible_blocks,
     _website_values,
+    extract_website_candidates,
+)
+
+# The real 2022 Handelsbanken filing (LEI NHBDILHZTYCNBV5UYZ31) used for the
+# end-to-end check. Not checked into the repo -- skip when it is absent.
+_REAL_2022_FILING = Path(
+    "/Users/graovic/.claude/jobs/dea16ebc/tmp/hand2022/hand-2022-12-31-sv.xhtml"
 )
 
 
@@ -210,3 +221,94 @@ def test_same_line_split_domain_keeps_hyphen_when_uncorroborated() -> None:
 
     assert "www.corporate-governanceboard.se" in values
     assert "www.corporategovernanceboard.se" not in values
+
+
+# --- Third-party referrals become external_reference ---
+
+
+def test_third_party_referral_gets_external_reference_role(tmp_path: Path) -> None:
+    report_path = tmp_path / "report.xhtml"
+    report_path.write_text(
+        """<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <body>
+    <p>och krav kring biologisk mångfald. Läs mer på</p>
+    <p>svanen.se/spararen.</p>
+    <p>Handelsbanken Fonder erbjuder vid årets slut ytterligare information.</p>
+  </body>
+</html>
+""",
+        encoding="utf-8",
+    )
+
+    candidates = extract_website_candidates(
+        {"reports/report.xhtml": report_path},
+        tagged_values=[],
+        known_email_domains=[],
+    )
+
+    by_domain = {candidate.registrable_domain: candidate for candidate in candidates}
+    assert by_domain["svanen.se"].suggested_roles == ["external_reference"]
+
+
+def test_tagged_website_fact_with_lone_referral_mention_stays_company_website(
+    tmp_path: Path,
+) -> None:
+    # A single, otherwise-referral-shaped mention ("läs mer på", no
+    # company-website signal word, mentioned only once) must NOT become
+    # external_reference when the domain is independently corroborated by a
+    # tagged WebsitesOfLegalEntity fact.
+    report_path = tmp_path / "report.xhtml"
+    report_path.write_text(
+        """<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <body>
+    <p>Läs mer på sample-oils.se om vårt hållbarhetsarbete.</p>
+  </body>
+</html>
+""",
+        encoding="utf-8",
+    )
+
+    candidates = extract_website_candidates(
+        {"reports/report.xhtml": report_path},
+        tagged_values=[
+            TaggedWebsiteValue(
+                report_member="reports/report.xhtml",
+                concept_local_name="WebsitesOfLegalEntity",
+                value="www.sample-oils.se",
+            ),
+        ],
+        known_email_domains=[],
+    )
+
+    by_domain = {candidate.registrable_domain: candidate for candidate in candidates}
+    assert by_domain["sample-oils.se"].suggested_roles == ["company_website"]
+
+
+# --- End-to-end check against the real 2022 Handelsbanken filing ---
+
+
+@pytest.mark.skipif(
+    not _REAL_2022_FILING.exists(),
+    reason="real 2022 Handelsbanken filing fixture is not present on disk",
+)
+def test_end_to_end_handelsbanken_2022_report_website_candidates() -> None:
+    candidates = extract_website_candidates(
+        {"reports/hand-2022-12-31-sv.xhtml": _REAL_2022_FILING},
+        tagged_values=[],
+        known_email_domains=[],
+    )
+    by_domain = {candidate.registrable_domain: candidate for candidate in candidates}
+
+    assert "handelsbanken.com" in by_domain
+    assert "banken.com" not in by_domain
+
+    assert "handelsbankenfonder.se" in by_domain
+    assert "bankenfonder.se" not in by_domain
+
+    assert "svanen.se" in by_domain
+    assert "external_reference" in by_domain["svanen.se"].suggested_roles
+
+    assert "ipcc.ch" in by_domain
+    assert "external_reference" in by_domain["ipcc.ch"].suggested_roles
