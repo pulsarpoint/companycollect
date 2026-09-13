@@ -629,7 +629,10 @@ the entity.
    Owner observation: with Ratsit first on employees, 5567081699's 2025 row shows 19 employees
    (Ratsit) over Bolagsverket's 1,900.
 4. Cutover: the admin workspace, the shared grid on the public page, every re-point of section 10
-   with migration 000402, the deletions, the owner-run view drops, the smoke.
+   with migration 000402, the deletions, the owner-run view drops, the smoke. Slice 4a (data
+   side) code complete 2026-09-13 on branch se-financial-entity (plan
+   2026-09-13-se-company-financial-4a-readers.md); migration 000404, not 000402; prod pending.
+   Slice 4b (backoffice) follows.
 
 Later, separate specs: a fold-aware weekly, USD twins on the other Ratsit tables, a merge rule for
 near-identical period ends if the readout warrants it, Wikidata employees as a source.
