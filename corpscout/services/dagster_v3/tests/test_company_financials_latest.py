@@ -74,8 +74,8 @@ def test_build_latest_insert_sql_qualifies_resolved_at_tiebreak() -> None:
     )
 
     for code in COMPANY_FINANCIALS_LATEST_COUNTRIES:
-        if code == "br":
-            continue  # BR's hand-built SELECT has no {tiebreak}-style placeholder
+        if code in ("br", "se"):
+            continue  # hand-built SELECTs: BR pivots, SE reads the folded entity (below)
         source_table = SOURCES[code]["table"]
         select_sql = build_latest_insert_sql(code)
         expected = f"`{source_table}`.resolved_at DESC"
@@ -94,13 +94,27 @@ def test_build_latest_insert_sql_qualifies_resolved_at_tiebreak() -> None:
         )
 
 
-def test_sweden_latest_prefers_reported_metrics_over_comparatives() -> None:
-    from dagster_v3.defs.company_financials_latest.sql import build_latest_insert_sql
+def test_sweden_latest_reads_the_entitys_newest_active_standalone_period() -> None:
+    """Spec 2026-09-11 section 10: the Sweden leg reads corpscout.se_company_financial (the
+    fold's output), active standalone rows under FINAL, newest period end first with the
+    fold stamp as the qualified tiebreak; the USD twins are the winners' own conversions, so
+    no fx fallback; years_count counts distinct fiscal years before LIMIT 1 BY; a period end outside the Date range is
+    NULL, never a wrapped toDate() (the engine test proves the wrap)."""
+    from dagster_v3.defs.company_financials_latest.assets import UPSTREAM_KEYS
+    from dagster_v3.defs.company_financials_latest.sql import SOURCES, build_latest_insert_sql
 
     sql = build_latest_insert_sql("se")
 
-    assert "observation_kind = 'reported' DESC" in sql
-    assert "source_fiscal_year DESC NULLS LAST" in sql
+    assert "FROM corpscout.se_company_financial FINAL" in sql
+    assert "WHERE active = 1 AND scope = 'standalone'" in sql
+    assert "if(period_end BETWEEN toDate32('1970-01-01') AND toDate32('2149-06-06'), toDate(period_end), NULL) AS period_end_date" in sql
+    assert "toDate(period_end) AS period_end_date" not in sql
+    assert "ORDER BY period_end DESC, `se_company_financial`.folded_at DESC" in sql
+    assert "LIMIT 1 BY company_id" in sql
+    assert "fx_rate_to_usd" not in sql and "se_bolagsverket_financial_metrics" not in sql
+    assert "toUInt32(uniqExact(fiscal_year) OVER (PARTITION BY company_id)) AS years_count" in sql
+    assert SOURCES["se"] == {"table": "se_company_financial", "id": "company_id"}
+    assert UPSTREAM_KEYS["se"] == ["se_company_financial_fold"]
 
 
 def test_build_latest_insert_sql_rejects_unknown_code() -> None:

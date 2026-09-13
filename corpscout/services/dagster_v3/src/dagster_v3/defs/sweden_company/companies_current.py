@@ -217,14 +217,23 @@ def _address_map_expression() -> str:
 
 SE_COMPANIES_SERVING_VIEW = "se_companies_serving"
 
-BOLAGSVERKET_FINANCIAL_SET = (
-    f"SELECT company_id FROM {CLICKHOUSE_DATABASE}.se_bolagsverket_financial_metrics"
+# The financial entity (spec 2026-09-11 section 10): one table constant, read FINAL, active
+# rows only -- a period the reviewer hid or every source withdrew must not keep a flag lit.
+# The per-register flags read the row's `sources` (every source that won a field): the
+# restated column a later Bolagsverket filing publishes (`bolagsverket_comparative`) is
+# Bolagsverket's data too, so it lights the Bolagsverket flag with the reported rows.
+COMPANY_FINANCIAL_TABLE = f"{CLICKHOUSE_DATABASE}.se_company_financial"
+FINANCIAL_SET = f"SELECT company_id FROM {COMPANY_FINANCIAL_TABLE} FINAL WHERE active = 1"
+FINANCIAL_BOLAGSVERKET_SET = (
+    f"SELECT company_id FROM {COMPANY_FINANCIAL_TABLE} FINAL "
+    "WHERE active = 1 AND hasAny(sources, ['bolagsverket', 'bolagsverket_comparative'])"
 )
-ESEF_FINANCIAL_SET = (
-    f"SELECT ci.company_id FROM {CLICKHOUSE_DATABASE}.company_identifier AS ci "
-    "WHERE ci.issuer_scheme = 'lei' AND ci.country_code = 'SE' AND ci.is_current = 1 "
-    f"AND ci.issuer_id IN (SELECT upperUTF8(trimBoth(m.lei)) FROM {CLICKHOUSE_DATABASE}.esef_financial_metrics AS m)"
+FINANCIAL_ESEF_SET = (
+    f"SELECT company_id FROM {COMPANY_FINANCIAL_TABLE} FINAL "
+    "WHERE active = 1 AND has(sources, 'esef')"
 )
+# Filed reports are a source fact, not a presentation: a company with a filed report but no
+# extracted figure still counts as having financials (owner ruling 2026-08-25).
 FINANCIAL_REPORTS_SET = (
     f"SELECT company_id FROM {CLICKHOUSE_DATABASE}.se_financial_reports"
 )
@@ -301,7 +310,7 @@ def build_se_companies_serving_sql() -> str:
 
     Flag semantics are ported verbatim from the backoffice's DATATYPE_PRESENCE_EXPR /
     PROFILE_SOURCE_PREDICATES (se-company-info-lists.server.ts, owner ruling 2026-08-25:
-    has_financial is extracted metrics OR filed reports; the SCB flag is omitted -- it is 1
+    has_financial is an active financial-entity row OR a filed report; the SCB flag is omitted -- it is 1
     for every row by construction, the reader hard-codes its letter).
     """
     address_map = _address_map_expression()
@@ -366,7 +375,7 @@ SELECT
   updated_from_raw_at,
   has_description,
   has_address,
-  toUInt8(fin_bolagsverket OR fin_esef OR fin_reports) AS has_financial,
+  toUInt8(fin_entity OR fin_reports) AS has_financial,
   has_people,
   has_domains,
   toUInt8(address_bolagsverket OR fin_bolagsverket OR people_bolagsverket) AS source_bolagsverket,
@@ -402,8 +411,9 @@ FROM (
     ifNull(b.observed_at, toDateTime64(0, 3, 'UTC')) AS updated_from_raw_at,
     toUInt8(i.description IS NOT NULL) AS has_description,
     toUInt8(ifNull(agg.address_count, 0) > 0) AS has_address,
-    toUInt8(i.company_id IN ({BOLAGSVERKET_FINANCIAL_SET})) AS fin_bolagsverket,
-    toUInt8(i.company_id IN ({ESEF_FINANCIAL_SET})) AS fin_esef,
+    toUInt8(i.company_id IN ({FINANCIAL_SET})) AS fin_entity,
+    toUInt8(i.company_id IN ({FINANCIAL_BOLAGSVERKET_SET})) AS fin_bolagsverket,
+    toUInt8(i.company_id IN ({FINANCIAL_ESEF_SET})) AS fin_esef,
     toUInt8(i.company_id IN ({FINANCIAL_REPORTS_SET})) AS fin_reports,
     toUInt8(i.company_id IN ({PEOPLE_SET})) AS has_people,
     toUInt8(i.company_id IN ({PEOPLE_BOLAGSVERKET_SET})) AS people_bolagsverket,

@@ -21,9 +21,14 @@ section_rows AS (
     UNION ALL
     SELECT country_code, company_id, 'contracts', contract_ref, resolved_at FROM {{ ref('company_contract_current_build') }}
     UNION ALL
-    SELECT '{{ var("country_code") }}', financials.company_id, 'financials', financials.company_id, financials.resolved_at
-    FROM {{ source('corpscout', 'se_company_financials_latest') }} AS financials
+    -- The financial entity (spec 2026-09-11 section 10, slice 4a): one presence row per
+    -- company with an ACTIVE folded period, keyed by company as before; folded_at is the
+    -- observation instant. se_company_financials_latest is a projection of the same table
+    -- since that slice, so the presence reads the table it is derived from.
+    SELECT '{{ var("country_code") }}', financials.company_id, 'financials', financials.company_id, financials.folded_at
+    FROM {{ source('corpscout', 'se_company_financial') }} AS financials FINAL
     INNER JOIN company_anchors AS anchors ON anchors.company_id = financials.company_id
+    WHERE financials.active = 1
     UNION ALL
     SELECT '{{ var("country_code") }}', company_id, 'industries', classification_code, resolved_at
     FROM {{ ref('se_company_industry_display_current_build') }}
