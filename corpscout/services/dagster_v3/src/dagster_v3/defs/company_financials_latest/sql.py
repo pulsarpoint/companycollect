@@ -91,19 +91,12 @@ SOURCES = {
         # no toDate() wrapper needed.
         "period_end": "period_end",
     },
+    # SE reads the financial ENTITY (spec 2026-09-11 section 10), not a source table, so
+    # its SELECT is hand-built (_SE_SELECT) like BR's; "table" and "id" stay here for the
+    # upstream-table-existence check in assets.py and the coverage test.
     "se": {
-        "table": "se_bolagsverket_financial_metrics",
+        "table": "se_company_financial",
         "id": "company_id",
-        "currency": "currency",
-        "rev": "revenue",
-        "net": "profit_loss",
-        "employees": "toFloat64(employees)",
-        # se.report_period_end is Nullable(Date32) (verified live 2026-07-17),
-        # not Date like the migration column -- toDate() normalizes it.
-        "period_end": "toDate(report_period_end)",
-        "statement_order": (
-            "observation_kind = 'reported' DESC, source_fiscal_year DESC NULLS LAST, "
-        ),
     },
     "ee": {
         "table": "ee_financial_metrics",
@@ -218,6 +211,36 @@ ORDER BY fy DESC
 LIMIT 1 BY cnpj_basico
 """
 
+# SE is the folded financial entity (spec 2026-09-11 section 10): the latest ACTIVE STANDALONE
+# period per company, read FINAL from corpscout.se_company_financial. Every USD figure is the
+# winning source's own conversion, copied by the fold -- the entity carries no row-level fx
+# rate, so there is no `original * fx_rate` fallback here. `years_count` counts the company's
+# distinct fiscal years over its active standalone rows, computed BEFORE `LIMIT 1 BY`
+# collapses to the newest period. The tiebreak on folded_at is qualified with the table name
+# for the same reason the wide template qualifies resolved_at (a bare alias would shadow it).
+_SE_SELECT = """
+SELECT
+  company_id AS company_id,
+  toInt32(fiscal_year) AS fiscal_year,
+  toDate(period_end) AS period_end_date,
+  toString(currency) AS currency,
+  toFloat64(revenue_amount_original) AS revenue_amount_original,
+  toFloat64(revenue_amount_usd) AS revenue_amount_usd,
+  toFloat64(net_result_amount_original) AS net_result_amount_original,
+  toFloat64(net_result_amount_usd) AS net_result_amount_usd,
+  toFloat64(total_assets_amount_original) AS total_assets_amount_original,
+  toFloat64(total_assets_amount_usd) AS total_assets_amount_usd,
+  toFloat64(equity_amount_original) AS equity_amount_original,
+  toFloat64(equity_amount_usd) AS equity_amount_usd,
+  toFloat64(employees) AS employees,
+  toUInt32(uniqExact(fiscal_year) OVER (PARTITION BY company_id)) AS years_count,
+  now64(3) AS resolved_at
+FROM corpscout.se_company_financial FINAL
+WHERE active = 1 AND scope = 'standalone'
+ORDER BY period_end DESC, `se_company_financial`.folded_at DESC
+LIMIT 1 BY company_id
+"""
+
 
 def build_latest_insert_sql(code: str) -> str:
     """Return the latest-financials SELECT body for one country `code`.
@@ -234,6 +257,8 @@ def build_latest_insert_sql(code: str) -> str:
         )
     if code == "br":
         return _BR_SELECT
+    if code == "se":
+        return _SE_SELECT
     defaults = {
         "where": "",
         "total_assets_original": "toFloat64(total_assets_amount_original)",
