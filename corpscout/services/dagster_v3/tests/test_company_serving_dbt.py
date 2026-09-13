@@ -221,10 +221,29 @@ def test_company_domains_build_reads_the_esef_domains_view() -> None:
     assert "se_esef_document_contact_candidates" not in sql
     assert "domains.extraction_status = 'ok'" in sql
     assert "domains.registrable_domain != ''" in sql
-    assert "JSONExtract(domains.roles_json, 'Array(String)') != ['external_reference']" in sql
+    # Auditor / social-media / referral-only domains never reach serving (final-review
+    # ruling, spec section 5); the old "exactly ['external_reference']" form is gone.
+    assert "AND NOT arrayAll(" in sql
+    assert "role -> role IN ('auditor', 'social_media', 'external_reference')" in sql
+    assert "!= ['external_reference']" not in sql
     assert "has(JSONExtract(domains.roles_json, 'Array(String)'), 'company_website')" in sql
     assert "domains.corroborated = 1 OR domains.evidence_count >= 2" in sql
     assert "0.50" in sql and "0.75" not in sql
+
+
+def test_source_links_read_esef_domain_provenance_from_the_domains_view() -> None:
+    sql = (MODELS_DIR / "company_section_item_source_links_build.sql").read_text(
+        encoding="utf-8"
+    )
+    cte = sql.split("esef_domains AS (", 1)[1].split("\n),\n", 1)[0]
+    assert "source('corpscout', 'se_esef_domains') }} AS domains" in cte
+    assert "se_esef_document_contact_candidates" not in cte
+    assert "domains.extraction_status = 'ok'" in cte
+    assert "domains.registrable_domain != ''" in cte
+    assert "role -> role IN ('auditor', 'social_media', 'external_reference')" in cte
+    assert "domains.source_record_uid" in cte
+    assert "domains.resolved_at AS linked_at" in cte
+    assert "candidate_kind = 'website'" not in sql
 
 
 def test_company_contact_current_build_excludes_website_rows() -> None:

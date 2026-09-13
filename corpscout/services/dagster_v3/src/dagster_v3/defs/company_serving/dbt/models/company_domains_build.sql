@@ -100,13 +100,22 @@ esef_sources AS (
     LEFT ANY JOIN {{ source('corpscout', 'se_esef_filings') }} AS filings
         ON filings.fxo_id = domains.source_document_id
     -- The extractor (dagster_v3.defs.esef_filings.domains_extraction) writes one
-    -- marker row per document without domains (registrable_domain '') and tags a
-    -- domain it saw only in a third-party referral as external_reference; neither
-    -- is a company website. A tagged WebsitesOfLegalEntity fact, a known e-mail
-    -- domain or a repeated mention (corroborated = 1) lifts a mention to 0.90.
+    -- marker row per document without domains (registrable_domain '') -- not a
+    -- website. A domain whose roles are all auditor / social_media /
+    -- external_reference is the auditor's, a social-media profile or a third-party
+    -- referral, not the company's own (spec 2026-09-13 section 5, final-review
+    -- ruling: an auditor tagged via WebsiteOfTheAuditEntity is corroborated and
+    -- would otherwise reach 0.90). An ok row always carries at least one role
+    -- (unknown when nothing else), so arrayAll never sees an empty array on a real
+    -- row; a row mixing one of these with another role keeps the confidence rule.
+    -- A tagged WebsitesOfLegalEntity fact, a known e-mail domain or a repeated
+    -- mention (corroborated = 1) lifts a mention to 0.90.
     WHERE domains.extraction_status = 'ok'
       AND domains.registrable_domain != ''
-      AND JSONExtract(domains.roles_json, 'Array(String)') != ['external_reference']
+      AND NOT arrayAll(
+          role -> role IN ('auditor', 'social_media', 'external_reference'),
+          JSONExtract(domains.roles_json, 'Array(String)')
+      )
 ),
 
 common_crawl_evidence AS (

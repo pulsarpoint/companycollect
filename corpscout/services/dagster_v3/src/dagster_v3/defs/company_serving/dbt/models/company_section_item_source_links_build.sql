@@ -296,20 +296,28 @@ wikidata_domains AS (
     WHERE has(current.source_names, 'wikidata')
 ),
 esef_domains AS (
+    -- The esef_filing domain provenance reads the esef_domains extractor's rows, the same
+    -- rows (and the same role exclusion) as company_domains_build's esef_sources leg, so a
+    -- filing is linked only where its row fed the esef_filing source.
     SELECT
         current.country_code, current.company_id, 'domains' AS section,
-        current.root_domain AS item_key, candidates.source_record_uid,
+        current.root_domain AS item_key, domains.source_record_uid,
         'annual_report_website' AS relationship_kind,
         'annual_report_extraction' AS match_method,
         arrayElement(current.source_confidences, indexOf(current.source_names, 'esef_filing')) AS match_confidence,
-        candidates.source_run_id, candidates.resolved_at AS linked_at
+        domains.source_run_id, domains.resolved_at AS linked_at
     FROM {{ ref('company_domains_build') }} AS current
-    INNER JOIN {{ source('corpscout', 'se_esef_document_contact_candidates') }} AS candidates
-        ON candidates.company_id = current.company_id
-       AND candidates.registrable_domain = current.root_domain
-       AND candidates.candidate_kind = 'website'
+    INNER JOIN {{ source('corpscout', 'se_esef_domains') }} AS domains
+        ON domains.company_id = current.company_id
+       AND domains.registrable_domain = current.root_domain
     WHERE has(current.source_names, 'esef_filing')
-      AND candidates.source_record_uid != ''
+      AND domains.extraction_status = 'ok'
+      AND domains.registrable_domain != ''
+      AND NOT arrayAll(
+          role -> role IN ('auditor', 'social_media', 'external_reference'),
+          JSONExtract(domains.roles_json, 'Array(String)')
+      )
+      AND domains.source_record_uid != ''
 ),
 contacts AS (
     SELECT
