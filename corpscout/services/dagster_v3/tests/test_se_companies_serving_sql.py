@@ -486,9 +486,10 @@ def _script(*, join_use_nulls: int) -> str:
         # Stubs for the presence-set reads: only the columns the serving SELECT's
         # IN-subqueries touch. Seeds prove each arm independently.
         "CREATE TABLE corpscout.se_code_labels (code_type String, code String, label_en String, label_sv String, version UInt32) ENGINE = MergeTree ORDER BY code;",
-        "CREATE TABLE corpscout.se_bolagsverket_financial_metrics (company_id String) ENGINE = MergeTree ORDER BY company_id;",
-        "CREATE TABLE corpscout.company_identifier (company_id String, issuer_scheme String, country_code String, is_current UInt8, issuer_id String) ENGINE = MergeTree ORDER BY company_id;",
-        "CREATE TABLE corpscout.esef_financial_metrics (lei String) ENGINE = MergeTree ORDER BY lei;",
+        # The financial entity's main table (migration 000401) -- read FINAL, active rows only;
+        # only the columns the three financial IN-subqueries touch. ReplacingMergeTree so the
+        # stub accepts the FINAL modifier the real engine does.
+        "CREATE TABLE corpscout.se_company_financial (company_id String, sources Array(String), active UInt8, scope String) ENGINE = ReplacingMergeTree ORDER BY company_id;",
         "CREATE TABLE corpscout.se_financial_reports (company_id String) ENGINE = MergeTree ORDER BY company_id;",
         # The person entity's main table (migration 000396, renamed by 000398) -- read
         # FINAL, active rows only. Only the three columns the serving SELECT's IN-subqueries
@@ -506,7 +507,9 @@ def _script(*, join_use_nulls: int) -> str:
         + ", ".join((_bolagsverket_row(COARSE, reason="'konkurs avslutad'"), _bolagsverket_row(PRECISE)))
         + ";",
         "INSERT INTO corpscout.se_code_labels VALUES ('status_reason', 'konkurs avslutad', 'Bankruptcy concluded', '', 1), ('legal_form', '49', 'Limited company (aktiebolag)', 'Aktiebolag', 1);",
-        f"INSERT INTO corpscout.se_bolagsverket_financial_metrics VALUES ('{PRECISE}');",
+        # PRECISE has an active folded period from Bolagsverket and Ratsit; UNGEOCODED's only
+        # period is hidden (active 0), which must not light has_financial.
+        f"INSERT INTO corpscout.se_company_financial VALUES ('{PRECISE}', ['bolagsverket', 'ratsit'], 1, 'standalone'), ('{UNGEOCODED}', ['ratsit'], 0, 'standalone');",
         f"INSERT INTO corpscout.se_financial_reports VALUES ('{COARSE}');",
         f"INSERT INTO corpscout.se_company_person VALUES ('{PRECISE}', ['esef'], 1);",
         # The SE filter must hold: UNGEOCODED's domain is Norwegian and must not count.
@@ -598,8 +601,9 @@ def test_an_addressless_company_serves_an_empty_address_summary(
 
 
 def test_presence_flags_come_from_the_child_tables(rows: dict[str, dict]) -> None:
-    # has_financial: PRECISE via extracted metrics, COARSE via a filed report --
-    # the owner's 2026-08-25 widening -- and nothing else.
+    # has_financial: PRECISE via an active financial-entity row, COARSE via a filed report --
+    # the owner's 2026-08-25 widening -- and nothing else; UNGEOCODED's hidden period does
+    # not count.
     assert rows[PRECISE]["has_financial"] == 1
     assert rows[COARSE]["has_financial"] == 1
     assert rows[UNGEOCODED]["has_financial"] == 0
