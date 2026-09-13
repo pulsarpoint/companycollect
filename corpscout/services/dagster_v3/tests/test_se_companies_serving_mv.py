@@ -168,6 +168,10 @@ def test_the_up_migration_stops_repoints_and_starts() -> None:
     assert f"FROM {FINANCIAL_ENTITY} FINAL" in filing and "WHERE active = 1 AND scope = 'standalone'" in filing
     assert "se_company_financials_latest" not in filing
     assert "FROM corpscout.se_annual_report_filing_observations FINAL" in filing
+    # Provenance is per company, from the newest period's winning sources (final review F1).
+    assert "hasAny(argMax(sources, period_end), ['bolagsverket', 'bolagsverket_comparative']) AS newest_from_register" in filing
+    assert "if(newest_from_register, 'sweden_financial', 'se_company_financial') AS source_slug" in filing
+    assert "'sweden_financial' AS source_slug" not in filing
     # A repoint, nothing else: no staged swap, no rename, no new table, no drop on either
     # side. The refresh this view runs takes 13 to 15 minutes and the migrate client's read
     # timeout is 300 seconds, so a SYSTEM WAIT VIEW here would drop the client mid-migration.

@@ -18,6 +18,11 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 --    data_available leg reads the entity's newest active standalone period end per company
 --    instead of se_company_financials_latest (which is itself rebuilt from the entity by the
 --    company_financials_latest asset from this slice on). The observations leg is unchanged.
+--    The leg's provenance is per company: when the newest period's winning sources include a
+--    Bolagsverket source (bolagsverket or bolagsverket_comparative) the row keeps 000282's
+--    Bolagsverket bulk-file provenance, otherwise source_slug is se_company_financial with no
+--    URL and no file format -- the entity's `sources` names the sources that WON a field, so
+--    a Ratsit-only or ESEF-only period must not claim a Bolagsverket document.
 --    A plain view, so CREATE OR REPLACE VIEW does it in place.
 --
 -- AN IN-PLACE REPOINT of the serving view, the recipe of 000393/000396/000398/000403, not
@@ -38,6 +43,11 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 -- hand: check corpscout.se_companies_serving in system.view_refreshes, run SYSTEM START VIEW
 -- corpscout.se_companies_serving, then migrate force 404 so the ledger records where the
 -- database actually is. The address design doc's runbook section has the full sequence.
+-- IF IT DROPS AFTER THE START but before the last statement, the serving view is fine and
+-- the filing-status view still reads se_company_financials_latest -- before forcing 404,
+-- confirm SHOW CREATE VIEW corpscout.se_annual_report_filing_status_current names
+-- corpscout.se_company_financial FINAL, and if it does not, run the CREATE OR REPLACE VIEW
+-- at the end of this file by hand first.
 --
 -- THE SELECT BELOW IS NOT HAND-WRITTEN AND MUST NOT BE HAND-EDITED -- exact rendering of
 -- companies_current.build_se_companies_serving_sql(), drift-pinned by dagster_v3
@@ -272,17 +282,21 @@ FROM
             'data_available' AS filing_status,
             toDate32(period_end_date) AS report_period_end,
             CAST(NULL, 'Nullable(Date32)') AS filing_registered_on,
-            CAST('application/xhtml+xml' AS Nullable(String)) AS source_file_format,
+            if(newest_from_register, CAST('application/xhtml+xml' AS Nullable(String)), CAST(NULL, 'Nullable(String)')) AS source_file_format,
             CAST(NULL, 'Nullable(String)') AS bolagsverket_document_id,
-            'sweden_financial' AS source_slug,
+            if(newest_from_register, 'sweden_financial', 'se_company_financial') AS source_slug,
             concat('financials-latest:', company_id) AS source_record_id,
-            'https://vardefulla-datamangder.bolagsverket.se/arsredovisningar-bulkfiler' AS source_url,
+            if(newest_from_register, 'https://vardefulla-datamangder.bolagsverket.se/arsredovisningar-bulkfiler', '') AS source_url,
             '' AS source_object_key,
             '' AS source_payload_sha256,
             '' AS source_run_id,
             resolved_at AS observed_at
         FROM (
-            SELECT company_id, max(period_end) AS period_end_date, max(folded_at) AS resolved_at
+            SELECT
+                company_id,
+                max(period_end) AS period_end_date,
+                max(folded_at) AS resolved_at,
+                hasAny(argMax(sources, period_end), ['bolagsverket', 'bolagsverket_comparative']) AS newest_from_register
             FROM corpscout.se_company_financial FINAL
             WHERE active = 1 AND scope = 'standalone'
             GROUP BY company_id
