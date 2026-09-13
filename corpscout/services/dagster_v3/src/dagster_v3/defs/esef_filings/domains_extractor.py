@@ -86,7 +86,7 @@ class EsefDomainsConfig(dg.Config):
     batch_size: int = Field(
         default=250,
         ge=1,
-        le=5000,
+        le=1000,
         description="Documents per ClickHouse replace; progress survives a failure after each batch.",
     )
     parse_timeout_seconds: int = Field(default=300, ge=60, le=3600)
@@ -105,13 +105,14 @@ def stale_documents_sql(*, all_available: bool, only_listed: bool) -> str:
     Parameters: extractor_version (unless all_available),
     source_document_ids (when only_listed).
     """
+    # ifNull, not `extracted.source_document_id = '' OR extracted.extractor_version != ...`:
+    # under join_use_nulls=1 the unmatched LEFT JOIN side is NULL, and `NULL != x` is NULL
+    # (not true), so the OR form silently drops every never-extracted document. Coalescing
+    # first keeps this correct under both settings (llm_enrichment_assets.py's join guard).
     version_predicate = (
         ""
         if all_available
-        else (
-            " AND (extracted.source_document_id = '' "
-            "OR extracted.extractor_version != %(extractor_version)s)"
-        )
+        else " AND ifNull(extracted.extractor_version, '') != %(extractor_version)s"
     )
     listed_predicate = (
         " AND filings.fxo_id IN %(source_document_ids)s" if only_listed else ""
@@ -296,6 +297,9 @@ def _extract_batch(
                 )
             package_path.write_bytes(body)
         except Exception as exc:  # noqa: BLE001 - a bad or missing package is this document's failure, not the run's
+            # write_bytes can raise after partially creating the file (e.g. disk full);
+            # never leave a partial package behind for the temp root's caller to trip over.
+            package_path.unlink(missing_ok=True)
             outcomes.append(
                 _Outcome(
                     document,
@@ -337,8 +341,13 @@ def run_esef_domains_extraction(
     config: EsefDomainsConfig,
     source_run_id: str,
     log: Any,
+    work_dir: str | None = None,
     extract: ExtractFn = extract_package_domains_bounded,
 ) -> dict[str, object]:
+    """`work_dir` is where the run's temp root (`esef-domains-*`) is created --
+    `None` keeps the platform default (`tempfile.gettempdir()`); the asset
+    never sets it. A test passes its own `tmp_path` so it can assert cleanup.
+    """
     wall_started = perf_counter()
     assert_clickhouse_tables_exist(
         clickhouse,
@@ -346,6 +355,18 @@ def run_esef_domains_extraction(
         tables=(tables.ESEF_DOMAINS_TABLE,),
     )
     documents = select_documents(clickhouse, config)
+    if config.source_document_ids:
+        selected_ids = {document.source_document_id for document in documents}
+        not_selected = sorted(set(config.source_document_ids) - selected_ids)
+        if not_selected:
+            log.warning(
+                "esef_domains: %d of %d requested document(s) were not selected -- "
+                "each has no corpscout.esef_facts rows, an empty package_sha256, or a "
+                "future period_end: %s",
+                len(not_selected),
+                len(config.source_document_ids),
+                not_selected,
+            )
     document_ids = [document.source_document_id for document in documents]
     tagged = load_tagged_website_facts(clickhouse, document_ids)
     emails = load_email_domains(clickhouse, document_ids)
@@ -368,7 +389,9 @@ def run_esef_domains_extraction(
     extract_seconds = 0.0
     if documents:
         with (
-            tempfile.TemporaryDirectory(prefix="esef-domains-") as temp_root_name,
+            tempfile.TemporaryDirectory(
+                prefix="esef-domains-", dir=work_dir
+            ) as temp_root_name,
             ProcessPoolExecutor(
                 max_workers=config.workers,
                 max_tasks_per_child=_EXTRACTIONS_PER_POOL_CHILD,

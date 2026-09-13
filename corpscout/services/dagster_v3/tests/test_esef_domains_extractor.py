@@ -8,6 +8,8 @@ from datetime import date
 from hashlib import sha256
 from pathlib import Path
 
+import pytest
+
 from dagster_v3.defs.esef_filings import tables
 from dagster_v3.defs.esef_filings.domains_extraction import (
     ESEF_DOMAINS_EXTRACTOR_VERSION,
@@ -63,7 +65,7 @@ def test_stale_documents_sql_selects_available_documents_at_another_version() ->
     assert "FROM corpscout.esef_domains GROUP BY source_document_id" in sql
     assert "filings.package_sha256 != ''" in sql
     assert "filings.period_end <= today()" in sql
-    assert "extracted.extractor_version != %(extractor_version)s" in sql
+    assert "ifNull(extracted.extractor_version, '') != %(extractor_version)s" in sql
     assert "ORDER BY filings.period_end DESC, filings.fxo_id" in sql
     assert "%(source_document_ids)s" not in sql
 
@@ -105,7 +107,7 @@ def test_select_documents_maps_rows_and_applies_max_documents() -> None:
         DomainsDocument("doc-2", "b" * 64, "LEI2", date(2024, 12, 31), 2024)
     ]
     sql, parameters = clickhouse.client.calls[0]
-    assert "extracted.extractor_version != %(extractor_version)s" in sql
+    assert "ifNull(extracted.extractor_version, '') != %(extractor_version)s" in sql
     assert parameters == {"extractor_version": ESEF_DOMAINS_EXTRACTOR_VERSION}
 
 
@@ -230,6 +232,7 @@ def test_run_extracts_writes_batches_and_marks_a_missing_package(
         config=EsefDomainsConfig(workers=1, batch_size=1, parse_timeout_seconds=120),
         source_run_id="run-1",
         log=logging.getLogger("test"),
+        work_dir=str(tmp_path),
     )
 
     assert summary["candidate_document_count"] == 2
@@ -282,6 +285,34 @@ def test_run_with_nothing_stale_writes_nothing() -> None:
     assert summary["candidate_document_count"] == 0
     assert summary["row_count"] == 0
     assert not any(sql.startswith("CREATE TABLE") for sql, _ in clickhouse.client.calls)
+
+
+def test_run_warns_about_requested_documents_that_were_not_selected(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    clickhouse = _FakeClickHouse(
+        [
+            TABLES_EXIST,
+            [("doc-1", "a" * 64, "LEI1", date(2024, 1, 1))],
+            [],
+            [],
+        ]
+    )
+
+    with caplog.at_level(logging.WARNING):
+        run_esef_domains_extraction(
+            clickhouse=clickhouse,
+            object_store=_FakeObjectStore({}),
+            config=EsefDomainsConfig(source_document_ids=["doc-1", "doc-9"], workers=1),
+            source_run_id="run-1",
+            log=logging.getLogger("test"),
+        )
+
+    [message] = [
+        record.message for record in caplog.records if "not selected" in record.message
+    ]
+    assert "doc-9" in message
+    assert "doc-1" not in message
 
 
 # --- definitions ------------------------------------------------------------------
