@@ -293,7 +293,8 @@ all three, so selecting an address keeps the workplace page and paging keeps the
 address; a POST keeps both through React Router's default form action. The map shows the
 company's active addresses plus the current workplace page. The five reviewer writes still
 read the company whole -- they are one POST per click, and Remove must be able to find a
-workplace row by key.
+workplace row by key. Measured on the 1,502-workplace kommun: 7,817,093 → 429,319 bytes
+(about 7% over the 400 KB target, accepted; the residual is per-row markup).
 
 ## Readers (slice 4a, 2026-09-08)
 

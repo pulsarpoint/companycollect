@@ -1127,13 +1127,10 @@ interface AddressSheetState {
 export function SeAddressWorkspace({
   companyId,
   detail,
-  selectedKey,
   result,
 }: {
   companyId: string;
   detail: SeAddressDetail;
-  /** The `?address=` key, when it is a well-formed one. */
-  selectedKey: string | null;
   result: SeAddressResult;
 }) {
   const navigation = useNavigation();

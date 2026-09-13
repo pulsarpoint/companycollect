@@ -527,11 +527,20 @@ rows). Two rules:
 No schema change. Target: the 1,502-workplace kommun renders under 400 KB; every other
 company gets the lighter loader as a side effect.
 
-Shipped 2026-09-13 (plan `2026-09-13-se-address-tab-paging.md`): the loader returns list
-rows without members and resolves the selected row's members -- the `?address=` row, else
-the first active one -- from that row's own `(source, slot)` pairs; workplace-only rows moved to a 50-a-page "Workplaces" card with a
-`normalized_address` filter, `?workplaces=` and `?workplace_q=` joining `?address=` in every
-link; fold-pending became one row of scalar aggregates. No schema change.
+Shipped 2026-09-13 (plan `2026-09-13-se-address-tab-paging.md`): the loader returns list rows
+without members and resolves the selected row's members -- the `?address=` row, else the first
+active one -- from that row's own `(source, slot)` pairs; workplace-only rows moved to a
+50-a-page "Workplaces" card with a `normalized_address` filter, `?workplaces=` and
+`?workplace_q=` joining `?address=` in every link; fold-pending became one row of scalar
+aggregates. No schema change. Measured on the owner's dev server (main, before) against a
+worktree server (this branch, after), two rounds each, ClickHouse host under load: kommun
+2120000142 (1,502 workplaces) 7,817,093 bytes / 23.1 s cold, 1.5 s warm → 429,319 bytes /
+0.42–0.47 s (a selected workplace row: 431,089 bytes); Oxie 5594121039 88,989 → 89,082 bytes,
+still one merged row; Bromma 5592303829 84,801 bytes. The 400 KB target was missed by 7%: the
+residual is the Addresses/Workplaces row markup (~6.9 KB a row over 51 rows), not a leaked
+payload — a smaller page or lighter row markup would close it. Runtime proof of the new SQL
+ran against the live ClickHouse before Task 2 (page 1/3, a filter, a foreign key, a company
+without workplaces).
 
 ## 9. Slices, parity, cutover
 

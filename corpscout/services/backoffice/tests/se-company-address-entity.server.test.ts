@@ -666,19 +666,44 @@ describe("se-company-address-entity.server", () => {
     expect(malformed?.selected?.row).toEqual(MERGED_ROW);
   });
 
-  it("selects nothing when the company has no active company address", async () => {
-    // A workplace-only company (or one whose every company address is
-    // withdrawn): there is no first active row to fall back to, so the panel
-    // says nothing is published and no member read runs at all.
+  it("falls back to the first published row of any activity when none is active", async () => {
+    // A company whose every address is withdrawn or hidden still has a
+    // published row: the pre-branch tab's own fallback, restored so the panel
+    // (and Reset) stay reachable rather than reading as "nothing published".
     clickhouse.query.mockImplementation(async (sql: string, params?: Record<string, unknown>) =>
       sql === ADDRESS_LIST_SQL ? [listRow(BOX_ROW, 0)] : answer(sql, params),
     );
     const detail = await load();
     expect(detail?.published).toEqual([{ row: BOX_ROW, refoldPending: false, hideRule: BOX_HIDE_RULE }]);
-    expect(detail?.selected).toBeNull();
+    // No `?address=` key, and no active row either: the selection falls
+    // through to the first published row of any activity -- BOX_ROW is
+    // already in hand, so no extra row read runs -- and its members are read
+    // from ITS OWN (source, slot) pairs.
     expect(ranSql(ADDRESS_SELECTED_SQL)).toBe(false);
-    expect(ranSql(ADDRESS_MEMBER_NORMALIZED_SQL)).toBe(false);
-    expect(ranSql(ADDRESS_MEMBER_RAW_SQL)).toBe(false);
+    expect(detail?.selected?.row).toEqual(BOX_ROW);
+    expect(paramsOf(ADDRESS_MEMBER_NORMALIZED_SQL)).toEqual({
+      companyId: COMPANY,
+      memberSources: ["ratsit"],
+      memberSlots: ["x1"],
+    });
+    expect(paramsOf(ADDRESS_MEMBER_RAW_SQL)).toEqual({
+      companyId: COMPANY,
+      memberSources: ["ratsit"],
+      memberSlots: ["x1"],
+    });
+    expect(detail?.selected?.members).toEqual([
+      {
+        source: "ratsit",
+        slot: "x1",
+        normalizedId: "n3",
+        current: RATSIT_NORMALIZED,
+        raw: RATSIT_RAW,
+        refoldPending: false,
+        completeness: 3,
+      },
+    ]);
+    expect(detail?.selected?.textSourceReason).toBe("single source");
+    expect(detail?.selected?.hideRule).toEqual(BOX_HIDE_RULE);
   });
 
   it("binds the workplace page, its offset and its filter, and echoes them back", async () => {
@@ -739,6 +764,33 @@ describe("se-company-address-entity.server", () => {
       pageSize: 50,
       query: "",
     });
+  });
+
+  it("clamps an out-of-range page and an overlong query itself, rather than trusting the caller", async () => {
+    // workplacePageFromSearch and workplaceQueryFromSearch already clamp a
+    // hand-typed URL before the route ever calls the loader, but the store
+    // re-validates every option on its own -- exactly as it already does for
+    // selectedKey -- rather than trusting whatever a caller passes it.
+    clickhouse.query.mockImplementation(async (sql: string, params?: Record<string, unknown>) =>
+      sql === ADDRESS_WORKPLACES_SQL
+        ? []
+        : sql === ADDRESS_WORKPLACES_COUNT_SQL
+          ? [{ total: 0 }]
+          : answer(sql, params),
+    );
+    const detail = await load({ workplacePage: 10_000_000, workplaceQuery: "x".repeat(150) });
+    expect(paramsOf(ADDRESS_WORKPLACES_SQL)).toEqual({
+      companyId: COMPANY,
+      workplaceQuery: "x".repeat(100),
+      limit: 50,
+      offset: 4_999_950,
+    });
+    expect(paramsOf(ADDRESS_WORKPLACES_COUNT_SQL)).toEqual({
+      companyId: COMPANY,
+      workplaceQuery: "x".repeat(100),
+    });
+    expect(detail?.workplaces.page).toBe(100_000);
+    expect(detail?.workplaces.query).toBe("x".repeat(100));
   });
 
   it("binds a filter with SQL wildcard characters verbatim, and a whitespace-only one as ''", async () => {
@@ -883,6 +935,8 @@ describe("se-company-address-entity.server", () => {
     const workplacesOnly = await load();
     expect(workplacesOnly?.published).toEqual([]);
     expect(workplacesOnly?.workplaces.total).toBe(1);
+    // `published` is empty -- the only case the fallback chain leaves null.
+    expect(workplacesOnly?.selected).toBeNull();
   });
 
   it("ignores a cleared reviewer_draft row: it is a tombstone, not a draft", async () => {

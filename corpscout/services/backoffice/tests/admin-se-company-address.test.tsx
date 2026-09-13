@@ -223,7 +223,7 @@ function render(element: React.ReactElement, search = ""): string {
 describe("SeAddressWorkspace", () => {
   it("renders the published address line with its kind, source and geocode badges, and marks the selected row", () => {
     const html = render(
-      <SeAddressWorkspace companyId={COMPANY} detail={detail} selectedKey={KEY} result={null} />,
+      <SeAddressWorkspace companyId={COMPANY} detail={detail} result={null} />,
     );
     expect(html).toContain("storgatan 5|11122|stockholm|se");
     expect(html).toContain("Postal");
@@ -237,13 +237,12 @@ describe("SeAddressWorkspace", () => {
       <SeAddressWorkspace
         companyId={COMPANY}
         detail={{ ...detail, foldPending: true }}
-        selectedKey={null}
         result={null}
       />,
     );
     expect(pending).toContain("Fold pending");
     const settled = render(
-      <SeAddressWorkspace companyId={COMPANY} detail={detail} selectedKey={null} result={null} />,
+      <SeAddressWorkspace companyId={COMPANY} detail={detail} result={null} />,
     );
     expect(settled).not.toContain("Fold pending");
   });
@@ -253,7 +252,6 @@ describe("SeAddressWorkspace", () => {
       <SeAddressWorkspace
         companyId={COMPANY}
         detail={EMPTY_DETAIL}
-        selectedKey={null}
         result={null}
       />,
     );
@@ -266,7 +264,6 @@ describe("SeAddressWorkspace", () => {
       <SeAddressWorkspace
         companyId={COMPANY}
         detail={{ ...detail, drafts: [draft] }}
-        selectedKey={KEY}
         result={null}
       />,
     );
@@ -289,7 +286,6 @@ describe("SeAddressWorkspace", () => {
       <SeAddressWorkspace
         companyId={COMPANY}
         detail={{ ...detail, published: [listEntry, secondListEntry] }}
-        selectedKey={KEY}
         result={null}
       />,
     );
@@ -312,7 +308,6 @@ describe("SeAddressWorkspace", () => {
       <SeAddressWorkspace
         companyId={COMPANY}
         detail={detail}
-        selectedKey={KEY}
         result={{ ok: true, intent: "remove" }}
       />,
     );
@@ -332,7 +327,7 @@ describe("SeAddressWorkspace", () => {
 
   it("renders the Workplaces card with its total, its rows and its page footer", () => {
     const html = render(
-      <SeAddressWorkspace companyId={COMPANY} detail={paged} selectedKey={KEY} result={null} />,
+      <SeAddressWorkspace companyId={COMPANY} detail={paged} result={null} />,
       PAGED_SEARCH,
     );
     expect(html).toContain("Workplaces (1502)");
@@ -347,7 +342,7 @@ describe("SeAddressWorkspace", () => {
 
   it("keeps the selected address and the filter in every workplace link, and the page in every address link", () => {
     const html = render(
-      <SeAddressWorkspace companyId={COMPANY} detail={paged} selectedKey={KEY} result={null} />,
+      <SeAddressWorkspace companyId={COMPANY} detail={paged} result={null} />,
       PAGED_SEARCH,
     );
     // Previous and Next move only the page. `&` is escaped in an attribute.
@@ -377,7 +372,7 @@ describe("SeAddressWorkspace", () => {
 
   it("hides the Workplaces card when there are none, and says so when a filter finds none", () => {
     const none = render(
-      <SeAddressWorkspace companyId={COMPANY} detail={detail} selectedKey={KEY} result={null} />,
+      <SeAddressWorkspace companyId={COMPANY} detail={detail} result={null} />,
     );
     expect(none).not.toContain("Workplaces (");
 
@@ -388,7 +383,6 @@ describe("SeAddressWorkspace", () => {
           ...detail,
           workplaces: { rows: [], total: 0, page: 1, pageSize: 50, query: "nowhere" },
         }}
-        selectedKey={KEY}
         result={null}
       />,
       "?workplace_q=nowhere",
@@ -418,7 +412,6 @@ describe("SeAddressWorkspace", () => {
       <SeAddressWorkspace
         companyId={COMPANY}
         detail={{ ...detail, published: [listEntry, merged] }}
-        selectedKey={KEY}
         result={null}
       />,
     );
@@ -447,7 +440,6 @@ describe("SeAddressWorkspace", () => {
       <SeAddressWorkspace
         companyId={COMPANY}
         detail={{ ...paged, published: [listEntry, secondListEntry] }}
-        selectedKey={KEY}
         result={null}
       />,
       PAGED_SEARCH,
@@ -464,7 +456,6 @@ describe("SeAddressWorkspace", () => {
       <SeAddressWorkspace
         companyId={COMPANY}
         detail={{ ...detail, published: [{ ...listEntry, refoldPending: true }] }}
-        selectedKey={KEY}
         result={null}
       />,
     );
@@ -494,7 +485,7 @@ describe("admin-se-company-address route", () => {
       request: new Request(`http://x/admin/se/company/${COMPANY}/address`),
       params: { companyId: COMPANY },
     } as never);
-    expect(response).toEqual({ detail, selectedKey: null });
+    expect(response).toEqual({ detail });
     // The tab's three parameters, at their defaults.
     expect(server.loadSeAddressDetail).toHaveBeenCalledWith(COMPANY, {
       selectedKey: null,
@@ -514,13 +505,11 @@ describe("admin-se-company-address route", () => {
         ...EMPTY_DETAIL,
         workplaces: { rows: [], total: 0, page: 3, pageSize: 50, query: "box" },
       },
-      selectedKey: null,
     });
     const html = render(
       <SeAddressWorkspace
         companyId={COMPANY}
         detail={missing.detail}
-        selectedKey={missing.selectedKey}
         result={null}
       />,
     );
@@ -535,7 +524,7 @@ describe("admin-se-company-address route", () => {
       ),
       params: { companyId: COMPANY },
     } as never);
-    expect(selected).toEqual({ detail, selectedKey: KEY });
+    expect(selected).toEqual({ detail });
     expect(server.loadSeAddressDetail).toHaveBeenLastCalledWith(COMPANY, {
       selectedKey: KEY,
       workplacePage: 4,
@@ -548,7 +537,7 @@ describe("admin-se-company-address route", () => {
       ),
       params: { companyId: COMPANY },
     } as never);
-    expect(malformed).toEqual({ detail, selectedKey: null });
+    expect(malformed).toEqual({ detail });
     expect(server.loadSeAddressDetail).toHaveBeenLastCalledWith(COMPANY, {
       selectedKey: null,
       workplacePage: 1,

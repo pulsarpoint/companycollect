@@ -63,7 +63,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     workplacePage,
     workplaceQuery,
   });
-  return { detail: detail ?? emptyAddressDetail(workplacePage, workplaceQuery), selectedKey };
+  return { detail: detail ?? emptyAddressDetail(workplacePage, workplaceQuery) };
 }
 
 /**
@@ -129,7 +129,6 @@ export default function AdminSwedenCompanyAddress({
     <SeAddressWorkspace
       companyId={params.companyId}
       detail={loaderData.detail}
-      selectedKey={loaderData.selectedKey}
       result={actionData ?? null}
     />
   );

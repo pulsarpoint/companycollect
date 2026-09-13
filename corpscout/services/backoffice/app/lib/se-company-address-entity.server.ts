@@ -27,7 +27,13 @@ import {
   SE_COMPANY_ADDRESS_FOLD_COMPANIES_ASSET,
 } from "~/lib/dagster.server";
 import type { SeAddressDecision } from "~/lib/se-address-decision-form";
-import { addressFoldPending, isAddressKey, WORKPLACE_PAGE_SIZE } from "~/lib/se-address-fields";
+import {
+  addressFoldPending,
+  isAddressKey,
+  MAX_WORKPLACE_PAGE,
+  MAX_WORKPLACE_QUERY_LENGTH,
+  WORKPLACE_PAGE_SIZE,
+} from "~/lib/se-address-fields";
 import { SE_COMPANY_ADDRESS_TABLE } from "~/lib/se-address-tables";
 import { clickhouseStamp } from "~/lib/se-basic-info.server";
 
@@ -210,9 +216,10 @@ export interface SeAddressDetail {
   published: SeAddressListEntry[];
   /** The row the panel describes, with its members: the `?address=` row when
    * the key names one of this company's, else the FIRST ACTIVE row of
-   * `published` (owner ruling 2026-09-13 -- the tab keeps the default it has
-   * always had). Null only when the company has no active company address at
-   * all: a workplace-only company, or one whose every address is withdrawn. */
+   * `published`, else the first published row of ANY activity (owner ruling
+   * 2026-09-13 -- the tab keeps the default it has always had, and the panel,
+   * with Reset, stays reachable even when every address is withdrawn or
+   * hidden). Null only when `published` is empty: a workplace-only company. */
   selected: SeAddressPublishedDetail | null;
   workplaces: SeAddressWorkplacePage;
   drafts: SeAddressDraft[];
@@ -591,8 +598,10 @@ async function loadSelectedDetail(
  * only when `?address=` carried a well-formed key -- that one row. The second
  * resolves the selected row's members from its own `(source, slot)` pairs: the
  * `?address=` row when it is this company's, else the first active row of the
- * list, which is already in hand and needs no read of its own (owner ruling
- * 2026-09-13: the panel keeps the default selection it has always had).
+ * list, else the first published row of any activity, both already in hand
+ * and needing no read of their own (owner ruling 2026-09-13: the panel keeps
+ * the default selection it has always had, and stays reachable even when
+ * every address is withdrawn or hidden).
  *
  * Null when the company has no address at any layer -- no list row, no
  * workplace, no draft and no normalized row -- which the route turns into the
@@ -602,12 +611,15 @@ export async function loadSeAddressDetail(
   companyId: string,
   options: SeAddressDetailOptions,
 ): Promise<SeAddressDetail | null> {
-  const { workplacePage, workplaceQuery } = options;
   // A hand-typed key never reaches ClickHouse: the route already filters one,
-  // and this is the store's own guard.
+  // and this is the store's own guard. `workplacePage` and `workplaceQuery`
+  // get the same treatment -- the route's own parsers already clamp them, but
+  // the store re-validates every option itself rather than trusting a caller.
   const selectedKey =
     options.selectedKey !== null && isAddressKey(options.selectedKey) ? options.selectedKey : null;
-  const offset = (workplacePage - 1) * WORKPLACE_PAGE_SIZE;
+  const page = Math.min(Math.max(1, Math.trunc(options.workplacePage) || 1), MAX_WORKPLACE_PAGE);
+  const query = options.workplaceQuery.trim().slice(0, MAX_WORKPLACE_QUERY_LENGTH);
+  const offset = (page - 1) * WORKPLACE_PAGE_SIZE;
   const [
     listRows,
     workplaceRows,
@@ -622,11 +634,11 @@ export async function loadSeAddressDetail(
     chQuery<SeAddressListRow>(ADDRESS_LIST_SQL, { companyId }),
     chQuery<SeAddressListRow>(ADDRESS_WORKPLACES_SQL, {
       companyId,
-      workplaceQuery,
+      workplaceQuery: query,
       limit: WORKPLACE_PAGE_SIZE,
       offset,
     }),
-    chQuery<{ total: number }>(ADDRESS_WORKPLACES_COUNT_SQL, { companyId, workplaceQuery }),
+    chQuery<{ total: number }>(ADDRESS_WORKPLACES_COUNT_SQL, { companyId, workplaceQuery: query }),
     chQuery<SeAddressHistoryRow>(ADDRESS_HISTORY_SQL, { companyId }),
     chQuery<SeAddressRuleRow>(ADDRESS_RULES_SQL, { companyId }),
     chQuery<SeAddressRawRow>(ADDRESS_DRAFT_RAW_SQL, { companyId }),
@@ -640,9 +652,9 @@ export async function loadSeAddressDetail(
   const workplaces: SeAddressWorkplacePage = {
     rows: workplaceRows.map((row) => listEntry(row, rules)),
     total: workplaceCount[0]?.total ?? 0,
-    page: workplacePage,
+    page,
     pageSize: WORKPLACE_PAGE_SIZE,
-    query: workplaceQuery,
+    query,
   };
   const draftNormalizedBySlot = new Map(draftNormalizedRows.map((row) => [row.slot, row]));
   const drafts = draftRawRows
@@ -654,6 +666,8 @@ export async function loadSeAddressDetail(
       replacesKey: raw.replaces_key,
     }));
   const state = foldStateRows[0] ?? EMPTY_FOLD_STATE;
+  // A filter that matches nothing cannot make a company read as empty: normalized_rows === 0
+  // means no published row exists at all, so the filtered total is 0 regardless of the query.
   if (
     published.length === 0 &&
     workplaces.total === 0 &&
@@ -663,12 +677,17 @@ export async function loadSeAddressDetail(
     return null;
   }
   // The `?address=` row, else the first active company address (the list is
-  // sorted `active DESC` first). A key that is absent, malformed or not this
-  // company's lands on the same fallback, and only a company with no active
-  // company address at all -- workplace-only, or every address withdrawn --
-  // leaves the panel with nothing to describe.
+  // sorted `active DESC` first), else the first published row of ANY
+  // activity -- the pre-branch tab's own fallback, restored so the panel and
+  // Reset stay reachable for a company whose every address is withdrawn or
+  // hidden. A key that is absent, malformed or not this company's lands on
+  // the same fallback chain; only a workplace-only company (`published` is
+  // empty) leaves the panel with nothing to describe.
   const selectedRow =
-    selectedRows[0] ?? published.find((entry) => entry.row.active === 1)?.row ?? null;
+    selectedRows[0] ??
+    published.find((entry) => entry.row.active === 1)?.row ??
+    published[0]?.row ??
+    null;
   return {
     published,
     selected: selectedRow === null ? null : await loadSelectedDetail(companyId, selectedRow, rules),
