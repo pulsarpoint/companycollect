@@ -18,6 +18,7 @@ vi.mock("~/lib/dagster.server", () => ({
   SE_COMPANY_ADDRESS_FOLD_COMPANIES_ASSET: "se_company_address_fold_companies",
 }));
 
+import { workplaceQueryFromSearch } from "~/lib/se-address-fields";
 import {
   activateSeAddressDraft,
   ADDRESS_DRAFT_NORMALIZED_SQL,
@@ -710,6 +711,52 @@ describe("se-company-address-entity.server", () => {
       offset: 0,
     });
     expect(first?.workplaces.total).toBe(1502);
+  });
+
+  it("binds a page past the end without throwing: MAX_WORKPLACE_PAGE's own offset fits UInt32", async () => {
+    // workplacePageFromSearch clamps a hand-typed page to MAX_WORKPLACE_PAGE
+    // (100,000) before it ever reaches here; this is the loader's own half of
+    // that guarantee -- the clamp's own ceiling must not overflow the
+    // {offset:UInt32} it binds, and a page with no rows must not throw.
+    clickhouse.query.mockImplementation(async (sql: string, params?: Record<string, unknown>) =>
+      sql === ADDRESS_WORKPLACES_SQL
+        ? []
+        : sql === ADDRESS_WORKPLACES_COUNT_SQL
+          ? [{ total: 1 }]
+          : answer(sql, params),
+    );
+    const detail = await load({ workplacePage: 100_000 });
+    expect(paramsOf(ADDRESS_WORKPLACES_SQL)).toEqual({
+      companyId: COMPANY,
+      workplaceQuery: "",
+      limit: 50,
+      offset: 4_999_950,
+    });
+    expect(detail?.workplaces).toEqual({
+      rows: [],
+      total: 1,
+      page: 100_000,
+      pageSize: 50,
+      query: "",
+    });
+  });
+
+  it("binds a filter with SQL wildcard characters verbatim, and a whitespace-only one as ''", async () => {
+    // positionCaseInsensitiveUTF8 takes its needle as a literal, so `%` and `_`
+    // must reach ClickHouse exactly as typed -- there is nothing to escape.
+    await load({ workplaceQuery: "10%_off" });
+    expect(paramsOf(ADDRESS_WORKPLACES_SQL)?.workplaceQuery).toBe("10%_off");
+    expect(paramsOf(ADDRESS_WORKPLACES_COUNT_SQL)?.workplaceQuery).toBe("10%_off");
+
+    // workplaceQueryFromSearch is what trims a whitespace-only ?workplace_q=
+    // before the route ever calls the loader; what it produces is what must
+    // bind -- '', which is also what turns the filter off in WORKPLACE_WHERE_SQL.
+    clickhouse.query.mockClear();
+    const trimmed = workplaceQueryFromSearch(new URLSearchParams("workplace_q=+++"));
+    expect(trimmed).toBe("");
+    await load({ workplaceQuery: trimmed });
+    expect(paramsOf(ADDRESS_WORKPLACES_SQL)?.workplaceQuery).toBe("");
+    expect(paramsOf(ADDRESS_WORKPLACES_COUNT_SQL)?.workplaceQuery).toBe("");
   });
 
   it("calls the text source a tie-break when another member is just as complete", async () => {

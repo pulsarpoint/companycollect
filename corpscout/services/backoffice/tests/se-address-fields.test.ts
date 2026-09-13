@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   ADDRESS_KINDS, ADDRESS_SOURCES, REVIEWER_KINDS, addressFoldPending, addressKindLabel, addressSearchString,
-  addressSourceLabel, geocodeStatusLabel, isAddressKind, isAddressSource, MAX_WORKPLACE_QUERY_LENGTH,
-  selectedAddressFromSearch, validateSeAddressInput, WORKPLACE_PAGE_SIZE, workplacePageFromSearch,
-  workplaceQueryFromSearch,
+  addressSourceLabel, geocodeStatusLabel, isAddressKind, isAddressSource, MAX_WORKPLACE_PAGE,
+  MAX_WORKPLACE_QUERY_LENGTH, selectedAddressFromSearch, validateSeAddressInput, WORKPLACE_PAGE_SIZE,
+  workplacePageFromSearch, workplaceQueryFromSearch,
 } from "~/lib/se-address-fields";
 
 const KEY = "a".repeat(64);
@@ -90,6 +90,15 @@ describe("workplace paging search params", () => {
     for (const raw of ["0", "-2", "2.5", "abc", "", "%20", "1e3", "01x"]) {
       expect(workplacePageFromSearch(new URLSearchParams(`workplaces=${raw}`))).toBe(1);
     }
+  });
+
+  it("clamps a page past MAX_WORKPLACE_PAGE rather than overflowing the loader's UInt32 offset", () => {
+    // The loader binds `(page - 1) * WORKPLACE_PAGE_SIZE` as `{offset:UInt32}`;
+    // an unclamped hand-typed page would overflow that and 500 the route.
+    expect(MAX_WORKPLACE_PAGE).toBe(100_000);
+    expect(workplacePageFromSearch(new URLSearchParams("workplaces=90000000"))).toBe(100_000);
+    expect(workplacePageFromSearch(new URLSearchParams("workplaces=100001"))).toBe(100_000);
+    expect(workplacePageFromSearch(new URLSearchParams("workplaces=100000"))).toBe(100_000);
   });
 
   it("trims the filter and caps it at a hundred characters", () => {

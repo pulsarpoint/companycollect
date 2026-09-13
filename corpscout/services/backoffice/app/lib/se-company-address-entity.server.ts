@@ -469,8 +469,6 @@ const COMPONENT_FIELDS = [
 /** A `reviewer_draft` row still holding one of these is a live draft; a row
  * with all four empty is the tombstone an Activate or a Discard left behind. */
 const DRAFT_TEXT_FIELDS = ["street_address", "care_of", "postal_code", "post_town"] as const;
-// Deleted -- the fold state answers `has_publishable` in ClickHouse now:
-// const PUBLISHABLE_PARSE_STATUS = new Set(["ok", "partial", "foreign"]);
 
 function slotKey(source: string, slot: string): string {
   return `${source}|${slot}`;
