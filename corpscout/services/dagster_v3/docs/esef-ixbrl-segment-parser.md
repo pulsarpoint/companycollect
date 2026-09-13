@@ -1,8 +1,10 @@
 # ESEF iXBRL segment parser
 
 > Since 2026-09-13 the artifact parser is the *facts* extractor only in spirit: new products
-> are independent extractors (see `esef-extractors.md`); domains come from `esef_domains`, and
-> the website rows of `esef_document_contact_candidates` are no longer read by consumers.
+> are independent extractors (see `esef-extractors.md`). company_serving's domain and
+> source-link models and the backoffice ESEF tab read domains from `se_esef_domains`; the
+> website rows of `esef_document_contact_candidates` are still produced here and still read by
+> the backoffice document contacts query.
 
 The core parser resolves each content-addressed ESEF report package once with
 Arelle and writes a deterministic, versioned JSON artifact. It does not call an
