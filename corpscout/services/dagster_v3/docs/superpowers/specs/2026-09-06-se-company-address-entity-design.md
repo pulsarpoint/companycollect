@@ -500,6 +500,33 @@ the catalogue. The results carry the intent, as the basic-info route does.
 
 The corrections queue page keeps reading the old ledger until the cutover retires it.
 
+Amended 2026-09-13 (Address tab paging, after Ratsit slice 3 — a kommun with 1,502
+`workplace` rows rendered as 7.8 MB of HTML: 5.15 MB of markup for every row plus 2.66 MB of
+hydration payload because the loader shipped every row's members with their normalized and raw
+rows). Two rules:
+
+1. **The list is slim; the detail is for the selected address only.** The loader returns the
+   published rows without their members (the row's own columns, the `draft`/`hidden` state,
+   the hide rule, and a re-fold-pending flag computed in ClickHouse against the current
+   normalized versions), and resolves members — normalized rows, raw rows, completeness,
+   `text_source` reason — for the `?address=<key>` row alone, fetching only that row's
+   `(source, slot)` pairs. Reviewer drafts still load on their own (source `reviewer_draft`),
+   and History keeps its cap of 200.
+2. **Workplaces are their own paged section, on the serving view's split.** A row whose kinds
+   are exactly `['workplace']` (the rows migration 000403 keeps out of `se_companies_serving`)
+   leaves the Addresses card and goes to a "Workplaces (<total>)" card below it, absent when
+   the total is 0, paged server-side 50 rows a page and filtered by a text box over
+   `normalized_address` (case-insensitive contains). Page and filter live in the URL —
+   `?workplaces=<page>` (1-based) and `?workplace_q=<text>` — so the loader does the
+   filtering, the offset and the count in ClickHouse, and every link on the page (row
+   selection, previous/next, the actions' redirects) carries them. A merged row that carries
+   `workplace` beside another kind is a company address and stays in the Addresses card.
+   The map shows the company addresses and the current workplace page; the row's actions
+   (Correct, Remove, Reset, Fold now) do not change.
+
+No schema change. Target: the 1,502-workplace kommun renders under 400 KB; every other
+company gets the lighter loader as a side effect.
+
 ## 9. Slices, parity, cutover
 
 0. Tables and normalizer: migrations, the `se_company/address` package skeleton, the
