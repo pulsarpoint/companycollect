@@ -6,8 +6,8 @@ import shutil
 import sys
 import tempfile
 import time
-from collections.abc import Awaitable, Callable, Sequence
-from contextlib import contextmanager
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from http import HTTPStatus
@@ -30,6 +30,7 @@ from playwright.async_api import (
 )
 from pydantic import ValidationError
 
+from browser_processes import kill_profile_processes
 from models import (
     ExtensionReport,
     WebtechCandidate,
@@ -42,6 +43,9 @@ MAX_CALLBACK_BODY_BYTES = 1_000_000
 DEFAULT_DOMAIN_TIMEOUT_SECONDS = 20.0
 PAGE_CLOSE_TIMEOUT_SECONDS = 2.0
 CONTEXT_CLOSE_TIMEOUT_SECONDS = 5.0
+CONTEXT_LAUNCH_WATCHDOG_SECONDS = 90.0
+WATCHDOG_GRACE_SECONDS = 15.0
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +58,14 @@ class WebtechScannerSettings:
     domain_timeout_seconds: float
     domains_per_context: int | None
     context_launch_interval_seconds: float
+
+
+@dataclass(frozen=True, slots=True)
+class LaunchedContext:
+    """One browser context and the profile directory its processes announce."""
+
+    context: BrowserContext
+    profile_directory: str
 
 
 @dataclass(slots=True)
@@ -149,7 +161,7 @@ async def scan_webtech_candidates(
                 progress_callback=progress_callback,
             )
 
-        contexts: list[BrowserContext] = []
+        contexts: list[LaunchedContext] = []
         profile_directories: list[tempfile.TemporaryDirectory[str]] = []
         try:
             for browser_number in range(min(settings.browser_count, len(selected))):
@@ -157,12 +169,13 @@ async def scan_webtech_candidates(
                     prefix=f"webtech-profile-{browser_number + 1}-"
                 )
                 profile_directories.append(profile_directory)
-                context = await _launch_browser_context(
-                    profile_directory.name,
-                    extension_dir=extension_dir,
-                    headless=settings.headless,
+                contexts.append(
+                    await _launch_guarded_context(
+                        profile_directory.name,
+                        extension_dir=extension_dir,
+                        headless=settings.headless,
+                    )
                 )
-                contexts.append(context)
 
             return await _scan_pages(
                 tuple(contexts),
@@ -172,7 +185,9 @@ async def scan_webtech_candidates(
                 progress_callback=progress_callback,
             )
         finally:
-            await asyncio.gather(*(_close_context(context) for context in contexts))
+            await asyncio.gather(
+                *(_close_guarded_context(launched) for launched in contexts)
+            )
             for profile_directory in reversed(profile_directories):
                 profile_directory.cleanup()
 
@@ -216,21 +231,21 @@ async def _scan_in_context_batches(
             with tempfile.TemporaryDirectory(
                 prefix=f"webtech-profile-{worker_number}-"
             ) as profile_directory:
-                context = await _launch_browser_context(
+                launched = await _launch_guarded_context(
                     profile_directory,
                     extension_dir=extension_dir,
                     headless=settings.headless,
                 )
                 try:
                     batch_results = await _scan_pages(
-                        (context,),
+                        (launched,),
                         batch,
                         router=router,
                         settings=settings,
                         progress_callback=progress_callback,
                     )
                 finally:
-                    await _close_context(context)
+                    await _close_guarded_context(launched)
             results.update(zip(batch, batch_results, strict=True))
 
     await asyncio.gather(
@@ -261,7 +276,7 @@ async def _launch_browser_context(
 
 
 async def _scan_pages(
-    contexts: tuple[BrowserContext, ...],
+    contexts: tuple[LaunchedContext, ...],
     candidates: tuple[WebtechCandidate, ...],
     *,
     router: ExtensionReportRouter,
@@ -270,15 +285,24 @@ async def _scan_pages(
 ) -> tuple[WebtechDomainResult, ...]:
     candidate_iterator = iter(candidates)
     results: dict[WebtechCandidate, WebtechDomainResult] = {}
+    domain_watchdog_seconds = (
+        settings.domain_timeout_seconds
+        + PAGE_CLOSE_TIMEOUT_SECONDS
+        + WATCHDOG_GRACE_SECONDS
+    )
 
-    async def page_worker(context: BrowserContext) -> None:
+    async def page_worker(launched: LaunchedContext) -> None:
         for candidate in candidate_iterator:
-            result = await _scan_candidate_with_hard_timeout(
-                context,
-                candidate,
-                router=router,
-                timeout_seconds=settings.domain_timeout_seconds,
-            )
+            async with _process_watchdog(
+                launched.profile_directory,
+                domain_watchdog_seconds,
+            ):
+                result = await _scan_candidate_with_hard_timeout(
+                    launched.context,
+                    candidate,
+                    router=router,
+                    timeout_seconds=settings.domain_timeout_seconds,
+                )
             progress = progress_callback(result)
             if inspect.isawaitable(progress):
                 await progress
@@ -286,8 +310,8 @@ async def _scan_pages(
 
     await asyncio.gather(
         *(
-            page_worker(context)
-            for context in contexts
+            page_worker(launched)
+            for launched in contexts
             for _ in range(settings.pages_per_browser)
         )
     )
@@ -361,6 +385,70 @@ async def _close_context(context: BrowserContext) -> None:
             type(error).__name__,
             error,
         )
+
+
+async def _launch_guarded_context(
+    profile_directory: str,
+    *,
+    extension_dir: Path,
+    headless: bool,
+) -> LaunchedContext:
+    async with _process_watchdog(profile_directory, CONTEXT_LAUNCH_WATCHDOG_SECONDS):
+        context = await _launch_browser_context(
+            profile_directory,
+            extension_dir=extension_dir,
+            headless=headless,
+        )
+    return LaunchedContext(context=context, profile_directory=profile_directory)
+
+
+async def _close_guarded_context(launched: LaunchedContext) -> None:
+    async with _process_watchdog(
+        launched.profile_directory,
+        CONTEXT_CLOSE_TIMEOUT_SECONDS + WATCHDOG_GRACE_SECONDS,
+    ):
+        await _close_context(launched.context)
+
+
+@asynccontextmanager
+async def _process_watchdog(
+    profile_directory: str,
+    timeout_seconds: float,
+) -> AsyncIterator[None]:
+    """Kill the context's Chromium if the guarded block outlives ``timeout_seconds``.
+
+    Cooperative cancellation is not enough on its own: Playwright waits for the
+    driver to acknowledge an aborted call, and a wedged renderer never lets that
+    happen, so the worker would sit inside the cancellation forever. Killing the
+    processes fails the pending call instead and the worker moves on.
+    """
+
+    async def fire() -> None:
+        await asyncio.sleep(timeout_seconds)
+        try:
+            killed = kill_profile_processes(profile_directory)
+        except Exception:
+            LOGGER.exception(
+                "Failed to kill wedged CloakBrowser processes profile=%s",
+                profile_directory,
+            )
+            return
+        LOGGER.warning(
+            "Killed wedged CloakBrowser processes profile=%s pids=%s after %.1fs",
+            profile_directory,
+            killed,
+            timeout_seconds,
+        )
+
+    watchdog = asyncio.create_task(
+        fire(),
+        name=f"webtech-watchdog-{profile_directory}",
+    )
+    try:
+        yield
+    finally:
+        watchdog.cancel()
+        await asyncio.gather(watchdog, return_exceptions=True)
 
 
 async def _scan_candidate(

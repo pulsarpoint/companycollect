@@ -61,12 +61,23 @@ cancellation. `/healthz` reports the active scan ID, completed/total counts,
 seconds since the last stored result, and current throughput; service activity
 does not need to be inferred from CPU utilization.
 
+A browser that stops responding cannot hold a worker forever. Cooperative
+cancellation alone is not enough: Playwright waits for the driver to acknowledge
+an aborted call, and a wedged renderer never lets that settle. Each context
+therefore runs under a process watchdog that SIGKILLs the Chromium processes
+announcing its `--user-data-dir` when launch, one domain (hard deadline plus
+page close plus a 15-second grace), or context close overruns; the pending call
+then fails, the domain is recorded as a timeout or browser error, and the
+worker moves on. If a scan still makes no progress for 10 minutes, the service
+marks it `failed` and frees the slot.
+
 Only one scan can be active because one workstation owns the configured browser
-capacity. Dagster submits and exits, then its sensor performs a zero-wait status
-request every 30 seconds. If the process restarts, the sensor resubmits the same request; the
-service reconstructs already completed domains from RustFS and scans the missing
-ones. There is no service database, message queue, or intermediate batch
-checkpoint.
+capacity. Dagster's asset step submits the scan and polls it with zero-wait
+status requests every two seconds; after 15 minutes without progress it cancels
+the remote scan and fails the step so a run retry resubmits. If the process
+restarts or a scan failed, the resubmission reconstructs already completed
+domains from RustFS and scans only the missing ones. There is no service
+database, message queue, or intermediate batch checkpoint.
 
 The checked-in user systemd unit is `deploy/webtech.service`. It runs 20 fresh,
 headless one-page contexts by default, with a 60-second per-domain deadline and

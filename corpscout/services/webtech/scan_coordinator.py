@@ -27,6 +27,7 @@ from service_models import (
 LOGGER = logging.getLogger("uvicorn.error")
 SCAN_HEARTBEAT_SECONDS = 60.0
 SCAN_STALLED_AFTER_SECONDS = 120.0
+SCAN_STALL_FAIL_AFTER_SECONDS = 600.0
 
 type ScanFunction = Callable[..., Awaitable[tuple[WebtechDomainResult, ...]]]
 
@@ -66,6 +67,7 @@ class ScanJob:
         self.error_message = ""
         self.events: list[ScanProgressEvent] = []
         self.task: asyncio.Task[None] | None = None
+        self.stall_reason: str | None = None
         self._pending_event_results: list[StoredResultReference] = []
         self._condition = asyncio.Condition()
         self._started_monotonic: float | None = None
@@ -535,6 +537,18 @@ class ScanCoordinator:
                 snapshot.final_manifest_uri,
             )
         except asyncio.CancelledError:
+            if job.stall_reason is not None:
+                await job.mark_failed(job.stall_reason)
+                LOGGER.error(
+                    "Webtech scan failed scan_id=%s partition=%s completed=%s/%s "
+                    "error=%s",
+                    job.scan_id,
+                    job.request.partition_key,
+                    len(job.results),
+                    len(job.manifest.candidates),
+                    job.stall_reason,
+                )
+                return
             await job.mark_cancelled()
             LOGGER.warning(
                 "Webtech scan cancelled scan_id=%s partition=%s completed=%s/%s",
@@ -566,6 +580,9 @@ class ScanCoordinator:
             snapshot = job.snapshot()
             if snapshot.status not in {"pending", "running"}:
                 return
+            if snapshot.progress_age_seconds >= SCAN_STALL_FAIL_AFTER_SECONDS:
+                self._fail_stalled_scan(job, snapshot)
+                return
             if snapshot.progress_age_seconds >= SCAN_STALLED_AFTER_SECONDS:
                 LOGGER.warning(
                     "Webtech scan stalled scan_id=%s partition=%s "
@@ -592,6 +609,31 @@ class ScanCoordinator:
                 snapshot.elapsed_seconds,
                 snapshot.domains_per_minute,
             )
+
+    def _fail_stalled_scan(self, job: ScanJob, snapshot: ScanSnapshot) -> None:
+        """Give up on a scan that has made no progress for too long.
+
+        Cancelling the scan task lets ``_run`` record the failure and free the
+        single scan slot; a resubmission then recovers the stored results from
+        RustFS and scans only the domains still missing.
+        """
+        remaining = snapshot.total_count - snapshot.completed_count
+        job.stall_reason = (
+            f"scan stalled: no progress for {snapshot.progress_age_seconds:.0f}s "
+            f"with {remaining} domains remaining"
+        )
+        LOGGER.error(
+            "Webtech scan stalled beyond limit; failing scan_id=%s partition=%s "
+            "completed=%s/%s progress_age_seconds=%.1f limit_seconds=%.0f",
+            snapshot.scan_id,
+            snapshot.partition_key,
+            snapshot.completed_count,
+            snapshot.total_count,
+            snapshot.progress_age_seconds,
+            SCAN_STALL_FAIL_AFTER_SECONDS,
+        )
+        if job.task is not None and not job.task.done():
+            job.task.cancel()
 
     def _load_manifest(self, request: ScanRequest) -> CandidateManifest:
         location = self.store.parse_allowed_uri(request.candidate_manifest_uri)
