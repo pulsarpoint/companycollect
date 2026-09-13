@@ -632,7 +632,22 @@ the entity.
    with migration 000404, the deletions, the owner-run view drops, the smoke. Slice 4a (data
    side) code complete 2026-09-13 on branch se-financial-entity (plan
    2026-09-13-se-company-financial-4a-readers.md); migration 000404, not 000402; prod pending.
-   Slice 4b (backoffice) follows.
+   Slice 4b (backoffice) follows. Prod 2026-09-13: ledger 404 clean (in-place repoint, 4.75 s);
+   dagster_v3 deployed from merge commit 34ae55a15 (ansible RC=0); se_company_financials_latest
+   rebuilt in-process: 795,403 rows (was 579,766), fiscal years 2000..2026, no NULL period end;
+   5567081699 = 2025 / 2025-12-31 / SEK 65,000,000 / 19 employees / 8 years;
+   se_annual_report_filing_status_current data_available 795,403 (533,228 with Bolagsverket
+   provenance, 262,175 entity); se_companies_serving after its 14:45 refresh: has_financial
+   795,635 (was 580,832), source_bolagsverket 2,855,160 and source_esef 403 unchanged.
+   company_section_presence_current NOT republished: the 13 company_serving_dbt models were
+   rebuilt (stale since 2026-09-09; the presence build now carries financials 795,434 and no
+   management section) but the publish's domains reconciliation counts an inactive domain row
+   (5566692850 johnjohns.se, is_active 0 from main's ESEF website commits) that the presence
+   model excludes: publish.py's expected queries for domains and technology lack
+   company_domain_current_build's is_active = 1 AND review_status != 'rejected' filter, a latent
+   bug outside this slice, fix pending the owner; live presence still shows financials 579,735.
+   main fast-forwards to the branch (the owner's checkout sat on main, so the merge commit was
+   built in a detached worktree).
 
 Later, separate specs: a fold-aware weekly, USD twins on the other Ratsit tables, a merge rule for
 near-identical period ends if the readout warrants it, Wikidata employees as a source.

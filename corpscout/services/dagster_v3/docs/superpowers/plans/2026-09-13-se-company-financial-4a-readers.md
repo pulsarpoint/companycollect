@@ -49,7 +49,7 @@
 **Interfaces:**
 - Produces: `sql._SE_SELECT`; `sql.SOURCES["se"] == {"table": "se_company_financial", "id": "company_id"}`; `build_latest_insert_sql("se")` returns `_SE_SELECT`; `assets.UPSTREAM_KEYS["se"] == ["se_company_financial_fold"]`. The asset's existence check reads `SOURCES["se"]["table"]`, so the entity table is what it asserts exists.
 
-- [ ] **Step 1: Patch the test (the failing test first)**
+- [x] **Step 1: Patch the test (the failing test first)**
 
 From `corpscout/services/dagster_v3`, run this script with `uv run --env-file .env python - <<'PY' … PY` (paste verbatim):
 
@@ -93,7 +93,7 @@ new = """def test_sweden_latest_reads_the_entitys_newest_active_standalone_perio
 assert t.count(old) == 1; test.write_text(t.replace(old, new)); print("test patched")
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 ```bash
 uv run --env-file .env pytest tests/test_company_financials_latest.py -q
@@ -101,7 +101,7 @@ uv run --env-file .env pytest tests/test_company_financials_latest.py -q
 
 Expected: 1 failed (`test_sweden_latest_reads_the_entitys_newest_active_standalone_period`: the SQL still names `se_bolagsverket_financial_metrics`).
 
-- [ ] **Step 3: Patch the code**
+- [x] **Step 3: Patch the code**
 
 ```python
 from pathlib import Path
@@ -182,7 +182,7 @@ new = '    # The folded financial entity (spec 2026-09-11 section 10): the fold,
 assert t.count(old) == 1; assets.write_text(t.replace(old, new)); print("code patched")
 ```
 
-- [ ] **Step 4: Run the tests and ruff**
+- [x] **Step 4: Run the tests and ruff**
 
 ```bash
 uv run --env-file .env pytest tests/test_company_financials_latest.py -q
@@ -191,7 +191,7 @@ uv run ruff check src/dagster_v3/defs/company_financials_latest tests/test_compa
 
 Expected: all passed (the file's tests, including the every-country coverage and the qualified-tiebreak test that now skips `se` like `br`); ruff clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-financial-entity
@@ -211,7 +211,7 @@ git commit -m "feat(se-financial): se_company_financials_latest reads the entity
 **Interfaces:**
 - Produces: `companies_current.COMPANY_FINANCIAL_TABLE`, `FINANCIAL_SET`, `FINANCIAL_BOLAGSVERKET_SET`, `FINANCIAL_ESEF_SET` (kept: `FINANCIAL_REPORTS_SET`); the render contains `corpscout.se_company_financial FINAL` three times, `toUInt8(fin_entity OR fin_reports) AS has_financial`, and names no source financial table.
 
-- [ ] **Step 1: Patch the three tests (they fail until the code and the migration exist)**
+- [x] **Step 1: Patch the three tests (they fail until the code and the migration exist)**
 
 ```python
 from pathlib import Path
@@ -395,7 +395,7 @@ tm.write_text(t + NEW_TEST)
 print("tests patched")
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 ```bash
 uv run --env-file .env pytest tests/test_se_companies_serving_mv.py tests/test_clickhouse_migrations.py -q 2>&1 | tail -3
@@ -403,7 +403,7 @@ uv run --env-file .env pytest tests/test_se_companies_serving_mv.py tests/test_c
 
 Expected: failures (the 000404 files do not exist; the builder still names the source tables).
 
-- [ ] **Step 3: Patch the builder**
+- [x] **Step 3: Patch the builder**
 
 ```python
 from pathlib import Path
@@ -460,7 +460,7 @@ new = "    has_financial is an active financial-entity row OR a filed report; th
 assert t.count(old) == 1; cc.write_text(t.replace(old, new)); print("companies_current.py patched")
 ```
 
-- [ ] **Step 4: Generate migration 000404 from the builder render (run from `corpscout/services/dagster_v3`, with the env so the module imports)**
+- [x] **Step 4: Generate migration 000404 from the builder render (run from `corpscout/services/dagster_v3`, with the env so the module imports)**
 
 ```bash
 uv run --env-file .env python - <<'PY'
@@ -568,7 +568,7 @@ PY
 
 Expected: `000404 written: 310 up lines; 274 down lines`. Never edit the generated render by hand; if the builder changes, re-run this step.
 
-- [ ] **Step 5: Run the tests, the engine suite and ruff**
+- [x] **Step 5: Run the tests, the engine suite and ruff**
 
 ```bash
 uv run --env-file .env pytest tests/test_se_companies_serving_mv.py tests/test_clickhouse_migrations.py tests/test_se_companies_current_asset.py -q 2>&1 | tail -2
@@ -578,7 +578,7 @@ uv run ruff check src/dagster_v3/defs/sweden_company/companies_current.py tests/
 
 Expected: all passed (the migrations file has hundreds of tests; the mv file 8; the engine suite 46, under both `join_use_nulls` settings); ruff clean.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-financial-entity
@@ -594,7 +594,7 @@ git commit -m "feat(se-financial): migration 000404 — the serving view's finan
 - Modify: `src/dagster_v3/defs/company_serving/dbt/models/company_section_presence_current_build.sql`, `src/dagster_v3/defs/company_serving/dbt/models/sources.yml`, `src/dagster_v3/defs/company_serving/publish.py`
 - Create: `tests/test_company_serving_financials_presence.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/test_company_serving_financials_presence.py`, exactly:
 
@@ -629,7 +629,7 @@ def test_the_publish_reconciliation_counts_the_same_rows() -> None:
     assert "corpscout.se_company_financials_latest AS financials" not in text
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 ```bash
 uv run --env-file .env pytest tests/test_company_serving_financials_presence.py -q
@@ -637,7 +637,7 @@ uv run --env-file .env pytest tests/test_company_serving_financials_presence.py 
 
 Expected: 2 failed (the model and the reconciliation still read `se_company_financials_latest`).
 
-- [ ] **Step 3: Patch the model, the sources and the reconciliation**
+- [x] **Step 3: Patch the model, the sources and the reconciliation**
 
 ```python
 from pathlib import Path
@@ -681,7 +681,7 @@ new = """        # The financial entity (spec 2026-09-11 section 10, slice 4a): 
 assert t.count(old) == 1; pub.write_text(t.replace(old, new)); print("presence, sources and reconciliation patched")
 ```
 
-- [ ] **Step 4: Run the tests, the definitions check and ruff**
+- [x] **Step 4: Run the tests, the definitions check and ruff**
 
 ```bash
 uv run --env-file .env pytest tests/test_company_serving_financials_presence.py tests/test_company_serving_dbt.py tests/test_company_serving.py -q 2>&1 | tail -2
@@ -692,7 +692,7 @@ uv run ruff check src/dagster_v3/defs/company_serving/publish.py tests/test_comp
 
 Expected: all passed; `All definitions loaded successfully.` (the dbt defs state must be refreshed after the sources.yml change — the `company_domain_suggestions` adapter traceback that `refresh-defs-state` may print is non-fatal noise); ruff clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-financial-entity
@@ -710,7 +710,7 @@ git commit -m "feat(se-financial): the section-presence model and its reconcilia
 - Create: `corpscout/clickhouse/operations/se_financial_views_retirement_precheck.sql`, `se_financial_views_retirement_drops.sql`, `se_financial_views_retirement_postcheck.sql`
 - Create: `tests/test_se_financial_views_retirement_drops.py`
 
-- [ ] **Step 1: Write the test**
+- [x] **Step 1: Write the test**
 
 `tests/test_se_financial_views_retirement_drops.py`, exactly:
 
@@ -806,7 +806,7 @@ def test_the_postcheck_asserts_absence_and_the_kept_objects() -> None:
             assert f"'{name}'" in sql, name
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 ```bash
 uv run --env-file .env pytest tests/test_se_financial_views_retirement_drops.py -q
@@ -814,7 +814,7 @@ uv run --env-file .env pytest tests/test_se_financial_views_retirement_drops.py 
 
 Expected: FAIL (`FileNotFoundError` on the scripts).
 
-- [ ] **Step 3: Write the three scripts**
+- [x] **Step 3: Write the three scripts**
 
 `corpscout/clickhouse/operations/se_financial_views_retirement_precheck.sql`, exactly:
 
@@ -936,7 +936,7 @@ SELECT count() AS serving_rows, countIf(has_financial = 1) AS with_financial
 FROM corpscout.se_companies_serving;
 ```
 
-- [ ] **Step 4: Run the test and ruff, and prove the precheck parses on the engine**
+- [x] **Step 4: Run the test and ruff, and prove the precheck parses on the engine**
 
 ```bash
 uv run --env-file .env pytest tests/test_se_financial_views_retirement_drops.py tests/test_se_person_retirement_drops.py -q
@@ -947,7 +947,7 @@ cat /tmp/fin_views_fixture.sql ../../clickhouse/operations/se_financial_views_re
 
 Expected: 6 + the person file's tests passed; ruff clean; the precheck runs to completion on clickhouse-local (its `system.view_refreshes` read returns nothing there, the `no_readers` gate prints 1, the engine listing prints `View` twice).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-financial-entity
@@ -962,7 +962,7 @@ git commit -m "chore(se-financial): owner-run retirement scripts for the two Swe
 **Files:**
 - Modify: `src/dagster_v3/defs/sweden_financial/docs/sweden_financial-design.md`, `docs/sweden-data-sources.md`, `docs/superpowers/specs/2026-09-11-se-company-financial-entity-design.md`
 
-- [ ] **Step 1: Rewrite the two docs sections**
+- [x] **Step 1: Rewrite the two docs sections**
 
 ```python
 from pathlib import Path
@@ -1029,11 +1029,11 @@ retired in slice 4 of that spec.
 
 ```
 
-- [ ] **Step 2: Record code completion in the spec**
+- [x] **Step 2: Record code completion in the spec**
 
 Section 12 item 4 (`4. Cutover: …`): append `Slice 4a (data side) code complete 2026-09-13 on branch se-financial-entity (plan 2026-09-13-se-company-financial-4a-readers.md); migration 000404, not 000402; prod pending. Slice 4b (backoffice) follows.` and re-wrap the item like its neighbours (three-space continuation indent, about 97 columns).
 
-- [ ] **Step 3: Run the slice's suites and the wider suite once**
+- [x] **Step 3: Run the slice's suites and the wider suite once**
 
 ```bash
 uv run --env-file .env pytest tests/test_company_financials_latest.py tests/test_se_companies_serving_mv.py tests/test_se_financial_views_retirement_drops.py tests/test_company_serving_financials_presence.py tests/test_company_serving_dbt.py tests/test_company_serving.py tests/test_clickhouse_migrations.py tests/test_se_companies_current_asset.py tests/test_sweden_financial_assets.py tests/test_clickhouse_leaf_checks.py -q 2>&1 | tail -2
@@ -1043,7 +1043,7 @@ set -a; source .env; set +a; uv run pytest tests -q -p no:cacheprovider --ignore
 
 Expected: all green; the wider run `N passed, 3 skipped, 5 deselected`, no failures (about 8 minutes).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/.claude/worktrees/se-financial-entity
@@ -1057,11 +1057,11 @@ git commit -m "docs(se-financial): the serving docs name the entity; spec record
 
 **Preconditions:** final review clean; merged into main through a temporary worktree on `main` (re-check overlap with main's new commits and the owner's dirty files right before); the worktree fast-forwarded; prod ledger 403 clean.
 
-- [ ] **Step 1: Apply migration 000404 outside the :45 refresh window**
+- [x] **Step 1: Apply migration 000404 outside the :45 refresh window**
 
 Wait for the serving view's refresh to have finished (`SELECT view, status, last_success_time FROM system.view_refreshes WHERE view = 'se_companies_serving'` shows `Scheduled` with a fresh `last_success_time`; the refresh runs hourly at :45 and takes 13 to 15 minutes, so about :00 to :40 is safe). Then from `corpscout/` (needs `corpscout/.env`): `make clickhouse-migrate-up-one`; confirm `SELECT version, dirty FROM corpscout.schema_migrations ORDER BY sequence DESC LIMIT 1` = 404, 0; confirm the view is `Scheduled` (not stopped) and that `SHOW CREATE TABLE corpscout.se_companies_serving` contains `corpscout.se_company_financial FINAL` three times and `se_bolagsverket_financial_metrics` nowhere; confirm `SHOW CREATE VIEW corpscout.se_annual_report_filing_status_current` reads the entity. If the migrate client dropped between STOP and START: `SYSTEM START VIEW corpscout.se_companies_serving`, then `make clickhouse-migrate-force VERSION=404`.
 
-- [ ] **Step 2: Deploy dagster_v3 from the worktree**
+- [x] **Step 2: Deploy dagster_v3 from the worktree**
 
 The deploy recipe (uv sync, the two dbt parses, `dg utils refresh-defs-state` — mandatory here because `sources.yml` changed — `dg check defs`, ansible light sync); expected `RC=0`, `failed=0`. Confirm through GraphQL `assetNodes` that `se_company_financials_latest_clickhouse` now depends on `se_company_financial_fold`.
 
@@ -1078,7 +1078,7 @@ SELECT section, count() AS companies, sum(item_count) AS items FROM corpscout.co
 
 Expected for 5567081699: fiscal_year 2025, period_end_date 2025-12-31, revenue 65,000,000 SEK from the Ratsit row, employees 19, years_count 8.
 
-- [ ] **Step 4: The serving view after its next :45 refresh**
+- [x] **Step 4: The serving view after its next :45 refresh**
 
 ```sql
 SELECT view, status, last_success_time, exception FROM system.view_refreshes WHERE view = 'se_companies_serving';
