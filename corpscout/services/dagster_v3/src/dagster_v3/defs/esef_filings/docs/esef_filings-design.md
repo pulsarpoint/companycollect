@@ -87,6 +87,12 @@ two assets write the same file, so their Dagster pools allow parallel work.
 Every file records its completion contract in
 `esef_filings._partition_status`.
 
+Website candidate extraction (`website_candidates.py`) reconstructs a domain
+split across a PDF-derived line break (e.g. `www.handels-` / `banken.com`)
+into its dehyphenated form only when that form is corroborated elsewhere in
+the report or by a known contact domain, and otherwise keeps the hyphen
+rather than ever emit the bare continuation fragment on its own.
+
 ## ClickHouse publication
 
 One non-subsettable multi-asset operation publishes the four weekly ClickHouse

@@ -24,16 +24,13 @@ _BARE_DOMAIN_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _EMAIL_LIKE_PATTERN = re.compile(r"[^\s@]+@[^\s@]+")
-_DOMAIN_PREFIX_PATTERN = re.compile(
-    r"(?:https?://|//|www\.)[A-Z0-9.-]*-$",
-    re.IGNORECASE,
-)
 _SPLIT_DOMAIN_PATTERN = re.compile(
     r"((?:https?://|//|www\.)[A-Z0-9.-]*-)\s+"
     r"((?:[A-Z0-9-]+\.)+[A-Z]{2,63}(?::\d{2,5})?(?:/[^\s<>\"']*)?)",
     re.IGNORECASE,
 )
 _HOST_LABEL_PATTERN = re.compile(r"(?!-)[a-z0-9-]{1,63}(?<!-)$")
+_LEADING_PUNCTUATION = "([{\"'"
 _EXCLUDED_ELEMENTS = frozenset(
     {
         "canvas",
@@ -255,6 +252,7 @@ def _extract_tagged_value(
         tagged_value.value,
         allow_bare_domains=True,
         corroborating_domains=corroborating_domains,
+        hyphen_corroborating_domains=corroborating_domains,
     ):
         _add_website_candidate(
             raw_value=raw_value,
@@ -291,6 +289,18 @@ def _extract_report_websites(
         ),
     )
     blocks = _visible_blocks(tree)
+
+    # Computed once per report: registrable domains mentioned as a
+    # genuinely unbroken URL/bare domain anywhere in the report's visible
+    # text (excluding a block's own leading hyphen-break fragment, which
+    # isn't a real mention). This corroborates the dehyphenated reading of
+    # a hyphenated line-break join elsewhere in the same report -- e.g.
+    # "handelsbanken.com" appearing unbroken once is enough to confirm that
+    # a "handels-" / "banken.com" split elsewhere should drop its hyphen.
+    hyphen_corroborating_domains = corroborating_domains | set(
+        _unbroken_domain_mention_counts(blocks)
+    )
+
     for index, block in enumerate(blocks):
         context = _block_context(blocks, index)
         website_values, extraction_method = _block_website_values(
@@ -298,6 +308,7 @@ def _extract_report_websites(
             index,
             context=context,
             corroborating_domains=corroborating_domains,
+            hyphen_corroborating_domains=hyphen_corroborating_domains,
         )
         for raw_value in website_values:
             _add_website_candidate(
@@ -459,14 +470,43 @@ def registrable_domain_for_host(host: str) -> str | None:
     return registrable_domain
 
 
+def _dehyphenated_or_kept(
+    *,
+    hyphen_kept: str,
+    hyphen_dropped: str,
+    corroborating_domains: set[str],
+) -> str:
+    """Pick the dehyphenated reading of a line-broken domain join only when
+    it is corroborated; otherwise keep today's hyphenated reading.
+
+    A PDF-derived line break can land a hyphen either on a genuine
+    hyphenated domain (``svenska-handel.se``) or on an artifact of
+    reflowing a word across the break (``handels-`` + ``banken.com`` ->
+    ``handelsbanken.com``). Without independent evidence the hyphenated
+    reading is the safe default.
+    """
+    dropped_normalized = _normalize_website(hyphen_dropped)
+    if (
+        dropped_normalized is not None
+        and dropped_normalized.registrable_domain in corroborating_domains
+    ):
+        return hyphen_dropped
+    return hyphen_kept
+
+
 def _website_values(
     text: str,
     *,
     allow_bare_domains: bool,
     corroborating_domains: set[str],
+    hyphen_corroborating_domains: set[str],
 ) -> list[str]:
     values = [
-        _clean_candidate(f"{match.group(1)}{match.group(2)}")
+        _dehyphenated_or_kept(
+            hyphen_kept=_clean_candidate(f"{match.group(1)}{match.group(2)}"),
+            hyphen_dropped=_clean_candidate(f"{match.group(1)[:-1]}{match.group(2)}"),
+            corroborating_domains=hyphen_corroborating_domains,
+        )
         for match in _SPLIT_DOMAIN_PATTERN.finditer(text)
     ]
     url_spans: list[tuple[int, int]] = []
@@ -501,33 +541,159 @@ def _block_website_values(
     *,
     context: str,
     corroborating_domains: set[str],
+    hyphen_corroborating_domains: set[str],
 ) -> tuple[list[str], str]:
-    values = _website_values(
-        blocks[index].value,
-        allow_bare_domains=_BARE_DOMAIN_SIGNAL_PATTERN.search(context) is not None,
-        corroborating_domains=corroborating_domains,
-    )
+    # `hyphen_corroborating_domains` corroborates a dehyphenated line-break
+    # join specifically (report-wide unbroken mentions in addition to known
+    # contact domains); it is distinct from `corroborating_domains`, which
+    # only gates whether an otherwise-unsignalled bare domain is trusted. A
+    # caller with no wider report-level signal (e.g. tagged-fact values, or a
+    # test exercising a single block in isolation) passes the same set for
+    # both.
+    current_text = blocks[index].value
+    allow_bare_domains = _BARE_DOMAIN_SIGNAL_PATTERN.search(context) is not None
     method = (
         "visible_text_reconstructed"
-        if _SPLIT_DOMAIN_PATTERN.search(blocks[index].value) is not None
+        if _SPLIT_DOMAIN_PATTERN.search(current_text) is not None
         else "visible_text"
     )
-    if index == 0:
-        return values, method
-    previous_tokens = blocks[index - 1].value.rstrip().split()
-    if not previous_tokens:
-        return values, method
-    prefix = previous_tokens[-1]
-    if _DOMAIN_PREFIX_PATTERN.fullmatch(prefix) is None:
-        return values, method
+    if index > 0:
+        rejoin = _rejoin_hyphenated_block(
+            previous_value=blocks[index - 1].value,
+            current_value=current_text,
+            corroborating_domains=hyphen_corroborating_domains,
+        )
+        if rejoin is not None:
+            joined_values, remainder_text = rejoin
+            remainder_values = _website_values(
+                remainder_text,
+                allow_bare_domains=allow_bare_domains,
+                corroborating_domains=corroborating_domains,
+                hyphen_corroborating_domains=hyphen_corroborating_domains,
+            )
+            return [*joined_values, *remainder_values], "visible_text_reconstructed"
     return (
         _website_values(
-            f"{prefix}{blocks[index].value.lstrip()}",
-            allow_bare_domains=False,
+            current_text,
+            allow_bare_domains=allow_bare_domains,
             corroborating_domains=corroborating_domains,
+            hyphen_corroborating_domains=hyphen_corroborating_domains,
         ),
-        "visible_text_reconstructed",
+        method,
     )
+
+
+def _hyphen_line_break_prefix(previous_value: str) -> str | None:
+    """Return the previous block's trailing hyphenated token, stripped of
+    any leading punctuation, when it is a plausible domain-prefix
+    continuation -- e.g. ``handels-``, ``www.handels-``,
+    ``(www.handels-``, ``https://www.handels-``.
+
+    Returns None for a token whose alphanumeric part is too short to be a
+    meaningful prefix (guards against an unrelated trailing dash).
+    """
+    tokens = previous_value.rstrip().split()
+    if not tokens:
+        return None
+    token = tokens[-1].lstrip(_LEADING_PUNCTUATION)
+    if not token.endswith("-"):
+        return None
+    alphanumeric_length = sum(character.isalnum() for character in token)
+    if alphanumeric_length < 3:
+        return None
+    return token
+
+
+def _rejoin_hyphenated_block(
+    *,
+    previous_value: str,
+    current_value: str,
+    corroborating_domains: set[str],
+) -> tuple[list[str], str] | None:
+    """Reconstruct a domain split across a PDF-derived line break.
+
+    Returns None when the previous block does not end in a plausible
+    domain-prefix token -- the caller should process ``current_value``
+    unchanged. Otherwise returns the value(s) to emit for the join (never
+    the bare continuation fragment on its own) plus the remainder of
+    ``current_value`` still to be scanned for unrelated domains.
+    """
+    prefix = _hyphen_line_break_prefix(previous_value)
+    if prefix is None:
+        return None
+    stripped_current = current_value.lstrip()
+    match = _BARE_DOMAIN_PATTERN.match(stripped_current)
+    if match is None:
+        match = _URL_PATTERN.match(stripped_current)
+    if match is None:
+        return None
+
+    fragment = match.group(0)
+    remainder = stripped_current[match.end() :]
+    hyphen_kept = _clean_candidate(f"{prefix}{fragment}")
+    hyphen_dropped = _clean_candidate(f"{prefix[:-1]}{fragment}")
+
+    dropped_normalized = _normalize_website(hyphen_dropped)
+    if (
+        dropped_normalized is not None
+        and dropped_normalized.registrable_domain in corroborating_domains
+    ):
+        return [hyphen_dropped], remainder
+    if _normalize_website(hyphen_kept) is not None:
+        return [hyphen_kept], remainder
+    if dropped_normalized is not None:
+        return [hyphen_dropped], remainder
+    # Neither reading normalizes to a domain -- still suppress the bare
+    # fragment (it is a line-break artifact, not evidence of anything).
+    return [], remainder
+
+
+def _unbroken_domain_mention_counts(blocks: list[_VisibleBlock]) -> dict[str, int]:
+    """Count genuinely unbroken URL/bare-domain mentions per registrable
+    domain across a report's visible-text blocks.
+
+    A block whose predecessor ends in a hyphenated prefix candidate has its
+    own leading match excluded: that match is the line-break continuation
+    fragment (e.g. ``banken.com``), not a real mention of that fragment as
+    a domain in its own right.
+    """
+    counts: dict[str, int] = {}
+    for index, block in enumerate(blocks):
+        skip_leading_match = index > 0 and (
+            _hyphen_line_break_prefix(blocks[index - 1].value) is not None
+        )
+        for domain in _unbroken_domain_mentions(
+            block.value, skip_leading_match=skip_leading_match
+        ):
+            counts[domain] = counts.get(domain, 0) + 1
+    return counts
+
+
+def _unbroken_domain_mentions(text: str, *, skip_leading_match: bool) -> list[str]:
+    domains: list[str] = []
+    url_spans: list[tuple[int, int]] = []
+    email_spans = [match.span() for match in _EMAIL_LIKE_PATTERN.finditer(text)]
+    for match in _URL_PATTERN.finditer(text):
+        url_spans.append(match.span())
+        if skip_leading_match and match.start() == 0:
+            continue
+        normalized = _normalize_website(_clean_candidate(match.group(0)))
+        if normalized is not None:
+            domains.append(normalized.registrable_domain)
+    for match in _BARE_DOMAIN_PATTERN.finditer(text):
+        if skip_leading_match and match.start() == 0:
+            continue
+        if re.search(r"-\s*$", text[: match.start()]) is not None:
+            continue
+        if any(
+            match.start() >= start and match.end() <= end
+            for start, end in (*url_spans, *email_spans)
+        ):
+            continue
+        normalized = _normalize_website(_clean_candidate(match.group(0)))
+        if normalized is not None:
+            domains.append(normalized.registrable_domain)
+    return domains
 
 
 def _visible_blocks(tree: etree._ElementTree) -> list[_VisibleBlock]:
