@@ -4,16 +4,21 @@ A text assertion on the SQL string cannot see whether the LEFT JOIN's stale pred
 actually finds every never-extracted document once the engine's `join_use_nulls` setting
 turns the unmatched side into NULL instead of the type default -- that is exactly the bug
 `ifNull(extracted.extractor_version, '')` fixes (see domains_extractor.py). This runs
-`stale_documents_sql`/`stale_document_count_sql`/`tagged_website_facts_sql`/
-`email_domains_sql` on the engine over corpscout.esef_filings (migration 000149),
-corpscout.esef_facts and corpscout.esef_document_contact_candidates (the esef_facts_v2 /
-esef_document_contact_candidates_v2 tables from migration 000309, renamed the way migration
-000313 renames them in production) and corpscout.esef_domains (migration 000405).
+`stale_documents_sql`/`stale_document_count_sql`/`retry_failed_documents_sql`/
+`tagged_website_facts_sql`/`email_domains_sql` on the engine over corpscout.esef_filings
+(migration 000149), corpscout.esef_facts and corpscout.esef_document_contact_candidates (the
+esef_facts_v2 / esef_document_contact_candidates_v2 tables from migration 000309, renamed the
+way migration 000313 renames them in production) and corpscout.esef_domains (migration 000405).
 
-Fixture documents cover every predicate leg:
-- FXO_CURRENT: an esef_domains row at the current extractor version -- not stale.
+Fixture documents cover every predicate leg (their facts settled long ago unless noted):
+- FXO_CURRENT: an esef_domains row at the current version and package -- not stale.
 - FXO_STALE_VERSION: an esef_domains row at another version -- stale.
+- FXO_CHANGED_PACKAGE: a row at the current version for another package_sha256 -- stale.
 - FXO_NO_DOMAINS: parsed, no esef_domains row at all -- stale.
+- FXO_RETRY_FAILED: a `failed` marker row at the current version -- not stale; what
+  retry_failed re-runs.
+- FXO_FRESH_FACTS: parsed, but its newest fact is under an hour old -- never selected (the
+  publish multi-asset may not have written its contact candidates yet).
 - FXO_NO_FACTS: an esef_filings row but no esef_facts row -- never selected (INNER JOIN).
 - FXO_EMPTY_SHA: parsed, but package_sha256 = '' -- never selected.
 - FXO_FUTURE: parsed, but period_end is in the future -- never selected.
@@ -29,6 +34,7 @@ from dagster_v3.defs.esef_filings.domains_extraction import (
 )
 from dagster_v3.defs.esef_filings.domains_extractor import (
     email_domains_sql,
+    retry_failed_documents_sql,
     stale_document_count_sql,
     stale_documents_sql,
     tagged_website_facts_sql,
@@ -45,13 +51,19 @@ DOMAINS_MIGRATION = "000405_corpscout_esef_domains.up.sql"
 
 FXO_CURRENT = "fxo-current"
 FXO_STALE_VERSION = "fxo-stale-version"
+FXO_CHANGED_PACKAGE = "fxo-changed-package"
 FXO_NO_DOMAINS = "fxo-no-domains"
+FXO_RETRY_FAILED = "fxo-retry-failed"
+FXO_FRESH_FACTS = "fxo-fresh-facts"
 FXO_NO_FACTS = "fxo-no-facts"
 FXO_EMPTY_SHA = "fxo-empty-sha"
 FXO_FUTURE = "fxo-future"
 
 STALE_VERSION = "esef-domains-v0"
 LEI = "LEI1"
+# esef_facts.resolved_at: long settled, and just written (inside the one-hour window).
+SETTLED = "toDateTime64('2024-01-01 00:00:00', 3)"
+FRESH = "now64(3)"
 
 
 def _statements(migration: str) -> list[str]:
@@ -103,19 +115,24 @@ def _facts_row(
     fact_id: str,
     concept_local_name: str,
     raw_value: str,
+    resolved_at: str = SETTLED,
 ) -> str:
     return (
         f"('{fxo_id}', '{LEI}', toDate32('{period_end}'), '{fact_id}', "
-        f"'{concept_local_name}', '{raw_value}', toDate('2024-01-01'))"
+        f"'{concept_local_name}', '{raw_value}', toDate('2024-01-01'), {resolved_at})"
     )
 
 
 def _domains_row(
-    fxo_id: str, period_end: str, package_sha256: str, version: str
+    fxo_id: str,
+    period_end: str,
+    package_sha256: str,
+    version: str,
+    status: str = "ok",
 ) -> str:
     return (
         f"('{fxo_id}', '{fxo_id}', '{package_sha256}', '{LEI}', "
-        f"toDate32('{period_end}'), '{version}', now64(3, 'UTC'))"
+        f"toDate32('{period_end}'), '{status}', '{version}', now64(3, 'UTC'))"
     )
 
 
@@ -125,14 +142,18 @@ INSERTS = (
         [
             _filings_row(FXO_CURRENT, "2024-06-30", "a" * 64),
             _filings_row(FXO_STALE_VERSION, "2024-12-31", "b" * 64),
+            _filings_row(FXO_CHANGED_PACKAGE, "2024-09-30", "f" * 64),
             _filings_row(FXO_NO_DOMAINS, "2023-12-31", "c" * 64),
+            _filings_row(FXO_RETRY_FAILED, "2022-06-30", "8" * 64),
+            _filings_row(FXO_FRESH_FACTS, "2023-06-30", "9" * 64),
             _filings_row(FXO_NO_FACTS, "2022-12-31", "d" * 64),
             _filings_row(FXO_EMPTY_SHA, "2021-12-31", ""),
             _filings_row(FXO_FUTURE, "2099-12-31", "e" * 64),
         ]
     ),
     "INSERT INTO corpscout.esef_facts "
-    "(fxo_id, lei, period_end, fact_id, concept_local_name, raw_value, processed_week) VALUES "
+    "(fxo_id, lei, period_end, fact_id, concept_local_name, raw_value, processed_week, "
+    "resolved_at) VALUES "
     + ", ".join(
         [
             _facts_row(FXO_CURRENT, "2024-06-30", "f1", "Assets", "100"),
@@ -143,21 +164,43 @@ INSERTS = (
                 "WebsitesOfLegalEntity",
                 "https://example.com",
             ),
+            _facts_row(FXO_CHANGED_PACKAGE, "2024-09-30", "f6", "Assets", "100"),
             _facts_row(FXO_NO_DOMAINS, "2023-12-31", "f3", "Assets", "100"),
+            _facts_row(FXO_RETRY_FAILED, "2022-06-30", "f7", "Assets", "100"),
+            # FXO_FRESH_FACTS: one settled fact and one just written -- the newest decides.
+            _facts_row(FXO_FRESH_FACTS, "2023-06-30", "f8", "Assets", "100"),
+            _facts_row(
+                FXO_FRESH_FACTS, "2023-06-30", "f9", "Equity", "50", resolved_at=FRESH
+            ),
             # FXO_NO_FACTS intentionally has no row here.
             _facts_row(FXO_EMPTY_SHA, "2021-12-31", "f4", "Assets", "100"),
             _facts_row(FXO_FUTURE, "2099-12-31", "f5", "Assets", "100"),
         ]
     ),
     "INSERT INTO corpscout.esef_domains "
-    "(domain_id, source_document_id, package_sha256, lei, period_end, extractor_version, extracted_at) VALUES "
+    "(domain_id, source_document_id, package_sha256, lei, period_end, extraction_status, "
+    "extractor_version, extracted_at) VALUES "
     + ", ".join(
         [
             _domains_row(
                 FXO_CURRENT, "2024-06-30", "a" * 64, ESEF_DOMAINS_EXTRACTOR_VERSION
             ),
             _domains_row(FXO_STALE_VERSION, "2024-12-31", "b" * 64, STALE_VERSION),
-            # FXO_NO_DOMAINS intentionally has no row here.
+            # Extracted at the current version, but from a package the index no longer has.
+            _domains_row(
+                FXO_CHANGED_PACKAGE,
+                "2024-09-30",
+                "0" * 64,
+                ESEF_DOMAINS_EXTRACTOR_VERSION,
+            ),
+            _domains_row(
+                FXO_RETRY_FAILED,
+                "2022-06-30",
+                "8" * 64,
+                ESEF_DOMAINS_EXTRACTOR_VERSION,
+                status="failed",
+            ),
+            # FXO_NO_DOMAINS and FXO_FRESH_FACTS intentionally have no row here.
         ]
     ),
     "INSERT INTO corpscout.esef_document_contact_candidates "
@@ -171,8 +214,13 @@ def _script() -> str:
         stale_documents_sql(all_available=False, only_listed=False),
         {"extractor_version": ESEF_DOMAINS_EXTRACTOR_VERSION},
     )
+    all_sql = render(stale_documents_sql(all_available=True, only_listed=False), {})
     count_sql = render(
         stale_document_count_sql(),
+        {"extractor_version": ESEF_DOMAINS_EXTRACTOR_VERSION},
+    )
+    retry_sql = render(
+        retry_failed_documents_sql(),
         {"extractor_version": ESEF_DOMAINS_EXTRACTOR_VERSION},
     )
     tagged_sql = render(
@@ -194,8 +242,12 @@ def _script() -> str:
         "SET join_use_nulls = 1",
         "SELECT '@@stale_1'",
         stale_sql + " FORMAT TSV",
+        "SELECT '@@all'",
+        all_sql + " FORMAT TSV",
         "SELECT '@@count'",
         count_sql + " FORMAT TSV",
+        "SELECT '@@retry'",
+        retry_sql + " FORMAT TSV",
         "SELECT '@@tagged'",
         tagged_sql + " FORMAT TSV",
         "SELECT '@@emails'",
@@ -236,16 +288,42 @@ def sections() -> dict[str, list[list[str]]]:
 def test_stale_documents_sql_is_correct_under_both_join_use_nulls_settings(
     sections: dict[str, list[list[str]]],
 ) -> None:
-    expected = [FXO_STALE_VERSION, FXO_NO_DOMAINS]  # newest period_end first
+    # Newest period_end first; a changed package is stale at the current version too.
+    expected = [FXO_STALE_VERSION, FXO_CHANGED_PACKAGE, FXO_NO_DOMAINS]
 
     assert [row[0] for row in sections["stale_0"]] == expected
     assert [row[0] for row in sections["stale_1"]] == expected
 
 
+def test_all_available_variant_keeps_every_settled_document(
+    sections: dict[str, list[list[str]]],
+) -> None:
+    assert [row[0] for row in sections["all"]] == [
+        FXO_STALE_VERSION,
+        FXO_CHANGED_PACKAGE,
+        FXO_CURRENT,
+        FXO_NO_DOMAINS,
+        FXO_RETRY_FAILED,
+    ]
+
+
+def test_documents_whose_facts_are_under_an_hour_old_are_not_available(
+    sections: dict[str, list[list[str]]],
+) -> None:
+    for name in ("stale_0", "stale_1", "all"):
+        assert FXO_FRESH_FACTS not in [row[0] for row in sections[name]]
+
+
 def test_stale_document_count_sql_counts_the_stale_set(
     sections: dict[str, list[list[str]]],
 ) -> None:
-    assert sections["count"] == [["2"]]
+    assert sections["count"] == [["3"]]
+
+
+def test_retry_failed_documents_sql_returns_failed_rows_at_the_current_version(
+    sections: dict[str, list[list[str]]],
+) -> None:
+    assert sections["retry"] == [[FXO_RETRY_FAILED]]
 
 
 def test_tagged_website_facts_sql_returns_the_tagged_fact(

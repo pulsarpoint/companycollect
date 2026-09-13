@@ -128,11 +128,21 @@ def _package_bytes(tmp_path: Path) -> bytes:
 def test_stale_documents_sql_selects_available_documents_at_another_version() -> None:
     sql = stale_documents_sql(all_available=False, only_listed=False)
     assert "FROM corpscout.esef_filings AS filings FINAL" in sql
-    assert "SELECT DISTINCT fxo_id FROM corpscout.esef_facts" in sql
+    # Facts must have settled: the publish writes esef_facts before the contact candidates.
+    assert (
+        "INNER JOIN (SELECT fxo_id FROM corpscout.esef_facts GROUP BY fxo_id "
+        "HAVING max(resolved_at) < now() - INTERVAL 1 HOUR)"
+    ) in sql
+    assert "SELECT DISTINCT fxo_id" not in sql
     assert "FROM corpscout.esef_domains GROUP BY source_document_id" in sql
+    assert "any(package_sha256) AS package_sha256" in sql
     assert "filings.package_sha256 != ''" in sql
     assert "filings.period_end <= today()" in sql
-    assert "ifNull(extracted.extractor_version, '') != %(extractor_version)s" in sql
+    # Another version, or another package at this version, is stale.
+    assert (
+        " AND (ifNull(extracted.extractor_version, '') != %(extractor_version)s"
+        " OR ifNull(extracted.package_sha256, '') != filings.package_sha256)"
+    ) in sql
     assert "ORDER BY filings.period_end DESC, filings.fxo_id" in sql
     assert "%(source_document_ids)s" not in sql
 
@@ -140,6 +150,7 @@ def test_stale_documents_sql_selects_available_documents_at_another_version() ->
 def test_stale_documents_sql_variants() -> None:
     everything = stale_documents_sql(all_available=True, only_listed=False)
     assert "%(extractor_version)s" not in everything
+    assert "ifNull(extracted.package_sha256" not in everything
     listed = stale_documents_sql(all_available=True, only_listed=True)
     assert "filings.fxo_id IN %(source_document_ids)s" in listed
     assert stale_document_count_sql().startswith("SELECT count() FROM (")

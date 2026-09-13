@@ -3,7 +3,8 @@
 First extractor of the documents-plus-independent-extractors architecture
 (spec 2026-09-13): one asset, one table (corpscout.esef_domains, migration
 000405), one version constant. It selects documents whose esef_domains rows
-are missing or carry another extractor version, streams each archived package
+are missing, carry another extractor version or were extracted from another
+package, streams each archived package
 from the object store into a process pool whose workers run the deterministic
 website extraction in a killable child, and replaces the table's rows batch
 by batch -- no partitions, no shared artifact, no schema version. A version
@@ -113,10 +114,14 @@ class EsefDomainsConfig(dg.Config):
 
 def stale_documents_sql(*, all_available: bool, only_listed: bool) -> str:
     """Available documents -- a package archived by the weekly parse and
-    facts in esef_facts -- whose esef_domains rows are missing or carry
-    another extractor version (a newer one counts as stale too, like the
-    artifact reuse rule). Newest period_end first; `period_end <= today()`
-    drops the future-dated index rows (owner ruling 2026-09-11).
+    settled facts in esef_facts (the newest fact row older than one hour: the
+    publish multi-asset writes esef_facts before
+    esef_document_contact_candidates, and a document extracted in between
+    would miss its e-mail domains for good at this version) -- whose
+    esef_domains rows are missing, carry another extractor version (a newer
+    one counts as stale too, like the artifact reuse rule) or were extracted
+    from another package_sha256. Newest period_end first; `period_end <=
+    today()` drops the future-dated index rows (owner ruling 2026-09-11).
 
     Parameters: extractor_version (unless all_available),
     source_document_ids (when only_listed).
@@ -128,7 +133,10 @@ def stale_documents_sql(*, all_available: bool, only_listed: bool) -> str:
     version_predicate = (
         ""
         if all_available
-        else " AND ifNull(extracted.extractor_version, '') != %(extractor_version)s"
+        else (
+            " AND (ifNull(extracted.extractor_version, '') != %(extractor_version)s"
+            " OR ifNull(extracted.package_sha256, '') != filings.package_sha256)"
+        )
     )
     listed_predicate = (
         " AND filings.fxo_id IN %(source_document_ids)s" if only_listed else ""
@@ -136,9 +144,11 @@ def stale_documents_sql(*, all_available: bool, only_listed: bool) -> str:
     return (
         "SELECT filings.fxo_id, filings.package_sha256, filings.lei, filings.period_end "
         f"FROM {tables.QUALIFIED_ESEF_FILINGS_TABLE} AS filings FINAL "
-        f"INNER JOIN (SELECT DISTINCT fxo_id FROM {tables.QUALIFIED_ESEF_FACTS_TABLE}) "
+        f"INNER JOIN (SELECT fxo_id FROM {tables.QUALIFIED_ESEF_FACTS_TABLE} "
+        "GROUP BY fxo_id HAVING max(resolved_at) < now() - INTERVAL 1 HOUR) "
         "AS parsed ON parsed.fxo_id = filings.fxo_id "
-        "LEFT JOIN (SELECT source_document_id, max(extractor_version) AS extractor_version "
+        "LEFT JOIN (SELECT source_document_id, max(extractor_version) AS extractor_version, "
+        "any(package_sha256) AS package_sha256 "
         f"FROM {tables.QUALIFIED_ESEF_DOMAINS_TABLE} GROUP BY source_document_id) "
         "AS extracted ON extracted.source_document_id = filings.fxo_id "
         "WHERE filings.package_sha256 != '' AND filings.period_end <= today()"
@@ -480,8 +490,8 @@ def run_esef_domains_extraction(
         if not_selected:
             log.warning(
                 "esef_domains: %d of %d requested document(s) were not selected -- "
-                "each has no corpscout.esef_facts rows, an empty package_sha256, or a "
-                "future period_end: %s",
+                "each has no corpscout.esef_facts rows (or facts written less than an "
+                "hour ago), an empty package_sha256, or a future period_end: %s",
                 len(not_selected),
                 len(config.source_document_ids),
                 not_selected,
