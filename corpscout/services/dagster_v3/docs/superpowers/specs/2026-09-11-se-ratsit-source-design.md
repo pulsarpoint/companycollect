@@ -462,3 +462,40 @@ appended below each item.
    STOPPED.
 3. Ratsit addresses: the postal-town dictionary, the establishments as `workplace`, per-slot
    tombstones; prod re-extract with `since`, normalize, warm, fold.
+   Shipped 2026-09-13 (plan `2026-09-12-se-ratsit-3-addresses.md`, main b182ffbb; migration
+   000403). Code: `address/ratsit.py` became `ratsit-address-v2` — the company row's town comes
+   from the SCB postcode→town dictionary (digits-only postcode, most frequent trimmed town,
+   ties alphabetical; 15,698 postcodes), every establishment of the current report with a
+   street and a postcode is a `workplace` row in slot `est:<identifier>` (`:<index>` on a
+   repeated identifier), a slot the newest report stops delivering is tombstoned through
+   `address/suggestions.py::address_select_sql`, the module reads `se_ratsit_company` for its
+   own `observed_at`, and the STOPPED weekly binds 10,000 ids per page. 000403 keeps
+   workplace-only rows out of `se_companies_serving` (array, count, primary), pinned by
+   `tests/test_se_companies_serving_mv.py`. Prod, all launches with `dagster/priority` 10
+   because another session's 76-partition ESEF backfill held the 32 run slots: preview
+   8d96b2e8 found 947,200 companies / 95 pages / 1,679,503 candidates; execute 8cb95d01
+   inserted 1,679,503 rows in 10 min (947,200 `company` rows, 732,303 `workplace` rows,
+   18,347 street-less rows, 0 tombstone-only rows, 2 index-suffixed slots); a second preview
+   found 0 companies (converged). The dictionary changed the town on 261,252 of 930,702
+   company rows with a Ratsit locality (28%, the spec's number). Normalize 2728d0c5: 1,679,504
+   rows in 19 min (ok 1,651,197 / partial 11,554 / no_address 16,753 / foreign 0); Ratsit
+   company rows sharing an SCB `address_key` 50,620 → 799,137. Warm c15ac5f2: 2,138,500 keys
+   in 15 chunks, 2,063,111 cache hits, 75,389 newly matched, 22 min, every asset check green.
+   Fold backfill gipnbcvu: 64/64 SUCCESS, 2.5 h of run time (median 79 s, max 528 s) over a
+   4 h 43 min wall, considered 946,648 / published 1,200,834 / changed 1,123,041 / withdrawn
+   23,847 / geocoded 1,115,231 all from the cache. Entity before → after (FINAL): rows
+   3,762,055 → 3,947,726 (active 3,923,878), companies 3,516,836 → 3,516,856, Ratsit rows
+   82,173 → 1,149,163, workplace rows 0 → 730,438 (510,345 of them merged into a register row
+   as `postal+visiting_or_postal+workplace`, 131,092 standing alone), withdrawn 33 → 23,848;
+   sources `bolagsverket+ratsit+scb` 789,252 rows; municipality-as-town duplicates 21,007 → 150;
+   1,349 companies now publish ten or more addresses (most: kommun 2120000142 with 1,502
+   workplaces); workplace geocodes exact 241,554 / street 188,031 / area 180,516 / corrected
+   89,409 / site 15,826 / unmatched 10,486 (1.4%). Serving: the 08:45 refresh (finished 09:05:24, no exception) reads the fully folded table — with_an_address 3,516,836 → 3,516,846, total addresses 3,792,786, max `address_count` still 3, 599,303 companies name a workplace kind inside a merged row, 0 workplace-only rows in any array, the 10 companies whose only rows are workplaces carry no address and no primary, max `length(addresses)` 1,230. Smoke on the owner's dev
+   server: 5594121039 (Oxie) shows one published row with kinds Postal / Visiting or postal /
+   Workplace over Bolagsverket, SCB and Ratsit, the establishment slot `est:69751261` labelled
+   Workplace, the old municipality row under "Withdrawn and hidden (1)"; 5592471915 (Bromma)
+   the same; the 1,503-row kommun page renders in 6.6 s as 7.8 MB of HTML (the Address-tab
+   paging follow-up stands). Rulings: normalize was launched while the convergence preview was
+   still queued (it reads the suggestion table only; changed_only would have caught a
+   non-converged extract); the two previews and the execute ran ahead of nothing — the code
+   was merged and deployed first (22:40Z), 000403 applied before the fold (22:35Z).
