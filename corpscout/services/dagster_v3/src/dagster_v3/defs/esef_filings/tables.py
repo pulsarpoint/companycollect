@@ -275,7 +275,7 @@ ESEF_DOCUMENT_PEOPLE_EXTRACTION_EXPORT_COLUMNS = (
 )
 
 # One row per (document, registrable domain) from the esef_domains extractor
-# (migration 000404, spec 2026-09-13), or one marker row per document without
+# (migration 000405, spec 2026-09-13), or one marker row per document without
 # domains. source_record_uid and resolved_at are DEFAULT-expression columns
 # there and never part of the INSERT tuple, so both are excluded from this list.
 ESEF_DOMAINS_EXPORT_COLUMNS = (

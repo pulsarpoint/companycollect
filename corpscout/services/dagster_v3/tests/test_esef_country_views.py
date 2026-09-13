@@ -47,9 +47,9 @@ def test_view_sql_joins_the_verified_swedish_link_and_reads_replacing_tables_fin
     assert "AS t INNER JOIN" in _normalized(build_se_esef_view_sql(disclosures))  # MergeTree: no FINAL
 
 
-MIGRATION_000404 = MIGRATION.parent / "000404_corpscout_esef_domains.up.sql"
+MIGRATION_000405 = MIGRATION.parent / "000405_corpscout_esef_domains.up.sql"
 # Views added after the country-agnostic cutover live in their own migration.
-VIEW_MIGRATIONS = {"se_esef_domains": MIGRATION_000404}
+VIEW_MIGRATIONS = {"se_esef_domains": MIGRATION_000405}
 
 
 def test_every_rendered_view_is_embedded_in_its_migration() -> None:

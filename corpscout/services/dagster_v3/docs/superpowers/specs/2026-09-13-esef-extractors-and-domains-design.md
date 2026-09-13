@@ -52,8 +52,8 @@ referrals promoted to company domains).
 
 ## 2. `esef_domains`
 
-Migration `000404_corpscout_esef_domains` (ledger at 403 on 2026-09-13; the SE financial track
-also plans a 000404 — re-check main and the prod ledger at merge time and renumber if needed):
+Migration `000405_corpscout_esef_domains` (renumbered 2026-09-13 evening: the SE financial track
+took 000404 (`se_financial_readers_entity`, applied on prod before this branch merged); re-check main and the prod ledger again at merge time):
 
 ```
 CREATE TABLE IF NOT EXISTS corpscout.esef_domains
@@ -168,7 +168,7 @@ The stale-weeks sensor stays as it is for the facts parse.
 
 ## 6. Rollout
 
-1. Owner applies 000404 (`make clickhouse-migrate-up-one`), verifies `esef_domains` and
+1. Owner applies 000405 (`make clickhouse-migrate-up-one`), verifies `esef_domains` and
    `se_esef_domains` exist.
 2. Owner deploys from main after `dg utils refresh-defs-state` (the dbt source and model
    change) — the deploy also ships the extraction fix merged on 2026-09-13 (636f30042) to the
@@ -195,7 +195,7 @@ The stale-weeks sensor stays as it is for the facts parse.
   export columns in order, `corroborated`, batch replace statements, a missing package counted
   as failed with a marker row); the sensor's pure decision and its `evaluate_tick` with fakes;
   migration column-order contract and `SE_ESEF_VIEWS` drift pins (the new view pinned to
-  000404); the dbt model's SQL-text pins plus the existing `dbt parse` test; the backoffice
+  000405); the dbt model's SQL-text pins plus the existing `dbt parse` test; the backoffice
   reader's query pin and loader mapping.
 
 ## 8. Out of scope (later slices)

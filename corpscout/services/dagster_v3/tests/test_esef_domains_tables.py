@@ -1,4 +1,4 @@
-"""corpscout.esef_domains (migration 000404): the export-column tuple pins the
+"""corpscout.esef_domains (migration 000405): the export-column tuple pins the
 CREATE TABLE's column order, the view entry renders into the same migration."""
 
 import re
@@ -8,8 +8,8 @@ from dagster_v3.defs.esef_filings import tables
 from dagster_v3.defs.esef_filings.country_views import build_se_esef_view_sql
 
 MIGRATIONS = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
-UP = MIGRATIONS / "000404_corpscout_esef_domains.up.sql"
-DOWN = MIGRATIONS / "000404_corpscout_esef_domains.down.sql"
+UP = MIGRATIONS / "000405_corpscout_esef_domains.up.sql"
+DOWN = MIGRATIONS / "000405_corpscout_esef_domains.down.sql"
 
 
 def _normalized(sql: str) -> str:
