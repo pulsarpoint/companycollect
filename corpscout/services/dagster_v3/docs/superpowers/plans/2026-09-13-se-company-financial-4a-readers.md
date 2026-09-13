@@ -218,10 +218,36 @@ from pathlib import Path
 def sub(path, old, new):
     t = path.read_text(); assert t.count(old) == 1, (path.name, old[:60], t.count(old)); path.write_text(t.replace(old, new))
 
+MV_DOCSTRING = '''"""Migration 000404: the serving view's financial flags read the financial entity, and the
+filing-status view's data_available leg does too.
+
+`corpscout.se_companies_serving` is the ONE wide per-company row every admin companies list
+page reads: the info-list columns, the presence and source flags, the address JSON + primary
+geocode summary, and (since 000338) the registered-activity translation, status-reason label
+and spine fields absorbed from the retired `se_companies_translated` view.
+
+WHAT 000404 CHANGES (financial slice 4a, spec 2026-09-11 section 10). `has_financial` becomes
+"an active row in corpscout.se_company_financial OR a filed report" (the 2026-08-25 widening
+on filed reports stays), `fin_bolagsverket` and `fin_esef` become `has(sources, ...)` over the
+same active rows (the restated column `bolagsverket_comparative` is Bolagsverket data and
+lights that flag too), and the IN-set subqueries on se_bolagsverket_financial_metrics,
+esef_financial_metrics and company_identifier leave the view. The same file re-issues
+`se_annual_report_filing_status_current` (000282) with its data_available leg reading the
+entity's newest active standalone period end instead of se_company_financials_latest.
+
+The serving definition changes and nothing else does, so this is the in-place `ALTER TABLE
+... MODIFY QUERY` of 000393, 000396, 000398 and 000403, not the staged swap of 000391/000392:
+no `_next`, no `SYSTEM WAIT VIEW` (a refresh takes 13 to 15 minutes against a 300-second
+client read timeout), no drop. The filing-status view is a plain view: CREATE OR REPLACE.
+
+The drift pin couples the migration's MODIFY QUERY body to a fresh render of
+companies_current.build_se_companies_serving_sql -- editing either half alone turns this red.
+"""'''
+
 mv = Path("tests/test_se_companies_serving_mv.py")
 t = mv.read_text()
 start = t.index('"""Migration 000403'); end = t.index('"""\n\nfrom pathlib import Path') + 3
-t = t[:start] + '"""Migration 000404: the serving view\'s financial flags read the financial entity, and the\nfiling-status view\'s data_available leg does too.\n\n`corpscout.se_companies_serving` is the ONE wide per-company row every admin companies list\npage reads: the info-list columns, the presence and source flags, the address JSON + primary\ngeocode summary, and (since 000338) the registered-activity translation, status-reason label\nand spine fields absorbed from the retired `se_companies_translated` view.\n\nWHAT 000404 CHANGES (financial slice 4a, spec 2026-09-11 section 10). `has_financial` becomes\n"an active row in corpscout.se_company_financial OR a filed report" (the 2026-08-25 widening\non filed reports stays), `fin_bolagsverket` and `fin_esef` become `has(sources, ...)` over the\nsame active rows (the restated column `bolagsverket_comparative` is Bolagsverket data and\nlights that flag too), and the IN-set subqueries on se_bolagsverket_financial_metrics,\nesef_financial_metrics and company_identifier leave the view. The same file re-issues\n`se_annual_report_filing_status_current` (000282) with its data_available leg reading the\nentity\'s newest active standalone period end instead of se_company_financials_latest.\n\nThe serving definition changes and nothing else does, so this is the in-place `ALTER TABLE\n... MODIFY QUERY` of 000393, 000396, 000398 and 000403, not the staged swap of 000391/000392:\nno `_next`, no `SYSTEM WAIT VIEW` (a refresh takes 13 to 15 minutes against a 300-second\nclient read timeout), no drop. The filing-status view is a plain view: CREATE OR REPLACE.\n\nThe drift pin couples the migration\'s MODIFY QUERY body to a fresh render of\ncompanies_current.build_se_companies_serving_sql -- editing either half alone turns this red.\n"""' + t[end:]
+t = t[:start] + MV_DOCSTRING + t[end:]
 mv.write_text(t)
 sub(mv, 'MIGRATION = "000403_corpscout_se_companies_serving_no_workplace"\nPREVIOUS_MIGRATION = "000398_corpscout_se_company_person_rename"\n',
         'MIGRATION = "000404_corpscout_se_financial_readers_entity"\nPREVIOUS_MIGRATION = "000403_corpscout_se_companies_serving_no_workplace"\nFILING_VIEW = "corpscout.se_annual_report_filing_status_current"\nFINANCIAL_ENTITY = "corpscout.se_company_financial"\n')
@@ -346,7 +372,28 @@ t = tm.read_text()
 old = '    "000403_corpscout_se_companies_serving_no_workplace",\n'
 assert t.count(old) == 1
 t = t.replace(old, old + '    "000404_corpscout_se_financial_readers_entity",\n')
-t += ```
+NEW_TEST = '''
+
+def test_000404_repoints_the_two_financial_readers_to_the_entity() -> None:
+    """Financial slice 4a (spec 2026-09-11 section 10): the serving view's financial flags and
+    the filing-status view's data_available leg read corpscout.se_company_financial; the up
+    file's executable text never names se_company_financials_latest, and the down file puts
+    000282's leg back. The serving render itself is drift-pinned in
+    test_se_companies_serving_mv.py."""
+    up = _migration_sql("000404_corpscout_se_financial_readers_entity.up.sql")
+    down = _migration_sql("000404_corpscout_se_financial_readers_entity.down.sql")
+    executable_up = "\\n".join(line.split("--")[0] for line in up.splitlines())
+
+    assert executable_up.count("corpscout.se_company_financial FINAL") == 4
+    assert "ALTER TABLE corpscout.se_companies_serving\\nMODIFY QUERY" in up
+    assert "CREATE OR REPLACE VIEW corpscout.se_annual_report_filing_status_current" in up
+    assert "se_company_financials_latest" not in executable_up
+    assert "SYSTEM WAIT VIEW" not in executable_up and "DROP" not in executable_up.upper()
+    assert "FROM corpscout.se_company_financials_latest" in down
+'''
+tm.write_text(t + NEW_TEST)
+print("tests patched")
+```
 
 - [ ] **Step 2: Run them to verify they fail**
 
