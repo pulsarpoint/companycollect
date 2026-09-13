@@ -1,26 +1,24 @@
-"""Migration 000403: workplace-only address rows leave the serving view.
+"""Migration 000404: the serving view's financial flags read the financial entity, and the
+filing-status view's data_available leg does too.
 
 `corpscout.se_companies_serving` is the ONE wide per-company row every admin companies list
 page reads: the info-list columns, the presence and source flags, the address JSON + primary
 geocode summary, and (since 000338) the registered-activity translation, status-reason label
 and spine fields absorbed from the retired `se_companies_translated` view.
 
-WHAT 000403 CHANGES (Ratsit address slice 3). The Ratsit extractor publishes one address per
-ESTABLISHMENT, so the address entity now holds hundreds of rows for some companies -- one
-holds 1,607 -- and 355 companies have establishments but no `visiting_or_postal` row at all.
-The `addresses` array is an uncapped `groupArray` and the primary address is picked by a
-tiebreak over kinds, so unchanged this view would publish a ~400 KB JSON blob for that one
-company and could print a branch office as another company's own address. The
-`company_addresses` CTE therefore gains `AND NOT (a.kinds = ['workplace'])` -- one CTE, so the
-array, `address_count` and the primary pick drop those rows together. A row the FOLD merged
-(an establishment repeating the company's own postal street and postcode, kinds
-`['postal', 'workplace']`) is the company's address and stays. Nothing is deleted: the rows
-remain in `se_company_address` and on the backoffice Address tab.
+WHAT 000404 CHANGES (financial slice 4a, spec 2026-09-11 section 10). `has_financial` becomes
+"an active row in corpscout.se_company_financial OR a filed report" (the 2026-08-25 widening
+on filed reports stays), `fin_bolagsverket` and `fin_esef` become `has(sources, ...)` over the
+same active rows (the restated column `bolagsverket_comparative` is Bolagsverket data and
+lights that flag too), and the IN-set subqueries on se_bolagsverket_financial_metrics,
+esef_financial_metrics and company_identifier leave the view. The same file re-issues
+`se_annual_report_filing_status_current` (000282) with its data_available leg reading the
+entity's newest active standalone period end instead of se_company_financials_latest.
 
-The definition changes and nothing else does, so this is the in-place `ALTER TABLE ... MODIFY
-QUERY` of 000393, 000396 and 000398, not the staged swap of 000391/000392: no `_next`, no
-`SYSTEM WAIT VIEW` (a refresh takes 13 to 15 minutes against a 300-second client read
-timeout), no drop.
+The serving definition changes and nothing else does, so this is the in-place `ALTER TABLE
+... MODIFY QUERY` of 000393, 000396, 000398 and 000403, not the staged swap of 000391/000392:
+no `_next`, no `SYSTEM WAIT VIEW` (a refresh takes 13 to 15 minutes against a 300-second
+client read timeout), no drop. The filing-status view is a plain view: CREATE OR REPLACE.
 
 The drift pin couples the migration's MODIFY QUERY body to a fresh render of
 companies_current.build_se_companies_serving_sql -- editing either half alone turns this red.
@@ -33,8 +31,10 @@ from dagster_v3.defs.sweden_company.companies_current import (
 )
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
-MIGRATION = "000403_corpscout_se_companies_serving_no_workplace"
-PREVIOUS_MIGRATION = "000398_corpscout_se_company_person_rename"
+MIGRATION = "000404_corpscout_se_financial_readers_entity"
+PREVIOUS_MIGRATION = "000403_corpscout_se_companies_serving_no_workplace"
+FILING_VIEW = "corpscout.se_annual_report_filing_status_current"
+FINANCIAL_ENTITY = "corpscout.se_company_financial"
 VIEW = "corpscout.se_companies_serving"
 ENTITY = "corpscout.se_company_person"
 ENTITY_V2 = "corpscout.se_company_person_v2"
@@ -118,12 +118,30 @@ def test_the_builder_serves_no_workplace_only_address_row() -> None:
     assert sql.count("FROM company_addresses") == 2
 
 
+def test_the_builder_reads_the_financial_entity_for_every_financial_flag() -> None:
+    """Slice 4a's repoint, on the builder rather than on the file: the three financial arms
+    read the entity's ACTIVE rows under FINAL, the register flags read the row's `sources`
+    (the restated Bolagsverket column counts as Bolagsverket), the filed-reports arm stays,
+    and no financial arm names a source table or company_identifier any more."""
+    sql = build_se_companies_serving_sql()
+
+    assert sql.count(f"{FINANCIAL_ENTITY} FINAL") == 3
+    assert "toUInt8(fin_entity OR fin_reports) AS has_financial" in sql
+    assert "WHERE active = 1 AND hasAny(sources, ['bolagsverket', 'bolagsverket_comparative'])" in sql
+    assert sql.count("has(sources, 'esef')") == 2          # the people arm and the financial arm
+    assert "FROM corpscout.se_financial_reports" in sql
+    for gone in ("se_bolagsverket_financial_metrics", "esef_financial_metrics", "company_identifier"):
+        assert gone not in sql, gone
+
+
 def test_the_pin_is_not_vacuous() -> None:
     body = _modify_query_body(_sql("up"))
     assert len(body) > 2000
     assert "groupArray" in body
     assert "primary_geocode_class" in body
     assert ADDRESS_ROW_SOURCE in body
+    assert body.count(f"{FINANCIAL_ENTITY} FINAL") == 3
+    assert "se_bolagsverket_financial_metrics" not in body and "company_identifier" not in body
     # Whole-name matching: ENTITY prefixes all five siblings, so the count is taken on the
     # name PLUS the token that follows it in the three people subqueries.
     assert body.count(f"{ENTITY} FINAL") == 3
@@ -139,11 +157,21 @@ def test_the_pin_is_not_vacuous() -> None:
 def test_the_up_migration_stops_repoints_and_starts() -> None:
     statements = _statements(_sql("up"))
 
-    assert len(statements) == 4
+    assert len(statements) == 5
     assert statements[0] == "CREATE DATABASE IF NOT EXISTS corpscout"
     assert _body(statements[1]) == f"SYSTEM STOP VIEW {VIEW}"
     assert _body(statements[2]).startswith(f"ALTER TABLE {VIEW}\nMODIFY QUERY\n")
     assert _body(statements[3]) == f"SYSTEM START VIEW {VIEW}"
+    # The filing-status view, re-issued in place with its data_available leg on the entity.
+    filing = _body(statements[4])
+    assert filing.startswith(f"CREATE OR REPLACE VIEW {FILING_VIEW} AS")
+    assert f"FROM {FINANCIAL_ENTITY} FINAL" in filing and "WHERE active = 1 AND scope = 'standalone'" in filing
+    assert "se_company_financials_latest" not in filing
+    assert "FROM corpscout.se_annual_report_filing_observations FINAL" in filing
+    # Provenance is per company, from the newest period's winning sources (final review F1).
+    assert "hasAny(argMax(sources, period_end), ['bolagsverket', 'bolagsverket_comparative']) AS newest_from_register" in filing
+    assert "if(newest_from_register, 'sweden_financial', 'se_company_financial') AS source_slug" in filing
+    assert "'sweden_financial' AS source_slug" not in filing
     # A repoint, nothing else: no staged swap, no rename, no new table, no drop on either
     # side. The refresh this view runs takes 13 to 15 minutes and the migrate client's read
     # timeout is 300 seconds, so a SYSTEM WAIT VIEW here would drop the client mid-migration.
@@ -158,24 +186,32 @@ def test_the_up_migration_stops_repoints_and_starts() -> None:
         assert "DROP" not in _executable(_sql(suffix)).upper(), suffix
 
 
-def test_the_down_migration_restores_000398s_render() -> None:
+def test_the_down_migration_restores_000403s_render_and_000282s_view() -> None:
     statements = _statements(_sql("down"))
 
-    assert len(statements) == 4
+    assert len(statements) == 5
     assert statements[0] == "CREATE DATABASE IF NOT EXISTS corpscout"
     assert _body(statements[1]) == f"SYSTEM STOP VIEW {VIEW}"
     assert _body(statements[3]) == f"SYSTEM START VIEW {VIEW}"
     assert "SYSTEM WAIT VIEW" not in _executable(_sql("down"))
-    # The restored query is 000398's, modulo whitespace (_normalized collapses runs of
-    # whitespace before comparing, so this is not a character-for-character check) -- and it
-    # is the render in which a workplace-only row still counts.
+    # The restored query is 000403's, modulo whitespace (_normalized collapses runs of
+    # whitespace before comparing, so this is not a character-for-character check) -- the
+    # render whose financial flags still read the source tables.
     assert _normalized(_modify_query_body(_sql("down"))) == _normalized(
         _modify_query_body(_sql_of(PREVIOUS_MIGRATION, "up"))
     )
-    assert "kinds = ['workplace']" not in _modify_query_body(_sql("down"))
+    assert FINANCIAL_ENTITY not in _modify_query_body(_sql("down"))
+    assert "se_bolagsverket_financial_metrics" in _modify_query_body(_sql("down"))
+    # And the filing-status view is 000282's text, verbatim modulo whitespace.
+    [original] = [
+        _body(s) for s in _statements(_sql_of("000282_corpscout_se_annual_report_filing_status", "up"))
+        if _body(s).startswith("CREATE OR REPLACE VIEW")
+    ]
+    assert _normalized(_body(statements[4])) == _normalized(original)
+    assert "FROM corpscout.se_company_financials_latest" in _body(statements[4])
 
 
 def test_the_up_migration_documents_the_interrupted_repoint_recovery() -> None:
     up = _sql("up")
     assert "SYSTEM START VIEW" in up
-    assert "migrate force 403" in up
+    assert "migrate force 404" in up

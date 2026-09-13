@@ -36,6 +36,7 @@ sources:
       - name: company_domains
       - name: company_contract_facts
       - name: se_company_financials_latest
+      - name: se_company_financial
       - name: se_bolagsverket_financial_metrics
       - name: se_industries
       - name: nace_categories

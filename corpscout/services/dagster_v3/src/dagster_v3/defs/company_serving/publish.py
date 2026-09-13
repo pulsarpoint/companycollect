@@ -278,6 +278,14 @@ def _validate_source_links(client: Any, link_stage: str) -> None:
         raise ValueError(f"Section evidence stage has {missing} missing source records")
 
 
+# The rows of the domains stage that the presence model counts: company_domain_current_build
+# keeps exactly these rows of company_domains_build, and the presence model's domains and
+# technology legs read it, while the publish stages the unfiltered build (with the live
+# review state overlaid). Without the filter the first inactive or rejected domain row fails
+# the reconciliation by one (2026-09-13).
+PUBLISHED_DOMAIN_FILTER = "is_active = 1 AND review_status != 'rejected'"
+
+
 def _validate_presence_counts(
     client: Any,
     *,
@@ -303,6 +311,7 @@ def _validate_presence_counts(
         "domains": (
             "SELECT countDistinct(tuple(company_id, item_key)) FROM ("
             f"SELECT company_id, concat('domain:', root_domain) AS item_key FROM {stages[tables.DOMAINS.name]} "
+            f"WHERE {PUBLISHED_DOMAIN_FILTER} "
             "UNION ALL "
             f"SELECT company_id, concat('contact:', contact_id) AS item_key FROM {stages[tables.CONTACTS.name]}"
             ")"
@@ -311,11 +320,14 @@ def _validate_presence_counts(
             "SELECT countDistinct(tuple(company_id, contract_ref)) "
             f"FROM {stages[tables.CONTRACTS.name]}"
         ),
+        # The financial entity (spec 2026-09-11 section 10, slice 4a): the presence model
+        # counts companies with an ACTIVE folded period, read FINAL, anchored like addresses.
         "financials": (
             "SELECT countDistinct(financials.company_id) "
-            "FROM corpscout.se_company_financials_latest AS financials "
+            "FROM corpscout.se_company_financial AS financials FINAL "
             f"INNER JOIN (SELECT DISTINCT company_id FROM {stages[tables.EXTERNAL_IDENTIFIERS.name]}) AS anchors "
-            "ON anchors.company_id = financials.company_id"
+            "ON anchors.company_id = financials.company_id "
+            "WHERE financials.active = 1"
         ),
         "industries": (
             "SELECT countDistinct(tuple(company_id, classification_code)) "
@@ -342,7 +354,7 @@ def _validate_presence_counts(
         ),
         "technology": (
             "SELECT countDistinct(tuple(company_id, root_domain)) "
-            f"FROM {stages[tables.DOMAINS.name]}"
+            f"FROM {stages[tables.DOMAINS.name]} WHERE {PUBLISHED_DOMAIN_FILTER}"
         ),
     }
     presence_stage = stages[tables.PRESENCE.name]

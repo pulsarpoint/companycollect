@@ -498,10 +498,10 @@ Re-pointed to `se_company_financial` (active rows, `FINAL`):
   through one table constant, the per-source flags `fin_bolagsverket` and `fin_esef` become
   `has(sources, ...)` over the same rows, `fin_reports` stays on `se_financial_reports` (filed
   reports are a source fact, not a presentation). `se_companies_serving` is re-pointed with
-  `ALTER TABLE ... MODIFY QUERY` in the cutover migration (000402), the person slice 4 recipe.
+  `ALTER TABLE ... MODIFY QUERY` in the cutover migration (000404), the person slice 4 recipe.
 - `se_annual_report_filing_status_current` (migration 000282): its first leg reads the entity's
   newest active standalone period end instead of `se_company_financials_latest`, re-issued in
-  000402; the `se_annual_report_filing_observations` leg stays (empty today).
+  000404; the `se_annual_report_filing_observations` leg stays (empty today).
 - Backoffice: `company-sections.server.ts`'s financials presence, `queries.server.ts`'s
   `getStructuredFinancialFilingFallback`, `countries.ts`'s Sweden `financialsByYear`
   (`se_bolagsverket_financial_metrics` today) read the entity's active standalone rows;
@@ -629,7 +629,25 @@ the entity.
    Owner observation: with Ratsit first on employees, 5567081699's 2025 row shows 19 employees
    (Ratsit) over Bolagsverket's 1,900.
 4. Cutover: the admin workspace, the shared grid on the public page, every re-point of section 10
-   with migration 000402, the deletions, the owner-run view drops, the smoke.
+   with migration 000404, the deletions, the owner-run view drops, the smoke. Slice 4a (data
+   side) code complete 2026-09-13 on branch se-financial-entity (plan
+   2026-09-13-se-company-financial-4a-readers.md); migration 000404, not 000402; prod pending.
+   Slice 4b (backoffice) follows. Prod 2026-09-13: ledger 404 clean (in-place repoint, 4.75 s);
+   dagster_v3 deployed from merge commit 34ae55a15 (ansible RC=0); se_company_financials_latest
+   rebuilt in-process: 795,403 rows (was 579,766), fiscal years 2000..2026, no NULL period end;
+   5567081699 = 2025 / 2025-12-31 / SEK 65,000,000 / 19 employees / 8 years;
+   se_annual_report_filing_status_current data_available 795,403 (533,228 with Bolagsverket
+   provenance, 262,175 entity); se_companies_serving after its 14:45 refresh: has_financial
+   795,635 (was 580,832), source_bolagsverket 2,855,160 and source_esef 403 unchanged.
+   company_section_presence_current NOT republished: the 13 company_serving_dbt models were
+   rebuilt (stale since 2026-09-09; the presence build now carries financials 795,434 and no
+   management section) but the publish's domains reconciliation counts an inactive domain row
+   (5566692850 johnjohns.se, is_active 0 from main's ESEF website commits) that the presence
+   model excludes: publish.py's expected queries for domains and technology lack
+   company_domain_current_build's is_active = 1 AND review_status != 'rejected' filter, a latent
+   bug outside this slice, fix pending the owner; live presence still shows financials 579,735.
+   main fast-forwards to the branch (the owner's checkout sat on main, so the merge commit was
+   built in a detached worktree).
 
 Later, separate specs: a fold-aware weekly, USD twins on the other Ratsit tables, a merge rule for
 near-identical period ends if the readout warrants it, Wikidata employees as a source.
@@ -645,7 +663,7 @@ Tables `se_company_financial_suggestion`, `se_company_financial`, `se_company_fi
 `se_company_financial_precedence_clickhouse`; job `se_company_financial_extract_job`; schedule
 `se_company_financial_weekly`. Ratsit: asset `se_ratsit_financial_periods_usd`, job
 `se_ratsit_financial_usd_job`. Migrations 000400 (Ratsit USD columns), 000401 (entity tables),
-000402 (cutover re-points). Backoffice `app/lib/se-company-financial-entity.server.ts`,
+000404 (cutover re-points). Backoffice `app/lib/se-company-financial-entity.server.ts`,
 `app/lib/se-financial-fields.ts`, `app/lib/se-financial-decision-form.ts`,
 `app/lib/se-financial-tables.ts`, `app/components/admin/se-financial-workspace.tsx`,
 `app/components/admin/se-financial-edit-sheet.tsx`,

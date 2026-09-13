@@ -134,3 +134,26 @@ def test_domain_stage_overlays_current_reviews_before_versioned_publish() -> Non
     assert "current.review_status" in sql
     assert "current.reviewed_evidence_fingerprint" in sql
     assert "now64(3, 'UTC')" in sql
+
+
+def test_domain_reconciliation_counts_only_the_rows_the_presence_model_counts() -> None:
+    """The presence model's domains and technology legs read company_domain_current_build,
+    which keeps the `is_active = 1 AND review_status != 'rejected'` rows of
+    company_domains_build; the publish stages the UNFILTERED company_domains_build. The
+    expected counts must apply the same filter, or the first inactive domain row fails the
+    publish by one (2026-09-13: 5566692850 johnjohns.se, deactivated upstream, tripped
+    `domains: expected=18028 actual=18027` on a stage that was otherwise correct)."""
+    model = (
+        Path(__file__).resolve().parents[1]
+        / "src/dagster_v3/defs/company_serving/dbt/models/company_domain_current_build.sql"
+    ).read_text(encoding="utf-8")
+    assert "WHERE is_active = 1\n      AND review_status != 'rejected'" in model
+
+    client = _EmptyServingClient()
+    stages = {contract.name: f"stage_{contract.name}" for contract in tables.CURRENT_TABLES}
+    _validate_presence_counts(client, stages=stages, country_code="SE")
+
+    domain_reads = [query for query in client.queries if "FROM stage_company_domains" in query]
+    assert len(domain_reads) == 2, domain_reads  # domains (with contacts) and technology
+    for query in domain_reads:
+        assert "FROM stage_company_domains WHERE is_active = 1 AND review_status != 'rejected'" in query

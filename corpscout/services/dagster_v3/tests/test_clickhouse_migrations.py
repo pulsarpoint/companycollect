@@ -417,6 +417,7 @@ EXPECTED_MIGRATIONS = (
     "000401_corpscout_se_company_financial_entity",
     "000402_corpscout_se_company_person_role",
     "000403_corpscout_se_companies_serving_no_workplace",
+    "000404_corpscout_se_financial_readers_entity",
     "000405_corpscout_esef_domains",
 )
 
@@ -4441,3 +4442,21 @@ def test_no_up_migration_declares_a_slice_0_dropped_object() -> None:
             declared.add(name)
     for kept in SLICE_0_KEPT_OBJECTS:
         assert kept in declared, f"no migration declares the kept object {kept}"
+
+
+def test_000404_repoints_the_two_financial_readers_to_the_entity() -> None:
+    """Financial slice 4a (spec 2026-09-11 section 10): the serving view's financial flags and
+    the filing-status view's data_available leg read corpscout.se_company_financial; the up
+    file's executable text never names se_company_financials_latest, and the down file puts
+    000282's leg back. The serving render itself is drift-pinned in
+    test_se_companies_serving_mv.py."""
+    up = _migration_sql("000404_corpscout_se_financial_readers_entity.up.sql")
+    down = _migration_sql("000404_corpscout_se_financial_readers_entity.down.sql")
+    executable_up = "\n".join(line.split("--")[0] for line in up.splitlines())
+
+    assert executable_up.count("corpscout.se_company_financial FINAL") == 4
+    assert "ALTER TABLE corpscout.se_companies_serving\nMODIFY QUERY" in up
+    assert "CREATE OR REPLACE VIEW corpscout.se_annual_report_filing_status_current" in up
+    assert "se_company_financials_latest" not in executable_up
+    assert "SYSTEM WAIT VIEW" not in executable_up and "DROP" not in executable_up.upper()
+    assert "FROM corpscout.se_company_financials_latest" in down
