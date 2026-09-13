@@ -144,7 +144,7 @@ def test_serving_models_resolve_identity_and_evidence_offline() -> None:
     assert "ref('company_management_current_build')" not in source_links
     company_domains = (models / "company_domains_build.sql").read_text()
     assert "source('corpscout', 'wikidata_company_domains')" in company_domains
-    assert "source('corpscout', 'se_esef_document_contact_candidates')" in company_domains
+    assert "source('corpscout', 'se_esef_domains')" in company_domains
     assert "source('corpscout', 'company_domain_suggestions_active')" in company_domains
     assert "reviewed_evidence_fingerprint" in company_domains
     assert "domains_without_current_source" in company_domains
@@ -210,3 +210,29 @@ def test_serving_project_declares_integrity_tests() -> None:
     assert "test company_serving_sweden_anchor" in generic_tests
     assert schema.count("company_serving_unique_key:") == 12
     assert schema.count("company_serving_sweden_anchor") == 12
+
+
+MODELS_DIR = DBT_DIR / "models"
+
+
+def test_company_domains_build_reads_the_esef_domains_view() -> None:
+    sql = (MODELS_DIR / "company_domains_build.sql").read_text(encoding="utf-8")
+    assert "source('corpscout', 'se_esef_domains')" in sql
+    assert "se_esef_document_contact_candidates" not in sql
+    assert "domains.extraction_status = 'ok'" in sql
+    assert "domains.registrable_domain != ''" in sql
+    assert "JSONExtract(domains.roles_json, 'Array(String)') != ['external_reference']" in sql
+    assert "has(JSONExtract(domains.roles_json, 'Array(String)'), 'company_website')" in sql
+    assert "domains.corroborated = 1 OR domains.evidence_count >= 2" in sql
+    assert "0.50" in sql and "0.75" not in sql
+
+
+def test_company_contact_current_build_excludes_website_rows() -> None:
+    sql = (MODELS_DIR / "company_contact_current_build.sql").read_text(encoding="utf-8")
+    assert "WHERE candidate_kind != 'website'" in sql
+
+
+def test_sources_declare_the_esef_domains_view_with_its_asset_key() -> None:
+    text = (MODELS_DIR / "sources.yml").read_text(encoding="utf-8")
+    assert "- name: se_esef_domains" in text
+    assert "asset_key: [esef_domains_clickhouse]" in text
