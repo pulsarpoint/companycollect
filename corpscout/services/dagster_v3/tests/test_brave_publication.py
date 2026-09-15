@@ -155,11 +155,19 @@ def clickhouse(store, tmp_path, archive_s3):
             "CREATE NAMED COLLECTION brave_history AS url=%(url)s NOT OVERRIDABLE, access_key_id='brave_test' NOT OVERRIDABLE, secret_access_key='brave_test_secret' NOT OVERRIDABLE",
             {"url": f"{internal_endpoint}/{bucket}/"},
         )
+        client.execute("CREATE USER processing_publisher IDENTIFIED BY 'test'")
+        client.execute(
+            "GRANT S3, CREATE TEMPORARY TABLE ON *.* TO processing_publisher"
+        )
+        client.execute(
+            "GRANT NAMED COLLECTION ON brave_history TO processing_publisher"
+        )
         for statement in MIGRATION.read_text().split(";"):
             if statement.strip():
                 client.execute(statement)
         for migration in (
             "000415_corpscout_brave_history_query_settings.up.sql",
+            "000416_corpscout_brave_history_reader.up.sql",
             "000411_corpscout_company_processing_input.up.sql",
             "000412_corpscout_company_brave_search_input.up.sql",
         ):
@@ -675,3 +683,28 @@ def test_other_country_requires_its_own_destination_and_is_not_misrouted(
     assert client.execute(
         "SELECT count() FROM corpscout.se_company_brave_domains FINAL"
     ) == [(0,)]
+
+
+def test_history_reader_only_needs_select_on_the_country_view(store, clickhouse):
+    queue, _ = store
+    client, resource = clickhouse
+    task = prepare_task(queue, names=("A",))
+    complete(queue, claim(queue, task))
+    publish_results(queue, client, task, batch_size=100)
+    client.execute("CREATE USER brave_reader IDENTIFIED BY 'test'")
+    client.execute(
+        "GRANT SELECT ON corpscout.se_company_brave_domains_history TO brave_reader"
+    )
+    reader = Client(
+        host="127.0.0.1", port=resource.port, user="brave_reader", password="test"
+    )
+    try:
+        assert reader.execute(
+            "SELECT count() FROM corpscout.se_company_brave_domains_history WHERE status='success'"
+        ) == [(1,)]
+        with pytest.raises(Exception):
+            reader.execute(
+                "SELECT count() FROM s3(brave_history, filename='v1/country=SE/batch_id=*/*.parquet', format='Parquet')"
+            )
+    finally:
+        reader.disconnect()

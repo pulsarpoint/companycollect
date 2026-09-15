@@ -225,7 +225,9 @@ for retry. No Brave request is needed to retry publication.
 The history view disables ClickHouse's query condition cache for its S3 reads.
 During cutover on 26.5.1, a filtered read returned zero successful responses with
 that cache enabled and all 308 with it disabled. The setting belongs to the view,
-so callers do not need to remember it.
+so callers do not need to remember it. Its definer is the provisioned
+`processing_publisher` user: other readers need only `SELECT` on the country
+history view, without direct S3 or named-collection access.
 
 All attempts, including errors and superseded answers, remain queryable through
 **`corpscout.se_company_brave_domains_history`**, a view over the S3 table function. It stores no
@@ -281,7 +283,7 @@ The ClickHouse table UUID and existing rows are preserved. Earlier pilot rows us
 an empty selection task ID; migration 122 binds old tasks to that legacy selection.
 Deploy the matching reader and initialization asset after applying both migrations.
 
-Current-table/S3 publication requires ClickHouse migrations `000414` and `000415` and PostgreSQL
+Current-table/S3 publication requires ClickHouse migrations `000414`–`000416` and PostgreSQL
 migration `000123`. Finish or gracefully pause old Brave workers before applying
 123; it changes existing batch destination identities. Run
 `scripts/provision-processing-storage.py` first to provision the archive bucket,
