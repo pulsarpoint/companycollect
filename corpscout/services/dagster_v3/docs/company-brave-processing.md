@@ -9,55 +9,80 @@ Dagster tracks the asset run. PostgreSQL tracks the individual company IDs insid
 that run, so a failed run can resume without repeating saved work. Progress counts
 are logged and attached to the Dagster materialization.
 
-## Prepare and inspect the selection in ClickHouse
+## Initialize the input selection
 
-Migrations `000411` and `000412` define the physical Brave input queue,
-`corpscout.company_brave_search_input`, for companies from any country.
-Populate it before launching a task. Selection happens here, independently of the
-Brave asset; neither `company_ids` nor raw selection SQL is sent to the asset.
+Materialize `company_brave_search_input` independently, or launch
+`company_brave_search_input_job`. It receives filter parameters and runs one
+`INSERT SELECT` entirely inside ClickHouse:
 
-For example, on an empty queue:
-
-```sql
-INSERT INTO corpscout.company_brave_search_input
-    (input_id, company_id, company_name, country_code)
-SELECT concat('SE:', company_id), company_id, trimBoth(ifNull(legal_name, '')), 'SE'
-FROM corpscout.se_company_basic_info FINAL
-WHERE status = 'active'
-  AND trimBoth(ifNull(legal_name, '')) != ''
-  AND company_id IN ('5560004615', '5560160680');
-
-SELECT * FROM corpscout.company_brave_search_input ORDER BY input_id;
-SELECT count(), uniqExact(input_id) FROM corpscout.company_brave_search_input;
+```yaml
+ops:
+  company_brave_search_input:
+    config:
+      source_relation: corpscout.se_company_basic_info
+      company_name_column: legal_name
+      country_code: SE
+      source_final: true
+      company_ids:
+        - "5560004615"
+        - "5560160680"
+      filters:
+        status: [active]
 ```
 
-This SQL is an example selection, not a Sweden restriction. The asset requires an
-explicit `input_relation` and accepts another prepared table with different input
-columns. It does not create a view or a table at materialization time.
+`source_relation` can refer to another country's table or view. Column mappings
+are configurable: `company_id_column` defaults to `company_id` and
+`company_name_column` defaults to `company_name`. `country_code` is used for
+attribution and prefixes input IDs, such as `SE:5560004615`; it is not automatically
+included in the Brave prompt. `source_final: true` applies ClickHouse `FINAL` when
+reading sources such as the Swedish ReplacingMergeTree registry.
 
-**Keep the selected table unchanged until its task and retries finish.** It is the
-retained input snapshot. Changes to the original registry do not affect rows
-already copied into this queue. Do not truncate, update, refill or replace a queue
-that an unfinished task still needs. For concurrent independent selections, use
-distinct prepared tables. There is no automatic input cleanup.
+`company_ids` selects exact source IDs. `filters` maps source column names to
+allowed values: values within a column use `IN`; different columns and company IDs
+are combined with `AND`. Column names are validated and values are bound as query
+parameters. These are scalar equality filters, not raw SQL expressions.
+`max_companies` optionally limits the selection in ID order. To deliberately
+select an entire source without filters or a limit, supply `select_all: true`.
 
-The table must use `MergeTree`, `ReplicatedMergeTree` or `SharedMergeTree`, in a
-database with table UUIDs, with `ORDER BY input_id`. Views and replacing/aggregating
-engines are rejected. `input_id` must be a unique, nonempty, non-nullable `String`
-without NUL. It is sorted lexically by ClickHouse; it need not be an incremental
-number. Use a country/source prefix if company IDs can overlap across countries.
+The asset creates a task ID (or accepts an explicit UUID), inserts the selected
+company rows under that `task_id` in `corpscout.company_brave_search_input`, and
+validates the fixed selection. PostgreSQL stores its identity, configuration
+fingerprint and exact total, with status `selected`. It contains no input payloads
+or per-company progress rows until processing begins.
 
-## Start a task
+Inspect the materialization's `task_id` and `selected_companies` metadata. You can
+also inspect the selected rows before running Brave:
 
-Paste this YAML into Dagster's materialization launchpad. It is run configuration,
-not a separate file automatically discovered by Dagster:
+```sql
+SELECT input_id, company_id, company_name, country_code
+FROM corpscout.company_brave_search_input
+WHERE task_id = 'the-task-UUID'
+ORDER BY input_id;
+```
+
+Each task retains its own fixed selection in the same physical table. Initializing
+another task does not clear or append to an existing task's selection. Do not
+manually modify a task's rows while it has unfinished work. The original registry
+can change without affecting an already prepared selection.
+
+Rematerializing initialization with the same task ID and filters reuses its saved
+selection, even after processing has begun. Changed filters require a new task ID.
+If initialization fails before the selection is confirmed, retrying stops that
+task's outstanding insert, removes only its unconfirmed rows and reruns selection.
+Other tasks' rows and results remain intact. A PostgreSQL session lock excludes
+competing initializers of the same task; no transaction stays open during the
+ClickHouse query. A zero-match selection is valid and reports a total of zero.
+
+## Process the prepared selection
+
+Materialize `company_brave_search_results`, or launch `company_brave_search_job`,
+with the task ID returned by initialization:
 
 ```yaml
 ops:
   company_brave_search_results:
     config:
-      input_relation: corpscout.company_brave_search_input
-      input_namespace: company
+      task_id: "the-task-UUID"
       query_type: official_website
       query_template: "Find the official website of {company_name}."
       requests_per_route: 1
@@ -67,11 +92,16 @@ ops:
       export_interval_seconds: 30
 ```
 
-Supply a UUID `task_id` if you want to choose its identity beforehand; otherwise
-the asset generates and logs one. Startup validates uniqueness and counts the
-selection inside ClickHouse. Only the total, table identity and upper input ID
-are stored in PostgreSQL. This validation scans IDs inside ClickHouse, so startup
-is not a constant-time operation, but company rows do not cross to PostgreSQL.
+The first processing run freezes the query configuration and changes the task from
+`selected` to `ready`. Its source relation, selected rows and total already exist.
+There is no need to pass `company_ids` or the input table again.
+
+To initialize and process together, launch `company_brave_search_workflow` with
+both `ops` configurations, omitting `task_id` from the processing configuration.
+The initialization asset records the task ID in the run tag `processing/task_id`;
+the downstream asset reads that tag. An explicit task ID on initialization is
+passed through too. The asset dependency ensures initialization finishes first.
+Dagster's launchpad YAML is run configuration, not a separate discovered YAML file.
 
 The worker reads at most `input_batch_size` rows into memory. It atomically commits
 their IDs and the admission cursor to PostgreSQL. The cursor means “admitted for
@@ -86,7 +116,12 @@ queue fails the run rather than silently skipping unfinished work. These checks
 do not make a mutable table immutable: retaining the prepared selection unchanged
 is part of the input contract.
 
-A domain input table can instead expose `input_id` and `domain`, with:
+For an existing independently prepared custom input table, the processing asset
+still accepts `input_relation` when creating a task. Such a table must have a
+unique nonempty String `input_id` and `ORDER BY input_id`; views are not queues.
+The shared Brave input table is instead scoped by the initialized task ID and has
+`ORDER BY (input_id, task_id)` plus a task ID skipping index.
+A custom domain input table can expose `input_id` and `domain`, with:
 
 ```yaml
 input_relation: corpscout.my_domain_selection
@@ -129,8 +164,8 @@ ops:
       task_id: "the-original-task-UUID"
 ```
 
-The saved input relation, namespace, template, query type and freshness policy
-remain fixed. Operational settings such as route concurrency and batch size can
+After processing starts, the saved input relation, namespace, template, query type
+and freshness policy remain fixed. Operational settings such as route concurrency and batch size can
 change. A completed task can resume without access to its input table. Use
 `mode: publish` with the task ID to publish saved responses without Brave requests.
 
@@ -183,6 +218,12 @@ it; old workers require columns that the migration removes.
 The input table was renamed in place by ClickHouse migration `000412`, preserving
 its data and UUID. Apply PostgreSQL migration `000121` afterward to update saved
 task references. Apply this pair while Brave tasks are idle.
+
+Initialization additionally requires ClickHouse migration `000413` and PostgreSQL
+migration `000122`. They add task-scoped input rows and the `selected` task state.
+The ClickHouse table UUID and existing rows are preserved. Earlier pilot rows use
+an empty selection task ID; migration 122 binds old tasks to that legacy selection.
+Deploy the matching reader and initialization asset after applying both migrations.
 
 Existing `PROCESSING_PG_URL` and `PROCESSING_CLICKHOUSE_*` credentials remain valid.
 `scripts/provision-processing-storage.py` owns the least-privilege worker, export

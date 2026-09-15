@@ -5,7 +5,7 @@ from contextlib import closing
 from threading import Event, Thread
 from time import monotonic
 from typing import Literal
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
@@ -119,6 +119,7 @@ def publish_results(
 
 
 @dg.asset(
+    deps=["company_brave_search_input"],
     group_name="company_domains",
     kinds={"python", "browser", "postgres", "clickhouse"},
     pool="company_domains_brave",
@@ -140,7 +141,13 @@ def company_brave_search_results(
         and config.input_batch_size < len(ROUTES) * config.requests_per_route
     ):
         raise ValueError("input_batch_size must cover all configured request slots")
-    task_id = config.task_id or str(uuid4())
+    current_run = context.instance.get_run_by_id(context.run.run_id)
+    tagged_task_id = current_run.tags.get("processing/task_id") if current_run else None
+    if config.task_id and tagged_task_id and config.task_id != tagged_task_id:
+        raise ValueError(
+            "processing task_id differs from the task prepared in this run"
+        )
+    task_id = config.task_id or tagged_task_id or context.run.run_id
     # Persist identity in the event log before selection so interrupted preparation is traceable.
     context.add_output_metadata({"task_id": task_id})
     context.log.info("Brave task_id=%s mode=%s", task_id, config.mode)
@@ -151,7 +158,7 @@ def company_brave_search_results(
                 raise ValueError("publish mode requires an existing task_id")
             if config.input_relation is None:
                 raise ValueError(
-                    "new tasks require input_relation: a prepared physical ClickHouse queue"
+                    "initialize company_brave_search_input and supply its task_id, or provide a prepared input_relation"
                 )
             saved_config = {
                 key: getattr(config, key)
@@ -176,13 +183,34 @@ def company_brave_search_results(
             task = store.task(task_id)
         if task["processor"] != PROCESSOR_VERSION:
             raise ValueError("task belongs to a different processor version")
+        if task["status"] == "selected" and config.mode == "process":
+            task = store.activate_selection(
+                task_id,
+                config={
+                    key: getattr(config, key)
+                    for key in (
+                        "input_namespace",
+                        "query_type",
+                        "query_template",
+                        "freshness_days",
+                    )
+                },
+                work_config={
+                    key: getattr(config, key)
+                    for key in ("input_namespace", "query_type")
+                },
+            )
         if task["status"] != "ready":
             raise ValueError("task is not ready for processing")
         # A resume always uses the registered selection and template.
         saved_config = task["config"]
         source_info = task["source_info"]
         source = (
-            ClickHouseInputQueue(clickhouse, source_info["relation"])
+            ClickHouseInputQueue(
+                clickhouse,
+                source_info["relation"],
+                selection_task_id=source_info.get("selection_task_id"),
+            )
             if source_info
             else None
         )

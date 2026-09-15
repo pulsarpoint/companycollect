@@ -90,6 +90,83 @@ class ProcessingStore:
             )
             return cursor.fetchone()
 
+    @contextmanager
+    def selection_lock(self, task_id: str):
+        # A session lock also fences a retry after its prior process disappeared.
+        # Commit before ClickHouse work: no PostgreSQL transaction stays open.
+        with self.transaction() as cursor:
+            cursor.execute(
+                "SELECT pg_try_advisory_lock(hashtextextended(%s, 0)) AS acquired",
+                ("brave_input:" + task_id,),
+            )
+            if not cursor.fetchone()["acquired"]:
+                raise ValueError("this input selection is already being initialized")
+        try:
+            yield
+        finally:
+            with self.transaction() as cursor:
+                cursor.execute(
+                    "SELECT pg_advisory_unlock(hashtextextended(%s, 0))",
+                    ("brave_input:" + task_id,),
+                )
+
+    def prepare_selection(
+        self, task_id: str, *, processor: str, fingerprint: str
+    ) -> tuple[dict, bool]:
+        with self.transaction() as cursor:
+            cursor.execute(
+                """INSERT INTO processing.tasks(task_id,processor,config,work_config,status)
+                VALUES (%s,%s,%s,'{}','preparing') ON CONFLICT (task_id) DO NOTHING RETURNING task_id""",
+                (task_id, processor, Json({"selection_fingerprint": fingerprint})),
+            )
+            created = cursor.fetchone() is not None
+            cursor.execute(
+                "SELECT * FROM processing.tasks WHERE task_id=%s FOR UPDATE", (task_id,)
+            )
+            task = dict(cursor.fetchone())
+            if (
+                task["processor"] != processor
+                or task["config"].get("selection_fingerprint") != fingerprint
+            ):
+                raise ValueError("task_id already belongs to a different selection")
+            if task["status"] == "cancelled":
+                raise ValueError("input selection was cancelled")
+            return task, created
+
+    def finish_selection(self, task_id: str, source_info: dict) -> None:
+        with self.transaction() as cursor:
+            cursor.execute(
+                """UPDATE processing.tasks SET source_info=%s,total=%s,status='selected'
+                WHERE task_id=%s AND status='preparing' RETURNING task_id""",
+                (Json(source_info), source_info["total"], task_id),
+            )
+            if cursor.fetchone() is None:
+                raise ValueError("input task is no longer being initialized")
+
+    def activate_selection(
+        self, task_id: str, *, config: dict, work_config: dict
+    ) -> dict:
+        with self.transaction() as cursor:
+            cursor.execute(
+                "SELECT * FROM processing.tasks WHERE task_id=%s FOR UPDATE", (task_id,)
+            )
+            task = dict(cursor.fetchone())
+            if task["status"] == "selected":
+                saved = {
+                    **task["config"],
+                    **config,
+                    "input_relation": task["source_info"]["relation"],
+                }
+                cursor.execute(
+                    """UPDATE processing.tasks SET config=%s,work_config=%s,status='ready',ready_at=now()
+                    WHERE task_id=%s RETURNING *""",
+                    (Json(saved), Json(work_config), task_id),
+                )
+                return dict(cursor.fetchone())
+            if task["status"] != "ready":
+                raise ValueError("input initialization must finish before processing")
+            return task
+
     def register(
         self,
         task_id: str,

@@ -13,9 +13,16 @@ def validate_relation(relation: str) -> str:
 
 
 class ClickHouseInputQueue:
-    def __init__(self, resource: ClickhouseResource, relation: str):
+    def __init__(
+        self,
+        resource: ClickhouseResource,
+        relation: str,
+        *,
+        selection_task_id: str | None = None,
+    ):
         self.resource = resource
         self.relation = validate_relation(relation)
+        self.selection_task_id = selection_task_id
 
     def identity(self, client) -> str:
         database, table = self.relation.split(".")
@@ -31,8 +38,13 @@ class ClickHouseInputQueue:
             raise ValueError(
                 "input queue must be a physical MergeTree table, prepared before the task"
             )
-        if sorting_key not in ("input_id", "tuple(input_id)"):
-            raise ValueError("input queue must be sorted by input_id")
+        expected = (
+            ("input_id", "tuple(input_id)")
+            if self.selection_task_id is None
+            else ("input_id, task_id", "tuple(input_id, task_id)")
+        )
+        if sorting_key not in expected:
+            raise ValueError("input queue sorting key requires its selection task_id")
         if identity == "00000000-0000-0000-0000-000000000000":
             raise ValueError("input queue requires a table UUID (an Atomic database)")
         return identity
@@ -44,10 +56,16 @@ class ClickHouseInputQueue:
             columns = client.execute(f"DESCRIBE TABLE {self.relation}")
             if dict((row[0], row[1]) for row in columns).get("input_id") != "String":
                 raise ValueError("input_id must be a non-nullable String")
+            where = (
+                ""
+                if self.selection_task_id is None
+                else " WHERE task_id=%(selection_task_id)s"
+            )
             [(total, unique_ids, invalid_ids, upper_id)] = client.execute(
                 f"SELECT count(),uniqExact(input_id),"
                 f"countIf(empty(trimBoth(input_id)) OR position(input_id,char(0))>0),"
-                f"max(input_id) FROM {self.relation}"
+                f"max(input_id) FROM {self.relation}{where}",
+                {"selection_task_id": self.selection_task_id},
             )
             if total != unique_ids or invalid_ids:
                 raise ValueError("input_id must be unique, nonempty and contain no NUL")
@@ -58,6 +76,11 @@ class ClickHouseInputQueue:
                 "table_uuid": identity,
                 "total": total,
                 "upper_id": upper_id,
+                **(
+                    {"selection_task_id": self.selection_task_id}
+                    if self.selection_task_id is not None
+                    else {}
+                ),
             }
 
     def read(
@@ -70,8 +93,15 @@ class ClickHouseInputQueue:
     ) -> list[dict]:
         if not 1 <= limit <= 10_000:
             raise ValueError("input page limit must be between 1 and 10000")
+        if source_info.get("selection_task_id") != self.selection_task_id:
+            raise ValueError(
+                "input queue selection task_id differs from the saved task"
+            )
         params = {"upper": source_info["upper_id"], "limit": limit}
         where = "input_id <= %(upper)s"
+        if self.selection_task_id is not None:
+            where += " AND task_id = %(selection_task_id)s"
+            params["selection_task_id"] = self.selection_task_id
         if input_id is not None:
             where += " AND input_id = %(input_id)s"
             params["input_id"] = input_id
@@ -95,6 +125,9 @@ class ClickHouseInputQueue:
             json.loads(json.dumps(dict(zip(names, row, strict=True)), default=str))
             for row in rows
         ]
+        if self.selection_task_id is not None:
+            for value in values:
+                value.pop("task_id")
         if input_id is not None and len(values) != 1:
             raise ValueError(
                 "unfinished input is missing or duplicated in its fixed queue"
