@@ -26,7 +26,10 @@ class BraveInputConfig(dg.Config):
     company_id_column: str = "company_id"
     company_name_column: str = "company_name"
     country_code: str
-    company_ids: list[str] = Field(default_factory=list)
+    company_ids: list[str] = Field(default_factory=list, description="Testing only. Use filters for production selections.")
+    excluded_company_ids: list[str] = Field(default_factory=list)
+    company_name_pattern: str | None = Field(default=None, min_length=1)
+    company_id_length: int | None = Field(default=None, ge=1)
     filters: dict[str, list[str]] = Field(default_factory=dict)
     source_final: bool = False
     max_companies: int | None = Field(default=None, ge=1)
@@ -61,7 +64,8 @@ class BraveInputConfig(dg.Config):
         if any(not values for values in self.filters.values()):
             raise ValueError("each column filter needs at least one value")
         if not (
-            self.company_ids or self.filters or self.max_companies or self.select_all
+            self.company_ids or self.filters or self.company_name_pattern
+            or self.company_id_length or self.max_companies or self.select_all
         ):
             raise ValueError(
                 "provide company_ids, filters, max_companies or explicit select_all"
@@ -92,6 +96,11 @@ def company_brave_search_input(
     context.add_output_metadata({"task_id": task_id, "input_relation": INPUT_RELATION})
     selection = config.model_dump(exclude={"task_id"})
     selection["company_ids"] = sorted(set(selection["company_ids"]))
+    selection["excluded_company_ids"] = sorted(set(selection["excluded_company_ids"]))
+    # Retain fingerprints of selections prepared before these optional filters existed.
+    for key in ("excluded_company_ids", "company_name_pattern", "company_id_length"):
+        if not selection[key]:
+            del selection[key]
     selection["filters"] = {
         key: sorted(set(values)) for key, values in selection["filters"].items()
     }
@@ -111,6 +120,17 @@ def company_brave_search_input(
                     f"toString(`{config.company_id_column}`) IN %(company_ids)s"
                 )
                 params["company_ids"] = tuple(config.company_ids)
+            if config.excluded_company_ids:
+                predicates.append(
+                    f"toString(`{config.company_id_column}`) NOT IN %(excluded_company_ids)s"
+                )
+                params["excluded_company_ids"] = tuple(config.excluded_company_ids)
+            if config.company_name_pattern is not None:
+                predicates.append(f"`{config.company_name_column}` ILIKE %(company_name_pattern)s")
+                params["company_name_pattern"] = config.company_name_pattern
+            if config.company_id_length is not None:
+                predicates.append(f"length(toString(`{config.company_id_column}`)) = %(company_id_length)s")
+                params["company_id_length"] = config.company_id_length
             for index, (column, values) in enumerate(sorted(config.filters.items())):
                 predicates.append(f"`{column}` IN %(filter_{index})s")
                 params[f"filter_{index}"] = tuple(values)

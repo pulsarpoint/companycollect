@@ -1,6 +1,8 @@
 """Filter selection, crash recovery and the two-asset workflow at real DB boundaries."""
 
 from contextlib import closing
+import hashlib
+import json
 from uuid import uuid4
 
 import dagster as dg
@@ -92,6 +94,75 @@ def test_filters_prepare_only_selected_companies_without_postgres_input_rows(
     ).success
     assert queue.progress(empty)["total"] == 0
     assert queue.task(empty)["status"] == "selected"
+
+
+def test_list_filters_freeze_matches_and_exclusions_in_clickhouse(store, task_inputs):
+    queue, dsn = store
+    client, resource = task_inputs
+    client.execute("""CREATE TABLE corpscout.se_companies_serving (
+        company_id String, legal_name String, status String, legal_form_code String,
+        has_description UInt8, source_esef UInt8, has_financial UInt8
+    ) ENGINE=MergeTree ORDER BY company_id""")
+    rows = [
+        ("5560000001", "ALPHA AB", "active", "49", 0, 1, 1),
+        ("5560000002", "Alpha excluded", "active", "49", 0, 1, 1),
+        ("5560000003", "Other", "active", "49", 0, 1, 1),
+        ("198000000001", "Alpha sole", "active", "49", 0, 1, 1),
+        ("5560000004", "Alpha described", "active", "49", 1, 1, 1),
+        ("5560000005", "Alpha no source", "active", "49", 0, 0, 1),
+        ("5560000006", "Alpha no accounts", "active", "49", 0, 1, 0),
+        ("5560000007", "Alpha inactive", "inactive", "49", 0, 1, 1),
+        ("5560000008", "Alpha other form", "active", "", 0, 1, 1),
+    ]
+    client.execute("INSERT INTO corpscout.se_companies_serving VALUES", rows)
+    task = str(uuid4())
+    filters = dict(
+        source_relation="corpscout.se_companies_serving", source_final=False,
+        company_name_pattern="%alpha%", company_id_length=10,
+        excluded_company_ids=["5560000002"], select_all=True,
+        filters={"status": ["active"], "legal_form_code": ["49"],
+                 "has_description": ["0"], "source_esef": ["1"], "has_financial": ["1"]},
+    )
+    assert initialize(resource, dsn, task, **filters).success
+    assert queue.progress(task)["total"] == 1
+    assert client.execute(
+        f"SELECT company_id FROM {INPUT_RELATION} WHERE task_id=%(task)s", {"task": task}
+    ) == [("5560000001",)]
+    # New matching rows after initialization must not change the fixed selection.
+    client.execute("INSERT INTO corpscout.se_companies_serving VALUES", [
+        ("5560000009", "Alpha new", "active", "49", 0, 1, 1),
+    ])
+    assert initialize(resource, dsn, task, **filters).success
+    assert queue.progress(task)["total"] == 1
+    with queue.transaction() as cursor:
+        cursor.execute("SELECT count(*) FROM processing.items")
+        assert cursor.fetchone()["count"] == 0
+    # Name patterns and exclusions remain bound values, including SQL-looking text.
+    empty = str(uuid4())
+    assert initialize(resource, dsn, empty, **{
+        **filters, "company_name_pattern": "%x' OR 1=1 --%",
+        "excluded_company_ids": ["x') OR 1=1 --"],
+    }).success
+    assert queue.progress(empty)["total"] == 0
+    picked = str(uuid4())
+    assert initialize(resource, dsn, picked,
+                      filters={"company_id": ["5560000001", "5560000003"]},
+                      source_relation="corpscout.se_companies_serving", source_final=False).success
+    assert queue.progress(picked)["total"] == 2
+
+
+def test_new_optional_filters_preserve_existing_selection_fingerprints(store, task_inputs):
+    queue, dsn = store
+    _, resource = task_inputs
+    task = str(uuid4())
+    old_config = dict(source_relation="corpscout.se_company_basic_info",
+                      company_id_column="company_id", company_name_column="legal_name",
+                      country_code="SE", company_ids=[], filters={"status": ["active"]},
+                      source_final=True, max_companies=None, select_all=False)
+    fingerprint = hashlib.sha256(json.dumps(old_config, sort_keys=True).encode()).hexdigest()
+    queue.prepare_selection(task, processor="brave-v2", fingerprint=fingerprint)
+    assert initialize(resource, dsn, task, filters={"status": ["active"]}).success
+    assert queue.task(task)["status"] == "selected"
 
 
 def test_selections_are_isolated_and_rematerialization_keeps_original_values(

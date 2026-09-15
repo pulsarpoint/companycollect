@@ -23,9 +23,6 @@ ops:
       company_name_column: legal_name
       country_code: SE
       source_final: true
-      company_ids:
-        - "5560004615"
-        - "5560160680"
       filters:
         status: [active]
 ```
@@ -37,12 +34,22 @@ attribution and prefixes input IDs, such as `SE:5560004615`; it is not automatic
 included in the Brave prompt. `source_final: true` applies ClickHouse `FINAL` when
 reading sources such as the Swedish ReplacingMergeTree registry.
 
-`company_ids` selects exact source IDs. `filters` maps source column names to
-allowed values: values within a column use `IN`; different columns and company IDs
+`company_ids` is reserved for testing. Production selections use `filters`, which
+maps source column names to allowed values (including `company_id` when selecting
+specific companies): values within a column use `IN`; different columns
 are combined with `AND`. Column names are validated and values are bound as query
 parameters. These are scalar equality filters, not raw SQL expressions.
+`company_name_pattern` adds a bound `ILIKE` pattern, `company_id_length` selects
+an ID length, and `excluded_company_ids` removes unchecked rows from a query selection.
 `max_companies` optionally limits the selection in ID order. To deliberately
 select an entire source without filters or a limit, supply `select_all: true`.
+
+In the backoffice, select rows on Sweden → Companies and click **Send for Brave
+analysis**. The action launches `company_brave_search_workflow`: initialization
+from `corpscout.se_companies_serving` with the selected filters, followed by
+processing with the default official-website query. “Select all matching” sends
+filters and exclusions, without expanding all matching IDs in the backoffice.
+The saved selection reflects the serving table when initialization executes.
 
 The asset creates a task ID (or accepts an explicit UUID), inserts the selected
 company rows under that `task_id` in `corpscout.company_brave_search_input`, and
