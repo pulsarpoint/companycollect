@@ -11,15 +11,15 @@ are logged and attached to the Dagster materialization.
 
 ## Prepare and inspect the selection in ClickHouse
 
-Migration `000411_corpscout_company_processing_input` defines an empty,
-country-independent example queue, `corpscout.company_processing_input`.
+Migrations `000411` and `000412` define the physical Brave input queue,
+`corpscout.company_brave_search_input`, for companies from any country.
 Populate it before launching a task. Selection happens here, independently of the
 Brave asset; neither `company_ids` nor raw selection SQL is sent to the asset.
 
 For example, on an empty queue:
 
 ```sql
-INSERT INTO corpscout.company_processing_input
+INSERT INTO corpscout.company_brave_search_input
     (input_id, company_id, company_name, country_code)
 SELECT concat('SE:', company_id), company_id, trimBoth(ifNull(legal_name, '')), 'SE'
 FROM corpscout.se_company_basic_info FINAL
@@ -27,8 +27,8 @@ WHERE status = 'active'
   AND trimBoth(ifNull(legal_name, '')) != ''
   AND company_id IN ('5560004615', '5560160680');
 
-SELECT * FROM corpscout.company_processing_input ORDER BY input_id;
-SELECT count(), uniqExact(input_id) FROM corpscout.company_processing_input;
+SELECT * FROM corpscout.company_brave_search_input ORDER BY input_id;
+SELECT count(), uniqExact(input_id) FROM corpscout.company_brave_search_input;
 ```
 
 This SQL is an example selection, not a Sweden restriction. The asset requires an
@@ -56,7 +56,7 @@ not a separate file automatically discovered by Dagster:
 ops:
   company_brave_search_results:
     config:
-      input_relation: corpscout.company_processing_input
+      input_relation: corpscout.company_brave_search_input
       input_namespace: company
       query_type: official_website
       query_template: "Find the official website of {company_name}."
@@ -179,6 +179,10 @@ ClickHouse migration `000411` after `000410`. The PostgreSQL migration preserves
 old result/export data and refuses to remove input payloads while legacy tasks
 are unfinished. It is forward-only. Deploy the matching worker code after applying
 it; old workers require columns that the migration removes.
+
+The input table was renamed in place by ClickHouse migration `000412`, preserving
+its data and UUID. Apply PostgreSQL migration `000121` afterward to update saved
+task references. Apply this pair while Brave tasks are idle.
 
 Existing `PROCESSING_PG_URL` and `PROCESSING_CLICKHOUSE_*` credentials remain valid.
 `scripts/provision-processing-storage.py` owns the least-privilege worker, export

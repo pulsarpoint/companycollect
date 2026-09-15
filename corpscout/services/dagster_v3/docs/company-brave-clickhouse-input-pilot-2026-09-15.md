@@ -1,5 +1,8 @@
 # Brave fixed ClickHouse input pilot — 2026-09-15
 
+> The input queue was subsequently renamed to `corpscout.company_brave_search_input`
+> by migration 412. Its data and UUID were retained; this report records the original run.
+
 Runtime commit: `d703f1d2f`. PostgreSQL migration 120; ClickHouse migration 411.
 Deployment: Ansible content hot-sync, 33 successful tasks, zero failed tasks.
 The Dagster service remained active/running with zero restarts. All four runtime

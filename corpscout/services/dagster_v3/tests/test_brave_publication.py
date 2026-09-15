@@ -95,12 +95,13 @@ def clickhouse(store, tmp_path):
         for statement in MIGRATION.read_text().split(";"):
             if statement.strip():
                 client.execute(statement)
-        queue_migration = MIGRATION.with_name(
-            "000411_corpscout_company_processing_input.up.sql"
-        )
-        for statement in queue_migration.read_text().split(";"):
-            if statement.strip():
-                client.execute(statement)
+        for migration in (
+            "000411_corpscout_company_processing_input.up.sql",
+            "000412_corpscout_company_brave_search_input.up.sql",
+        ):
+            for statement in MIGRATION.with_name(migration).read_text().split(";"):
+                if statement.strip():
+                    client.execute(statement)
         client.execute(
             f"CREATE NAMED COLLECTION processing_postgres AS host='host.docker.internal' NOT OVERRIDABLE, "
             f"port={pg_port} NOT OVERRIDABLE, database='{database}' NOT OVERRIDABLE, "
@@ -165,13 +166,13 @@ def test_materialization_pages_renders_processes_and_resumes_without_searching(
     fixture.release_slow.set()
     monkeypatch.setattr(brave, "launch", fixture.launch)
     client.execute(
-        "INSERT INTO corpscout.company_processing_input VALUES",
+        "INSERT INTO corpscout.company_brave_search_input VALUES",
         [(str(i), str(i), f"Company {i} AB", "SE") for i in range(8)],
     )
     task = str(uuid4())
     config = {
         "task_id": task,
-        "input_relation": "corpscout.company_processing_input",
+        "input_relation": "corpscout.company_brave_search_input",
         "input_batch_size": 4,
         "query_type": "website",
         "query_template": "Find {company_name}",
@@ -199,7 +200,7 @@ def test_materialization_pages_renders_processes_and_resumes_without_searching(
         pytest.fail("resume repeated a saved Brave search")
 
     monkeypatch.setattr(brave, "launch", unexpected_launch)
-    client.execute("TRUNCATE TABLE corpscout.company_processing_input")
+    client.execute("TRUNCATE TABLE corpscout.company_brave_search_input")
     result = dg.materialize(
         [company_brave_search_results],
         resources=resources,
@@ -249,9 +250,9 @@ def test_three_million_clickhouse_rows_admit_only_a_bounded_page(store, clickhou
     queue, _ = store
     client, resource = clickhouse
     client.execute(
-        "INSERT INTO corpscout.company_processing_input SELECT toString(number),toString(number),concat('Company ',toString(number)),'SE' FROM numbers(3000000)"
+        "INSERT INTO corpscout.company_brave_search_input SELECT toString(number),toString(number),concat('Company ',toString(number)),'SE' FROM numbers(3000000)"
     )
-    source = ClickHouseInputQueue(resource, "corpscout.company_processing_input")
+    source = ClickHouseInputQueue(resource, "corpscout.company_brave_search_input")
     started = time.monotonic()
     info = source.inspect()
     task = str(uuid4())
@@ -295,15 +296,17 @@ def test_three_million_clickhouse_rows_admit_only_a_bounded_page(store, clickhou
 def test_queue_rejects_duplicate_ids_and_missing_retry_inputs(store, clickhouse):
     _, resource = clickhouse
     client, _ = clickhouse
-    source = ClickHouseInputQueue(resource, "corpscout.company_processing_input")
+    source = ClickHouseInputQueue(resource, "corpscout.company_brave_search_input")
     client.execute(
-        "INSERT INTO corpscout.company_processing_input VALUES", [("1", "1", "A", "SE")]
+        "INSERT INTO corpscout.company_brave_search_input VALUES",
+        [("1", "1", "A", "SE")],
     )
     info = source.inspect()
     with pytest.raises(ValueError, match="missing"):
         source.read(info, input_id="0")
     client.execute(
-        "INSERT INTO corpscout.company_processing_input VALUES", [("1", "1", "B", "SE")]
+        "INSERT INTO corpscout.company_brave_search_input VALUES",
+        [("1", "1", "B", "SE")],
     )
     with pytest.raises(ValueError, match="unique"):
         source.inspect()
@@ -320,7 +323,7 @@ def test_clickhouse_outage_does_not_repeat_saved_browser_work(
     fixture.release_slow.set()
     monkeypatch.setattr(brave, "launch", fixture.launch)
     client.execute(
-        "INSERT INTO corpscout.company_processing_input VALUES",
+        "INSERT INTO corpscout.company_brave_search_input VALUES",
         [(str(i), str(i), f"Company {i}", "SE") for i in range(8)],
     )
     task = str(uuid4())
@@ -341,7 +344,7 @@ def test_clickhouse_outage_does_not_repeat_saved_browser_work(
                 "company_brave_search_results": {
                     "config": {
                         "task_id": task,
-                        "input_relation": "corpscout.company_processing_input",
+                        "input_relation": "corpscout.company_brave_search_input",
                         "export_batch_size": 4,
                     }
                 }
@@ -444,13 +447,13 @@ def test_fixed_upper_bound_excludes_later_inputs_and_missing_rows_cannot_finish(
     queue, dsn = store
     client, resource = clickhouse
     client.execute(
-        "INSERT INTO corpscout.company_processing_input VALUES",
+        "INSERT INTO corpscout.company_brave_search_input VALUES",
         [("1", "1", "First", "SE"), ("2", "2", "Second", "SE")],
     )
-    source = ClickHouseInputQueue(resource, "corpscout.company_processing_input")
+    source = ClickHouseInputQueue(resource, "corpscout.company_brave_search_input")
     info = source.inspect()
     client.execute(
-        "INSERT INTO corpscout.company_processing_input VALUES",
+        "INSERT INTO corpscout.company_brave_search_input VALUES",
         [("3", "3", "Later", "SE")],
     )
     assert [row["input_id"] for row in source.read(info, limit=100)] == ["1", "2"]
@@ -462,7 +465,7 @@ def test_fixed_upper_bound_excludes_later_inputs_and_missing_rows_cannot_finish(
         work_config={},
         source_info=info,
     )
-    client.execute("TRUNCATE TABLE corpscout.company_processing_input")
+    client.execute("TRUNCATE TABLE corpscout.company_brave_search_input")
 
     def unexpected_launch(**kwargs):
         pytest.fail("empty source must not launch a Brave request")

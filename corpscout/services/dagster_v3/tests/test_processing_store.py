@@ -81,6 +81,11 @@ def store(processing_postgres_url):
                     "000120_processing_clickhouse_input.up.sql"
                 ).read_text()
             )
+            cursor.execute(
+                MIGRATION.with_name(
+                    "000121_processing_brave_input_relation.up.sql"
+                ).read_text()
+            )
         yield ProcessingStore(connection), dsn
     finally:
         connection.close()
