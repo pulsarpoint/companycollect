@@ -240,3 +240,6 @@ claims, restart recovery, migration preservation and replayable publication.
 
 The [live ClickHouse-input pilot](company-brave-clickhouse-input-pilot-2026-09-15.md)
 verified bounded admission, eight real answers and a resume without new requests.
+
+The [initialization asset pilot](company-brave-initialization-pilot-2026-09-15.md)
+verified selection, idempotent rematerialization and handoff to processing.
