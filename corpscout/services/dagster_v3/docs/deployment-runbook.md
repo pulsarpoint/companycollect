@@ -31,6 +31,7 @@ External services a host must reach (credentials via `.env`, see §2):
 | Service | Address (dev) | Used for |
 |---|---|---|
 | Postgres | `DAGSTER_PG_URL` | Dagster run/event/schedule storage (shared DB with Temporal — connection pressure is the scaling bottleneck; see CLAUDE.md) |
+| Processing PostgreSQL | `PROCESSING_PG_URL` | frozen task inputs, item progress and durable result outbox; see [Brave pilot](company-brave-processing.md) |
 | ClickHouse | `CLICKHOUSE_HOST` native `CLICKHOUSE_NATIVE_PORT` | all `corpscout.*` exports |
 | MinIO/S3 | `CORPSCOUT_S3_ENDPOINT` | raw snapshot buckets (Norway parquet, Finland XBRL XML, Sweden archives, …) |
 | Temporal | `TEMPORAL_ADDRESS` | translator workflow |
@@ -86,6 +87,7 @@ Gotchas:
 | `storage/`, `logs/` (under `DAGSTER_HOME`) | compute logs, IO artifacts | scratch |
 | MinIO buckets (`source-*`) | raw source snapshots (per-company API fetches, XBRL XML, …) | **expensive-to-rebuild cache** |
 | Postgres `dagster` DB | run history, schedules, event log | **backup** |
+| Postgres `corpscout.processing` schema | task snapshots, leases, saved results and export batches | **backup; never rebuildable cache** |
 | ClickHouse `corpscout` DB | all published tables + `text_translations` / `text_classifications` caches | **backup** |
 
 ## 4. Backup scope (decision, 2026-07-12)

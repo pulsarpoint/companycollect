@@ -2,7 +2,6 @@
 
 import json
 import subprocess
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -10,79 +9,39 @@ from cloakbrowser import launch
 from cloakbrowser.config import get_binary_path
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from dagster_v3.defs.company_domains.assets import PENDING_COMPANIES_SQL, RESULT_COLUMNS
+from dagster_v3.defs.company_domains.assets import EXPORT_COLUMNS
 from dagster_v3.defs.company_domains.browser import copy_brave_answer
-from tests.clickhouse_local import clickhouse_local_command, render
+from tests.clickhouse_local import clickhouse_local_command
 
 pytestmark = pytest.mark.integration
 MIGRATION = (
     Path(__file__).parents[3]
-    / "clickhouse/migrations/000409_corpscout_company_brave_search_results.up.sql"
+    / "clickhouse/migrations/000410_corpscout_company_brave_info.up.sql"
 )
 
 
-def test_real_clickhouse_selects_only_pending_active_named_companies():
-    schema = """
+def test_named_input_view_filters_companies_and_replayed_results_are_deduplicated():
+    sql = (
+        """
+CREATE DATABASE corpscout;
 CREATE TABLE corpscout.se_company_basic_info
     (company_id String, legal_name Nullable(String), status String)
     ENGINE=ReplacingMergeTree ORDER BY company_id;
 INSERT INTO corpscout.se_company_basic_info VALUES
-    ('1','Fresh AB','active'), ('2','Renamed AB','active'), ('3','Retry AB','active'),
-    ('4','Inactive AB','inactive'), ('5','   ','active'), ('6',NULL,'active'),
-    ('7','Prompt AB','active'), ('8','Expired AB','active'), ('9','Other country AB','active');
-INSERT INTO corpscout.company_brave_search_results
-    (country_code,company_id,company_name,prompt_version,status,fetched_at,source_run_id)
-VALUES
-    ('SE','1','Fresh AB','company-info-v1','success','2026-09-14 00:00:00','a'),
-    ('SE','2','Old AB','company-info-v1','success','2026-09-14 00:00:00','a'),
-    ('SE','3','Retry AB','company-info-v1','error','2026-09-14 00:00:00','a'),
-    ('SE','7','Prompt AB','old-prompt','success','2026-09-14 00:00:00','a'),
-    ('SE','8','Expired AB','company-info-v1','success','2026-07-01 00:00:00','a'),
-    ('NO','9','Other country AB','company-info-v1','success','2026-09-14 00:00:00','a');
+    ('1',' Active AB ','active'),('2','Inactive','inactive'),('3',NULL,'active'),('4','   ','active');
 """
-    params = {
-        "prompt_version": "company-info-v1",
-        "freshness_cutoff": datetime(2026, 8, 16, tzinfo=UTC),
-        "after_company_id": "",
-        "all_companies": True,
-        "company_ids": ("",),
-        "page_size": 100,
-    }
-    statements = [MIGRATION.read_text(), schema]
-    expectations = [
-        (
-            {},
-            [
-                ["2", "Renamed AB"],
-                ["3", "Retry AB"],
-                ["7", "Prompt AB"],
-                ["8", "Expired AB"],
-                ["9", "Other country AB"],
-            ],
-        ),
-        (
-            {"after_company_id": "3", "page_size": 2},
-            [["7", "Prompt AB"], ["8", "Expired AB"]],
-        ),
-        (
-            {"all_companies": False, "company_ids": ("1", "3", "9")},
-            [["3", "Retry AB"], ["9", "Other country AB"]],
-        ),
-    ]
-    expected = []
-    for overrides, rows in expectations:
-        statements.append(
-            render(PENDING_COMPANIES_SQL, {**params, **overrides})
-            + " FORMAT JSONCompactEachRow;"
-        )
-        expected.extend(rows)
-    statements.append(
-        "SELECT name FROM system.columns WHERE database='corpscout' AND table='company_brave_search_results' ORDER BY position FORMAT JSONCompactEachRow;"
+        + MIGRATION.read_text()
+        + """
+SELECT input_id,company_id,company_name,country_code FROM corpscout.se_company_brave_input FORMAT JSONCompactEachRow;
+INSERT INTO corpscout.company_brave_info (result_id,task_id,answer_text) VALUES ('result-1','task-1','Full copied response');
+INSERT INTO corpscout.company_brave_info (result_id,task_id,answer_text) VALUES ('result-1','task-1','Full copied response');
+SELECT result_id,answer_text FROM corpscout.company_brave_info_deduplicated FORMAT JSONCompactEachRow;
+SELECT name FROM system.columns WHERE database='corpscout' AND table='company_brave_info' ORDER BY position FORMAT JSONCompactEachRow;
+"""
     )
-    expected.extend([[column] for column in RESULT_COLUMNS])
     result = subprocess.run(
         clickhouse_local_command(),
-        input="\n".join(statements),
+        input=sql,
         capture_output=True,
         text=True,
         timeout=90,
@@ -90,7 +49,11 @@ VALUES
     assert result.returncode == 0, result.stderr
     assert [
         json.loads(line) for line in result.stdout.splitlines() if line.strip()
-    ] == expected
+    ] == [
+        ["1", "1", "Active AB", "SE"],
+        ["result-1", "Full copied response"],
+        *[[column] for column in EXPORT_COLUMNS],
+    ]
 
 
 COPY_PAGE = """<!doctype html><html><body>

@@ -1,6 +1,6 @@
 """Brave search → More → Copy, using Ratsit's direct/proxy browser topology."""
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -14,7 +14,6 @@ from playwright.sync_api import Page
 from pydantic import Field, model_validator
 
 BRAVE_ORIGIN = "https://search.brave.com"
-PROMPT_VERSION = "company-info-v1"
 ROUTES = ("direct", "crawl_proxy1", "crawl_proxy2", "crawl_proxy3")
 
 # Capture what Brave's Copy button writes without using the OS-wide clipboard.
@@ -32,6 +31,8 @@ COPY_CAPTURE_SCRIPT = """(() => {
 class CompanySearchInput:
     company_id: str
     company_name: str
+    query: str
+    request_id: str
 
     def __post_init__(self) -> None:
         if not self.company_id.strip() or not self.company_name.strip():
@@ -48,12 +49,6 @@ class BraveSearchResult:
     status: Literal["success", "error"]
     answer: str = ""
     error_type: str = ""
-
-
-def company_query(company: CompanySearchInput) -> str:
-    return (
-        f"Can you give me more information about Sweden company {company.company_name}"
-    )
 
 
 def copy_brave_answer(page: Page, query: str, *, timeout_ms: int) -> str:
@@ -104,6 +99,7 @@ class BraveBrowserResource(dg.ConfigurableResource):
         companies: Iterator[CompanySearchInput],
         *,
         requests_per_route: int,
+        on_result: Callable[[BraveSearchResult], None],
     ) -> Iterator[BraveSearchResult]:
         """Refill a route immediately when it finishes, without fixed batch barriers.
 
@@ -149,7 +145,7 @@ class BraveBrowserResource(dg.ConfigurableResource):
                 try:
                     while company is not None and not stopped.is_set():
                         page = None
-                        query = company_query(company)
+                        query = company.query
                         try:
                             page = browser_context.new_page()
                             answer = copy_brave_answer(
@@ -176,6 +172,9 @@ class BraveBrowserResource(dg.ConfigurableResource):
                                 "error",
                                 error_type=type(error).__name__,
                             )
+                        try:
+                            # Preserve the answer even when browser cleanup fails.
+                            on_result(result)
                         finally:
                             if page is not None:
                                 page.close()
