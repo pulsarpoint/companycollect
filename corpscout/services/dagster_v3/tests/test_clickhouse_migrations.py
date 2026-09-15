@@ -422,6 +422,7 @@ EXPECTED_MIGRATIONS = (
     "000406_corpscout_se_company_person_llm_enhance",
     "000407_corpscout_se_company_person_match_input",
     "000408_corpscout_se_company_domain_entity",
+    "000409_corpscout_company_brave_search_results",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}

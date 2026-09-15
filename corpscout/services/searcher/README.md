@@ -1,5 +1,10 @@
 # CloakBrowser CDP service
 
+The Brave search → More → Copy flow also runs as the Dagster asset
+`company_brave_search_results` in group `company_domains`. It uses dynamic Swedish
+company names and one direct plus three proxy routes, refilling slots as requests
+finish. See [the asset design and launch configuration](../dagster_v3/src/dagster_v3/defs/company_domains/docs/company-domains-design.md).
+
 Runs a persistent CloakBrowser profile and exposes its Chrome DevTools Protocol
 endpoint on `127.0.0.1`. Cookies, local storage, IndexedDB, cache, and other
 browser state remain in the profile directory across service restarts.
