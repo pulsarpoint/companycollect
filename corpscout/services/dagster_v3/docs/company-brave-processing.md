@@ -190,3 +190,6 @@ This change applies to Brave only. Translation, Ratsit and webtech remain unchan
 Tests use disposable PostgreSQL 17 and ClickHouse 26.5 servers, including a real
 three-million-row ClickHouse queue with only 100 admitted PostgreSQL IDs, concurrent
 claims, restart recovery, migration preservation and replayable publication.
+
+The [live ClickHouse-input pilot](company-brave-clickhouse-input-pilot-2026-09-15.md)
+verified bounded admission, eight real answers and a resume without new requests.
