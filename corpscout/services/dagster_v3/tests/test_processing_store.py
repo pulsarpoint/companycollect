@@ -187,7 +187,7 @@ def test_out_of_order_completion_and_restart_never_skip_slow_item(store):
 
     with closing(psycopg2.connect(dsn)) as connection:
         restarted = ProcessingStore(connection)
-        restarted.release("run-1")
+        restarted.release("run-1", max_attempts=3)
         recovered = claim(restarted, task)
         assert recovered.input_id == slow.input_id
         assert recovered.lease_token != slow.lease_token
@@ -358,3 +358,19 @@ def test_templates_reject_missing_or_non_column_expressions(template):
 
     with pytest.raises(ValueError):
         render_query(template, {"company_name": "A"})
+
+
+def test_abandoned_last_attempt_is_terminal_and_does_not_block_the_next_item(store):
+    queue, _ = store
+    task = freeze(queue)
+    exhausted = claim(queue, task)
+    with queue.connection, queue.connection.cursor() as cursor:
+        cursor.execute(
+            "UPDATE processing.items SET attempt=3 WHERE task_id=%s AND input_id=%s",
+            (task, exhausted.input_id),
+        )
+    queue.release("run-1", max_attempts=3)
+    next_item = claim(queue, task)
+    assert next_item.input_id == "1"
+    assert queue.progress(task)["terminal_failed"] == 1
+    assert complete(queue, exhausted) is None

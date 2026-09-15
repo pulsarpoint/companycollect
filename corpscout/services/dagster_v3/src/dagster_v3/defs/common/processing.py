@@ -177,30 +177,47 @@ class ProcessingStore:
         self, task_id: str, *, owner: str, lease_seconds: int, max_attempts: int
     ) -> ClaimedItem | None:
         with self.transaction() as cursor:
+            # Recover expired leases separately. Combining this predicate with the
+            # pending selection forces a full queue scan/sort instead of an index seek.
             cursor.execute(
-                """UPDATE processing.items SET state='terminal_failed', lease_token=NULL, lease_owner=NULL
-                WHERE task_id=%s AND attempt >= %s AND
-                  (state IN ('queued','retry_wait') OR (state='running' AND lease_expires_at <= now()))""",
-                (task_id, max_attempts),
+                """UPDATE processing.items SET
+                    state=CASE WHEN attempt >= %s THEN 'terminal_failed' ELSE 'queued' END,
+                    lease_token=NULL,lease_owner=NULL,next_attempt_at=now()
+                WHERE task_id=%s AND state='running' AND lease_expires_at <= now()""",
+                (max_attempts, task_id),
             )
-            cursor.execute(
-                """
-                WITH candidate AS (
-                    SELECT i.task_id,i.input_id FROM processing.items i JOIN processing.tasks t USING (task_id)
-                    WHERE i.task_id=%s AND t.status='ready' AND i.attempt < %s
-                      AND ((i.state IN ('queued','retry_wait') AND i.next_attempt_at <= now())
-                           OR (i.state='running' AND i.lease_expires_at <= now()))
-                    ORDER BY i.next_attempt_at,i.input_id LIMIT 1 FOR UPDATE OF i SKIP LOCKED
+            while True:
+                cursor.execute(
+                    """SELECT i.input_id,i.attempt FROM processing.items i
+                    JOIN processing.tasks t USING (task_id)
+                    WHERE i.task_id=%s AND t.status='ready'
+                      AND i.state IN ('queued','retry_wait') AND i.next_attempt_at <= now()
+                    ORDER BY i.next_attempt_at,i.input_id LIMIT 1 FOR UPDATE OF i SKIP LOCKED""",
+                    (task_id,),
                 )
-                UPDATE processing.items i SET state='running',attempt=attempt+1,
-                    lease_owner=%s,lease_token=%s,lease_expires_at=now()+%s*interval '1 second'
-                FROM candidate c WHERE i.task_id=c.task_id AND i.input_id=c.input_id
-                RETURNING i.task_id::text,i.input_id,i.input_data,i.query,i.work_key,i.attempt,i.lease_token::text
-            """,
-                (task_id, max_attempts, owner, str(uuid4()), lease_seconds),
-            )
-            row = cursor.fetchone()
-            return ClaimedItem(**row) if row else None
+                candidate = cursor.fetchone()
+                if candidate is None:
+                    return None
+                if candidate["attempt"] >= max_attempts:
+                    cursor.execute(
+                        "UPDATE processing.items SET state='terminal_failed' WHERE task_id=%s AND input_id=%s",
+                        (task_id, candidate["input_id"]),
+                    )
+                    continue
+                cursor.execute(
+                    """UPDATE processing.items SET state='running',attempt=attempt+1,
+                        lease_owner=%s,lease_token=%s,lease_expires_at=now()+%s*interval '1 second'
+                    WHERE task_id=%s AND input_id=%s
+                    RETURNING task_id::text,input_id,input_data,query,work_key,attempt,lease_token::text""",
+                    (
+                        owner,
+                        str(uuid4()),
+                        lease_seconds,
+                        task_id,
+                        candidate["input_id"],
+                    ),
+                )
+                return ClaimedItem(**cursor.fetchone())
 
     def heartbeat(self, owner: str, *, lease_seconds: int) -> None:
         with self.transaction() as cursor:
@@ -210,12 +227,14 @@ class ProcessingStore:
                 (lease_seconds, owner),
             )
 
-    def release(self, owner: str) -> None:
+    def release(self, owner: str, *, max_attempts: int) -> None:
         with self.transaction() as cursor:
             cursor.execute(
-                """UPDATE processing.items SET state='queued',lease_token=NULL,lease_owner=NULL,
+                """UPDATE processing.items SET
+                state=CASE WHEN attempt >= %s THEN 'terminal_failed' ELSE 'queued' END,
+                lease_token=NULL,lease_owner=NULL,
                 next_attempt_at=now() WHERE state='running' AND lease_owner=%s""",
-                (owner,),
+                (max_attempts, owner),
             )
 
     def complete(

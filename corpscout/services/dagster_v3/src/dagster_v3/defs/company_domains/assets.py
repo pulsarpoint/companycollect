@@ -309,7 +309,7 @@ def company_brave_search_results(
         finally:
             stopped.set()
             heartbeat.join()
-            store.release(context.run.run_id)
+            store.release(context.run.run_id, max_attempts=config.max_attempts)
         counts = store.progress(task_id)
         metadata = {
             key: value
