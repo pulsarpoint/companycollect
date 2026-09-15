@@ -1,4 +1,4 @@
-"""Brave search → More → Copy, using Ratsit's direct/proxy browser topology."""
+"""Brave Ask → finished answer → Copy, using Ratsit's direct/proxy browsers."""
 
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from queue import Full, Queue
 from threading import Event, Lock
 from typing import Literal, Self
+from urllib.parse import urlencode
 
 import dagster as dg
 from cloakbrowser import launch
@@ -52,17 +53,17 @@ class BraveSearchResult:
 
 
 def copy_brave_answer(page: Page, query: str, *, timeout_ms: int) -> str:
-    """The searcher/brave.py interaction, with a fresh page's private Copy capture."""
+    """Open Ask explicitly and capture the completed answer's private Copy text."""
     page.set_default_timeout(timeout_ms)
     page.add_init_script(COPY_CAPTURE_SCRIPT)
-    page.goto(BRAVE_ORIGIN, wait_until="domcontentloaded")
-    searchbox = page.get_by_test_id("searchbox")
-    searchbox.fill(query)
-    searchbox.press("Enter")
-    more = page.get_by_role("button", name="More", exact=True)
-    more.wait_for(state="visible")
-    more.click()
-    page.get_by_role("button", name="Copy", exact=True).click()
+    page.goto(
+        f"{BRAVE_ORIGIN}/ask?{urlencode({'q': query})}",
+        wait_until="domcontentloaded",
+    )
+    # Ask shows these answer actions after generation. Its question also has an
+    # icon-only Copy button; only the answer's button contains the text "Copy".
+    page.get_by_role("button", name="Try again", exact=True).wait_for(state="visible")
+    page.get_by_role("button", name="Copy", exact=True).filter(has_text="Copy").click()
     page.wait_for_function(
         "() => typeof window.__companyBraveCopiedText === 'string' "
         "&& window.__companyBraveCopiedText.trim().length > 0"

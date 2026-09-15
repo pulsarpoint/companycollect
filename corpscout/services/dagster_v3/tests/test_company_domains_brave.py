@@ -4,6 +4,7 @@ import threading
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
+from urllib.parse import parse_qs, urlsplit
 
 import dagster as dg
 import pytest
@@ -44,8 +45,6 @@ class BrowserFixture:
         fixture = self
 
         class Page:
-            url = "https://search.brave.com/search?q=fixture"
-
             def set_default_timeout(self, value):
                 pass
 
@@ -53,18 +52,8 @@ class BrowserFixture:
                 pass
 
             def goto(self, url, **kwargs):
-                pass
-
-            def get_by_test_id(self, name):
-                return self
-
-            def get_by_role(self, role, **kwargs):
-                return self
-
-            def fill(self, query):
-                self.query = query
-
-            def press(self, key):
+                self.url = url
+                self.query = parse_qs(urlsplit(url).query)["q"][0]
                 with fixture.lock:
                     fixture.active[route] += 1
                     fixture.peak[route] = max(
@@ -81,6 +70,12 @@ class BrowserFixture:
                     fixture.refilled.set()
                 if route == "direct":
                     assert fixture.release_slow.wait(5), "slow route was never released"
+
+            def get_by_role(self, role, **kwargs):
+                return self
+
+            def filter(self, **kwargs):
+                return self
 
             def wait_for(self, **kwargs):
                 if fixture.failing_company and self.query.endswith(

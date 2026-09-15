@@ -57,17 +57,20 @@ SELECT name FROM system.columns WHERE database='corpscout' AND table='company_br
 
 
 COPY_PAGE = """<!doctype html><html><body>
-<input data-testid="searchbox">
-<button id="more" hidden>More</button><button id="copy" hidden>Copy</button>
+<button aria-label="Copy" id="question-copy"></button>
+<button id="copy" aria-label="Copy"> Copy</button>
+<button id="retry" hidden>Try again</button>
 <script>
-const input = document.querySelector('input');
-input.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') document.querySelector('#more').hidden = false;
-});
-document.querySelector('#more').onclick = () => { document.querySelector('#copy').hidden = false; };
+const query = new URL(location.href).searchParams.get('q');
+let answer = 'Incomplete streamed answer';
+document.querySelector('#question-copy').onclick = () => navigator.clipboard.writeText(query);
 document.querySelector('#copy').onclick = async () => {
-    await navigator.clipboard.writeText(input.value === 'empty' ? '' : 'Answer: ' + input.value + '\\nhttps://example.se/');
+    await navigator.clipboard.writeText(answer);
 };
+if (query !== 'never_finished') setTimeout(() => {
+    answer = query === 'empty' ? '' : 'Answer: ' + query + '\\nhttps://example.se/';
+    document.querySelector('#retry').hidden = false;
+}, 50);
 </script></body></html>"""
 
 
@@ -87,19 +90,24 @@ def test_copy_capture_is_per_page_and_empty_answers_never_reuse_previous_text(
         )
         first, second = context.new_page(), context.new_page()
         assert (
-            copy_brave_answer(first, "+1 Kommunikationsbyrå AB", timeout_ms=5_000)
-            == "Answer: +1 Kommunikationsbyrå AB\nhttps://example.se/"
+            copy_brave_answer(
+                first, "+1 Kommunikationsbyrå AB & Co? #1", timeout_ms=5_000
+            )
+            == "Answer: +1 Kommunikationsbyrå AB & Co? #1\nhttps://example.se/"
         )
+        assert first.url.startswith("https://search.brave.com/ask?")
         assert (
             copy_brave_answer(second, "Skanska AB", timeout_ms=5_000)
             == "Answer: Skanska AB\nhttps://example.se/"
         )
         assert (
             first.evaluate("() => window.__companyBraveCopiedText")
-            == "Answer: +1 Kommunikationsbyrå AB\nhttps://example.se/"
+            == "Answer: +1 Kommunikationsbyrå AB & Co? #1\nhttps://example.se/"
         )
         with pytest.raises(PlaywrightTimeoutError):
             copy_brave_answer(first, "empty", timeout_ms=500)
+        with pytest.raises(PlaywrightTimeoutError):
+            copy_brave_answer(first, "never_finished", timeout_ms=500)
         context.close()
     finally:
         browser.close()

@@ -7,6 +7,11 @@ This pilot replaces Brave's per-response S3 write and ClickHouse insert. The old
 `company_brave_search_results` ClickHouse table and its S3 objects remain readable;
 new responses go to `company_brave_info.answer_text`.
 
+Queries open Brave's **Ask** page explicitly. The browser waits for the completed
+answer actions, then captures the answer's Copy text. This avoids ordinary search
+results that do not include an AI answer, and excludes the separate question Copy
+button. Query values are URL-encoded, including Swedish characters, `+`, and `&`.
+
 ## Start a task
 
 Paste this YAML into the Dagster materialization launchpad (it is run config,
