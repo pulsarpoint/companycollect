@@ -47,6 +47,7 @@ WHERE export_batch_id = %(batch_id)s AND country_code = %(country)s AND status =
 """
 POSTGRES_SETTINGS = {
     "max_execution_time": 60,
+    "use_query_condition_cache": 0,
     "postgresql_connection_pool_size": 2,
     "postgresql_connection_attempt_timeout": 5,
 }
@@ -93,6 +94,7 @@ def publish_batch(store: ProcessingStore, client, batch: ExportBatch) -> None:
         structure = ", ".join(
             f"{column[0]} {column[1]}"
             for column in client.execute(f"DESCRIBE TABLE corpscout.{table}_history")
+            if column[0] in EXPORT_COLUMNS
         )
         path = f"v1/country={country}/batch_id={batch.batch_id}/results.parquet"
         params = {
@@ -110,7 +112,10 @@ def publish_batch(store: ProcessingStore, client, batch: ExportBatch) -> None:
         archived = client.execute(
             f"SELECT {COLUMNS_SQL} FROM {S3_SQL} ORDER BY result_id",
             {**params, "path": path.replace("results.parquet", "*.parquet")},
-            settings={"s3_throw_on_zero_files_match": 0},
+            settings={
+                "s3_throw_on_zero_files_match": 0,
+                "use_query_condition_cache": 0,
+            },
         )
         if not archived:
             client.execute(
@@ -125,7 +130,9 @@ def publish_batch(store: ProcessingStore, client, batch: ExportBatch) -> None:
                 },
             )
             archived = client.execute(
-                f"SELECT {COLUMNS_SQL} FROM {S3_SQL} ORDER BY result_id", params
+                f"SELECT {COLUMNS_SQL} FROM {S3_SQL} ORDER BY result_id",
+                params,
+                settings={"use_query_condition_cache": 0},
             )
         if archived != expected:
             raise ValueError(
@@ -161,6 +168,7 @@ def publish_batch(store: ProcessingStore, client, batch: ExportBatch) -> None:
                         }
                     )
                 },
+                settings={"use_query_condition_cache": 0},
             )
             current_by_key = {(row[0], row[1]): row for row in current}
             for record in successful:

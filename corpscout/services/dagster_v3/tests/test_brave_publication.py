@@ -159,6 +159,7 @@ def clickhouse(store, tmp_path, archive_s3):
             if statement.strip():
                 client.execute(statement)
         for migration in (
+            "000415_corpscout_brave_history_query_settings.up.sql",
             "000411_corpscout_company_processing_input.up.sql",
             "000412_corpscout_company_brave_search_input.up.sql",
         ):
@@ -598,6 +599,13 @@ def test_archive_preserves_attempts_current_never_regresses_and_can_rebuild(
             "SELECT count(*) FROM processing.export_batches WHERE archived_at IS NOT NULL AND archive_manifest IS NOT NULL"
         )
         assert cursor.fetchone()["count"] == 3
+    # Repeated filtered history reads must stay complete with the server cache enabled.
+    for status, count in (("error", 1), ("success", 2), ("missing", 0), ("success", 2)):
+        assert client.execute(
+            "SELECT count() FROM corpscout.se_company_brave_domains_history WHERE status=%(status)s",
+            {"status": status},
+            settings={"use_query_condition_cache": 1},
+        ) == [(count,)]
     # Cache identity survives removal of the large answer from PostgreSQL.
     cached = prepare_task(queue, names=("A",))
     item = claim(queue, cached)
