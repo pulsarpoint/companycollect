@@ -1,6 +1,11 @@
 # Shared processing pattern: ClickHouse inputs, durable work, and bulk results
 
-Analysis date: 2026-09-15. Status: architecture recommendation; no runtime changes or migrations applied.
+Analysis date: 2026-09-15. Historical engine comparison. The adopted Brave implementation
+is documented in [company-brave-processing.md](company-brave-processing.md).
+Its input selection stays in a physical ClickHouse table; PostgreSQL holds results
+and progress, admitting only a bounded set of IDs as work proceeds. The original
+proposal below to put full task membership/input values in PostgreSQL was superseded.
+Other processors have not been migrated.
 
 ## Recommendation
 

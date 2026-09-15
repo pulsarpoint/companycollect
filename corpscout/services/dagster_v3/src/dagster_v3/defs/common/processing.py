@@ -1,9 +1,8 @@
-"""Transactional task snapshots, fenced claims and a replayable result outbox."""
+"""Bounded input admission, fenced progress claims and a replayable result outbox."""
 
 import hashlib
 import json
 import re
-from collections.abc import Iterable
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -20,9 +19,6 @@ from psycopg2.extras import Json, RealDictCursor, execute_values
 class ClaimedItem:
     task_id: str
     input_id: str
-    input_data: dict
-    query: str
-    work_key: str
     attempt: int
     lease_token: str
 
@@ -55,6 +51,17 @@ def render_query(template: str, values: dict) -> str:
     return query
 
 
+def work_key(
+    processor: str, work_config: dict, template: str, values: dict, query: str
+) -> str:
+    canonical = json.dumps(
+        [processor, work_config, template, values, query],
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
 class ProcessingStore:
     """One bounded connection per run, shared only during short serialized transactions.
 
@@ -83,95 +90,134 @@ class ProcessingStore:
             )
             return cursor.fetchone()
 
-    def freeze(
+    def register(
         self,
         task_id: str,
         *,
         processor: str,
         config: dict,
         work_config: dict,
-        inputs: Iterable[dict],
-        query_template: str,
-        freshness_days: int,
+        source_info: dict,
     ) -> None:
+        """Save one task record, never the input selection or its payloads."""
         with self.transaction() as cursor:
-            # Serializes two creators of the same ID without locking unrelated tasks.
             cursor.execute(
                 "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (task_id,)
             )
             cursor.execute(
-                "SELECT processor, config, work_config FROM processing.tasks WHERE task_id=%s",
-                (task_id,),
+                "SELECT * FROM processing.tasks WHERE task_id=%s", (task_id,)
             )
             existing = cursor.fetchone()
             if existing:
-                if (
-                    existing["processor"] != processor
-                    or existing["config"] != config
-                    or existing["work_config"] != work_config
+                if any(
+                    existing[key] != value
+                    for key, value in (
+                        ("processor", processor),
+                        ("config", config),
+                        ("work_config", work_config),
+                        ("source_info", source_info),
+                    )
                 ):
                     raise ValueError(
-                        "task configuration differs from its frozen snapshot"
+                        "task configuration differs from its fixed selection"
                     )
                 return
             cursor.execute(
-                "INSERT INTO processing.tasks (task_id, processor, config, work_config, status) VALUES (%s,%s,%s,%s,'preparing')",
-                (task_id, processor, Json(config), Json(work_config)),
+                """INSERT INTO processing.tasks
+                (task_id,processor,config,work_config,status,total,source_info,ready_at)
+                VALUES (%s,%s,%s,%s,'ready',%s,%s,now())""",
+                (
+                    task_id,
+                    processor,
+                    Json(config),
+                    Json(work_config),
+                    source_info["total"],
+                    Json(source_info),
+                ),
             )
-            rows = []
-            total = 0
-            for values in inputs:
-                input_id = values.get("input_id")
-                if not isinstance(input_id, str) or not input_id.strip():
-                    raise ValueError("input_id must be a nonempty stable string")
-                query = render_query(query_template, values)
-                canonical = json.dumps(
-                    [processor, work_config, query_template, values, query],
-                    sort_keys=True,
-                    ensure_ascii=False,
-                )
-                work_key = hashlib.sha256(canonical.encode()).hexdigest()
-                rows.append((task_id, input_id, Json(values), work_key, query))
-                total += 1
-                if len(rows) == 1000:
-                    execute_values(
-                        cursor,
-                        "INSERT INTO processing.items (task_id,input_id,input_data,work_key,query) VALUES %s",
-                        rows,
-                        page_size=1000,
-                    )
-                    rows.clear()
-            if rows:
-                execute_values(
-                    cursor,
-                    "INSERT INTO processing.items (task_id,input_id,input_data,work_key,query) VALUES %s",
-                    rows,
-                    page_size=1000,
-                )
-            if freshness_days > 0:
-                # Only reuse already published successes; task-local outboxes stay independent.
-                cursor.execute(
-                    """
-                    UPDATE processing.items i SET state='skipped', accepted_result_id=cached.result_id
-                    FROM (
-                        SELECT pending.input_id, hit.result_id FROM processing.items pending
-                        CROSS JOIN LATERAL (
-                            SELECT r.result_id FROM processing.results r
-                            JOIN processing.export_batches b ON b.batch_id=r.export_batch_id
-                            WHERE r.work_key=pending.work_key AND r.status='success'
-                              AND b.published_at IS NOT NULL
-                              AND r.completed_at >= now() - %s * interval '1 day'
-                            ORDER BY r.completed_at DESC LIMIT 1
-                        ) hit WHERE pending.task_id=%s
-                    ) cached
-                    WHERE i.task_id=%s AND i.input_id=cached.input_id
-                """,
-                    (freshness_days, task_id, task_id),
-                )
+
+    def admit(
+        self, task_id: str, *, after: str | None, input_ids: list[str], capacity: int
+    ) -> bool:
+        """Commit a bounded page of identities and its source cursor atomically.
+
+        A stale reader returns False and reloads the cursor. No cursor advances
+        past identities that have not been committed as recoverable progress.
+        """
+        if not input_ids or len(input_ids) > capacity:
+            raise ValueError("admission requires a nonempty bounded page")
+        if any(
+            not isinstance(value, str) or not value.strip() or "\x00" in value
+            for value in input_ids
+        ):
+            raise ValueError("input_id must be a nonempty stable string without NUL")
+        if input_ids != sorted(set(input_ids)) or (
+            after is not None and input_ids[0] <= after
+        ):
+            raise ValueError("input IDs must be unique and ordered after the cursor")
+        with self.transaction() as cursor:
             cursor.execute(
-                "UPDATE processing.tasks SET total=%s,status='ready',ready_at=now() WHERE task_id=%s",
-                (total, task_id),
+                "SELECT * FROM processing.tasks WHERE task_id=%s FOR UPDATE", (task_id,)
             )
+            task = cursor.fetchone()
+            if task is None or task["status"] != "ready":
+                raise ValueError("task is not ready")
+            if task["source_cursor"] != after:
+                return False
+            open_count = task["admitted_count"] - sum(
+                task[key]
+                for key in (
+                    "succeeded_count",
+                    "terminal_failed_count",
+                    "skipped_count",
+                    "cancelled_count",
+                )
+            )
+            if open_count + len(input_ids) > capacity:
+                return False
+            if (
+                task["admitted_count"] + len(input_ids) > task["total"]
+                or input_ids[-1] > task["source_info"]["upper_id"]
+            ):
+                raise ValueError("input queue differs from its fixed selection")
+            execute_values(
+                cursor,
+                "INSERT INTO processing.items (task_id,input_id) VALUES %s",
+                [(task_id, value) for value in input_ids],
+                page_size=capacity,
+            )
+            cursor.execute(
+                """UPDATE processing.tasks SET source_cursor=%s,admitted_count=admitted_count+%s
+                WHERE task_id=%s""",
+                (input_ids[-1], len(input_ids), task_id),
+            )
+            return True
+
+    def skip_if_fresh(
+        self, item: ClaimedItem, *, work_key: str, freshness_days: int
+    ) -> bool:
+        if freshness_days <= 0:
+            return False
+        with self.transaction() as cursor:
+            cursor.execute(
+                """SELECT r.result_id FROM processing.results r
+                JOIN processing.export_batches b ON b.batch_id=r.export_batch_id
+                WHERE r.work_key=%s AND r.status='success' AND b.published_at IS NOT NULL
+                  AND r.completed_at >= now()-%s*interval '1 day'
+                ORDER BY r.completed_at DESC LIMIT 1""",
+                (work_key, freshness_days),
+            )
+            hit = cursor.fetchone()
+            if hit is None:
+                return False
+            cursor.execute(
+                """UPDATE processing.items SET state='skipped',accepted_result_id=%s,
+                    lease_owner=NULL,lease_token=NULL
+                WHERE task_id=%s AND input_id=%s AND state='running'
+                  AND lease_token=%s AND lease_expires_at>now() RETURNING input_id""",
+                (hit["result_id"], item.task_id, item.input_id, item.lease_token),
+            )
+            return cursor.fetchone() is not None
 
     def claim(
         self, task_id: str, *, owner: str, lease_seconds: int, max_attempts: int
@@ -208,7 +254,7 @@ class ProcessingStore:
                     """UPDATE processing.items SET state='running',attempt=attempt+1,
                         lease_owner=%s,lease_token=%s,lease_expires_at=now()+%s*interval '1 second'
                     WHERE task_id=%s AND input_id=%s
-                    RETURNING task_id::text,input_id,input_data,query,work_key,attempt,lease_token::text""",
+                    RETURNING task_id::text,input_id,attempt,lease_token::text""",
                     (
                         owner,
                         str(uuid4()),
@@ -242,6 +288,7 @@ class ProcessingStore:
         item: ClaimedItem,
         *,
         status: str,
+        work_key: str,
         payload: dict,
         completed_at: datetime,
         max_attempts: int,
@@ -271,7 +318,7 @@ class ProcessingStore:
                     result_id,
                     item.task_id,
                     item.input_id,
-                    item.work_key,
+                    work_key,
                     item.attempt,
                     status,
                     Json(payload),

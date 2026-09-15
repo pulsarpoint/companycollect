@@ -1,63 +1,92 @@
-# Brave processing pilot
+# Brave processing
 
-The `company_brave_search_results` asset in `company_domains` uses the shared
-PostgreSQL `processing` schema for frozen input, claims, responses and progress.
-ClickHouse imports closed result batches through its PostgreSQL integration.
-This pilot replaces Brave's per-response S3 write and ClickHouse insert. The old
-`company_brave_search_results` ClickHouse table and its S3 objects remain readable;
-new responses go to `company_brave_info.answer_text`.
+`company_brave_search_results`, in the `company_domains` group, processes a **fixed
+selection stored in a physical ClickHouse input table**. PostgreSQL stores results
+and progress. Starting a three-million-company task creates one PostgreSQL task
+record; it does not copy three million inputs into PostgreSQL.
 
-Queries open Brave's **Ask** page explicitly. The browser waits for the completed
-answer actions, then captures the answer's Copy text. This avoids ordinary search
-results that do not include an AI answer, and excludes the separate question Copy
-button. Query values are URL-encoded, including Swedish characters, `+`, and `&`.
+Dagster tracks the asset run. PostgreSQL tracks the individual company IDs inside
+that run, so a failed run can resume without repeating saved work. Progress counts
+are logged and attached to the Dagster materialization.
+
+## Prepare and inspect the selection in ClickHouse
+
+Migration `000411_corpscout_company_processing_input` defines an empty,
+country-independent example queue, `corpscout.company_processing_input`.
+Populate it before launching a task. Selection happens here, independently of the
+Brave asset; neither `company_ids` nor raw selection SQL is sent to the asset.
+
+For example, on an empty queue:
+
+```sql
+INSERT INTO corpscout.company_processing_input
+    (input_id, company_id, company_name, country_code)
+SELECT concat('SE:', company_id), company_id, trimBoth(ifNull(legal_name, '')), 'SE'
+FROM corpscout.se_company_basic_info FINAL
+WHERE status = 'active'
+  AND trimBoth(ifNull(legal_name, '')) != ''
+  AND company_id IN ('5560004615', '5560160680');
+
+SELECT * FROM corpscout.company_processing_input ORDER BY input_id;
+SELECT count(), uniqExact(input_id) FROM corpscout.company_processing_input;
+```
+
+This SQL is an example selection, not a Sweden restriction. The asset requires an
+explicit `input_relation` and accepts another prepared table with different input
+columns. It does not create a view or a table at materialization time.
+
+**Keep the selected table unchanged until its task and retries finish.** It is the
+retained input snapshot. Changes to the original registry do not affect rows
+already copied into this queue. Do not truncate, update, refill or replace a queue
+that an unfinished task still needs. For concurrent independent selections, use
+distinct prepared tables. There is no automatic input cleanup.
+
+The table must use `MergeTree`, `ReplicatedMergeTree` or `SharedMergeTree`, in a
+database with table UUIDs, with `ORDER BY input_id`. Views and replacing/aggregating
+engines are rejected. `input_id` must be a unique, nonempty, non-nullable `String`
+without NUL. It is sorted lexically by ClickHouse; it need not be an incremental
+number. Use a country/source prefix if company IDs can overlap across countries.
 
 ## Start a task
 
-Paste this YAML into the Dagster materialization launchpad (it is run config,
-not a separate file that Dagster discovers):
+Paste this YAML into Dagster's materialization launchpad. It is run configuration,
+not a separate file automatically discovered by Dagster:
 
 ```yaml
 ops:
   company_brave_search_results:
     config:
-      input_relation: corpscout.se_company_brave_input
-      input_namespace: se_company
+      input_relation: corpscout.company_processing_input
+      input_namespace: company
       query_type: official_website
       query_template: "Find the official website of {company_name}."
-      max_companies: 100
       requests_per_route: 1
+      input_batch_size: 100
+      freshness_days: 0
+      export_batch_size: 100
+      export_interval_seconds: 30
 ```
 
-The default input view selects active Swedish companies with nonempty names.
-`max_companies` is optional; leaving it out selects all rows in the relation.
-`company_ids` can restrict selection by `input_id`. For a new task the asset
-streams **one SELECT** and inserts the frozen rows into PostgreSQL in batches.
-The snapshot commits atomically before any browser starts. A failed snapshot
-creates no partially ready task. An empty selection produces a successful empty
-task. A duplicate or empty `input_id` fails snapshot preparation.
+Supply a UUID `task_id` if you want to choose its identity beforehand; otherwise
+the asset generates and logs one. Startup validates uniqueness and counts the
+selection inside ClickHouse. Only the total, table identity and upper input ID
+are stored in PostgreSQL. This validation scans IDs inside ClickHouse, so startup
+is not a constant-time operation, but company rows do not cross to PostgreSQL.
 
-You can test a selection independently and then provide its view name:
+The worker reads at most `input_batch_size` rows into memory. It atomically commits
+their IDs and the admission cursor to PostgreSQL. The cursor means “admitted for
+processing”, never “everything before this ID succeeded”. Claims, retry dates,
+lease tokens and accepted result IDs are compact per-item progress records.
+Unadmitted inputs have no PostgreSQL item record.
 
-```sql
-CREATE VIEW corpscout.my_company_selection AS
-SELECT company_id AS input_id, company_id, legal_name AS company_name,
-       'SE' AS country_code
-FROM corpscout.se_company_basic_info FINAL
-WHERE status = 'active' AND company_id IN ('5560004615', '5560160680');
+As slots open, the worker claims pending IDs or admits another bounded page.
+On restart, unfinished IDs are recovered and their input values are read from
+ClickHouse again. A replaced table UUID, missing retry input or early end of the
+queue fails the run rather than silently skipping unfinished work. These checks
+do not make a mutable table immutable: retaining the prepared selection unchanged
+is part of the input contract.
 
-SELECT * FROM corpscout.my_company_selection;
-```
-
-This must be a normal named view/table visible to Dagster's ClickHouse connection,
-not a session-local temporary view. Once the snapshot has committed, changes to
-that view or its source rows cannot change this task's input. The view may then
-be removed independently. View creation from a backoffice selection is a later
-integration; this pilot accepts an existing view.
-
-Every input needs a stable nonempty **String** `input_id`. IDs need not be numeric,
-incremental or sortable: PostgreSQL tracks each item separately. For a domain
-selection, expose `domain AS input_id, domain` and use, for example:
+A domain input table can instead expose `input_id` and `domain`, with:
 
 ```yaml
 input_relation: corpscout.my_domain_selection
@@ -66,137 +95,98 @@ query_type: domain_owner
 query_template: "Which company owns {domain}?"
 ```
 
-`input_namespace` identifies the kind of entity. Keep it stable across selection
-views containing the same kind of input. Template placeholders are simple column
-names; missing/empty values, attribute access, conversions and format expressions
-are rejected. All input columns and the exact rendered query are frozen. Dates
-and decimals in custom views are stored as text. Templates never become SQL.
+Placeholders are simple column names; missing/empty values, attribute access,
+conversions and format expressions are rejected. Templates are rendered in memory
+from the selected row and never become SQL. PostgreSQL saves the rendered request
+with its response, not arbitrary input columns.
 
-## Resume and publish
+## Requests, results and recovery
 
-`task_id` is logged and attached as output metadata before preparation starts.
-You may supply a UUID when starting a task to make its identity known beforehand.
-Resume an interrupted task with:
+Four routes (`direct`, `crawl_proxy1`, `crawl_proxy2`, `crawl_proxy3`) each allow one
+request by default. Fast routes save their result and refill while slower routes
+are still busy. `requests_per_route` supports 1–8; `input_batch_size` must cover all
+configured request slots. The Dagster pool `company_domains_brave` limits concurrent
+materializations to one, preserving the existing proxy traffic limit.
+
+The browser opens Brave's **Ask** page, waits for completed answer actions and
+captures the answer's Copy text. It distinguishes that button from the question's
+Copy button. The copied answer is stored as `answer_text`, together with query,
+company attribution, route, source URL, status and result identity. Domain extraction
+is a separate concern; an answer can contain more than one website.
+
+PostgreSQL saves each response and its progress transition in the same synchronous
+transaction. Claims use `FOR UPDATE SKIP LOCKED` and renewable lease tokens. A stale
+worker cannot overwrite a reclaimed attempt. Defaults are three attempts, a
+60-second retry delay and a 300-second lease. Crashed attempts count toward the
+budget; graceful exit releases unfinished claims.
+
+Resume with only the original task ID:
 
 ```yaml
 ops:
   company_brave_search_results:
     config:
-      task_id: "the-UUID-from-the-original-run"
+      task_id: "the-original-task-UUID"
 ```
 
-The same task uses its stored selection and queries. Input relation, selection,
-query type, template and freshness options apply only when creating a task;
-changing them requires a new task ID. Operational settings such as route
-concurrency and export batch size can change on resume. Dagster run IDs identify
-execution attempts; they are never a completion cursor.
+The saved input relation, namespace, template, query type and freshness policy
+remain fixed. Operational settings such as route concurrency and batch size can
+change. A completed task can resume without access to its input table. Use
+`mode: publish` with the task ID to publish saved responses without Brave requests.
 
-For publication recovery alone, set `mode: publish` with that task ID. This reads
-saved responses and makes no Brave requests. A ClickHouse outage may fail the
-materialization while all browser work is already saved. Publication recovery
-succeeds independently of whether some input items exhausted their search retries.
+`freshness_days` defaults to 30; zero forces fresh requests. Only published
+successes are reused. The work fingerprint covers processor version, namespace,
+query type, template, rendered query and input values, but not task ID or queue
+name. Reuse is checked as each item is claimed and recorded as `skipped` progress.
 
-## Concurrency and recovery
+## Progress and publication
 
-Each direct/proxy worker holds its own browser. Four routes (`direct`,
-`crawl_proxy1`, `crawl_proxy2`, `crawl_proxy3`) run with one request each by default.
-A worker saves its outcome in a short PostgreSQL transaction before taking another
-item; fast routes refill while slow routes are still busy. `requests_per_route`
-allows 1–8. The Dagster `company_domains_brave` pool retains its existing limit of
-one materialization, so overlapping Dagster runs do not multiply proxy traffic.
-
-Claims use `FOR UPDATE SKIP LOCKED` and a fresh lease token. Heartbeats renew live
-claims every third of `lease_seconds` (default 300 seconds). A stale worker cannot
-save over a reclaimed item. Graceful exit releases unfinished claims; after a
-killed process, expired claims become eligible again. Searches retry up to
-`max_attempts` (default 3), waiting `retry_seconds` (default 60) after errors.
-Attempts abandoned by crashed workers count toward that budget too.
-
-Task progress is available directly in PostgreSQL throughout processing:
+Read live counts in PostgreSQL:
 
 ```sql
 SELECT * FROM processing.task_progress WHERE task_id = 'task-uuid';
+SELECT total, admitted_count, source_cursor
+FROM processing.tasks WHERE task_id = 'task-uuid';
 ```
 
 `total = queued + running + retry_wait + succeeded + terminal_failed + skipped + cancelled`.
-`remaining = queued + running + retry_wait`. `unpublished` counts saved outcomes
-whose export batch has not been acknowledged, including error attempts. A task
-can therefore have `remaining = 0` and `unpublished > 0`. Task `status = ready`
-means its snapshot is usable, not that processing or publication has finished.
-Dagster materialization metadata includes these counts and the task ID.
+`queued` includes unadmitted ClickHouse inputs. `remaining = queued + running + retry_wait`.
+Terminal counts update transactionally; progress polling reads counters and bounded
+open work instead of scanning millions of finished item records. `status = ready`
+means the task can be processed; completion is represented by `remaining = 0`.
 
-New tasks reuse only published successes within `freshness_days` (default 30).
-The fingerprint covers processor version, input namespace, query type, template,
-rendered query and frozen input values. Selection view names, row limits and task
-IDs do not change that fingerprint. `freshness_days: 0` forces fresh work. The
-legacy S3-only Brave index is not reused for the new query contract. Failed items
-remain visible; start a new selection to retry terminal failures, reusing its
-already published successes as appropriate.
+Saved outcomes are assigned to closed export batches. ClickHouse imports them with
+`INSERT SELECT FROM postgresql(processing_postgres, table='brave_export', schema='processing')`
+filtered by batch ID. The importer verifies the deduplicated count before
+acknowledging the batch. Partial imports and lost acknowledgments replay the same
+result IDs. Read `corpscout.company_brave_info_deduplicated` or the base table with
+`FINAL`; filter successful outcomes and the appropriate query type for downstream use.
 
-## Publication contract
+`unpublished` counts saved outcomes awaiting acknowledgment, including failed
+attempts. A publication outage does not make successful searches pending again.
+Flushes happen at the configured result count, on the first completion after the
+time threshold, and at the end. There is no distributed transaction: a crash after
+receiving an external answer but before saving it can repeat that request.
 
-Responses are committed with item state in PostgreSQL before publication.
-Each result has a stable ID and timestamp. Export assigns a fixed set of results
-to a batch in a transaction, then ClickHouse executes:
+## Deployment and scope
 
-```sql
-INSERT INTO corpscout.company_brave_info (...)
-SELECT ...
-FROM postgresql(processing_postgres, table='brave_export', schema='processing')
-WHERE export_batch_id = 'batch-uuid';
-```
+PostgreSQL uses the existing server shared with Dagster, in the application's
+`corpscout` database and `processing` schema. Dagster's internal metadata is in its
+separate `dagster` database. The instances share server resources.
 
-The equality predicate is pushed to PostgreSQL; an index supports batch lookup.
-The importer checks the deduplicated row count before acknowledging the batch.
-An interrupted insert or lost acknowledgment replays the same IDs. Consumers
-must read `corpscout.company_brave_info_deduplicated`, or the base table with
-`FINAL`, for correctness before background merges. Error responses are retained
-alongside successes, so domain consumers should filter `status = 'success'` and
-choose the desired `query_type`/version.
+Apply PostgreSQL migration `000120_processing_clickhouse_input` after `000119` and
+ClickHouse migration `000411` after `000410`. The PostgreSQL migration preserves
+old result/export data and refuses to remove input payloads while legacy tasks
+are unfinished. It is forward-only. Deploy the matching worker code after applying
+it; old workers require columns that the migration removes.
 
-Batches flush at 100 saved outcomes or on the first completion after 30 seconds,
-plus a final flush; both thresholds are configurable. PostgreSQL is the durable
-outbox, so an outage does not discard responses or make successful items pending.
-There is no distributed transaction or guarantee that an external search executes
-exactly once: a crash before saving its response can repeat that search.
+Existing `PROCESSING_PG_URL` and `PROCESSING_CLICKHOUSE_*` credentials remain valid.
+`scripts/provision-processing-storage.py` owns the least-privilege worker, export
+reader, publisher and named collection setup. Retain its private credentials file.
+Credentials are never materialization parameters. Back up both the PostgreSQL
+progress/results and retained ClickHouse inputs, including access metadata.
 
-The pilot retains snapshots/results/batches; no automatic pruning is enabled.
-Include the `corpscout` PostgreSQL database in backups. Do not apply the existing
-"S3 is rebuildable cache" retention policy to this queue. PostgreSQL uses one
-serialized connection per Dagster run and synchronous commits. Larger evidence
-objects and other processors can adopt this contract separately; translation,
-Ratsit and web technology flows are unchanged by this pilot.
-
-## Deployment
-
-1. Apply PostgreSQL migration `000119_processing_tasks` to the application
-   `corpscout` database and ClickHouse migration `000410_corpscout_company_brave_info`.
-2. Run `scripts/provision-processing-storage.py` with `PROCESSING_ADMIN_PG_URL`
-   and the existing administrative `CLICKHOUSE_*` environment. The ClickHouse
-   administrator needs named-collection control during provisioning. The script
-   saves generated credentials in a required mode-0600 `--credentials-file`;
-   retain that file for idempotent provisioning. Supply a PostgreSQL host reachable
-   from both Dagster and ClickHouse with `--postgres-host-for-clients`.
-3. Copy only `PROCESSING_PG_URL`, `PROCESSING_CLICKHOUSE_USER`, and
-   `PROCESSING_CLICKHOUSE_PASSWORD` into the server-owned Dagster `.env`.
-   PostgreSQL worker/reader credentials never enter Dagster materialization YAML.
-4. Deploy using the full Ansible `sync.yml` path because environment/dependencies
-   changed. Verify definitions and the external read before launching any task.
-
-The PostgreSQL worker has access only to the processing schema; the export reader
-can read only `processing.brave_export`. The persisted ClickHouse named collection
-`processing_postgres` uses that reader and forbids connection overrides. The SQL
-user `processing_publisher` can use the collection and read/insert the result
-table. The normal ClickHouse resource selects input; this separate publisher
-resource uses `PROCESSING_CLICKHOUSE_*`. Administrative privileges are not needed
-at materialization time. Back up ClickHouse access metadata/named collections too.
-
-Validation uses disposable PostgreSQL 17 and ClickHouse 26.5 Docker servers,
-including concurrent claims, stale fencing, partial publication, lost acknowledgments,
-a publication outage, credential scope, and actual Dagster materialization/resume.
-The browser tests intercept requests with fixtures; they do not query Brave.
-
-A separate [live pilot on 2026-09-15](company-brave-pilot-2026-09-15.md) completed
-eight real company queries across all four routes, verified identical saved
-responses in PostgreSQL and ClickHouse, and resumed without new processing attempts
-or duplicate results.
+This change applies to Brave only. Translation, Ratsit and webtech remain unchanged.
+Tests use disposable PostgreSQL 17 and ClickHouse 26.5 servers, including a real
+three-million-row ClickHouse queue with only 100 admitted PostgreSQL IDs, concurrent
+claims, restart recovery, migration preservation and replayable publication.

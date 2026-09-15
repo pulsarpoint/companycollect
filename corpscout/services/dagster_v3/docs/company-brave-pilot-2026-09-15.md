@@ -1,5 +1,8 @@
 # Brave PostgreSQL pilot — 2026-09-15
 
+> This records the earlier PostgreSQL-input pilot. The current workflow keeps the
+> input selection in ClickHouse; see [the operator guide](company-brave-processing.md).
+
 Both production Dagster runs succeeded. Eight company queries used Brave Ask, saved their complete copied answers in PostgreSQL, and published matching rows to ClickHouse. Resuming the same task created no new processing attempts, result rows, or export batches.
 
 ## Identity and deployment

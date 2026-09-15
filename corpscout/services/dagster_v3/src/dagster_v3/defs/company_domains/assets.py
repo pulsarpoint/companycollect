@@ -1,9 +1,6 @@
-"""Frozen Brave tasks with durable responses and replayable ClickHouse publication."""
+"""Fixed ClickHouse inputs with durable PostgreSQL progress and Brave responses."""
 
-import json
 import os
-import re
-from collections.abc import Iterator
 from contextlib import closing
 from threading import Event, Thread
 from time import monotonic
@@ -14,7 +11,16 @@ import dagster as dg
 from dagster_clickhouse import ClickhouseResource
 from pydantic import Field, field_validator
 
-from dagster_v3.defs.common.processing import ProcessingResource, ProcessingStore
+from dagster_v3.defs.common.clickhouse_queue import (
+    ClickHouseInputQueue,
+    validate_relation,
+)
+from dagster_v3.defs.common.processing import (
+    ProcessingResource,
+    ProcessingStore,
+    render_query,
+    work_key,
+)
 from dagster_v3.defs.company_domains.browser import (
     ROUTES,
     BraveBrowserResource,
@@ -57,15 +63,14 @@ WHERE export_batch_id = %(batch_id)s
 class BraveSearchConfig(dg.Config):
     task_id: str | None = None
     mode: Literal["process", "publish"] = "process"
-    input_relation: str = "corpscout.se_company_brave_input"
-    input_namespace: str = Field(default="se_company", min_length=1)
+    input_relation: str | None = None
+    input_namespace: str = Field(default="company", min_length=1)
     query_type: str = Field(default="official_website", min_length=1)
     query_template: str = Field(
         default="Find the official website of {company_name}.", min_length=1
     )
     requests_per_route: int = Field(default=1, ge=1, le=8)
-    max_companies: int | None = Field(default=None, ge=1)
-    company_ids: list[str] = Field(default_factory=list)
+    input_batch_size: int = Field(default=100, ge=4, le=10_000)
     freshness_days: int = Field(default=30, ge=0)
     max_attempts: int = Field(default=3, ge=1, le=10)
     retry_seconds: int = Field(default=60, ge=0, le=3600)
@@ -75,45 +80,13 @@ class BraveSearchConfig(dg.Config):
 
     @field_validator("input_relation")
     @classmethod
-    def named_relation(cls, value: str) -> str:
-        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*", value):
-            raise ValueError(
-                "input_relation must be a database.table or database.view name"
-            )
-        return value
+    def named_relation(cls, value: str | None) -> str | None:
+        return validate_relation(value) if value is not None else None
 
     @field_validator("task_id")
     @classmethod
     def stable_task_id(cls, value: str | None) -> str | None:
         return str(UUID(value)) if value is not None else None
-
-
-def snapshot_inputs(
-    clickhouse: ClickhouseResource, config: BraveSearchConfig
-) -> Iterator[dict]:
-    """One streaming SELECT freezes membership and values; no moving keyset cursor."""
-    sql = f"SELECT * FROM {config.input_relation}"
-    params = {}
-    if config.company_ids:
-        sql += " WHERE input_id IN %(ids)s"
-        params["ids"] = tuple(config.company_ids)
-    if config.max_companies is not None:
-        sql += " ORDER BY input_id LIMIT %(limit)s"
-        params["limit"] = config.max_companies
-    with clickhouse.get_connection() as client:
-        rows = client.execute_iter(
-            sql, params, with_column_types=True, settings={"max_block_size": 1000}
-        )
-        columns = [name for name, _ in next(rows)]
-        if "input_id" not in columns or len(columns) != len(set(columns)):
-            raise ValueError(
-                "input relation requires uniquely named columns including input_id"
-            )
-        for row in rows:
-            # Dates/decimals from other named input views are frozen as text too.
-            yield json.loads(
-                json.dumps(dict(zip(columns, row, strict=True)), default=str)
-            )
 
 
 def publish_results(
@@ -150,7 +123,7 @@ def publish_results(
     kinds={"python", "browser", "postgres", "clickhouse"},
     pool="company_domains_brave",
     tags={"source": "brave"},
-    description="Freeze a named input relation, render the query template, and collect copied Brave "
+    description="Read a fixed ClickHouse input queue, render the query template, and collect copied Brave "
     "responses with four continuously refilled routes. PostgreSQL holds task progress and responses; "
     "closed batches are imported by ClickHouse SQL. Supply task_id to resume or mode=publish to replay exports.",
 )
@@ -162,6 +135,11 @@ def company_brave_search_results(
     company_brave_browser: BraveBrowserResource,
     processing: ProcessingResource,
 ) -> dg.MaterializeResult:
+    if (
+        config.mode == "process"
+        and config.input_batch_size < len(ROUTES) * config.requests_per_route
+    ):
+        raise ValueError("input_batch_size must cover all configured request slots")
     task_id = config.task_id or str(uuid4())
     # Persist identity in the event log before selection so interrupted preparation is traceable.
     context.add_output_metadata({"task_id": task_id})
@@ -171,36 +149,44 @@ def company_brave_search_results(
         if task is None:
             if config.mode == "publish":
                 raise ValueError("publish mode requires an existing task_id")
-            frozen_config = {
+            if config.input_relation is None:
+                raise ValueError(
+                    "new tasks require input_relation: a prepared physical ClickHouse queue"
+                )
+            saved_config = {
                 key: getattr(config, key)
                 for key in (
                     "input_relation",
                     "input_namespace",
                     "query_type",
                     "query_template",
-                    "company_ids",
-                    "max_companies",
                     "freshness_days",
                 )
             }
-            with closing(snapshot_inputs(clickhouse, config)) as inputs:
-                store.freeze(
-                    task_id,
-                    processor=PROCESSOR_VERSION,
-                    config=frozen_config,
-                    work_config={
-                        key: frozen_config[key]
-                        for key in ("input_namespace", "query_type")
-                    },
-                    inputs=inputs,
-                    query_template=config.query_template,
-                    freshness_days=config.freshness_days,
-                )
-        elif task["processor"] != PROCESSOR_VERSION:
+            source = ClickHouseInputQueue(clickhouse, config.input_relation)
+            store.register(
+                task_id,
+                processor=PROCESSOR_VERSION,
+                config=saved_config,
+                work_config={
+                    key: saved_config[key] for key in ("input_namespace", "query_type")
+                },
+                source_info=source.inspect(),
+            )
+            task = store.task(task_id)
+        if task["processor"] != PROCESSOR_VERSION:
             raise ValueError("task belongs to a different processor version")
-        elif task["status"] != "ready":
+        if task["status"] != "ready":
             raise ValueError("task is not ready for processing")
-        # New input/template settings only apply to new tasks. Resumes use the stored queries.
+        # A resume always uses the registered selection and template.
+        saved_config = task["config"]
+        source_info = task["source_info"]
+        source = (
+            ClickHouseInputQueue(clickhouse, source_info["relation"])
+            if source_info
+            else None
+        )
+        input_cache = {}
         errors = []
         stopped = Event()
 
@@ -218,6 +204,7 @@ def company_brave_search_results(
         claims = {}
 
         def companies():
+            # iter_answers serializes this generator while browser workers run independently.
             while not stopped.is_set():
                 item = store.claim(
                     task_id,
@@ -226,24 +213,88 @@ def company_brave_search_results(
                     max_attempts=config.max_attempts,
                 )
                 if item is None:
-                    return
-                claims[item.lease_token] = item
+                    current = store.task(task_id)
+                    if current["admitted_count"] == current["total"]:
+                        return
+                    open_count = current["admitted_count"] - sum(
+                        current[key]
+                        for key in (
+                            "succeeded_count",
+                            "terminal_failed_count",
+                            "skipped_count",
+                            "cancelled_count",
+                        )
+                    )
+                    available = config.input_batch_size - open_count
+                    if available <= 0:
+                        return
+                    rows = source.read(
+                        source_info, after=current["source_cursor"], limit=available
+                    )
+                    if not rows:
+                        raise ValueError(
+                            "fixed input queue ended before its registered total"
+                        )
+                    for values in rows:
+                        render_query(saved_config["query_template"], values)
+                    if store.admit(
+                        task_id,
+                        after=current["source_cursor"],
+                        input_ids=[row["input_id"] for row in rows],
+                        capacity=config.input_batch_size,
+                    ):
+                        input_cache.update((row["input_id"], row) for row in rows)
+                        context.log.info(
+                            "Brave task=%s admitted=%s/%s",
+                            task_id,
+                            current["admitted_count"] + len(rows),
+                            current["total"],
+                        )
+                    continue
+                values = input_cache.pop(item.input_id, None)
+                if values is None:
+                    values = source.read(source_info, input_id=item.input_id)[0]
+                query = render_query(saved_config["query_template"], values)
+                key = work_key(
+                    PROCESSOR_VERSION,
+                    task["work_config"],
+                    saved_config["query_template"],
+                    values,
+                    query,
+                )
+                if store.skip_if_fresh(
+                    item, work_key=key, freshness_days=saved_config["freshness_days"]
+                ):
+                    continue
+                # Retain only request/result attribution while the browser is active.
+                claims[item.lease_token] = (
+                    item,
+                    key,
+                    {
+                        "query": query,
+                        "company_id": str(values.get("company_id") or item.input_id),
+                        "company_name": str(values.get("company_name") or ""),
+                        "country_code": str(values.get("country_code") or ""),
+                    },
+                )
                 yield CompanySearchInput(
                     item.input_id,
-                    str(item.input_data.get("company_name") or item.input_id),
-                    item.query,
+                    str(values.get("company_name") or item.input_id),
+                    query,
                     item.lease_token,
                 )
 
         def save(result: BraveSearchResult):
-            item = claims.pop(result.company.request_id)
+            item, key, attribution = claims.pop(result.company.request_id)
             if result.status == "success" and not result.answer.strip():
                 raise ValueError("cannot save an empty successful Brave response")
             store.complete(
                 item,
                 status=result.status,
+                work_key=key,
                 completed_at=result.fetched_at,
                 payload={
+                    **attribution,
                     "answer_text": result.answer,
                     "route": result.route,
                     "source_url": result.source_url,

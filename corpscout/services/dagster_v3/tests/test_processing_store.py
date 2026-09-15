@@ -76,6 +76,11 @@ def store(processing_postgres_url):
     try:
         with connection, connection.cursor() as cursor:
             cursor.execute(MIGRATION.read_text())
+            cursor.execute(
+                MIGRATION.with_name(
+                    "000120_processing_clickhouse_input.up.sql"
+                ).read_text()
+            )
         yield ProcessingStore(connection), dsn
     finally:
         connection.close()
@@ -84,21 +89,23 @@ def store(processing_postgres_url):
         admin.close()
 
 
-def freeze(
+def prepare_task(
     store, names=("First AB", "Second AB"), task_id=None, template="Find {company_name}"
 ):
     task_id = task_id or str(uuid4())
-    store.freeze(
+    inputs = {
+        str(i): {"input_id": str(i), "company_name": name}
+        for i, name in enumerate(names)
+    }
+    store.register(
         task_id,
         processor="brave-v2",
         config={"query_template": template},
         work_config={},
-        inputs=(
-            {"input_id": str(i), "company_name": name} for i, name in enumerate(names)
-        ),
-        query_template=template,
-        freshness_days=30,
+        source_info={"total": len(inputs), "upper_id": max(inputs, default="")},
     )
+    if inputs:
+        store.admit(task_id, after=None, input_ids=sorted(inputs), capacity=len(inputs))
     return task_id
 
 
@@ -110,71 +117,103 @@ def complete(store, item, status="success", answer="Copied response"):
     return store.complete(
         item,
         status=status,
-        payload={"answer_text": answer},
+        work_key="test-work-" + item.input_id,
+        payload={"answer_text": answer, "query": "Find " + item.input_id},
         completed_at=datetime.now(UTC),
         max_attempts=3,
         retry_seconds=0,
     )
 
 
-def test_snapshot_is_frozen_and_resume_never_consumes_new_input(store):
+def test_registration_keeps_millions_of_inputs_out_of_postgres(store):
     queue, _ = store
-    task = freeze(queue)
+    task = str(uuid4())
+    source = {"total": 3_000_000, "upper_id": "999999"}
+    queue.register(
+        task, processor="brave-v2", config={}, work_config={}, source_info=source
+    )
+    queue.register(
+        task, processor="brave-v2", config={}, work_config={}, source_info=source
+    )
+    assert (
+        queue.progress(task)["total"] == queue.progress(task)["remaining"] == 3_000_000
+    )
+    with queue.transaction() as cursor:
+        cursor.execute("SELECT count(*) FROM processing.items")
+        assert cursor.fetchone()["count"] == 0
+        cursor.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_schema='processing' AND table_name='items'"
+        )
+        assert not {"input_data", "query", "work_key"} & {
+            row["column_name"] for row in cursor.fetchall()
+        }
+    with pytest.raises(ValueError, match="configuration"):
+        queue.register(
+            task,
+            processor="brave-v2",
+            config={"changed": True},
+            work_config={},
+            source_info=source,
+        )
 
-    def unexpected_input():
-        pytest.fail("resume reran the input selection")
-        yield
 
-    queue.freeze(
+def test_admission_cursor_and_ids_commit_together_and_limit_open_work(store):
+    queue, dsn = store
+    task = str(uuid4())
+    queue.register(
         task,
         processor="brave-v2",
-        config={"query_template": "Find {company_name}"},
+        config={},
         work_config={},
-        inputs=unexpected_input(),
-        query_template="Find {company_name}",
-        freshness_days=30,
+        source_info={"total": 10, "upper_id": "9"},
     )
-    first = claim(queue, task)
-    assert first.input_data == {"input_id": "0", "company_name": "First AB"}
-    assert first.query == "Find First AB"
-    assert queue.progress(task)["total"] == 2
-    with pytest.raises(ValueError, match="configuration"):
-        freeze(queue, task_id=task, template="Different {company_name}")
+    assert queue.admit(task, after=None, input_ids=["0", "1"], capacity=2)
+    assert not queue.admit(task, after=None, input_ids=["0", "1"], capacity=2)
+    assert not queue.admit(task, after="1", input_ids=["2"], capacity=2)
+    assert queue.task(task)["source_cursor"] == "1"
+    from dagster_v3.defs.common.processing import ProcessingStore
+
+    with closing(psycopg2.connect(dsn)) as connection:
+        recovered = ProcessingStore(connection)
+        assert recovered.task(task)["admitted_count"] == 2
+        complete(recovered, claim(recovered, task))
+        assert recovered.admit(task, after="1", input_ids=["2"], capacity=2)
+    assert queue.progress(task)["remaining"] == 9
+    assert queue.progress(task)["queued"] == 9
+    for values in (["3", "3"], ["4", "3"], [""], ["bad\x00id"]):
+        with pytest.raises(ValueError):
+            queue.admit(task, after="2", input_ids=values, capacity=10)
+        assert queue.task(task)["source_cursor"] == "2"
 
 
-def test_bad_or_duplicate_inputs_leave_no_partial_task(store):
+def test_failed_admission_rolls_back_inserted_ids_and_cursor(store):
     queue, _ = store
-    for inputs, template in [
-        (
-            [
-                {"input_id": "1", "company_name": "A"},
-                {"input_id": "1", "company_name": "B"},
-            ],
-            "Find {company_name}",
-        ),
-        ([{"input_id": "", "company_name": "A"}], "Find {company_name}"),
-        ([{"input_id": "1", "company_name": "A"}], "Find {missing}"),
-        ([{"input_id": "1", "company_name": None}], "Find {company_name}"),
-    ]:
-        task = str(uuid4())
-        with pytest.raises((ValueError, psycopg2.IntegrityError)):
-            queue.freeze(
-                task,
-                processor="brave-v2",
-                config={},
-                work_config={},
-                inputs=iter(inputs),
-                query_template=template,
-                freshness_days=0,
-            )
-        assert queue.task(task) is None
-    empty = freeze(queue, names=())
-    assert queue.progress(empty)["remaining"] == 0
+    task = str(uuid4())
+    queue.register(
+        task,
+        processor="brave-v2",
+        config={},
+        work_config={},
+        source_info={"total": 10, "upper_id": "9"},
+    )
+    with queue.transaction() as cursor:
+        cursor.execute(
+            "INSERT INTO processing.items(task_id,input_id) VALUES (%s,'1')", (task,)
+        )
+    with pytest.raises(psycopg2.IntegrityError):
+        queue.admit(task, after=None, input_ids=["0", "1"], capacity=10)
+    assert queue.task(task)["source_cursor"] is None
+    assert queue.task(task)["admitted_count"] == 0
+    with queue.transaction() as cursor:
+        cursor.execute(
+            "SELECT input_id FROM processing.items WHERE task_id=%s", (task,)
+        )
+        assert [row["input_id"] for row in cursor.fetchall()] == ["1"]
 
 
 def test_out_of_order_completion_and_restart_never_skip_slow_item(store):
     queue, dsn = store
-    task = freeze(queue)
+    task = prepare_task(queue)
     slow, fast = claim(queue, task), claim(queue, task)
     result = complete(queue, fast)
     assert result is not None
@@ -199,7 +238,7 @@ def test_out_of_order_completion_and_restart_never_skip_slow_item(store):
 
 def test_independent_connections_claim_distinct_items(store):
     queue, dsn = store
-    task = freeze(queue, names=tuple(f"Company {i}" for i in range(20)))
+    task = prepare_task(queue, names=tuple(f"Company {i}" for i in range(20)))
     from dagster_v3.defs.common.processing import ProcessingStore
 
     def work(_):
@@ -222,7 +261,7 @@ def test_independent_connections_claim_distinct_items(store):
 
 def test_retry_budget_and_expired_tokens(store):
     queue, _ = store
-    task = freeze(queue, names=("A",))
+    task = prepare_task(queue, names=("A",))
     old = claim(queue, task)
     with queue.connection, queue.connection.cursor() as cursor:
         cursor.execute(
@@ -243,7 +282,7 @@ def test_retry_budget_and_expired_tokens(store):
 
 def test_batches_are_closed_replayable_and_do_not_capture_later_results(store):
     queue, _ = store
-    task = freeze(queue)
+    task = prepare_task(queue)
     first, second = claim(queue, task), claim(queue, task)
     result_id = complete(queue, first)
     batch = queue.export_batch(task, limit=100, destination="company_brave_info_v1")
@@ -266,67 +305,54 @@ def test_batches_are_closed_replayable_and_do_not_capture_later_results(store):
         )
         assert cursor.fetchall() == [(result_id,)]
     queue.acknowledge(next_batch)
+    queue.acknowledge(next_batch)
     assert queue.progress(task)["unpublished"] == 0
 
 
-def test_cache_keys_include_input_template_and_query_type(store):
+def test_freshness_skips_only_published_matching_results_with_a_live_claim(store):
     queue, _ = store
-    first = freeze(queue, names=("A",))
+    first = prepare_task(queue, names=("A",))
     complete(queue, claim(queue, first))
+    next_task = prepare_task(queue, names=("A",))
+    item = claim(queue, next_task)
+    assert not queue.skip_if_fresh(item, work_key="test-work-0", freshness_days=30)
     queue.acknowledge(
         queue.export_batch(first, limit=100, destination="company_brave_info_v1")
     )
-    cached = freeze(queue, names=("A",))
-    assert queue.progress(cached)["skipped"] == 1
-    assert claim(queue, cached) is None
-    changed = freeze(queue, names=("A",), template="New {company_name}")
-    assert queue.progress(changed)["queued"] == 1
-    renamed = freeze(queue, names=("Renamed",))
-    assert queue.progress(renamed)["queued"] == 1
+    assert not queue.skip_if_fresh(item, work_key="changed-query", freshness_days=30)
+    assert not queue.skip_if_fresh(item, work_key="test-work-0", freshness_days=0)
+    assert queue.skip_if_fresh(item, work_key="test-work-0", freshness_days=30)
+    assert not queue.skip_if_fresh(item, work_key="test-work-0", freshness_days=30)
+    assert queue.progress(next_task)["skipped"] == 1
+    assert queue.progress(next_task)["remaining"] == 0
+    assert complete(queue, item) is None
 
 
-def test_selection_limits_do_not_change_semantic_work_identity(store):
-    queue, _ = store
-    first, second = str(uuid4()), str(uuid4())
-    for task, limit in [(first, 1), (second, 10)]:
-        queue.freeze(
-            task,
-            processor="brave-v2",
-            config={"limit": limit},
-            work_config={"query_type": "website", "input_namespace": "companies"},
-            inputs=[{"input_id": "1", "company_name": "A"}],
-            query_template="Find {company_name}",
-            freshness_days=30,
-        )
-        if task == first:
-            complete(queue, claim(queue, task))
-            queue.acknowledge(
-                queue.export_batch(task, limit=100, destination="company_brave_info_v1")
-            )
-    assert queue.progress(second)["skipped"] == 1
+def test_work_identity_changes_with_input_template_and_query_type():
+    from dagster_v3.defs.common.processing import work_key
 
-
-def test_duplicate_after_a_snapshot_batch_rolls_back_the_entire_snapshot(store):
-    queue, _ = store
-    task = str(uuid4())
-    rows = [{"input_id": str(i), "company_name": f"Name {i}"} for i in range(1000)]
-    rows.append({"input_id": "0", "company_name": "Duplicate"})
-    with pytest.raises(psycopg2.IntegrityError):
-        queue.freeze(
-            task,
-            processor="brave-v2",
-            config={},
-            work_config={},
-            inputs=rows,
-            query_template="Find {company_name}",
-            freshness_days=0,
-        )
-    assert queue.task(task) is None
+    values = {"input_id": "1", "company_name": "A"}
+    key = work_key(
+        "brave-v2", {"query_type": "website"}, "Find {company_name}", values, "Find A"
+    )
+    assert key != work_key(
+        "brave-v2", {"query_type": "other"}, "Find {company_name}", values, "Find A"
+    )
+    assert key != work_key(
+        "brave-v2", {"query_type": "website"}, "Find {company_name}.", values, "Find A."
+    )
+    assert key != work_key(
+        "brave-v2",
+        {"query_type": "website"},
+        "Find {company_name}",
+        {**values, "company_name": "B"},
+        "Find B",
+    )
 
 
 def test_heartbeat_only_renews_live_claims(store):
     queue, _ = store
-    task = freeze(queue)
+    task = prepare_task(queue)
     expired, live = claim(queue, task), claim(queue, task)
     with queue.connection, queue.connection.cursor() as cursor:
         cursor.execute(
@@ -362,7 +388,7 @@ def test_templates_reject_missing_or_non_column_expressions(template):
 
 def test_abandoned_last_attempt_is_terminal_and_does_not_block_the_next_item(store):
     queue, _ = store
-    task = freeze(queue)
+    task = prepare_task(queue)
     exhausted = claim(queue, task)
     with queue.connection, queue.connection.cursor() as cursor:
         cursor.execute(
@@ -374,3 +400,49 @@ def test_abandoned_last_attempt_is_terminal_and_does_not_block_the_next_item(sto
     assert next_item.input_id == "1"
     assert queue.progress(task)["terminal_failed"] == 1
     assert complete(queue, exhausted) is None
+
+
+def test_migration_preserves_legacy_responses_and_refuses_unfinished_inputs(store):
+    queue, _ = store
+    task, result = str(uuid4()), str(uuid4())
+    with queue.transaction() as cursor:
+        cursor.execute("DROP SCHEMA processing CASCADE")
+        cursor.execute(MIGRATION.read_text())
+        cursor.execute(
+            "INSERT INTO processing.tasks(task_id,processor,config,work_config,status,total) VALUES (%s,'brave-v2','{}','{}','ready',1)",
+            (task,),
+        )
+        cursor.execute(
+            "INSERT INTO processing.items(task_id,input_id,input_data,query,work_key) VALUES (%s,'1','{\"company_name\":\"Original AB\",\"country_code\":\"SE\"}','Find Original AB','old-key')",
+            (task,),
+        )
+    with pytest.raises(psycopg2.errors.RaiseException, match="Finish legacy"):
+        with queue.transaction() as cursor:
+            cursor.execute(
+                MIGRATION.with_name(
+                    "000120_processing_clickhouse_input.up.sql"
+                ).read_text()
+            )
+    with queue.transaction() as cursor:
+        cursor.execute(
+            "INSERT INTO processing.results(result_id,task_id,input_id,work_key,attempt,status,payload,completed_at) VALUES (%s,%s,'1','old-key',1,'success','{\"answer_text\":\"Exact copied answer åäö\"}',now())",
+            (result, task),
+        )
+        cursor.execute(
+            "UPDATE processing.items SET state='succeeded',attempt=1,accepted_result_id=%s WHERE task_id=%s",
+            (result, task),
+        )
+        cursor.execute("SELECT * FROM processing.brave_export")
+        before = dict(cursor.fetchone())
+        cursor.execute(
+            MIGRATION.with_name("000120_processing_clickhouse_input.up.sql").read_text()
+        )
+        cursor.execute("SELECT * FROM processing.brave_export")
+        assert dict(cursor.fetchone()) == before
+    assert queue.progress(task)["succeeded"] == 1
+    assert queue.progress(task)["remaining"] == 0
+    assert queue.progress(task)["unpublished"] == 1
+    queue.acknowledge(
+        queue.export_batch(task, limit=100, destination="company_brave_info_v1")
+    )
+    assert queue.progress(task)["unpublished"] == 0

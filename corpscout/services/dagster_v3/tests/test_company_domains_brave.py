@@ -253,12 +253,13 @@ def test_asset_serializes_runs_and_config_bounds_route_concurrency():
     }
     assert company_brave_search_results.op.pool == "company_domains_brave"
     assert BraveSearchConfig().requests_per_route == 1
-    assert BraveSearchConfig().max_companies is None
+    assert BraveSearchConfig().input_relation is None
+    assert BraveSearchConfig().input_batch_size == 100
     for invalid in [0, -1]:
         with pytest.raises(ValueError):
             BraveSearchConfig(requests_per_route=invalid)
         with pytest.raises(ValueError):
-            BraveSearchConfig(max_companies=invalid)
+            BraveSearchConfig(input_batch_size=invalid)
 
 
 def test_proxy_routes_must_be_present_and_distinct():
