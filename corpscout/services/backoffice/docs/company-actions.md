@@ -6,6 +6,10 @@ Each area has Sync inputs and Full processing. The launch dialog posts to
 Table filters and selected company IDs are never forwarded. Companies and People
 pages keep browsing and company-specific reviewer actions.
 
+The Companies list also has **Send for Brave analysis** for the current bulk
+selection. This uses the separate `company_brave_search_workflow` and its
+ClickHouse initialization asset; see [bulk selection](company-bulk-selection.md).
+
 The page reads live status and history from Dagster, refreshing every 5 seconds
 while runs are active and every 15 seconds otherwise (only while visible). Active
 runs are fetched separately from the latest 20 runs per action; last successful

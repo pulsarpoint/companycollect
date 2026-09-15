@@ -1,6 +1,10 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { data, useFetcher } from "react-router";
 import type { Route } from "./+types/admin-se-companies-info";
 import { SeCompanyInfoTable } from "~/components/admin/se-company-info-table";
+import { Alert, AlertDescription } from "~/components/ui/alert";
+import { Button } from "~/components/ui/button";
+import { launchSeCompanyBraveAnalysis } from "~/lib/se-company-brave.server";
 import {
   NO_COMPANIES_SELECTED,
   selectionForSeCompanyFilters,
@@ -14,7 +18,7 @@ import {
   resolveInfoSort,
 } from "~/lib/se-company-info-lists.server";
 
-// Only `loader`, `meta` and the component live here -- any other export that
+// Only route exports and the component live here -- any other export that
 // touched `~/lib/*.server` would keep that module in the client bundle and
 // break the production build (see CLAUDE.md). Parsing lives in the client-safe
 // `se-company-info-filters` module, shared with the ledger route and directly
@@ -53,17 +57,50 @@ export function meta() {
   return [{ title: "Companies · Info | CompanyCollect" }];
 }
 
+export async function action({ request }: Route.ActionArgs) {
+  try {
+    const body = await request.json();
+    if (body?.action !== "brave_analysis") throw new Error("Choose a supported company action.");
+    return data(await launchSeCompanyBraveAnalysis(
+      body.selection,
+      process.env.BACKOFFICE_OPERATOR?.trim() || "backoffice",
+    ));
+  } catch (error) {
+    return data({ ok: false as const, error: error instanceof Error ? error.message : "Could not start Brave analysis." }, { status: 400 });
+  }
+}
+
 export default function AdminSeCompanyInfoTable({ loaderData }: Route.ComponentProps) {
   const { listPage, counts, options, total, filters, view, sort } = loaderData;
-  // Route-owned state survives pagination and sorting. Future bulk actions
-  // submit this selection alongside the action name; query selections must
-  // reach resolveSeCompanySelection on the server without client expansion.
+  // Route-owned state survives pagination and sorting. Submit filters directly;
+  // Dagster freezes their matching companies in ClickHouse.
   const [selection, setSelection] = useState<SeCompanySelection>(NO_COMPANIES_SELECTED);
   const currentSelection = selectionForSeCompanyFilters(selection, filters);
   if (currentSelection !== selection) setSelection(currentSelection);
+  const fetcher = useFetcher<typeof action>();
+  const submittedSelection = useRef<SeCompanySelection | null>(null);
+  const handledRun = useRef<string | null>(null);
+  const busy = fetcher.state !== "idle";
+  const selectedCount = currentSelection.mode === "ids"
+    ? currentSelection.companyIds.length
+    : Math.max(0, total - currentSelection.excludedCompanyIds.length);
+  useEffect(() => {
+    if (fetcher.data?.ok && handledRun.current !== fetcher.data.runId) {
+      handledRun.current = fetcher.data.runId;
+      setSelection((current) => current === submittedSelection.current ? NO_COMPANIES_SELECTED : current);
+    }
+  }, [fetcher.data]);
   // The layout owns the page header now (title + tab bar), so this tab renders
   // only its own body.
   return (
+    <div className="flex flex-col gap-4">
+    {fetcher.data && !busy && <Alert variant={fetcher.data.ok ? "default" : "destructive"}>
+      <AlertDescription>
+        {fetcher.data.ok
+          ? <>Brave analysis submitted. {fetcher.data.runUrl && <a href={fetcher.data.runUrl} target="_blank" rel="noreferrer">View Dagster run</a>}.</>
+          : fetcher.data.error}
+      </AlertDescription>
+    </Alert>}
     <SeCompanyInfoTable
       rows={listPage.rows}
       total={total}
@@ -76,6 +113,16 @@ export default function AdminSeCompanyInfoTable({ loaderData }: Route.ComponentP
       filters={filters}
       selection={currentSelection}
       onSelectionChange={setSelection}
+      selectionActions={(selectedCount > 0 || busy) && <Button
+        size="sm"
+        disabled={busy || selectedCount === 0}
+        onClick={() => {
+          if (busy) return;
+          submittedSelection.current = currentSelection;
+          fetcher.submit(JSON.stringify({ action: "brave_analysis", selection: currentSelection }), { method: "post", encType: "application/json", action: "/admin/se/companies?index" });
+        }}
+      >{busy ? "Sending to Brave…" : "Send for Brave analysis"}</Button>}
     />
+    </div>
   );
 }

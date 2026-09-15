@@ -9,7 +9,7 @@ existing behavior. Clear removes either selection. Reloads discard selection.
 
 ## Adding an action
 
-There is currently no bulk action panel on this list. When adding one, submit the
+The selection toolbar includes **Send for Brave analysis**. It submits the
 route's selection directly alongside the action name, for example as JSON:
 
 ```ts
@@ -35,12 +35,29 @@ route's selection directly alongside the action name, for example as JSON:
 }
 ```
 
+For Brave, the action name is `brave_analysis` and the endpoint is
+`POST /admin/se/companies?index`. It launches `company_brave_search_workflow`, which
+first materializes `company_brave_search_input`, then processes that task.
+The initializer reads `corpscout.se_companies_serving` (the displayed list's
+source), with `legal_name` and country `SE`. Explicit picks become
+`filters.company_id`; query selections become column filters, a name pattern,
+an ID length and exclusions. The `company_ids` Dagster parameter is for tests
+only and is never sent by this UI. No full matching ID list is downloaded to
+the backoffice or stored in the Dagster run configuration.
+
+Dagster freezes the selected rows in ClickHouse when initialization runs, with
+an exact total. PostgreSQL holds progress and Brave responses. The action uses
+the workflow's default official-website query and processing settings, and
+returns a Dagster run link. The selection clears after successful submission;
+errors retain it. The submitted filters determine membership at initialization
+time, so the final total may differ from the last displayed list count.
+
 Use the complete **applied** filters from the loader, including empty fields.
 `datatypes` holds the normalized values of the repeated `datatype` URL parameter.
 Pagination, sorting, raw SQL and browser-derived lists of all matches do not
 belong in the query payload. Selecting all replaces any previous explicit picks.
 
-In the server action, validate the action name and then call
+For other actions that need an ID list, validate the action name and then call
 `resolveSeCompanySelection(body.selection)` from
 `app/lib/se-company-selection.server.ts`. Pass the returned IDs to that action's
 SE company handler. Keep these IDs scoped to Sweden; bare IDs are not globally

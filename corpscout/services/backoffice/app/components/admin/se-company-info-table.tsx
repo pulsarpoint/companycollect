@@ -1,4 +1,5 @@
 import type { ColumnDef, OnChangeFn } from "@tanstack/react-table";
+import type { ReactNode } from "react";
 import { Link } from "react-router";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
@@ -336,6 +337,7 @@ export function SeCompanyInfoTable({
   options,
   selection,
   onSelectionChange,
+  selectionActions,
 }: {
   rows: SeCompanyInfoListRow[];
   total: number;
@@ -351,6 +353,7 @@ export function SeCompanyInfoTable({
    * selection outlives the page of rows it was made on. */
   selection: SeCompanySelection;
   onSelectionChange: OnChangeFn<SeCompanySelection>;
+  selectionActions?: ReactNode;
 }) {
   const pageIds = rows.map((row) => row.company_id);
   return (
@@ -368,6 +371,7 @@ export function SeCompanyInfoTable({
             the list, and it appears only once something is picked. */}
         <div className="flex flex-wrap items-center gap-2">
           <SelectionIndicator selection={selection} total={total} onSelectionChange={onSelectionChange} />
+          {selectionActions}
           {(selection.mode === "ids" || selection.excludedCompanyIds.length > 0) && (
             <Button
               variant="outline"
