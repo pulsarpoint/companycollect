@@ -85,6 +85,7 @@ Gotchas:
 | `data/*.duckdb` (+ per-source subdirs) | per-source staging databases | **rebuildable cache** |
 | `$DUCKDB_TEMP_DIRECTORY` | DuckDB spill | scratch, safe to wipe when idle |
 | `storage/`, `logs/` (under `DAGSTER_HOME`) | compute logs, IO artifacts | scratch |
+| S3 bucket `company-brave-history` | complete immutable Brave responses | **backup, no expiry; authoritative history** |
 | MinIO buckets (`source-*`) | raw source snapshots (per-company API fetches, XBRL XML, …) | **expensive-to-rebuild cache** |
 | Postgres `dagster` DB | run history, schedules, event log | **backup** |
 | Postgres `corpscout.processing` schema | task snapshots, leases, saved results and export batches | **backup; never rebuildable cache** |
@@ -92,8 +93,11 @@ Gotchas:
 
 ## 4. Backup scope (decision, 2026-07-12)
 
-**Back up only Postgres and ClickHouse.**
+**Back up Postgres, ClickHouse, and the authoritative Brave response history bucket.**
 
+- The `company-brave-history` bucket is an exception to the source-cache policy: it
+  contains historical Brave responses pruned from PostgreSQL after verified publication.
+  Preserve and back it up with the processing metadata.
 - Every DuckDB file under `data/` re-derives from source downloads by re-running the source's
   full-refresh job — they are staging, not a system of record. Do not back them up; after disk
   loss, re-materialize each source chain (register jobs first, then financials).

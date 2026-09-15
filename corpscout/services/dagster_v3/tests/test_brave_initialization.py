@@ -18,7 +18,10 @@ from dagster_v3.defs.company_domains.input import (
     BraveInputConfig,
     company_brave_search_input,
 )
-from tests.test_brave_publication import clickhouse as clickhouse
+from tests.test_brave_publication import (
+    archive_s3 as archive_s3,
+    clickhouse as clickhouse,
+)
 from tests.test_company_domains_brave import BrowserFixture, PROXIES
 from tests.test_company_domains_brave_integration import MIGRATION
 
@@ -117,21 +120,33 @@ def test_list_filters_freeze_matches_and_exclusions_in_clickhouse(store, task_in
     client.execute("INSERT INTO corpscout.se_companies_serving VALUES", rows)
     task = str(uuid4())
     filters = dict(
-        source_relation="corpscout.se_companies_serving", source_final=False,
-        company_name_pattern="%alpha%", company_id_length=10,
-        excluded_company_ids=["5560000002"], select_all=True,
-        filters={"status": ["active"], "legal_form_code": ["49"],
-                 "has_description": ["0"], "source_esef": ["1"], "has_financial": ["1"]},
+        source_relation="corpscout.se_companies_serving",
+        source_final=False,
+        company_name_pattern="%alpha%",
+        company_id_length=10,
+        excluded_company_ids=["5560000002"],
+        select_all=True,
+        filters={
+            "status": ["active"],
+            "legal_form_code": ["49"],
+            "has_description": ["0"],
+            "source_esef": ["1"],
+            "has_financial": ["1"],
+        },
     )
     assert initialize(resource, dsn, task, **filters).success
     assert queue.progress(task)["total"] == 1
     assert client.execute(
-        f"SELECT company_id FROM {INPUT_RELATION} WHERE task_id=%(task)s", {"task": task}
+        f"SELECT company_id FROM {INPUT_RELATION} WHERE task_id=%(task)s",
+        {"task": task},
     ) == [("5560000001",)]
     # New matching rows after initialization must not change the fixed selection.
-    client.execute("INSERT INTO corpscout.se_companies_serving VALUES", [
-        ("5560000009", "Alpha new", "active", "49", 0, 1, 1),
-    ])
+    client.execute(
+        "INSERT INTO corpscout.se_companies_serving VALUES",
+        [
+            ("5560000009", "Alpha new", "active", "49", 0, 1, 1),
+        ],
+    )
     assert initialize(resource, dsn, task, **filters).success
     assert queue.progress(task)["total"] == 1
     with queue.transaction() as cursor:
@@ -139,27 +154,49 @@ def test_list_filters_freeze_matches_and_exclusions_in_clickhouse(store, task_in
         assert cursor.fetchone()["count"] == 0
     # Name patterns and exclusions remain bound values, including SQL-looking text.
     empty = str(uuid4())
-    assert initialize(resource, dsn, empty, **{
-        **filters, "company_name_pattern": "%x' OR 1=1 --%",
-        "excluded_company_ids": ["x') OR 1=1 --"],
-    }).success
+    assert initialize(
+        resource,
+        dsn,
+        empty,
+        **{
+            **filters,
+            "company_name_pattern": "%x' OR 1=1 --%",
+            "excluded_company_ids": ["x') OR 1=1 --"],
+        },
+    ).success
     assert queue.progress(empty)["total"] == 0
     picked = str(uuid4())
-    assert initialize(resource, dsn, picked,
-                      filters={"company_id": ["5560000001", "5560000003"]},
-                      source_relation="corpscout.se_companies_serving", source_final=False).success
+    assert initialize(
+        resource,
+        dsn,
+        picked,
+        filters={"company_id": ["5560000001", "5560000003"]},
+        source_relation="corpscout.se_companies_serving",
+        source_final=False,
+    ).success
     assert queue.progress(picked)["total"] == 2
 
 
-def test_new_optional_filters_preserve_existing_selection_fingerprints(store, task_inputs):
+def test_new_optional_filters_preserve_existing_selection_fingerprints(
+    store, task_inputs
+):
     queue, dsn = store
     _, resource = task_inputs
     task = str(uuid4())
-    old_config = dict(source_relation="corpscout.se_company_basic_info",
-                      company_id_column="company_id", company_name_column="legal_name",
-                      country_code="SE", company_ids=[], filters={"status": ["active"]},
-                      source_final=True, max_companies=None, select_all=False)
-    fingerprint = hashlib.sha256(json.dumps(old_config, sort_keys=True).encode()).hexdigest()
+    old_config = dict(
+        source_relation="corpscout.se_company_basic_info",
+        company_id_column="company_id",
+        company_name_column="legal_name",
+        country_code="SE",
+        company_ids=[],
+        filters={"status": ["active"]},
+        source_final=True,
+        max_companies=None,
+        select_all=False,
+    )
+    fingerprint = hashlib.sha256(
+        json.dumps(old_config, sort_keys=True).encode()
+    ).hexdigest()
     queue.prepare_selection(task, processor="brave-v2", fingerprint=fingerprint)
     assert initialize(resource, dsn, task, filters={"status": ["active"]}).success
     assert queue.task(task)["status"] == "selected"
@@ -303,7 +340,7 @@ def test_combined_materialization_shares_task_and_saves_custom_queries(
     assert queue.progress(task)["remaining"] == queue.progress(task)["unpublished"] == 0
     assert fixture.total_peak == 4
     assert client.execute(
-        "SELECT count(),uniqExact(query) FROM corpscout.company_brave_info WHERE task_id=%(task)s AND query_type='owner' AND startsWith(query,'Who owns Company ')",
+        "SELECT count(),uniqExact(query) FROM corpscout.se_company_brave_domains WHERE task_id=%(task)s AND query_type='owner' AND startsWith(query,'Who owns Company ')",
         {"task": task},
     ) == [(8, 8)]
     # Rerunning initialization after processing is also idempotent.

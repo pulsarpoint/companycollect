@@ -427,6 +427,7 @@ EXPECTED_MIGRATIONS = (
     "000411_corpscout_company_processing_input",
     "000412_corpscout_company_brave_search_input",
     "000413_corpscout_company_brave_input_tasks",
+    "000414_corpscout_se_company_brave_domains",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -436,6 +437,8 @@ NOOP_MIGRATIONS = {"000276_noop"}
 # history. Nothing is left for these migrations to declare, so the "creates something" and
 # "undoes something" assertions cannot apply -- the database statement is all that remains.
 EMPTIED_MIGRATIONS = {
+    "000409_corpscout_company_brave_search_results",
+    "000410_corpscout_company_brave_info",
     "000052_corpscout_lei_wikidata_companies_view",
     "000111_corpscout_dns_axfr_observations",
     "000121_corpscout_commoncrawl_domain_hostname_axfr_sync",

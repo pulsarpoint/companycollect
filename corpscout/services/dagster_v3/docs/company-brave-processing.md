@@ -199,12 +199,54 @@ Terminal counts update transactionally; progress polling reads counters and boun
 open work instead of scanning millions of finished item records. `status = ready`
 means the task can be processed; completion is represented by `remaining = 0`.
 
-Saved outcomes are assigned to closed export batches. ClickHouse imports them with
-`INSERT SELECT FROM postgresql(processing_postgres, table='brave_export', schema='processing')`
-filtered by batch ID. The importer verifies the deduplicated count before
-acknowledging the batch. Partial imports and lost acknowledgments replay the same
-result IDs. Read `corpscout.company_brave_info_deduplicated` or the base table with
-`FINAL`; filter successful outcomes and the appropriate query type for downstream use.
+Saved outcomes are assigned to closed export batches. ClickHouse writes the full
+batch directly from `processing.brave_export` to immutable Parquet files in the
+`company-brave-history` S3 bucket, using the server-owned `brave_history` named
+collection. File paths are stable by country and batch ID:
+`v1/country=SE/batch_id=<uuid>/results.parquet`. Retries reuse and verify those
+files instead of appending duplicates or overwriting history.
+
+After verifying every archived field against PostgreSQL, ClickHouse bulk imports
+successful responses with `INSERT SELECT FROM postgresql(...)` into the country's
+current table. For Sweden this is **`corpscout.se_company_brave_domains`**. Its
+replacement key is `(company_id, query_type)` and its version is `completed_at`.
+Read with `FINAL` for the latest successful answer before background merges finish.
+An older export cannot replace a newer answer, and an unsuccessful refresh leaves
+the previous successful answer available. The response is the complete copied
+Brave text, not an extracted or independently verified domain.
+
+Only after both checks pass does one PostgreSQL transaction mark the batch
+published/archived, save its paths, row counts and content digests in
+`processing.export_batches.archive_manifest`, and remove `answer_text` from the
+outbox payload. Result IDs, attribution, progress and freshness-cache references
+remain in PostgreSQL. Any failure before acknowledgment leaves the response there
+for retry. No Brave request is needed to retry publication.
+
+All attempts, including errors and superseded answers, remain queryable through
+**`corpscout.se_company_brave_domains_history`**, an S3 engine table. It stores no
+second physical copy of history in ClickHouse. For example:
+
+```sql
+SELECT company_id, query_type, answer_text, completed_at, archive_path
+FROM corpscout.se_company_brave_domains FINAL
+WHERE company_id = '5560004615';
+
+SELECT result_id, task_id, status, answer_text, completed_at, _path
+FROM corpscout.se_company_brave_domains_history
+WHERE company_id = '5560004615'
+ORDER BY completed_at DESC;
+```
+
+For a known batch, filter `_path` or query `s3(brave_history, filename='...')`
+directly to avoid scanning the entire history. The current table can be rebuilt
+using `INSERT INTO corpscout.se_company_brave_domains SELECT *, _path FROM
+corpscout.se_company_brave_domains_history WHERE status='success'`. `FINAL`
+then resolves multiple successful versions for the same company and query type.
+
+Input remains shared across countries. Output routes by the captured `country_code`
+to `<country>_company_brave_domains` and its `_history` table. Provision that
+country's migration first; an absent destination keeps its responses in PostgreSQL
+and fails publication instead of putting them into Sweden's table.
 
 `unpublished` counts saved outcomes awaiting acknowledgment, including failed
 attempts. A publication outage does not make successful searches pending again.
@@ -234,14 +276,31 @@ The ClickHouse table UUID and existing rows are preserved. Earlier pilot rows us
 an empty selection task ID; migration 122 binds old tasks to that legacy selection.
 Deploy the matching reader and initialization asset after applying both migrations.
 
+Current-table/S3 publication requires ClickHouse migration `000414` and PostgreSQL
+migration `000123`. Finish or gracefully pause old Brave workers before applying
+123; it changes existing batch destination identities. Run
+`scripts/provision-processing-storage.py` first to provision the archive bucket,
+named collection and roles, using the existing private credentials file. S3
+credentials come from `CORPSCOUT_S3_*`, never materialization parameters. The
+optional `--s3-endpoint-for-clickhouse` is for hosts where the ClickHouse server
+uses a different network address from the provisioning process.
+
+Publish each existing task once with the new worker. Previously published batches
+without an archive receipt are backfilled as well. Verify complete history and
+current-table coverage before dropping the retired `company_brave_info`,
+`company_brave_info_deduplicated`, empty `company_brave_search_results`, and unused
+`se_company_brave_input` view. Migrations 409/410 retain their version files but no
+longer create the retired objects; migration 414 does not drop live data.
+
 Existing `PROCESSING_PG_URL` and `PROCESSING_CLICKHOUSE_*` credentials remain valid.
-`scripts/provision-processing-storage.py` owns the least-privilege worker, export
-reader, publisher and named collection setup. Retain its private credentials file.
-Credentials are never materialization parameters. Back up both the PostgreSQL
-progress/results and retained ClickHouse inputs, including access metadata.
+Retain the private provisioning credentials file. Back up PostgreSQL progress,
+ClickHouse inputs/current tables, access metadata, and **the authoritative
+`company-brave-history` S3 bucket**. This bucket has no expiry policy. It is not a
+rebuildable source-download cache: once an answer is pruned from PostgreSQL, its
+historical content lives in S3.
 
 This change applies to Brave only. Translation, Ratsit and webtech remain unchanged.
-Tests use disposable PostgreSQL 17 and ClickHouse 26.5 servers, including a real
+Tests use disposable PostgreSQL 17, ClickHouse 26.5 and RustFS servers, including a real
 three-million-row ClickHouse queue with only 100 admitted PostgreSQL IDs, concurrent
 claims, restart recovery, migration preservation and replayable publication.
 

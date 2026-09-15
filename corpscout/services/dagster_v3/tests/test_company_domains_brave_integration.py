@@ -9,34 +9,28 @@ from cloakbrowser import launch
 from cloakbrowser.config import get_binary_path
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from dagster_v3.defs.company_domains.assets import EXPORT_COLUMNS
+from dagster_v3.defs.company_domains.publication import EXPORT_COLUMNS
 from dagster_v3.defs.company_domains.browser import copy_brave_answer
 from tests.clickhouse_local import clickhouse_local_command
 
 pytestmark = pytest.mark.integration
 MIGRATION = (
     Path(__file__).parents[3]
-    / "clickhouse/migrations/000410_corpscout_company_brave_info.up.sql"
+    / "clickhouse/migrations/000414_corpscout_se_company_brave_domains.up.sql"
 )
 
 
-def test_named_input_view_filters_companies_and_replayed_results_are_deduplicated():
+def test_current_answers_keep_latest_success_per_company_and_query_type():
+    # The S3 engine is exercised separately against a real server and object store.
     sql = (
-        """
-CREATE DATABASE corpscout;
-CREATE TABLE corpscout.se_company_basic_info
-    (company_id String, legal_name Nullable(String), status String)
-    ENGINE=ReplacingMergeTree ORDER BY company_id;
-INSERT INTO corpscout.se_company_basic_info VALUES
-    ('1',' Active AB ','active'),('2','Inactive','inactive'),('3',NULL,'active'),('4','   ','active');
-"""
-        + MIGRATION.read_text()
+        MIGRATION.read_text().split("-- Full immutable responses", 1)[0]
         + """
-SELECT input_id,company_id,company_name,country_code FROM corpscout.se_company_brave_input FORMAT JSONCompactEachRow;
-INSERT INTO corpscout.company_brave_info (result_id,task_id,answer_text) VALUES ('result-1','task-1','Full copied response');
-INSERT INTO corpscout.company_brave_info (result_id,task_id,answer_text) VALUES ('result-1','task-1','Full copied response');
-SELECT result_id,answer_text FROM corpscout.company_brave_info_deduplicated FORMAT JSONCompactEachRow;
-SELECT name FROM system.columns WHERE database='corpscout' AND table='company_brave_info' ORDER BY position FORMAT JSONCompactEachRow;
+INSERT INTO corpscout.se_company_brave_domains (result_id,company_id,country_code,status,query_type,answer_text,completed_at)
+VALUES ('new','1','SE','success','website','Latest','2026-09-15 12:00:00'),
+('old','1','SE','success','website','Previous','2026-09-14 12:00:00'),
+('owner','1','SE','success','owner','Owner answer','2026-09-14 12:00:00');
+SELECT result_id,answer_text FROM corpscout.se_company_brave_domains FINAL ORDER BY query_type FORMAT JSONCompactEachRow;
+SELECT name FROM system.columns WHERE database='corpscout' AND table='se_company_brave_domains' ORDER BY position FORMAT JSONCompactEachRow;
 """
     )
     result = subprocess.run(
@@ -50,9 +44,10 @@ SELECT name FROM system.columns WHERE database='corpscout' AND table='company_br
     assert [
         json.loads(line) for line in result.stdout.splitlines() if line.strip()
     ] == [
-        ["1", "1", "Active AB", "SE"],
-        ["result-1", "Full copied response"],
+        ["owner", "Owner answer"],
+        ["new", "Latest"],
         *[[column] for column in EXPORT_COLUMNS],
+        ["archive_path"],
     ]
 
 

@@ -17,10 +17,10 @@ from dagster_v3.defs.common.clickhouse_queue import (
 )
 from dagster_v3.defs.common.processing import (
     ProcessingResource,
-    ProcessingStore,
     render_query,
     work_key,
 )
+from dagster_v3.defs.company_domains.publication import publish_results
 from dagster_v3.defs.company_domains.browser import (
     ROUTES,
     BraveBrowserResource,
@@ -29,35 +29,6 @@ from dagster_v3.defs.company_domains.browser import (
 )
 
 PROCESSOR_VERSION = "brave-v2"
-RESULT_TABLE = "company_brave_info"
-EXPORT_DESTINATION = "company_brave_info_v1"
-EXPORT_COLUMNS = (
-    "result_id",
-    "task_id",
-    "input_id",
-    "work_key",
-    "attempt",
-    "status",
-    "export_batch_id",
-    "country_code",
-    "company_id",
-    "company_name",
-    "query",
-    "query_type",
-    "processor_version",
-    "answer_text",
-    "route",
-    "source_url",
-    "error_type",
-    "source_run_id",
-    "completed_at",
-)
-# A server-owned named collection supplies the read-only PostgreSQL connection.
-PUBLISH_SQL = f"""INSERT INTO corpscout.{RESULT_TABLE} ({", ".join(EXPORT_COLUMNS)})
-SELECT {", ".join(EXPORT_COLUMNS)}
-FROM postgresql(processing_postgres, table='brave_export', schema='processing')
-WHERE export_batch_id = %(batch_id)s
-"""
 
 
 class BraveSearchConfig(dg.Config):
@@ -89,35 +60,6 @@ class BraveSearchConfig(dg.Config):
         return str(UUID(value)) if value is not None else None
 
 
-def publish_results(
-    store: ProcessingStore, client, task_id: str, *, batch_size: int
-) -> int:
-    published = 0
-    while batch := store.export_batch(
-        task_id, limit=batch_size, destination=EXPORT_DESTINATION
-    ):
-        client.execute(
-            PUBLISH_SQL,
-            {"batch_id": batch.batch_id},
-            settings={
-                "max_execution_time": 60,
-                "postgresql_connection_pool_size": 2,
-                "postgresql_connection_attempt_timeout": 5,
-            },
-        )
-        [(count,)] = client.execute(
-            f"SELECT count() FROM corpscout.{RESULT_TABLE} FINAL WHERE task_id=%(task_id)s AND export_batch_id=%(batch_id)s",
-            {"batch_id": batch.batch_id, "task_id": task_id},
-        )
-        if count != batch.result_count:
-            raise ValueError(
-                "ClickHouse publication count does not match the closed batch"
-            )
-        store.acknowledge(batch)
-        published += batch.result_count
-    return published
-
-
 @dg.asset(
     deps=["company_brave_search_input"],
     group_name="company_domains",
@@ -126,7 +68,7 @@ def publish_results(
     tags={"source": "brave"},
     description="Read a fixed ClickHouse input queue, render the query template, and collect copied Brave "
     "responses with four continuously refilled routes. PostgreSQL holds task progress and responses; "
-    "closed batches are imported by ClickHouse SQL. Supply task_id to resume or mode=publish to replay exports.",
+    "closed batches are archived to S3 and latest successful answers are imported into country tables by ClickHouse SQL. Supply task_id to resume or mode=publish to replay exports.",
 )
 def company_brave_search_results(
     context: dg.AssetExecutionContext,
@@ -397,7 +339,7 @@ def company_brave_search_results(
         }
         metadata.update(
             task_id=task_id,
-            table=f"corpscout.{RESULT_TABLE}",
+            output_tables="corpscout.<country>_company_brave_domains",
             request_slots=len(ROUTES) * config.requests_per_route,
         )
         if config.mode == "process" and counts["terminal_failed"]:

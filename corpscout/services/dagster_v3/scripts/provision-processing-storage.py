@@ -16,11 +16,14 @@ from clickhouse_driver import Client
 from dotenv import dotenv_values, load_dotenv
 from psycopg2 import sql
 
+from dagster_v3.defs.common.resources import ObjectStoreResource
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--credentials-file", type=Path, required=True)
     parser.add_argument("--postgres-host-for-clients", required=True)
+    parser.add_argument("--s3-endpoint-for-clickhouse")
     args = parser.parse_args()
     load_dotenv(".env")
     admin_url = os.environ["PROCESSING_ADMIN_PG_URL"]
@@ -93,7 +96,29 @@ def main():
         secure=os.getenv("CLICKHOUSE_SECURE", "").lower() in ("true", "1", "yes"),
     )
     try:
-        client.execute("EXISTS TABLE corpscout.company_brave_info")
+        ObjectStoreResource(bucket="company-brave-history").ensure_bucket()
+        exists = client.execute(
+            "SELECT name FROM system.named_collections WHERE name='brave_history'"
+        )
+        command = (
+            "ALTER NAMED COLLECTION brave_history SET"
+            if exists
+            else "CREATE NAMED COLLECTION brave_history AS"
+        )
+        client.execute(
+            command
+            + " url=%(url)s NOT OVERRIDABLE, access_key_id=%(access)s NOT OVERRIDABLE, secret_access_key=%(secret)s NOT OVERRIDABLE",
+            {
+                "url": (
+                    args.s3_endpoint_for_clickhouse
+                    or os.environ["CORPSCOUT_S3_ENDPOINT"]
+                ).rstrip("/")
+                + "/company-brave-history/",
+                "access": os.environ["CORPSCOUT_S3_ACCESS_KEY"],
+                "secret": os.environ["CORPSCOUT_S3_SECRET_KEY"],
+            },
+            settings={"log_queries": 0},
+        )
         exists = client.execute(
             "SELECT name FROM system.named_collections WHERE name='processing_postgres'"
         )
@@ -130,13 +155,17 @@ def main():
         client.execute(
             "GRANT NAMED COLLECTION ON processing_postgres TO processing_publisher"
         )
+        client.execute(
+            "GRANT NAMED COLLECTION ON brave_history TO processing_publisher"
+        )
+        client.execute("GRANT S3 ON *.* TO processing_publisher")
         client.execute("GRANT POSTGRES ON *.* TO processing_publisher")
         client.execute("GRANT CREATE TEMPORARY TABLE ON *.* TO processing_publisher")
         client.execute(
-            "GRANT SELECT, INSERT ON corpscout.company_brave_info TO processing_publisher"
+            "GRANT SELECT, INSERT ON corpscout.se_company_brave_domains TO processing_publisher"
         )
         client.execute(
-            "GRANT SELECT ON corpscout.company_brave_info_deduplicated TO processing_publisher"
+            "GRANT SELECT ON corpscout.se_company_brave_domains_history TO processing_publisher"
         )
     finally:
         client.disconnect()

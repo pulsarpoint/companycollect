@@ -92,6 +92,12 @@ def store(processing_postgres_url):
                     "000122_processing_input_initialization.up.sql"
                 ).read_text()
             )
+        with connection, connection.cursor() as cursor:
+            cursor.execute(
+                MIGRATION.with_name(
+                    "000123_processing_brave_archive.up.sql"
+                ).read_text()
+            )
         yield ProcessingStore(connection), dsn
     finally:
         connection.close()
@@ -129,7 +135,12 @@ def complete(store, item, status="success", answer="Copied response"):
         item,
         status=status,
         work_key="test-work-" + item.input_id,
-        payload={"answer_text": answer, "query": "Find " + item.input_id},
+        payload={
+            "answer_text": answer,
+            "query": "Find " + item.input_id,
+            "country_code": "SE",
+            "company_id": item.input_id,
+        },
         completed_at=datetime.now(UTC),
         max_attempts=3,
         retry_seconds=0,
@@ -296,17 +307,17 @@ def test_batches_are_closed_replayable_and_do_not_capture_later_results(store):
     task = prepare_task(queue)
     first, second = claim(queue, task), claim(queue, task)
     result_id = complete(queue, first)
-    batch = queue.export_batch(task, limit=100, destination="company_brave_info_v1")
+    batch = queue.export_batch(task, limit=100, destination="country_brave_domains_v1")
     complete(queue, second)
     assert (
-        queue.export_batch(task, limit=100, destination="company_brave_info_v1")
+        queue.export_batch(task, limit=100, destination="country_brave_domains_v1")
         == batch
     )
     assert batch.result_count == 1
     queue.acknowledge(batch)
     assert queue.progress(task)["unpublished"] == 1
     next_batch = queue.export_batch(
-        task, limit=100, destination="company_brave_info_v1"
+        task, limit=100, destination="country_brave_domains_v1"
     )
     assert next_batch.batch_id != batch.batch_id
     with queue.connection, queue.connection.cursor() as cursor:
@@ -328,7 +339,7 @@ def test_freshness_skips_only_published_matching_results_with_a_live_claim(store
     item = claim(queue, next_task)
     assert not queue.skip_if_fresh(item, work_key="test-work-0", freshness_days=30)
     queue.acknowledge(
-        queue.export_batch(first, limit=100, destination="company_brave_info_v1")
+        queue.export_batch(first, limit=100, destination="country_brave_domains_v1")
     )
     assert not queue.skip_if_fresh(item, work_key="changed-query", freshness_days=30)
     assert not queue.skip_if_fresh(item, work_key="test-work-0", freshness_days=0)
@@ -454,6 +465,6 @@ def test_migration_preserves_legacy_responses_and_refuses_unfinished_inputs(stor
     assert queue.progress(task)["remaining"] == 0
     assert queue.progress(task)["unpublished"] == 1
     queue.acknowledge(
-        queue.export_batch(task, limit=100, destination="company_brave_info_v1")
+        queue.export_batch(task, limit=100, destination="country_brave_domains_v1")
     )
     assert queue.progress(task)["unpublished"] == 0
