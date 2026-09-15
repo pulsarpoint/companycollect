@@ -195,3 +195,8 @@ Validation uses disposable PostgreSQL 17 and ClickHouse 26.5 Docker servers,
 including concurrent claims, stale fencing, partial publication, lost acknowledgments,
 a publication outage, credential scope, and actual Dagster materialization/resume.
 The browser tests intercept requests with fixtures; they do not query Brave.
+
+A separate [live pilot on 2026-09-15](company-brave-pilot-2026-09-15.md) completed
+eight real company queries across all four routes, verified identical saved
+responses in PostgreSQL and ClickHouse, and resumed without new processing attempts
+or duplicate results.
