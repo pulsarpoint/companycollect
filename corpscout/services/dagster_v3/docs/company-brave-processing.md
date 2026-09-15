@@ -69,7 +69,9 @@ Rematerializing initialization with the same task ID and filters reuses its save
 selection, even after processing has begun. Changed filters require a new task ID.
 If initialization fails before the selection is confirmed, retrying stops that
 task's outstanding insert, removes only its unconfirmed rows and reruns selection.
-Other tasks' rows and results remain intact. A PostgreSQL session lock excludes
+Other tasks' rows and results remain intact. Initialization has its own
+`company_brave_input` pool, so another selection can be prepared while a Brave
+processing task is running. A PostgreSQL session lock excludes
 competing initializers of the same task; no transaction stays open during the
 ClickHouse query. A zero-match selection is valid and reports a total of zero.
 

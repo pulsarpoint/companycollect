@@ -72,7 +72,7 @@ class BraveInputConfig(dg.Config):
 @dg.asset(
     group_name="company_domains",
     kinds={"clickhouse", "postgres"},
-    pool="company_domains_brave",
+    pool="company_brave_input",
     tags={"source": "brave"},
     description="Prepare a fixed company selection inside ClickHouse from filter parameters. "
     "Materialize independently to inspect the selected count, then process its task_id with Brave.",
