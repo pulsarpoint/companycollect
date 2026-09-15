@@ -106,7 +106,9 @@ describe("company area SQL", () => {
       expect([SHELL_INFO_SQL, SHELL_REGISTER_SQL, SHELL_ENTITY_TYPE_SQL].join("\n"))
         .toContain(table);
     }
-    expect(COMPANY_DOMAINS_SQL).toContain("corpscout.company_domains AS d FINAL");
+    expect(COMPANY_DOMAINS_SQL).toContain("corpscout.company_domains_resolved AS d");
+    expect(COMPANY_DOMAINS_SQL).not.toContain("company_domains_resolved AS d FINAL");
+    expect(COMPANY_DOMAINS_SQL).toContain("corpscout.se_company_domain AS entity FINAL");
     // eodhd_eod_prices is a ReplacingMergeTree on retrieved_at: a re-fetched
     // trading day must show once, in its newest state.
     expect(COMPANY_LEAD_PRICES_SQL).toContain(

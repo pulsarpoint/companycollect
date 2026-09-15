@@ -2,6 +2,7 @@
 assets (slice 3). The extractors and the extract job live in their own modules (slice 2)."""
 
 import re
+from collections import Counter
 from datetime import UTC, datetime
 from typing import Any
 
@@ -193,6 +194,32 @@ def se_company_financial_fold(
             folded_at=datetime.now(UTC), page_size=config.page_size, log=context.log.info,
         )
     return dg.MaterializeResult(metadata=_fold_metadata(counts, config, bucket=bucket))
+
+
+@dg.asset(
+    group_name=GROUP_NAME,
+    deps=[dg.AssetKey(name) for name in EXTRACTOR_ASSET_NAMES],
+    pool=FOLD_POOL,
+    kinds={"clickhouse", "python"},
+    description="Publishes financial across all companies after source processing, visiting fold buckets sequentially.",
+)
+def se_company_financial_publish(
+    context: dg.AssetExecutionContext, config: FinancialFoldConfig, clickhouse: ClickhouseResource
+) -> dg.MaterializeResult:
+    assert_clickhouse_tables_exist(clickhouse, database=tables.DATABASE, tables=_FOLD_TABLES)
+    totals: Counter[str] = Counter()
+    with clickhouse.get_connection() as client:
+        for bucket in range(BUCKET_COUNT):
+            counts = fold_bucket(
+                client, bucket, changed_only=config.changed_only, source_run_id=context.run_id,
+                folded_at=datetime.now(UTC), page_size=config.page_size, log=context.log.info,
+            )
+            totals.update({key: value for key, value in counts.as_metadata().items() if isinstance(value, int)})
+            context.log.info("Published bucket %d of %d", bucket + 1, BUCKET_COUNT)
+    return dg.MaterializeResult(metadata={
+        **totals, "buckets": BUCKET_COUNT, "changed_only": config.changed_only,
+        "table": tables.QUALIFIED_MAIN_TABLE, "history_table": tables.QUALIFIED_HISTORY_TABLE,
+    })
 
 
 @dg.asset(

@@ -5,9 +5,9 @@ se_company_person_v2, because the 2026-08-19 table held the final name until sli
 it, and 000396's DDL still declares it under that build name -- the rename is a RENAME TABLE
 on the deployed database, and MAIN_TABLE is the one place this package spells it. Slice 5
 added the derived role view (ROLE_VIEW, build_se_company_person_role_sql), created by
-migration 000402. The LLM-enhance slice 1 (migration 000406) added the per-source-table LLM
-pair -- LLM_QUEUE_TABLE and LLM_RESPONSE_TABLE -- the request_id column on both match tables,
-and the match-gap view (MATCH_GAP_VIEW, build_se_company_person_match_gap_sql).
+migration 000402. Migration 000406 added request_id to both match tables and the derived
+match-gap view (MATCH_GAP_VIEW, build_se_company_person_match_gap_sql). Migration 000407
+adds current matching inputs and per-attempt fingerprints/configuration snapshots.
 """
 
 DATABASE = "corpscout"
@@ -25,18 +25,9 @@ ROLE_TYPE_TABLE = "company_person_role_type"
 # string match on a table name compares whole names.
 MATCH_TABLE = "se_company_person_match"
 MATCH_STATE_TABLE = "se_company_person_match_state"
+MATCH_INPUT_TABLE = "se_company_person_match_input"
 
-# The LLM-enhancement pattern (spec 2026-09-13 sections 3 and 4, migration 000406): one
-# queue table and one response table PER SOURCE TABLE that needs an LLM pass, mapped to that
-# table's own unit id -- here company_id, the unit a person-match prompt is built over.
-# THESE ARE THE ONLY TWO corpscout TABLES WHOSE NAMES DO NOT START WITH THEIR ENTITY'S
-# PREFIX, and that is the pattern's name rather than an oversight: `llm_<step>_<source
-# table>` reads as "the LLM queue OF se_company_person". Every string match on a table name
-# in this repo compares whole names, so the new prefix breaks nothing.
-LLM_QUEUE_TABLE = "llm_queue_se_company_person"
-LLM_RESPONSE_TABLE = "llm_response_se_company_person"
-
-# Slice 1 of the same spec (section 5): the companies that still carry a deterministic
+# Migration 000406: the companies that still carry a deterministic
 # call-name or double-surname gap no stored match has closed. A refreshable materialized
 # view over the main table, the normalized rows and the two match tables, rebuilt hourly at
 # :30 -- the free half of the hour between the role view's :20 and the serving view's :45.
@@ -65,9 +56,8 @@ QUALIFIED_PRECEDENCE_TABLE = f"{DATABASE}.{PRECEDENCE_TABLE}"
 QUALIFIED_ROLE_TYPE_TABLE = f"{DATABASE}.{ROLE_TYPE_TABLE}"
 QUALIFIED_MATCH_TABLE = f"{DATABASE}.{MATCH_TABLE}"
 QUALIFIED_MATCH_STATE_TABLE = f"{DATABASE}.{MATCH_STATE_TABLE}"
+QUALIFIED_MATCH_INPUT_TABLE = f"{DATABASE}.{MATCH_INPUT_TABLE}"
 QUALIFIED_ROLE_VIEW = f"{DATABASE}.{ROLE_VIEW}"
-QUALIFIED_LLM_QUEUE_TABLE = f"{DATABASE}.{LLM_QUEUE_TABLE}"
-QUALIFIED_LLM_RESPONSE_TABLE = f"{DATABASE}.{LLM_RESPONSE_TABLE}"
 QUALIFIED_MATCH_GAP_VIEW = f"{DATABASE}.{MATCH_GAP_VIEW}"
 
 SOURCES: tuple[str, ...] = ("bolagsverket", "esef", "wikidata", "ratsit", "reviewer", "reviewer_draft")
@@ -110,23 +100,25 @@ RULE_COLUMNS: tuple[str, ...] = (
 PRECEDENCE_COLUMNS: tuple[str, ...] = (
     "company_id", "field", "source", "precedence", "removed", "decided_by", "note", "decided_at",
 )
-# request_id is last on BOTH, which is where migration 000406's ADD COLUMN puts it (no
-# AFTER clause), and tests/se_company_ddl.py replays that ALTER -- so these tuples are the
-# DEPLOYED column lists, not 000399's. On the pair table the column is also the fourth
-# component of the sorting key: v1's rows carry '' and every request's rows carry its id, so
-# two prompt versions of one candidate pair coexist instead of replacing each other.
+# Migration 000406 appends request_id, also the fourth component of the pair sorting
+# key. Migration 000407 appends fingerprints to the state table. These tuples follow
+# the deployed column order; the current matcher keeps request_id empty.
 MATCH_COLUMNS: tuple[str, ...] = (
     "company_id", "candidate_a", "candidate_b", "members_a", "members_b",
     "source_a", "source_b", "name_a", "name_b", "confidence", "reason",
     "model", "prompt_version", "input_hash", "matched_at", "request_id",
 )
-# On the state table request_id is NOT in the key: that table is one row per company by
-# design -- the certification the fold joins on -- and an apply REPLACES it. The column
-# records which request certified the company, which is what a revert deletes by.
+# The state table keeps one row per company. request_id is not part of its sorting key
+# and the current matcher writes the empty-string default here too.
 MATCH_STATE_COLUMNS: tuple[str, ...] = (
     "company_id", "input_hash", "candidates", "sources", "pairs", "model",
     "prompt_version", "prompt_tokens", "completion_tokens", "raw_response", "error",
     "source_run_id", "matched_at", "request_id",
+    "data_hash", "bindings_hash", "prompt_hash", "model_hash", "input_snapshot", "config_snapshot",
+)
+MATCH_INPUT_COLUMNS: tuple[str, ...] = (
+    "company_id", "data_hash", "bindings_hash", "input_snapshot", "eligible", "hash_version",
+    "normalized_at", "computed_at",
 )
 
 # The view's columns in DDL order, and its sort key. `is_current` is the only derived
@@ -197,21 +189,6 @@ SETTINGS join_algorithm = 'grace_hash,hash',
     max_memory_usage = 12884901888"""
 
 
-# The queue holds the UNIT IDS of one request and nothing else. No version column: within a
-# request a company appears once (both minters de-duplicate before inserting) and every
-# other column is identical for every row of a request, so there is nothing for a version to
-# choose between. request_id leads the key because every read is "this request's companies".
-LLM_QUEUE_COLUMNS: tuple[str, ...] = (
-    "request_id", "company_id", "queued_at", "queued_by", "note",
-)
-# One row per company per request, the newest answer winning. `candidates` is the list length
-# the answer was produced for (the apply's sanity check and the cost readout) and
-# `source_run_id` is the Dagster run that wrote the row.
-LLM_RESPONSE_COLUMNS: tuple[str, ...] = (
-    "request_id", "company_id", "provider", "model", "prompt_version", "input_hash",
-    "candidates", "prompt_tokens", "completion_tokens", "raw_response", "error",
-    "attempts", "source_run_id", "responded_at",
-)
 # The gap view's columns in DDL order, and its sort key. One row per company; the two
 # counters are the number of UNCLOSED pairs of each kind.
 MATCH_GAP_VIEW_COLUMNS: tuple[str, ...] = (
@@ -221,7 +198,9 @@ MATCH_GAP_VIEW_ORDER_BY: tuple[str, ...] = ("company_id",)
 
 
 def build_se_company_person_match_gap_sql() -> str:
-    """The SELECT behind `corpscout.se_company_person_match_gap` (spec section 5.2).
+    """The SELECT behind `corpscout.se_company_person_match_gap`.
+
+    See docs/se-company-person-match-gap.md for the view's role in the pipeline.
 
     One row per company that still carries a deterministic gap the stored matches have not
     closed. Both rules are computed over the MEMBER SPELLINGS of two ACTIVE published
@@ -252,7 +231,7 @@ def build_se_company_person_match_gap_sql() -> str:
     machine members takes part as a person like any other.
 
     THREE LITERALS ARE SPELLED OUT HERE rather than imported: the four machine sources
-    (`match.MACHINE_SOURCES`), the foldable parse status (`fold.FOLDABLE_STATUS`) and the
+    (`candidates.MACHINE_SOURCES`), the foldable parse status (`fold.FOLDABLE_STATUS`) and the
     0.8 threshold (`fold.MATCH_THRESHOLD`). Both of those modules import THIS one, so the
     import cannot go the other way; tests/test_se_company_person_match_gap_view.py holds the
     equalities instead.

@@ -12,18 +12,13 @@ import pytest
 
 from dagster_v3.defs.se_company.info import LlmProfileConfig
 from dagster_v3.defs.se_company.person.fold import MATCH_THRESHOLD, NormalizedRow
-from dagster_v3.defs.se_company.person.match import (
+from dagster_v3.defs.se_company.person.candidates import (
     MACHINE_SOURCES,
     MAX_CANDIDATES,
     MAX_ROLES,
-    PROMPT_VERSION,
-    REASON_LIMIT,
-    SYSTEM_PROMPT,
     build_candidates,
-    build_match_request,
     in_scope,
     input_hash,
-    parse_match_response,
     serialize_candidates,
 )
 
@@ -32,8 +27,9 @@ from openai import OpenAIError, RateLimitError
 from pydantic import ValidationError
 
 from dagster_v3.defs.se_company.person import batch, tables
-from dagster_v3.defs.se_company.person import match
+from dagster_v3.defs.se_company.person import match, candidates as candidate_module, match_input
 from dagster_v3.defs.se_company.person.match import (
+    PROMPT_VERSION, REASON_LIMIT, SYSTEM_PROMPT, build_match_request, parse_match_response,
     MatchCounts,
     PersonMatchProfile,
     run_match,
@@ -217,6 +213,37 @@ def test_the_input_hash_moves_only_when_the_candidate_list_moves() -> None:
     assert input_hash(build_candidates([*rows, row("wikidata", "q1", middles=("maria",))])) != base
 
 
+def test_custom_prompt_snapshot_is_sent_verbatim_and_invalidates_cached_results() -> None:
+    candidates = build_candidates([row("bolagsverket"), row("ratsit")])
+    profile = PersonMatchProfile(
+        provider="openrouter", model="chosen/model", base_url="https://example.com/v1",
+        api_key_environment_variable="CUSTOM_KEY", prompt_version="people:prompt-1:r2",
+        system_prompt="Match conservatively. Return a JSON object with pairs.",
+    )
+    assert build_match_request(candidates, profile)["messages"][0]["content"] == profile.system_prompt
+    hashed = match.match_input_hash(candidates, profile)
+    assert hashed != input_hash(candidates)
+    for update in ({"system_prompt": "Edited text"}, {"model": "other/model"}):
+        assert match.match_input_hash(candidates, profile.model_copy(update=update)) != hashed
+    assert match.match_input_hash(list(reversed(candidates)), profile) == hashed
+    assert match.match_input_hash(candidates, profile.model_copy(update={"prompt_version": "renamed:r99"})) == hashed
+    with pytest.raises(ValidationError):
+        PersonMatchProfile(provider="openrouter", model="m", system_prompt=" ")
+    with pytest.raises(ValidationError):
+        PersonMatchProfile(provider="openrouter", model="m", api_key_environment_variable="key-value-is-not-a-variable")
+
+
+def test_person_profile_resolves_the_saved_environment_variable_only_on_the_worker(monkeypatch) -> None:
+    from dagster_v3.defs.se_company import info
+    monkeypatch.setenv("WORKER_LLM_KEY", "worker-secret")
+    received = {}
+    monkeypatch.setattr(info, "OpenAI", lambda **kwargs: received.update(kwargs))
+    profile = PersonMatchProfile(provider="custom provider", model="m", api_key_environment_variable="WORKER_LLM_KEY")
+    info.build_llm_client(profile, timeout_seconds=120, api_key_environment_variable=profile.api_key_environment_variable)
+    assert received["api_key"] == "worker-secret"
+    assert "worker-secret" not in profile.model_dump_json()
+
+
 def test_the_hard_candidate_cap_is_four_hundred() -> None:
     """Spec section 8: a company above the cap is skipped with an error, never truncated."""
     assert MAX_CANDIDATES == 400
@@ -251,18 +278,18 @@ def test_the_prompt_carries_ordinal_ids_and_no_normalized_id() -> None:
     echo twice per pair for an identifier it has no use for. The model sees `c0`..`cN`; the
     HASHED rendering keeps the real ids, so no stored input_hash moves."""
     candidates = build_candidates([ERIK, BO, ANNA])
-    payload = json.loads(match.prompt_payload(candidates))
+    payload = json.loads(candidate_module.prompt_payload(candidates))
     assert [entry["id"] for entry in payload] == ["c0", "c1", "c2"]
     # The serialized (hashed) order is source then id: bolagsverket, esef, ratsit.
     assert [entry["source"] for entry in payload] == ["bolagsverket", "esef", "ratsit"]
     for candidate in candidates:
-        assert candidate.id not in match.prompt_payload(candidates)
-    assert "members" not in match.prompt_payload(candidates)
+        assert candidate.id not in candidate_module.prompt_payload(candidates)
+    assert "members" not in candidate_module.prompt_payload(candidates)
     # Same keys as the hashed rendering, only the id differs.
     hashed = json.loads(serialize_candidates(candidates))
     assert [set(entry) for entry in payload] == [set(entry) for entry in hashed]
     assert [entry["name"] for entry in payload] == [entry["name"] for entry in hashed]
-    assert match.ordinal_id(0) == "c0" and match.ordinal_id(17) == "c17"
+    assert candidate_module.ordinal_id(0) == "c0" and candidate_module.ordinal_id(17) == "c17"
 
 
 def _wide(count: int):
@@ -316,7 +343,7 @@ def test_the_request_is_the_prompt_the_ordinal_candidates_and_json_mode() -> Non
     assert request["temperature"] == 0 and request["max_tokens"] == 4_000
     assert request["response_format"] == {"type": "json_object"}
     assert request["messages"][0] == {"role": "system", "content": SYSTEM_PROMPT}
-    assert request["messages"][1]["content"] == match.prompt_payload(candidates)
+    assert request["messages"][1]["content"] == candidate_module.prompt_payload(candidates)
     assert request["messages"][1]["content"] != serialize_candidates(candidates)
     # deepseek-v4-flash is a reasoning model and its reasoning counts against max_tokens,
     # so the pass disables thinking exactly as the ESEF passes do.
@@ -460,7 +487,10 @@ class FakeClient:
     def __init__(self, *, scope_pages, rows, state=()):
         self.scope_pages = [list(page) for page in scope_pages]
         self.rows = list(rows)
-        self.state = list(state)
+        self.state = [
+            (*entry, "", "", "", "", "", "", "", 0, 0, PROMPT_VERSION) if len(entry) == 3 else entry
+            for entry in state
+        ]
         self.statements: list[tuple[str, object, object]] = []
         self.inserts: list[tuple[str, list]] = []
 
@@ -477,8 +507,14 @@ class FakeClient:
             page = self.scope_pages.pop(0) if self.scope_pages else []
             return [(company_id,) for company_id in page]
         ids = set(params["company_ids"])
-        if sql == match.current_candidates_sql():
-            return [normalized_tuple(r) for r in self.rows if r.company_id in ids]
+        if sql == match_input.current_inputs_sql():
+            inputs = []
+            for company_id in sorted(ids):
+                candidates = build_candidates([r for r in self.rows if r.company_id == company_id])
+                metadata = match_input.input_metadata(candidates)
+                inputs.append((company_id, metadata["data_hash"], metadata["bindings_hash"],
+                               metadata["input_snapshot"], in_scope(candidates), match_input.HASH_VERSION))
+            return inputs
         if sql == match.match_state_sql():
             return [entry for entry in self.state if entry[0] in ids]
         raise AssertionError(sql)
@@ -534,24 +570,17 @@ def multi(company_id: str) -> list[NormalizedRow]:
     ]
 
 
-def test_the_scope_sql_gates_on_two_machine_sources() -> None:
+def test_the_scope_reads_precomputed_eligible_inputs() -> None:
     sql = match.match_scope_sql()
-    assert f"FROM {tables.QUALIFIED_NORMALIZED_TABLE} FINAL" in sql
-    assert "parse_status = 'ok'" in sql
-    assert "source IN ('bolagsverket', 'esef', 'wikidata', 'ratsit')" in sql
-    assert "uniqExact(source) AS sources" in sql and "HAVING sources >= 2" in sql
-    # No keyset tail: scope_pages runs this once into a scratch table and pages that.
-    assert "%(after_company_id)s" not in sql and "LIMIT" not in sql
-    # Reviewer rows never reach the model.
-    assert "reviewer" not in sql
+    assert f"FROM {tables.QUALIFIED_MATCH_INPUT_TABLE} FINAL" in sql
+    assert "WHERE eligible AND hash_version = 1" in sql
+    assert tables.QUALIFIED_NORMALIZED_TABLE not in sql
 
 
 def test_the_page_reads_bind_ids_read_final_and_keep_error_state_rows() -> None:
-    candidates_sql = match.current_candidates_sql()
-    assert f"FROM {tables.QUALIFIED_NORMALIZED_TABLE} FINAL" in candidates_sql
-    assert candidates_sql.startswith(f"SELECT {', '.join(batch.NORMALIZED_SELECT_COLUMNS)}")
+    candidates_sql = match_input.current_inputs_sql()
+    assert f"FROM {tables.QUALIFIED_MATCH_INPUT_TABLE} FINAL" in candidates_sql
     assert "company_id IN %(company_ids)s" in candidates_sql
-    assert "ORDER BY company_id, source, slot" in candidates_sql
     state_sql = match.match_state_sql()
     assert f"FROM {tables.QUALIFIED_MATCH_STATE_TABLE} FINAL" in state_sql
     assert "toString(input_hash) AS input_hash" in state_sql
@@ -599,6 +628,7 @@ def test_the_run_calls_once_per_company_and_writes_pairs_then_state() -> None:
     assert state["error"] == "" and state["source_run_id"] == "run-1"
     assert state["raw_response"] == model.answers[A]
     assert state["matched_at"] == pair["matched_at"]
+    assert pair["request_id"] == state["request_id"] == ""
 
 
 def test_an_unchanged_input_hash_is_reused_and_never_called() -> None:
@@ -887,7 +917,7 @@ def test_match_counts_as_metadata_names_every_counter() -> None:
                          skipped_single_source=5, pairs=6, pairs_above_threshold=7, errors=8,
                          prompt_tokens=9, completion_tokens=10, stopped_at_cap=False)
     assert set(counts.as_metadata()) == {
-        "companies", "pages", "called", "reused", "skipped_sticky",
+        "companies", "pages", "called", "reused", "rebound", "skipped_sticky",
         "skipped_single_source", "pairs", "pairs_above_threshold", "errors",
         "prompt_tokens", "completion_tokens", "stopped_at_cap", "prompt_version", "threshold",
     }

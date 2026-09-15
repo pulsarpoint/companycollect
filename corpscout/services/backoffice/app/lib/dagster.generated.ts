@@ -142,6 +142,8 @@ export type RunsFilter = {
 /** An enumeration. */
 export type StaleStatus = "FRESH" | "MISSING" | "STALE";
 
+export type StepEventStatus = "FAILURE" | "IN_PROGRESS" | "SKIPPED" | "SUCCESS";
+
 export type BackofficeLaunchRunMutationVariables = Exact<{
   executionParams: ExecutionParams;
 }>;
@@ -238,6 +240,91 @@ export type BackofficeRunsQuery = {
           }>;
         }>;
       };
+};
+
+export type BackofficeProcessingRunsQueryVariables = Exact<{
+  job: string;
+  activeStatuses: Array<RunStatus> | RunStatus;
+}>;
+
+export type BackofficeProcessingRunsQuery = {
+  __typename: "Query";
+  recent:
+    | { __typename: "InvalidPipelineRunsFilterError"; message: string }
+    | { __typename: "PythonError"; message: string }
+    | {
+        __typename: "Runs";
+        results: Array<{
+          __typename: "Run";
+          runId: string;
+          status: RunStatus;
+          jobName: string;
+          creationTime: number;
+          startTime: number | null;
+          endTime: number | null;
+          tags: Array<{
+            __typename: "PipelineTag";
+            key: string;
+            value: string;
+          }>;
+        }>;
+      };
+  active:
+    | { __typename: "InvalidPipelineRunsFilterError"; message: string }
+    | { __typename: "PythonError"; message: string }
+    | {
+        __typename: "Runs";
+        results: Array<{
+          __typename: "Run";
+          runId: string;
+          status: RunStatus;
+          jobName: string;
+          creationTime: number;
+          startTime: number | null;
+          endTime: number | null;
+          stepStats: Array<{
+            __typename: "RunStepStats";
+            stepKey: string;
+            status: StepEventStatus | null;
+          }>;
+          tags: Array<{
+            __typename: "PipelineTag";
+            key: string;
+            value: string;
+          }>;
+        }>;
+      };
+  successful:
+    | { __typename: "InvalidPipelineRunsFilterError"; message: string }
+    | { __typename: "PythonError"; message: string }
+    | {
+        __typename: "Runs";
+        results: Array<{
+          __typename: "Run";
+          runId: string;
+          status: RunStatus;
+          jobName: string;
+          creationTime: number;
+          startTime: number | null;
+          endTime: number | null;
+          tags: Array<{
+            __typename: "PipelineTag";
+            key: string;
+            value: string;
+          }>;
+        }>;
+      };
+};
+
+export type ProcessingRunSummaryFragment = {
+  __typename: "Run";
+  runId: string;
+  status: RunStatus;
+  jobName: string;
+  creationTime: number;
+  startTime: number | null;
+  endTime: number | null;
+  tags: Array<{ __typename: "PipelineTag"; key: string; value: string }>;
 };
 
 export type BackofficeRunQueryVariables = Exact<{

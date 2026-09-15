@@ -1,8 +1,8 @@
 """Migration 000406's refreshable view, and the pin that keeps its body machine-rendered.
 
-`corpscout.se_company_person_match_gap` (spec 2026-09-13 section 5, LLM-enhance slice 1) is
-a REFRESHABLE materialized view over four tables the person entity already has: one row per
-company that still carries a deterministic call-name or double-surname gap the stored
+`corpscout.se_company_person_match_gap` is a REFRESHABLE materialized view over four tables
+the person entity already has: one row per company that still carries a deterministic
+call-name or double-surname gap the stored
 matches have not closed. Nothing writes it -- the fold, the normalizer, the rules, the
 precedence and the match asset never see it -- so the only thing that can drift is the
 SELECT itself. This file couples the two halves exactly as
@@ -20,7 +20,7 @@ from pathlib import Path
 
 from dagster_v3.defs.se_company.person import tables
 from dagster_v3.defs.se_company.person.fold import FOLDABLE_STATUS, MATCH_THRESHOLD
-from dagster_v3.defs.se_company.person.match import MACHINE_SOURCES
+from dagster_v3.defs.se_company.person.candidates import MACHINE_SOURCES
 from dagster_v3.defs.se_company.person.tables import build_se_company_person_match_gap_sql
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
@@ -30,8 +30,6 @@ MAIN = "corpscout.se_company_person"
 NORMALIZED = "corpscout.se_company_person_normalized"
 MATCH = "corpscout.se_company_person_match"
 MATCH_STATE = "corpscout.se_company_person_match_state"
-QUEUE = "corpscout.llm_queue_se_company_person"
-RESPONSE = "corpscout.llm_response_se_company_person"
 
 
 def _sql(suffix: str) -> str:
@@ -86,15 +84,13 @@ def test_the_pin_is_not_vacuous() -> None:
     assert "ON n.company_id = p.company_id AND n.normalized_id = member_id" in body
     assert f"FROM {MATCH} AS m FINAL" in body
     assert f"    FROM {MATCH_STATE} FINAL" in body
-    # The view never reads itself, and nothing about the queue or the response table
-    # belongs in it -- it is derived from the person entity alone.
+    # The view is derived from the person entity and never reads itself.
     assert VIEW not in body
-    assert QUEUE not in body and RESPONSE not in body
     for column in tables.MATCH_GAP_VIEW_COLUMNS:
         assert f" AS {column}" in body, column
 
 
-def test_the_two_rules_are_spelled_as_section_5_1_defines_them() -> None:
+def test_the_two_name_rules_require_disjoint_sources_and_compatible_birth_years() -> None:
     """Call name: equal surname token lists, one side's given-token SET a STRICT superset of
     the other's. Double surname: equal given sets, one side's surname two tokens and the
     other's one, and the single token one of the two. Both rules need DISJOINT source sets
@@ -148,12 +144,12 @@ def test_the_matched_leg_uses_the_folds_threshold_and_an_error_free_state_row() 
     assert "ON s.company_id = m.company_id AND s.input_hash = m.input_hash" in body
 
 
-def test_the_up_migration_is_two_tables_two_alters_and_one_refreshable_view() -> None:
+def test_the_up_migration_is_two_alters_and_one_refreshable_view() -> None:
     statements = _statements(_sql("up"))
 
-    assert len(statements) == 6
+    assert len(statements) == 4
     assert statements[0] == "CREATE DATABASE IF NOT EXISTS corpscout"
-    create = _body(statements[5])
+    create = _body(statements[3])
     assert create.startswith(f"CREATE MATERIALIZED VIEW {VIEW}\n")
     assert "\nREFRESH EVERY 1 HOUR OFFSET 30 MINUTE\n" in create
     # The engine lives INSIDE the view (000326/000391/000402's form), so the view IS the
@@ -175,11 +171,11 @@ def test_the_pair_alter_is_one_statement_and_carries_no_default_expression() -> 
     refuses a key column that has a DEFAULT EXPRESSION -- proven on 26.5 while this was
     written: `ADD COLUMN request_id String DEFAULT '', MODIFY ORDER BY (...)` fails with
     code 36, BAD_ARGUMENTS. Without the clause the column still stores String's zero value,
-    which is the `''` spec section 4.3 asks for. The state table's copy is NOT in a key, so
+    which is the `''` the matcher writes. The state table's copy is NOT in a key, so
     it keeps the explicit DEFAULT."""
     statements = _statements(_sql("up"))
-    pair_alter = _body(statements[3])
-    state_alter = _body(statements[4])
+    pair_alter = _body(statements[1])
+    state_alter = _body(statements[2])
 
     assert pair_alter.startswith(f"ALTER TABLE {MATCH}\n")
     assert "\n    ADD COLUMN IF NOT EXISTS request_id String,\n" in pair_alter
@@ -194,20 +190,17 @@ def test_the_pair_alter_is_one_statement_and_carries_no_default_expression() -> 
 
 
 def test_the_down_migration_removes_everything_it_can() -> None:
-    """Forward-only in spirit: the view and the two new tables go, and the state table's
-    column goes, but the PAIR table keeps `request_id` -- it is in that table's sorting key
-    and ClickHouse cannot shrink a sorting key. Undoing it would mean rebuilding a live
+    """The view and the state table's column go, but the PAIR table keeps `request_id`.
+    ClickHouse cannot shrink its sorting key. Undoing it would mean rebuilding a live
     table, which a down migration must not do."""
     statements = _statements(_sql("down"))
 
     assert statements[0] == "CREATE DATABASE IF NOT EXISTS corpscout"
     assert _body(statements[1]) == f"DROP VIEW IF EXISTS {VIEW}"
-    assert _body(statements[2]) == f"DROP TABLE IF EXISTS {RESPONSE}"
-    assert _body(statements[3]) == f"DROP TABLE IF EXISTS {QUEUE}"
-    assert _body(statements[4]) == (
+    assert _body(statements[2]) == (
         f"ALTER TABLE {MATCH_STATE}\n    DROP COLUMN IF EXISTS request_id"
     )
-    assert len(statements) == 5
+    assert len(statements) == 3
     # One object in, one object out: the inline engine means the view owns its MergeTree and
     # DROP VIEW takes the data with it.
     assert f"DROP TABLE IF EXISTS {VIEW}" not in _sql("down")
@@ -227,14 +220,11 @@ def test_the_sort_keys_carry_no_nullable_column() -> None:
     assert "toUInt32(countIf(g.is_double_surname = 1)) AS double_surname_pairs" in body
     assert "Nullable" not in body
     executable_up = _executable(_sql("up"))
-    # Both new tables key on (request_id, company_id) -- two plain Strings -- and neither
-    # declares a Nullable column at all.
-    assert executable_up.count("ORDER BY (request_id, company_id)") == 2
     assert "Nullable" not in executable_up
 
 
 def test_the_select_carries_the_same_refresh_bounding_settings_since_000347() -> None:
-    """The heaviest hourly refresh this entity owns (spec section 12): two ARRAY JOINs over
+    """The heaviest hourly refresh this entity owns: two ARRAY JOINs over
     1.27M active persons, a self-join of ~5.8M member rows and an anti-join. It ends with
     the identical trailing SETTINGS block 000347/000391/000402 carry -- copied verbatim, not
     a hand-typed near-copy."""

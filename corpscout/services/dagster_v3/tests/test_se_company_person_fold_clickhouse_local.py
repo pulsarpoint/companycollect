@@ -33,7 +33,7 @@ from typing import Any
 
 import pytest
 
-from dagster_v3.defs.se_company.person import batch, tables
+from dagster_v3.defs.se_company.person import batch, tables, match_input
 from dagster_v3.defs.se_company.person.assets import export_precedence
 from dagster_v3.defs.se_company.person.fold import MATCH_THRESHOLD, person_key
 from dagster_v3.defs.se_company.person.normalize import RAW_ROW_COLUMNS, normalized_row
@@ -111,7 +111,8 @@ def _schema_statements() -> list[str]:
     tables.MATCH_COLUMNS and MATCH_STATE_COLUMNS are the DEPLOYED column lists and both end
     with request_id."""
     statements: list[str] = []
-    for name in (MIGRATION_FILE, MATCH_MIGRATION_FILE, ENHANCE_MIGRATION_FILE):
+    for name in (MIGRATION_FILE, MATCH_MIGRATION_FILE, ENHANCE_MIGRATION_FILE,
+                 "000407_corpscout_se_company_person_match_input.up.sql"):
         text = (MIGRATIONS_DIR / name).read_text(encoding="utf-8")
         for raw in text.split(";"):
             statement = "\n".join(
@@ -139,6 +140,7 @@ _QUERY_COLUMNS: dict[str, tuple[str, ...]] = {
     batch.company_precedence_watermarks_sql(): ("company_id", "decided_at"),
     batch.global_precedence_watermark_sql(): ("decided_at",),
     batch.current_normalized_sql(): batch.NORMALIZED_SELECT_COLUMNS,
+    match_input.normalized_inputs_sql(): (*batch.NORMALIZED_SELECT_COLUMNS, "normalized_at"),
     batch.current_main_rows_sql(): batch.MAIN_SELECT_COLUMNS,
     batch.active_rules_sql(): batch.RULE_SELECT_COLUMNS,
     batch.company_precedence_sql(): ("company_id", "source", "precedence"),
@@ -453,7 +455,7 @@ def _match_state_insert(company_id: str) -> str:
            480, 60, MATCH_ANSWER, "", "run-match", MATCHED_AT, "")
     return (
         f"INSERT INTO {tables.QUALIFIED_MATCH_STATE_TABLE} "
-        f"({', '.join(tables.MATCH_STATE_COLUMNS)}) VALUES {_literal(row)}"
+        f"({', '.join(tables.MATCH_STATE_COLUMNS[:14])}) VALUES {_literal(row)}"
     )
 
 
@@ -521,3 +523,18 @@ def test_re_running_the_matched_fold_selects_nothing(matched) -> None:
         folded_at=datetime(2026, 9, 10, 14, 0, tzinfo=UTC),
     )
     assert counts.considered == 0
+
+
+def test_a_new_answer_with_no_pairs_supersedes_old_pairs_for_the_same_input() -> None:
+    client = _LocalClient(0)
+    client.add(_match_insert(MATCH_CO, _normalized_id("1" * 64), _normalized_id("2" * 64)))
+    client.add(_match_state_insert(MATCH_CO))
+    assert len(client.execute(batch.match_pairs_sql(), {"company_ids": [MATCH_CO]})) == 1
+    # A forced re-match can return no pairs while its candidate/prompt hash stays identical.
+    # Its state certifies this answer only, not old pairs omitted from the new response.
+    stamp = datetime(2026, 9, 11, 15, 0, tzinfo=UTC)
+    row = (MATCH_CO, MATCH_HASH, 2, 2, 0, "deepseek-v4-flash", "se-person-match-v1",
+           480, 20, '{"pairs":[]}', "", "run-rematch", stamp, "")
+    client.add(f"INSERT INTO {tables.QUALIFIED_MATCH_STATE_TABLE} "
+               f"({', '.join(tables.MATCH_STATE_COLUMNS[:14])}) VALUES {_literal(row)}")
+    assert client.execute(batch.match_pairs_sql(), {"company_ids": [MATCH_CO]}) == []

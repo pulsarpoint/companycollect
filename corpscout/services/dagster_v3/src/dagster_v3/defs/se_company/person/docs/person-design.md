@@ -10,19 +10,19 @@ everything past the modules below -- the backoffice.
 | `roles.py` | Per-source role maps (`role_code_for`), moved verbatim from `sweden_financial`/`esef_filings`/`wikidata`'s own `roles.py`; an unmapped label publishes as itself, lowercased and trimmed |
 | `normalize_se.py` | `normalize_se_person`: pure Swedish parser -- splits, folds and classifies a delivered name and role; never guesses a missing half |
 | `normalize.py` | The normalize SQL (`changed_scope_sql`, `changed_rows_sql`, `all_scope_sql`, `all_rows_sql`, `normalized_insert_sql`) and the paging/write loop (`normalize_all`, `normalize_companies`) |
-| `assets.py` | The Dagster asset `se_company_person_normalize` |
+| `assets.py` | Normalization, input snapshots, LLM matching, publication, targeted correction folds and precedence export |
 | `suggestions.py` | The person `SuggestionTarget`, the shared column lists (`PERSON_SELECT_COLUMNS`/`PERSON_STATE_COLUMNS`) and the four SQL builders every source shares (`live_select_sql`, `person_state_sql`, `person_changed_scope_sql`, `person_select_sql`) |
 | `bolagsverket.py` | The Bolagsverket signatory extractor `se_company_person_suggestions_bolagsverket`: split name, `role_kind` as `role_key`, and the `has_company = 0` deregistration tombstone |
 | `esef.py` | The ESEF document-people extractor `se_company_person_suggestions_esef`: one name string, `role_category` as `role_key`, slot = `source_document_id` + `candidate_uid` |
 | `wikidata.py` | The Wikidata company-person extractor `se_company_person_suggestions_wikidata`: orgnr/LEI-linked statements, slot = `Q<company>:P<property>:Q<person>` |
 | `ratsit.py` | The Ratsit responsible-people extractor `se_company_person_suggestions_ratsit`: the newest normalized report per company, one row per named person, slot = the profile-URL token (role-qualified when a report repeats it, `idx:<person_index>` without a URL), `role_key` NULL |
-| `jobs.py` | `se_company_person_extract_job` (the four extractors plus the normalize asset) and the STOPPED `se_company_person_weekly` schedule (`25 7 * * 1`) |
+| `jobs.py` | The two global workflows: `se_company_person_sync_job` (extract → normalize → input hashes) and `se_company_person_refresh_job` (same sync → match → publish). No People schedule. |
 | `precedence.py` | The `name` spelling order (`PERSON_PRECEDENCE`, `precedence_for`, `precedence_rows`): reviewer 20000, ratsit 1000, bolagsverket 900, wikidata 600, esef 400. It decides the published spelling and the `data` merge, never who is published |
 | `fold.py` | The pure fold: identity sets (equal first/last tokens with the unique-minimal-superset middle rule, or a shared QID, never across two birth years), the canonical name and `person_key`, the reviewer rules, the member/roles/`data` blocks, the lifecycle diff and the history entries |
 | `batch.py` | The fold's SQL and paging: selection, the four page reads under `FINAL`, history-then-main writes, `FoldCounts`, `fold_companies`, `fold_bucket` |
 | `match.py` | The LLM matching phase: candidates per source per name-token triple, the versioned prompt and its parser, the change scan and the paged run loop, `PersonMatchProfile` |
 | `se_company_person_match` | One call per company whose normalized `ok` rows span two or more machine sources; writes `se_company_person_match` (scored pairs) and `se_company_person_match_state` (one row per company). Pool `se_company_person_match` (limit 1), retried 3 times with exponential backoff; `provider` and `model` have no defaults |
-| `se_company_person_fold` | 64 static buckets (`bucket_00`..`bucket_63`, `modulo(cityHash64(company_id), 64)`), `BackfillPolicy.multi_run(max_partitions_per_run=1)`, pooled at `FOLD_POOL` (limit 1) so a backfill runs one bucket at a time -- a page's `FINAL` read of the normalized table is a full scan (controller ruling 2026-09-10); config `changed_only` (default true) and `page_size` (default 20,000) |
+| `se_company_person_publish` | Publishes all companies by visiting 64 hash buckets sequentially in the fold concurrency pool. Part of Full processing; config `changed_only` (default true) and `page_size` (default 20,000). |
 | `se_company_person_fold_companies` | The targeted fold for the backoffice's Fold now: normalizes `company_ids` first (always `changed_only`), then folds them (`changed_only` false by default) |
 | `se_company_person_precedence_clickhouse` | Exports `PERSON_PRECEDENCE` as the global (`company_id = ''`, `field = 'name'`) rows; re-running it re-folds every company |
 
@@ -135,10 +135,12 @@ person column NULL and `data` `{}`. `suggestion_id` and `suggested_at` both come
 The suggestion table stores neither `source_run_id` nor `extractor_version`. `execute:
 false` (the default) previews the count without writing.
 
-`se_company_person_extract_job` (`jobs.py`) selects the four extractors and
-`se_company_person_normalize` (which now `deps` on them); `se_company_person_weekly`
-schedules it Mondays 07:25 UTC (`25 7 * * 1`) with `execute: true`, `page_size: 10000` per
-extractor and `changed_only: true` on the normalize asset, registered STOPPED.
+`se_company_person_sync_job` selects the four extractors, normalization and input
+snapshot maintenance. `se_company_person_refresh_job` adds LLM matching and publication.
+Backoffice sends `execute: true`, `page_size: 10000` per extractor and incremental
+normalization/input maintenance. Full processing also supplies the saved LLM profile
+and prompt, with changed-only matching enabled by default. There is no People schedule.
+The old extract-and-match job and standalone partitioned fold have been retired.
 
 ## The fold
 
@@ -296,17 +298,12 @@ store this constant's twin as 0.800000011920929 and a threshold of 0.7 as 0.6999
 rather than by the constant. The `llm_match` JSON still rounds the confidence to four
 decimals: `data` is in `_COMPARED`, so that text decides whether a person counts as changed.
 
-WHAT THE WEEKLY RUN COSTS IS BIRTHDAY-DRIVEN. Ratsit delivers `data.age`, not a birth date,
-so a person's age moves once a year: the extractor's state hash for that company moves with
-it, its slots are re-stamped, the normalizer mints new `normalized_id`s and the candidate
-`input_hash` moves -- and the company is re-sent, however little the model would see change.
-Expect roughly 5-8% of the multi-source companies per weekly run on that account alone, on
-top of genuinely new or changed people. It is the reason the change scan is worth its
-complexity and the reason a sticky error must not add itself to that bill every week.
-
-A normalizer bump changes every `normalized_id`, therefore every candidate hash, therefore
-re-matches every multi-source company on the next run. That is the price of a normalizer
-version change, and it is stated here so it is not a surprise.
+Matching compares the model-visible candidate data and effective prompt/model settings.
+A source observation or normalizer-version change that only changes row IDs can replay
+its stored answer against the current members without new model calls. Actual candidate
+or configuration changes require processing. See the current
+[input hash documentation](../../../../../../docs/se-company-person-match-input.md)
+for the data, binding and configuration hashes and legacy-state handling.
 
 ## Roles as rows (`se_company_person_role`, slice 5)
 
@@ -366,7 +363,7 @@ Six things to know before reading it:
 
 ### Roles view health
 
-`system.view_refreshes` is the runbook check until the person weekly run gets its own
+`system.view_refreshes` is the runbook check until the People pipeline gets its own
 `companies_current_refresh_is_healthy`-style asset check (`companies_current.py`'s
 pattern for `se_companies_serving`, spec section on refresh health): a refresh that throws
 keeps serving its last good rows at full speed, so a stuck or failing refresh is invisible
@@ -391,11 +388,11 @@ the view is serving stale rows at full speed -- the same failure mode
   the previous published members, and old slots persist for ever); split alone does not.
   A split rule pins slots and the Split dialog says so (Ruling 9); a durable split
   expression is deferred.
-- **The bucket fold is serial behind `FOLD_POOL`.** A page's `current_normalized_sql` read is
+- **Publication visits buckets serially behind `FOLD_POOL`.** A page's `current_normalized_sql` read is
   a `FINAL` scan of the normalized table, and the bucket hash scatters a page's ids over the
   whole primary key, so nearly every granule matches: measured on prod at 5.6M rows / 2.57
   GiB / 7.7 s / 366 MiB for one 9,000-company page. 64 of those in parallel would press the
-  server's memory, so the asset is pooled at limit 1 and a backfill runs one bucket at a time
+  server's memory, so publication is pooled at limit 1 and visits one bucket at a time
   (~30 s each, ~30 min for all 64).
 - **An idle precedence re-export no longer moves the watermark.** `export_precedence` reads
   the stored global rows first and inserts nothing when they already equal

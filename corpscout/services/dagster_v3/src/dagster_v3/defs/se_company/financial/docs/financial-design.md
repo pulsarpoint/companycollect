@@ -61,9 +61,13 @@ All four use `suggestions.py`'s target and the shared `se_company/state_scan.py`
 entity's per-company state hash, lifted in this slice): a company is visited when what the
 source delivers now differs from its stored live rows, and a period the source stopped
 delivering gets a tombstone that copies scope and period end so the table's CHECK holds.
-The job `se_company_financial_extract_job` runs `se_ratsit_financial_periods_usd` first, then
-the four extractors; the weekly `se_company_financial_weekly` (Monday 07:55 UTC) is defined
-STOPPED until the fold (slice 3) exists. Every extractor previews by default (`execute: false`).
+The job `se_company_financial_sync_job` runs `se_ratsit_financial_periods_usd` first, then
+the four extractors. `se_company_financial_refresh_job` adds the global
+`se_company_financial_publish` asset, which visits all 64 fold buckets sequentially in
+the fold pool. Both jobs are offered in the backoffice's Company actions → Finance menu
+with `execute: true`. Individual extractors still preview by default (`execute: false`).
+The redundant extract job and stopped weekly schedule were removed. The partitioned
+fold and targeted correction fold remain internal assets. Finance uses no LLM.
 
 A live row must carry at least one figure or an employee count; a source row with none is
 skipped, never written, on both sides of the state hash. The Ratsit extractor pins

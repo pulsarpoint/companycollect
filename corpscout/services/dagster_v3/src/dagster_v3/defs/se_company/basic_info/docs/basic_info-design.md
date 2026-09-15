@@ -131,12 +131,14 @@ How to run: preview first with `execute: false` to see the count of companies th
 visited; set `execute: true` to write. The `llm` extractor additionally requires an `llm:`
 profile (`provider`, `model`, `base_url`, `temperature`, `max_tokens`, `prompt_version`,
 `concurrency`) -- there is no default, so a bare Materialize fails config validation rather
-than silently spending on a default or a preview model. `se_company_basic_info_extract_job`
-(`jobs.py`) selects all six extractors; `se_company_basic_info_weekly` schedules it Mondays
-06:40 UTC (`40 6 * * 1`) with every source's `execute: true`, `page_size: 20000` on the five
-SQL extractors, `max_companies: 5000` on the llm and the pinned
-`deepseek`/`deepseek-v4-flash` profile, registered STOPPED -- turn it on only when ready to
-run automated weekly extraction.
+than silently spending on a default or a preview model. The backoffice's Company actions
+menu launches `se_company_basic_info_sync_job` for the five SQL sources, or
+`se_company_basic_info_refresh_job` for those sources, LLM descriptions and the global
+`se_company_basic_info_publish` asset. Publishing visits all 64 fold buckets sequentially
+in the fold pool. The LLM step has its own serial pool and accepts the selected profile's
+`api_key_environment_variable` name. The backoffice sends an explicit description cap
+(default 5,000). The redundant extract job and stopped weekly schedule were removed;
+the partitioned fold and targeted correction fold remain internal assets.
 
 Re-running bolagsverket after a translation backfill is no longer needed for coverage (the
 scan follows the translation stamp), but `since: "2000-01-01T00:00:00Z"` still re-selects

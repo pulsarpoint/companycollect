@@ -194,7 +194,11 @@ SELECT
         current.reviewed_evidence_fingerprint,
         staged.reviewed_evidence_fingerprint
     ),
-    staged.is_active,
+    toUInt8(multiIf(
+        current.review_status IN ('confirmed_primary', 'confirmed_related'), 1,
+        current.review_status = 'rejected', 0,
+        staged.is_active
+    )),
     staged.first_seen_at,
     staged.last_seen_at,
     now64(3, 'UTC')

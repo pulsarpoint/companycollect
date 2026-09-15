@@ -143,11 +143,9 @@ def test_serving_models_resolve_identity_and_evidence_offline() -> None:
     assert "'management'" not in source_links
     assert "ref('company_management_current_build')" not in source_links
     company_domains = (models / "company_domains_build.sql").read_text()
-    assert "source('corpscout', 'wikidata_company_domains')" in company_domains
-    assert "source('corpscout', 'se_esef_domains')" in company_domains
-    assert "source('corpscout', 'company_domain_suggestions_active')" in company_domains
+    assert "source('corpscout', 'se_company_domain')" in company_domains
     assert "reviewed_evidence_fingerprint" in company_domains
-    assert "domains_without_current_source" in company_domains
+    assert "domains.active AS is_active" in company_domains
     assert "existing.review_status != 'unreviewed'" not in company_domains
     assert "gleif_lei_record" in source_links
     assert "record_kind" in source_links
@@ -161,7 +159,7 @@ def test_serving_models_resolve_identity_and_evidence_offline() -> None:
         == 2
     )
 
-    assert company_domains.count("INNER JOIN companies") == 4
+    assert "AS companies" in company_domains
 
     for model_name in (
         "company_description_current_build.sql",
@@ -215,20 +213,13 @@ def test_serving_project_declares_integrity_tests() -> None:
 MODELS_DIR = DBT_DIR / "models"
 
 
-def test_company_domains_build_reads_the_esef_domains_view() -> None:
+def test_company_domains_build_reads_the_folded_entity() -> None:
     sql = (MODELS_DIR / "company_domains_build.sql").read_text(encoding="utf-8")
-    assert "source('corpscout', 'se_esef_domains')" in sql
-    assert "se_esef_document_contact_candidates" not in sql
-    assert "domains.extraction_status = 'ok'" in sql
-    assert "domains.registrable_domain != ''" in sql
-    # Auditor / social-media / referral-only domains never reach serving (final-review
-    # ruling, spec section 5); the old "exactly ['external_reference']" form is gone.
-    assert "AND NOT arrayAll(" in sql
-    assert "role -> role IN ('auditor', 'social_media', 'external_reference')" in sql
-    assert "!= ['external_reference']" not in sql
-    assert "has(JSONExtract(domains.roles_json, 'Array(String)'), 'company_website')" in sql
-    assert "domains.corroborated = 1 OR domains.evidence_count >= 2" in sql
-    assert "0.50" in sql and "0.75" not in sql
+    assert "source('corpscout', 'se_company_domain')" in sql
+    assert "domains.evidence_hash AS evidence_fingerprint" in sql
+    assert "domains.active AS is_active" in sql
+    assert "domains.is_primary AS suggested_primary" in sql
+    assert "company_domain_suggestions_active" not in sql
 
 
 def test_source_links_read_esef_domain_provenance_from_the_domains_view() -> None:

@@ -1,7 +1,11 @@
 import { useState } from "react";
 import type { Route } from "./+types/admin-se-companies-info";
 import { SeCompanyInfoTable } from "~/components/admin/se-company-info-table";
-import { NO_ROWS_SELECTED, type RowSelection } from "~/lib/row-selection";
+import {
+  NO_COMPANIES_SELECTED,
+  selectionForSeCompanyFilters,
+  type SeCompanySelection,
+} from "~/lib/se-company-selection";
 import { parseInfoFilters, parseListView } from "~/lib/se-company-info-filters";
 import {
   listSeCompanyInfoPage,
@@ -51,22 +55,12 @@ export function meta() {
 
 export default function AdminSeCompanyInfoTable({ loaderData }: Route.ComponentProps) {
   const { listPage, counts, options, total, filters, view, sort } = loaderData;
-  // The picked companies live HERE, in the route component, because that is
-  // where the Pipeline sheet's consumer can reach them: the sheet renders
-  // beside the table's Filters button and needs the same `selection` the
-  // checkboxes write to. Filtering, sorting and paging are all search-param
-  // navigations of THIS route, which re-run the loader without unmounting this
-  // component, so the ticks survive them -- a side effect of the placement, not
-  // a store: nothing here persists a selection past a reload.
-  //
-  //   `selection`     TanStack's RowSelectionState, keyed by company_id (the
-  //                   table passes `getRowId: row => row.company_id`), and so
-  //                   full of ids whose rows are not on screen.
-  //   `setSelection`  the OnChangeFn the table's checkboxes call; also what
-  //                   the toolbar's Clear resets.
-  //   `selectedRowIds(selection)` (~/lib/row-selection) turns it into the
-  //                   id list the pipeline launches post as `company_ids`.
-  const [selection, setSelection] = useState<RowSelection>(NO_ROWS_SELECTED);
+  // Route-owned state survives pagination and sorting. Future bulk actions
+  // submit this selection alongside the action name; query selections must
+  // reach resolveSeCompanySelection on the server without client expansion.
+  const [selection, setSelection] = useState<SeCompanySelection>(NO_COMPANIES_SELECTED);
+  const currentSelection = selectionForSeCompanyFilters(selection, filters);
+  if (currentSelection !== selection) setSelection(currentSelection);
   // The layout owns the page header now (title + tab bar), so this tab renders
   // only its own body.
   return (
@@ -80,7 +74,7 @@ export default function AdminSeCompanyInfoTable({ loaderData }: Route.ComponentP
       counts={counts}
       options={options}
       filters={filters}
-      selection={selection}
+      selection={currentSelection}
       onSelectionChange={setSelection}
     />
   );

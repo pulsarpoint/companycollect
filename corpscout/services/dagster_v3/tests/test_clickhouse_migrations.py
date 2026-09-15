@@ -420,6 +420,8 @@ EXPECTED_MIGRATIONS = (
     "000404_corpscout_se_financial_readers_entity",
     "000405_corpscout_esef_domains",
     "000406_corpscout_se_company_person_llm_enhance",
+    "000407_corpscout_se_company_person_match_input",
+    "000408_corpscout_se_company_domain_entity",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -4463,28 +4465,18 @@ def test_000404_repoints_the_two_financial_readers_to_the_entity() -> None:
     assert "FROM corpscout.se_company_financials_latest" in down
 
 
-def test_000406_pairs_the_llm_queue_and_response_and_widens_the_match_sort_key() -> None:
-    """LLM-enhance slice 1 (spec 2026-09-13 sections 4 and 5): two tables of the pattern, two
-    alters and one refreshable view, in that order. The pair-table alter is ONE statement --
-    ClickHouse extends a sorting key only with a column added by the same ALTER, and refuses
-    one that carries a DEFAULT expression -- and the view is created EMPTY with the hourly
-    refresh, so the migrate client's 300 s read timeout can never leave the ledger dirty. The
-    view's body is drift-pinned in test_se_company_person_match_gap_view.py."""
+def test_000406_widens_the_match_sort_key_and_creates_the_gap_view() -> None:
+    """The retained match-table alters and derived view remain valid after retirement.
+
+    The pair-table alter is one statement because ClickHouse requires the new sorting-key
+    column in the same ALTER. The view's body is pinned in the match-gap view tests.
+    """
     up = _migration_sql("000406_corpscout_se_company_person_llm_enhance.up.sql")
     down = _migration_sql("000406_corpscout_se_company_person_llm_enhance.down.sql")
     executable_up = "\n".join(line.split("--")[0] for line in up.splitlines())
 
     assert up.startswith("CREATE DATABASE IF NOT EXISTS corpscout;")
-    for table in ("llm_queue_se_company_person", "llm_response_se_company_person"):
-        assert f"CREATE TABLE IF NOT EXISTS corpscout.{table}\n" in up, table
-        assert f"DROP TABLE IF EXISTS corpscout.{table};" in down, table
-    assert executable_up.count("CREATE TABLE IF NOT EXISTS") == 2
-    assert executable_up.count("ORDER BY (request_id, company_id)") == 2
-    assert "ENGINE = ReplacingMergeTree\n" in up            # the queue has no version column
-    assert "ENGINE = ReplacingMergeTree(responded_at)" in up
-    assert up.count(
-        "CONSTRAINT valid_company_id CHECK match(company_id, '^([0-9]{10}|[0-9]{12})$')"
-    ) == 2
+    assert "CREATE TABLE IF NOT EXISTS" not in executable_up
 
     # ONE statement for the pair table, with both clauses and no DEFAULT expression.
     [pair_alter] = [
@@ -4517,3 +4509,18 @@ def test_000406_pairs_the_llm_queue_and_response_and_widens_the_match_sort_key()
     ) in down
     executable_down = "\n".join(line.split("--")[0] for line in down.splitlines())
     assert "ALTER TABLE corpscout.se_company_person_match\n" not in executable_down
+
+
+def test_retired_person_llm_tables_have_no_schema_or_runtime_definitions() -> None:
+    """Retired tables cannot return on a fresh schema install or enter runtime code."""
+    retired = ("llm_queue_se_company_person", "llm_response_se_company_person")
+    script = MIGRATIONS_DIR.parent / "operations" / "se_company_person_llm_retirement_drops.sql"
+    assert _statement_lines(script.read_text(encoding="utf-8")) == [
+        f"DROP TABLE IF EXISTS corpscout.{table};" for table in retired
+    ]
+    source_dir = Path(__file__).resolve().parents[1] / "src"
+    paths = [*MIGRATIONS_DIR.glob("*.sql"), *source_dir.rglob("*.py")]
+    for path in paths:
+        text = path.read_text(encoding="utf-8")
+        for table in retired:
+            assert table not in text, f"{path} still references {table}"

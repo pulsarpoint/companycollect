@@ -1,12 +1,10 @@
 """The LLM identity-matching phase (spec 2026-09-11 sections 3 and 4).
 
-Between `normalize` and the fold: a company's normalized `ok` rows from the four machine
-sources are grouped into candidates (one per source per exact name-token triple -- the same
-within-source identity the fold already applies), the list is hashed, and a company whose
-candidates span two or more sources is sent to the model once. The answer is a list of
-unordered pairs with a confidence, stored in `se_company_person_match`; one state row per
-company in `se_company_person_match_state` carries the hash, the usage, the raw text and any
-error, and is what the next run's change scan compares against.
+Between normalization and the fold, current per-company input snapshots are compared
+with the last result's data and effective configuration. Unchanged information reuses the
+answer; changed record bindings replay it against current members. Only changed semantic
+input/configuration or retryable failures need a model call. Pairs and their state record
+activate together through the shared input_hash and matched_at join.
 
 Nothing here decides which persons publish: the fold does, and it reads only the pairs at or
 above `fold.MATCH_THRESHOLD`. Reviewer rows never reach the model -- a reviewer merges by
@@ -16,6 +14,7 @@ hand -- and the API key is read from the host environment at call time by
 
 import hashlib
 import json
+import re
 from collections import defaultdict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import closing
@@ -25,247 +24,20 @@ from functools import partial
 from typing import Any
 
 from openai import OpenAI, OpenAIError, RateLimitError
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from dagster_v3.defs.se_company.basic_info.extract import SCAN_QUERY_SETTINGS, scope_pages
 from dagster_v3.defs.se_company.common import normalized_se_company_ids
 from dagster_v3.defs.se_company.info import LlmProfileConfig, map_ordered
 from dagster_v3.defs.se_company.person import tables
-from dagster_v3.defs.se_company.person.batch import (
-    NORMALIZED_SELECT_COLUMNS,
-    normalized_row_from_row,
+from dagster_v3.defs.se_company.person.fold import MATCH_THRESHOLD
+from dagster_v3.defs.se_company.person.candidates import (
+    Candidate, MAX_CANDIDATES, input_hash, in_scope, ordered_candidates,
+    ordinal_id, prompt_payload,
 )
-from dagster_v3.defs.se_company.person.fold import FOLDABLE_STATUS, MATCH_THRESHOLD, NormalizedRow
+from dagster_v3.defs.se_company.person import match_input
 
 PROMPT_VERSION = "se-person-match-v1"
-# The sources a model may be asked about. `reviewer` and `reviewer_draft` are deliberately
-# absent (spec 3.2): a human decision is not evidence to score.
-MACHINE_SOURCES: tuple[str, ...] = ("bolagsverket", "esef", "wikidata", "ratsit")
-# Spec section 8: a company with more candidates than this is skipped with an error rather
-# than truncated silently. The prod maximum is 159.
-MAX_CANDIDATES = 400
-# Spec 3.2: at most this many distinct (role_code, role_year) pairs per candidate.
-MAX_ROLES = 20
-
-
-@dataclass(frozen=True, slots=True)
-class Candidate:
-    """One person as ONE source spells them (spec 3.2)."""
-
-    id: str                                      # the group's smallest normalized_id
-    source: str
-    name: str                                    # the group's longest display_name
-    given: str                                   # first_tokens + middle_tokens, joined
-    surname: str                                 # last_tokens, joined
-    birth_year: int | None
-    age: int | None                              # data.age, Ratsit's only
-    roles: tuple[tuple[str, int | None], ...]
-    external: bool                               # data.external == 'true' (Ratsit's Extern)
-    members: tuple[str, ...]                     # every normalized_id in the group, sorted
-
-
-def _data_object(text: str) -> dict[str, Any]:
-    """A row's `data` as a dict, degrading to {} for anything else -- the same contract
-    `fold._data_object` keeps, repeated here so this module imports no fold private."""
-    try:
-        parsed = json.loads(text or "{}")
-    except (TypeError, json.JSONDecodeError):
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
-
-
-def _age(rows: Sequence[NormalizedRow]) -> int | None:
-    """The SMALLEST usable `data.age` any member carries, or None. Ratsit writes its `data`
-    values as STRINGS (`toJSONString(mapFilter(...))` over `String`s), so "58" is the
-    shape to expect and anything unparseable is no age at all.
-
-    The smallest rather than the first one in input order: two slots of one candidate can
-    carry ages stamped in different weeks (Ratsit re-stamps a person's age on their
-    birthday), and the read's `ORDER BY company_id, source, slot` does not say which of them
-    comes first in any way this function should depend on. `birth_year` already takes
-    `years[0]` for the same reason, and a value that moves with row order would move the
-    prompt and the input hash with it.
-    """
-    ages: list[int] = []
-    for member in rows:
-        value = _data_object(member.data).get("age")
-        if value is None or isinstance(value, bool):
-            continue
-        try:
-            ages.append(int(str(value).strip()))
-        except (TypeError, ValueError):
-            continue
-    return min(ages) if ages else None
-
-
-def _role_order(pair: tuple[str, int | None]) -> tuple[str, int]:
-    """How roles are PRESENTED: role code, then year, a year-less pair first."""
-    return (pair[0], -1 if pair[1] is None else pair[1])
-
-
-def _capped_roles(
-    pairs: Sequence[tuple[str, int | None]]
-) -> tuple[tuple[str, int | None], ...]:
-    """At most MAX_ROLES pairs, and when the cut bites it keeps the MOST RECENT ones.
-
-    Cutting the presentation order instead would hand a forty-year candidate the 1990s and
-    drop this decade: the years that decide whether two candidates are the same person are
-    the recent ones, and a role's year is the only date the model gets. A year-less pair
-    sorts last in the cut (a dated role is the stronger evidence) and what survives is
-    presented in the ascending order the rest of the payload uses, so neither the prompt nor
-    the input hash depends on how the cut was computed.
-    """
-    def recency(pair: tuple[str, int | None]) -> tuple[int, int, str]:
-        year = pair[1]
-        return (0 if year is not None else 1, -year if year is not None else 0, pair[0])
-
-    return tuple(sorted(sorted(pairs, key=recency)[:MAX_ROLES], key=_role_order))
-
-
-def _external(rows: Sequence[NormalizedRow]) -> bool:
-    return any(
-        str(_data_object(member.data).get("external", "")).strip().casefold() == "true"
-        for member in rows
-    )
-
-
-def build_candidates(rows: Sequence[NormalizedRow]) -> list[Candidate]:
-    """One company's candidates, ordered by (source, id).
-
-    Grouped per source by `(first_tokens, middle_tokens, last_tokens)`. Only `ok` rows of
-    the machine sources take part, so a reviewer row can never reach the model and a
-    `partial`/`no_person` row can never become a candidate.
-    """
-    grouped: dict[tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...]], list[NormalizedRow]]
-    grouped = defaultdict(list)
-    for row in rows:
-        if row.parse_status != FOLDABLE_STATUS or row.source not in MACHINE_SOURCES:
-            continue
-        grouped[(row.source, row.first_tokens, row.middle_tokens, row.last_tokens)].append(row)
-    candidates: list[Candidate] = []
-    for (source, first, middle, last), members in grouped.items():
-        normalized_ids = tuple(sorted({member.normalized_id for member in members}))
-        years = sorted({member.birth_year for member in members if member.birth_year is not None})
-        pairs = _capped_roles(
-            sorted(
-                {(member.role_code, member.role_year) for member in members if member.role_code},
-                key=_role_order,
-            )
-        )
-        candidates.append(
-            Candidate(
-                id=normalized_ids[0],
-                source=source,
-                # Longest spelling, ties broken alphabetically so the value never depends
-                # on the order the rows came back in.
-                name=min(
-                    (member.display_name for member in members),
-                    key=lambda name: (-len(name), name),
-                ),
-                given=" ".join((*first, *middle)),
-                surname=" ".join(last),
-                birth_year=years[0] if years else None,
-                age=_age(members),
-                roles=pairs,
-                external=_external(members),
-                members=normalized_ids,
-            )
-        )
-    return sorted(candidates, key=lambda candidate: (candidate.source, candidate.id))
-
-
-def in_scope(candidates: Sequence[Candidate]) -> bool:
-    """Spec 3.2: a company is in scope when its candidates span at least two sources."""
-    return len({candidate.source for candidate in candidates}) >= 2
-
-
-def _ordered(candidates: Sequence[Candidate]) -> list[Candidate]:
-    """The one order this module agrees on: source, then id. The prompt's ordinal ids are
-    positions in it, so `prompt_payload` and `parse_match_response` must never sort the list
-    two different ways."""
-    return sorted(candidates, key=lambda candidate: (candidate.source, candidate.id))
-
-
-def ordinal_id(index: int) -> str:
-    """The id the MODEL sees for the candidate at `index` of the serialized order."""
-    return f"c{index}"
-
-
-def _payload(candidate: Candidate) -> dict[str, Any]:
-    """One candidate as the model sees it. A value the register did not carry is left OUT
-    rather than sent as null, so the prompt never asks the model to reason about absence."""
-    payload: dict[str, Any] = {
-        "id": candidate.id,
-        "source": candidate.source,
-        "name": candidate.name,
-        "given": candidate.given,
-        "surname": candidate.surname,
-        "roles": [[code, year] for code, year in candidate.roles],
-    }
-    if candidate.birth_year is not None:
-        payload["birth_year"] = candidate.birth_year
-    if candidate.age is not None:
-        payload["age"] = candidate.age
-    if candidate.external:
-        payload["external"] = True
-    return payload
-
-
-def serialize_candidates(candidates: Sequence[Candidate]) -> str:
-    """The HASHED rendering: sorted by source then id, keys sorted, no spaces -- so the same
-    candidate list always renders the same bytes. `input_hash` hashes this plus the members
-    each candidate stands for, which the rendering itself does not carry.
-
-    This is no longer what the model reads (`prompt_payload` is), and it keeps the full
-    64-character normalized ids on purpose: a stored `input_hash` must not move because the
-    prompt's shape changed, or the first run after such a change re-sends -- and re-pays for
-    -- all 124,646 multi-source companies."""
-    return json.dumps(
-        [_payload(candidate) for candidate in _ordered(candidates)],
-        ensure_ascii=False, separators=(",", ":"), sort_keys=True,
-    )
-
-
-def prompt_payload(candidates: Sequence[Candidate]) -> str:
-    """The user message: the same candidates in the same order, under SHORT ordinal ids
-    `c0`..`cN`, keys sorted, no spaces.
-
-    A normalized id is 64 hex characters -- about 16 tokens the model would have to read
-    once and echo twice per pair, for an identifier it has no use for. The ordinal is one
-    token, and `parse_match_response` maps it back to the candidate's real id, so nothing
-    downstream ever sees `cN`. Members stay out of the prompt for the same reason they
-    always have: the model is not asked about them."""
-    return json.dumps(
-        [
-            {**_payload(candidate), "id": ordinal_id(index)}
-            for index, candidate in enumerate(_ordered(candidates))
-        ],
-        ensure_ascii=False, separators=(",", ":"), sort_keys=True,
-    )
-
-
-def input_hash(candidates: Sequence[Candidate]) -> str:
-    """sha256 of the candidate list, MEMBERS INCLUDED (spec 3.2). The change scan sends a
-    company when this differs from its stored hash, or when it has no state row at all.
-
-    The members are not in the prompt -- the model has no use for 64-character ids it is not
-    asked about -- but they are in the hash. A new annual filing adds a slot whose name is
-    identical to an existing candidate's: nothing the model would see changes, but the stored
-    pair's `members_a`/`members_b` must name that slot too, or the fold unions a set the pair
-    no longer fully describes. Hashing the members re-sends such a company, which is the only
-    way the stored pair stays complete.
-    """
-    ordered = _ordered(candidates)
-    payload = json.dumps(
-        {
-            "candidates": [_payload(candidate) for candidate in ordered],
-            "members": [list(candidate.members) for candidate in ordered],
-        },
-        ensure_ascii=False, separators=(",", ":"), sort_keys=True,
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
 # Model answers are capped so one verbose reply cannot bloat a row or a state row.
 REASON_LIMIT = 500
 
@@ -353,7 +125,8 @@ def build_match_request(
     deepseek-v4-flash is a reasoning model whose reasoning counts against `max_tokens` (the
     ESEF passes do the same).
     """
-    if profile.prompt_version != PROMPT_VERSION:
+    system_prompt = profile.system_prompt if isinstance(profile, PersonMatchProfile) else ""
+    if not system_prompt and profile.prompt_version != PROMPT_VERSION:
         raise ValueError(
             f"Unsupported person match prompt version: {profile.prompt_version!r}; "
             f"expected {PROMPT_VERSION!r}"
@@ -361,7 +134,7 @@ def build_match_request(
     request: dict[str, Any] = {
         "model": profile.model,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt or SYSTEM_PROMPT},
             {"role": "user", "content": prompt_payload(candidates)},
         ],
         "temperature": profile.temperature,
@@ -435,7 +208,7 @@ def parse_match_response(
     by_id = {candidate.id: candidate for candidate in candidates}
     by_ordinal = {
         ordinal_id(index): candidate.id
-        for index, candidate in enumerate(_ordered(candidates))
+        for index, candidate in enumerate(ordered_candidates(candidates))
     }
     best: dict[tuple[str, str], MatchedPair] = {}
     unknown = self_pairs = bad_confidence = 0
@@ -490,7 +263,6 @@ PAGE_SIZE = 500
 # larger page can never trip ClickHouse's 262,144-byte default.
 MATCH_ID_BOUND_QUERY_SETTINGS = {"max_query_size": 1_048_576, "max_execution_time": 1800}
 ERROR_LIMIT = 500
-_MACHINE_SOURCES_SQL = ", ".join(f"'{source}'" for source in MACHINE_SOURCES)
 
 # The errors worth paying for again on the SAME input: the provider's weather, plus anything
 # we did not foresee. `unexpected:` is in the list because its cause is usually a bug in THIS
@@ -522,13 +294,15 @@ class PersonMatchProfile(LlmProfileConfig):
 
     `provider` and `model` have NO defaults, like `LlmSuggestionProfile` and the ESEF
     passes: a bare Materialize must fail validation rather than spend on a default.
-    `prompt_version` is pinned to the prompt this module implements, so a run configured
-    for another version refuses rather than storing rows under a prompt nobody wrote.
+    A custom prompt must carry its text in run config. Without it, only the built-in
+    prompt version is accepted. Backoffice snapshots a saved SQLite prompt here.
     """
 
     provider: str = Field(min_length=1, max_length=64)
     model: str = Field(min_length=1, max_length=200)
     prompt_version: str = Field(default=PROMPT_VERSION, min_length=1, max_length=120)
+    system_prompt: str = Field(default="", max_length=30_000)
+    api_key_environment_variable: str = Field(default="", max_length=128)
     # deepseek-v4-flash is a reasoning model and its reasoning counts against max_tokens;
     # 4,000 is the spec's budget for an answer that is a list of pairs.
     max_tokens: int = Field(default=4_000, ge=256, le=32_000)
@@ -545,12 +319,58 @@ class PersonMatchProfile(LlmProfileConfig):
     def _valid_ids(cls, value: list[str]) -> list[str]:
         return list(normalized_se_company_ids(value))
 
-    @field_validator("prompt_version")
+    @field_validator("system_prompt")
     @classmethod
-    def _pinned_prompt_version(cls, value: str) -> str:
-        if value != PROMPT_VERSION:
-            raise ValueError(f"person match prompt_version must be {PROMPT_VERSION!r}")
+    def _valid_prompt(cls, value: str) -> str:
+        if value and not value.strip():
+            raise ValueError("system_prompt must not be blank")
         return value
+
+    @field_validator("api_key_environment_variable")
+    @classmethod
+    def _valid_key_variable(cls, value: str) -> str:
+        if value and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value) is None:
+            raise ValueError("Invalid API key environment variable name")
+        return value
+
+    @model_validator(mode="after")
+    def _known_prompt(self):
+        if not self.system_prompt and self.prompt_version != PROMPT_VERSION:
+            raise ValueError(f"person match prompt_version must be {PROMPT_VERSION!r} without system_prompt")
+        return self
+
+
+def legacy_match_input_hash(candidates: Sequence[Candidate], config: PersonMatchProfile) -> str:
+    """Read pre-fingerprint state without forcing every historic success through the LLM."""
+    hashed = input_hash(candidates)
+    if not config.system_prompt:
+        return hashed
+    payload = json.dumps([
+        hashed, config.system_prompt, config.prompt_version, config.provider,
+        config.model, config.base_url, config.temperature, config.max_tokens,
+    ], ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def config_metadata(candidates: Sequence[Candidate], config: PersonMatchProfile) -> dict[str, str]:
+    request = build_match_request(candidates, config)
+    system_prompt = request["messages"][0]["content"]
+    model_config = {
+        key: value for key, value in request.items() if key != "messages"
+    }
+    model_config.update(provider=config.provider.strip().casefold(), base_url=config.base_url.rstrip("/"))
+    return {
+        "prompt_hash": match_input.digest(system_prompt),
+        "model_hash": match_input.digest(match_input.json_text(model_config)),
+        "config_snapshot": match_input.json_text({"system_prompt": system_prompt, **model_config}),
+    }
+
+
+def match_input_hash(candidates: Sequence[Candidate], config: PersonMatchProfile) -> str:
+    metadata = {**match_input.input_metadata(candidates), **config_metadata(candidates, config)}
+    return match_input.digest(match_input.json_text([
+        metadata[key] for key in ("data_hash", "bindings_hash", "prompt_hash", "model_hash")
+    ]))
 
 
 @dataclass(frozen=True, slots=True)
@@ -569,7 +389,7 @@ class MatchCounts:
     companies: int                 # ids the pages handed out
     pages: int
     called: int                    # companies the model answered and the parser accepted
-    reused: int                    # unchanged input hash, no error, no call made
+    reused: int                    # unchanged data/config, including binding-only replay
     skipped_sticky: int            # unchanged input hash, stored error not worth retrying
     skipped_single_source: int
     pairs: int                     # pair rows written
@@ -578,11 +398,12 @@ class MatchCounts:
     prompt_tokens: int
     completion_tokens: int
     stopped_at_cap: bool
+    rebound: int = 0
 
     def as_metadata(self) -> dict[str, Any]:
         return {
             "companies": self.companies, "pages": self.pages, "called": self.called,
-            "reused": self.reused, "skipped_sticky": self.skipped_sticky,
+            "reused": self.reused, "rebound": self.rebound, "skipped_sticky": self.skipped_sticky,
             "skipped_single_source": self.skipped_single_source,
             "pairs": self.pairs, "pairs_above_threshold": self.pairs_above_threshold,
             "errors": self.errors, "prompt_tokens": self.prompt_tokens,
@@ -592,33 +413,10 @@ class MatchCounts:
 
 
 def match_scope_sql() -> str:
-    """Companies whose current normalized `ok` rows come from two or more machine sources.
-
-    That is as far as the gate goes in SQL: the candidate hash is a Python computation over
-    the page's rows, so the scan's job is only to keep single-source companies out of the
-    pages. `scope_pages` runs this once into a scratch table and keyset-pages that, so the
-    FINAL read of the normalized table happens once per run.
-    """
+    """Scan compact current inputs; normalization owns candidate construction."""
     return (
-        "SELECT company_id FROM (\n"
-        "    SELECT company_id, uniqExact(source) AS sources\n"
-        f"    FROM {tables.QUALIFIED_NORMALIZED_TABLE} FINAL\n"
-        f"    WHERE parse_status = '{FOLDABLE_STATUS}' AND source IN ({_MACHINE_SOURCES_SQL})\n"
-        "    GROUP BY company_id\n"
-        "    HAVING sources >= 2\n"
-        ")"
-    )
-
-
-def current_candidates_sql() -> str:
-    """The page's candidate rows -- the same columns and the same shape the fold reads, so
-    `batch.normalized_row_from_row` turns them into NormalizedRow unchanged."""
-    return (
-        f"SELECT {', '.join(NORMALIZED_SELECT_COLUMNS)}\n"
-        f"FROM {tables.QUALIFIED_NORMALIZED_TABLE} FINAL\n"
-        f"WHERE company_id IN %(company_ids)s AND source IN ({_MACHINE_SOURCES_SQL}) "
-        f"AND parse_status = '{FOLDABLE_STATUS}'\n"
-        "ORDER BY company_id, source, slot"
+        f"SELECT company_id FROM {tables.QUALIFIED_MATCH_INPUT_TABLE} FINAL\n"
+        f"WHERE eligible AND hash_version = {match_input.HASH_VERSION}"
     )
 
 
@@ -633,7 +431,9 @@ def match_state_sql() -> str:
     for the fold as well (fix wave F3). The `error` column is what the next run reads to tell
     the two apart, so it has to come back with the hash."""
     return (
-        "SELECT company_id, toString(input_hash) AS input_hash, error\n"
+        "SELECT company_id, toString(input_hash) AS input_hash, error, data_hash, bindings_hash, "
+        "prompt_hash, model_hash, input_snapshot, config_snapshot, raw_response, "
+        "prompt_tokens, completion_tokens, prompt_version\n"
         f"FROM {tables.QUALIFIED_MATCH_STATE_TABLE} FINAL\n"
         "WHERE company_id IN %(company_ids)s"
     )
@@ -662,14 +462,10 @@ def match_row(
     prompt_version: str,
     input_hash: str,
     matched_at: datetime,
-    request_id: str = "",
 ) -> tuple[Any, ...]:
     """One insert tuple in tables.MATCH_COLUMNS order.
 
-    `request_id` is the fourth component of the pair table's sorting key since migration
-    000406: the match asset leaves it empty, which is what every v1 row carries, and the
-    LLM-enhance apply passes the request it is applying so that request's pairs are their
-    own rows and can be reverted on their own.
+    The deployed sorting key includes request_id. The matcher always writes it empty.
     """
     left, right = by_id[pair.candidate_a], by_id[pair.candidate_b]
     values: dict[str, Any] = {
@@ -681,7 +477,7 @@ def match_row(
         "confidence": float(pair.confidence), "reason": pair.reason,
         "model": model, "prompt_version": prompt_version,
         "input_hash": input_hash, "matched_at": matched_at,
-        "request_id": request_id,
+        "request_id": "",
     }
     return tuple(values[column] for column in tables.MATCH_COLUMNS)
 
@@ -701,20 +497,20 @@ def match_state_row(
     error: str,
     source_run_id: str,
     matched_at: datetime,
-    request_id: str = "",
+    fingerprints: Mapping[str, str],
 ) -> tuple[Any, ...]:
     """One insert tuple in tables.MATCH_STATE_COLUMNS order.
 
-    `request_id` records which request certified the company (migration 000406). It is NOT
-    in this table's key -- one row per company, replaced by whoever certifies it last.
+    Keep request_id empty to match the deployed schema; source_run_id identifies the run.
     """
     values: dict[str, Any] = {
+        **fingerprints,
         "company_id": company_id, "input_hash": input_hash, "candidates": candidates,
         "sources": sources, "pairs": pairs, "model": model, "prompt_version": prompt_version,
         "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
         "raw_response": raw_response, "error": error, "source_run_id": source_run_id,
         "matched_at": matched_at,
-        "request_id": request_id,
+        "request_id": "",
     }
     return tuple(values[column] for column in tables.MATCH_STATE_COLUMNS)
 
@@ -755,6 +551,7 @@ class _Outcome:
     completion_tokens: int
     raw_response: str
     error: str
+    rebound: bool = False
 
 
 def _pages(client: Any, config: PersonMatchProfile) -> Iterator[list[str]]:
@@ -778,10 +575,9 @@ def run_match(
 ) -> MatchCounts:
     """Match every company in scope, a page at a time (spec 3.1 to 3.3).
 
-    Per page: read the candidate rows, build and hash the candidate lists, drop the
-    single-source companies, the ones whose hash is unchanged and the ones whose stored
-    error a re-send cannot fix, call the model for the rest through `map_ordered` at
-    `config.concurrency`, then write the page's pair rows and its state rows with ONE stamp.
+    Per page: read the current snapshots, compare semantic data and effective config,
+    replay successful answers when only bindings changed, and call the model for the
+    remaining companies. Pair rows and their certifying state share one new timestamp.
     A company whose call fails or whose answer does not parse gets a state row with `error`
     set and the run continues; whether the NEXT run sends it again is
     `is_transient_error`'s decision.
@@ -804,37 +600,67 @@ def run_match(
             counts["pages"] += 1
             counts["companies"] += len(page)
             params = {"company_ids": page}
-            by_company: dict[str, list[NormalizedRow]] = defaultdict(list)
-            for raw in client.execute(
-                current_candidates_sql(), params, settings=MATCH_ID_BOUND_QUERY_SETTINGS
-            ):
-                normalized = normalized_row_from_row(raw)
-                by_company[normalized.company_id].append(normalized)
-            stored: dict[str, tuple[str, str]] = {}
+            current = {
+                row[0]: dict(zip(
+                    ("company_id", "data_hash", "bindings_hash", "input_snapshot", "eligible", "hash_version"),
+                    row, strict=True,
+                ))
+                for row in client.execute(
+                    match_input.current_inputs_sql(), params, settings=MATCH_ID_BOUND_QUERY_SETTINGS,
+                )
+            }
+            missing = set(page) - current.keys()
+            if missing:
+                raise ValueError(
+                    f"Missing People input snapshots for {len(missing)} companies; "
+                    "materialize se_company_person_match_input first"
+                )
+            stored = {}
             if config.changed_only:
                 stored = {
-                    str(company_id): (str(hashed), str(error or ""))
-                    for company_id, hashed, error in client.execute(
-                        match_state_sql(), params, settings=MATCH_ID_BOUND_QUERY_SETTINGS
+                    row[0]: dict(zip(
+                        ("company_id", "input_hash", "error", "data_hash", "bindings_hash", "prompt_hash",
+                         "model_hash", "input_snapshot", "config_snapshot", "raw_response",
+                         "prompt_tokens", "completion_tokens", "prompt_version"), row, strict=True,
+                    ))
+                    for row in client.execute(
+                        match_state_sql(), params, settings=MATCH_ID_BOUND_QUERY_SETTINGS,
                     )
                 }
 
             prepared: list[tuple[str, tuple[Candidate, ...], str]] = []
             outcomes: list[_Outcome] = []
             for company_id in page:
-                candidates = tuple(build_candidates(by_company.get(company_id, [])))
+                candidates = match_input.snapshot_candidates(current[company_id]["input_snapshot"])
                 if not in_scope(candidates):
                     counts["skipped_single_source"] += 1
                     continue
-                hashed = input_hash(candidates)
-                previous_hash, previous_error = stored.get(company_id, ("", ""))
-                if previous_hash == hashed:
-                    if not previous_error:
+                hashed = match_input_hash(candidates, config)
+                previous = stored.get(company_id, {})
+                fingerprints = {**current[company_id], **config_metadata(candidates, config)}
+                same_content = bool(previous.get("data_hash")) and all(
+                    previous[key] == fingerprints[key] for key in ("data_hash", "prompt_hash", "model_hash")
+                )
+                legacy_config = config.model_copy(update={
+                    "prompt_version": previous.get("prompt_version") or config.prompt_version,
+                })
+                legacy_same = not previous.get("data_hash") and (
+                    previous.get("input_hash") == legacy_match_input_hash(candidates, legacy_config)
+                )
+                if same_content or legacy_same:
+                    if not previous["error"]:
                         counts["reused"] += 1
+                        if same_content and previous["bindings_hash"] != fingerprints["bindings_hash"]:
+                            # Ordinals are ordered by semantic content, so unchanged data
+                            # permits replay against the current normalized IDs and members.
+                            parsed = parse_match_response(previous["raw_response"], candidates)
+                            outcomes.append(_Outcome(
+                                company_id, candidates, hashed, parsed,
+                                previous["prompt_tokens"], previous["completion_tokens"],
+                                previous["raw_response"], "", rebound=True,
+                            ))
                         continue
-                    if not is_transient_error(previous_error):
-                        # Same input, an error a re-send cannot fix: skip it and write
-                        # NOTHING, so the company's match watermark stays where it is.
+                    if not is_transient_error(previous["error"]):
                         counts["skipped_sticky"] += 1
                         continue
                 if len(candidates) > MAX_CANDIDATES:
@@ -914,11 +740,14 @@ def run_match(
                 counts["pairs_above_threshold"] += sum(
                     1 for pair in pairs if pair.confidence >= MATCH_THRESHOLD
                 )
-                counts["prompt_tokens"] += outcome.prompt_tokens
-                counts["completion_tokens"] += outcome.completion_tokens
+                if not outcome.rebound:
+                    counts["prompt_tokens"] += outcome.prompt_tokens
+                    counts["completion_tokens"] += outcome.completion_tokens
+                else:
+                    counts["rebound"] += 1
                 if outcome.error:
                     counts["errors"] += 1
-                else:
+                elif not outcome.rebound:
                     counts["called"] += 1
                 state_rows.append(
                     match_state_row(
@@ -931,6 +760,10 @@ def run_match(
                         completion_tokens=outcome.completion_tokens,
                         raw_response=outcome.raw_response, error=outcome.error,
                         source_run_id=source_run_id, matched_at=matched_at,
+                        fingerprints={
+                            **match_input.input_metadata(outcome.candidates),
+                            **config_metadata(outcome.candidates, config),
+                        },
                     )
                 )
             # Pairs FIRST: the fold reads the pairs whose input_hash equals the state row's,
@@ -967,5 +800,5 @@ def run_match(
         skipped_single_source=counts["skipped_single_source"],
         pairs=counts["pairs"], pairs_above_threshold=counts["pairs_above_threshold"],
         errors=counts["errors"], prompt_tokens=counts["prompt_tokens"],
-        completion_tokens=counts["completion_tokens"], stopped_at_cap=stopped,
+        completion_tokens=counts["completion_tokens"], stopped_at_cap=stopped, rebound=counts["rebound"],
     )

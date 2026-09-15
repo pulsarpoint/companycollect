@@ -76,7 +76,9 @@ function AdminBreadcrumbs() {
   const onTechnologiesIndexPage = pathname === "/admin/technologies";
   const onTechnologyDetailPage = pathname.startsWith("/admin/technologies/");
   const onGeneralRolesPage = pathname === "/admin/general/roles";
-  const onLlmSettingsPage = pathname === "/admin/settings/llms";
+  const onDomainPromptsPage = pathname === "/admin/settings/domain-prompts";
+  const onPeoplePromptsPage = pathname === "/admin/settings/people-prompts";
+  const onLlmSettingsPage = pathname === "/admin/settings/llms" || onPeoplePromptsPage || onDomainPromptsPage;
   const onEsefPage = pathname === "/admin/esef";
   const onCompanyInfoPage = pathname.startsWith("/admin/se/company/");
   const onCompaniesPage =
@@ -209,7 +211,7 @@ function AdminBreadcrumbs() {
     );
   }
 
-  if (onPeoplePage) {
+  if (onPeoplePage || pathname === "/admin/se/processing") {
     return (
       <Breadcrumb>
         <BreadcrumbList>
@@ -222,7 +224,7 @@ function AdminBreadcrumbs() {
           </BreadcrumbItem>
           <BreadcrumbSeparator className="hidden sm:block" />
           <BreadcrumbItem>
-            <BreadcrumbPage>People</BreadcrumbPage>
+            <BreadcrumbPage>{onPeoplePage ? "People" : "Processing"}</BreadcrumbPage>
           </BreadcrumbItem>
         </BreadcrumbList>
       </Breadcrumb>
@@ -282,7 +284,7 @@ function AdminBreadcrumbs() {
           </BreadcrumbItem>
           <BreadcrumbSeparator />
           <BreadcrumbItem>
-            <BreadcrumbPage>LLMs</BreadcrumbPage>
+            <BreadcrumbPage>{onDomainPromptsPage ? "Domain prompts" : onPeoplePromptsPage ? "People prompts" : "LLMs"}</BreadcrumbPage>
           </BreadcrumbItem>
         </BreadcrumbList>
       </Breadcrumb>

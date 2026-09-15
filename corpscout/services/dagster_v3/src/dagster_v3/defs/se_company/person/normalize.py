@@ -21,6 +21,7 @@ from typing import Any
 
 from dagster_v3.defs.se_company.basic_info.extract import SCAN_QUERY_SETTINGS, scope_pages
 from dagster_v3.defs.se_company.person import tables
+from dagster_v3.defs.se_company.person.match_input import refresh_inputs, stale_scope_sql
 from dagster_v3.defs.se_company.person.normalize_se import (
     NORMALIZER_VERSION,
     NormalizedPerson,
@@ -210,6 +211,9 @@ def _normalize_page(
         counts[row[status_index]] += 1
     if rows:
         client.execute(normalized_insert_sql(), rows)
+    # Include unchanged sources and tombstones in the company snapshot, even when
+    # this is a retry after the normalized insert already succeeded.
+    refresh_inputs(client, company_ids)
     counts["rows"] = len(rows)
     return counts
 
@@ -246,7 +250,8 @@ def normalize_all(
     page_size: int = PAGE_SIZE, log: Any = None,
 ) -> NormalizeCounts:
     """Scan the raw table once for the companies that need normalizing, then page them."""
-    scope_sql = changed_scope_sql() if changed_only else all_scope_sql()
+    raw_scope = changed_scope_sql() if changed_only else all_scope_sql()
+    scope_sql = f"SELECT DISTINCT company_id FROM ({raw_scope} UNION DISTINCT {stale_scope_sql()})"
     pages: list[dict[str, int]] = []
     companies = 0
     for page in scope_pages(

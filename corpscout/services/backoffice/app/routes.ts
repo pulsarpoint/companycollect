@@ -114,6 +114,8 @@ export default [
     route("technologies/:slug", "routes/admin-technology-detail.tsx"),
     route("general/roles", "routes/admin-general-roles.tsx"),
     route("settings/llms", "routes/admin-settings-llms.tsx"),
+    route("settings/people-prompts", "routes/admin-settings-people-prompts.tsx"),
+    route("settings/domain-prompts", "routes/admin-settings-domain-prompts.tsx"),
     route("settings/llms/local", "routes/admin-settings-llms-local.tsx"),
     // One company, ten tabs. The layout owns the header and the sub-menu; a
     // bare /admin/se/company/:companyId redirects to Info.
@@ -177,7 +179,9 @@ export default [
     ]),
     // The all-people LIST area: a sibling of se/companies, not one of its tabs --
     // every published person across every company, server-paged and filtered.
+    route("se/processing", "routes/admin-se-processing.tsx"),
     route("se/people", "routes/admin-se-people.tsx"),
+    route("se/company-actions", "routes/admin-se-company-actions.ts"),
     // Old bookmarks: the list and the geocoding view moved under se/companies.
     // Thin loader-only routes that 302 to the new URLs.
     route("se/company-info", "routes/admin-se-company-info-redirect.ts"),

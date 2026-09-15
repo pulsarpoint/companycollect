@@ -5,7 +5,7 @@ tests/test_se_company_person_normalize_clickhouse_local.py."""
 import hashlib
 from datetime import UTC, datetime
 
-from dagster_v3.defs.se_company.person import tables
+from dagster_v3.defs.se_company.person import tables, batch, match_input
 from dagster_v3.defs.se_company.person.normalize import (
     NORMALIZE_ID_BOUND_QUERY_SETTINGS,
     PAGE_SIZE,
@@ -37,10 +37,18 @@ class FakeClient:
     def __init__(self, *, scope_ids, rows):
         self.scope_pages = [list(scope_ids)]
         self.rows = list(rows)
+        self.normalized = {}
         self.statements: list[tuple[str, object, object]] = []
 
     def execute(self, sql, params=None, settings=None):
         self.statements.append((sql, params, settings))
+        if sql.startswith(f"INSERT INTO {tables.QUALIFIED_NORMALIZED_TABLE}"):
+            for row in params:
+                self.normalized[tuple(row[:3])] = dict(zip(tables.NORMALIZED_COLUMNS, row, strict=True))
+            return []
+        if sql == match_input.normalized_inputs_sql():
+            return [tuple(row[column] for column in (*batch.NORMALIZED_SELECT_COLUMNS, "normalized_at"))
+                    for row in self.normalized.values() if row["company_id"] in params["company_ids"]]
         if sql.startswith(("CREATE TABLE", "DROP TABLE", "INSERT INTO")):
             return []
         if sql.startswith(f"SELECT company_id FROM {tables.SCRATCH_SCOPE_PREFIX}"):

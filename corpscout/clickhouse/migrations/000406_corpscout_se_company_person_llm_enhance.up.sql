@@ -1,77 +1,8 @@
 CREATE DATABASE IF NOT EXISTS corpscout;
 
--- THE LLM-ENHANCEMENT PATTERN, FIRST USE (spec 2026-09-13 sections 3 and 4, slice 1). An
--- LLM pass over a source table is a QUEUE, a RESPONSE table and four steps -- queue, run,
--- apply, clean up -- and every one of them belongs to the table it enhances. Per source
--- table X that needs LLM augmentation there are exactly two tables, llm_queue_<X> and
--- llm_response_<X>, mapped to X's own unit id. Nothing generic goes into the schema: a
--- shared llm_queue would need a string entity discriminator in its sort key, an unconstrained
--- unit id, and one table's retention policy imposed on every consumer.
---
--- THESE ARE THE ONLY TWO corpscout TABLES WHOSE NAMES DO NOT START WITH THEIR ENTITY'S
--- PREFIX. That is the pattern's name, not an oversight: llm_<step>_<source table> reads as
--- "the LLM queue OF se_company_person". Every string match on a table name in this repo
--- compares whole names, so nothing is broken by the new prefix.
---
--- THE UNIT IS THE COMPANY, because that is what a person-match prompt is built over: all of
--- a company's people go into one prompt, since identity is decided by comparing them with
--- each other. The queue therefore holds company ids, not person keys -- even when the
--- reviewer reached it from a person row.
-
--- The unit ids of one request and nothing else. No version column: within a request a
--- company appears once (both minters de-duplicate before inserting) and every column beside
--- the key is identical for every row of a request, so there is nothing for a version to
--- choose between. request_id leads the sort key because every read is "this request's
--- companies".
-CREATE TABLE IF NOT EXISTS corpscout.llm_queue_se_company_person
-(
-    request_id String,
-    company_id String,
-    queued_at DateTime64(3, 'UTC'),
-    queued_by String,
-    note String DEFAULT '',
-    CONSTRAINT valid_company_id CHECK match(company_id, '^([0-9]{10}|[0-9]{12})$')
-)
-ENGINE = ReplacingMergeTree
-ORDER BY (request_id, company_id);
-
--- One row per company per request, the newest answer winning. Nothing downstream reads it:
--- it is the paid evidence, and the apply step's input. Two columns go beyond the owner's
--- list and both earn their place -- `candidates` is the list length the answer was produced
--- for, which is the apply's sanity check and the cost readout, and `source_run_id` is the
--- Dagster run that wrote the row, which is how a Requests page links to the last run without
--- a tag query against Dagster.
---
--- RE-RUNNING THE SAME REQUEST UNDER A DIFFERENT PROMPT VERSION REPLACES THAT REQUEST'S
--- RESPONSES. A request holds exactly one effective answer per company, the most recent
--- run's. To compare two prompts, queue two requests.
-CREATE TABLE IF NOT EXISTS corpscout.llm_response_se_company_person
-(
-    request_id String,
-    company_id String,
-    provider LowCardinality(String),
-    model LowCardinality(String),
-    prompt_version LowCardinality(String),
-    input_hash FixedString(64),
-    candidates UInt16,
-    prompt_tokens UInt32,
-    completion_tokens UInt32,
-    raw_response String,
-    error String DEFAULT '',
-    attempts UInt8,
-    source_run_id String,
-    responded_at DateTime64(3, 'UTC'),
-    CONSTRAINT valid_company_id CHECK match(company_id, '^([0-9]{10}|[0-9]{12})$')
-)
-ENGINE = ReplacingMergeTree(responded_at)
-ORDER BY (request_id, company_id);
-
--- WHY THE PAIR TABLE'S SORT KEY HAS TO GROW. Without request_id in it, a v2 pair row
--- REPLACES the v1 row for the same candidate pair, so a v2 that scores a pair lower than v1
--- silently unmerges a person the moment the next fold runs. With it, v1's rows (request_id
--- empty) and every request's rows coexist as distinct rows, and the fold takes the MAXIMUM
--- confidence across them. It is also what makes a revert exact: deleting a request's pair
--- rows cannot touch another request's.
+-- The unused request queue and response tables were dropped by hand on 2026-09-13.
+-- Their DDL was removed under the development-phase retirement policy. Keep the match
+-- columns and sorting key already deployed, together with the derived match-gap view.
 --
 -- ONE STATEMENT ON PURPOSE. ClickHouse extends a sorting key only with a column added by the
 -- SAME ALTER, and the column must take the type's zero value so that every stored row's new
@@ -82,22 +13,19 @@ ORDER BY (request_id, company_id);
 -- refused on 26.5 with code 36, BAD_ARGUMENTS, "Newly added column request_id has a default
 -- expression, so adding expressions that use it to the sorting key is forbidden". Without
 -- the clause the column still stores String's zero value, which is the empty string this
--- design wants -- it is the DEFAULT EXPRESSION, not the value, that a key column may not
+-- matcher writes -- it is the DEFAULT EXPRESSION, not the value, that a key column may not
 -- carry.
 ALTER TABLE corpscout.se_company_person_match
     ADD COLUMN IF NOT EXISTS request_id String,
     MODIFY ORDER BY (company_id, candidate_a, candidate_b, request_id);
 
--- The state table's sort key is NOT extended: it is one row per company by design -- the
--- certification the fold joins on -- and an apply REPLACES it. request_id here records which
--- request certified the company, which is what a revert deletes by. The column is not in a
--- key, so it keeps its explicit DEFAULT.
+-- The state table keeps one row per company. Its request_id column is not in the key,
+-- so it keeps its explicit DEFAULT.
 ALTER TABLE corpscout.se_company_person_match_state
     ADD COLUMN IF NOT EXISTS request_id String DEFAULT '';
 
--- THE MATCH-GAP VIEW (spec section 5): one row per company that still carries a
+-- THE MATCH-GAP VIEW: one row per company that still carries a
 -- deterministic call-name or double-surname gap no stored match at or above 0.8 has closed.
--- It is what turns "re-send everything" into a named, affordable request.
 --
 -- DERIVED, NOT WRITTEN. Nothing inserts into it. The fold, the normalizer, the reviewer
 -- rules, the precedence and the match asset are untouched by this migration. The view is

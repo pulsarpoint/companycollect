@@ -1,4 +1,4 @@
-import { chInsertCompanyDomains, chQuery } from "~/lib/clickhouse.server";
+import { chInsertCompanyDomains, chInsertSeCompanyDomainRules, chQuery } from "~/lib/clickhouse.server";
 
 export const COMPANY_DOMAIN_REVIEW_STATUSES = [
   "unreviewed",
@@ -203,7 +203,7 @@ export const COMPANY_DOMAINS_QUERY = `SELECT
   toString(first_seen_at) AS first_seen_at,
   toString(last_seen_at) AS last_seen_at,
   toString(resolved_at) AS resolved_at
-FROM company_domains FINAL
+FROM company_domains_resolved
 WHERE country_code = {country:String}
   AND company_id = {companyId:String}
 ORDER BY
@@ -576,7 +576,7 @@ export async function getUnifiedCompanyDomains(
 }
 
 const COMPANY_DOMAIN_QUEUE_WHERE = `WHERE domains.country_code = {country:String}
-  AND domains.is_active = 1
+  AND (domains.is_active = 1 OR entity.inactive_reason IN ('unverified', 'rejected'))
   AND domains.review_status = 'unreviewed'
   AND (
     {query:String} = ''
@@ -587,36 +587,40 @@ const COMPANY_DOMAIN_QUEUE_WHERE = `WHERE domains.country_code = {country:String
   AND ({source:String} = 'all' OR has(domains.source_names, {source:String}))`;
 
 export const COMPANY_DOMAIN_REVIEW_QUEUE_COUNT_QUERY = `SELECT count() AS total
-FROM company_domains AS domains FINAL
+FROM company_domains_resolved AS domains
+LEFT JOIN se_company_domain AS entity FINAL
+  ON entity.company_id = domains.company_id AND entity.root_domain = domains.root_domain
 INNER JOIN se_company_basic_info AS companies FINAL
   ON companies.company_id = domains.company_id
 ${COMPANY_DOMAIN_QUEUE_WHERE}`;
 
 export const COMPANY_DOMAIN_REVIEW_QUEUE_QUERY = `SELECT
-  domains.country_code,
-  domains.company_id,
+  domains.country_code AS country_code,
+  domains.company_id AS company_id,
   companies.legal_name AS company_name,
-  domains.root_domain,
-  domains.website_url,
-  domains.website_host,
-  domains.source_names,
-  domains.source_confidences,
-  domains.source_record_ids,
-  domains.source_urls,
-  domains.confidence_bases,
-  domains.suggested_confidence,
-  domains.suggested_primary,
-  domains.evidence_fingerprint,
-  domains.review_status,
-  domains.review_note,
-  domains.reviewed_by,
+  domains.root_domain AS root_domain,
+  domains.website_url AS website_url,
+  domains.website_host AS website_host,
+  domains.source_names AS source_names,
+  domains.source_confidences AS source_confidences,
+  domains.source_record_ids AS source_record_ids,
+  domains.source_urls AS source_urls,
+  domains.confidence_bases AS confidence_bases,
+  domains.suggested_confidence AS suggested_confidence,
+  domains.suggested_primary AS suggested_primary,
+  domains.evidence_fingerprint AS evidence_fingerprint,
+  domains.review_status AS review_status,
+  domains.review_note AS review_note,
+  domains.reviewed_by AS reviewed_by,
   ifNull(toString(domains.reviewed_at), '') AS reviewed_at,
-  domains.reviewed_evidence_fingerprint,
-  domains.is_active,
+  domains.reviewed_evidence_fingerprint AS reviewed_evidence_fingerprint,
+  domains.is_active AS is_active,
   toString(domains.first_seen_at) AS first_seen_at,
   toString(domains.last_seen_at) AS last_seen_at,
   toString(domains.resolved_at) AS resolved_at
-FROM company_domains AS domains FINAL
+FROM company_domains_resolved AS domains
+LEFT JOIN se_company_domain AS entity FINAL
+  ON entity.company_id = domains.company_id AND entity.root_domain = domains.root_domain
 INNER JOIN se_company_basic_info AS companies FINAL
   ON companies.company_id = domains.company_id
 ${COMPANY_DOMAIN_QUEUE_WHERE}
@@ -780,5 +784,12 @@ export async function recordCompanyDomainReview(
       }
     }
   }
+  const swedishRows = rows.filter((row) => row.country_code === "SE");
+  if (swedishRows.length) await chInsertSeCompanyDomainRules(swedishRows.map((row) => ({
+    company_id: row.company_id, root_domain: row.root_domain,
+    action: row.review_status, removed: row.review_status === "unreviewed" ? 1 : 0,
+    decided_by: row.reviewed_by, note: row.review_note,
+    evidence_hash: row.reviewed_evidence_fingerprint, decided_at: row.reviewed_at,
+  })));
   await chInsertCompanyDomains(rows);
 }

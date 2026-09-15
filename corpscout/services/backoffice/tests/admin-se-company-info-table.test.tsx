@@ -45,6 +45,7 @@ import {
   type RowSelection,
 } from "~/lib/row-selection";
 import { legalFormOptionLabel } from "~/lib/se-legal-form";
+import { NO_COMPANIES_SELECTED, type SeCompanySelection } from "~/lib/se-company-selection";
 
 /** Every in-page link resolves against the route the table is rendered at. */
 const PATH = "/admin/se/companies";
@@ -134,7 +135,7 @@ function render(props: Partial<Parameters<typeof SeCompanyInfoTable>[0]> = {}) {
             counts={COUNTS}
             filters={EMPTY_INFO_FILTERS}
             options={OPTIONS}
-            selection={NO_ROWS_SELECTED}
+            selection={NO_COMPANIES_SELECTED}
             onSelectionChange={() => {}}
             {...props}
           />
@@ -449,7 +450,7 @@ describe("SeCompanyInfoTable selection", () => {
     // Legal names repeat across the register; the ids the selection is keyed by
     // do not, so both boxes have to be nameable on their own.
     const twin = { ...ROW_B, legal_name: ROW.legal_name };
-    const html = render({ rows: [ROW, twin], selection: { [twin.company_id]: true } });
+    const html = render({ rows: [ROW, twin], selection: { mode: "ids", companyIds: [twin.company_id] } });
     expect(html).toContain(`aria-label="${selectLabel(ROW)}"`);
     expect(html).toContain(`aria-label="${selectLabel(twin)}"`);
     expect(checkboxState(html, selectLabel(ROW))).toBe("false");
@@ -457,7 +458,7 @@ describe("SeCompanyInfoTable selection", () => {
   });
 
   it("ticks exactly the companies the selection names", () => {
-    const html = render({ rows: [ROW, ROW_B], selection: { "5565200028": true } });
+    const html = render({ rows: [ROW, ROW_B], selection: { mode: "ids", companyIds: ["5565200028"] } });
     expect(checkboxState(html, selectLabel(ROW))).toBe("true");
     expect(checkboxState(html, selectLabel(ROW_B))).toBe("false");
   });
@@ -466,18 +467,18 @@ describe("SeCompanyInfoTable selection", () => {
     const rows = [ROW, ROW_B];
     expect(checkboxState(render({ rows }), SELECT_PAGE)).toBe("false");
     expect(
-      checkboxState(render({ rows, selection: { "5565200028": true } }), SELECT_PAGE),
+      checkboxState(render({ rows, selection: { mode: "ids", companyIds: ["5565200028"] } }), SELECT_PAGE),
     ).toBe("mixed");
     expect(
       checkboxState(
-        render({ rows, selection: { "5565200028": true, "5560125220": true } }),
+        render({ rows, selection: { mode: "ids", companyIds: ["5565200028", "5560125220"] } }),
         SELECT_PAGE,
       ),
     ).toBe("true");
   });
 
   it("keeps a selection across pages: keyed by company id, counted over the lot", () => {
-    const selection: RowSelection = { "5565200028": true, "5567890123": true };
+    const selection: SeCompanySelection = { mode: "ids", companyIds: ["5565200028", "5567890123"] };
     // Page one shows Alpha and Beta; Gamma is picked and not on it.
     const page1 = render({ rows: [ROW, ROW_B], selection });
     expect(checkboxState(page1, selectLabel(ROW))).toBe("true");
@@ -503,7 +504,7 @@ describe("SeCompanyInfoTable selection", () => {
     expect(empty).not.toMatch(/\d+ selected/);
     expect(empty).not.toContain(">Clear<");
 
-    const picked = render({ rows: [ROW, ROW_B], selection: { "5565200028": true } });
+    const picked = render({ rows: [ROW, ROW_B], selection: { mode: "ids", companyIds: ["5565200028"] } });
     expect(picked).toContain('data-slot="selection-indicator"');
     expect(picked).toContain("1 selected");
     expect(picked).toContain(">Clear<");
@@ -513,13 +514,14 @@ describe("SeCompanyInfoTable selection", () => {
 
   it("clears the WHOLE selection, including the pages not on screen", () => {
     expect(
-      SelectionIndicator({ selection: NO_ROWS_SELECTED, onSelectionChange: () => {} }),
+      SelectionIndicator({ selection: NO_COMPANIES_SELECTED, total: 3500000, onSelectionChange: () => {} }),
     ).toBeNull();
 
-    const selection: RowSelection = { "5565200028": true, "5567890123": true };
-    const applied: RowSelection[] = [];
+    const selection: SeCompanySelection = { mode: "ids", companyIds: ["5565200028", "5567890123"] };
+    const applied: SeCompanySelection[] = [];
     const element = SelectionIndicator({
       selection,
+      total: 3500000,
       onSelectionChange: (updater) => {
         applied.push(functionalUpdate(updater, selection));
       },
@@ -530,7 +532,33 @@ describe("SeCompanyInfoTable selection", () => {
     const clear = element.props.children.find((child) => child.props.children === "Clear");
     expect(clear).toBeDefined();
     clear?.props.onClick?.();
-    expect(applied).toEqual([{}]);
+    expect(applied).toEqual([NO_COMPANIES_SELECTED]);
+  });
+
+  it("offers all matching companies even before any page is selected", () => {
+    expect(render({ total: 3500000 })).toContain("Select all 3,500,000 matching companies");
+    const empty = render({ rows: [], total: 0 });
+    expect(empty).toMatch(/<button[^>]*disabled[^>]*>Select all 0 matching companies<\/button>/);
+  });
+
+  it("ticks unvisited pages and describes the full query selection", () => {
+    const selection: SeCompanySelection = { mode: "query", query: EMPTY_INFO_FILTERS, excludedCompanyIds: [] };
+    const html = render({ rows: [ROW_B, ROW_C], total: 3500000, page: 2, selection });
+    expect(html).toContain("All 3,500,000 matching companies selected");
+    expect(checkboxState(html, SELECT_PAGE)).toBe("true");
+    expect(checkboxState(html, selectLabel(ROW_C))).toBe("true");
+  });
+
+  it("reflects exclusions across pages and allows selecting everything again", () => {
+    const selection: SeCompanySelection = {
+      mode: "query", query: EMPTY_INFO_FILTERS, excludedCompanyIds: [ROW.company_id, ROW_C.company_id],
+    };
+    const html = render({ rows: [ROW, ROW_B], total: 3500000, selection });
+    expect(html).toContain("3,499,998 matching companies selected (2 excluded)");
+    expect(checkboxState(html, SELECT_PAGE)).toBe("mixed");
+    expect(checkboxState(html, selectLabel(ROW))).toBe("false");
+    expect(checkboxState(html, selectLabel(ROW_B))).toBe("true");
+    expect(html).toContain("Select all 3,500,000 matching companies");
   });
 });
 

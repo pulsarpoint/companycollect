@@ -168,10 +168,11 @@ def match_pairs_sql() -> str:
         f"SELECT {', '.join(f'p.{column}' for column in MATCH_PAIR_SELECT_COLUMNS)}\n"
         f"FROM {tables.QUALIFIED_MATCH_TABLE} AS p FINAL\n"
         "INNER JOIN (\n"
-        "    SELECT company_id, input_hash\n"
+        "    SELECT company_id, input_hash, matched_at\n"
         f"    FROM {tables.QUALIFIED_MATCH_STATE_TABLE} FINAL\n"
         "    WHERE company_id IN %(company_ids)s AND error = ''\n"
         ") AS s ON s.company_id = p.company_id AND s.input_hash = p.input_hash\n"
+        "    AND s.matched_at = p.matched_at\n"
         f"WHERE p.company_id IN %(company_ids)s AND p.confidence >= {MATCH_THRESHOLD}\n"
         "ORDER BY p.company_id, p.candidate_a, p.candidate_b"
     )

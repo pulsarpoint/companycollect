@@ -1,8 +1,6 @@
-"""Dagster assets of the person entity. Slice 0 ships the normalize asset; the extractors
-and the stopped weekly live in bolagsverket.py, esef.py, wikidata.py and jobs.py (slice 1;
-ratsit.py joined them 2026-09-11), the fold and the precedence export in slice 2."""
+"""People normalization, matching and publication, plus company correction and precedence maintenance."""
 
-import re
+from collections import Counter
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any
@@ -23,6 +21,7 @@ from dagster_v3.defs.se_company.person.batch import (
     fold_companies,
 )
 from dagster_v3.defs.se_company.person.match import MatchCounts, PersonMatchProfile, run_match
+from dagster_v3.defs.se_company.person.match_input import refresh_all_inputs, refresh_inputs
 from dagster_v3.defs.se_company.person.normalize import (
     PAGE_SIZE,
     NormalizeCounts,
@@ -33,13 +32,9 @@ from dagster_v3.defs.se_company.person.precedence import precedence_rows
 
 GROUP_NAME = "se_company_person"
 NORMALIZE_POOL = "se_company_person_normalize"
-# The bucket fold's page read is a full scan of the normalized table (the bucket hash
-# scatters a page's ids over the whole primary key: 5.6M rows, 366 MiB, 7.7 s per page on
-# prod), so 64 buckets unpooled would exceed the server's memory under a wide backfill. The
-# instance defaults every pool to limit 1 (dagster.yaml), so this pool serializes buckets:
-# about 30 s each, ~30 min for all 64 (controller ruling 2026-09-10, over the plan's "no
-# pool"). The targeted fold below (se_company_person_fold_companies, a few ids, primary-key
-# reads) stays unpooled -- it never scans the whole table.
+# Publishing scans the normalized table per bucket, so it visits buckets sequentially
+# and uses a limit-1 pool to serialize full publication runs. The targeted company fold
+# shares NORMALIZE_POOL because it also writes normalized rows and input snapshots.
 FOLD_POOL = "se_company_person_fold"
 # One pool of limit 1 (the instance default), so two match runs can never race on the same
 # companies and double-spend their calls (spec section 8).
@@ -67,18 +62,20 @@ class PersonNormalizeConfig(dg.Config):
     pool=NORMALIZE_POOL,
     deps=[dg.AssetKey(name) for name in EXTRACTOR_ASSET_NAMES],
     kinds={"clickhouse", "python"},
-    metadata={"table": tables.QUALIFIED_NORMALIZED_TABLE, "reads": tables.QUALIFIED_SUGGESTION_TABLE},
+    metadata={"table": tables.QUALIFIED_NORMALIZED_TABLE, "reads": tables.QUALIFIED_SUGGESTION_TABLE,
+              "input_table": tables.QUALIFIED_MATCH_INPUT_TABLE},
     description=(
         "Normalizes raw person suggestions into se_company_person_normalized: rows never "
         "normalized, computed from an older raw version, or computed by an older normalizer "
-        "version. changed_only=false re-normalizes every raw row; company_ids targets companies."
+        "version. Refreshes complete per-company match-input hashes after each page and repairs "
+        "missing or stale snapshots. changed_only=false re-normalizes every raw row; company_ids targets companies."
     ),
 )
 def se_company_person_normalize(
     context: dg.AssetExecutionContext, config: PersonNormalizeConfig, clickhouse: ClickhouseResource
 ) -> dg.MaterializeResult:
     assert_clickhouse_tables_exist(
-        clickhouse, database=tables.DATABASE, tables=(tables.SUGGESTION_TABLE, tables.NORMALIZED_TABLE)
+        clickhouse, database=tables.DATABASE, tables=(tables.SUGGESTION_TABLE, tables.NORMALIZED_TABLE, tables.MATCH_INPUT_TABLE)
     )
     normalized_at = datetime.now(UTC)
     with clickhouse.get_connection() as client:
@@ -98,16 +95,47 @@ def se_company_person_normalize(
 
 
 @dg.asset(
+    group_name=GROUP_NAME,
+    pool=NORMALIZE_POOL,
+    deps=[se_company_person_normalize],
+    kinds={"clickhouse", "python"},
+    metadata={"table": tables.QUALIFIED_MATCH_INPUT_TABLE},
+    description=(
+        "Repairs or backfills per-company People input snapshots without LLM calls. "
+        "Normalization already maintains snapshots after each written page; this asset "
+        "also supports rebuilding them after a hash algorithm change."
+    ),
+)
+def se_company_person_match_input(
+    context: dg.AssetExecutionContext, config: PersonNormalizeConfig, clickhouse: ClickhouseResource
+) -> dg.MaterializeResult:
+    assert_clickhouse_tables_exist(
+        clickhouse, database=tables.DATABASE,
+        tables=(tables.NORMALIZED_TABLE, tables.MATCH_INPUT_TABLE),
+    )
+    with clickhouse.get_connection() as client:
+        if config.company_ids:
+            count = 0
+            for start in range(0, len(config.company_ids), config.page_size):
+                count += refresh_inputs(client, config.company_ids[start:start + config.page_size])
+        else:
+            count = refresh_all_inputs(
+                client, changed_only=config.changed_only, page_size=config.page_size, log=context.log,
+            )
+    return dg.MaterializeResult(metadata={"companies": count, "table": tables.QUALIFIED_MATCH_INPUT_TABLE})
+
+
+@dg.asset(
     name="se_company_person_match",
     group_name=GROUP_NAME,
     pool=MATCH_POOL,
-    deps=[se_company_person_normalize],
+    deps=[se_company_person_match_input],
     kinds={"clickhouse", "python", "llm"},
     retry_policy=dg.RetryPolicy(max_retries=3, delay=60, backoff=dg.Backoff.EXPONENTIAL),
     metadata={
         "table": tables.QUALIFIED_MATCH_TABLE,
         "state_table": tables.QUALIFIED_MATCH_STATE_TABLE,
-        "reads": tables.QUALIFIED_NORMALIZED_TABLE,
+        "reads": tables.QUALIFIED_MATCH_INPUT_TABLE,
     },
     description=(
         "Asks an LLM, once per company whose normalized people come from two or more "
@@ -115,11 +143,13 @@ def se_company_person_normalize(
         "pairs in se_company_person_match with one state row per company in "
         "se_company_person_match_state. The fold unions the pairs at or above "
         "MATCH_THRESHOLD. changed_only=true sends a company with no state row, one whose "
-        "candidate list changed (a different input_hash), and one whose last attempt failed "
+        "model-visible data or effective prompt/model changed (a different input_hash), and one whose last attempt failed "
         "TRANSIENTLY (rate_limited:, http_error:, unexpected:); a malformed, truncated or "
         "empty answer and a company over the candidate cap are STICKY for the same input -- "
         "skipped without a new state row and reported as skipped_sticky -- until its "
-        "candidates change. company_ids targets companies. provider and model have no "
+        "data or configuration changes. Binding-only changes replay the saved answer against "
+        "current normalized IDs without an LLM call. Prompt names and revisions do not "
+        "invalidate identical content. company_ids targets companies. provider and model have no "
         "defaults -- a bare Materialize fails validation rather than spending on one -- and "
         "the provider's API key is read from the host environment at call time. A page in "
         "which most calls fail raises after its rows are written, so a provider outage "
@@ -133,18 +163,22 @@ def se_company_person_match(
 ) -> dg.MaterializeResult:
     assert_clickhouse_tables_exist(
         clickhouse, database=tables.DATABASE,
-        tables=(tables.NORMALIZED_TABLE, tables.MATCH_TABLE, tables.MATCH_STATE_TABLE),
+        tables=(tables.MATCH_INPUT_TABLE, tables.MATCH_TABLE, tables.MATCH_STATE_TABLE),
     )
     # Built before any page is touched, so a run configured for a provider whose key this
     # host does not carry fails without having written a row or spent a call.
-    llm_client = build_llm_client(config, timeout_seconds=config.timeout_seconds)
+    llm_client = build_llm_client(
+        config, timeout_seconds=config.timeout_seconds,
+        api_key_environment_variable=config.api_key_environment_variable,
+    )
     with clickhouse.get_connection() as client:
         counts: MatchCounts = run_match(
             client, llm_client=llm_client, config=config, source_run_id=context.run_id,
             log=context.log.info,
         )
     return dg.MaterializeResult(
-        metadata={**counts.as_metadata(), "table": tables.QUALIFIED_MATCH_TABLE}
+        metadata={**counts.as_metadata(), "prompt_version": config.prompt_version,
+                  "table": tables.QUALIFIED_MATCH_TABLE}
     )
 
 
@@ -237,29 +271,16 @@ def se_company_person_precedence_clickhouse(
     )
 
 
-PERSON_FOLD_PARTITIONS = dg.StaticPartitionsDefinition(
-    [f"bucket_{bucket:02d}" for bucket in range(BUCKET_COUNT)]
-)
 _FOLD_TABLES = (
     tables.NORMALIZED_TABLE, tables.MATCH_TABLE, tables.MATCH_STATE_TABLE,
     tables.MAIN_TABLE, tables.HISTORY_TABLE, tables.RULE_TABLE, tables.PRECEDENCE_TABLE,
 )
 
 
-def person_bucket_index(partition_key: str) -> int:
-    match = re.fullmatch(r"bucket_(\d{2})", partition_key)
-    if match is None:
-        raise ValueError(f"invalid person fold partition key: {partition_key!r}")
-    bucket = int(match.group(1))
-    if not 0 <= bucket < BUCKET_COUNT:
-        raise ValueError(f"person fold bucket out of range: {bucket}")
-    return bucket
-
-
 class PersonFoldConfig(dg.Config):
     # True: only companies whose newest normalized row, rule version or precedence row (their
     # own, or the global export) is newer than their last fold, plus companies never folded
-    # that have a foldable row. False re-folds the whole bucket; history rows are written
+    # that have a foldable row. False re-folds all companies; history rows are written
     # either way only where a compared column changed.
     changed_only: bool = True
     # Companies per page. Lower it if a page's rows press the host's memory.
@@ -275,17 +296,6 @@ class PersonFoldCompaniesConfig(dg.Config):
     @classmethod
     def _valid_ids(cls, value: list[str]) -> list[str]:
         return list(normalized_se_company_ids(value))
-
-
-def _fold_metadata(counts: FoldCounts, config: dg.Config, **extra) -> dict:
-    return {
-        **counts.as_metadata(),
-        "changed_only": config.changed_only,
-        "page_size": config.page_size,
-        "table": tables.QUALIFIED_MAIN_TABLE,
-        "history_table": tables.QUALIFIED_HISTORY_TABLE,
-        **extra,
-    }
 
 
 def targeted_fold(
@@ -318,43 +328,39 @@ def targeted_fold(
 
 
 @dg.asset(
-    name="se_company_person_fold",
-    partitions_def=PERSON_FOLD_PARTITIONS,
-    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     group_name=GROUP_NAME,
+    deps=[se_company_person_normalize, se_company_person_match],
     pool=FOLD_POOL,
     kinds={"clickhouse", "python"},
-    metadata={
-        "table": tables.QUALIFIED_MAIN_TABLE,
-        "history_table": tables.QUALIFIED_HISTORY_TABLE,
-    },
     description=(
-        "Folds the current normalized person rows of the companies in one of 64 hash buckets "
-        "into se_company_person: observations of one person merge into one row with every "
-        "source, reviewer rules hide, merge and split, previously published keys without a "
-        "set are withdrawn, and every change is appended to se_company_person_history first. "
-        "Pooled at FOLD_POOL (instance default limit 1): a page's FINAL read of the "
-        "normalized table is a full scan (the bucket hash scatters its ids over the whole "
-        "primary key), so a backfill runs one bucket at a time -- about 30 s each, ~30 min "
-        "for all 64. Manual: launch a partition or a backfill from the UI."
+        "Publishes People across all companies, visiting the 64 fold buckets sequentially. "
+        "Used by the backoffice Full processing action. By default only changed companies "
+        "are folded. Runs after normalization and, when selected, LLM matching."
     ),
 )
-def se_company_person_fold(
+def se_company_person_publish(
     context: dg.AssetExecutionContext, config: PersonFoldConfig, clickhouse: ClickhouseResource
 ) -> dg.MaterializeResult:
     assert_clickhouse_tables_exist(clickhouse, database=tables.DATABASE, tables=_FOLD_TABLES)
-    bucket = person_bucket_index(context.partition_key)
+    totals: Counter[str] = Counter()
     with clickhouse.get_connection() as client:
-        counts = fold_bucket(
-            client, bucket, changed_only=config.changed_only, source_run_id=context.run_id,
-            folded_at=datetime.now(UTC), page_size=config.page_size, log=context.log.info,
-        )
-    return dg.MaterializeResult(metadata=_fold_metadata(counts, config, bucket=bucket))
+        for bucket in range(BUCKET_COUNT):
+            counts = fold_bucket(
+                client, bucket, changed_only=config.changed_only, source_run_id=context.run_id,
+                folded_at=datetime.now(UTC), page_size=config.page_size, log=context.log.info,
+            )
+            totals.update({key: value for key, value in counts.as_metadata().items() if isinstance(value, int)})
+            context.log.info("People publish: completed bucket %d of %d", bucket + 1, BUCKET_COUNT)
+    return dg.MaterializeResult(metadata={
+        **totals, "buckets": BUCKET_COUNT, "changed_only": config.changed_only,
+        "table": tables.QUALIFIED_MAIN_TABLE,
+    })
 
 
 @dg.asset(
     name="se_company_person_fold_companies",
     group_name=GROUP_NAME,
+    pool=NORMALIZE_POOL,
     kinds={"clickhouse", "python"},
     metadata={
         "table": tables.QUALIFIED_MAIN_TABLE,
@@ -373,7 +379,7 @@ def se_company_person_fold_companies(
 ) -> dg.MaterializeResult:
     assert_clickhouse_tables_exist(
         clickhouse, database=tables.DATABASE,
-        tables=(tables.SUGGESTION_TABLE, *_FOLD_TABLES),
+        tables=(tables.SUGGESTION_TABLE, tables.MATCH_INPUT_TABLE, *_FOLD_TABLES),
     )
     folded_at = datetime.now(UTC)
     with clickhouse.get_connection() as client:
@@ -384,7 +390,11 @@ def se_company_person_fold_companies(
         )
     return dg.MaterializeResult(
         metadata={
-            **_fold_metadata(counts, config),
+            **counts.as_metadata(),
+            "changed_only": config.changed_only,
+            "page_size": config.page_size,
+            "table": tables.QUALIFIED_MAIN_TABLE,
+            "history_table": tables.QUALIFIED_HISTORY_TABLE,
             **{f"normalize_{key}": value for key, value in normalized.as_metadata().items()},
         }
     )

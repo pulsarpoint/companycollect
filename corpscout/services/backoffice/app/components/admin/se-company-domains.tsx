@@ -115,6 +115,9 @@ function DomainCard({ row }: { row: SeCompanyDomainRow }) {
           valueClassName="break-all"
           entries={[
             ["Website host", text(row.website_host)],
+            ["Verification", text(row.verification_status?.replaceAll("_", " ") ?? "")],
+            ["Verification reason", text(row.verification_reason ?? "")],
+            ["Inactive reason", text(row.is_active ? "" : (row.inactive_reason?.replaceAll("_", " ") ?? ""))],
             ["Reviewed by", text(row.reviewed_by)],
             ["Reviewed at", text(row.reviewed_at)],
             ["Review note", text(row.review_note)],
@@ -129,7 +132,7 @@ function DomainCard({ row }: { row: SeCompanyDomainRow }) {
 }
 
 /**
- * Every domain the unified `company_domains` register associates with this
+ * Every domain the domain entity associates with this
  * company -- rejected and inactive ones included, because "we already decided
  * against this one" is the answer a reviewer most often needs.
  */

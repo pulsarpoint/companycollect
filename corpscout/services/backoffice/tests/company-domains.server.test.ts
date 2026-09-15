@@ -3,11 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const clickhouse = vi.hoisted(() => ({
   query: vi.fn(),
   insert: vi.fn(),
+  rules: vi.fn(),
 }));
 
 vi.mock("~/lib/clickhouse.server", () => ({
   chQuery: clickhouse.query,
   chInsertCompanyDomains: clickhouse.insert,
+  chInsertSeCompanyDomainRules: clickhouse.rules,
 }));
 
 import {

@@ -11,10 +11,11 @@ import { LegalForm } from "~/components/admin/legal-form";
 import { SeCompanyInfoFilterSheet } from "~/components/admin/se-company-info-filter-sheet";
 import type { SortDir } from "~/lib/countries";
 import {
-  NO_ROWS_SELECTED,
-  selectedRowCount,
-  type RowSelection,
-} from "~/lib/row-selection";
+  NO_COMPANIES_SELECTED,
+  seCompanyRowSelection,
+  updateSeCompanyRowSelection,
+  type SeCompanySelection,
+} from "~/lib/se-company-selection";
 import type {
   SeCompanyInfoFilterOptions,
   SeCompanyInfoListCounts,
@@ -149,33 +150,37 @@ export function selectionColumn(): ColumnDef<SeCompanyInfoListRow, unknown> {
 }
 
 /**
- * How many companies are picked -- across every page visited, not just this
- * one -- and the single control that empties the lot.
- *
- * Rendered as nothing at all while the count is zero: a "0 selected" chip
- * would be permanent noise on a list nobody has ticked. The count comes from
- * the selection itself rather than from the rows on screen, which is what
- * makes it the cross-page total.
+ * Selection scope, total, and the control that empties the whole selection.
+ * Query totals describe the current list; membership is resolved at execution.
  */
 export function SelectionIndicator({
   selection,
+  total,
   onSelectionChange,
 }: {
-  selection: RowSelection;
-  onSelectionChange: OnChangeFn<RowSelection>;
+  selection: SeCompanySelection;
+  total: number;
+  onSelectionChange: OnChangeFn<SeCompanySelection>;
 }) {
-  const count = selectedRowCount(selection);
-  if (count === 0) return null;
+  const excluded = selection.mode === "query" ? selection.excludedCompanyIds.length : 0;
+  const count = selection.mode === "ids" ? selection.companyIds.length : Math.max(0, total - excluded);
+  if (selection.mode === "ids" && count === 0) return null;
   return (
-    <div data-slot="selection-indicator" className="flex items-center gap-1 text-sm">
-      <span className="font-medium tabular-nums">{nf.format(count)} selected</span>
+    <div data-slot="selection-indicator" className="flex flex-wrap items-center gap-1 text-sm">
+      <span className="font-medium tabular-nums" role="status">
+        {selection.mode === "query"
+          ? excluded === 0
+            ? `All ${nf.format(total)} matching companies selected`
+            : `${nf.format(count)} matching companies selected (${nf.format(excluded)} excluded)`
+          : `${nf.format(count)} selected`}
+      </span>
       <span aria-hidden="true" className="text-muted-foreground">
         ·
       </span>
       <Button
         variant="ghost"
         size="sm"
-        onClick={() => onSelectionChange(NO_ROWS_SELECTED)}
+        onClick={() => onSelectionChange(NO_COMPANIES_SELECTED)}
       >
         Clear
       </Button>
@@ -344,14 +349,12 @@ export function SeCompanyInfoTable({
   /** The picked companies and the setter that owns them, both from the route
    * component -- this table is controlled, which is the whole reason a
    * selection outlives the page of rows it was made on. */
-  selection: RowSelection;
-  onSelectionChange: OnChangeFn<RowSelection>;
+  selection: SeCompanySelection;
+  onSelectionChange: OnChangeFn<SeCompanySelection>;
 }) {
+  const pageIds = rows.map((row) => row.company_id);
   return (
     <div className="flex flex-col gap-4">
-      {/* The Filters sheet with its chips. The old publisher's Pipeline sheet that
-          sat beside it went with basic-info slice 4 (2026-09-08); the selection the
-          route component owns stays for the indicator and the next pipeline sheet. */}
       <div className="flex flex-wrap items-start justify-between gap-2">
         <SeCompanyInfoFilterSheet
           filters={filters}
@@ -363,7 +366,19 @@ export function SeCompanyInfoTable({
         <CountsStrip counts={counts} />
         {/* Beside the counts rather than above the table: it is a fact about
             the list, and it appears only once something is picked. */}
-        <SelectionIndicator selection={selection} onSelectionChange={onSelectionChange} />
+        <div className="flex flex-wrap items-center gap-2">
+          <SelectionIndicator selection={selection} total={total} onSelectionChange={onSelectionChange} />
+          {(selection.mode === "ids" || selection.excludedCompanyIds.length > 0) && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={total === 0}
+              onClick={() => onSelectionChange({ mode: "query", query: filters, excludedCompanyIds: [] })}
+            >
+              Select all {nf.format(total)} matching companies
+            </Button>
+          )}
+        </div>
       </div>
       {/* One line, above the table, so the Sources letters can be read without
           hovering each badge. Built from the same catalog the letters are. */}
@@ -381,8 +396,8 @@ export function SeCompanyInfoTable({
         // different company from page 1's third row, and the selection is
         // read long after both pages are gone.
         selection={{
-          state: selection,
-          onChange: onSelectionChange,
+          state: seCompanyRowSelection(selection, pageIds),
+          onChange: (updater) => onSelectionChange((current) => updateSeCompanyRowSelection(current, pageIds, updater)),
           getRowId: (row) => row.company_id,
         }}
       />

@@ -1,9 +1,8 @@
-"""The person extract job and its STOPPED weekly (spec 2026-09-09 section 6), plus the
-normalize asset's dependence on every extractor."""
+"""People job selections and their execution order."""
 
 import dagster as dg
 
-from dagster_v3.defs.se_company.person import assets, jobs
+from dagster_v3.defs.se_company.person import assets
 
 
 def _repo():
@@ -12,43 +11,13 @@ def _repo():
     return load_defs().get_repository_def()
 
 
-def test_the_job_selects_every_extractor_the_normalizer_and_the_matcher() -> None:
-    job = _repo().get_job("se_company_person_extract_job")
-    selected = {key.path[-1] for key in job.asset_layer.executable_asset_keys}
-    assert selected == {
-        *assets.EXTRACTOR_ASSET_NAMES, "se_company_person_normalize", "se_company_person_match"
-    }
-
-
-def test_the_weekly_is_stopped_on_a_minute_hour_no_other_schedule_uses() -> None:
+def test_only_the_two_global_people_jobs_are_registered() -> None:
     repo = _repo()
-    schedule = repo.get_schedule_def("se_company_person_weekly")
-    # Spec section 6 says Monday 07:15 UTC; 07:15 is taken by
-    # france_sirene_register_schedule and tests/test_schedule_cron_contracts.py forbids a
-    # shared (minute, hour), so this entity took the next free minute of the same hour.
-    assert schedule.cron_schedule == "25 7 * * 1"
-    assert schedule.default_status == dg.DefaultScheduleStatus.STOPPED
-    assert schedule.job_name == "se_company_person_extract_job"
-    taken = {
-        (other.cron_schedule.split()[0], other.cron_schedule.split()[1])
-        for other in repo.schedule_defs
-        if other.name != "se_company_person_weekly" and isinstance(other.cron_schedule, str)
+    assert {job.name for job in repo.get_all_jobs() if job.name.startswith("se_company_person_")} == {
+        "se_company_person_sync_job", "se_company_person_refresh_job",
     }
-    assert ("25", "7") not in taken
-
-
-def test_the_weekly_runs_every_extractor_the_normalizer_and_the_matcher() -> None:
-    ops = jobs.WEEKLY_RUN_CONFIG["ops"]
-    for name in assets.EXTRACTOR_ASSET_NAMES:
-        assert ops[name] == {"config": {"execute": True, "page_size": jobs.WEEKLY_PAGE_SIZE}}
-    assert ops["se_company_person_normalize"] == {"config": {"changed_only": True}}
-    # provider and model are spelled out, because the match profile has no defaults for
-    # them: an automated run must say what it is paying for.
-    assert ops["se_company_person_match"] == {
-        "config": {"provider": "deepseek", "model": "deepseek-v4-flash", "changed_only": True}
-    }
-    assert jobs.MATCH_ASSET == "se_company_person_match"
-    assert jobs.WEEKLY_PAGE_SIZE == 10_000
+    assert not any(schedule.name.startswith("se_company_person_") for schedule in repo.schedule_defs)
+    assert dg.AssetKey("se_company_person_fold") not in repo.asset_graph.get_all_asset_keys()
 
 
 def test_the_normalize_asset_runs_after_the_extractors() -> None:
@@ -58,3 +27,41 @@ def test_the_normalize_asset_runs_after_the_extractors() -> None:
 
 def test_no_person_sensor_yet() -> None:
     assert not any("se_company_person" in sensor.name for sensor in _repo().sensor_defs)
+
+
+def test_backoffice_jobs_have_all_company_scope_and_publish_after_their_upstreams() -> None:
+    repo = _repo()
+    refresh = repo.get_job("se_company_person_refresh_job")
+    sync = repo.get_job("se_company_person_sync_job")
+    assert {key.path[-1] for key in refresh.asset_layer.executable_asset_keys} == {
+        *assets.EXTRACTOR_ASSET_NAMES, "se_company_person_normalize", "se_company_person_match_input", "se_company_person_match",
+        "se_company_person_publish",
+    }
+    assert {key.path[-1] for key in sync.asset_layer.executable_asset_keys} == {
+        *assets.EXTRACTOR_ASSET_NAMES, "se_company_person_normalize", "se_company_person_match_input",
+    }
+    assert not repo.has_job("se_company_person_publish_job")
+    input_node = repo.asset_graph.get(dg.AssetKey("se_company_person_match_input"))
+    assert input_node.parent_keys == {dg.AssetKey("se_company_person_normalize")}
+    graph = repo.asset_graph.get(dg.AssetKey("se_company_person_publish"))
+    assert {key.path[-1] for key in graph.parent_keys} == {
+        "se_company_person_normalize", "se_company_person_match",
+    }
+    assert assets.se_company_person_publish.op.pool == assets.FOLD_POOL
+    assert assets.se_company_person_publish.partitions_def is None
+    config = {"ops": {
+        **{name: {"config": {"execute": True, "page_size": 10_000}} for name in assets.EXTRACTOR_ASSET_NAMES},
+        "se_company_person_normalize": {"config": {"changed_only": True}},
+        "se_company_person_match_input": {"config": {"changed_only": True}},
+        "se_company_person_match": {"config": {
+            "provider": "openrouter", "model": "chosen/model", "base_url": "https://example.com/v1",
+            "api_key_environment_variable": "WORKER_LLM_KEY", "system_prompt": "Return pairs.",
+            "prompt_version": "people:prompt-1:r2", "temperature": 0, "concurrency": 1, "changed_only": True,
+        }},
+        "se_company_person_publish": {"config": {"changed_only": True, "page_size": 10_000}},
+    }}
+    dg.validate_run_config(refresh, config)
+    dg.validate_run_config(sync, {"ops": {
+        name: value for name, value in config["ops"].items()
+        if name not in {"se_company_person_match", "se_company_person_publish"}
+    }})

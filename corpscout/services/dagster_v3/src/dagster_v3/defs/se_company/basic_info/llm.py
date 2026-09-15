@@ -70,6 +70,7 @@ class LlmSuggestionProfile(LlmProfileConfig):
     provider: str = Field(min_length=1, max_length=64)
     model: str = Field(min_length=1, max_length=200)
     prompt_version: str = Field(default=SUGGESTION_PROMPT_VERSION, min_length=1, max_length=120)
+    api_key_environment_variable: str = Field(default="", max_length=128, pattern=r"^([A-Za-z_][A-Za-z0-9_]*)?$")
 
 
 class LlmExtractConfig(ExtractConfig):
@@ -414,6 +415,7 @@ def run_llm_extractor(
 
 @dg.asset(
     name="se_basic_info_suggestions_llm",
+    pool="se_basic_info_suggestions_llm",
     deps=[
         dg.AssetKey("se_basic_info_suggestions_scb"), dg.AssetKey("se_basic_info_suggestions_bolagsverket"),
         dg.AssetKey("se_basic_info_suggestions_esef"), dg.AssetKey("se_basic_info_suggestions_wikidata"),
@@ -431,7 +433,10 @@ def run_llm_extractor(
 )
 def se_basic_info_suggestions_llm(context: dg.AssetExecutionContext, config: LlmExtractConfig, clickhouse: ClickhouseResource) -> dg.MaterializeResult:
     assert_clickhouse_tables_exist(clickhouse, database=tables.DATABASE, tables=(tables.SUGGESTION_TABLE, SE_COMPANY_INFO_OBSERVATION))
-    llm_client = build_llm_client(config.llm, timeout_seconds=config.timeout_seconds) if config.execute else None
+    llm_client = build_llm_client(
+        config.llm, timeout_seconds=config.timeout_seconds,
+        api_key_environment_variable=config.llm.api_key_environment_variable,
+    ) if config.execute else None
     with clickhouse.get_connection() as client:
         counts = run_llm_extractor(
             client, clickhouse=clickhouse, llm_client=llm_client, profile=config.llm, config=config,

@@ -2,6 +2,7 @@
 schedule, no sensor, until the fold has proven itself on production."""
 
 import re
+from collections import Counter
 from datetime import UTC, datetime
 from typing import Any
 
@@ -22,6 +23,16 @@ from dagster_v3.defs.se_company.common import normalized_se_company_ids
 
 GROUP_NAME = "se_company_basic_info"
 FOLD_POOL = "se_company_basic_info_fold"
+
+SQL_EXTRACTOR_ASSETS = (
+    "se_basic_info_suggestions_scb",
+    "se_basic_info_suggestions_bolagsverket",
+    "se_basic_info_suggestions_esef",
+    "se_basic_info_suggestions_wikidata",
+    "se_basic_info_suggestions_ratsit",
+)
+LLM_EXTRACTOR_ASSET = "se_basic_info_suggestions_llm"
+EXTRACTOR_ASSETS = (*SQL_EXTRACTOR_ASSETS, LLM_EXTRACTOR_ASSET)
 
 BASIC_INFO_FOLD_PARTITIONS = dg.StaticPartitionsDefinition(
     [f"bucket_{bucket:02d}" for bucket in range(BUCKET_COUNT)]
@@ -95,6 +106,32 @@ def se_company_basic_info_fold(
                   "page_size": config.page_size, "table": tables.QUALIFIED_MAIN_TABLE,
                   "history_table": tables.QUALIFIED_HISTORY_TABLE}
     )
+
+
+@dg.asset(
+    group_name=GROUP_NAME,
+    deps=[dg.AssetKey(name) for name in (*SQL_EXTRACTOR_ASSETS, LLM_EXTRACTOR_ASSET)],
+    pool=FOLD_POOL,
+    kinds={"clickhouse", "python"},
+    description="Publishes basic info across all companies after source processing, visiting fold buckets sequentially.",
+)
+def se_company_basic_info_publish(
+    context: dg.AssetExecutionContext, config: BasicInfoFoldConfig, clickhouse: ClickhouseResource
+) -> dg.MaterializeResult:
+    assert_clickhouse_tables_exist(clickhouse, database=tables.DATABASE, tables=_FOLD_TABLES)
+    totals: Counter[str] = Counter()
+    with clickhouse.get_connection() as client:
+        for bucket in range(BUCKET_COUNT):
+            counts = fold_bucket(
+                client, bucket, changed_only=config.changed_only, source_run_id=context.run_id,
+                folded_at=datetime.now(UTC), page_size=config.page_size, log=context.log.info,
+            )
+            totals.update({key: value for key, value in counts.as_metadata().items() if isinstance(value, int)})
+            context.log.info("Published bucket %d of %d", bucket + 1, BUCKET_COUNT)
+    return dg.MaterializeResult(metadata={
+        **totals, "buckets": BUCKET_COUNT, "changed_only": config.changed_only,
+        "table": tables.QUALIFIED_MAIN_TABLE, "history_table": tables.QUALIFIED_HISTORY_TABLE,
+    })
 
 
 @dg.asset(

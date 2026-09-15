@@ -170,65 +170,8 @@ def test_the_role_view_constants_describe_the_slice_5_view() -> None:
         ), column
 
 
-def test_the_llm_queue_table_holds_one_requests_unit_ids() -> None:
-    """Migration 000406, spec section 4.1. The queue is the unit ids of one request and
-    nothing else: no version column, because within a request a company appears once and
-    every column beside the key is identical for every row of that request."""
-    block = table_block("llm_queue_se_company_person")
-    assert declared_columns("llm_queue_se_company_person") == list(tables.LLM_QUEUE_COLUMNS)
-    assert tables.LLM_QUEUE_COLUMNS == (
-        "request_id", "company_id", "queued_at", "queued_by", "note",
-    )
-    assert "ENGINE = ReplacingMergeTree\n" in block
-    assert "ORDER BY (request_id, company_id)" in block
-    assert COMPANY_ID_CHECK in block
-    assert "    request_id String," in block
-    assert "    queued_at DateTime64(3, 'UTC')," in block
-    assert "    note String DEFAULT ''," in block
-    # No version column and no data column, so no valid_data constraint either.
-    assert "JSONType" not in block
-
-
-def test_the_llm_response_table_is_one_answer_per_request_and_company() -> None:
-    """Spec section 4.2. The paid evidence and the apply step's input: the newest answer for
-    a company within a request wins, and re-running the same request under another prompt
-    version REPLACES that request's answers rather than adding to them."""
-    block = table_block("llm_response_se_company_person")
-    assert declared_columns("llm_response_se_company_person") == list(
-        tables.LLM_RESPONSE_COLUMNS
-    )
-    assert tables.LLM_RESPONSE_COLUMNS == (
-        "request_id", "company_id", "provider", "model", "prompt_version", "input_hash",
-        "candidates", "prompt_tokens", "completion_tokens", "raw_response", "error",
-        "attempts", "source_run_id", "responded_at",
-    )
-    assert "ENGINE = ReplacingMergeTree(responded_at)" in block
-    assert "ORDER BY (request_id, company_id)" in block
-    assert COMPANY_ID_CHECK in block
-    assert "    provider LowCardinality(String)," in block
-    assert "    prompt_version LowCardinality(String)," in block
-    # input_hash is why this table is typed to the person match and not generic: only this
-    # unit has one, and the apply's staleness check is what makes it load-bearing.
-    assert "    input_hash FixedString(64)," in block
-    assert "    candidates UInt16," in block
-    assert "    attempts UInt8," in block
-    assert "    error String DEFAULT ''," in block
-    assert "    raw_response String," in block
-
-
-def test_the_pattern_tables_are_the_only_two_without_the_entity_prefix() -> None:
-    """Spec section 12's ruling, asserted rather than remembered: `llm_<step>_<source table>`
-    is the pattern's name. Both names END with the entity's name instead of starting with
-    it, and whole-name matching is what keeps that harmless."""
-    for name in (tables.LLM_QUEUE_TABLE, tables.LLM_RESPONSE_TABLE):
-        assert name.endswith(f"_{tables.MAIN_TABLE}")
-        assert not name.startswith(tables.MAIN_TABLE)
-    assert tables.QUALIFIED_LLM_QUEUE_TABLE == "corpscout.llm_queue_se_company_person"
-    assert tables.QUALIFIED_LLM_RESPONSE_TABLE == "corpscout.llm_response_se_company_person"
-
-
-def test_the_match_gap_view_constants_describe_the_slice_1_view() -> None:
-    """Migration 000406's derived view (spec section 5). Like the role view it carries the
+def test_the_match_gap_view_constants_describe_the_derived_view() -> None:
+    """Migration 000406's derived view. Like the role view it carries the
     entity's prefix and is not a table, so whole-name matching applies to it -- and it is a
     prefix collision waiting to happen with se_company_person_match, which is why nothing
     ever matches the pair table's name without the token that follows it."""
@@ -296,7 +239,7 @@ def test_match_state_is_one_row_per_matched_company() -> None:
     # 000406 adds request_id here too -- not in the key: one row per company, replaced by
     # whoever certifies it last, and the column records which request did.
     assert "request_id" not in block
-    assert tables.MATCH_STATE_COLUMNS[-1] == "request_id"
+    assert tables.MATCH_STATE_COLUMNS[13] == "request_id"
 
 
 def test_the_match_tables_join_the_entitys_column_tuples() -> None:
@@ -315,4 +258,13 @@ def test_the_match_tables_join_the_entitys_column_tuples() -> None:
         "company_id", "input_hash", "candidates", "sources", "pairs", "model",
         "prompt_version", "prompt_tokens", "completion_tokens", "raw_response", "error",
         "source_run_id", "matched_at", "request_id",
+        "data_hash", "bindings_hash", "prompt_hash", "model_hash", "input_snapshot", "config_snapshot",
     )
+
+
+def test_match_input_schema_supports_compact_current_company_comparisons() -> None:
+    assert declared_columns(tables.MATCH_INPUT_TABLE) == list(tables.MATCH_INPUT_COLUMNS)
+    block = table_block(tables.MATCH_INPUT_TABLE)
+    assert "ReplacingMergeTree(computed_at)" in block
+    assert "ORDER BY (company_id)" in block
+    assert "eligible Bool" in block

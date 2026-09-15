@@ -1,7 +1,7 @@
 import { chQuery } from "~/lib/clickhouse.server";
 
 /**
- * One company/domain association as the unified `company_domains` register
+ * One company/domain association as the `se_company_domain` entity
  * holds it. Each `source_names[i]` lines up with `source_confidences[i]`,
  * `source_urls[i]` and `confidence_bases[i]` -- the arrays are parallel, so
  * the page renders them zipped rather than as four separate lists.
@@ -24,10 +24,13 @@ export interface SeCompanyDomainRow {
   first_seen_at: string;
   last_seen_at: string;
   resolved_at: string;
+  verification_status?: string;
+  verification_reason?: string;
+  inactive_reason?: string;
 }
 
 /**
- * company_domains is keyed on (country_code, company_id, root_domain) and is a
+ * se_company_domain is keyed on (company_id, root_domain) in Sweden and is a
  * ReplacingMergeTree, so FINAL: a re-reviewed domain must show once, in its
  * newest state. 'SE' is a literal because this is the Sweden admin area, not
  * a value a request supplies -- the company id, which is, stays a named
@@ -54,8 +57,13 @@ export const COMPANY_DOMAINS_SQL = `SELECT
   toUInt8(d.is_active) AS is_active,
   toString(d.first_seen_at) AS first_seen_at,
   toString(d.last_seen_at) AS last_seen_at,
-  toString(d.resolved_at) AS resolved_at
-FROM corpscout.company_domains AS d FINAL
+  toString(d.resolved_at) AS resolved_at,
+  toString(entity.verification_status) AS verification_status,
+  entity.verification_reason AS verification_reason,
+  entity.inactive_reason AS inactive_reason
+FROM corpscout.company_domains_resolved AS d
+LEFT JOIN corpscout.se_company_domain AS entity FINAL
+  ON entity.company_id = d.company_id AND entity.root_domain = d.root_domain
 WHERE d.country_code = 'SE' AND d.company_id = {companyId:String}
 ORDER BY d.suggested_primary DESC, d.suggested_confidence DESC, d.root_domain
 LIMIT 100`;

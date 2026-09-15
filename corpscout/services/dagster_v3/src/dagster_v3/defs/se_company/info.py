@@ -71,13 +71,15 @@ def llm_api_key_variable(provider: str) -> str:
     return f"{provider.upper()}_API_KEY"
 
 
-def build_llm_client(profile: LlmProfileConfig, *, timeout_seconds: int) -> OpenAI:
+def build_llm_client(
+    profile: LlmProfileConfig, *, timeout_seconds: int, api_key_environment_variable: str = ""
+) -> OpenAI:
     """The OpenAI-compatible client for ``profile``, or a clear failure.
 
     Called before any page is touched, so a run configured for a provider whose key this
     host does not carry fails without having written a row or spent a call.
     """
-    variable = llm_api_key_variable(profile.provider)
+    variable = api_key_environment_variable or llm_api_key_variable(profile.provider)
     api_key = os.getenv(variable, "").strip()
     if not api_key:
         raise ValueError(

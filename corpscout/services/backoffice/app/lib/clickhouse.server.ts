@@ -116,6 +116,12 @@ export async function chInsertCompanyDomains<T extends object>(
   });
 }
 
+/** Store canonical SE domain review decisions before updating the serving projection. */
+export async function chInsertSeCompanyDomainRules(values: object[]): Promise<void> {
+  if (values.length === 0) return;
+  await getWriteClient().insert({ table: "se_company_domain_rule", values, format: "JSONEachRow" });
+}
+
 export async function chInsertTechnologyProposals(values: object[]): Promise<void> {
   if (values.length === 0) return;
   await getWriteClient().insert({ table: "new_tech", values, format: "JSONEachRow" });

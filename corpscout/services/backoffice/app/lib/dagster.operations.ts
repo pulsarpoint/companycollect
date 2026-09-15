@@ -77,6 +77,32 @@ export const BACKOFFICE_RUNS_QUERY = /* GraphQL */ `
   }
 `;
 
+export const BACKOFFICE_PROCESSING_RUNS_QUERY = /* GraphQL */ `
+  query BackofficeProcessingRuns($job: String!, $activeStatuses: [RunStatus!]!) {
+    recent: runsOrError(filter: {pipelineName: $job}, limit: 20) {
+      __typename
+      ... on Runs { results { ...ProcessingRunSummary } }
+      ... on PythonError { message }
+      ... on InvalidPipelineRunsFilterError { message }
+    }
+    active: runsOrError(filter: {pipelineName: $job, statuses: $activeStatuses}) {
+      __typename
+      ... on Runs { results { ...ProcessingRunSummary stepStats { stepKey status } } }
+      ... on PythonError { message }
+      ... on InvalidPipelineRunsFilterError { message }
+    }
+    successful: runsOrError(filter: {pipelineName: $job, statuses: [SUCCESS]}, limit: 1) {
+      __typename
+      ... on Runs { results { ...ProcessingRunSummary } }
+      ... on PythonError { message }
+      ... on InvalidPipelineRunsFilterError { message }
+    }
+  }
+  fragment ProcessingRunSummary on Run {
+    runId status jobName creationTime startTime endTime tags { key value }
+  }
+`;
+
 export const BACKOFFICE_RUN_QUERY = /* GraphQL */ `
   query BackofficeRun($runId: ID!) {
     runOrError(runId: $runId) {

@@ -37,6 +37,7 @@ sources:
             asset_key: [esef_filings_clickhouse]
       - name: company_domain_suggestions_active
       - name: company_domain_suggestion_evidence_active
+      - name: se_company_domain
       - name: company_domains
       - name: company_contract_facts
       - name: se_company_financials_latest

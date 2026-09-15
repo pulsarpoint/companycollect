@@ -8,7 +8,6 @@ const server = vi.hoisted(() => ({
   resolveSePeopleCompanyIds: vi.fn(),
 }));
 vi.mock("~/lib/se-people-list.server", () => server);
-
 import { loader } from "~/routes/admin-se-people";
 import { SePeopleTable } from "~/components/admin/se-people-table";
 import { parseSePeopleFilters, sePeopleHref, sePersonHref } from "~/lib/se-people-filters";

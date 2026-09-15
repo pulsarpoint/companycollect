@@ -47,10 +47,10 @@ def test_the_warm_asset_carries_the_workbench_pool_and_resources() -> None:
     assert warm.group_names_by_key[warm.key] == assets.GROUP_NAME
 
 
-def test_the_warm_asset_depends_on_the_osm_extract() -> None:
+def test_the_warm_asset_depends_on_the_osm_extract_and_normalized_addresses() -> None:
     warm = assets.se_address_geocodes_warm
     assert {dep.asset_key for dep in warm.specs_by_key[warm.key].deps} == {
-        dg.AssetKey("sweden_osm_addresses_duckdb")
+        dg.AssetKey("sweden_osm_addresses_duckdb"), dg.AssetKey("se_company_address_normalize"),
     }
 
 

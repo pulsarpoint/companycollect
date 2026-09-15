@@ -13,6 +13,7 @@ import {
   SlidersHorizontalIcon,
   TagsIcon,
   UsersIcon,
+  WorkflowIcon,
 } from "lucide-react";
 import {
   Collapsible,
@@ -57,6 +58,7 @@ const COUNTRY_NAVIGATION = [
         icon: UsersIcon,
         exact: false,
       },
+      { title: "Processing", to: "/admin/se/processing", icon: WorkflowIcon, exact: true },
     ],
   },
 ] as const;
@@ -70,6 +72,16 @@ const GENERAL_NAVIGATION = [
 ] as const;
 
 const SETTINGS_NAVIGATION = [
+  {
+    title: "People prompts",
+    to: "/admin/settings/people-prompts",
+    icon: TagsIcon,
+  },
+  {
+    title: "Domain prompts",
+    to: "/admin/settings/domain-prompts",
+    icon: TagsIcon,
+  },
   {
     title: "LLMs",
     to: "/admin/settings/llms",

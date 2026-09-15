@@ -412,10 +412,11 @@ export const PERSON_MATCH_SQL = `SELECT
   p.reason AS reason
 FROM corpscout.se_company_person_match AS p FINAL
 INNER JOIN (
-  SELECT company_id, input_hash
+  SELECT company_id, input_hash, matched_at
   FROM corpscout.se_company_person_match_state FINAL
   WHERE company_id = {companyId:String} AND error = ''
 ) AS s ON s.company_id = p.company_id AND s.input_hash = p.input_hash
+  AND s.matched_at = p.matched_at
 WHERE p.company_id = {companyId:String} AND p.confidence >= ${POSSIBLE_MATCH_FLOOR}
 ORDER BY p.confidence DESC, p.candidate_a, p.candidate_b`;
 

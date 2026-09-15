@@ -3,6 +3,7 @@ the fold (`se_company_address_fold`, `se_company_address_fold_companies`) and th
 precedence export; the extractors follow in a later slice."""
 
 import re
+from collections import Counter
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any
@@ -240,6 +241,35 @@ def se_company_address_fold(
 
 
 @dg.asset(
+    name="se_company_address_publish",
+    deps=[dg.AssetKey("se_company_address_normalize"), dg.AssetKey("se_address_geocodes_warm")],
+    pool=osm_tables.DUCKDB_POOL,
+    group_name=GROUP_NAME,
+    kinds={"clickhouse", "duckdb", "python"},
+    metadata={"table": tables.QUALIFIED_MAIN_TABLE, "history_table": tables.QUALIFIED_HISTORY_TABLE},
+    description="Folds and publishes addresses across all companies after normalization and geocode warming, visiting all 64 buckets sequentially.",
+)
+def se_company_address_publish(
+    context: dg.AssetExecutionContext, config: AddressFoldConfig, clickhouse: ClickhouseResource,
+    sweden_address_osm_duckdb: DuckDBResource,
+) -> dg.MaterializeResult:
+    assert_clickhouse_tables_exist(clickhouse, database=tables.DATABASE, tables=(*_FOLD_TABLES, *_GEOCODE_TABLES))
+    totals: Counter[str] = Counter()
+    with clickhouse.get_connection() as client, sweden_address_osm_duckdb.get_connection() as duckdb:
+        for bucket in range(BUCKET_COUNT):
+            counts = fold_bucket(
+                client, duckdb, bucket, changed_only=config.changed_only, source_run_id=context.run_id,
+                folded_at=datetime.now(UTC), page_size=config.page_size, log=context.log.info,
+            )
+            totals.update(counts.as_metadata())
+            context.log.info("Published bucket %d of %d", bucket + 1, BUCKET_COUNT)
+    return dg.MaterializeResult(metadata={
+        **totals, "buckets": BUCKET_COUNT, "changed_only": config.changed_only, "page_size": config.page_size,
+        "table": tables.QUALIFIED_MAIN_TABLE, "history_table": tables.QUALIFIED_HISTORY_TABLE,
+    })
+
+
+@dg.asset(
     name="se_company_address_fold_companies",
     pool=osm_tables.DUCKDB_POOL,
     group_name=GROUP_NAME,
@@ -278,13 +308,14 @@ class AddressWarmConfig(dg.Config):
     name="se_address_geocodes_warm",
     pool=osm_tables.DUCKDB_POOL,
     group_name=GROUP_NAME,
-    deps=[dg.AssetKey("sweden_osm_addresses_duckdb")],
+    deps=[dg.AssetKey("sweden_osm_addresses_duckdb"), dg.AssetKey("se_company_address_normalize")],
     kinds={"clickhouse", "duckdb", "python"},
     metadata={"table": "corpscout.se_address_geocodes", "reads": tables.QUALIFIED_NORMALIZED_TABLE},
     description=(
         "Geocodes every current address location key in bulk through the cache-then-matcher "
         "function, so the fold pages hit the cache. Run once before the first full fold and "
-        "after every OSM extract refresh. Runs in the weekly geocoding job after the OSM "
+        "after every OSM extract refresh. Also runs after normalization in the backoffice's "
+        "full address processing job. Runs in the weekly geocoding job after the OSM "
         "extract; also runnable by hand."
     ),
 )

@@ -28,6 +28,8 @@ import type {
   BackofficeRunQueryVariables,
   BackofficeRunsQuery,
   BackofficeRunsQueryVariables,
+  BackofficeProcessingRunsQuery,
+  BackofficeProcessingRunsQueryVariables,
   EvaluationErrorReason,
   RunStatus,
   StaleStatus,
@@ -39,6 +41,7 @@ import {
   BACKOFFICE_LAUNCH_RUN_MUTATION,
   BACKOFFICE_RUN_QUERY,
   BACKOFFICE_RUNS_QUERY,
+  BACKOFFICE_PROCESSING_RUNS_QUERY,
 } from "~/lib/dagster.operations";
 
 /** The deployed code location and repository these jobs live in. */
@@ -120,6 +123,7 @@ export class DagsterRunConfigValidationError extends DagsterGraphQLError {
 export interface DagsterOptions {
   fetchImpl?: typeof fetch;
   url?: string;
+  timeoutMs?: number;
 }
 
 export interface DagsterRun {
@@ -217,6 +221,7 @@ async function graphql<TData, TVariables>(
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ query, variables }),
+      ...(options.timeoutMs ? { signal: AbortSignal.timeout(options.timeoutMs) } : {}),
     });
   } catch (error) {
     throw new DagsterRequestError(
@@ -360,6 +365,19 @@ export async function listRuns(
       run.assetSelection?.map((asset) => assetName(asset.path)) ?? null,
     tags: tagMap(run.tags),
   }));
+}
+
+export async function processingJobRuns(
+  job: string, activeStatuses: readonly RunStatus[], options: DagsterOptions = {},
+) {
+  const result = await graphql<BackofficeProcessingRunsQuery, BackofficeProcessingRunsQueryVariables>(
+    BACKOFFICE_PROCESSING_RUNS_QUERY, { job, activeStatuses: [...activeStatuses] },
+    { ...options, timeoutMs: options.timeoutMs ?? 10_000 },
+  );
+  if (result.recent.__typename !== "Runs") throw unionError(result.recent, `Reading recent runs of ${job}`);
+  if (result.active.__typename !== "Runs") throw unionError(result.active, `Reading active runs of ${job}`);
+  if (result.successful.__typename !== "Runs") throw unionError(result.successful, `Reading successful runs of ${job}`);
+  return { recent: result.recent.results, active: result.active.results, successful: result.successful.results };
 }
 
 export async function runStatus(

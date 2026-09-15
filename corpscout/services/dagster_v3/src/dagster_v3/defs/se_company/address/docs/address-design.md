@@ -153,11 +153,14 @@ Change rule: the shared helper's -- a company is visited when its source table's
 newer than the company's current suggestion row from that source, or it has never been
 suggested by that source; `execute: false` (default) previews the count without writing.
 
-`se_company_address_extract_job` (`jobs.py`) selects the four extractors and
-`se_company_address_normalize` (which now `deps` on them); `se_company_address_weekly`
-schedules it Mondays 07:05 UTC (`5 7 * * 1`) with `execute: true`, `page_size: 20000` per
-extractor and `changed_only: true` on the normalize asset, registered STOPPED. It took the
-canonical name when slice 4b retired the old model's schedule of the same name.
+The backoffice's Company actions → Addresses menu offers two global jobs:
+`se_company_address_sync_job` selects the four extractors and normalization;
+`se_company_address_refresh_job` adds geocode warming and `se_company_address_publish`.
+The latter folds all 64 buckets sequentially using the existing OSM workbench pool.
+The backoffice sends `execute: true`, `page_size: 10000` to each extractor, and
+`changed_only: true`, `page_size: 20000` to normalization and publication. No company
+filters or LLM settings are sent. The redundant extract job and stopped address weekly
+schedule were removed. Internal bucket and targeted correction folds remain available.
 
 ## Geocoding (slice 2a)
 
@@ -232,9 +235,12 @@ geocodes in-page whatever the warm step did not cover, so nothing depends on it 
 correctness. `AddressWarmConfig` (`chunk_size`, `limit`); pool `sweden_address_osm_duckdb`
 (`osm_tables.DUCKDB_POOL`), same as the fold's. Metadata:
 `keys/chunks/cache_hits/matched/geocoded/fallback`. The asset also carries
-`deps=[dg.AssetKey("sweden_osm_addresses_duckdb")]` and rides in
+dependencies on `sweden_osm_addresses_duckdb` and `se_company_address_normalize`, and rides in
 `sweden_company_address_geocoding_weekly_job` (`sweden_company/address_geocoding_assets.py`),
-so the weekly OSM refresh always warms the cache for the new extract.
+so the weekly OSM refresh always warms the cache for the new extract. It also runs after
+normalization in the backoffice full-processing job; that job uses the existing OSM data
+and never selects the OSM download or reference-data refresh assets. The existing OSM
+freshness warning check is selected with warming in both jobs.
 
 ## Backoffice (slice 3, 2026-09-07)
 
