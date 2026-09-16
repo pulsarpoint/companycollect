@@ -25,7 +25,7 @@ services:
   clickhouse-backup:
     image: altinity/clickhouse-backup:2.7.4
     profiles: ["backup"]
-    command: watch --watch-interval=24h --full-interval=168h
+    command: watch --watch-interval=24h --full-interval=72h
     depends_on:
       clickhouse:
         condition: service_healthy

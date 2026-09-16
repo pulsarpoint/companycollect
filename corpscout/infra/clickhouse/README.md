@@ -41,11 +41,12 @@ unaffected.
 
 A `clickhouse-backup` sidecar (Altinity, watch mode) continuously backs up
 all databases to the Backblaze B2 bucket `main-ch-backup`: a full backup
-every 7 days, an incremental every 24 h, keeping the 3 most recent remote
+every 3 days, an incremental every 24 h, keeping the 3 most recent remote
 backups (one full plus the last two days of changes; development-phase
-retention). Retention keeps the full backup that a retained incremental
-depends on, so usage floats between one and two fulls around each weekly
-full. It is enabled by
+retention). Watch mode requires full-interval / watch-interval to be at
+most the keep count, and retention also keeps the full a retained
+incremental depends on, so usage floats between one and two fulls.
+It is enabled by
 `COMPOSE_PROFILES=backup` in the server `.env`; local dev without that
 profile never starts it.
 
