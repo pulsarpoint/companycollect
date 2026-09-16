@@ -2,12 +2,65 @@
 
 ## Resume here
 
-**Next experiment designed: DSPy RLM, not yet implemented or run.** Read
-[DSPY_RLM_PLAN.md](company_research/DSPY_RLM_PLAN.md) for the division between
-classification, adaptive discovery, page evidence, company consolidation and final
-validation. Begin with the saved Handelsbanken corpus and direct DeepSeek Flash at
-high reasoning; evaluate live URL discovery separately. Preserve the completed
-0.15.2 results and record both baseline errors and proposed semantic corrections.
+**Completed standalone page-agent comparison; main runtime remains 0.15.2.**
+Read [page-agent results](page_agent_lab/RESULTS.md) and [runner instructions](page_agent_lab/README.md).
+Seven saved pages, direct DeepSeek Flash/high: one pass used 7 calls, 3.18 minutes,
+estimated $0.10676; router plus specialists used 67 calls, 8.96 minutes, $0.48565.
+Both matched 38/40 frozen exact-name controls and retained all 40 checked facts
+after two explicitly documented source-name matching corrections. Both retained
+30/30 listing titles/URLs and assessed all 278 observed navigation occurrences.
+No API errors, truncations or automatic correction calls. Six boundary tests,
+Ruff, type checks, 74 request-payload checks and credential scan passed.
+
+Routing dispatched all 14 selected positive page/objective pairs but selected
+60/70 possible workers; 18 returned empty. It added useful product names and
+more complete quotations, alongside false technologies (iframe host/element name),
+geographical markets as office addresses, person records under company profiles,
+unsupported supplier claims, capture dates as claim dates and AURIX service/product
+confusion. Both variants still need better technology signals and document taxonomy.
+Positive-control retention and source matching are not overall precision.
+
+Recommendation: keep the page boundary; use one-pass as the next integration
+baseline and test specialists selectively after correcting the newly recorded
+failures. The hybrid and autonomous coordinator are not implemented. The existing
+phone validator incorrectly digit-matches the owner name as well as the number;
+fix it separately and preserve actor/field evidence. Raw review items remain saved.
+Artifacts: `page_agent_lab/data/two-pass-20260916/`, including frozen code/inputs,
+calls, comparison.json, source-review.json and verification.json. Do not overwrite
+the completed run. No new site fetches, catalog/backend submissions or deployment.
+The [run receipt](page_agent_lab/RUN_RECEIPT.json) points to a verified 146-file
+archive under `/Users/graovic/pulsarpoint/company-research-snapshots/`.
+
+**Design direction: one page agent returns page data and scored visit targets.**
+Read [PAGE_AGENT_DESIGN.md](company_research/PAGE_AGENT_DESIGN.md). The coordinator
+persists page results, updates the existing queue and dispatches pending targets
+by priority. Each agent's factual context is its one page; company merge and catalog
+resolution follow. The standalone unit and comparison are implemented; the main
+crawler is unchanged. Integrate scheduling only after the remaining validation
+and objective-boundary gaps are addressed, then run an uninterrupted comparison.
+**Tested variant:** [two-pass page analysis](company_research/PAGE_AGENT_TWO_PASS.md):
+multi-label routing over all objectives, then selected specialists with their own
+prompts/examples and the original page as evidence. Compare against one-pass
+extraction under the same outer contract. Measure routing misses separately from
+extractor errors, and count all worker calls. See the completed pilot above.
+
+**DSPy RLM postponed by the user.** No implementation or model run has started.
+Keep [DSPY_RLM_PLAN.md](company_research/DSPY_RLM_PLAN.md) as a saved proposal;
+do not begin it unless the user resumes it. Current focus is the existing Crawl4AI
+and direct DeepSeek workflow. The Handelsbanken results support a supervised pilot,
+but do not establish reliable, complete research from a URL without intervention.
+The high-reasoning comparison reused saved sources, not a new autonomous crawl.
+Clarification from the original queue: the vacancies page had been discovered and
+rated highly. The analyst stopped the run after about 41 minutes, with 12/30 pages
+and 112/320 calls used. This does not establish failure to find jobs within budget.
+
+Next priorities: improve early coverage of jobs/company/contact/ownership hubs,
+confirmed company domains, pagination and embedded archives; fix team/role scope,
+retention of source facts with pending catalog metadata, technology taxonomy and
+contact attribution; then run a fresh autonomous regression against the saved
+source-audited expectations. Measure elapsed time and calls as well as quality.
+These are next steps, not fixes already implemented. High reasoning remains a
+promising explicit setting for technology work; global defaults are unchanged.
 The [baseline receipt](company_research/RESEARCH_BASELINE_20260916.md) records the
 Git branches, local archive and verified manifest of the saved research.
 

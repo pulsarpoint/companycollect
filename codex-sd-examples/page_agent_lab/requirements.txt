@@ -1,0 +1,2 @@
+# Install alongside the existing editable company_research environment.
+jsonschema>=4.23,<5

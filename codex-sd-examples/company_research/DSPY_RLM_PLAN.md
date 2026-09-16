@@ -1,6 +1,12 @@
 # DSPy RLM company-research experiment
 
-16 September 2026. **Design only: implementation and model runs have not started.**
+16 September 2026. **Postponed by the user: implementation and model runs have not started.**
+Retain this design for future reference. Continue improving the existing crawler;
+do not launch the RLM experiment unless the user resumes it. If revisited, consider
+first testing a limited evidence-review/consolidation module against a simple
+batched review with the same sources and budget before changing the crawler.
+
+The following is the original proposed experiment, not active implementation work.
 Target: repeat the Handelsbanken company-research task with direct DeepSeek Flash,
 using DSPy RLM to explore evidence and choose semantic subtasks. Preserve the
 0.15.2 baseline and its completed low/high results before making runtime changes.
@@ -200,6 +206,6 @@ inputs, outputs, traces, code and reports; credentials and installed runtimes ar
 excluded. The [baseline receipt](RESEARCH_BASELINE_20260916.md) records their location
 and verification. The archive predates this receipt link; Git holds the final plan.
 
-The next implementation step is the isolated offline integration smoke and frozen
-16-page technology experiment. No RLM model run, new crawl, deployment or backend
-write is part of preparing this plan and baseline.
+If this experiment is resumed, reassess its scope before the isolated offline
+integration smoke and frozen-source comparison. No RLM model run, new crawl,
+deployment or backend write has been performed for this experiment.

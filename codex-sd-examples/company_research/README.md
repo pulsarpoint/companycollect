@@ -3,9 +3,20 @@
 See the [research checkpoint](../RESEARCH_CHECKPOINT.md) for saved findings,
 known NOVELIC extraction gaps and next work. PDF/OCR experimentation is paused.
 
-The [DSPy RLM experiment plan](DSPY_RLM_PLAN.md) describes the proposed next
-comparison using the frozen Handelsbanken sources. It is a design; the RLM
-implementation and runs have not started.
+The proposed [page-agent design](PAGE_AGENT_DESIGN.md) makes one page's extracted
+data and scored navigation targets the independently testable unit. It keeps queue
+scheduling in Python and merges source-backed results afterward. The design is
+saved; the current runtime has not yet been refactored to this contract.
+
+The standalone [page-agent lab](../page_agent_lab/README.md) now implements both
+one-pass and routed-specialist variants. Its [seven-page results](../page_agent_lab/RESULTS.md)
+retained the selected facts in both versions; routing increased cost/time and added
+errors. Use one-pass as the next integration baseline, with targeted specialists
+still to be tested. Neither variant is integrated into the crawler yet.
+
+The [DSPy RLM experiment plan](DSPY_RLM_PLAN.md) is **postponed** and saved for
+future reference. The RLM implementation and runs have not started. Current work
+continues with the existing crawler and its discovery/validation gaps.
 
 The [Handelsbanken company analysis](HANDELSBANKEN_ANALYSIS.md) combines the documented
 autonomous diagnostic with source-guided follow-ups. Its [low/high reasoning comparison](HANDELSBANKEN_REASONING_COMPARISON.md)

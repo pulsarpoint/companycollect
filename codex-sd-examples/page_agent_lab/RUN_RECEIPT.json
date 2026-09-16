@@ -1,0 +1,10 @@
+{
+  "run_directory": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/page_agent_lab/data/two-pass-20260916",
+  "archive": "/Users/graovic/pulsarpoint/company-research-snapshots/20260916T155012Z-page-agent/page-agent-pilot.tar.gz",
+  "archive_sha256": "6ecc88ec8fbcb5aee8cb741f650c497fc82005dfaf04ebc0cd35ae60ffebb6f4",
+  "archive_bytes": 6779217,
+  "files": 146,
+  "all_member_hashes_verified": true,
+  "created_at": "2026-09-16T15:50:13.625294+00:00",
+  "manifest": "/Users/graovic/pulsarpoint/company-research-snapshots/20260916T155012Z-page-agent/manifest.json"
+}
