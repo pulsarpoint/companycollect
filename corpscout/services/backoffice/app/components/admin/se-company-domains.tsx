@@ -1,3 +1,4 @@
+import { DomainSourceSupport, DOMAIN_RANKING_EXPLANATION } from "~/components/domain-suggestions/domain-source-support";
 import { CompanySourceStrip } from "~/components/admin/company-source-strip";
 import { GlobeIcon } from "lucide-react";
 import { Link } from "react-router";
@@ -75,6 +76,7 @@ function DomainCard({ row }: { row: SeCompanyDomainRow }) {
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
+        <DomainSourceSupport sources={row.supporting_sources} />
         <div className="flex flex-col gap-1">
           <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Evidence
@@ -175,6 +177,7 @@ export function SeCompanyDomainsTab({
       <CompanySourceStrip
         sources={domains.flatMap((row) => row.source_names)}
       />
+      <p className="text-muted-foreground text-sm">{DOMAIN_RANKING_EXPLANATION}</p>
       <div className="text-sm">
         <Link
           className="underline underline-offset-2"

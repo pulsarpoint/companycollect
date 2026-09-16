@@ -11,6 +11,7 @@ export interface SeCompanyDomainRow {
   website_url: string;
   website_host: string;
   source_names: string[];
+  supporting_sources: string[];
   source_confidences: number[];
   source_urls: string[];
   confidence_bases: string[];
@@ -45,6 +46,7 @@ export const COMPANY_DOMAINS_SQL = `SELECT
   d.website_url AS website_url,
   d.website_host AS website_host,
   d.source_names AS source_names,
+  d.supporting_sources AS supporting_sources,
   arrayMap(value -> toFloat64(value), d.source_confidences) AS source_confidences,
   d.source_urls AS source_urls,
   d.confidence_bases AS confidence_bases,
@@ -65,7 +67,7 @@ FROM corpscout.company_domains_resolved AS d
 LEFT JOIN corpscout.se_company_domain AS entity FINAL
   ON entity.company_id = d.company_id AND entity.root_domain = d.root_domain
 WHERE d.country_code = 'SE' AND d.company_id = {companyId:String}
-ORDER BY d.suggested_primary DESC, d.suggested_confidence DESC, d.root_domain
+ORDER BY d.is_active DESC, d.suggested_primary DESC, length(d.supporting_sources) DESC, d.suggested_confidence DESC, d.root_domain
 LIMIT 100`;
 
 /** Every domain associated with one Swedish company, primary first. */

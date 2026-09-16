@@ -23,6 +23,7 @@ const row = {
   root_domain: "assaabloy.com",
   website_url: "https://www.assaabloy.com/",
   website_host: "www.assaabloy.com",
+  supporting_sources: ["esef_filing", "wikidata"],
   source_names: ["wikidata", "esef_filing"],
   source_confidences: [1, 0.9],
   source_record_ids: ["Q123", "filing-2025"],
@@ -63,6 +64,7 @@ describe("unified company domains", () => {
 
     const [domain] = await getUnifiedCompanyDomains("se", "5560593575");
 
+    expect(domain.supportingSources).toEqual(["esef_filing", "wikidata"]);
     expect(domain.rootDomain).toBe("assaabloy.com");
     expect(domain.sources).toEqual([
       expect.objectContaining({ name: "wikidata", confidence: 1 }),

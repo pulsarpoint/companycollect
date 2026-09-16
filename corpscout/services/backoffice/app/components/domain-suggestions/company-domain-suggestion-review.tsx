@@ -1,10 +1,10 @@
+import { DomainSourceSupport, DOMAIN_RANKING_EXPLANATION } from "~/components/domain-suggestions/domain-source-support";
 import type { ColumnDef } from "@tanstack/react-table";
 import { ArrowLeft, Search, SearchX } from "lucide-react";
 import { Form, Link, useNavigate } from "react-router";
 import { DataTable } from "~/components/data-table/data-table";
 import { DataTablePagination } from "~/components/data-table/pagination";
 import { useEffectiveSearchParams } from "~/components/data-table/use-effective-search";
-import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
   Empty,
@@ -32,6 +32,7 @@ const sourceOptions: Array<{
   label: string;
 }> = [
   { value: "all", label: "All" },
+  { value: "brave", label: "Brave" },
   { value: "wikidata", label: "Wikidata" },
   { value: "esef_filing", label: "ESEF" },
   { value: "common_crawl_identity", label: "Common Crawl" },
@@ -69,13 +70,7 @@ function columns(
       id: "sources",
       header: "Sources",
       cell: ({ row }) => (
-        <div className="flex flex-wrap gap-1">
-          {row.original.sources.map((source) => (
-            <Badge key={source.name} variant="outline">
-              {source.name.replaceAll("_", " ")}
-            </Badge>
-          ))}
-        </div>
+        <DomainSourceSupport sources={row.original.supportingSources} />
       ),
     },
     {
@@ -133,6 +128,9 @@ export function CompanyDomainSuggestionReview({
             Unreviewed company/domain associations from every discovery source.
             Open a company to inspect evidence, technology, and infrastructure
             before confirming or rejecting the association.
+          </p>
+          <p className="text-muted-foreground mt-1 max-w-3xl text-sm">
+            {DOMAIN_RANKING_EXPLANATION}
           </p>
         </div>
       </header>

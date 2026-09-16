@@ -62,6 +62,7 @@ export interface CompanyDomain {
   websiteUrl: string;
   websiteHost: string;
   sources: CompanyDomainSource[];
+  supportingSources: string[];
   suggestedConfidence: number;
   suggestedPrimary: boolean;
   evidenceFingerprint: string;
@@ -79,6 +80,7 @@ export interface CompanyDomain {
 
 export const COMPANY_DOMAIN_SOURCES = [
   "all",
+  "brave",
   "wikidata",
   "esef_filing",
   "common_crawl_identity",
@@ -104,6 +106,7 @@ interface CompanyDomainRow {
   website_url: string;
   website_host: string;
   source_names: string[];
+  supporting_sources: string[];
   source_confidences: Array<number | string>;
   source_record_ids: string[];
   source_urls: string[];
@@ -187,6 +190,7 @@ export const COMPANY_DOMAINS_QUERY = `SELECT
   website_url,
   website_host,
   source_names,
+  supporting_sources,
   source_confidences,
   source_record_ids,
   source_urls,
@@ -210,6 +214,7 @@ ORDER BY
   is_active DESC,
   review_status = 'confirmed_primary' DESC,
   suggested_primary DESC,
+  length(supporting_sources) DESC,
   suggested_confidence DESC,
   root_domain`;
 
@@ -513,6 +518,7 @@ function domainFromRow(
     rootDomain: row.root_domain,
     websiteUrl: row.website_url,
     websiteHost: row.website_host,
+    supportingSources: row.supporting_sources,
     sources: row.source_names.map((name, index) => {
       const source = {
         name,
@@ -602,6 +608,7 @@ export const COMPANY_DOMAIN_REVIEW_QUEUE_QUERY = `SELECT
   domains.website_url AS website_url,
   domains.website_host AS website_host,
   domains.source_names AS source_names,
+  domains.supporting_sources AS supporting_sources,
   domains.source_confidences AS source_confidences,
   domains.source_record_ids AS source_record_ids,
   domains.source_urls AS source_urls,
@@ -624,7 +631,7 @@ LEFT JOIN se_company_domain AS entity FINAL
 INNER JOIN se_company_basic_info AS companies FINAL
   ON companies.company_id = domains.company_id
 ${COMPANY_DOMAIN_QUEUE_WHERE}
-ORDER BY domains.suggested_confidence DESC, companies.legal_name,
+ORDER BY length(domains.supporting_sources) DESC, domains.suggested_confidence DESC, companies.legal_name,
   domains.company_id, domains.root_domain
 LIMIT {limit:UInt16} OFFSET {offset:UInt64}`;
 

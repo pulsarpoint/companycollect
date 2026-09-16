@@ -20,6 +20,7 @@ import {
 const DATATYPE_SOURCE_LABELS: Record<string, string> = {
   "bolagsverket-annual-accounts": "Bolagsverket",
   esef_filing: "ESEF",
+  brave: "Brave",
   common_crawl_identity: "Common Crawl",
 };
 

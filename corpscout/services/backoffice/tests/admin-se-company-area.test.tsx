@@ -329,6 +329,7 @@ const domain: SeCompanyDomainRow = {
   root_domain: "beijerbygg.se",
   website_url: "https://www.beijerbygg.se",
   website_host: "beijerbygg.se",
+  supporting_sources: ["wikidata"],
   source_names: ["wikidata"],
   source_confidences: [1],
   source_urls: ["http://www.wikidata.org/entity/Q10427772"],
@@ -356,6 +357,8 @@ describe("domains tab", () => {
     expect(html).toContain(">unreviewed<");
     expect(html).toContain("confidence 100%");
     expect(html).toContain(">wikidata<");
+    expect(html).toContain("1 distinct source");
+    expect(html).toContain("Human primary decisions come first");
     expect(html).toContain("official_website_claim");
     expect(html).toContain("http://www.wikidata.org/entity/Q10427772");
     expect(html).toContain(

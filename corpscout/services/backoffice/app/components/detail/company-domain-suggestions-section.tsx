@@ -1,3 +1,4 @@
+import { DomainSourceSupport, DOMAIN_RANKING_EXPLANATION } from "~/components/domain-suggestions/domain-source-support";
 import {
   Archive,
   CalendarClock,
@@ -54,6 +55,7 @@ const percent = new Intl.NumberFormat("en-US", {
 });
 
 const sourceLabels: Record<string, string> = {
+  brave: "Brave",
   wikidata: "Wikidata",
   esef_filing: "ESEF filing",
   common_crawl_identity: "Common Crawl identity",
@@ -93,6 +95,9 @@ function reviewBadgeVariant(
 }
 
 function sourceBasisDescription(source: CompanyDomainSource): string {
+  if (source.name === "brave") {
+    return "Domain mentioned in the saved Brave answer. The full answer is passed to verification because it can include unrelated alternatives.";
+  }
   if (source.name === "common_crawl_identity") {
     const matches = source.evidence.filter(
       (evidence): evidence is CommonCrawlDomainEvidence =>
@@ -515,11 +520,13 @@ function DomainCard({
           )}
         </CardTitle>
         <CardDescription>
-          Proposed by {domain.sources.length} source
-          {domain.sources.length === 1 ? "" : "s"}. Automated confidence does
-          not replace human verification.
+          {domain.supportingSources.length > 1
+            ? "For connected domains, more supporting sources mean higher automated priority."
+            : "Source priority breaks ties between domains with the same support count."}
         </CardDescription>
         <CardAction className="flex flex-wrap gap-2">
+          {domain.active && domain.suggestedPrimary ? <Badge>Primary domain</Badge> : null}
+          {!domain.active ? <Badge variant="outline">Inactive</Badge> : null}
           <Badge variant={reviewBadgeVariant(domain.reviewStatus)}>
             {reviewLabels[domain.reviewStatus]}
           </Badge>
@@ -532,6 +539,7 @@ function DomainCard({
         </CardAction>
       </CardHeader>
       <CardContent className="flex flex-col gap-5">
+        <DomainSourceSupport sources={domain.supportingSources} />
         <div className="flex flex-col gap-3">
           <div>
             <h3 className="font-medium">Source evidence</h3>
@@ -585,9 +593,8 @@ export function CompanyDomainSuggestionsSection({
           Company domains
         </h2>
         <p className="text-muted-foreground mt-1 max-w-3xl text-sm">
-          Every domain proposed by Wikidata, ESEF filings, or deterministic
-          Common Crawl matching. Review decisions apply to the company/domain
-          association, not to an individual source.
+          Domains proposed by Brave, Wikidata, ESEF filings, and Common Crawl.
+          {" "}{DOMAIN_RANKING_EXPLANATION}
         </p>
       </header>
 

@@ -68,6 +68,6 @@ export function processingStepLabel(step: string): string {
   if (step === "se_company_domain_precedence_clickhouse") return "Update source precedence";
   if (step.endsWith("_publish")) return "Fold and publish";
   const source = step.split("_suggestions_")[1];
-  if (source) return `Sync ${({ scb: "SCB", bolagsverket: "Bolagsverket", bolagsverket_comparative: "comparative filings", ratsit: "Ratsit", esef: "ESEF", esef_filing: "ESEF filings", common_crawl_identity: "Common Crawl matches", wikidata: "Wikidata" } as Record<string, string>)[source] ?? source}`;
+  if (source) return `Sync ${({ scb: "SCB", bolagsverket: "Bolagsverket", bolagsverket_comparative: "comparative filings", ratsit: "Ratsit", esef: "ESEF", esef_filing: "ESEF filings", common_crawl_identity: "Common Crawl matches", brave: "Brave answers", wikidata: "Wikidata" } as Record<string, string>)[source] ?? source}`;
   return step.replaceAll("_", " ");
 }

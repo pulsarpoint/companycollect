@@ -32,7 +32,7 @@ export async function launchDomainAction(
   const run = await launchRun({
     job: process ? "se_company_domain_refresh_job" : "se_company_domain_sync_job",
     runConfig: { ops: {
-      ...Object.fromEntries(["wikidata", "esef_filing", "common_crawl_identity"].map((source) => [
+      ...Object.fromEntries(["brave", "wikidata", "esef_filing", "common_crawl_identity"].map((source) => [
         `se_company_domain_suggestions_${source}`, { config: { execute: true, page_size: 5_000 } },
       ])),
       ...(process ? {

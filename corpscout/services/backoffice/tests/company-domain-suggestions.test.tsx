@@ -11,6 +11,7 @@ const domain: CompanyDomain = {
   rootDomain: "acme-security.se",
   websiteUrl: "https://acme-security.se/",
   websiteHost: "acme-security.se",
+  supportingSources: ["common_crawl_identity"],
   sources: [
     {
       name: "common_crawl_identity",
@@ -76,6 +77,22 @@ function renderDomains(domains: CompanyDomain[]): string {
 }
 
 describe("CompanyDomainSuggestionsSection", () => {
+  it("shows distinct support separately from repeated evidence and verification", () => {
+    const first = { ...domain.sources[0], name: "brave", confidenceBasis: "brave_answer_candidate", evidence: [] };
+    const filing = { ...first, name: "esef_filing", sourceRecordId: "filing-1" };
+    const html = renderDomains([{
+      ...domain, supportingSources: ["brave", "esef_filing"],
+      sources: [first, filing, { ...filing, sourceRecordId: "filing-2" }],
+    }]);
+    expect(html).toContain("2 distinct sources");
+    expect(html).not.toContain("3 distinct sources");
+    expect(html).toContain(">Brave<");
+    expect(html).toContain("more distinct supporting sources rank higher");
+    expect(html).toContain("Human primary decisions come first");
+    expect(html).toContain("Source support alone does not verify a domain");
+    expect(html).toContain("Primary domain");
+    expect(html).toContain("unrelated alternatives");
+  });
   it("renders one association with source-specific confidence", () => {
     const html = renderDomains([domain]);
 
@@ -97,6 +114,7 @@ describe("CompanyDomainSuggestionsSection", () => {
     const html = renderDomains([
       {
         ...domain,
+        supportingSources: ["wikidata"],
         rootDomain: "acme.se",
         websiteUrl: "https://acme.se",
         suggestedConfidence: 1,
@@ -189,7 +207,7 @@ describe("CompanyDomainSuggestionReview", () => {
     expect(html).toContain("Domain review");
     expect(html).toContain("Acme Security AB");
     expect(html).toContain("acme-security.se");
-    expect(html).toContain("common crawl identity");
+    expect(html).toContain("Common Crawl");
     expect(html).toContain("70%");
     expect(html).toContain('href="/company/se/5590000000/suggestions"');
   });
