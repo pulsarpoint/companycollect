@@ -43,7 +43,6 @@ export async function launchSeCompanyBraveAnalysis(
     job: "company_brave_search_workflow",
     runConfig: { ops: {
       company_brave_search_input: { config: input },
-      company_brave_search_results: { config: {} },
     } },
     tags: {
       "processing/task_id": taskId,

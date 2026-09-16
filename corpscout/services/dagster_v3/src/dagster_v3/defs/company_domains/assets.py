@@ -75,15 +75,17 @@ class BraveSearchConfig(dg.Config):
 
 @dg.asset(
     deps=["company_brave_search_input"],
-    group_name="company_domains",
+    group_name="brave_domain_search",
     kinds={"python", "browser", "postgres", "clickhouse"},
     pool="company_domains_brave",
-    tags={"source": "brave"},
-    description="Read a fixed ClickHouse input queue, render the query template, and collect copied Brave "
+    tags={"source": "brave", "country": "SE"},
+    metadata={"dagster/table_name": "corpscout.se_company_brave_domains"},
+    description="Latest successful Brave answers for Swedish companies in corpscout.se_company_brave_domains. "
+    "Read a fixed ClickHouse input queue, render the query template, and collect copied Brave "
     "responses with four continuously refilled routes. PostgreSQL holds task progress and responses; "
-    "closed batches are archived to S3 and latest successful answers are imported into country tables by ClickHouse SQL. Supply task_id to resume or mode=publish to replay exports.",
+    "closed batches are archived to S3 and latest successful answers are imported into the Swedish output table by ClickHouse SQL. Supply task_id to resume or mode=publish to replay exports.",
 )
-def company_brave_search_results(
+def se_company_brave_domains(
     context: dg.AssetExecutionContext,
     config: BraveSearchConfig,
     clickhouse: ClickhouseResource,
@@ -381,7 +383,7 @@ def company_brave_search_results(
         }
         metadata.update(
             task_id=task_id,
-            output_tables="corpscout.<country>_company_brave_domains",
+            output_tables="corpscout.se_company_brave_domains",
             request_slots=len(ROUTES) * config.requests_per_route,
         )
         if config.mode == "process" and counts["terminal_failed"]:
@@ -394,11 +396,11 @@ def company_brave_search_results(
 
 company_brave_search_job = dg.define_asset_job(
     name="company_brave_search_job",
-    selection=dg.AssetSelection.assets(company_brave_search_results),
+    selection=dg.AssetSelection.assets(se_company_brave_domains),
 )
 
 defs = dg.Definitions(
-    assets=[company_brave_search_results],
+    assets=[se_company_brave_domains],
     jobs=[company_brave_search_job],
     resources={
         "company_brave_browser": BraveBrowserResource(

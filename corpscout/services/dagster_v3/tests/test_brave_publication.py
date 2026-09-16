@@ -18,7 +18,7 @@ from dagster_clickhouse import ClickhouseResource
 from dagster_v3.defs.common.processing import ProcessingResource
 from dagster_v3.defs.company_domains.assets import (
     BraveSearchConfig,
-    company_brave_search_results,
+    se_company_brave_domains,
 )
 from dagster_v3.defs.company_domains import browser as brave
 from dagster_v3.defs.company_domains import publication
@@ -260,9 +260,9 @@ def test_materialization_pages_renders_processes_and_resumes_without_searching(
         "company_brave_browser": brave.BraveBrowserResource(**PROXIES),
     }
     result = dg.materialize(
-        [company_brave_search_results],
+        [se_company_brave_domains],
         resources=resources,
-        run_config={"ops": {"company_brave_search_results": {"config": config}}},
+        run_config={"ops": {"se_company_brave_domains": {"config": config}}},
     )
     assert result.success
     assert queue.progress(task)["succeeded"] == 8
@@ -277,10 +277,10 @@ def test_materialization_pages_renders_processes_and_resumes_without_searching(
     monkeypatch.setattr(brave, "launch", unexpected_launch)
     client.execute("TRUNCATE TABLE corpscout.company_brave_search_input")
     result = dg.materialize(
-        [company_brave_search_results],
+        [se_company_brave_domains],
         resources=resources,
         run_config={
-            "ops": {"company_brave_search_results": {"config": {"task_id": task}}}
+            "ops": {"se_company_brave_domains": {"config": {"task_id": task}}}
         },
     )
     assert result.success
@@ -333,9 +333,9 @@ def test_adaptive_timeouts_survive_resume_and_retry_only_failed_items(
         "retry_seconds": 0,
     }
     first = dg.materialize(
-        [company_brave_search_results],
+        [se_company_brave_domains],
         resources=resources,
-        run_config={"ops": {"company_brave_search_results": {"config": config}}},
+        run_config={"ops": {"se_company_brave_domains": {"config": config}}},
         raise_on_error=False,
     )
     assert not first.success
@@ -347,18 +347,18 @@ def test_adaptive_timeouts_survive_resume_and_retry_only_failed_items(
     # A larger budget alone must not silently restart a finished failed selection.
     config = {"task_id": task, "max_attempts": 5, "retry_seconds": 0}
     resumed = dg.materialize(
-        [company_brave_search_results],
+        [se_company_brave_domains],
         resources=resources,
-        run_config={"ops": {"company_brave_search_results": {"config": config}}},
+        run_config={"ops": {"se_company_brave_domains": {"config": config}}},
         raise_on_error=False,
     )
     assert not resumed.success
     assert all(timeouts == [60_000] for timeouts in attempts.values())
     config["retry_failed"] = True
     retried = dg.materialize(
-        [company_brave_search_results],
+        [se_company_brave_domains],
         resources=resources,
-        run_config={"ops": {"company_brave_search_results": {"config": config}}},
+        run_config={"ops": {"se_company_brave_domains": {"config": config}}},
     )
     assert retried.success
     assert attempts == {
@@ -519,11 +519,11 @@ def test_clickhouse_outage_does_not_repeat_saved_browser_work(
         "RENAME TABLE corpscout.se_company_brave_domains TO corpscout.unavailable_brave_info"
     )
     result = dg.materialize(
-        [company_brave_search_results],
+        [se_company_brave_domains],
         resources=resources,
         run_config={
             "ops": {
-                "company_brave_search_results": {
+                "se_company_brave_domains": {
                     "config": {
                         "task_id": task,
                         "input_relation": "corpscout.company_brave_search_input",
@@ -546,11 +546,11 @@ def test_clickhouse_outage_does_not_repeat_saved_browser_work(
         "RENAME TABLE corpscout.unavailable_brave_info TO corpscout.se_company_brave_domains"
     )
     result = dg.materialize(
-        [company_brave_search_results],
+        [se_company_brave_domains],
         resources=resources,
         run_config={
             "ops": {
-                "company_brave_search_results": {
+                "se_company_brave_domains": {
                     "config": {"task_id": task, "mode": "publish"}
                 }
             }
@@ -660,7 +660,7 @@ def test_fixed_upper_bound_excludes_later_inputs_and_missing_rows_cannot_finish(
 
     monkeypatch.setattr(brave, "launch", unexpected_launch)
     result = dg.materialize(
-        [company_brave_search_results],
+        [se_company_brave_domains],
         resources={
             "clickhouse": resource,
             "processing_clickhouse": resource,
@@ -668,7 +668,7 @@ def test_fixed_upper_bound_excludes_later_inputs_and_missing_rows_cannot_finish(
             "company_brave_browser": brave.BraveBrowserResource(**PROXIES),
         },
         run_config={
-            "ops": {"company_brave_search_results": {"config": {"task_id": task}}}
+            "ops": {"se_company_brave_domains": {"config": {"task_id": task}}}
         },
         raise_on_error=False,
     )

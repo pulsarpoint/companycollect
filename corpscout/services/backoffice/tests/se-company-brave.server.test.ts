@@ -19,7 +19,6 @@ describe("Swedish company Brave action", () => {
         task_id: result.taskId, source_relation: "corpscout.se_companies_serving",
         company_name_column: "legal_name", country_code: "SE", filters: { company_id: ["5560004615", "5560160680"] },
       } },
-      company_brave_search_results: { config: {} },
     });
     expect(execution.executionMetadata.tags).toContainEqual({ key: "processing/task_id", value: result.taskId });
     expect(execution.executionMetadata.tags).toContainEqual({ key: "corpscout/requested_by", value: "operator" });

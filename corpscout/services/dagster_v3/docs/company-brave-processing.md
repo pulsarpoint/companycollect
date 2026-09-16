@@ -1,9 +1,15 @@
 # Brave processing
 
-`company_brave_search_results`, in the `company_domains` group, processes a **fixed
+`se_company_brave_domains`, in the `brave_domain_search` group, processes a **fixed
 selection stored in a physical ClickHouse input table**. PostgreSQL stores results
 and progress. Starting a three-million-company task creates one PostgreSQL task
 record; it does not copy three million inputs into PostgreSQL.
+
+The Swedish output asset matches `corpscout.se_company_brave_domains`. The shared
+`company_brave_search_input` asset is in the same group. Browser, retry and publication
+code is shared; additional countries should register their own output assets alongside
+their country tables. The existing job names remain `company_brave_search_job` and
+`company_brave_search_workflow`.
 
 Dagster tracks the asset run. PostgreSQL tracks the individual company IDs inside
 that run, so a failed run can resume without repeating saved work. Progress counts
@@ -84,12 +90,12 @@ ClickHouse query. A zero-match selection is valid and reports a total of zero.
 
 ## Process the prepared selection
 
-Materialize `company_brave_search_results`, or launch `company_brave_search_job`,
+Materialize `se_company_brave_domains`, or launch `company_brave_search_job`,
 with the task ID returned by initialization:
 
 ```yaml
 ops:
-  company_brave_search_results:
+  se_company_brave_domains:
     config:
       task_id: "the-task-UUID"
       query_type: official_website
@@ -185,7 +191,7 @@ Resume with only the original task ID:
 
 ```yaml
 ops:
-  company_brave_search_results:
+  se_company_brave_domains:
     config:
       task_id: "the-original-task-UUID"
 ```
@@ -276,7 +282,7 @@ then resolves multiple successful versions for the same company and query type.
 
 Input remains shared across countries. Output routes by the captured `country_code`
 to `<country>_company_brave_domains` and its `_history` table. Provision that
-country's migration first; an absent destination keeps its responses in PostgreSQL
+country's migration and output asset first; an absent destination keeps its responses in PostgreSQL
 and fails publication instead of putting them into Sweden's table.
 
 `unpublished` counts saved outcomes awaiting acknowledgment, including failed
@@ -286,6 +292,12 @@ time threshold, and at the end. There is no distributed transaction: a crash aft
 receiving an external answer but before saving it can repeat that request.
 
 ## Deployment and scope
+
+The output asset was renamed from `company_brave_search_results` to
+`se_company_brave_domains`, and both Brave assets moved from `company_domains` to
+`brave_domain_search`. Existing task IDs, input rows, PostgreSQL progress and response
+history are unchanged. Use `ops.se_company_brave_domains.config` in new run YAML.
+Earlier Dagster runs retain their original asset keys in the event log.
 
 PostgreSQL uses the existing server shared with Dagster, in the application's
 `corpscout` database and `processing` schema. Dagster's internal metadata is in its

@@ -15,7 +15,7 @@ import pytest
 from dagster_v3.defs.company_domains import browser as brave
 from dagster_v3.defs.company_domains.assets import (
     BraveSearchConfig,
-    company_brave_search_results,
+    se_company_brave_domains,
 )
 
 PROXIES = {
@@ -251,10 +251,10 @@ def test_browser_start_failure_is_sanitized_and_does_not_hang(monkeypatch):
 
 
 def test_asset_serializes_runs_and_config_bounds_route_concurrency():
-    assert company_brave_search_results.group_names_by_key == {
-        dg.AssetKey("company_brave_search_results"): "company_domains",
+    assert se_company_brave_domains.group_names_by_key == {
+        dg.AssetKey("se_company_brave_domains"): "brave_domain_search",
     }
-    assert company_brave_search_results.op.pool == "company_domains_brave"
+    assert se_company_brave_domains.op.pool == "company_domains_brave"
     assert BraveSearchConfig().requests_per_route == 1
     assert BraveSearchConfig().input_relation is None
     assert BraveSearchConfig().input_batch_size == 100

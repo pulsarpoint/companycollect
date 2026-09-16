@@ -12,7 +12,7 @@ import pytest
 from dagster_v3.defs.common.clickhouse_queue import ClickHouseInputQueue
 from dagster_v3.defs.common.processing import ProcessingResource, ProcessingStore
 from dagster_v3.defs.company_domains import browser as brave
-from dagster_v3.defs.company_domains.assets import company_brave_search_results
+from dagster_v3.defs.company_domains.assets import se_company_brave_domains
 from dagster_v3.defs.company_domains.input import (
     INPUT_RELATION,
     BraveInputConfig,
@@ -317,12 +317,12 @@ def test_combined_materialization_shares_task_and_saves_custom_queries(
     if explicit_task_id is not None:
         config["task_id"] = explicit_task_id
     result = dg.materialize(
-        [company_brave_search_input, company_brave_search_results],
+        [company_brave_search_input, se_company_brave_domains],
         resources=resources,
         run_config={
             "ops": {
                 "company_brave_search_input": {"config": config},
-                "company_brave_search_results": {
+                "se_company_brave_domains": {
                     "config": {
                         "query_template": "Who owns {company_name}?",
                         "query_type": "owner",
@@ -347,10 +347,10 @@ def test_combined_materialization_shares_task_and_saves_custom_queries(
     initialize(resource, dsn, task, company_ids=config["company_ids"])
     before = len(fixture.queries)
     assert dg.materialize(
-        [company_brave_search_results],
+        [se_company_brave_domains],
         resources=resources,
         run_config={
-            "ops": {"company_brave_search_results": {"config": {"task_id": task}}}
+            "ops": {"se_company_brave_domains": {"config": {"task_id": task}}}
         },
     ).success
     assert len(fixture.queries) == before

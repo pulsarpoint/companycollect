@@ -74,7 +74,7 @@ class BraveInputConfig(dg.Config):
 
 
 @dg.asset(
-    group_name="company_domains",
+    group_name="brave_domain_search",
     kinds={"clickhouse", "postgres"},
     pool="company_brave_input",
     tags={"source": "brave"},
@@ -212,7 +212,7 @@ company_brave_search_input_job = dg.define_asset_job(
 company_brave_search_workflow = dg.define_asset_job(
     "company_brave_search_workflow",
     selection=dg.AssetSelection.assets(
-        "company_brave_search_input", "company_brave_search_results"
+        "company_brave_search_input", "se_company_brave_domains"
     ),
 )
 defs = dg.Definitions(
