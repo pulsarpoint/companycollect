@@ -5,6 +5,9 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from urllib.parse import parse_qs, urlsplit
+from unittest.mock import Mock
+
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 import dagster as dg
 import pytest
@@ -126,7 +129,7 @@ def test_fast_routes_refill_while_a_slow_route_is_still_busy(monkeypatch, slots)
     resource = brave.BraveBrowserResource(**PROXIES)
     companies = [
         brave.CompanySearchInput(
-            str(i), f"Company {i} AB", f"Find Company {i} AB", str(i)
+            str(i), f"Company {i} AB", f"Find Company {i} AB", str(i), 60_000
         )
         for i in range(24)
     ]
@@ -171,7 +174,7 @@ def test_one_company_failure_does_not_stop_the_remaining_queue(monkeypatch):
         brave.BraveBrowserResource(**PROXIES).iter_answers(
             (
                 brave.CompanySearchInput(
-                    str(i), f"Company {i} AB", f"Find Company {i} AB", str(i)
+                    str(i), f"Company {i} AB", f"Find Company {i} AB", str(i), 60_000
                 )
                 for i in range(12)
             ),
@@ -197,7 +200,7 @@ def test_closing_results_stops_lazy_input_and_closes_all_browsers(monkeypatch):
         for i in range(100_000):
             claimed.append(i)
             yield brave.CompanySearchInput(
-                str(i), f"Company {i} AB", f"Find Company {i} AB", str(i)
+                str(i), f"Company {i} AB", f"Find Company {i} AB", str(i), 60_000
             )
 
     with closing(
@@ -236,7 +239,7 @@ def test_browser_start_failure_is_sanitized_and_does_not_hang(monkeypatch):
                 iter(
                     [
                         brave.CompanySearchInput(
-                            "1", "Example AB", "Find Example AB", "1"
+                            "1", "Example AB", "Find Example AB", "1", 60_000
                         )
                     ]
                 ),
@@ -286,7 +289,7 @@ def test_rendered_query_is_used_and_result_is_saved_before_refill(monkeypatch):
                         "a route refilled before saving any completed response"
                     )
             yield brave.CompanySearchInput(
-                str(i), f"Company {i}", f"Who owns example{i}.se?", str(i)
+                str(i), f"Company {i}", f"Who owns example{i}.se?", str(i), 60_000
             )
 
     def save(result):
@@ -309,7 +312,7 @@ def test_page_cleanup_failure_keeps_the_already_copied_response(monkeypatch):
     monkeypatch.setattr(brave, "launch", fixture.launch)
     saved = []
     companies = (
-        brave.CompanySearchInput(str(i), f"Company {i}", f"Find {i}", str(i))
+        brave.CompanySearchInput(str(i), f"Company {i}", f"Find {i}", str(i), 60_000)
         for i in range(4)
     )
     with pytest.raises(RuntimeError):
@@ -320,3 +323,41 @@ def test_page_cleanup_failure_keeps_the_already_copied_response(monkeypatch):
         )
     assert len(saved) == 4
     assert all(result.answer.startswith("Answer for Find") for result in saved)
+
+
+@pytest.mark.parametrize("stage", ["page_load", "answer_generation", "copy"])
+def test_timeout_stage_is_safe_and_only_answer_wait_is_extended(stage):
+    page = Mock()
+    failure = PlaywrightTimeoutError("http://user:secret@proxy.test")
+    operation = {
+        "page_load": page.goto,
+        "answer_generation": page.get_by_role.return_value.wait_for,
+        "copy": page.wait_for_function,
+    }[stage]
+    operation.side_effect = failure
+    with pytest.raises(brave.BraveStepError) as caught:
+        brave.copy_brave_answer(
+            page, "Find Company AB", timeout_ms=60_000, answer_timeout_ms=180_000
+        )
+    assert caught.value.stage == stage
+    assert caught.value.error_type == "TimeoutError"
+    assert "secret" not in str(caught.value)
+    page.set_default_timeout.assert_called_once_with(60_000)
+    assert page.goto.call_args.kwargs["timeout"] == 60_000
+    if stage != "page_load":
+        page.get_by_role.return_value.wait_for.assert_called_once_with(
+            state="visible", timeout=180_000
+        )
+
+
+def test_timeout_configuration_rejects_unbounded_or_reversed_limits():
+    assert BraveSearchConfig().answer_timeout_seconds == 60
+    assert BraveSearchConfig().max_answer_timeout_seconds == 180
+    for config in (
+        {"answer_timeout_seconds": 0},
+        {"max_answer_timeout_seconds": 601},
+        {"answer_timeout_seconds": 180, "max_answer_timeout_seconds": 60},
+        {"mode": "publish", "retry_failed": True},
+    ):
+        with pytest.raises(ValueError):
+            BraveSearchConfig(**config)

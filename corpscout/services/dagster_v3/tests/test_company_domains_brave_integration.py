@@ -7,10 +7,9 @@ from pathlib import Path
 import pytest
 from cloakbrowser import launch
 from cloakbrowser.config import get_binary_path
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from dagster_v3.defs.company_domains.publication import EXPORT_COLUMNS
-from dagster_v3.defs.company_domains.browser import copy_brave_answer
+from dagster_v3.defs.company_domains.browser import BraveStepError, copy_brave_answer
 from tests.clickhouse_local import clickhouse_local_command
 
 pytestmark = pytest.mark.integration
@@ -65,7 +64,7 @@ document.querySelector('#copy').onclick = async () => {
 if (query !== 'never_finished') setTimeout(() => {
     answer = query === 'empty' ? '' : 'Answer: ' + query + '\\nhttps://example.se/';
     document.querySelector('#retry').hidden = false;
-}, 50);
+}, query === 'slow' ? 900 : 50);
 </script></body></html>"""
 
 
@@ -86,23 +85,42 @@ def test_copy_capture_is_per_page_and_empty_answers_never_reuse_previous_text(
         first, second = context.new_page(), context.new_page()
         assert (
             copy_brave_answer(
-                first, "+1 Kommunikationsbyrå AB & Co? #1", timeout_ms=5_000
+                first,
+                "+1 Kommunikationsbyrå AB & Co? #1",
+                timeout_ms=5_000,
+                answer_timeout_ms=5_000,
             )
             == "Answer: +1 Kommunikationsbyrå AB & Co? #1\nhttps://example.se/"
         )
         assert first.url.startswith("https://search.brave.com/ask?")
         assert (
-            copy_brave_answer(second, "Skanska AB", timeout_ms=5_000)
+            copy_brave_answer(
+                second, "Skanska AB", timeout_ms=5_000, answer_timeout_ms=5_000
+            )
             == "Answer: Skanska AB\nhttps://example.se/"
         )
         assert (
             first.evaluate("() => window.__companyBraveCopiedText")
             == "Answer: +1 Kommunikationsbyrå AB & Co? #1\nhttps://example.se/"
         )
-        with pytest.raises(PlaywrightTimeoutError):
-            copy_brave_answer(first, "empty", timeout_ms=500)
-        with pytest.raises(PlaywrightTimeoutError):
-            copy_brave_answer(first, "never_finished", timeout_ms=500)
+        with pytest.raises(BraveStepError) as caught:
+            copy_brave_answer(first, "empty", timeout_ms=500, answer_timeout_ms=500)
+        assert caught.value.stage == "copy"
+        assert caught.value.error_type == "TimeoutError"
+        with pytest.raises(BraveStepError) as caught:
+            copy_brave_answer(
+                first, "never_finished", timeout_ms=500, answer_timeout_ms=500
+            )
+        assert caught.value.stage == "answer_generation"
+        assert caught.value.error_type == "TimeoutError"
+        # A short normal action timeout must not truncate a longer answer wait.
+        with pytest.raises(BraveStepError) as caught:
+            copy_brave_answer(first, "slow", timeout_ms=500, answer_timeout_ms=200)
+        assert caught.value.stage == "answer_generation"
+        assert (
+            copy_brave_answer(first, "slow", timeout_ms=500, answer_timeout_ms=2_000)
+            == "Answer: slow\nhttps://example.se/"
+        )
         context.close()
     finally:
         browser.close()

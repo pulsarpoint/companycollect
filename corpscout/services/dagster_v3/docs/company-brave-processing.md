@@ -164,6 +164,23 @@ worker cannot overwrite a reclaimed attempt. Defaults are three attempts, a
 60-second retry delay and a 300-second lease. Crashed attempts count toward the
 budget; graceful exit releases unfinished claims.
 
+Answer generation starts with `answer_timeout_seconds: 60`. Each saved answer-generation
+`TimeoutError` adds another 60 seconds for that company, capped by
+`max_answer_timeout_seconds: 180`: normally 60 → 120 → 180 seconds. The count is
+read from PostgreSQL attempt history, so retries on another route or after a restart
+retain their allowance. A new company starts at 60 seconds. Page-load and Copy
+timeouts, and non-timeout failures, do not increase the answer wait. Legacy timeouts
+without a recorded stage also qualify for an increase. Navigation and Copy operations
+retain the browser resource's `page_timeout_ms` (60 seconds by default); these are
+per-operation limits, not a single deadline for the whole request.
+
+Every attempt records `error_stage` (`page_setup`, `page_load`, `answer_generation`
+or `copy`), `error_type`, `answer_timeout_ms` and whole-request `elapsed_ms` in its
+PostgreSQL payload and Dagster logs. Successful attempts have an empty error stage.
+These compact diagnostics remain in PostgreSQL after the response text is archived;
+the S3 response schema is unchanged. Raw browser exceptions are never stored because
+they can include proxy credentials.
+
 Resume with only the original task ID:
 
 ```yaml
@@ -172,6 +189,13 @@ ops:
     config:
       task_id: "the-original-task-UUID"
 ```
+
+Once an item reaches `terminal_failed`, an ordinary resume leaves it finished.
+To retry those failures, explicitly set `retry_failed: true` and increase
+`max_attempts` above their existing attempt count, for example to 6 after an initial
+three-attempt run. This requeues only failed items with remaining budget, preserving
+all attempt numbers and history. Successful, cached, cancelled and still-pending
+items are not requeued. Reusing the same setting does not reset the retry budget.
 
 After processing starts, the saved input relation, namespace, template, query type
 and freshness policy remain fixed. Operational settings such as route concurrency and batch size can

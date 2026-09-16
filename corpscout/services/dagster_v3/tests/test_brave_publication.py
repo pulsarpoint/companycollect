@@ -287,6 +287,113 @@ def test_materialization_pages_renders_processes_and_resumes_without_searching(
     assert queue.progress(task)["total"] == 8
 
 
+def test_adaptive_timeouts_survive_resume_and_retry_only_failed_items(
+    store, clickhouse, monkeypatch
+):
+    queue, dsn = store
+    client, resource = clickhouse
+    fixture = BrowserFixture()
+    fixture.release_slow.set()
+    monkeypatch.setattr(brave, "launch", fixture.launch)
+    attempts = {str(i): [] for i in range(5)}
+
+    def copy_answer(page, query, *, timeout_ms, answer_timeout_ms):
+        company = query.rsplit(" ", 1)[1]
+        attempts[company].append(answer_timeout_ms)
+        attempt = len(attempts[company])
+        if company == "0" and attempt <= 3:
+            raise brave.BraveStepError("answer_generation", "TimeoutError")
+        if company == "1" and attempt == 1:
+            raise brave.BraveStepError("copy", "TimeoutError")
+        if company == "2" and attempt == 1:
+            raise brave.BraveStepError("answer_generation", "RuntimeError")
+        if company == "4" and attempt == 1:
+            # Historical timeouts have no stage; they still qualify for a longer wait.
+            raise brave.BraveStepError("", "TimeoutError")
+        page.url = "https://search.brave.com/ask"
+        return f"Answer for {query}"
+
+    monkeypatch.setattr(brave, "copy_brave_answer", copy_answer)
+    client.execute(
+        "INSERT INTO corpscout.company_brave_search_input VALUES",
+        [(str(i), str(i), f"Company {i}", "SE") for i in range(5)],
+    )
+    task = str(uuid4())
+    resources = {
+        "clickhouse": resource,
+        "processing_clickhouse": resource,
+        "processing": ProcessingResource(postgres_url=dsn),
+        "company_brave_browser": brave.BraveBrowserResource(**PROXIES),
+    }
+    config = {
+        "task_id": task,
+        "input_relation": "corpscout.company_brave_search_input",
+        "query_template": "Find {company_name}",
+        "max_attempts": 1,
+        "retry_seconds": 0,
+    }
+    first = dg.materialize(
+        [company_brave_search_results],
+        resources=resources,
+        run_config={"ops": {"company_brave_search_results": {"config": config}}},
+        raise_on_error=False,
+    )
+    assert not first.success
+    assert queue.progress(task)["terminal_failed"] == 4
+    assert queue.progress(task)["succeeded"] == 1
+    assert all(timeouts == [60_000] for timeouts in attempts.values())
+    assert queue.retry_failed(task, max_attempts=1) == 0
+
+    # A larger budget alone must not silently restart a finished failed selection.
+    config = {"task_id": task, "max_attempts": 5, "retry_seconds": 0}
+    resumed = dg.materialize(
+        [company_brave_search_results],
+        resources=resources,
+        run_config={"ops": {"company_brave_search_results": {"config": config}}},
+        raise_on_error=False,
+    )
+    assert not resumed.success
+    assert all(timeouts == [60_000] for timeouts in attempts.values())
+    config["retry_failed"] = True
+    retried = dg.materialize(
+        [company_brave_search_results],
+        resources=resources,
+        run_config={"ops": {"company_brave_search_results": {"config": config}}},
+    )
+    assert retried.success
+    assert attempts == {
+        "0": [60_000, 120_000, 180_000, 180_000],
+        "1": [60_000, 60_000],
+        "2": [60_000, 60_000],
+        "3": [60_000],
+        "4": [60_000, 120_000],
+    }
+    assert queue.progress(task)["succeeded"] == 5
+    assert queue.progress(task)["remaining"] == 0
+    assert queue.progress(task)["terminal_failed"] == 0
+    assert queue.progress(task)["unpublished"] == 0
+    assert queue.retry_failed(task, max_attempts=5) == 0
+    with queue.transaction() as cursor:
+        cursor.execute(
+            "SELECT attempt,payload FROM processing.results WHERE task_id=%s AND input_id='0' ORDER BY attempt",
+            (task,),
+        )
+        history = cursor.fetchall()
+    assert [row["attempt"] for row in history] == [1, 2, 3, 4]
+    assert [row["payload"]["answer_timeout_ms"] for row in history] == attempts["0"]
+    assert all(
+        row["payload"]["error_stage"] == "answer_generation" for row in history[:3]
+    )
+    assert all("elapsed_ms" in row["payload"] for row in history)
+    assert all("answer_text" not in row["payload"] for row in history)
+    assert client.execute(
+        "SELECT count() FROM corpscout.se_company_brave_domains FINAL"
+    ) == [(5,)]
+    assert client.execute(
+        "SELECT count() FROM corpscout.se_company_brave_domains_history"
+    ) == [(11,)]
+
+
 def test_physical_queue_supports_custom_template_columns_and_rejects_views(
     store, clickhouse
 ):

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from queue import Full, Queue
 from threading import Event, Lock
+from time import monotonic
 from typing import Literal, Self
 from urllib.parse import urlencode
 
@@ -34,10 +35,13 @@ class CompanySearchInput:
     company_name: str
     query: str
     request_id: str
+    answer_timeout_ms: int
 
     def __post_init__(self) -> None:
         if not self.company_id.strip() or not self.company_name.strip():
             raise ValueError("Brave requires a company ID and a nonempty company name")
+        if self.answer_timeout_ms <= 0:
+            raise ValueError("Brave requires a positive answer timeout")
 
 
 @dataclass(frozen=True)
@@ -50,28 +54,53 @@ class BraveSearchResult:
     status: Literal["success", "error"]
     answer: str = ""
     error_type: str = ""
+    error_stage: str = ""
+    elapsed_ms: int = 0
 
 
-def copy_brave_answer(page: Page, query: str, *, timeout_ms: int) -> str:
+class BraveStepError(Exception):
+    """A safe browser failure, without credential-bearing Playwright messages."""
+
+    def __init__(self, stage: str, error_type: str):
+        self.stage = stage
+        self.error_type = error_type
+        super().__init__(f"Brave {stage} failed ({error_type})")
+
+
+def copy_brave_answer(
+    page: Page, query: str, *, timeout_ms: int, answer_timeout_ms: int
+) -> str:
     """Open Ask explicitly and capture the completed answer's private Copy text."""
-    page.set_default_timeout(timeout_ms)
-    page.add_init_script(COPY_CAPTURE_SCRIPT)
-    page.goto(
-        f"{BRAVE_ORIGIN}/ask?{urlencode({'q': query})}",
-        wait_until="domcontentloaded",
-    )
-    # Ask shows these answer actions after generation. Its question also has an
-    # icon-only Copy button; only the answer's button contains the text "Copy".
-    page.get_by_role("button", name="Try again", exact=True).wait_for(state="visible")
-    page.get_by_role("button", name="Copy", exact=True).filter(has_text="Copy").click()
-    page.wait_for_function(
-        "() => typeof window.__companyBraveCopiedText === 'string' "
-        "&& window.__companyBraveCopiedText.trim().length > 0"
-    )
-    answer = page.evaluate("() => window.__companyBraveCopiedText")
-    if not isinstance(answer, str) or not answer.strip():
-        raise ValueError("Brave Copy returned no answer")
-    return answer
+    stage = "page_setup"
+    try:
+        page.set_default_timeout(timeout_ms)
+        page.add_init_script(COPY_CAPTURE_SCRIPT)
+        stage = "page_load"
+        page.goto(
+            f"{BRAVE_ORIGIN}/ask?{urlencode({'q': query})}",
+            wait_until="domcontentloaded",
+            timeout=timeout_ms,
+        )
+        # Ask shows these answer actions after generation. Its question also has an
+        # icon-only Copy button; only the answer's button contains the text "Copy".
+        stage = "answer_generation"
+        page.get_by_role("button", name="Try again", exact=True).wait_for(
+            state="visible", timeout=answer_timeout_ms
+        )
+        stage = "copy"
+        page.get_by_role("button", name="Copy", exact=True).filter(
+            has_text="Copy"
+        ).click()
+        page.wait_for_function(
+            "() => typeof window.__companyBraveCopiedText === 'string' "
+            "&& window.__companyBraveCopiedText.trim().length > 0"
+        )
+        answer = page.evaluate("() => window.__companyBraveCopiedText")
+        if not isinstance(answer, str) or not answer.strip():
+            raise ValueError("Brave Copy returned no answer")
+        return answer
+    except Exception as error:
+        raise BraveStepError(stage, type(error).__name__) from None
 
 
 class BraveBrowserResource(dg.ConfigurableResource):
@@ -147,10 +176,14 @@ class BraveBrowserResource(dg.ConfigurableResource):
                     while company is not None and not stopped.is_set():
                         page = None
                         query = company.query
+                        started = monotonic()
                         try:
                             page = browser_context.new_page()
                             answer = copy_brave_answer(
-                                page, query, timeout_ms=self.page_timeout_ms
+                                page,
+                                query,
+                                timeout_ms=self.page_timeout_ms,
+                                answer_timeout_ms=company.answer_timeout_ms,
                             )
                             result = BraveSearchResult(
                                 company,
@@ -160,6 +193,7 @@ class BraveBrowserResource(dg.ConfigurableResource):
                                 datetime.now(UTC),
                                 "success",
                                 answer,
+                                elapsed_ms=round((monotonic() - started) * 1000),
                             )
                         except Exception as error:
                             # Playwright error messages can contain credential-bearing
@@ -171,7 +205,17 @@ class BraveBrowserResource(dg.ConfigurableResource):
                                 BRAVE_ORIGIN,
                                 datetime.now(UTC),
                                 "error",
-                                error_type=type(error).__name__,
+                                error_type=(
+                                    error.error_type
+                                    if isinstance(error, BraveStepError)
+                                    else type(error).__name__
+                                ),
+                                error_stage=(
+                                    error.stage
+                                    if isinstance(error, BraveStepError)
+                                    else "page_setup"
+                                ),
+                                elapsed_ms=round((monotonic() - started) * 1000),
                             )
                         try:
                             # Preserve the answer even when browser cleanup fails.

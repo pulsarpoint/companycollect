@@ -4,12 +4,12 @@ import os
 from contextlib import closing
 from threading import Event, Thread
 from time import monotonic
-from typing import Literal
+from typing import Literal, Self
 from uuid import UUID
 
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from dagster_v3.defs.common.clickhouse_queue import (
     ClickHouseInputQueue,
@@ -44,10 +44,23 @@ class BraveSearchConfig(dg.Config):
     input_batch_size: int = Field(default=100, ge=4, le=10_000)
     freshness_days: int = Field(default=30, ge=0)
     max_attempts: int = Field(default=3, ge=1, le=10)
+    retry_failed: bool = False
+    answer_timeout_seconds: int = Field(default=60, ge=1, le=600)
+    max_answer_timeout_seconds: int = Field(default=180, ge=1, le=600)
     retry_seconds: int = Field(default=60, ge=0, le=3600)
     lease_seconds: int = Field(default=300, ge=30, le=3600)
     export_batch_size: int = Field(default=100, ge=1, le=10_000)
     export_interval_seconds: int = Field(default=30, ge=1, le=3600)
+
+    @model_validator(mode="after")
+    def validate_timeouts(self) -> Self:
+        if self.max_answer_timeout_seconds < self.answer_timeout_seconds:
+            raise ValueError(
+                "maximum answer timeout must cover the initial answer timeout"
+            )
+        if self.retry_failed and self.mode != "process":
+            raise ValueError("retry_failed requires process mode")
+        return self
 
     @field_validator("input_relation")
     @classmethod
@@ -144,6 +157,9 @@ def company_brave_search_results(
             )
         if task["status"] != "ready":
             raise ValueError("task is not ready for processing")
+        if config.retry_failed:
+            requeued = store.retry_failed(task_id, max_attempts=config.max_attempts)
+            context.log.info("Brave task=%s requeued_failed=%s", task_id, requeued)
         # A resume always uses the registered selection and template.
         saved_config = task["config"]
         source_info = task["source_info"]
@@ -236,6 +252,24 @@ def company_brave_search_results(
                     item, work_key=key, freshness_days=saved_config["freshness_days"]
                 ):
                     continue
+                timeout_count = 0
+                if item.attempt > 1:
+                    # Indexed by task/input/attempt; archived response text is not needed.
+                    # Older failures have no stage: conservatively treat those timeouts
+                    # as eligible, without inventing a stage for their history.
+                    with store.transaction() as cursor:
+                        cursor.execute(
+                            """SELECT count(*) AS timeouts FROM processing.results
+                            WHERE task_id=%s AND input_id=%s AND attempt<%s
+                              AND status='error' AND payload->>'error_type'='TimeoutError'
+                              AND coalesce(payload->>'error_stage','') IN ('','answer_generation')""",
+                            (task_id, item.input_id, item.attempt),
+                        )
+                        timeout_count = cursor.fetchone()["timeouts"]
+                answer_timeout_ms = 1000 * min(
+                    config.answer_timeout_seconds * (1 + timeout_count),
+                    config.max_answer_timeout_seconds,
+                )
                 # Retain only request/result attribution while the browser is active.
                 claims[item.lease_token] = (
                     item,
@@ -252,6 +286,7 @@ def company_brave_search_results(
                     str(values.get("company_name") or item.input_id),
                     query,
                     item.lease_token,
+                    answer_timeout_ms,
                 )
 
         def save(result: BraveSearchResult):
@@ -269,6 +304,9 @@ def company_brave_search_results(
                     "route": result.route,
                     "source_url": result.source_url,
                     "error_type": result.error_type,
+                    "error_stage": result.error_stage,
+                    "elapsed_ms": result.elapsed_ms,
+                    "answer_timeout_ms": result.company.answer_timeout_ms,
                     "source_run_id": context.run.run_id,
                 },
                 max_attempts=config.max_attempts,
@@ -311,11 +349,15 @@ def company_brave_search_results(
                                     last_export = monotonic()
                                     saved_since_export = 0
                                 context.log.info(
-                                    "Brave task=%s input=%s route=%s status=%s",
+                                    "Brave task=%s input=%s route=%s status=%s error=%s stage=%s answer_timeout_ms=%s elapsed_ms=%s",
                                     task_id,
                                     result.company.company_id,
                                     result.route,
                                     result.status,
+                                    result.error_type,
+                                    result.error_stage,
+                                    result.company.answer_timeout_ms,
+                                    result.elapsed_ms,
                                 )
                         if store.progress(task_id)["remaining"]:
                             stopped.wait(1)

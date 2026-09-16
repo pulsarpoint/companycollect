@@ -342,6 +342,23 @@ class ProcessingStore:
                 )
                 return ClaimedItem(**cursor.fetchone())
 
+    def retry_failed(self, task_id: str, *, max_attempts: int) -> int:
+        """Requeue only failed items with additional budget, preserving attempt history."""
+        with self.transaction() as cursor:
+            cursor.execute(
+                """SELECT task_id FROM processing.tasks
+                WHERE task_id=%s AND status='ready' FOR UPDATE""",
+                (task_id,),
+            )
+            if cursor.fetchone() is None:
+                raise ValueError("task is not ready for processing")
+            cursor.execute(
+                """UPDATE processing.items SET state='queued',next_attempt_at=now()
+                WHERE task_id=%s AND state='terminal_failed' AND attempt<%s""",
+                (task_id, max_attempts),
+            )
+            return cursor.rowcount
+
     def heartbeat(self, owner: str, *, lease_seconds: int) -> None:
         with self.transaction() as cursor:
             cursor.execute(
