@@ -1,5 +1,10 @@
 # One page as the unit of analysis and testing
 
+The active scope is the website crawler: page discovery/fetching, extraction,
+scored next links, final technology classification and complete JSON submission
+to RustFS/S3. Earlier infrastructure-detection and database-integration planning
+has been retired from this workflow.
+
 16 September 2026. **Standalone page unit and pilot completed; main runtime not
 changed.** Read [results](../page_agent_lab/RESULTS.md). DSPy RLM remains postponed.
 Preserve the 0.15.2 baseline for the future autonomous comparison.

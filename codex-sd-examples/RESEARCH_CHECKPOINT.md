@@ -2,6 +2,13 @@
 
 ## Resume here
 
+**Current scope: website crawler only.** Work on URL/page discovery, Crawl4AI,
+independent page extraction and link scoring, final technology classification,
+and complete JSON submission to RustFS/S3. DNS detection and integration with
+existing infrastructure detection pipelines are outside this task. The broader
+database plan has been moved to historical material; do not bring those branches
+back into the crawler workflow. ClickHouse parsing/storage remains deferred.
+
 **Latest correction: submit ALL research results as JSON to RustFS/S3.**
 Read [the submission contract](company_research/TECHNOLOGY_MENTION_STORAGE.md).
 The crawler's durable output is a complete, versioned result.json containing
