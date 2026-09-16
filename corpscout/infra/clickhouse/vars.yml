@@ -21,4 +21,4 @@ backblaze_endpoint: s3.us-east-005.backblazeb2.com
 # Backups — clickhouse-backup sidecar (watch mode) uploading to Backblaze B2.
 backup_s3_bucket: main-ch-backup
 backup_s3_region: us-east-005
-backups_to_keep_remote: 28
+backups_to_keep_remote: 3
