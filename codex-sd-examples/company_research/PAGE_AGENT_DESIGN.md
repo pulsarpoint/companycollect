@@ -4,6 +4,12 @@
 changed.** Read [results](../page_agent_lab/RESULTS.md). DSPy RLM remains postponed.
 Preserve the 0.15.2 baseline for the future autonomous comparison.
 
+**Latest technology boundary:** collect source-name mentions and referenced text
+sections per page; classify their company relationships after crawling. See
+[the mention-first design](TECHNOLOGY_MENTION_DESIGN.md). This supersedes the
+technology-signal portions below that ask the page agent for final classifications.
+The new contract is a design; it has not yet been implemented or benchmarked.
+
 Compare two internal implementations: a combined extraction request and a router
 followed by objective-specific extractors. Both retain the same page input and
 `data`/`links` outputs. See [the two-pass experiment and prompt examples](PAGE_AGENT_TWO_PASS.md).
@@ -78,7 +84,7 @@ Reuse the existing objective and source concepts. A page result contains:
 | `company_profile` | Legal/trading identities, identifiers and descriptions stated on this page. |
 | `products_services` | Named services/products with descriptions of what the company offers. |
 | `jobs` | Job identities, titles, stated employer, location, requirements and application URLs. |
-| `technology_signals` | Specific named technologies plus how they relate to the company, team, role, product or project. |
+| `technology_mentions` | Source names and referenced original sections/context; final eligibility and company relationships are decided after collection. |
 | `certifications_compliance` | Attributed credential/compliance claims, with scope, dates and document references when present. |
 | `people`, `company_contacts`, `locations` | Named people and roles, exact business contact values/owners, addresses and offices. |
 | `company_relationships` | Source-supported relationships with entity identities, direction, dates and ownership basis where stated. |
@@ -91,11 +97,12 @@ table. Keep `Findings`, `Source`, `ExternalLink` and existing objective names wh
 they fit; introduce a page-result envelope with a versioned contract.
 
 Each finding preserves source wording and exact evidence fragments, alongside a
-useful description. Technology findings additionally preserve the actor, actual
-company/team/role scope, relationship such as use/required experience/preference/
-planned adoption, dates and alternatives. Do not turn a job requirement into a
-company-wide deployment claim. Services, regulations and generic categories keep
-their appropriate meaning instead of entering the specific-technology catalog.
+useful description. Technology mentions preserve the original sections needed to
+interpret actors, dates, job requirements and alternatives. A separate final
+classifier produces technology findings with supported actor, scope and
+relationships. Do not turn a job requirement into a company-wide deployment claim.
+Services, regulations and generic categories retain their source context; final
+eligibility determines whether a name belongs in the specific-technology catalog.
 
 Evidence fragments can be disjoint when intervening text exists. Validate their
 positions and their combined semantic support; do not invent a contiguous quote.

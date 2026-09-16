@@ -2,6 +2,22 @@
 
 ## Resume here
 
+**Latest user direction: defer technology relationships to a final agent.**
+Collect source-name mentions with original text sections, headings, source URLs
+and actor/job context per page. After crawling, classify eligibility and all
+supported relationships (use, requirements, expertise, plans, product/client
+context, vendor partnerships), then resolve catalog identities. Keep raw mentions
+immutable; unknown use is not false. This changes the earlier plan to tighten
+technology filtering in the page request: retain candidate context there and
+apply catalog eligibility in the final pass. Read
+[the detailed contract and prompt examples](company_research/TECHNOLOGY_MENTION_DESIGN.md).
+Design saved; no runtime/schema change or new model test yet. Reuse the older
+statement pipeline's concepts without its full review chain or forced role scope.
+Next test must collect mentions from saved pages afresh, not only reclassify the
+previously accepted signals, which would hide collection misses.
+
+### Last completed evaluation
+
 **Revised one-pass evaluation completed; integration gate not passed.** Read
 [the full results](page_agent_lab/ONE_PASS_V2_RESULTS.md). Direct DeepSeek Flash/
 high, 13 frozen pages and one separate retry: 14 calls, estimated $0.26395.
