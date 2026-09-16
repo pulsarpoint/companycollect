@@ -5,6 +5,12 @@ saved-page command. It has not replaced the existing URL crawler's controller.
 The page units return extracted data and scored links; the saved-page runner does
 not follow links or claim complete site coverage.
 
+The v0.17.0 first-page eligibility gate belongs to the URL crawl controller. This
+saved-page command remains an explicit extraction/replay tool: it does not infer
+company eligibility from an isolated job, contact or third-party evidence page.
+When integrating the page unit into autonomous discovery, admit the target site
+once before scheduling these units; retain company-linked external job evidence.
+
 ```text
 saved Crawl4AI captures
   → MentionPageAgent: nine fact objectives + raw technology mentions + scored links

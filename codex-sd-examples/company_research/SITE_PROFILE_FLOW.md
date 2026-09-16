@@ -1,7 +1,7 @@
 # Site classification, research profiles and final summaries
 
-Design and implementation notes, updated for version 0.5.0 / schema 1.4. The package
-implements bootstrap classification, profile-based objective priorities, ten objectives
+Design and implementation notes, updated for version 0.17.0 / schema 1.11. The URL crawler
+implements first-page admission, profile-based objective priorities, ten objectives
 including certifications and document links, and sourced summaries. All ten objectives remain available
 on every page. Automatic later profile revisions, dynamic extraction schemas and PDF
 inspection remain planned. No crawler pipeline deployment is part of this step.
@@ -10,9 +10,13 @@ inspection remain planned. No crawler pipeline deployment is part of this step.
 
 ```mermaid
 flowchart TD
-    A[Input URL] --> B[Fetch homepage and sitemap inventory]
-    B --> C[LLM 1: classify site and identify activities]
-    C --> D[Python: select predefined research profiles]
+    A[Input URL] --> B[Crawl4AI: fetch first page]
+    B --> C[LLM: classify primary site purpose with exact evidence]
+    C --> C1[Python: validate schema, quotes and 200-word description limit]
+    C1 -->|Non-company content, search or advertising site| S[Return skip_crawling and site_description]
+    C1 -->|Blocked, insufficient or invalid evidence| U[Return needs_review; stop]
+    C1 -->|Identified company site| SI[Fetch sitemap inventory; reuse first-page HTML for extraction]
+    SI --> D[Python: select predefined research profiles]
     D --> E[LLM 2: assess candidate links against objectives]
     E --> F[Python queue: choose next page within budget]
     F --> G[Crawl4AI: fetch native cleaned HTML and links]
@@ -39,17 +43,33 @@ The LLM assesses relevance and extracts information. Python selects the next URL
 enforces limits and chooses schemas from predefined profiles. Website content and
 link labels remain untrusted data, including text inside apparent certificates.
 
-The homepage is a bootstrap fetch before classification. Reuse its HTML for normal
-extraction rather than downloading it again. Treat sitemap URLs as navigation hints,
-not evidence of page contents. Include the supplied page when the input is a deep
-link. If the bootstrap content is insufficient, retain `unknown`, inspect a bounded
-number of general identity/about pages, and revise classification from actual content.
+The first supplied page is fetched before classification; redirects are recorded and
+the destination determines sitemap scope after admission. Reuse that HTML for normal
+extraction. Sitemap URLs are navigation hints, never classification evidence. An
+unclear first page stops with `needs_review`; there is no fallback exploration of
+about pages. This intentionally sacrifices some recall to prevent researching
+unrelated sites. Model corrections use the same captured page only.
+
+Admission requires a source-supported company or brand and a corporate/product/service
+purpose. Company-owned stores, SaaS products and advertising agencies can qualify.
+An incidental blog does not make a corporate site a content portal. Conversely,
+publisher ownership, copyright, an About link and an advertising sales page do not
+make a news, entertainment, community, search or classified-ad destination eligible.
+A separate publisher's corporate website can qualify. The gate applies to the initial
+target, not each subsequent evidence page or every external domain observation.
+
+For skips, `result.json` has `status: "skip_crawling"`,
+`stop_reason: "not_company_website"`, `site_description` (maximum 200 whitespace-delimited
+words), the sourced `site_profile`, saved first-page provenance and usage. No detailed
+records are extracted; every objective stays `not_assessed`. Uncertainty, fetch/model
+failure and invalid evidence return `needs_review` without further crawling. Browser
+rendering assets, redirects, robots checks and bounded retries are still permitted.
 
 ## What each LLM request receives
 
 | Request | Input | Structured output |
 | --- | --- | --- |
-| Site classification | Homepage cleaned HTML windows, source URL, title, navigation labels and a bounded sitemap sample | Site type labels, purpose, operator candidates, stated business activities, supporting evidence and uncertainty |
+| Site classification | First page's complete native cleaned HTML and source URL only | Crawl decision, description ≤200 words, primary site types, operator/brand, activities and exact source fragments |
 | Link assessment | Current site profile, active objective descriptions, coverage, candidate IDs/URLs/titles/anchor labels | Potential and direct/navigation role for each objective, plus a short reason |
 | Page extraction | Native cleaned HTML window and URL, all objective schemas, attribution/evidence rules | Atomic findings with source names, exact fragments and attribution |
 | Evidence repair | Fixed records with validation issues and the same HTML window | Exact quotation fragments only; unsupported values stay reviewable |
@@ -68,8 +88,9 @@ structured findings and report that the summary is unavailable.
 
 Keep site purpose separate from the organization operating it. A news website may be
 operated by a company selling advertising and subscriptions. A company can operate
-both a service website and a community forum. Store multiple supported labels when
-needed; do not make the initial classification an irreversible filter.
+both a service website and a community forum. Classify the supplied site's primary
+purpose: a forum is skipped even if a company operates it. Mixed/unknown purposes
+cannot proceed automatically. A later operator-initiated run can revisit the decision.
 
 Use a small controlled vocabulary and predefined objective descriptions/schemas.
 The model chooses supported labels and activities; it does not invent a new schema
@@ -77,12 +98,12 @@ or executable crawl instructions for each website.
 
 | Profile | Additional focus | Useful page signals |
 | --- | --- | --- |
-| General site | Purpose, audience, operator, ownership and contact details | Homepage, about, contact, legal identity |
+| General admitted company | Purpose, operator, ownership and contact details | Homepage, about, contact, legal identity |
 | Service provider | Services, target customers, industries, locations, credentials and explicit client relationships | Services, industries, case studies, certifications, quality, trust/security |
 | Product/software company | Products, capabilities, integrations, business customers and credentials | Product pages, integrations, security/trust, pricing, partners |
 | Manufacturer | Manufactured products, capabilities, facilities and quality credentials | Products, capabilities, factories, quality, certifications |
-| News/media, entertainment or community | Subject matter, audience, publisher/operator, membership/subscription or advertising offerings when stated | About, editorial information, community information, advertise, membership |
-| Mixed or unknown | General identity plus bounded exploration; retain uncertainty | About, navigation hubs and pages with concrete activity clues |
+| News/media, entertainment, community, search or advertising portal | Return first-page description and `skip_crawling` | No follow-up pages |
+| Mixed or unknown | Retain uncertainty with `needs_review` | No follow-up pages |
 
 These are priorities, not assumptions that the information exists. Jobs, people,
 contacts, company relationships and technology signals remain available where

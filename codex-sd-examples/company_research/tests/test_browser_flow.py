@@ -31,6 +31,9 @@ class BrowserFlowTests(unittest.IsolatedAsyncioTestCase):
     async def test_direct_deepseek_endpoint_for_full_crawler(self):
         await self.run_browser_flow(api="deepseek")
 
+    async def test_news_site_stops_after_homepage_without_sitemap_or_other_pages(self):
+        await self.run_browser_flow(api="deepseek", skip_site=True)
+
     async def test_closed_browser_retries_same_page_with_fresh_context(self):
         await self.run_browser_flow(restart_budget=1)
 
@@ -40,7 +43,7 @@ class BrowserFlowTests(unittest.IsolatedAsyncioTestCase):
         await self.run_browser_flow(restart_budget=0)
 
     async def run_browser_flow(
-        self, restart_budget: int | None = None, api="openrouter"
+        self, restart_budget: int | None = None, api="openrouter", skip_site=False
     ):
         requested_paths = []
         browsers = []
@@ -63,6 +66,17 @@ class BrowserFlowTests(unittest.IsolatedAsyncioTestCase):
                     body, status = (
                         "<urlset><url><loc>/contact</loc></url><url><loc>/jobs</loc></url>"
                         "<url><loc>/failed</loc></url></urlset>",
+                        200,
+                    )
+                elif self.path == "/" and skip_site:
+                    body, status = (
+                        "<html><body><h1>Latest world news</h1><p>Read our breaking news, "
+                        "opinion articles and daily coverage of politics, sport and culture. "
+                        "This news site is operated by DemoWorks Media. Subscribe for unlimited "
+                        "access to our reporting, analysis and exclusive interviews.</p>"
+                        '<p><a href="/contact">Contact the publisher</a> '
+                        '<a href="/jobs">Jobs at our company</a> '
+                        '<a href="/advertise">Advertise with us</a></p></body></html>',
                         200,
                     )
                 elif self.path == "/":
@@ -192,19 +206,35 @@ class BrowserFlowTests(unittest.IsolatedAsyncioTestCase):
                     ]
                 }
             elif data.get("task") == "site_classification":
+                self.assertNotIn("/sitemap.xml", requested_paths)
                 if restart_budget is not None:
                     # Kill the real Playwright context while the crawler is doing model work.
                     await browsers[
                         0
                     ].crawler_strategy.browser_manager.default_context.close()
                 document = {
+                    "crawl_decision": "continue_crawling",
+                    "site_description": "DemoWorks provides engineering services.",
                     "site_types": ["company"],
                     "research_profiles": ["service_provider"],
                     "purpose": "Company website",
-                    "operator_name": None,
+                    "operator_name": "DemoWorks",
                     "business_activities": [],
-                    "evidence": ["Rendered with JavaScript"],
+                    "evidence": ["DemoWorks", "Rendered with JavaScript"],
                 }
+                if skip_site:
+                    document.update(
+                        crawl_decision="skip_crawling",
+                        site_description="The site publishes news, opinion and interviews about politics, sport and culture, with subscription access and advertising.",
+                        site_types=["news_media"],
+                        research_profiles=["media_community"],
+                        purpose="News portal",
+                        operator_name="DemoWorks Media",
+                        evidence=[
+                            "Latest world news",
+                            "This news site is operated by DemoWorks Media.",
+                        ],
+                    )
             elif data.get("task") == "company_summary":
                 document = {
                     "site_description": {
@@ -370,6 +400,24 @@ class BrowserFlowTests(unittest.IsolatedAsyncioTestCase):
                         else 2,
                     ),
                 )
+                if skip_site:
+                    self.assertEqual(
+                        result.status, "skip_crawling", result.model_dump()
+                    )
+                    self.assertEqual(result.stop_reason, "not_company_website")
+                    self.assertEqual(len(result.pages), 1)
+                    self.assertEqual(result.usage["calls"], 1)
+                    self.assertEqual(extraction_inputs, [])
+                    self.assertNotIn("/sitemap.xml", requested_paths)
+                    self.assertNotIn("/contact", requested_paths)
+                    self.assertNotIn("/jobs", requested_paths)
+                    self.assertNotIn("/advertise", requested_paths)
+                    self.assertFalse((root / "sitemaps.json").exists())
+                    self.assertEqual(
+                        json.loads((root / "result.json").read_text())["status"],
+                        "skip_crawling",
+                    )
+                    return
                 self.assertEqual(result.status, "partial", result.model_dump())
                 self.assertEqual(result.discovery["model_api"], api)
                 external = [
@@ -403,7 +451,7 @@ class BrowserFlowTests(unittest.IsolatedAsyncioTestCase):
                     )
                 )
                 saved = json.loads((root / "result.json").read_text(encoding="utf-8"))
-                self.assertEqual(saved["schema_version"], "1.10")
+                self.assertEqual(saved["schema_version"], "1.11")
                 self.assertEqual(
                     len(saved["external_links"]), len(result.external_links)
                 )
@@ -460,7 +508,7 @@ class BrowserFlowTests(unittest.IsolatedAsyncioTestCase):
                     any(value.external_link_count == 0 for value in result.pages)
                 )
                 self.assertEqual(result.objectives["company_contacts"].record_count, 2)
-                self.assertEqual(result.pages[-1].selected_for, "technology_signals")
+                self.assertEqual(result.pages[-1].selected_for, "job_detail_followup")
                 self.assertEqual(
                     result.objectives["technology_signals"].status, "found"
                 )

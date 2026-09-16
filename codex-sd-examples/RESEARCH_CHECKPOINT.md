@@ -2,6 +2,16 @@
 
 ## Resume here
 
+**First-page company eligibility gate implemented (v0.17.0 / schema 1.11).**
+The URL crawler fetches and classifies its first page before sitemap discovery,
+link ranking or detailed extraction. Consumer content/news/community/search,
+directories/marketplaces and advertising portals return `skip_crawling` with a
+description of at most 200 words, even if a company operates them. Unclear, blocked
+or failed classifications stop with `needs_review`; no exploratory follow-up is
+allowed before admission. Company/product/service sites can continue. Saved-page
+extraction remains a unit/replay tool, and external job evidence is not independently
+rejected as a target site. Read [the validation report](company_research/SITE_GATE_RESULTS.md).
+
 **Implemented: mention-first page workflow and complete RustFS submission (v0.16.0).**
 Read [the results](page_agent_lab/MENTION_FLOW_RESULTS.md) and
 [the running guide](company_research/PAGE_RESEARCH.md). Seven saved pages produced

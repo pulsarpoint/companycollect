@@ -663,7 +663,7 @@ async def research_company(
         raise ValueError(f"Output directory is not empty: {root}")
     root.mkdir(parents=True, exist_ok=True)
     result = ResearchResult(
-        schema_version="1.10",
+        schema_version="1.11",
         run_id=uuid4().hex,
         technology_catalog={
             "version": technology_catalog.snapshot.version,
@@ -713,24 +713,12 @@ async def research_company(
     ):
         llm = ModelClient(model_http, key, settings, root, api=api)
         try:
-            inventory = await sitemap_urls(web_http, site_url, settings)
-            write_json(root / "sitemaps.json", inventory)
-            result.discovery["sitemap"] = {
-                k: v for k, v in inventory.items() if k not in {"urls", "url_sources"}
-            }
-            result.discovery["sitemap"]["url_count"] = len(inventory["urls"])
-            for candidate_url in inventory["urls"]:
-                if queue.domain(candidate_url) == queue.site_domain:
-                    queue.add(
-                        candidate_url, source=inventory["url_sources"][candidate_url]
-                    )
             async with AsyncExitStack() as browser_stack:
                 crawler = await browser_stack.enter_async_context(open_browser())
                 recoveries = result.discovery.setdefault("browser_recoveries", [])
                 next_url, focus = site_url, "input_url"
-                classification_attempts = 0
                 while len(result.pages) < settings.max_pages:
-                    if llm.remaining <= 3:
+                    if llm.remaining <= (0 if not result.pages else 3):
                         result.stop_reason = "model_call_budget"
                         break
                     queue.visited.add(next_url)
@@ -818,6 +806,70 @@ async def research_company(
                                 candidate.external = (
                                     queue.domain(candidate.url) != queue.site_domain
                                 )
+                            LOGGER.info(
+                                "Checking company-site eligibility from %s",
+                                page.source_url,
+                            )
+                            result.site_profile = await classify_site(
+                                HtmlWindow(0, len(html), html), page, llm, root
+                            )
+                            result.site_description = result.site_profile.data[
+                                "site_description"
+                            ]
+                            decision = (
+                                result.site_profile.data["crawl_decision"]
+                                if result.site_profile.evidence_status
+                                == "source_matched"
+                                else "needs_review"
+                            )
+                            result.discovery["site_gate"] = {
+                                "decision": decision,
+                                "page_id": page.page_id,
+                                "source_url": page.source_url,
+                                "scope": "first_page_only",
+                                "evidence_status": result.site_profile.evidence_status,
+                            }
+                            write_json(
+                                root / "research-profile.json",
+                                {
+                                    "site_profile": result.site_profile.model_dump(),
+                                    "objective_order": profile_objectives(
+                                        result.site_profile
+                                    )
+                                    if decision == "continue_crawling"
+                                    else [],
+                                },
+                            )
+                            if decision != "continue_crawling":
+                                result.status = decision
+                                result.stop_reason = (
+                                    "not_company_website"
+                                    if decision == "skip_crawling"
+                                    else "site_eligibility_uncertain"
+                                )
+                                break
+                            queue.objective_order = profile_objectives(
+                                result.site_profile
+                            )
+                            queue.site_profile = result.site_profile.data
+                            inventory = await sitemap_urls(
+                                web_http, result.site_url, settings
+                            )
+                            write_json(root / "sitemaps.json", inventory)
+                            result.discovery["sitemap"] = {
+                                k: v
+                                for k, v in inventory.items()
+                                if k not in {"urls", "url_sources"}
+                            }
+                            result.discovery["sitemap"]["url_count"] = len(
+                                inventory["urls"]
+                            )
+                            for candidate_url in inventory["urls"]:
+                                if queue.domain(candidate_url) == queue.site_domain:
+                                    queue.add(
+                                        candidate_url,
+                                        source=inventory["url_sources"][candidate_url],
+                                    )
                         for link in links:
                             if isinstance(link.get("href"), str):
                                 queue.add(
@@ -836,53 +888,15 @@ async def research_company(
                                 overlap_chars=settings.overlap_chars,
                             )
                             page.chunks_planned = len(windows)
-                            if (
-                                windows
-                                and classification_attempts < 2
-                                and (
-                                    result.site_profile is None
-                                    or result.site_profile.evidence_status
-                                    != "source_matched"
-                                )
-                            ):
-                                classification_attempts += 1
-                                LOGGER.info("Classifying site from %s", page.source_url)
-                                try:
-                                    result.site_profile = await classify_site(
-                                        windows[0],
-                                        page,
-                                        list(queue.candidates),
-                                        llm,
-                                        root,
-                                    )
-                                except ValueError as error:
-                                    result.errors.append(
-                                        {
-                                            "stage": "site_classification",
-                                            "page_id": page.page_id,
-                                            "error": str(error)[:1000],
-                                        }
-                                    )
-                                else:
-                                    queue.objective_order = profile_objectives(
-                                        result.site_profile
-                                    )
-                                    if (
-                                        result.site_profile.evidence_status
-                                        == "source_matched"
-                                    ):
-                                        queue.site_profile = result.site_profile.data
-                                    write_json(
-                                        root / "research-profile.json",
-                                        {
-                                            "site_profile": result.site_profile.model_dump(),
-                                            "objective_order": queue.objective_order,
-                                        },
-                                    )
                             set_job_detail_context(page, queue, html)
                             await extract_saved_page(
                                 result, page, llm, root, technology_catalog
                             )
+                    if len(result.pages) == 1 and page.fetch_status != "fetched":
+                        result.status = "needs_review"
+                        result.stop_reason = "initial_page_unavailable"
+                        result.site_description = "The first page could not be retrieved, so the site's purpose and company eligibility could not be determined."
+                        break
                     queue.observe_findings(
                         page, result.records.jobs, result.records.company_profile
                     )
@@ -953,6 +967,27 @@ async def research_company(
                 }
             )
             LOGGER.error("Research stopped: %s", result.errors[-1]["error"])
+        if result.discovery.get("site_gate", {}).get("decision") != "continue_crawling":
+            if result.status != "skip_crawling":
+                result.status = "needs_review"
+                result.stop_reason = result.stop_reason or "site_eligibility_uncertain"
+                result.site_description = (
+                    result.site_description
+                    or "The site's company eligibility could not be determined from the first page. Further crawling was not started."
+                )
+            result.discovery.setdefault(
+                "site_gate", {"decision": "needs_review", "scope": "first_page_only"}
+            )
+            result.discovery["sitemap"] = {
+                "status": "not_requested",
+                "url_count": 0,
+                "reason": "site_not_admitted",
+            }
+            result.finished_at = utc_now()
+            update_statuses(result, queue, llm)
+            write_json(root / "result.json", result.model_dump())
+            write_json(root / "queue.json", queue.snapshot())
+            return result
         update_statuses(result, queue, llm)
         LOGGER.info("Consolidating site and company overview")
         try:

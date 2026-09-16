@@ -3,6 +3,21 @@
 See the [research checkpoint](../RESEARCH_CHECKPOINT.md) for saved findings,
 known NOVELIC extraction gaps and next work. PDF/OCR experimentation is paused.
 
+Version 0.17.0 adds a mandatory [first-page eligibility gate](SITE_PROFILE_FLOW.md)
+to `research_company` and the `company-research` URL command (result schema 1.11).
+Only an identified company/brand's own business site proceeds to sitemap discovery,
+link ranking and extraction. News/content sites, forums, search engines, directories,
+multi-seller marketplaces and advertising portals return `status: "skip_crawling"`
+with a factual `site_description` of at most 200 words. A named corporate owner does
+not override the site's primary purpose. Blocked, unavailable or unclear pages stop
+with `needs_review`. Both outcomes leave detailed objectives `not_assessed`.
+
+The gate uses only the first fetched page, including redirects, with source-matched
+quotations and bounded correction attempts. No sitemap or other page is fetched to
+resolve uncertainty. Normal browser assets and robots checks still occur. Skipping
+is a successful CLI outcome; `needs_review` exits with code 2 after emitting JSON.
+See [the validation report](SITE_GATE_RESULTS.md) for measured behavior and limits.
+
 Version 0.16.0 implements [saved-page research and S3 submission](PAGE_RESEARCH.md):
 one page request collects all objectives, raw technology mentions and scored links;
 a bounded final pass classifies the mentions, followed by read-only catalog lookup.

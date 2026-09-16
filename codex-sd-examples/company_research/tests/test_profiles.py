@@ -30,6 +30,8 @@ class ProfileHTTPTests(unittest.IsolatedAsyncioTestCase):
                 200,
                 json=response(
                     {
+                        "crawl_decision": "continue_crawling",
+                        "site_description": "DemoWorks provides engineering services.",
                         "site_types": ["company"],
                         "research_profiles": ["service_provider"],
                         "purpose": "Engineering services",
@@ -51,7 +53,7 @@ class ProfileHTTPTests(unittest.IsolatedAsyncioTestCase):
                     client, "test-key", ResearchConfig(provider=None), root
                 )
                 finding = await classify_site(
-                    HtmlWindow(0, len(html), html), page(html), [], llm, root
+                    HtmlWindow(0, len(html), html), page(html), llm, root
                 )
             self.assertEqual(finding.evidence_status, "source_matched")
             first = json.loads(

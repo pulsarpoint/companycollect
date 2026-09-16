@@ -76,7 +76,7 @@ def main(
     except (ValueError, OSError) as error:
         raise click.ClickException(str(error)) from error
     click.echo(result.model_dump_json(indent=2))
-    if result.status == "failed":
+    if result.status in {"failed", "needs_review"}:
         raise SystemExit(2)
 
 

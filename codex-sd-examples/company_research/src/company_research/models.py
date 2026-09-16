@@ -578,6 +578,10 @@ class CertificationClaim(StrictModel):
 
 
 class SiteClassification(StrictModel):
+    crawl_decision: Literal["continue_crawling", "skip_crawling", "needs_review"]
+    site_description: str = Field(
+        description="A factual description of the site's purpose in at most 200 words, based only on the first page."
+    )
     site_types: list[
         Literal[
             "company",
@@ -585,6 +589,10 @@ class SiteClassification(StrictModel):
             "entertainment",
             "forum_community",
             "marketplace",
+            "search_engine",
+            "advertising_portal",
+            "directory",
+            "parked_domain",
             "nonprofit",
             "public_sector",
             "personal",
@@ -605,6 +613,38 @@ class SiteClassification(StrictModel):
     operator_name: str | None
     business_activities: list[str]
     evidence: list[str] = Field(min_length=1, max_length=8)
+
+    @field_validator("site_description")
+    @classmethod
+    def description_word_limit(cls, value: str) -> str:
+        if len(value.split()) > 200:
+            raise ValueError("site_description must contain at most 200 words")
+        return value
+
+    @model_validator(mode="after")
+    def check_crawl_eligibility(self):
+        if self.crawl_decision == "continue_crawling":
+            if "company" not in self.site_types or self.operator_name is None:
+                raise ValueError(
+                    "Continuing requires an identifiable company/brand and a company site"
+                )
+            if set(self.site_types) & {
+                "news_media",
+                "entertainment",
+                "forum_community",
+                "marketplace",
+                "search_engine",
+                "advertising_portal",
+                "directory",
+                "parked_domain",
+                "personal",
+                "unknown",
+                "mixed",
+            }:
+                raise ValueError(
+                    "Content/search/advertising or unclear primary purposes must not continue company crawling"
+                )
+        return self
 
 
 class DocumentLink(StrictModel):
@@ -836,14 +876,17 @@ class Page(StrictModel):
 
 
 class ResearchResult(StrictModel):
-    schema_version: Literal["1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10"]
+    schema_version: Literal["1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10", "1.11"]
     run_id: str
     technology_catalog: dict | None
     input_url: str
     site_url: str
     started_at: str
     finished_at: str | None
-    status: Literal["running", "finished", "partial", "failed"]
+    status: Literal[
+        "running", "finished", "partial", "failed", "skip_crawling", "needs_review"
+    ]
+    site_description: str | None = None
     stop_reason: str | None
     config: ResearchConfig
     objectives: dict[Objective, ObjectiveStatus]
