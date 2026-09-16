@@ -108,8 +108,86 @@ export async function submitTechnologyProposals(input: unknown) {
   for (const raw of records) {
     const record = technologyObject(raw),
       data = technologyObject(record.data);
+    if (
+      record.evidence_status !== "source_matched" ||
+      data.catalog_error != null ||
+      (data.interpretation_review != null &&
+        technologyObject(data.interpretation_review).supported === false)
+    ) {
+      throw new TechnologyValidationError(
+        "Only accepted technology observations can be submitted.",
+      );
+    }
+    const requiredReviews =
+      data.required_reviews == null
+        ? []
+        : technologyArray(data.required_reviews, "required_reviews", 10);
+    const sourceReview =
+      data.interpretation_review == null
+        ? {}
+        : technologyObject(data.interpretation_review);
+    const metadataReview =
+      data.proposal_review == null
+        ? {}
+        : technologyObject(data.proposal_review);
+    if (
+      (requiredReviews.includes("source_meaning") &&
+        (sourceReview.status !== "accepted" ||
+          sourceReview.supported !== true)) ||
+      (sourceReview.status != null && sourceReview.status !== "accepted") ||
+      (requiredReviews.includes("proposal_metadata") &&
+        metadataReview.status !== "accepted") ||
+      (metadataReview.status != null && metadataReview.status !== "accepted")
+    ) {
+      throw new TechnologyValidationError(
+        "Required technology reviews have not passed.",
+      );
+    }
     const match = technologyObject(data.catalog_match);
+    if (metadataReview.metadata_sha256 != null) {
+      const draft = technologyObject(match.proposed_technology);
+      const metadataHash = createHash("sha256")
+        .update(
+          JSON.stringify(
+            Object.fromEntries(
+              Object.entries(draft).sort(([a], [b]) =>
+                a < b ? -1 : a > b ? 1 : 0,
+              ),
+            ),
+          ),
+        )
+        .digest("hex");
+      if (metadataReview.metadata_sha256 !== metadataHash)
+        throw new TechnologyValidationError(
+          "Proposal metadata changed after review.",
+        );
+    }
     const observed = technologyText(data.technology, "technology", 200);
+    const sources = technologyArray(record.sources, "sources", 100).map(
+      (rawSource) => {
+        const source = technologyObject(rawSource);
+        const evidence = technologyArray(source.evidence, "evidence", 8).map(
+          (fragment) =>
+            technologyText(technologyObject(fragment).text, "evidence", 4000),
+        );
+        if (!evidence.length || source.evidence_status !== "source_matched") {
+          throw new TechnologyValidationError(
+            "Source evidence and its verification status are required.",
+          );
+        }
+        return {
+          url: technologyUrl(source.url, "source URL"),
+          html_sha256: hashText(source.html_sha256, "html_sha256"),
+          fetched_at: technologyText(source.fetched_at, "fetched_at", 100),
+          evidence,
+          evidence_status: String(source.evidence_status),
+        };
+      },
+    );
+    if (!sources.length)
+      throw new TechnologyValidationError(
+        "At least one evidence source is required.",
+      );
     if (match.status === "matched") {
       if (
         !catalog.entries.some(
@@ -163,37 +241,16 @@ export async function submitTechnologyProposals(input: unknown) {
         "Proposal is missing a search for its observed name.",
       );
     }
-    const sources = technologyArray(record.sources, "sources", 100).map(
-      (rawSource) => {
-        const source = technologyObject(rawSource);
-        const evidence = technologyArray(source.evidence, "evidence", 8).map(
-          (fragment) =>
-            technologyText(technologyObject(fragment).text, "evidence", 4000),
-        );
-        if (
-          !evidence.length ||
-          !["source_matched", "needs_review"].includes(
-            String(source.evidence_status),
-          )
-        ) {
-          throw new TechnologyValidationError(
-            "Source evidence and its verification status are required.",
-          );
-        }
-        return {
-          url: technologyUrl(source.url, "source URL"),
-          html_sha256: hashText(source.html_sha256, "html_sha256"),
-          fetched_at: technologyText(source.fetched_at, "fetched_at", 100),
-          evidence,
-          evidence_status: String(source.evidence_status),
-        };
-      },
-    );
-    if (!sources.length)
-      throw new TechnologyValidationError(
-        "At least one evidence source is required.",
-      );
     const ids = categoryIds(proposal.category_ids);
+    const categorySuggestion = optionalText(
+      proposal.category_suggestion,
+      "category suggestion",
+    );
+    if (!ids.length && !categorySuggestion) {
+      throw new TechnologyValidationError(
+        "A proposal requires at least one category ID or a category suggestion.",
+      );
+    }
     const knownIds = new Set(
       catalog.entries.flatMap((entry) => entry.category_ids),
     );
@@ -204,6 +261,9 @@ export async function submitTechnologyProposals(input: unknown) {
     if (
       ![
         "stated_use",
+        "advertised_expertise",
+        "develops",
+        "offers",
         "required_experience",
         "preferred_experience",
         "planned_adoption",
@@ -228,10 +288,7 @@ export async function submitTechnologyProposals(input: unknown) {
       description: technologyText(proposal.description, "description"),
       website,
       category_ids: ids,
-      category_suggestion: optionalText(
-        proposal.category_suggestion,
-        "category suggestion",
-      ),
+      category_suggestion: categorySuggestion,
       saas: optionalBoolean(proposal.saas),
       oss: optionalBoolean(proposal.oss),
       pricing: technologyArray(proposal.pricing, "pricing", 10).map((value) =>

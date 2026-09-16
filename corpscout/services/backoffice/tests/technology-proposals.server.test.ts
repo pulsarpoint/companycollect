@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -72,6 +73,88 @@ function reviewForm(overrides: Record<string, string> = {}) {
 }
 
 describe("technology proposal intake", () => {
+  it.each(["advertised_expertise", "develops", "offers"])(
+    "preserves %s without promoting it to usage",
+    async (signal) => {
+      const input = structuredClone(fixture);
+      input.records[0].data.signal = signal;
+      input.records[0].data.scope = "company";
+      await submitTechnologyProposals(input);
+      expect(mocks.chInsertTechnologyProposals.mock.calls[0][0][0].signal).toBe(
+        signal,
+      );
+    },
+  );
+  it.each(["missing", "rejected", "processing_failed"])(
+    "blocks %s required metadata review while source evidence is accepted",
+    async (status) => {
+      const input = structuredClone(fixture);
+      input.records[0].data.required_reviews = ["proposal_metadata"];
+      if (status !== "missing")
+        input.records[0].data.proposal_review = { status };
+      await expect(submitTechnologyProposals(input)).rejects.toThrow(
+        "Required technology reviews",
+      );
+      expect(mocks.chInsertTechnologyProposals).not.toHaveBeenCalled();
+    },
+  );
+  it("binds metadata approval to the exact proposal draft", async () => {
+    const input = structuredClone(fixture);
+    const data = input.records[0].data;
+    data.required_reviews = ["proposal_metadata"];
+    data.proposal_review = {
+      status: "accepted",
+      metadata_sha256: createHash("sha256")
+        .update(
+          JSON.stringify(
+            Object.fromEntries(
+              Object.entries(data.catalog_match.proposed_technology).sort(
+                ([a], [b]) => (a < b ? -1 : a > b ? 1 : 0),
+              ),
+            ),
+          ),
+        )
+        .digest("hex"),
+    };
+    await submitTechnologyProposals(input);
+    mocks.chInsertTechnologyProposals.mockClear();
+    data.catalog_match.proposed_technology.description = "Changed after review";
+    await expect(submitTechnologyProposals(input)).rejects.toThrow(
+      "Proposal metadata changed after review",
+    );
+    expect(mocks.chInsertTechnologyProposals).not.toHaveBeenCalled();
+  });
+
+  it.each(["matched", "proposed"])(
+    "requires verified sources for %s observations",
+    async (status) => {
+      const invalid = structuredClone(fixture);
+      invalid.records[0].data.catalog_match.status = status;
+      invalid.records[0].data.catalog_match.canonical_technology =
+        status === "matched" ? catalog.entries[0].technology : null;
+      invalid.records[0].sources[0].evidence_status = "needs_review";
+      await expect(submitTechnologyProposals(invalid)).rejects.toThrow(
+        "Source evidence and its verification status are required",
+      );
+      expect(mocks.chInsertTechnologyProposals).not.toHaveBeenCalled();
+    },
+  );
+  it.each(["claim", "interpretation", "catalog", "source"])(
+    "rejects unaccepted %s evidence before inserting",
+    async (failure) => {
+      const invalid = structuredClone(fixture);
+      const record = invalid.records[0];
+      if (failure === "claim") record.evidence_status = "needs_review";
+      if (failure === "interpretation")
+        record.data.interpretation_review = { supported: false };
+      if (failure === "catalog")
+        record.data.catalog_error = "Resolution failed";
+      if (failure === "source")
+        record.sources[0].evidence_status = "needs_review";
+      await expect(submitTechnologyProposals(invalid)).rejects.toThrow();
+      expect(mocks.chInsertTechnologyProposals).not.toHaveBeenCalled();
+    },
+  );
   it.each(["signal", "scope"])(
     "rejects an unknown %s before inserting",
     async (field) => {
@@ -111,6 +194,8 @@ describe("technology proposal intake", () => {
     "invalid proposal ID",
     "missing sources",
     "unknown category",
+    "missing category",
+    "missing description",
     "unresolved status",
   ])("rejects %s before writing", async (kind) => {
     const input = structuredClone(fixture);
@@ -121,6 +206,12 @@ describe("technology proposal intake", () => {
     if (kind === "missing sources") record.sources = [];
     if (kind === "unknown category")
       match.proposed_technology.category_ids = [65535];
+    if (kind === "missing category") {
+      match.proposed_technology.category_ids = [];
+      match.proposed_technology.category_suggestion = null;
+    }
+    if (kind === "missing description")
+      match.proposed_technology.description = "   ";
     if (kind === "unresolved status") match.status = "unresolved";
     await expect(submitTechnologyProposals(input)).rejects.toThrow();
     expect(mocks.chInsertTechnologyProposals).not.toHaveBeenCalled();
