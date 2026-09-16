@@ -2,6 +2,14 @@
 
 Date: 7 September 2026. Status: proposed; this document does not deploy schema or change ingestion.
 
+**Update, 16 September:** the user confirmed that raw technology mentions and
+their source sections must be stored separately from later relationship
+classifications. Read [the current storage contract](TECHNOLOGY_MENTION_STORAGE.md).
+It supersedes the single interpreted-observation storage and initial table-count
+assumptions below. `technology_observations` becomes the analytical projection of
+selected classification revisions. Catalog keys, company identity pairs and the
+separate domain-detection path remain applicable. No new migration is applied.
+
 Build on the existing company–domain and domain–technology relationships. Add company
 technology observations from extracted content, then publish a company-level summary
 from both paths. Keep evidence available so every displayed association can be explained.

@@ -2,6 +2,20 @@
 
 ## Resume here
 
+**Latest confirmation: persist raw mentions and later decisions separately.**
+Read [the storage contract](company_research/TECHNOLOGY_MENTION_STORAGE.md).
+Planned ClickHouse objects: company_research_sections, technology_mentions,
+technology_mention_classifications, technology_classification_revisions.
+Keep shared original sections in the database and full artifacts in RustFS;
+derive technology_observations from selected complete decision revisions.
+Keep canonical technology names and `(country_code, company_id)` identities.
+Known matches and excluded/review mentions must be persisted too: the current
+submitTechnologyProposals code only inserts new_tech proposals and counts known
+matches. Proposal approval changes catalog identity, never source text or a
+relationship's meaning. This is a saved contract, not an applied migration or an
+implemented ingestion path. Freeze the page/final-agent payload and implement
+storage/ingestion together; retain the existing domain detection path separately.
+
 **Latest user direction: defer technology relationships to a final agent.**
 Collect source-name mentions with original text sections, headings, source URLs
 and actor/job context per page. After crawling, classify eligibility and all

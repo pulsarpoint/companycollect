@@ -4,6 +4,12 @@ Accepted direction, 16 September 2026. This updates the page-agent design after
 the revised one-pass evaluation. **Design only: the current lab/runtime has not
 yet been changed to this contract or evaluated with it.**
 
+The user also confirmed persistence of this separation. See
+[the database contract](TECHNOLOGY_MENTION_STORAGE.md): source sections and raw
+mentions are retained, classifications are versioned, and analytical observations
+are derived from the selected complete revision. The existing proposal endpoint
+does not yet store this broader research output.
+
 ## Boundary
 
 The page agent collects named technical mentions and their original surrounding
