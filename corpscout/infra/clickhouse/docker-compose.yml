@@ -25,6 +25,10 @@ services:
   clickhouse-backup:
     image: altinity/clickhouse-backup:2.7.4
     profiles: ["backup"]
+    # Same uid as the clickhouse-server process. The sidecar shares the data
+    # volume; anything it left root-owned there made the server crash-loop on
+    # restart (2026-07-20, 2026-09-04).
+    user: "101:101"
     command: watch --watch-interval=24h --full-interval=72h
     depends_on:
       clickhouse:

@@ -10,7 +10,9 @@ cd corpscout/infra/clickhouse
 ansible-playbook install.yml
 ```
 
-The playbook copies `docker-compose.yml`, renders `.env` from `vars.yml`, and
+The playbook copies `docker-compose.yml`, renders `.env` from `vars.yml` plus
+the git-ignored `secrets.yml` (ClickHouse password and Backblaze key; create
+it from `secrets.yml.example` on a new machine), and
 installs `clickhouse-compose.service` — a oneshot systemd unit that runs
 `docker compose up -d` on boot (after `docker.service`) and `docker compose
 down` on stop. Crash restarts are still handled by docker's
@@ -48,7 +50,10 @@ most the keep count, and retention also keeps the full a retained
 incremental depends on, so usage floats between one and two fulls.
 It is enabled by
 `COMPOSE_PROFILES=backup` in the server `.env`; local dev without that
-profile never starts it.
+profile never starts it. The sidecar runs as uid 101, the ClickHouse server
+user, so nothing it writes into the shared data volume is root-owned. Its
+Backblaze key is restricted to the `main-ch-backup` bucket (list, read,
+write and delete files only).
 
 Check backup health:
 

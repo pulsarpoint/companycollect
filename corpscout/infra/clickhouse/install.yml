@@ -4,6 +4,7 @@
   become: true
   vars_files:
     - vars.yml
+    - secrets.yml # git-ignored; copy secrets.yml.example
 
   tasks:
     # ----------------------------------------------------------- directories
