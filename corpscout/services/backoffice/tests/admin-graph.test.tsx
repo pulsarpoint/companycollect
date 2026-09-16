@@ -8,12 +8,15 @@ import type {
   DomainGraphResult,
 } from "~/lib/domain-graph.server";
 
-const { getDomainGraphReleases, searchDomainGraph } = vi.hoisted(() => ({
-  getDomainGraphReleases: vi.fn(),
-  searchDomainGraph: vi.fn(),
-}));
+const { getDomainGraphReleases, getDomainGraphImports, searchDomainGraph } =
+  vi.hoisted(() => ({
+    getDomainGraphReleases: vi.fn(),
+    getDomainGraphImports: vi.fn(),
+    searchDomainGraph: vi.fn(),
+  }));
 vi.mock("~/lib/domain-graph.server", () => ({
   getDomainGraphReleases,
+  getDomainGraphImports,
   searchDomainGraph,
 }));
 const { default: AdminGraph, loader } = await import("~/routes/admin-graph");
@@ -82,10 +85,71 @@ function renderPage(loaderData: Awaited<ReturnType<typeof loader>>): string {
 
 beforeEach(() => {
   getDomainGraphReleases.mockReset().mockResolvedValue([release]);
+  getDomainGraphImports.mockReset().mockResolvedValue([]);
   searchDomainGraph.mockReset().mockResolvedValue(result);
 });
 
 describe("Graph route", () => {
+  it("offers an importing release and shows its status before publication", async () => {
+    getDomainGraphReleases.mockResolvedValue([]);
+    getDomainGraphImports.mockResolvedValue([
+      {
+        graph_release: release.graph_release,
+        label: "Importing",
+        active: true,
+        run_url: "https://dagster.example/runs/active",
+      },
+    ]);
+    const data = await get("?domain=example.com");
+    expect(data.search.release).toBe(release.graph_release);
+    expect(searchDomainGraph).not.toHaveBeenCalled();
+    const html = renderPage(data);
+    expect(html).toContain(`${release.graph_release} — Importing`);
+    expect(html).toContain("automatically every 10 seconds");
+    expect(html).toContain('href="https://dagster.example/runs/active"');
+    expect(html).not.toContain("No graph release is ready yet");
+  });
+
+  it("uses the published snapshot once an importing release becomes available", async () => {
+    getDomainGraphImports.mockResolvedValue([
+      {
+        graph_release: release.graph_release,
+        label: "Awaiting publication",
+        active: true,
+        run_url: null,
+      },
+    ]);
+    const data = await get(
+      `?domain=example.com&release=${release.graph_release}`,
+    );
+    expect(data.imports).toEqual([]);
+    expect(searchDomainGraph).toHaveBeenCalledOnce();
+  });
+
+  it("keeps published graphs searchable when Dagster status fails", async () => {
+    getDomainGraphImports.mockRejectedValue(new Error("internal endpoint"));
+    const data = await get("?domain=example.com");
+    expect(searchDomainGraph).toHaveBeenCalledOnce();
+    const html = renderPage(data);
+    expect(html).toContain("Import status unavailable");
+    expect(html).not.toContain("internal endpoint");
+  });
+
+  it("shows failed imports without presenting them as searchable", async () => {
+    getDomainGraphReleases.mockResolvedValue([]);
+    getDomainGraphImports.mockResolvedValue([
+      {
+        graph_release: release.graph_release,
+        label: "Import failed",
+        active: false,
+        run_url: null,
+      },
+    ]);
+    const html = renderPage(await get("?domain=example.com"));
+    expect(searchDomainGraph).not.toHaveBeenCalled();
+    expect(html).toContain("Import failed");
+    expect(html).not.toContain("automatically every 10 seconds");
+  });
   it("offers releases without running a graph search before a domain is entered", async () => {
     const data = await get();
     expect(searchDomainGraph).not.toHaveBeenCalled();

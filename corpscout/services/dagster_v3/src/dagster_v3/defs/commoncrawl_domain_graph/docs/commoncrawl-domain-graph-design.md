@@ -147,8 +147,12 @@ Clicking a neighbor starts a new graph search in the same release. The evidence
 link opens the existing Common Crawl domain page for further investigation.
 
 Search state and pagination live in the URL. Queries use bound parameters, server-side
-paging (at most 200 rows), and a 20-second per-query limit. The release picker only
-lists completed snapshot markers. Unpublished graphs, absent domains, isolated domains,
+paging (at most 200 rows), and a 20-second per-query limit. The release picker shows
+published snapshots and pending imports from the latest Dagster attempt for each
+release. Pending imports show their status and a run link; active imports refresh
+every 10 seconds while the page is visible. Search remains disabled until the
+snapshot marker is published. Dagster status failures do not block searches of
+published releases. Unpublished graphs, absent domains, isolated domains,
 empty direction filters, and query failures have distinct UI states.
 
 From `services/backoffice`, run `npm run typecheck`, `npm run build`, and

@@ -1,4 +1,5 @@
 import type { Route } from "./+types/admin-graph";
+import { useEffect, useState } from "react";
 import {
   ArrowLeftRightIcon,
   CheckIcon,
@@ -46,10 +47,12 @@ import {
 } from "~/lib/domain-graph";
 import {
   getDomainGraphReleases,
+  getDomainGraphImports,
   searchDomainGraph,
 } from "~/lib/domain-graph.server";
 import type {
   DomainGraphRelease,
+  DomainGraphImport,
   DomainGraphResult,
 } from "~/lib/domain-graph.server";
 
@@ -64,20 +67,40 @@ const directionLabels = {
 export async function loader({ request }: Route.LoaderArgs) {
   const search = parseDomainGraphSearch(new URL(request.url));
   let releases: DomainGraphRelease[] = [];
+  let imports: DomainGraphImport[] = [];
+  let importStatusError = false;
   let result: DomainGraphResult | null = null;
   let error = graphDomainError(search.domain);
   let failed = false;
   try {
-    releases = await getDomainGraphReleases();
-    search.release ||= releases[0]?.graph_release ?? "";
+    const [snapshots, runs] = await Promise.allSettled([
+      getDomainGraphReleases(),
+      getDomainGraphImports(),
+    ]);
+    if (snapshots.status === "rejected") throw snapshots.reason;
+    releases = snapshots.value;
+    if (runs.status === "fulfilled") {
+      imports = runs.value.filter(
+        (run) =>
+          !releases.some((item) => item.graph_release === run.graph_release),
+      );
+    } else {
+      importStatusError = true;
+    }
+    search.release ||=
+      releases[0]?.graph_release ?? imports[0]?.graph_release ?? "";
+    const published = releases.some(
+      (item) => item.graph_release === search.release,
+    );
     if (
       search.release &&
-      !releases.some((item) => item.graph_release === search.release)
+      !published &&
+      !imports.some((item) => item.graph_release === search.release)
     ) {
       error =
         "This graph release is not available. Choose a published release.";
     }
-    if (!error && search.domain && search.release) {
+    if (!error && search.domain && published) {
       result = await searchDomainGraph(search);
     }
   } catch {
@@ -92,6 +115,8 @@ export async function loader({ request }: Route.LoaderArgs) {
       pageSize: result?.pageSize ?? search.pageSize,
     },
     releases,
+    imports,
+    importStatusError,
     result,
     error,
     failed,
@@ -103,13 +128,47 @@ export function meta() {
 }
 
 export default function AdminGraph({ loaderData }: Route.ComponentProps) {
-  const { search, releases, result, error, failed } = loaderData;
+  const {
+    search,
+    releases,
+    imports,
+    importStatusError,
+    result,
+    error,
+    failed,
+  } = loaderData;
+  const [selectedRelease, setSelectedRelease] = useState(search.release);
+  useEffect(() => setSelectedRelease(search.release), [search.release]);
   const navigation = useNavigation();
   const revalidator = useRevalidator();
   const loading = navigation.state !== "idle" || revalidator.state !== "idle";
   const release = releases.find(
+    (item) => item.graph_release === selectedRelease,
+  );
+  const resultRelease = releases.find(
     (item) => item.graph_release === search.release,
   );
+  const importing = imports.find(
+    (item) => item.graph_release === selectedRelease,
+  );
+  const { revalidate, state: refreshState } = revalidator;
+  useEffect(() => {
+    if (!importing?.active) return;
+    const refresh = () => {
+      if (
+        document.visibilityState === "visible" &&
+        refreshState === "idle" &&
+        navigation.state === "idle"
+      )
+        void revalidate();
+    };
+    const timer = window.setInterval(refresh, 10_000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [importing?.active, navigation.state, refreshState, revalidate]);
 
   return (
     <div className="flex flex-1 flex-col gap-6 p-4 md:p-6" aria-busy={loading}>
@@ -149,13 +208,14 @@ export default function AdminGraph({ loaderData }: Route.ComponentProps) {
             <NativeSelect
               id="graph-release"
               name="release"
-              defaultValue={release?.graph_release ?? ""}
-              disabled={releases.length === 0}
-              className="w-full sm:w-72"
+              value={selectedRelease}
+              onChange={(event) => setSelectedRelease(event.target.value)}
+              disabled={releases.length + imports.length === 0}
+              className="w-full sm:w-80"
             >
-              {releases.length === 0 ? (
+              {releases.length + imports.length === 0 ? (
                 <NativeSelectOption value="">
-                  No published release
+                  No graph releases
                 </NativeSelectOption>
               ) : null}
               {releases.map((item) => (
@@ -166,12 +226,20 @@ export default function AdminGraph({ loaderData }: Route.ComponentProps) {
                   {item.graph_release}
                 </NativeSelectOption>
               ))}
+              {imports.map((item) => (
+                <NativeSelectOption
+                  key={item.graph_release}
+                  value={item.graph_release}
+                >
+                  {item.graph_release} — {item.label}
+                </NativeSelectOption>
+              ))}
             </NativeSelect>
           </Field>
           <Button
             type="submit"
             className="sm:mt-6"
-            disabled={loading || releases.length === 0}
+            disabled={loading || !release}
           >
             {loading ? (
               <LoaderCircleIcon className="animate-spin" />
@@ -182,6 +250,16 @@ export default function AdminGraph({ loaderData }: Route.ComponentProps) {
           </Button>
         </FieldGroup>
       </Form>
+
+      {importStatusError ? (
+        <Alert>
+          <AlertTitle>Import status unavailable</AlertTitle>
+          <AlertDescription>
+            Dagster could not be reached. Published releases can still be
+            searched.
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
       {error ? (
         <Alert variant="destructive">
@@ -202,6 +280,49 @@ export default function AdminGraph({ loaderData }: Route.ComponentProps) {
             ) : null}
           </AlertDescription>
         </Alert>
+      ) : importing ? (
+        <Empty className="min-h-64 border">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              {importing.active ? (
+                <LoaderCircleIcon className="animate-spin" />
+              ) : (
+                <NetworkIcon />
+              )}
+            </EmptyMedia>
+            <EmptyTitle>{importing.label}</EmptyTitle>
+            <EmptyDescription>
+              {importing.graph_release}.{" "}
+              {importing.active
+                ? "Search will become available when the full graph is imported and validated. This page checks automatically every 10 seconds."
+                : "This run has not published a searchable graph. Open the Dagster run to inspect its status."}
+            </EmptyDescription>
+          </EmptyHeader>
+          <div className="flex gap-2">
+            {importing.run_url ? (
+              <Button
+                variant="outline"
+                nativeButton={false}
+                render={
+                  <a
+                    href={importing.run_url}
+                    target="_blank"
+                    rel="noreferrer"
+                  />
+                }
+              >
+                View import in Dagster
+              </Button>
+            ) : null}
+            <Button
+              variant="ghost"
+              onClick={() => revalidator.revalidate()}
+              disabled={loading}
+            >
+              Check again
+            </Button>
+          </div>
+        </Empty>
       ) : releases.length === 0 ? (
         <Empty className="min-h-64 border">
           <EmptyHeader>
@@ -380,10 +501,11 @@ export default function AdminGraph({ loaderData }: Route.ComponentProps) {
           </p>
         </section>
       )}
-      {release ? (
+      {resultRelease ? (
         <p className="text-xs text-muted-foreground">
-          {release.graph_release} · {nf.format(Number(release.node_count))}{" "}
-          domains · {nf.format(Number(release.edge_count))} directed links
+          {resultRelease.graph_release} ·{" "}
+          {nf.format(Number(resultRelease.node_count))} domains ·{" "}
+          {nf.format(Number(resultRelease.edge_count))} directed links
         </p>
       ) : null}
     </div>

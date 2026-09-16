@@ -1,6 +1,45 @@
 import { chQuery } from "~/lib/clickhouse.server";
 import { graphDomainError, type DomainGraphSearch } from "~/lib/domain-graph";
 import { clampPage, clampPageSize } from "~/lib/paging";
+import { dagsterRunUrl, listRuns } from "~/lib/dagster.server";
+
+export interface DomainGraphImport {
+  graph_release: string;
+  label: string;
+  active: boolean;
+  run_url: string | null;
+}
+
+export async function getDomainGraphImports(): Promise<DomainGraphImport[]> {
+  const runs = await listRuns(
+    { job: "commoncrawl_domain_graph_job", limit: 100 },
+    { timeoutMs: 5000 },
+  );
+  const imports = new Map<string, DomainGraphImport>();
+  // Dagster returns newest runs first; a retry supersedes the previous attempt.
+  for (const run of runs) {
+    const graph_release = run.tags["dagster/partition"];
+    if (!graph_release || imports.has(graph_release)) continue;
+    const active = !["FAILURE", "CANCELED"].includes(run.status);
+    const label =
+      run.status === "FAILURE"
+        ? "Import failed"
+        : run.status === "CANCELED"
+          ? "Import canceled"
+          : run.status === "SUCCESS"
+            ? "Awaiting publication"
+            : ["QUEUED", "NOT_STARTED"].includes(run.status)
+              ? "Queued"
+              : "Importing";
+    imports.set(graph_release, {
+      graph_release,
+      label,
+      active,
+      run_url: dagsterRunUrl(run.runId),
+    });
+  }
+  return [...imports.values()];
+}
 
 export interface DomainGraphRelease {
   graph_release: string;

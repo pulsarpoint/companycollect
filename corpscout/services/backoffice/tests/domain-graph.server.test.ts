@@ -7,10 +7,14 @@ import {
 import type { DomainGraphSearch } from "~/lib/domain-graph";
 
 const chQuery = vi.hoisted(() => vi.fn());
+const listRuns = vi.hoisted(() => vi.fn());
 vi.mock("~/lib/clickhouse.server", () => ({ chQuery }));
-const { getDomainGraphReleases, searchDomainGraph } = await import(
-  "~/lib/domain-graph.server"
-);
+vi.mock("~/lib/dagster.server", () => ({
+  listRuns,
+  dagsterRunUrl: (id: string) => `https://dagster.example/runs/${id}`,
+}));
+const { getDomainGraphReleases, getDomainGraphImports, searchDomainGraph } =
+  await import("~/lib/domain-graph.server");
 
 const search: DomainGraphSearch = {
   domain: "example.com",
@@ -19,6 +23,43 @@ const search: DomainGraphSearch = {
   page: 1,
   pageSize: 50,
 };
+
+describe("graph import status", () => {
+  it("uses the newest attempt for each release and ignores unpartitioned runs", async () => {
+    listRuns.mockResolvedValue([
+      {
+        runId: "new",
+        status: "STARTED",
+        tags: { "dagster/partition": search.release },
+      },
+      {
+        runId: "old",
+        status: "FAILURE",
+        tags: { "dagster/partition": search.release },
+      },
+      { runId: "unpartitioned", status: "CANCELED", tags: {} },
+      {
+        runId: "other",
+        status: "FAILURE",
+        tags: { "dagster/partition": "cc-main-2025-jun-jul-aug" },
+      },
+    ]);
+    expect(await getDomainGraphImports()).toEqual([
+      {
+        graph_release: search.release,
+        label: "Importing",
+        active: true,
+        run_url: "https://dagster.example/runs/new",
+      },
+      {
+        graph_release: "cc-main-2025-jun-jul-aug",
+        label: "Import failed",
+        active: false,
+        run_url: "https://dagster.example/runs/other",
+      },
+    ]);
+  });
+});
 
 describe("domain graph search parameters", () => {
   it("accepts website URLs and preserves compound country domains", () => {
