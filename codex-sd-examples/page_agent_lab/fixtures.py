@@ -14,7 +14,7 @@ def read(path: Path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def prepare(root: Path, corpus: Path) -> dict:
+def prepare(root: Path, corpus: Path, dataset: Path | None = None) -> dict:
     sources = [
         (
             "team_job",
@@ -59,6 +59,9 @@ def prepare(root: Path, corpus: Path) -> dict:
             "https://www.handelsbanken.se/",
         ),
     ]
+    selected = read(dataset) if dataset is not None else None
+    if selected is not None:
+        sources = [tuple(source) for source in selected["sources"]]
     metadata = []
     for fixture_id, directory, pid, target_url in sources:
         source = corpus / directory
@@ -126,7 +129,7 @@ def prepare(root: Path, corpus: Path) -> dict:
                 ),
             }
         )
-    controls = control_set()
+    controls = selected["controls"] if selected is not None else control_set()
     write_json(root / "controls.json", controls)
     frozen_code = root / "implementation"
     frozen_code.mkdir()

@@ -2,6 +2,39 @@
 
 ## Resume here
 
+**Revised one-pass evaluation completed; integration gate not passed.** Read
+[the full results](page_agent_lab/ONE_PASS_V2_RESULTS.md). Direct DeepSeek Flash/
+high, 13 frozen pages and one separate retry: 14 calls, estimated $0.26395.
+The seven-page regression retained 40/40 source-reviewed facts (frozen exact
+score 39/40 because Stadshypotek's short name is valid), all 30 listing jobs,
+278/278 links and 19/19 negative checks. Evidence passed for 118/238 records.
+
+Six additional Memgraph/Oxide/RT-RK pages initially returned 21/32 facts. One
+RT-RK response had an extra closing brace; its independent unchanged-prompt
+retry recovered all seven jobs and 11 checks. With that retry: 32/32 facts,
+19/21 negatives, 507/507 links and 74/159 source-matched records. Preserve the
+initial parse failure. The auditor now marks negatives on failed pages unavailable.
+
+Remaining work: bounded response/evidence recovery, stable evidence references
+with native-versus-rendered provenance, specific-technology policy aligned with
+the schema, client/product scope, application email versus job-page URLs, and
+positive controls for planned-adoption/expertise recall. Many records omit actor
+quotes; two valid rendered link labels failed native-only evidence validation.
+Protocol/storage standards and broad suites still leak into technology signals.
+Main runtime/queue unchanged; do not claim a new autonomous crawl. Integrate only
+after these page-level gaps are addressed. No prompt changes were made after the
+new tests began. Seven lab tests, Ruff/type/format checks and all 14 actual request
+payload checks passed; all 146 original pilot files remain unchanged.
+
+Artifacts: page_agent_lab/data/one-pass-v2-20260916,
+one-pass-holdout-20260916, one-pass-holdout-retry-20260916,
+one-pass-review-20260916. The runner now defaults to one-pass; `--mode compare`
+explicitly runs both arms; `--dataset page_agent_lab/holdout.json` selects the
+additional source snapshots/controls. See the
+[archive receipt](page_agent_lab/ONE_PASS_V2_RECEIPT.json).
+
+### Prior stage: preparation and phone validation
+
 **One-pass baseline accepted; phone validation fixed in 0.15.3.**
 The user agreed to keep one page as the independent unit and use one combined
 request as the integration baseline. Targeted specialists remain a later test.

@@ -1,5 +1,9 @@
 # Accepted direction and validation fix — 16 September 2026
 
+Historical preparation below. The prompt has since been tested; see
+[the revised one-pass evaluation](ONE_PASS_V2_RESULTS.md) for current results
+and remaining integration requirements.
+
 The user agreed to retain the independently testable page agent and use **one
 combined page request as the integration baseline**. Specialist requests remain
 an option for targeted follow-up tests, rather than an always-on routing stage.

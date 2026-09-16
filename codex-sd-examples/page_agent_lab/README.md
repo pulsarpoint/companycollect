@@ -8,8 +8,10 @@ The [completed seven-page comparison](RESULTS.md) retained the selected facts in
 both variants. Routing cost more and introduced additional mistakes; the page
 boundary is useful, but all-page specialist routing is not the current recommendation.
 The user accepted one-pass as the integration baseline. The
-[follow-up](FOLLOW_UP.md) fixes phone evidence validation in 0.15.3 and prepares
-revised lab prompts/controls; those prompt changes have not had a model run.
+[follow-up](FOLLOW_UP.md) fixed phone evidence validation in 0.15.3. The
+[revised-prompt evaluation](ONE_PASS_V2_RESULTS.md) now tests seven regression
+pages plus six additional pages. Integration remains pending evidence, taxonomy
+and malformed-response recovery fixes.
 
 Each analysis returns data, links and a schema version. Data includes objective
 arrays, source provenance, per-objective processing status, rejected records and
@@ -30,9 +32,14 @@ jsonschema>=4.23,<5, already available in the research environment.
 ~~~sh
 .venv/bin/python -m unittest page_agent_lab.test_agent -v
 .venv/bin/python -m page_agent_lab.benchmark \
-  --output page_agent_lab/data/my-new-comparison
-.venv/bin/python -m page_agent_lab.audit page_agent_lab/data/my-new-comparison
+  --output page_agent_lab/data/my-new-one-pass
+.venv/bin/python -m page_agent_lab.audit page_agent_lab/data/my-new-one-pass
 ~~~
+
+The default runs only one-pass. Use `--mode compare` explicitly for both arms.
+Use `--dataset page_agent_lab/holdout.json` for the six additional saved pages;
+the dataset specifies source snapshots and controls, which never enter the
+model input. Use a new output directory for every experiment.
 
 The runner reads DEEPSEEK from the environment or jobs_extraction_lab/.env.
 Use --env for another dotenv file. Credentials are excluded from call logs.
@@ -67,13 +74,15 @@ are not in Git. Missing snapshots cause an explicit preparation error.
   alongside rejected raw items. The existing source-presence validator checks
   quotations and field evidence. Source-matched does not establish semantic
   truth. No corrections, semantic review agents or catalog calls run here.
-- One-pass runs first, routed second. Pages and specialists run concurrently
+- In compare mode, one-pass runs first, routed second. Pages and specialists run concurrently
   within an arm. This single sample cannot isolate provider load/cache effects.
 - Forty selected factual checks, nineteen negative checks and four link groups are
   frozen from source review before calls. They are not exhaustive ground truth
   or an overall accuracy score. A separate diagnostic runs only known-positive
   objective pairs skipped by the router. The original completed pilot used four
   negative checks; its saved controls and results are unchanged.
+- Negative checks on failed objectives are unavailable, not passing. Reports
+  distinguish passed, evaluated and total checks.
 
 Experiments save hashes of HTML, input inventories, controls and frozen code.
 Call artifacts retain prompts, schemas, responses, tokens and errors. Cost is

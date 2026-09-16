@@ -1,0 +1,881 @@
+{
+  "description": "Six saved pages not used to tune the revised page-agent prompt. Controls selected by reading native source HTML before any held-out model output. Selected facts, not exhaustive ground truth. Investors are minority/unspecified relationships, not inferred control; protocol exclusions follow the existing catalog policy.",
+  "sources": [
+    [
+      "memgraph_home",
+      "deepseek-more-websites-20260911/sources/memgraph",
+      "p0001",
+      "https://memgraph.com/"
+    ],
+    [
+      "memgraph_careers",
+      "deepseek-more-websites-20260911/sources/memgraph",
+      "p0002",
+      "https://memgraph.com/"
+    ],
+    [
+      "oxide_home",
+      "deepseek-more-websites-20260911/sources/oxide",
+      "p0001",
+      "https://oxide.computer/"
+    ],
+    [
+      "oxide_job",
+      "deepseek-more-websites-20260911/sources/oxide",
+      "p0002",
+      "https://oxide.computer/"
+    ],
+    [
+      "rt-rk_jobs",
+      "deepseek-more-websites-20260911/sources/rt-rk",
+      "p0001",
+      "https://www.rt-rk.com/"
+    ],
+    [
+      "rt-rk_case",
+      "deepseek-more-websites-20260911/sources/rt-rk",
+      "p0002",
+      "https://www.rt-rk.com/"
+    ]
+  ],
+  "controls": {
+    "version": "page-agent-holdout/0.1",
+    "positive": [
+      {
+        "id": "memgraph_home:Lab product",
+        "page": "memgraph_home",
+        "objective": "products_services",
+        "identity": {
+          "name": [
+            "Memgraph Lab",
+            "Lab"
+          ]
+        },
+        "qualifiers": {
+          "kind": [
+            "product"
+          ]
+        }
+      },
+      {
+        "id": "memgraph_home:graph database",
+        "page": "memgraph_home",
+        "objective": "products_services",
+        "identity": {
+          "name": [
+            "Memgraph",
+            "Memgraph Database",
+            "Database"
+          ]
+        },
+        "qualifiers": {
+          "kind": [
+            "product"
+          ]
+        }
+      },
+      {
+        "id": "memgraph_careers:video meetings",
+        "page": "memgraph_careers",
+        "objective": "technology_signals",
+        "identity": {
+          "technology": [
+            "Google Meet"
+          ]
+        },
+        "qualifiers": {
+          "signal": [
+            "stated_use"
+          ],
+          "company_contains": [
+            "Memgraph"
+          ]
+        }
+      },
+      {
+        "id": "memgraph_careers:open application email",
+        "page": "memgraph_careers",
+        "objective": "company_contacts",
+        "identity": {
+          "value": [
+            "careers@memgraph.com"
+          ]
+        },
+        "qualifiers": {}
+      },
+      {
+        "id": "memgraph_careers:M12 investor",
+        "page": "memgraph_careers",
+        "objective": "company_relationships",
+        "identity": {
+          "subject_contains": [
+            "M12"
+          ],
+          "object_contains": [
+            "Memgraph"
+          ]
+        },
+        "qualifiers": {
+          "relationship": [
+            "shareholder_of",
+            "other_explicit"
+          ]
+        }
+      },
+      {
+        "id": "memgraph_careers:HeavyBit investor",
+        "page": "memgraph_careers",
+        "objective": "company_relationships",
+        "identity": {
+          "subject_contains": [
+            "HeavyBit"
+          ],
+          "object_contains": [
+            "Memgraph"
+          ]
+        },
+        "qualifiers": {
+          "relationship": [
+            "shareholder_of",
+            "other_explicit"
+          ]
+        }
+      },
+      {
+        "id": "oxide_home:cloud computer",
+        "page": "oxide_home",
+        "objective": "products_services",
+        "identity": {
+          "name_contains": [
+            "Oxide Cloud Computer"
+          ]
+        },
+        "qualifiers": {
+          "kind": [
+            "product"
+          ]
+        }
+      },
+      {
+        "id": "oxide_home:EPYC hardware",
+        "page": "oxide_home",
+        "objective": "technology_signals",
+        "identity": {
+          "technology_contains": [
+            "AMD EPYC"
+          ]
+        },
+        "qualifiers": {}
+      },
+      {
+        "id": "oxide_job:opening",
+        "page": "oxide_job",
+        "objective": "jobs",
+        "identity": {
+          "title": [
+            "Networking Software Engineer"
+          ]
+        },
+        "qualifiers": {
+          "employer_contains": [
+            "Oxide"
+          ]
+        }
+      },
+      {
+        "id": "oxide_job:Rust",
+        "page": "oxide_job",
+        "objective": "technology_signals",
+        "identity": {
+          "technology": [
+            "Rust"
+          ]
+        },
+        "qualifiers": {
+          "signal": [
+            "stated_use",
+            "required_experience"
+          ],
+          "scope": [
+            "role",
+            "team"
+          ]
+        }
+      },
+      {
+        "id": "oxide_job:C",
+        "page": "oxide_job",
+        "objective": "technology_signals",
+        "identity": {
+          "technology": [
+            "C"
+          ]
+        },
+        "qualifiers": {
+          "signal": [
+            "stated_use",
+            "required_experience"
+          ],
+          "scope": [
+            "role",
+            "team"
+          ]
+        }
+      },
+      {
+        "id": "oxide_job:P4",
+        "page": "oxide_job",
+        "objective": "technology_signals",
+        "identity": {
+          "technology": [
+            "P4"
+          ]
+        },
+        "qualifiers": {
+          "signal": [
+            "stated_use",
+            "required_experience"
+          ],
+          "scope": [
+            "role",
+            "team"
+          ]
+        }
+      },
+      {
+        "id": "oxide_job:OPTE",
+        "page": "oxide_job",
+        "objective": "technology_signals",
+        "identity": {
+          "technology": [
+            "OPTE",
+            "Oxide Packet Transformation Engine"
+          ]
+        },
+        "qualifiers": {
+          "company_contains": [
+            "Oxide"
+          ]
+        }
+      },
+      {
+        "id": "rt-rk_jobs:Machine Learning Engineer",
+        "page": "rt-rk_jobs",
+        "objective": "jobs",
+        "identity": {
+          "title": [
+            "Machine Learning Engineer"
+          ]
+        },
+        "qualifiers": {
+          "employer_contains": [
+            "RT-RK"
+          ]
+        }
+      },
+      {
+        "id": "rt-rk_jobs:Product owner",
+        "page": "rt-rk_jobs",
+        "objective": "jobs",
+        "identity": {
+          "title": [
+            "Product owner"
+          ]
+        },
+        "qualifiers": {
+          "employer_contains": [
+            "RT-RK"
+          ]
+        }
+      },
+      {
+        "id": "rt-rk_jobs:Senior Engineer – Relocation to Bangalore, India",
+        "page": "rt-rk_jobs",
+        "objective": "jobs",
+        "identity": {
+          "title": [
+            "Senior Engineer – Relocation to Bangalore, India"
+          ]
+        },
+        "qualifiers": {
+          "employer_contains": [
+            "RT-RK"
+          ]
+        }
+      },
+      {
+        "id": "rt-rk_jobs:Senior Solution Consultant – Atlassian Cloud Tools",
+        "page": "rt-rk_jobs",
+        "objective": "jobs",
+        "identity": {
+          "title": [
+            "Senior Solution Consultant – Atlassian Cloud Tools"
+          ]
+        },
+        "qualifiers": {
+          "employer_contains": [
+            "RT-RK"
+          ]
+        }
+      },
+      {
+        "id": "rt-rk_jobs:Student Internship",
+        "page": "rt-rk_jobs",
+        "objective": "jobs",
+        "identity": {
+          "title": [
+            "Student Internship"
+          ]
+        },
+        "qualifiers": {
+          "employer_contains": [
+            "RT-RK"
+          ]
+        }
+      },
+      {
+        "id": "rt-rk_jobs:Talent pool",
+        "page": "rt-rk_jobs",
+        "objective": "jobs",
+        "identity": {
+          "title": [
+            "Talent pool"
+          ]
+        },
+        "qualifiers": {
+          "employer_contains": [
+            "RT-RK"
+          ]
+        }
+      },
+      {
+        "id": "rt-rk_jobs:Technical Sales Manager",
+        "page": "rt-rk_jobs",
+        "objective": "jobs",
+        "identity": {
+          "title": [
+            "Technical Sales Manager"
+          ]
+        },
+        "qualifiers": {
+          "employer_contains": [
+            "RT-RK"
+          ]
+        }
+      },
+      {
+        "id": "rt-rk_jobs:email",
+        "page": "rt-rk_jobs",
+        "objective": "company_contacts",
+        "identity": {
+          "value": [
+            "info@rt-rk.com"
+          ]
+        },
+        "qualifiers": {}
+      },
+      {
+        "id": "rt-rk_jobs:address",
+        "page": "rt-rk_jobs",
+        "objective": "locations",
+        "identity": {
+          "address_contains": [
+            "Narodnog fronta 23a"
+          ]
+        },
+        "qualifiers": {
+          "company_contains": [
+            "RT-RK"
+          ]
+        }
+      },
+      {
+        "id": "rt-rk_jobs:founded",
+        "page": "rt-rk_jobs",
+        "objective": "company_profile",
+        "identity": {
+          "field": [
+            "founded"
+          ],
+          "value": [
+            "1991"
+          ]
+        },
+        "qualifiers": {}
+      },
+      {
+        "id": "rt-rk_jobs:group affiliation",
+        "page": "rt-rk_jobs",
+        "objective": "company_relationships",
+        "identity": {
+          "subject_contains": [
+            "RT-RK"
+          ],
+          "object_contains": [
+            "TTTech"
+          ]
+        },
+        "qualifiers": {
+          "relationship": [
+            "subsidiary_of",
+            "other_explicit"
+          ]
+        }
+      },
+      {
+        "id": "rt-rk_case:email",
+        "page": "rt-rk_case",
+        "objective": "company_contacts",
+        "identity": {
+          "value": [
+            "info@rt-rk.com"
+          ]
+        },
+        "qualifiers": {}
+      },
+      {
+        "id": "rt-rk_case:address",
+        "page": "rt-rk_case",
+        "objective": "locations",
+        "identity": {
+          "address_contains": [
+            "Narodnog fronta 23a"
+          ]
+        },
+        "qualifiers": {
+          "company_contains": [
+            "RT-RK"
+          ]
+        }
+      },
+      {
+        "id": "rt-rk_case:founded",
+        "page": "rt-rk_case",
+        "objective": "company_profile",
+        "identity": {
+          "field": [
+            "founded"
+          ],
+          "value": [
+            "1991"
+          ]
+        },
+        "qualifiers": {}
+      },
+      {
+        "id": "rt-rk_case:group affiliation",
+        "page": "rt-rk_case",
+        "objective": "company_relationships",
+        "identity": {
+          "subject_contains": [
+            "RT-RK"
+          ],
+          "object_contains": [
+            "TTTech"
+          ]
+        },
+        "qualifiers": {
+          "relationship": [
+            "subsidiary_of",
+            "other_explicit"
+          ]
+        }
+      },
+      {
+        "id": "rt-rk_case:customer engagement",
+        "page": "rt-rk_case",
+        "objective": "company_relationships",
+        "identity": {
+          "subject_contains": [
+            "Endress"
+          ],
+          "object_contains": [
+            "RT-RK"
+          ]
+        },
+        "qualifiers": {
+          "relationship": [
+            "customer_of"
+          ]
+        }
+      },
+      {
+        "id": "rt-rk_case:Linux",
+        "page": "rt-rk_case",
+        "objective": "technology_signals",
+        "identity": {
+          "technology": [
+            "Linux"
+          ]
+        },
+        "qualifiers": {
+          "signal": [
+            "stated_use",
+            "advertised_expertise"
+          ],
+          "company_contains": [
+            "RT-RK"
+          ]
+        }
+      },
+      {
+        "id": "rt-rk_case:C++",
+        "page": "rt-rk_case",
+        "objective": "technology_signals",
+        "identity": {
+          "technology": [
+            "C++"
+          ]
+        },
+        "qualifiers": {
+          "signal": [
+            "stated_use",
+            "advertised_expertise"
+          ],
+          "company_contains": [
+            "RT-RK"
+          ]
+        }
+      },
+      {
+        "id": "rt-rk_case:OBLO core",
+        "page": "rt-rk_case",
+        "objective": "technology_signals",
+        "identity": {
+          "technology_contains": [
+            "OBLO"
+          ]
+        },
+        "qualifiers": {}
+      }
+    ],
+    "negative": [
+      {
+        "id": "memgraph_home:exclude generic names",
+        "page": "memgraph_home",
+        "objective": "technology_signals",
+        "forbidden": {
+          "technology": [
+            "XML",
+            "JSON",
+            "PDF",
+            "XLSX",
+            "CSV",
+            "HTML",
+            "CSS",
+            "AI",
+            "CI/CD",
+            "VPN",
+            "ARM",
+            "BGP",
+            "IPsec",
+            "Bluetooth"
+          ]
+        }
+      },
+      {
+        "id": "memgraph_home:capture date is not claim date",
+        "page": "memgraph_home",
+        "objective": "technology_signals",
+        "forbidden": {
+          "as_of": [
+            "2026-09-11"
+          ]
+        }
+      },
+      {
+        "id": "memgraph_careers:exclude generic names",
+        "page": "memgraph_careers",
+        "objective": "technology_signals",
+        "forbidden": {
+          "technology": [
+            "XML",
+            "JSON",
+            "PDF",
+            "XLSX",
+            "CSV",
+            "HTML",
+            "CSS",
+            "AI",
+            "CI/CD",
+            "VPN",
+            "ARM",
+            "BGP",
+            "IPsec",
+            "Bluetooth"
+          ]
+        }
+      },
+      {
+        "id": "memgraph_careers:capture date is not claim date",
+        "page": "memgraph_careers",
+        "objective": "technology_signals",
+        "forbidden": {
+          "as_of": [
+            "2026-09-11"
+          ]
+        }
+      },
+      {
+        "id": "oxide_home:exclude generic names",
+        "page": "oxide_home",
+        "objective": "technology_signals",
+        "forbidden": {
+          "technology": [
+            "XML",
+            "JSON",
+            "PDF",
+            "XLSX",
+            "CSV",
+            "HTML",
+            "CSS",
+            "AI",
+            "CI/CD",
+            "VPN",
+            "ARM",
+            "BGP",
+            "IPsec",
+            "Bluetooth"
+          ]
+        }
+      },
+      {
+        "id": "oxide_home:capture date is not claim date",
+        "page": "oxide_home",
+        "objective": "technology_signals",
+        "forbidden": {
+          "as_of": [
+            "2026-09-11"
+          ]
+        }
+      },
+      {
+        "id": "oxide_job:exclude generic names",
+        "page": "oxide_job",
+        "objective": "technology_signals",
+        "forbidden": {
+          "technology": [
+            "XML",
+            "JSON",
+            "PDF",
+            "XLSX",
+            "CSV",
+            "HTML",
+            "CSS",
+            "AI",
+            "CI/CD",
+            "VPN",
+            "ARM",
+            "BGP",
+            "IPsec",
+            "Bluetooth"
+          ]
+        }
+      },
+      {
+        "id": "oxide_job:capture date is not claim date",
+        "page": "oxide_job",
+        "objective": "technology_signals",
+        "forbidden": {
+          "as_of": [
+            "2026-09-11"
+          ]
+        }
+      },
+      {
+        "id": "rt-rk_jobs:exclude generic names",
+        "page": "rt-rk_jobs",
+        "objective": "technology_signals",
+        "forbidden": {
+          "technology": [
+            "XML",
+            "JSON",
+            "PDF",
+            "XLSX",
+            "CSV",
+            "HTML",
+            "CSS",
+            "AI",
+            "CI/CD",
+            "VPN",
+            "ARM",
+            "BGP",
+            "IPsec",
+            "Bluetooth"
+          ]
+        }
+      },
+      {
+        "id": "rt-rk_jobs:capture date is not claim date",
+        "page": "rt-rk_jobs",
+        "objective": "technology_signals",
+        "forbidden": {
+          "as_of": [
+            "2026-09-11"
+          ]
+        }
+      },
+      {
+        "id": "rt-rk_case:exclude generic names",
+        "page": "rt-rk_case",
+        "objective": "technology_signals",
+        "forbidden": {
+          "technology": [
+            "XML",
+            "JSON",
+            "PDF",
+            "XLSX",
+            "CSV",
+            "HTML",
+            "CSS",
+            "AI",
+            "CI/CD",
+            "VPN",
+            "ARM",
+            "BGP",
+            "IPsec",
+            "Bluetooth"
+          ]
+        }
+      },
+      {
+        "id": "rt-rk_case:capture date is not claim date",
+        "page": "rt-rk_case",
+        "objective": "technology_signals",
+        "forbidden": {
+          "as_of": [
+            "2026-09-11"
+          ]
+        }
+      },
+      {
+        "id": "memgraph_home:customer languages not Memgraph deployment",
+        "page": "memgraph_home",
+        "objective": "technology_signals",
+        "forbidden": {
+          "technology": [
+            "Python",
+            "R"
+          ],
+          "company_contains": [
+            "Memgraph"
+          ],
+          "signal": [
+            "stated_use"
+          ]
+        }
+      },
+      {
+        "id": "memgraph_home:comparison not deployment",
+        "page": "memgraph_home",
+        "objective": "technology_signals",
+        "forbidden": {
+          "technology": [
+            "Neo4j",
+            "ArangoDB",
+            "FalkorDB",
+            "Amazon Neptune"
+          ],
+          "company_contains": [
+            "Memgraph"
+          ],
+          "signal": [
+            "stated_use"
+          ]
+        }
+      },
+      {
+        "id": "memgraph_careers:remote coverage is not an address",
+        "page": "memgraph_careers",
+        "objective": "locations",
+        "forbidden": {}
+      },
+      {
+        "id": "memgraph_careers:navigation is not a vacancy",
+        "page": "memgraph_careers",
+        "objective": "jobs",
+        "forbidden": {
+          "title": [
+            "Careers",
+            "No positions available at the moment",
+            "See open positions"
+          ]
+        }
+      },
+      {
+        "id": "oxide_home:demo VM name not deployment",
+        "page": "oxide_home",
+        "objective": "technology_signals",
+        "forbidden": {
+          "technology": [
+            "Redis"
+          ],
+          "signal": [
+            "stated_use"
+          ]
+        }
+      },
+      {
+        "id": "oxide_home:VMware exit not deployment",
+        "page": "oxide_home",
+        "objective": "technology_signals",
+        "forbidden": {
+          "technology": [
+            "VMware"
+          ],
+          "signal": [
+            "stated_use"
+          ]
+        }
+      },
+      {
+        "id": "oxide_job:no company certification",
+        "page": "oxide_job",
+        "objective": "certifications_compliance",
+        "forbidden": {}
+      },
+      {
+        "id": "rt-rk_case:unspecified product qualification not named certification",
+        "page": "rt-rk_case",
+        "objective": "certifications_compliance",
+        "forbidden": {}
+      },
+      {
+        "id": "rt-rk_jobs:vacancy cities not addresses",
+        "page": "rt-rk_jobs",
+        "objective": "locations",
+        "forbidden": {
+          "address": [
+            "Novi Sad",
+            "Belgrade",
+            "Osijek",
+            "Banja Luka",
+            "Serbia"
+          ]
+        }
+      }
+    ],
+    "link_controls": [
+      {
+        "page": "memgraph_home",
+        "label": "careers",
+        "url_contains": "/careers"
+      },
+      {
+        "page": "oxide_home",
+        "label": "careers",
+        "url_contains": "/careers"
+      },
+      {
+        "page": "oxide_job",
+        "label": "OPTE repository",
+        "url_contains": "github.com/oxidecomputer/opte"
+      },
+      {
+        "page": "rt-rk_jobs",
+        "label": "job details",
+        "url_contains": "talentlyft.com/jobs/"
+      }
+    ]
+  }
+}

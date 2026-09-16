@@ -141,9 +141,11 @@ def audit_arm(root: Path, mode: str, controls: dict) -> dict:
         negative_checks.append(
             control
             | {
+                "evaluated": data["coverage"][control["objective"]]["status"]
+                in {"processed", "partial"},
                 "violations": [
                     r for r in all_records if matches(r, control["forbidden"])
-                ]
+                ],
             }
         )
     links = []
@@ -220,6 +222,11 @@ def audit_arm(root: Path, mode: str, controls: dict) -> dict:
         "control_count": len(checks),
         "checks": checks,
         "negative_checks": negative_checks,
+        "negative_passed": sum(
+            check["evaluated"] and not check["violations"] for check in negative_checks
+        ),
+        "negative_evaluated": sum(check["evaluated"] for check in negative_checks),
+        "negative_count": len(negative_checks),
         "link_controls": links,
         "required_routes": routes,
         "assessed_links": sum(
@@ -269,12 +276,15 @@ def audit(root: Path) -> dict:
                 != fixture[field]
             ):
                 raise ValueError("Frozen input changed")
+    modes = experiment.get("modes", ["one_pass", "routed"])
     report = {
         "method": "Selected source-read controls. Schema/source-presence checks are not semantic correctness or exhaustive precision/recall. Single run per variant; no autonomous crawl.",
-        "arms": {
-            mode: audit_arm(root, mode, controls) for mode in ["one_pass", "routed"]
-        },
-        "routing_diagnostic": read(root / "routing_diagnostic/manifest.json"),
+        "arms": {mode: audit_arm(root, mode, controls) for mode in modes},
+        "routing_diagnostic": (
+            read(root / "routing_diagnostic/manifest.json")
+            if "routed" in modes
+            else {"status": "not_applicable", "calls": 0}
+        ),
     }
     write_json(root / "comparison.json", report)
     return report

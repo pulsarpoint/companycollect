@@ -119,11 +119,15 @@ async def run(args) -> None:
         extraction_concurrency=3,
         max_output_tokens=65536,
     )
-    manifest = prepare(root, args.corpus.resolve())
+    manifest = prepare(root, args.corpus.resolve(), args.dataset)
+    modes: list[Literal["one_pass", "routed"]] = (
+        ["one_pass", "routed"] if args.mode == "compare" else ["one_pass"]
+    )
     manifest.update(
         status="prepared",
         config=config.model_dump(),
-        protocol="one_pass then routed; each processes seven pages with a shared concurrency cap of three. Same source payload and objective rules. No automatic corrections. No catalog calls. Whole pages are supplied without truncation.",
+        modes=modes,
+        protocol="Run the recorded modes on frozen pages with a shared concurrency cap of three. Same source payload and objective rules. No automatic corrections. No catalog calls. Whole pages are supplied without truncation.",
     )
     write_json(root / "experiment.json", manifest)
     if args.prepare_only:
@@ -135,10 +139,10 @@ async def run(args) -> None:
     manifest.update(status="running", started_at=utc_now())
     write_json(root / "experiment.json", manifest)
     try:
-        modes: list[Literal["one_pass", "routed"]] = ["one_pass", "routed"]
         for mode in modes:
             await run_arm(root, mode, key, config)
-        await routing_diagnostic(root, key, config)
+        if "routed" in modes:
+            await routing_diagnostic(root, key, config)
         manifest["status"] = "finished"
     finally:
         manifest["finished_at"] = utc_now()
@@ -173,6 +177,10 @@ def main() -> None:
     parser.add_argument("--corpus", type=Path, default=Path("company_research/data"))
     parser.add_argument("--env", type=Path, default=Path("jobs_extraction_lab/.env"))
     parser.add_argument("--prepare-only", action="store_true")
+    parser.add_argument("--mode", choices=["one_pass", "compare"], default="one_pass")
+    parser.add_argument(
+        "--dataset", type=Path, help="Source snapshots and source-read controls JSON"
+    )
     asyncio.run(run(parser.parse_args()))
 
 
