@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 import unicodedata
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -9,7 +10,11 @@ from urllib.parse import urlsplit
 
 from pydantic import Field
 
-from company_research.models import StrictModel
+from company_research.models import (
+    ModelTechnologyMatch,
+    StrictModel,
+    validate_specific_technology_name,
+)
 from company_research.storage import utc_now, write_json
 
 
@@ -96,14 +101,52 @@ class TechnologyCatalog:
             return self.aliases[key], "alias"
         return None, "not_found"
 
-    def search(self, query: str) -> dict:
+    def search(self, query: str, context: str = "") -> dict:
         if not isinstance(query, str) or not query.strip() or len(query) > 200:
             raise ValueError("Technology search requires 1–200 characters")
         key = technology_key(query)
+        if not isinstance(context, str) or len(context) > 4000:
+            raise ValueError("Search context must be text of at most 4000 characters")
+        context_terms = set(re.findall(r"[\w+#.-]{3,}", technology_key(context))) - {
+            "the",
+            "and",
+            "for",
+            "with",
+            "from",
+            "that",
+            "this",
+            "tool",
+            "tools",
+            "technology",
+            "used",
+            "uses",
+            "using",
+            "company",
+        }
+        whole_name = re.compile(r"(?<![\w+#.])" + re.escape(key) + r"(?![\w+#])")
         canonical, method = self.resolve(query)
         scores = []
         for name, entry in self.entries.items():
             normalized = technology_key(name)
+            description = technology_key(entry.description)
+            candidate_terms = set(
+                re.findall(
+                    r"[\w+#.-]{3,}",
+                    " ".join(
+                        [normalized, description, *entry.categories, *entry.groups]
+                    ).casefold(),
+                )
+            )
+            context_overlap = len(context_terms & candidate_terms)
+            if len(key) <= 3 and name != canonical and key != normalized:
+                # Short names must not match inside words (ADS in Spreadsheets)
+                # or through edit distance. Context narrows genuine acronym hits.
+                if not whole_name.search(normalized) and not whole_name.search(
+                    description
+                ):
+                    continue
+                if context_terms and context_overlap < min(2, len(context_terms)):
+                    continue
             score = (
                 1.0
                 if name == canonical
@@ -111,22 +154,50 @@ class TechnologyCatalog:
             )
             if key == normalized:
                 score = 1.0
-            elif len(key) >= 3 and key in normalized:
+            elif whole_name.search(normalized) or len(key) > 3 and key in normalized:
                 score = max(score, 0.8)
-            elif len(key) >= 3 and key in technology_key(entry.description):
+            elif whole_name.search(description) or len(key) > 3 and key in description:
                 score = max(score, 0.6)
             if score >= 0.55:
-                scores.append((score, name))
+                scores.append((score, context_overlap, name))
         names = [
-            name for _, name in sorted(scores, key=lambda row: (-row[0], row[1]))[:10]
+            name
+            for _, _, name in sorted(
+                scores, key=lambda row: (-row[0], -row[1], row[2])
+            )[:10]
         ]
         return {
             "query": query,
+            "context": context,
             "catalog_version": self.snapshot.version,
+            "catalog_synced_at": self.snapshot.synced_at,
             "canonical_technology": canonical,
             "match_method": method,
             "candidates": [self.entries[name].model_dump() for name in names],
             "note": "Candidates are suggestions, not proof of identity. Preserve source spelling.",
+        }
+
+    def category_options(self) -> dict:
+        """Expose category IDs with consistent published labels; omit conflicting pairs."""
+        labels: dict[int, set[str]] = {}
+        for entry in self.entries.values():
+            if len(entry.category_ids) != len(entry.categories):
+                continue
+            for identifier, label in zip(
+                entry.category_ids, entry.categories, strict=True
+            ):
+                labels.setdefault(identifier, set()).add(label)
+        return {
+            "catalog_version": self.snapshot.version,
+            "categories": [
+                {"id": identifier, "name": next(iter(names))}
+                for identifier, names in sorted(labels.items())
+                if len(names) == 1
+            ],
+            "ambiguous_category_ids": sorted(
+                identifier for identifier, names in labels.items() if len(names) != 1
+            ),
+            "note": "Published category labels only. If none fits, supply a descriptive category_suggestion rather than inventing an ID.",
         }
 
 
@@ -200,7 +271,25 @@ SEARCH_TECHNOLOGIES_TOOL = {
                     "maxItems": 20,
                 }
             },
+            "context": {
+                "type": "string",
+                "maxLength": 4000,
+                "description": "Source context such as RF circuit simulation, to distinguish short names. Optional.",
+            },
             "required": ["queries"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+LIST_TECHNOLOGY_CATEGORIES_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "list_technology_categories",
+        "description": "List published category IDs and names for new-technology proposals. Use a category_suggestion if none fits.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
             "additionalProperties": False,
         },
     },
@@ -214,6 +303,7 @@ def validate_technology_match(
     searches: list[dict],
 ) -> dict:
     """Model choices cannot invent catalog identities or bypass successful lookup."""
+    validate_specific_technology_name(observed_name)
     result = {
         "status": "proposed",
         "canonical_technology": None,
@@ -225,6 +315,7 @@ def validate_technology_match(
         "searches": [
             {
                 "query": search["query"],
+                "context": search.get("context", ""),
                 "candidates": [
                     {"technology": entry["technology"]}
                     for entry in search["candidates"]
@@ -246,6 +337,7 @@ def validate_technology_match(
     queried = {technology_key(search["query"]) for search in searches}
     if claimed is None or technology_key(observed_name) not in queried:
         raise ValueError("A successful search of the observed name is required")
+    claimed = ModelTechnologyMatch.model_validate(claimed).model_dump()
     result["reason"] = claimed["reason"]
     if claimed["status"] == "matched":
         candidate_names = {

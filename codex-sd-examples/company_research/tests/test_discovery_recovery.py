@@ -11,7 +11,7 @@ from test_technologies import finding, signal
 from company_research.analytics import summarize_technologies
 from company_research.content import HtmlWindow, merge_finding, source_finding
 from company_research.discovery import CrawlQueue, normalize_url
-from company_research.llm import OpenRouter, parse_model_json
+from company_research.llm import ModelClient, parse_model_json
 from company_research.models import (
     OBJECTIVES,
     RECORD_TYPES,
@@ -275,7 +275,9 @@ class RecoveryHTTPTests(unittest.IsolatedAsyncioTestCase):
                                 "record_id": data["claims"][0]["record_id"],
                                 "supported": True,
                                 "reason": "Optional candidate experience",
-                                "source_subject": None,
+                                "source_subject": "DemoWorks",
+                                "source_subject_kind": "company",
+                                "source_scope": "team",
                                 "source_object": None,
                                 "specific_technology": True,
                                 "source_signal": "preferred_experience",
@@ -293,7 +295,7 @@ class RecoveryHTTPTests(unittest.IsolatedAsyncioTestCase):
                 base_url="https://openrouter.test/v1/",
                 transport=httpx.MockTransport(handle),
             ) as client:
-                llm = OpenRouter(client, "test-key", ResearchConfig(), root)
+                llm = ModelClient(client, "test-key", ResearchConfig(), root)
                 corrected = await correct_reviewed_claims([original], llm, root, "test")
                 self.assertEqual(
                     await correct_reviewed_claims(
@@ -357,7 +359,7 @@ class RecoveryHTTPTests(unittest.IsolatedAsyncioTestCase):
                 ) as client:
                     await review_claims(
                         [record],
-                        OpenRouter(
+                        ModelClient(
                             client, "test-key", ResearchConfig(), Path(directory)
                         ),
                         Path(directory),
@@ -402,7 +404,7 @@ class RecoveryHTTPTests(unittest.IsolatedAsyncioTestCase):
                 base_url="https://openrouter.test/v1/",
                 transport=httpx.MockTransport(handle),
             ) as client:
-                llm = OpenRouter(client, "test-key", ResearchConfig(), Path(directory))
+                llm = ModelClient(client, "test-key", ResearchConfig(), Path(directory))
                 issues = await review_claims([record], llm, Path(directory), "test")
         self.assertTrue(issues)
         self.assertEqual(record.sources[0].evidence_status, "source_matched")
@@ -417,7 +419,7 @@ class RecoveryHTTPTests(unittest.IsolatedAsyncioTestCase):
                 base_url="https://openrouter.test/v1/",
                 transport=httpx.MockTransport(lambda _: httpx.Response(503)),
             ) as client:
-                llm = OpenRouter(
+                llm = ModelClient(
                     client,
                     "test-key",
                     ResearchConfig(max_http_attempts=1),
@@ -438,7 +440,7 @@ class RecoveryHTTPTests(unittest.IsolatedAsyncioTestCase):
                     )
                 ),
             ) as client:
-                llm = OpenRouter(client, "test-key", ResearchConfig(), Path(directory))
+                llm = ModelClient(client, "test-key", ResearchConfig(), Path(directory))
                 _, complete, errors, assessed = await extract_window(
                     HtmlWindow(0, len(html), html), page(html), llm, Path(directory), 0
                 )
@@ -476,7 +478,7 @@ class RecoveryHTTPTests(unittest.IsolatedAsyncioTestCase):
                 base_url="https://openrouter.test/v1/",
                 transport=httpx.MockTransport(handle),
             ) as client:
-                llm = OpenRouter(client, "test-key", config, Path(directory))
+                llm = ModelClient(client, "test-key", config, Path(directory))
                 await assess_links(queue, llm, Path(directory))
                 self.assertFalse(candidate.assessed)
                 self.assertEqual(queue.snapshot()["assessment_failed_count"], 1)
@@ -521,7 +523,7 @@ class RecoveryHTTPTests(unittest.IsolatedAsyncioTestCase):
                 base_url="https://openrouter.test/v1/",
                 transport=httpx.MockTransport(handle),
             ) as client:
-                llm = OpenRouter(
+                llm = ModelClient(
                     client,
                     "test-key",
                     ResearchConfig(reasoning_effort="none"),

@@ -13,7 +13,7 @@ import httpx
 from dotenv import dotenv_values
 
 from company_research.content import merge_finding, split_html
-from company_research.llm import OpenRouter
+from company_research.llm import ModelClient
 from company_research.models import RECORD_TYPES, Findings, Page, ResearchConfig
 from company_research.research import extract_window, research_company
 from company_research.review import correct_reviewed_claims, review_claims
@@ -27,16 +27,18 @@ async def run(args: argparse.Namespace) -> None:
     )
     if not key:
         raise ValueError("OPENROUTER_API_KEY is required")
-    catalog = TechnologyCatalog.read(args.snapshot / "technology-catalog.json")
+    catalog = TechnologyCatalog.read(
+        args.catalog or args.snapshot / "technology-catalog.json"
+    )
     config = ResearchConfig(
         provider=None if args.provider == "auto" else args.provider,
         reasoning_effort=args.reasoning,
         max_pages=args.max_pages,
         max_external_pages=8,
-        max_model_calls=100,
+        max_model_calls=args.max_model_calls,
         selection_batch_size=12,
         extraction_concurrency=1,
-        model_timeout_seconds=180.0,
+        model_timeout_seconds=args.model_timeout,
         max_http_attempts=1,
     )
     if args.mode == "live":
@@ -68,7 +70,7 @@ async def run(args: argparse.Namespace) -> None:
     )
     original = json.loads((args.snapshot / "result.json").read_text(encoding="utf-8"))
     async with httpx.AsyncClient(base_url="https://openrouter.ai/api/v1/") as client:
-        llm = OpenRouter(client, key, config, root)
+        llm = ModelClient(client, key, config, root)
         for page_id in args.page_id:
             source = next(
                 value for value in original["pages"] if value["page_id"] == page_id
@@ -154,6 +156,9 @@ def main() -> None:
     )
     parser.add_argument("--page-id", action="append", default=[])
     parser.add_argument("--max-pages", type=int, default=16)
+    parser.add_argument("--max-model-calls", type=int, default=160)
+    parser.add_argument("--model-timeout", type=float, default=120.0)
+    parser.add_argument("--catalog", type=Path)
     parser.add_argument(
         "--reasoning", choices=["none", "low", "medium", "high"], default="low"
     )

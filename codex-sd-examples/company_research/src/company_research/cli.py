@@ -9,13 +9,12 @@ from pathlib import Path
 
 import click
 import httpx
-from clickhouse_driver import Client
-from clickhouse_driver.errors import Error as ClickHouseError
 from dotenv import dotenv_values
 
+from company_research.analytics import technology_submission_records
+from company_research.catalog_config import load_catalog
 from company_research.models import ResearchConfig, ResearchResult
 from company_research.research import research_company
-from company_research.technology_catalog import TechnologyCatalog, sync_catalog
 
 
 @click.command()
@@ -59,42 +58,7 @@ def main(
         )
     key = environment.get("OPENROUTER_API_KEY")
     try:
-        catalog = None
-        if offline_catalog:
-            if technology_catalog is None:
-                raise ValueError("--offline-catalog requires --technology-catalog")
-            catalog = TechnologyCatalog.read(technology_catalog)
-        elif environment.get("CLICKHOUSE_HOST"):
-            catalog_path = technology_catalog or Path(
-                ".cache/company-research/technology-catalog.json"
-            )
-            client = Client(
-                host=environment["CLICKHOUSE_HOST"],
-                port=int(environment.get("CLICKHOUSE_NATIVE_PORT", "9000")),
-                user=environment.get("CLICKHOUSE_USER", "default"),
-                password=environment.get("CLICKHOUSE_PASSWORD", ""),
-                secure=environment.get("CLICKHOUSE_SECURE", "false").lower()
-                in {"1", "true", "yes"},
-                connect_timeout=10,
-                send_receive_timeout=30,
-                settings={"readonly": 1, "max_execution_time": 20},
-            )
-            try:
-                catalog = sync_catalog(client, catalog_path)
-            except (ClickHouseError, OSError, EOFError) as error:
-                raise ValueError(
-                    "ClickHouse catalog sync failed; no crawl was started"
-                ) from error
-            finally:
-                client.disconnect()
-        elif technology_catalog is not None:
-            raise ValueError(
-                "Configure CLICKHOUSE_HOST to refresh the catalog, or use --offline-catalog explicitly"
-            )
-        else:
-            raise ValueError(
-                "Configure CLICKHOUSE_HOST for catalog sync, or provide --technology-catalog with --offline-catalog"
-            )
+        catalog = load_catalog(environment, technology_catalog, offline_catalog)
         config = ResearchConfig.model_validate(
             {k: v for k, v in values.items() if v is not None}
         )
@@ -135,13 +99,11 @@ def submit(result_file: Path, backend_url: str, env_file: Path | None) -> None:
         raise click.ClickException("Set TECHNOLOGY_SUBMISSION_TOKEN")
     try:
         result = ResearchResult.model_validate_json(result_file.read_bytes())
-        failed = sum(
-            finding.data.get("catalog_match") is None
-            for finding in result.records.technology_signals
-        )
+        records = technology_submission_records(result.records.technology_signals)
+        failed = len(result.records.technology_signals) - len(records)
         if failed:
             click.echo(
-                f"Skipping {failed} observations with technology processing errors; retained in result.json",
+                f"Skipping {failed} unaccepted or unattributed observations; retained in result.json",
                 err=True,
             )
         response = httpx.post(
@@ -151,11 +113,7 @@ def submit(result_file: Path, backend_url: str, env_file: Path | None) -> None:
                 "run_id": result.run_id,
                 "site_url": result.site_url,
                 "model": result.config.model,
-                "records": [
-                    finding.model_dump()
-                    for finding in result.records.technology_signals
-                    if finding.data.get("catalog_match") is not None
-                ],
+                "records": records,
             },
             headers={"Authorization": f"Bearer {token}"},
             timeout=60,

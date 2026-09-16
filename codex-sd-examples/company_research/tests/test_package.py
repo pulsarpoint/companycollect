@@ -13,7 +13,7 @@ from company_research.content import (
     split_html,
 )
 from company_research.discovery import CrawlQueue, normalize_url, sitemap_urls
-from company_research.llm import ModelBudgetExceeded, ModelUnavailable, OpenRouter
+from company_research.llm import ModelBudgetExceeded, ModelClient, ModelUnavailable
 from company_research.models import (
     OBJECTIVES,
     RECORD_TYPES,
@@ -59,6 +59,28 @@ def person() -> dict:
 
 
 def response(document: object) -> dict:
+    if isinstance(document, dict) and isinstance(document.get("checks"), list):
+        for check in document["checks"]:
+            check.setdefault("source_attribution", None)
+            if check.get("correction") is not None:
+                check["correction"].setdefault("attribution", None)
+                check["correction"].setdefault("evidence", None)
+    if isinstance(document, dict) and isinstance(document.get("reviews"), list):
+        document = dict(document) | {
+            "reviews": [
+                {
+                    "identity_basis": None,
+                    "source_subject_kind": None,
+                    "source_value": None,
+                    "source_claim_type": None,
+                    "source_scope": None,
+                }
+                | value
+                if "specific_technology" in value
+                else value
+                for value in document["reviews"]
+            ]
+        }
     return {
         "choices": [
             {"finish_reason": "stop", "message": {"content": json.dumps(document)}}
@@ -73,6 +95,8 @@ def assessment(candidate_id: str, **potentials) -> CandidateAssessment:
         {
             "candidate_id": candidate_id,
             "reason": "Test page metadata",
+            "target_relevance": "target_evidence",
+            "follow_scope": "single_page",
             "objectives": {
                 o: {
                     "potential": potentials.get(o, "low"),
@@ -224,7 +248,7 @@ class QueueTests(unittest.TestCase):
         queue.visited.add(candidate.url)
         queue.add("https://another.org/unrelated", source=candidate.url)
         queue.add("https://jobs.external.net/company/job/1", source=candidate.url)
-        self.assertEqual(queue.excluded["outside_approved_scope"], 1)
+        self.assertEqual(queue.excluded["outside_approved_scope"], 2)
         self.assertIsNone(queue.pick(dict.fromkeys(OBJECTIVES, 0)))
 
     def test_missing_metadata_can_be_explored_and_login_is_excluded(self):
@@ -256,7 +280,7 @@ class HTTPTests(unittest.IsolatedAsyncioTestCase):
                     lambda _: httpx.Response(200, json=replies.pop(0))
                 ),
             ) as client:
-                llm = OpenRouter(client, "fake-key", ResearchConfig(), root)
+                llm = ModelClient(client, "fake-key", ResearchConfig(), root)
                 for index in range(1, 4):
                     reply = await llm.ask("prompt", {}, task="test")
                     self.assertIsNotNone(reply.error)
@@ -278,7 +302,7 @@ class HTTPTests(unittest.IsolatedAsyncioTestCase):
                     lambda _: httpx.Response(200, json={"choices": []})
                 ),
             ) as client:
-                llm = OpenRouter(client, "fake-key", ResearchConfig(), Path(directory))
+                llm = ModelClient(client, "fake-key", ResearchConfig(), Path(directory))
                 queue = CrawlQueue("https://example.test", llm.config)
                 queue.add("/contact", source=queue.site_url)
                 errors = await assess_links(queue, llm, Path(directory))
@@ -331,7 +355,7 @@ class HTTPTests(unittest.IsolatedAsyncioTestCase):
                 base_url="https://openrouter.test/v1/",
                 transport=httpx.MockTransport(handle),
             ) as client:
-                llm = OpenRouter(
+                llm = ModelClient(
                     client,
                     "not-a-real-secret",
                     ResearchConfig(max_model_calls=1),
@@ -363,7 +387,7 @@ class HTTPTests(unittest.IsolatedAsyncioTestCase):
                     lambda _: httpx.Response(200, json=response(document))
                 ),
             ) as client:
-                llm = OpenRouter(
+                llm = ModelClient(
                     client, "test-key", ResearchConfig(max_model_calls=1), root
                 )
                 finding_page = page(html)

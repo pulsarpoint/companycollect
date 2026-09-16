@@ -1,4 +1,4 @@
-"""Direct, budgeted OpenRouter calls with strict JSON output and per-call artifacts."""
+"""Budgeted OpenRouter or DeepSeek calls with JSON output and per-call artifacts."""
 
 import asyncio
 import json
@@ -6,12 +6,14 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 import httpx
 
 from company_research.models import ResearchConfig
 from company_research.storage import utc_now, write_json
 from company_research.technology_catalog import (
+    LIST_TECHNOLOGY_CATEGORIES_TOOL,
     SEARCH_TECHNOLOGIES_TOOL,
     TechnologyCatalog,
 )
@@ -25,15 +27,26 @@ class ModelUnavailable(RuntimeError):
     pass
 
 
+def unique_json_object(pairs: list[tuple[str, object]]) -> dict:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Duplicate JSON field: {key}")
+        result[key] = value
+    return result
+
+
 def parse_model_json(raw: str) -> tuple[object, bool]:
     """Unwrap formatting or identical repeated JSON; never choose conflicting data."""
     try:
-        return json.loads(raw), False
+        return json.loads(raw, object_pairs_hook=unique_json_object), False
     except ValueError:
         remaining, documents = raw.lstrip(), []
         try:
             while remaining:
-                document, end = json.JSONDecoder().raw_decode(remaining)
+                document, end = json.JSONDecoder(
+                    object_pairs_hook=unique_json_object
+                ).raw_decode(remaining)
                 documents.append(document)
                 remaining = remaining[end:].lstrip()
         except ValueError:
@@ -49,7 +62,7 @@ def parse_model_json(raw: str) -> tuple[object, bool]:
         )
         if raw.count("```") != 2 or len(blocks) != 1:
             raise
-        return json.loads(blocks[0]), True
+        return json.loads(blocks[0], object_pairs_hook=unique_json_object), True
 
 
 @dataclass
@@ -61,13 +74,16 @@ class ModelReply:
     searches: list[dict] = field(default_factory=list)
 
 
-class OpenRouter:
+class ModelClient:
     def __init__(
         self,
         client: httpx.AsyncClient,
         api_key: str,
         config: ResearchConfig,
         output_dir: Path,
+        *,
+        api: Literal["openrouter", "deepseek"] = "openrouter",
+        json_mode: Literal["json_schema", "json_object"] | None = None,
     ):
         self.client, self.api_key, self.config, self.output_dir = (
             client,
@@ -75,6 +91,13 @@ class OpenRouter:
             config,
             output_dir,
         )
+        self.api = api
+        self.api_name = "DeepSeek" if api == "deepseek" else "OpenRouter"
+        self.json_mode = json_mode or (
+            "json_object" if api == "deepseek" else "json_schema"
+        )
+        if api == "deepseek" and self.json_mode != "json_object":
+            raise ValueError("DeepSeek supports json_object, not json_schema")
         self.calls: list[dict] = []
         self.semaphore = asyncio.Semaphore(config.extraction_concurrency)
         self.consecutive_errors = 0
@@ -118,6 +141,11 @@ class OpenRouter:
             },
             {"role": "user", "content": prompt},
         ]
+        if self.json_mode == "json_object":
+            messages[0]["content"] += (
+                "\n\nRequired JSON Schema (validated by the application):\n"
+                + json.dumps(schema, ensure_ascii=False, sort_keys=True)
+            )
         searches = []
         rounds = self.config.max_technology_tool_rounds if catalog is not None else 0
         for round_index in range(rounds + 1):
@@ -146,20 +174,36 @@ class OpenRouter:
                     )
                 function = call.get("function", {})
                 try:
-                    if (
-                        not isinstance(function, dict)
-                        or function.get("name") != "search_technologies"
-                    ):
-                        raise ValueError("Only search_technologies is available")
+                    if not isinstance(function, dict) or function.get("name") not in {
+                        "search_technologies",
+                        "list_technology_categories",
+                    }:
+                        raise ValueError(
+                            "Only the supplied catalog tools are available"
+                        )
                     arguments = json.loads(function.get("arguments", ""))
-                    if not isinstance(arguments, dict) or set(arguments) != {"queries"}:
-                        raise ValueError("Supply a queries array")
-                    queries = arguments["queries"]
-                    if not isinstance(queries, list) or not 1 <= len(queries) <= 20:
-                        raise ValueError("Supply 1–20 queries")
-                    results = [catalog.search(query) for query in queries]
-                    searches.extend(results)
-                    output = {"results": results}
+                    if function["name"] == "list_technology_categories":
+                        if arguments != {}:
+                            raise ValueError("Category listing takes no arguments")
+                        output = catalog.category_options()
+                    else:
+                        if (
+                            not isinstance(arguments, dict)
+                            or "queries" not in arguments
+                            or set(arguments) - {"queries", "context"}
+                        ):
+                            raise ValueError(
+                                "Supply a queries array and optional context"
+                            )
+                        queries = arguments["queries"]
+                        if not isinstance(queries, list) or not 1 <= len(queries) <= 20:
+                            raise ValueError("Supply 1–20 queries")
+                        results = [
+                            catalog.search(query, arguments.get("context", ""))
+                            for query in queries
+                        ]
+                        searches.extend(results)
+                        output = {"results": results}
                 except (ValueError, TypeError) as error:
                     output = {"error": str(error)}
                 messages.append(
@@ -180,19 +224,43 @@ class OpenRouter:
         catalog: TechnologyCatalog | None,
     ) -> ModelReply:
         async with self.semaphore:
-            request = {
+            request: dict = {
                 "model": self.config.model,
-                "temperature": 0,
                 "stream": False,
-                "reasoning": {"enabled": False}
-                if self.config.reasoning_effort == "none"
-                else {
-                    "enabled": True,
-                    "exclude": True,
-                    "effort": self.config.reasoning_effort,
-                },
                 "max_tokens": self.config.max_output_tokens,
-                "provider": {
+                "messages": messages,
+                "response_format": {"type": self.json_mode},
+            }
+            if self.json_mode == "json_schema":
+                request["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "company_research",
+                        "strict": True,
+                        "schema": schema,
+                    },
+                }
+            if self.api == "deepseek":
+                request["thinking"] = {
+                    "type": "disabled"
+                    if self.config.reasoning_effort == "none"
+                    else "enabled"
+                }
+                request["reasoning_effort"] = self.config.reasoning_effort
+                if self.config.reasoning_effort == "none":
+                    request["temperature"] = 0
+            else:
+                request["temperature"] = 0
+                request["reasoning"] = (
+                    {"enabled": False}
+                    if self.config.reasoning_effort == "none"
+                    else {
+                        "enabled": True,
+                        "exclude": True,
+                        "effort": self.config.reasoning_effort,
+                    }
+                )
+                request["provider"] = {
                     **(
                         {"only": [self.config.provider]}
                         if self.config.provider is not None
@@ -200,19 +268,12 @@ class OpenRouter:
                     ),
                     "allow_fallbacks": self.config.provider is None,
                     "require_parameters": True,
-                },
-                "messages": messages,
-                "response_format": {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "company_research",
-                        "strict": True,
-                        "schema": schema,
-                    },
-                },
-            }
+                }
             if catalog is not None:
-                request["tools"] = [SEARCH_TECHNOLOGIES_TOOL]
+                request["tools"] = [
+                    SEARCH_TECHNOLOGIES_TOOL,
+                    LIST_TECHNOLOGY_CATEGORIES_TOOL,
+                ]
             last_error = "Request did not complete"
             record: dict | None = None
             started = time.monotonic()
@@ -221,7 +282,7 @@ class OpenRouter:
                     for attempt in range(1, self.config.max_http_attempts + 1):
                         if self.unavailable:
                             raise ModelUnavailable(
-                                "OpenRouter unavailable after repeated or permanent errors"
+                                f"{self.api_name} unavailable after repeated or permanent errors"
                             )
                         if self.remaining <= 0:
                             raise ModelBudgetExceeded("Model request budget reached")
@@ -230,6 +291,7 @@ class OpenRouter:
                             "task": task,
                             "attempt": attempt,
                             "started_at": utc_now(),
+                            "api": self.api,
                         }
                         self.calls.append(record)
                         target = (
@@ -245,9 +307,7 @@ class OpenRouter:
                                 timeout=self.config.model_timeout_seconds,
                             )
                         except httpx.HTTPError as error:
-                            last_error = (
-                                f"{type(error).__name__}: OpenRouter transport failed"
-                            )
+                            last_error = f"{type(error).__name__}: {self.api_name} transport failed"
                             record["error"] = last_error
                             write_json(target, {**record, "request": request})
                         else:
@@ -256,7 +316,9 @@ class OpenRouter:
                                 time.monotonic() - started, 3
                             )
                             if response.is_error:
-                                last_error = f"OpenRouter HTTP {response.status_code}"
+                                last_error = (
+                                    f"{self.api_name} HTTP {response.status_code}"
+                                )
                                 record["error"] = last_error
                                 try:
                                     error_payload = response.json()
@@ -297,9 +359,7 @@ class OpenRouter:
                                 try:
                                     payload = response.json()
                                 except ValueError:
-                                    last_error = (
-                                        "OpenRouter returned a non-JSON HTTP response"
-                                    )
+                                    last_error = f"{self.api_name} returned a non-JSON HTTP response"
                                     record["error"] = last_error
                                     write_json(target, {**record, "request": request})
                                 else:
@@ -314,6 +374,7 @@ class OpenRouter:
                                         }
                                     record["response_id"] = payload.get("id")
                                     record["provider"] = payload.get("provider")
+                                    record["response_model"] = payload.get("model")
                                     if isinstance(payload.get("usage"), dict):
                                         record["usage"] = payload["usage"]
                                     choices = payload.get("choices")
@@ -379,7 +440,7 @@ class OpenRouter:
                         if attempt < self.config.max_http_attempts:
                             await asyncio.sleep(retry_delay)
             except TimeoutError:
-                last_error = f"OpenRouter exceeded {self.config.model_timeout_seconds:g}s total deadline"
+                last_error = f"{self.api_name} exceeded {self.config.model_timeout_seconds:g}s total deadline"
                 if record is not None:
                     record.update(
                         error=last_error,

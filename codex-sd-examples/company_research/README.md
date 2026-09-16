@@ -2,8 +2,74 @@
 
 See the [research checkpoint](../RESEARCH_CHECKPOINT.md) for saved findings,
 known NOVELIC extraction gaps and next work. PDF/OCR experimentation is paused.
-The [NOVELIC recheck report](NOVELIC_RECHECK_RESULTS.md) contains the latest company,
-Careers and engineering-page JSON, measured costs, fixes and remaining limitations.
+
+The [DSPy RLM experiment plan](DSPY_RLM_PLAN.md) describes the proposed next
+comparison using the frozen Handelsbanken sources. It is a design; the RLM
+implementation and runs have not started.
+
+The [Handelsbanken company analysis](HANDELSBANKEN_ANALYSIS.md) combines the documented
+autonomous diagnostic with source-guided follow-ups. Its [low/high reasoning comparison](HANDELSBANKEN_REASONING_COMPARISON.md)
+retained 31/38 technology controls at low and 36/38 at high, with higher cost and
+runtime and remaining taxonomy/scope failures. Link assessment did not show an overall
+improvement. The experiment uses explicit reasoning settings; defaults are unchanged.
+
+Version 0.15.2 preserves technology observations when restricting job evidence to
+role scope makes originally distinct company/team/role observations identical.
+Only duplicates created by that conversion are coalesced; genuine duplicate model
+decisions still need review. Usage and experience remain separate observations.
+The Handelsbanken saved-decision replay recovered Microsoft 365 and Exchange
+without new extraction or normalization requests.
+
+Version 0.15.1 exposes direct DeepSeek through the public Python API with
+`research_company(..., api="deepseek")`. With no explicit configuration it selects
+`deepseek-flash`; the key defaults to `DEEPSEEK`. Explicit configurations must set
+the desired direct model. The CLI retains its existing OpenRouter route.
+This version also fixes numeric `tel:` links being mistaken for HTTP URLs during
+external-link capture, a failure discovered on Handelsbanken.
+
+Version 0.15.0 adds [external-link observations](EXTERNAL_LINKS.md): complete destination
+URLs, source pages, rendered HTML provenance, header/footer/section context and separate
+relationship assessments. Every observed external link survives crawl exclusions and
+model failures. Research output uses schema 1.10; company extraction HTML is unchanged.
+
+Version 0.14.4 adds an explicit direct DeepSeek API dialect to the shared model client
+and paired benchmarks using `DEEPSEEK` from `jobs_extraction_lab/.env` with
+`deepseek-flash`. See [direct API results](DEEPSEEK_DIRECT_RESULTS.md): greater recovery
+in this bounded run, higher cost, remaining completeness gaps. The crawler CLI still
+uses its existing OpenRouter configuration; direct selection is explicit in the tests.
+
+The [three additional website tests](DEEPSEEK_MORE_WEBSITES.md) compare fresh native
+Crawl4AI HTML from Memgraph, Oxide and RT-RK. Direct retained more observations without
+API timeouts, but both routes expose relationship omissions, catalog/review failures
+and overly broad technology identities. All six paired runs and manual review are saved.
+
+Version 0.14.3 introduced separate checks for structured actors and descriptions, repairs to source
+quotations before rechecking actor corrections, and a distinction between development services
+and selling the technology. See the [saved-failure replay](ATTRIBUTION_REPLAY_RESULTS.md)
+for measured improvements, manual holds and remaining omissions. Output uses
+`page-statements/1.3`; regular research results retain schema 1.9. Failed page extraction
+is reported separately from pending statement IDs. The workflow is still optional.
+Multiple supported relationships from one description remain separate observations;
+each retains its own signal, source review, company/job and page context. The
+[fresh five-company benchmark](FRESH_COMPANY_BENCHMARK.md) compares
+it with direct extraction on newly fetched pages, preserving all intermediate results.
+
+The preceding [page statement review workflow](PAGE_STATEMENTS_REVIEW_RESULTS.md) in
+0.12.3 checks descriptions against saved HTML, rechecks corrections and normalizes
+statements with required decisions per ID. It keeps valid records when another fails,
+preserves job-level scope and reuses saved reviews/results. That saved NOVELIC test
+recovered 31/32 technology controls and 3/3 company credential controls. Its historical
+output uses `page-statements/1.1`; shared catalog resolution also requires individual
+decisions and retries incomplete items.
+
+The [first page statement experiment](PAGE_STATEMENTS_EXPERIMENT.md) preserves the 0.11.1 results and the failures that motivated these changes.
+
+The [technology metadata replay](NOVELIC_METADATA_REPLAY.md) documents 0.10.2 / schema 1.8, separate validation stages, advertised expertise, the saved-data results and remaining manual quality holds.
+
+The [controller recheck](NOVELIC_CONTROLLER_RECHECK.md) documents the 0.9.2 URL binding, engineering coverage and saved-extraction retry changes, including which versions ran in each benchmark. The [scope and validation recheck](NOVELIC_SCOPE_RECHECK.md) preserves the preceding 0.8.1 benchmark.
+The [earlier autonomous NOVELIC report](NOVELIC_AUTONOMOUS_RESULTS.md) preserves the
+0.7.0 homepage-only run, measured costs and the errors that motivated these changes. The earlier
+[recheck report](NOVELIC_RECHECK_RESULTS.md) preserves the guided and frozen-source comparisons.
 
 One website URL in; JSON findings for company profile, contacts, locations,
 products/services, people, company relationships, jobs, technology signals and
@@ -13,6 +79,10 @@ The package uses Crawl4AI with the tested CloakBrowser rendering setup and nativ
 cleaned HTML. DeepSeek assesses candidates and extracts all objectives on every
 fetched page. A small Python queue balances objectives and enforces limits.
 It has no dependency on the example applications, benchmark folders or Codex SDK.
+
+The optional [technology catalog MCP server](TECHNOLOGY_MCP.md) lets agents search
+the published database catalog, inspect technology/category metadata and prepare
+new proposals with a required category and an LLM-written description.
 
 The [live verification report](SMOKE_RESULTS.md) includes a five-page run with
 102 records and the observed provider timeout/coverage limitations.
@@ -70,8 +140,10 @@ hash, fetch time, source-window offsets, exact evidence fragments and evidence s
 The same data observed on several pages is merged while preserving its sources.
 When only quotations fail, a focused repair request returns separate exact source
 fragments for fixed record values. It cannot invent or rewrite the facts. Relationship
-and technology claims also receive structured interpretation review: parties and
-direction, technology specificity, and the source-supported usage signal. A reversed
+and technology claims, company facts, credential holders and document types receive
+structured interpretation review before catalog resolution. Technology proposals then
+receive a separate identity/category audit. Review states distinguish accepted, rejected
+and processing_failed; temporary failures receive bounded retries. A reversed
 pair or wrong signal can receive one narrowly scoped correction and another review;
 the original record remains reviewable with a link to its correction. Review failures
 and unavailable reviews stay `needs_review`. This is not independent verification.
@@ -90,9 +162,10 @@ Each objective has one of these statuses:
 does not certify the model's interpretation, ownership attribution or temporal
 correctness. Failed source checks retain the record as `needs_review`.
 
-Technology extraction is part of the same LLM request on every page. The selection
-prompt also prioritizes full job descriptions for technology research after job
-titles have been found. The `technology_signals` objective has its own coverage
+Technology extraction is part of the same LLM request on every page. The controller promotes source-matched target-employer job URLs into detail-page
+follow-ups. `job_detail_reserve` prioritizes up to five descriptions by default, within
+the overall and external-page budgets. `discovery.job_coverage` records discovered
+postings, detail attempts, descriptions with target jobs and unvisited job URLs. The `technology_signals` objective has its own coverage
 status, so finding a list of openings does not complete this objective.
 
 Technology signals are limited to specific named applications, tools, platforms,
@@ -128,7 +201,7 @@ identity. Proposed identities remain separate until review; product families, co
 names and mirrored job ads are not resolved globally.
 See [technology verification](TECHNOLOGY_RESULTS.md) for real-ad and controlled-prompt results.
 
-Version 0.5.0 emits schema `1.4`, retaining a run ID, pinned catalog metadata and
+Version 0.7.0 emits schema `1.5` (the reader also accepts `1.4`), retaining a run ID, pinned catalog metadata and
 `catalog_match` with either `matched` or `proposed` on technology findings. A local
 `search_technologies` tool supplies canonical candidates in a separate identity-resolution
 step after HTML extraction. Exact names and aliases resolve locally; the smaller model
@@ -138,6 +211,27 @@ tools attached. Missing or
 invalid model resolutions are recorded as processing errors, with the source finding
 retained and excluded from the technology summary. Historical schema `1.0`–`1.3` artifacts are preserved and are not silently
 upgraded or submitted as catalog-checked findings.
+
+`result.entities.people`, `.jobs` and `.technologies` consolidate accepted findings
+without deleting raw observations. Each entity carries its identity, all observed
+field values, original record IDs and source URLs. People group by case-insensitive
+name and company; conflicting profile URLs stay separate. Jobs group by published
+job URL, actual redirects and single-opening detail-page links. Missing job URLs do
+not trigger fuzzy title matching. Technology entities group by company and canonical
+or proposed identity, preserving different dates, scopes and signals in the referenced
+observations and `technology_summary`. These are conservative entity counts, not a
+guarantee that every duplicate has been resolved.
+
+Technology submissions require an accepted claim, company attribution, a completed
+catalog match/proposal, and source-matched evidence. Rejected interpretation reviews
+and catalog errors exclude a record even if a catalog match exists. The backoffice
+also rejects unaccepted claims and sources before proposal insertion.
+
+If the browser context closes, the run restarts it and retries the same page with
+cumulative attempt numbers. `max_browser_restarts` bounds restarts across the entire
+run (default two); exhaustion stops with `browser_unavailable`, preserving collected
+findings. `discovery.browser_recoveries` records recovery events. A browser outage is
+not evidence that a URL or company fact is absent.
 
 Before selecting further pages, the crawler classifies the first usable page into site
 types and research profiles. A failed or unsupported classification can be retried on
@@ -254,3 +348,94 @@ OpenRouter's HTTP response. It checks sitemap discovery, JavaScript rendering,
 selection, a failed page, continued discovery from a jobs list to a job description,
 technology aggregation, extraction across objectives, scoped negative claims,
 source hashes and the final JSON. It makes no paid model requests.
+
+
+### Target-company scope and overview validation (0.8.1)
+
+Link assessments include `target_relevance` and `follow_scope`. External partner
+profiles default to a single page. Further external navigation requires an explicitly
+target-scoped navigation assessment and target-company facts observed after fetching.
+Every fetched page is still examined for all objectives. Related companies remain
+separate; only source-reviewed legal/trading-name mappings extend the target names. Different legal
+names require an explicit same-entity basis; regional market-entry wording is insufficient.
+
+The overview input contains only accepted facts attributed to the target (or explicit
+relationships involving it). Relationship and credential statements must cite the
+corresponding fact types. A final meaning check excludes unsupported statements and
+saves them under `summaries/meaning-review.json`; no new ownership fact is inferred
+from a name or location. `product_documentation` is separate from financial reports.
+Document discovery does not download or interpret PDFs.
+
+Summary requests use short internal citation IDs, expanded to canonical IDs only after
+validation. Certification names must match their cited structured facts exactly.
+Source/proposal reviews are propagated to duplicate records. `required_reviews` metadata
+prevents missing reviews from entering accepted exports; rejected copies cannot be
+restored by merging an unreviewed duplicate. Generic CI/CD is a method, not a technology
+identity; named tools such as GitHub Actions remain valid candidates.
+
+## Technology approval stages (0.10.2, schema 1.8)
+
+A source-supported observation can have rejected catalog metadata. Its
+`evidence_status` records the quotation/meaning outcome; `catalog_error` and
+`proposal_review` record separate catalog outcomes. Use `accepted_finding`, not
+`evidence_status` alone, when producing accepted summaries or submissions.
+`discovery.pending_technology_metadata` lists source-supported records still waiting
+on catalog stages, separately from unfinished HTML extraction chunks.
+
+`advertised_expertise` represents company skills tables, tool experience and advertised
+competence. It does not establish an installed technology stack. Explicit usage stays
+`stated_use`; applicant requirements stay `required_experience` or
+`preferred_experience`, with their original company/team/role scope.
+
+Proposal review checks identity, category and description independently. A rejected
+category or description can receive one bounded metadata correction
+(`ResearchConfig.max_proposal_corrections`, default 1). This correction cannot change
+the observed technology, company, signal, quotations, proposal name, website or
+licensing fields. New descriptive category suggestions are allowed when no published
+category fits. Unknown numeric category IDs are rejected.
+
+Changed metadata is reviewed again. `proposal_review.metadata_sha256` binds approval
+to the exact draft; before/after values and rejection reasons remain in
+`proposal_metadata_repairs` and the saved call artifacts. Identity rejections remain
+blocked. An LLM approval is still a draft-quality check, not independent verification
+or administrator approval.
+
+`process_technology_metadata(records, catalog, llm, root, task)` resumes only missing
+catalog resolution and unreviewed/failed proposal metadata. It skips unchanged accepted
+drafts, retries rejected/failed metadata review when explicitly resumed, clears stale
+resolution errors after success, and does not extract HTML again. An unchanged repair
+can be re-reviewed within the same correction budget; a mistaken rejection does not
+require inventing a metadata edit.
+Successful source extraction is not retried because of a catalog HTTP failure. Existing
+source interpretation corrections retain the rejected original and link a newly
+reviewed record through `correction_of`.
+
+### Posting URLs and saved extraction attempts (0.9.2, schema 1.7)
+
+Accepted listing links plus an unchanged fetched URL and unambiguous primary heading
+establish `page.job_detail`. Matching job/technology titles receive that exact URL in
+code, with provenance under `data.job_url_binding`. Listings, unrelated job titles and
+redirects to a different page do not receive this binding. HTML evidence checks remain.
+
+`engineering_page_reserve` defaults to three pages inside `max_pages`; it prioritizes
+direct service/engineering sources with plausible technology evidence. `page_kind`
+and observed new-record counts reduce repetitive news/navigation priority. A zero-yield
+penalty requires completed extraction of that objective; failed or partially processed
+pages do not count as evidence of low usefulness. These are discovery heuristics;
+every fetched page still receives all extraction objectives.
+
+`extract_saved_page` verifies stored native HTML and processes pending chunks without
+fetching again. `max_extraction_attempts=2` bounds each chunk and
+`max_saved_extraction_retries=5` bounds additional attempts across the run. Existing
+HTTP and total model-call limits still apply. `page.extraction_attempts`,
+`extraction-attempts/`, `discovery.saved_extraction_retries` and
+`discovery.pending_extractions` retain progress and failures, including planned chunks
+that have not started. Completed chunks and semantic rejections are not retried. This
+recovery function does not refresh sources.
+
+Source and proposal reviews use short request IDs, mapped exactly back to canonical
+record IDs. Unknown or truncated IDs are rejected rather than guessed.
+
+Native HTML, source neighborhoods, original claims, corrections, source reviews,
+proposal reviews and overview exclusions remain inspectable. Proposal metadata is an
+LLM-reviewed draft for administrator approval, not independently verified catalog data.

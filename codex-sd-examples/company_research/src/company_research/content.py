@@ -150,7 +150,8 @@ def normalize(text: str) -> str:
 
 def normalize_evidence(text: str) -> str:
     # Joining inline DOM nodes can insert a space before punctuation, e.g. <b>Yocto</b>.
-    return re.sub(r"\s+([,.;:!?\)\]\}])", r"\1", normalize(text))
+    text = normalize(text).translate(str.maketrans("‘’“”", "''\"\""))
+    return re.sub(r"\s+([,.;:!?\)\]\}])", r"\1", text)
 
 
 def source_finding(
@@ -176,6 +177,22 @@ def source_finding(
         if matched == "not_found":
             issues.append("evidence_fragment_absent")
     data = {k: v for k, v in record.items() if k != "evidence"}
+    binding = None
+    detail = page.get("job_detail")
+    title = data.get("title") if objective == "jobs" else data.get("job_title")
+    if (
+        objective in {"jobs", "technology_signals"}
+        and detail is not None
+        and detail["url"] == page["source_url"]
+        and isinstance(title, str)
+        and normalize_evidence(title) == normalize_evidence(detail["title"])
+    ):
+        binding = {
+            "basis": "observed_posting_and_primary_heading",
+            "model_url": data.get("job_url"),
+            "bound_url": detail["url"],
+        }
+        data["job_url"] = detail["url"]
     urls = {page["source_url"]}
     urls.update(
         urljoin(page["source_url"], str(a["href"])) for a in soup.find_all(href=True)
@@ -192,6 +209,11 @@ def source_finding(
         if data["value"] not in urls:
             issues.append("contact_url_absent")
     anchor_fields = {
+        "page_statements": [
+            key
+            for key in ("subject_name", "source_name", "section_heading", "job_title")
+            if data.get(key) is not None
+        ],
         "people": ["name"],
         "jobs": ["title"],
         "products_services": ["name"],
@@ -292,7 +314,9 @@ def source_finding(
     if objective == "technology_signals":
         # Short names such as R, C and Go must not match inside another word or C++/C#.
         technology_pattern = (
-            r"(?<![\w+#.])" + re.escape(normalize(data["technology"])) + r"(?![\w+#])"
+            r"(?<![\w+#.])"
+            + re.escape(normalize_evidence(data["technology"]))
+            + r"(?![\w+#])"
         )
         if re.search(technology_pattern, quoted) is None:
             issues.append("technology_not_in_evidence")
@@ -300,6 +324,15 @@ def source_finding(
             if data[key] is not None and normalize_evidence(data[key]) not in quoted:
                 issues.append(f"{key}_not_in_evidence")
     status = "needs_review" if issues else "source_matched"
+    if objective == "page_statements" and data.get("source_name") is not None:
+        pattern = (
+            r"(?<![\w+#.])"
+            + re.escape(normalize_evidence(data["source_name"]))
+            + r"(?![\w+#])"
+        )
+        if re.search(pattern, text) is None:
+            issues.append("source_name_not_in_page_text")
+            status = "needs_review"
     source = Source(
         url=page["source_url"],
         page_id=page["page_id"],
@@ -318,30 +351,81 @@ def source_finding(
         for key, value in data.items()
     }
     record_id = content_hash(objective + json.dumps(identity, sort_keys=True))[:24]
+    if binding is not None:
+        data["job_url_binding"] = binding
     return Finding(
         record_id=record_id, data=data, sources=[source], evidence_status=status
+    )
+
+
+def proposal_metadata_hash(proposal: dict) -> str:
+    return content_hash(
+        json.dumps(proposal, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     )
 
 
 def merge_finding(records: list[Finding], finding: Finding) -> None:
     for existing in records:
         if existing.record_id == finding.record_id:
-            if (
-                finding.data.get("catalog_match") is not None
-                and existing.data.get("catalog_match") is None
+            required_reviews = sorted(
+                {
+                    *existing.data.get("required_reviews", []),
+                    *finding.data.get("required_reviews", []),
+                }
+            )
+            incoming_reviewed = (
+                finding.data.get("interpretation_review", {}).get("supported") is True
+            )
+            existing_reviewed = (
+                existing.data.get("interpretation_review", {}).get("supported") is True
+            )
+            if finding.evidence_status == "source_matched" and (
+                incoming_reviewed or "interpretation_review" not in existing.data
             ):
-                existing.data["catalog_match"] = finding.data["catalog_match"]
-                existing.data.pop("catalog_error", None)
+                if incoming_reviewed or not existing_reviewed:
+                    incoming_match = finding.data.get("catalog_match") or {}
+                    resolved = (
+                        incoming_match.get("status") in {"matched", "proposed"}
+                        and finding.data.get("catalog_error") is None
+                    )
+                    metadata = {
+                        key: existing.data[key]
+                        for key in (
+                            "catalog_match",
+                            "catalog_error",
+                            "proposal_review",
+                            "proposal_metadata_repairs",
+                        )
+                        if key in existing.data
+                        and key not in finding.data
+                        and not (key == "catalog_error" and resolved)
+                        and not (
+                            key == "proposal_review"
+                            and incoming_match.get("status") == "matched"
+                            and resolved
+                        )
+                    }
+                    if incoming_match.get("status") == "matched" and resolved:
+                        required_reviews = [
+                            review
+                            for review in required_reviews
+                            if review != "proposal_metadata"
+                        ]
+                    existing.data = dict(finding.data) | metadata
+                    existing.evidence_status = "source_matched"
+            for review_key in ("interpretation_review", "proposal_review"):
+                if review_key not in existing.data and review_key in finding.data:
+                    existing.data[review_key] = dict(finding.data[review_key])
+                if (
+                    review_key == "interpretation_review"
+                    and existing.data.get(review_key, {}).get("status", "accepted")
+                    != "accepted"
+                ):
+                    existing.evidence_status = "needs_review"
+            if required_reviews:
+                existing.data["required_reviews"] = required_reviews
             for source in finding.sources:
                 if source not in existing.sources:
                     existing.sources.append(source)
-                    if source.evidence_status == "source_matched":
-                        existing.data.pop("interpretation_review", None)
-            if finding.evidence_status == "source_matched":
-                if (
-                    existing.data.get("interpretation_review", {}).get("supported")
-                    is not False
-                ):
-                    existing.evidence_status = "source_matched"
             return
     records.append(finding)

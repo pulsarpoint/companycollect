@@ -11,10 +11,14 @@ import httpx
 import tldextract
 from defusedxml import ElementTree
 
+from company_research.content import normalize
 from company_research.models import (
     OBJECTIVES,
     CandidateAssessment,
+    Finding,
+    Findings,
     Objective,
+    Page,
     ResearchConfig,
 )
 
@@ -104,8 +108,8 @@ def navigation_objectives(url: str, labels: list[str]) -> set[Objective]:
         "products_services": r"\b(?:services|products|solutions)\b",
         "people": r"\b(?:team|leadership|management|founders|board)\b",
         "company_relationships": r"\b(?:ownership|shareholders|subsidiaries|group|acquisition|investors)\b",
-        "jobs": r"\b(?:career|careers|jobs|vacancies|open.positions|openings|join.us|opportunities)\b",
-        "technology_signals": r"\b(?:career|careers|jobs|vacancies|engineering|technology)\b",
+        "jobs": r"\b(?:career|careers|job|jobs|vacancies|open.positions|openings|join.us|opportunities)\b",
+        "technology_signals": r"\b(?:career|careers|job|jobs|vacancies|engineering|technology)\b",
         "certifications_compliance": r"\b(?:certifications|certificates|quality|compliance|trust)\b",
         "document_links": r"\b(?:annual.report|financial|reports|investor|investors|disclosures|certificates)\b",
     }
@@ -221,6 +225,9 @@ class Candidate:
     title: str | None = None
     anchor_text: list[str] = field(default_factory=list)
     source: list[str] = field(default_factory=list)
+    link_contexts: list[dict] = field(default_factory=list)
+    job_record_ids: list[str] = field(default_factory=list)
+    observed_relevance: str | None = None
     assessed: bool = False
     assessment_attempts: int = 0
     assessment: CandidateAssessment | None = None
@@ -232,7 +239,10 @@ class Candidate:
             "title": self.title,
             "anchor_text": self.anchor_text,
             "source": self.source,
+            "link_contexts": self.link_contexts,
             "external": self.external,
+            "job_record_ids": self.job_record_ids,
+            "observed_relevance": self.observed_relevance,
         }
 
 
@@ -245,7 +255,12 @@ class CrawlQueue:
         self.site_domain = self.domain(site_url)
         self.candidates: dict[str, Candidate] = {}
         self.visited: set[str] = set()
-        self.external_domains: set[str] = set()
+        self.target_names: set[str] = set()
+        self.job_detail_attempts: set[str] = set()
+        self.job_details_fetched: set[str] = set()
+        self.engineering_attempts: set[str] = set()
+        self.page_yields: dict[str, dict] = {}
+        self.observed_record_ids: set[str] = set()
         self.focus_visits: Counter = Counter()
         self.navigation_visits: Counter = Counter()
         self.external_pages = 0
@@ -267,6 +282,7 @@ class CrawlQueue:
         source: str,
         title: str | None = None,
         label: str | None = None,
+        context: dict | None = None,
     ) -> None:
         try:
             url = normalize_url(url, source)
@@ -312,7 +328,8 @@ class CrawlQueue:
         if (
             external
             and source_domain != self.site_domain
-            and self.domain(url) not in self.external_domains
+            and url not in self.candidates
+            and not self.permits_external_navigation(source)
         ):
             self.excluded["outside_approved_scope"] += 1
             return
@@ -324,6 +341,15 @@ class CrawlQueue:
                 f"c{len(self.candidates) + 1:05}", url, external
             )
         candidate = self.candidates[url]
+        if (
+            context
+            and context not in candidate.link_contexts
+            and len(candidate.link_contexts) < 5
+        ):
+            candidate.link_contexts.append(context)
+            candidate.assessed = False
+            candidate.assessment = None
+            candidate.assessment_attempts = 0
         if (label and not candidate.anchor_text) or (title and not candidate.title):
             # A link label can clarify a URL previously assessed from a bare sitemap entry.
             candidate.assessed = False
@@ -339,10 +365,82 @@ class CrawlQueue:
         if source not in candidate.source and len(candidate.source) < 5:
             candidate.source.append(source)
 
+    def permits_external_navigation(self, source: str) -> bool:
+        parent = self.candidates.get(source)
+        return bool(
+            parent is not None
+            and parent.assessment is not None
+            and parent.assessment.target_relevance in {"target", "target_evidence"}
+            and parent.assessment.follow_scope == "target_navigation"
+            and parent.observed_relevance == "target"
+        )
+
+    def is_target(self, name: str | None) -> bool:
+        names = self.target_names | {
+            normalize((self.site_profile or {}).get("operator_name") or "")
+        }
+        return bool(name and normalize(name) in names)
+
+    def observe_findings(
+        self, page: Page, jobs: list[Finding], facts: list[Finding]
+    ) -> None:
+        for fact in facts:
+            review = fact.data.get("interpretation_review", {})
+            if (
+                fact.evidence_status == "source_matched"
+                and review.get("supported") is True
+                and fact.data.get("field") in {"legal_name", "trading_name"}
+                and self.is_target(fact.data.get("company"))
+            ):
+                self.target_names.add(normalize(fact.data["value"]))
+        for job in jobs:
+            if job.evidence_status != "source_matched" or not self.is_target(
+                job.data.get("employer")
+            ):
+                continue
+            job_url = job.data.get("job_url")
+            if not job_url:
+                continue
+            job_url = normalize_url(job_url)
+            candidate = self.candidates.get(job_url)
+            # Only a URL actually discovered in source HTML can become a follow-up.
+            if candidate is None:
+                continue
+            if job.record_id not in candidate.job_record_ids:
+                candidate.job_record_ids.append(job.record_id)
+            self.navigation_visits["jobs"] = max(1, self.navigation_visits["jobs"])
+        candidate = self.candidates.get(page.requested_url)
+        if candidate and candidate.job_record_ids and page.fetch_status == "fetched":
+            if any(
+                self.is_target(job.data.get("employer"))
+                and job.evidence_status == "source_matched"
+                and any(source.page_id == page.page_id for source in job.sources)
+                for job in jobs
+            ):
+                self.job_details_fetched.add(page.source_url)
+        if candidate and candidate.external:
+            on_page = [
+                fact
+                for fact in [*jobs, *facts]
+                if fact.evidence_status == "source_matched"
+                and any(source.page_id == page.page_id for source in fact.sources)
+            ]
+            candidate.observed_relevance = (
+                "target"
+                if any(
+                    self.is_target(
+                        fact.data.get("company") or fact.data.get("employer")
+                    )
+                    for fact in on_page
+                )
+                else "unconfirmed"
+            )
+
     def assessment_batch(self) -> list[Candidate]:
         candidates = sorted(
             [c for c in self.available() if not c.assessed],
             key=lambda c: (
+                not bool(c.job_record_ids),
                 c.assessment_attempts,
                 c.external,
                 not bool(c.anchor_text),
@@ -396,8 +494,118 @@ class CrawlQueue:
             and (not c.external or self.external_pages < self.config.max_external_pages)
         ]
 
+    def page_kind(self, candidate: Candidate) -> str:
+        if candidate.assessment and candidate.assessment.page_kind != "unknown":
+            return candidate.assessment.page_kind
+        path = urlsplit(candidate.url).path.casefold()
+        if re.search(r"/(?:news|blog|case-studies|press)(?:/|$)", path):
+            return "news"
+        if re.search(
+            r"engineering|design|simulation",
+            " ".join([path, *candidate.anchor_text]),
+            re.I,
+        ):
+            return "service_detail"
+        return "unknown"
+
+    def observe_page_yield(self, page: Page, records: Findings) -> None:
+        candidate = self.candidates.get(page.requested_url)
+        report = self.page_yields.setdefault(
+            page.page_id,
+            {
+                "url": page.source_url,
+                "page_kind": self.page_kind(candidate) if candidate else "unknown",
+                "new_record_counts": dict.fromkeys(OBJECTIVES, 0),
+            },
+        )
+        report["completed_objectives"] = (
+            list(page.objectives_examined)
+            if page.extraction_status == "complete"
+            else []
+        )
+        for objective in OBJECTIVES:
+            identifiers = {
+                finding.record_id
+                for finding in getattr(records, objective)
+                if finding.evidence_status == "source_matched"
+                and any(
+                    source.page_id == page.page_id
+                    and source.evidence_status == "source_matched"
+                    for source in finding.sources
+                )
+            }
+            report["new_record_counts"][objective] += len(
+                identifiers - self.observed_record_ids
+            )
+            self.observed_record_ids.update(identifiers)
+
+    def repetition_penalty(self, candidate: Candidate, objective: Objective) -> int:
+        kind = self.page_kind(candidate)
+        if kind not in {"news", "navigation", "job_list"}:
+            return 0
+        return sum(
+            report["page_kind"] == kind
+            and objective in report.get("completed_objectives", [])
+            and report["new_record_counts"][objective] == 0
+            for report in self.page_yields.values()
+        )
+
     def pick(self, found_counts: dict[Objective, int]) -> tuple[Candidate, str] | None:
         available = self.available()
+        followups = [c for c in available if c.job_record_ids]
+        if followups and len(self.job_detail_attempts) < self.config.job_detail_reserve:
+            candidate = min(
+                followups,
+                key=lambda c: (
+                    not bool(
+                        re.search(
+                            r"engineer|developer|software|firmware|embedded|dsp|data",
+                            " ".join([c.url, *c.anchor_text]),
+                            re.I,
+                        )
+                    ),
+                    c.url,
+                ),
+            )
+            self.job_detail_attempts.add(candidate.url)
+            self.focus_visits["jobs"] += 1
+            if candidate.external:
+                self.external_pages += 1
+            return candidate, "job_detail_followup"
+        engineering = [
+            candidate
+            for candidate in available
+            if not candidate.external
+            and candidate.assessment is not None
+            and candidate.assessment.target_relevance == "target"
+            and self.page_kind(candidate) == "service_detail"
+            and candidate.assessment.objectives.products_services.role == "direct"
+            and candidate.assessment.objectives.technology_signals.role == "direct"
+            and candidate.assessment.objectives.technology_signals.potential
+            in {"high", "medium"}
+        ]
+        if (
+            engineering
+            and len(self.engineering_attempts) < self.config.engineering_page_reserve
+        ):
+            candidate = min(
+                engineering,
+                key=lambda c: (
+                    not bool(
+                        re.search(
+                            r"engineering|simulation",
+                            " ".join([c.url, *c.anchor_text]),
+                            re.I,
+                        )
+                    ),
+                    c.assessment is None
+                    or c.assessment.objectives.technology_signals.potential != "high",
+                    c.url,
+                ),
+            )
+            self.engineering_attempts.add(candidate.url)
+            self.focus_visits["technology_signals"] += 1
+            return candidate, "engineering_followup"
         for objective in sorted(
             self.objective_order,
             key=lambda o: (self.focus_visits[o], found_counts[o] > 0),
@@ -415,6 +623,16 @@ class CrawlQueue:
             for candidate in available:
                 if candidate.assessment is None:
                     continue
+                if candidate.assessment.target_relevance in {
+                    "related_company",
+                    "unrelated",
+                }:
+                    continue
+                if candidate.external and candidate.assessment.target_relevance not in {
+                    "target",
+                    "target_evidence",
+                }:
+                    continue
                 potential = getattr(candidate.assessment.objectives, objective)
                 if (
                     potential.potential in {"high", "medium"}
@@ -425,13 +643,14 @@ class CrawlQueue:
                 candidate, potential = min(
                     useful,
                     key=lambda item: (
-                        item[1].potential != "high",
+                        self.repetition_penalty(item[0], objective),
                         item[1].role
                         != (
                             "navigation"
                             if self.navigation_visits[objective] == 0
                             else "direct"
                         ),
+                        item[1].potential != "high",
                         item[0].external,
                         item[0].url,
                     ),
@@ -441,7 +660,7 @@ class CrawlQueue:
                     self.navigation_visits[objective] += 1
                 if candidate.external:
                     self.external_pages += 1
-                    self.external_domains.add(self.domain(candidate.url))
+
                 return candidate, objective
         if self.explored < self.config.exploration_pages:
             uncertain = [
@@ -476,6 +695,27 @@ class CrawlQueue:
     def snapshot(self) -> dict:
         return {
             "site_domain": self.site_domain,
+            "target_names": sorted(
+                self.target_names
+                | {normalize((self.site_profile or {}).get("operator_name") or "")}
+                - {""}
+            ),
+            "job_coverage": {
+                "listing_urls_discovered": sum(
+                    bool(c.job_record_ids) for c in self.candidates.values()
+                ),
+                "detail_attempts": sorted(self.job_detail_attempts),
+                "details_fetched_with_target_jobs": sorted(self.job_details_fetched),
+                "unvisited_job_urls": sorted(
+                    c.url
+                    for c in self.candidates.values()
+                    if c.job_record_ids and c.url not in self.visited
+                ),
+            },
+            "engineering_coverage": {
+                "detail_attempts": sorted(self.engineering_attempts)
+            },
+            "page_yields": self.page_yields,
             "excluded": dict(self.excluded),
             "candidate_count": len(self.candidates),
             "visited_count": len(self.visited),

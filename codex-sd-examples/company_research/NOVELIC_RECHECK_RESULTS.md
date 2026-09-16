@@ -1,6 +1,6 @@
 # NOVELIC extraction and discovery recheck
 
-Saved 2026-09-07/08, package 0.5.0 / schema 1.4. PDF/OCR work remains paused.
+Saved 2026-09-07, package 0.5.0 / schema 1.4. PDF/OCR work remains paused.
 
 The extraction improved substantially after separating catalog matching from HTML
 extraction and adding focused evidence repair and structured interpretation review.

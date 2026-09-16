@@ -7,7 +7,7 @@ import httpx
 from test_package import page, response
 
 from company_research.content import HtmlWindow, source_finding
-from company_research.llm import OpenRouter
+from company_research.llm import ModelClient
 from company_research.models import CertificationClaim, ResearchConfig
 from company_research.profiles import (
     classify_site,
@@ -47,7 +47,7 @@ class ProfileHTTPTests(unittest.IsolatedAsyncioTestCase):
             async with httpx.AsyncClient(
                 base_url="https://example.test/", transport=httpx.MockTransport(serve)
             ) as client:
-                llm = OpenRouter(
+                llm = ModelClient(
                     client, "test-key", ResearchConfig(provider=None), root
                 )
                 finding = await classify_site(

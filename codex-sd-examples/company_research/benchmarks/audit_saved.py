@@ -13,7 +13,7 @@ from pydantic import ValidationError
 
 from company_research.analytics import summarize_technologies
 from company_research.content import HtmlWindow, source_finding
-from company_research.llm import ModelBudgetExceeded, ModelUnavailable, OpenRouter
+from company_research.llm import ModelBudgetExceeded, ModelClient, ModelUnavailable
 from company_research.models import RECORD_TYPES, ResearchConfig, ResearchResult
 from company_research.profiles import summarize_company
 from company_research.review import repair_evidence, review_claims
@@ -119,7 +119,7 @@ async def run(args):
         for o, rows in result.records
     }
     async with httpx.AsyncClient(base_url="https://openrouter.ai/api/v1/") as client:
-        llm = OpenRouter(client, key, config, root)
+        llm = ModelClient(client, key, config, root)
         for page_id, html in html_by_page.items():
             spans = sorted(
                 {

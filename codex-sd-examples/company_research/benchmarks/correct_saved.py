@@ -11,7 +11,7 @@ from dotenv import dotenv_values
 
 from company_research.analytics import summarize_technologies
 from company_research.content import merge_finding
-from company_research.llm import OpenRouter
+from company_research.llm import ModelClient
 from company_research.models import Findings, ResearchConfig, ResearchResult
 from company_research.profiles import summarize_company
 from company_research.review import correct_reviewed_claims, review_claims
@@ -39,7 +39,7 @@ async def run(args):
         },
     )
     async with httpx.AsyncClient(base_url="https://openrouter.ai/api/v1/") as client:
-        llm = OpenRouter(
+        llm = ModelClient(
             client,
             api_key,
             ResearchConfig(

@@ -6,11 +6,14 @@ administrator review queue in the Corpscout backoffice.
 1. Sync the ClickHouse catalog and accepted aliases to one validated local snapshot.
    Pin its content hash for a crawl. Search runs locally; credentials and the complete
    catalog are not sent to the model.
-2. Provide `search_technologies` during extraction. Preserve the observed name and
+2. After HTML extraction, provide `search_technologies` and category lookup during
+   focused technology resolution. The [MCP server](TECHNOLOGY_MCP.md) exposes the
+   same catalog and proposal behavior to other agents. Preserve the observed name and
    evidence separately from the canonical name. Exact and unique normalized matches
    take precedence over accepted aliases; search similarity only suggests candidates.
 3. Emit `matched` or `proposed` (pending administrator review). A proposal requires a
-   successful local search and structured proposed metadata. Failed searches are
+   successful local search, an LLM-written description, and either existing category
+   IDs or a nonempty category suggestion. Failed searches are
    processing errors; ambiguous named technologies go to review. Unknown metadata
    stays unknown for administrator review.
 4. Submit proposals with stable IDs, original observations, source evidence and the
@@ -25,8 +28,17 @@ administrator review queue in the Corpscout backoffice.
 
 The catalog currently uses the exact technology name as its identity. Company
 attribution remains separate from the page host, including external job boards.
-Neither a catalog match nor administrator approval turns a job requirement into
-confirmed company-wide technology usage.
+Neither a catalog match nor administrator approval turns a job requirement or
+`advertised_expertise` into confirmed company-wide technology usage.
+
+Source meaning and proposal metadata have separate gates. A proposal category or
+description rejection preserves the source-supported observation while withholding it
+from accepted summaries and submission. Metadata-only correction is bounded and
+re-reviewed; a hash binds each decision to the reviewed draft. Identity problems stay
+blocked. Suggested new categories do not have to exist in the current catalog.
+The backend enforces required review statuses and the metadata hash, in addition to
+source evidence, canonical identity, stable proposal IDs and category validation.
+Administrator review remains necessary before any new entry reaches the main catalog.
 
 ## Running the crawler
 
@@ -68,7 +80,7 @@ Full tool results stay in call artifacts; findings keep compact query/candidate 
 ## Submission and review
 
 The backend endpoint is `POST /admin/api/technology-submissions`. It accepts submission
-schema `1.0` generated from the current research schema `1.3`, with a maximum of 500 observations
+schema `1.0` generated from the current research schema `1.8`, with a maximum of 500 observations
 and 8 MB per request. It validates the complete batch before inserting proposals.
 The saved run ID and record ID make retransmission safe. Findings with a catalog
 processing error remain in the research JSON and are skipped with a stderr message.

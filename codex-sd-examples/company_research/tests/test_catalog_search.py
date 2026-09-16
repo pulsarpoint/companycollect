@@ -9,7 +9,7 @@ from test_package import page, response
 from test_technologies import signal
 
 from company_research.content import HtmlWindow
-from company_research.llm import OpenRouter, parse_model_json
+from company_research.llm import ModelClient, parse_model_json
 from company_research.models import OBJECTIVES, ResearchConfig
 from company_research.research import extract_window
 from company_research.technology_catalog import (
@@ -85,6 +85,9 @@ class CatalogTests(unittest.TestCase):
             ({"name": "C++"}, True),
         )
         for raw in [
+            '{"actor":"DMC","actor":"React"}',
+            '```json\n{"actor":"DMC","actor":"React"}\n```',
+            '{"actor":"DMC","actor":"DMC"}',
             '```json\n{"name":\n```',
             "```json\n{}\n```\n```json\n{}\n```",
             'Explanation: {"name":"C++"}',
@@ -182,6 +185,55 @@ class CatalogTests(unittest.TestCase):
             )
 
 
+def accepted_technology_reviews(body):
+    prompt = body["messages"][1]["content"]
+    if '"task": "proposal_review"' in prompt:
+        proposals = json.loads(prompt.split("INPUT DATA:\n", 1)[1])["proposals"]
+        return httpx.Response(
+            200,
+            json=response(
+                {
+                    "reviews": [
+                        {
+                            "record_id": proposal["record_id"],
+                            "identity_supported": True,
+                            "description_supported": True,
+                            "category_supported": True,
+                            "reason": "Appropriate tool draft",
+                        }
+                        for proposal in proposals
+                    ]
+                }
+            ),
+        )
+    if '"task": "claim_review"' not in prompt:
+        return None
+    claims = json.loads(prompt.split("INPUT DATA:\n", 1)[1])["claims"]
+    return httpx.Response(
+        200,
+        json=response(
+            {
+                "reviews": [
+                    {
+                        "record_id": claim["record_id"],
+                        "supported": True,
+                        "reason": "Specific source tool and signal",
+                        "source_subject": claim["data"].get("company"),
+                        "source_subject_kind": "company"
+                        if claim["data"].get("company")
+                        else "unknown",
+                        "source_object": None,
+                        "specific_technology": True,
+                        "source_signal": claim["data"]["signal"],
+                        "source_scope": claim["data"]["scope"],
+                    }
+                    for claim in claims
+                ]
+            }
+        ),
+    )
+
+
 class CatalogToolTests(unittest.IsolatedAsyncioTestCase):
     async def test_out_of_scope_names_do_not_escape_extraction_or_erase_service_details(
         self,
@@ -217,10 +269,13 @@ class CatalogToolTests(unittest.IsolatedAsyncioTestCase):
             async with httpx.AsyncClient(
                 base_url="https://test.invalid/",
                 transport=httpx.MockTransport(
-                    lambda request: httpx.Response(200, json=response(document))
+                    lambda request: (
+                        accepted_technology_reviews(json.loads(request.content))
+                        or httpx.Response(200, json=response(document))
+                    )
                 ),
             ) as client:
-                llm = OpenRouter(
+                llm = ModelClient(
                     client, "secret", ResearchConfig(max_corrections=0), Path(directory)
                 )
                 findings, complete, issues, assessed = await extract_window(
@@ -260,6 +315,9 @@ class CatalogToolTests(unittest.IsolatedAsyncioTestCase):
 
         def handle(request):
             body = json.loads(request.content)
+            review = accepted_technology_reviews(body)
+            if review is not None:
+                return review
             requests.append(body)
             if len(requests) == 1:
                 self.assertNotIn("tools", body)
@@ -308,7 +366,7 @@ class CatalogToolTests(unittest.IsolatedAsyncioTestCase):
             async with httpx.AsyncClient(
                 base_url="https://test.invalid/", transport=httpx.MockTransport(handle)
             ) as client:
-                llm = OpenRouter(
+                llm = ModelClient(
                     client, "secret", ResearchConfig(max_corrections=0), Path(directory)
                 )
                 findings, complete, issues, _ = await extract_window(
@@ -321,7 +379,7 @@ class CatalogToolTests(unittest.IsolatedAsyncioTestCase):
                 )
         self.assertTrue(complete, issues)
         self.assertEqual(len(requests), 3)
-        self.assertEqual(len(llm.calls), 3)
+        self.assertEqual(len(llm.calls), 5)
         self.assertTrue(all("tools" in request for request in requests[1:]))
         self.assertEqual(
             [finding.data["technology"] for _, finding in findings], ["Git", "Yocto"]
@@ -360,7 +418,7 @@ class CatalogToolTests(unittest.IsolatedAsyncioTestCase):
                     lambda request: httpx.Response(200, json=payload)
                 ),
             ) as client:
-                llm = OpenRouter(
+                llm = ModelClient(
                     client,
                     "secret",
                     ResearchConfig(max_technology_tool_rounds=1),

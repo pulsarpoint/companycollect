@@ -3,11 +3,12 @@ import unittest
 from pydantic import ValidationError
 from test_package import assessment, page
 
-from company_research.analytics import summarize_technologies
+from company_research.analytics import accepted_finding, summarize_technologies
 from company_research.content import HtmlWindow, merge_finding, source_finding
 from company_research.discovery import CrawlQueue
 from company_research.models import (
     OBJECTIVES,
+    Finding,
     ModelTechnologyMatch,
     ProposedTechnology,
     ResearchConfig,
@@ -43,6 +44,49 @@ def finding(record: dict, html: str, url: str = "https://example.test/jobs/engin
 
 
 class TechnologyTests(unittest.TestCase):
+    def test_saved_generic_technology_cannot_enter_accepted_summaries(self):
+        record = finding(
+            signal(
+                company=None,
+                job_employer=None,
+                job_title=None,
+                job_url=None,
+                evidence=["Python"],
+            ),
+            "<p>Python</p>",
+        )
+        self.assertTrue(accepted_finding(record))
+        # Finding.data intentionally accepts historical payloads without re-running
+        # TechnologySignal validation. The export boundary must enforce it too.
+        record.data["technology"] = "CMOS"
+        self.assertFalse(accepted_finding(record))
+        self.assertEqual(summarize_technologies([record]), [])
+
+    def test_credential_document_type_without_document_reference_is_held(self):
+        source = finding(
+            signal(
+                company=None,
+                job_employer=None,
+                job_title=None,
+                job_url=None,
+                evidence=["Python"],
+            ),
+            "<p>Python</p>",
+        ).sources[0]
+        record = Finding(
+            record_id="certificate",
+            sources=[source],
+            evidence_status="source_matched",
+            data={
+                "standard_name": "ISO 9001",
+                "document_type": "certificate",
+                "document_url": None,
+            },
+        )
+        self.assertFalse(accepted_finding(record))
+        record.data["document_type"] = None
+        self.assertTrue(accepted_finding(record))
+
     def test_formats_and_capabilities_cannot_be_technology_identities(self):
         for name in (
             "XML",
@@ -53,6 +97,12 @@ class TechnologyTests(unittest.TestCase):
             "FPGA",
             "AI",
             "RISC-V",
+            "CMOS",
+            "BiCMOS",
+            "SiGe",
+            "Child Presence Detection",
+            "Seat Occupancy Detection",
+            "Intrusion & Proximity Alert",
         ):
             with self.subTest(name=name):
                 with self.assertRaises(ValidationError):

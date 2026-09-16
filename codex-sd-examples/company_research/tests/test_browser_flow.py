@@ -4,6 +4,7 @@ import json
 import os
 import threading
 import unittest
+from contextlib import asynccontextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -13,6 +14,7 @@ import httpx
 from test_catalog_search import catalog_fixture
 
 from company_research import ResearchConfig, research_company
+from company_research.fetch import open_browser
 from company_research.models import OBJECTIVES, RECORD_TYPES
 from company_research.storage import content_hash
 
@@ -24,7 +26,30 @@ class BrowserFlowTests(unittest.IsolatedAsyncioTestCase):
     async def test_url_to_json_with_browser_sitemap_selection_failure_and_secondary_facts(
         self,
     ):
+        await self.run_browser_flow()
+
+    async def test_direct_deepseek_endpoint_for_full_crawler(self):
+        await self.run_browser_flow(api="deepseek")
+
+    async def test_closed_browser_retries_same_page_with_fresh_context(self):
+        await self.run_browser_flow(restart_budget=1)
+
+    async def test_closed_browser_exhaustion_stops_without_spending_remaining_pages(
+        self,
+    ):
+        await self.run_browser_flow(restart_budget=0)
+
+    async def run_browser_flow(
+        self, restart_budget: int | None = None, api="openrouter"
+    ):
         requested_paths = []
+        browsers = []
+
+        @asynccontextmanager
+        async def tracked_browser():
+            async with open_browser() as crawler:
+                browsers.append(crawler)
+                yield crawler
 
         class Website(BaseHTTPRequestHandler):
             def log_message(self, format: str, *args) -> None:
@@ -42,7 +67,7 @@ class BrowserFlowTests(unittest.IsolatedAsyncioTestCase):
                     )
                 elif self.path == "/":
                     body, status = (
-                        "<html><body><main><h1>DemoWorks</h1><p>We build equipment and provide engineering services "
+                        '<html><body><header><nav aria-label="Our businesses"><a href="https://nova.example/?utm_source=header#labs"><img alt="Nova Labs" src="/logo.png"></a></nav></header><main><h1>DemoWorks</h1><p>We build equipment and provide engineering services '
                         "for customers worldwide. Our website introduces our company and the people who work here.</p>"
                         '<p><a href="/contact">Contact our offices and staff</a> '
                         '<a href="/jobs">View our current job openings</a> '
@@ -51,7 +76,8 @@ class BrowserFlowTests(unittest.IsolatedAsyncioTestCase):
                         'DemoWorks welcomes customers to explore our products and talk to our team about their needs.</p>";</script>'
                         "<p>DemoWorks financial statements for year ended 31 March 2025: "
                         '<a href="/reports/accounts.pdf">Financial statements</a>.</p>'
-                        "</main></body></html>",
+                        '<p>Our implementation partner <a href="https://nova.example/?utm_source=header#labs">Nova Labs</a> helps customers deploy equipment.</p>'
+                        '</main><footer><a href="https://www.linkedin.com/company/demoworks/?trk=footer">LinkedIn</a></footer></body></html>',
                         200,
                     )
                 elif self.path == "/contact":
@@ -97,9 +123,17 @@ class BrowserFlowTests(unittest.IsolatedAsyncioTestCase):
         extraction_inputs = []
 
         async def model_boundary(client, request, **kwargs):
-            if request.url.host != "openrouter.ai":
+            model_host = "api.deepseek.com" if api == "deepseek" else "openrouter.ai"
+            if request.url.host != model_host:
                 return await original_send(client, request, **kwargs)
             payload = json.loads(request.content)
+            if api == "deepseek":
+                self.assertEqual(
+                    str(request.url), "https://api.deepseek.com/chat/completions"
+                )
+                self.assertEqual(payload["model"], "deepseek-flash")
+                self.assertEqual(payload["response_format"], {"type": "json_object"})
+                self.assertNotIn("provider", payload)
             data = json.loads(
                 next(
                     message["content"]
@@ -107,22 +141,62 @@ class BrowserFlowTests(unittest.IsolatedAsyncioTestCase):
                     if message["role"] == "user"
                 ).split("INPUT DATA:\n", 1)[1]
             )
-            if data.get("task") == "claim_review":
+            if data.get("task") == "external_link_context":
+                document = {
+                    "assessments": [
+                        {
+                            "link_id": link["link_id"],
+                            "relationship": "unknown",
+                            "basis": "unknown",
+                            "related_entity_name": None,
+                            "description": "No verified relationship in this browser boundary test.",
+                            "evidence": [],
+                        }
+                        for link in data["links"]
+                    ]
+                }
+            elif data.get("task") == "summary_review":
+                document = {
+                    "reviews": [
+                        {
+                            "statement_id": value["statement_id"],
+                            "supported": True,
+                            "reason": "Supported test statement",
+                        }
+                        for value in data["statements"]
+                    ]
+                }
+            elif data.get("task") == "claim_review":
                 document = {
                     "reviews": [
                         {
                             "record_id": claim["record_id"],
                             "supported": True,
                             "reason": "Explicit team usage in the quoted role description",
-                            "source_subject": None,
+                            "source_subject": claim["data"].get("company"),
                             "source_object": None,
                             "specific_technology": True,
-                            "source_signal": claim["data"]["signal"],
+                            "source_signal": claim["data"].get("signal"),
+                            "source_scope": claim["data"].get("scope"),
+                            "source_subject_kind": "company"
+                            if "technology" in claim["data"]
+                            and claim["data"].get("company")
+                            else None,
+                            "identity_basis": None,
+                            "source_value": claim["data"].get(
+                                "value", claim["data"].get("document_url")
+                            ),
+                            "source_claim_type": claim["data"].get("document_type"),
                         }
                         for claim in data["claims"]
                     ]
                 }
             elif data.get("task") == "site_classification":
+                if restart_budget is not None:
+                    # Kill the real Playwright context while the crawler is doing model work.
+                    await browsers[
+                        0
+                    ].crawler_strategy.browser_manager.default_context.close()
                 document = {
                     "site_types": ["company"],
                     "research_profiles": ["service_provider"],
@@ -274,18 +348,96 @@ class BrowserFlowTests(unittest.IsolatedAsyncioTestCase):
             with (
                 TemporaryDirectory() as directory,
                 patch.object(httpx.AsyncClient, "send", model_boundary),
+                patch("company_research.research.open_browser", tracked_browser),
             ):
                 root = Path(directory)
                 result = await research_company(
                     site_url,
                     technology_catalog=catalog_fixture(),
                     api_key="fake-key",
+                    api=api,
                     output_dir=root,
                     config=ResearchConfig(
-                        max_pages=5, max_model_calls=20, page_timeout_seconds=15.0
+                        model="deepseek-flash"
+                        if api == "deepseek"
+                        else ResearchConfig().model,
+                        max_pages=5,
+                        max_external_pages=0,
+                        max_model_calls=20,
+                        page_timeout_seconds=15.0,
+                        max_browser_restarts=restart_budget
+                        if restart_budget is not None
+                        else 2,
                     ),
                 )
                 self.assertEqual(result.status, "partial", result.model_dump())
+                self.assertEqual(result.discovery["model_api"], api)
+                external = [
+                    link
+                    for link in result.external_links
+                    if link.source_page_id == "p0001"
+                ]
+                nova = [
+                    link for link in external if link.destination_host == "nova.example"
+                ]
+                self.assertEqual(len(nova), 2)
+                self.assertEqual(nova[0].page_region, "header")
+                self.assertEqual(nova[0].image_alt, ["Nova Labs"])
+                self.assertEqual(nova[0].section_heading, "Our businesses")
+                self.assertEqual(nova[0].extraction_method, "rendered_html")
+                self.assertEqual(
+                    nova[0].url, "https://nova.example/?utm_source=header#labs"
+                )
+                self.assertIn(
+                    "Our implementation partner", nova[1].surrounding_text or ""
+                )
+                self.assertEqual(
+                    nova[0].html_sha256,
+                    content_hash(
+                        (root / nova[0].html_file).read_text(encoding="utf-8")
+                    ),
+                )
+                self.assertTrue(
+                    any(
+                        link.destination_host == "www.linkedin.com" for link in external
+                    )
+                )
+                saved = json.loads((root / "result.json").read_text(encoding="utf-8"))
+                self.assertEqual(saved["schema_version"], "1.10")
+                self.assertEqual(
+                    len(saved["external_links"]), len(result.external_links)
+                )
+                self.assertEqual(result.pages[0].external_link_count, len(external))
+                self.assertTrue(
+                    all(
+                        value.external_link_count is not None
+                        for value in result.pages
+                        if value.fetch_status == "fetched"
+                    )
+                )
+                self.assertEqual(result.records.company_relationships, [])
+                if restart_budget == 0:
+                    self.assertEqual(result.stop_reason, "browser_unavailable")
+                    self.assertEqual(len(result.pages), 2)
+                    self.assertEqual(len(browsers), 1)
+                    self.assertEqual(result.pages[1].fetch_status, "failed")
+                    self.assertEqual(result.pages[1].extraction_status, "not_assessed")
+                    return
+                if restart_budget == 1:
+                    self.assertEqual(len(browsers), 2)
+                    self.assertEqual(result.pages[1].attempts, 2)
+                    self.assertEqual(result.pages[1].fetch_status, "fetched")
+                    self.assertEqual(len(result.discovery["browser_recoveries"]), 1)
+                    self.assertFalse(
+                        json.loads((root / "fetches/p0002-1.json").read_text())[
+                            "success"
+                        ]
+                    )
+                    self.assertTrue(
+                        json.loads((root / "fetches/p0002-2.json").read_text())[
+                            "success"
+                        ]
+                    )
                 self.assertEqual(result.stop_reason, "page_budget")
                 self.assertEqual(len(result.pages), 5)
                 assert result.site_profile is not None
@@ -304,6 +456,9 @@ class BrowserFlowTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(len(result.discovery["document_candidates"]), 1)
                 self.assertEqual(result.objectives["jobs"].explicit_negative_count, 1)
                 self.assertEqual(result.objectives["people"].status, "not_found")
+                self.assertTrue(
+                    any(value.external_link_count == 0 for value in result.pages)
+                )
                 self.assertEqual(result.objectives["company_contacts"].record_count, 2)
                 self.assertEqual(result.pages[-1].selected_for, "technology_signals")
                 self.assertEqual(

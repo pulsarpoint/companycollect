@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "company-research"
-version = "0.5.0"
+version = "0.15.2"
 description = "Objective-driven company research with Crawl4AI and DeepSeek"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -21,9 +21,13 @@ dependencies = [
     "tldextract>=5,<6",
 ]
 
+[project.optional-dependencies]
+mcp = ["mcp>=1.28,<2"]
+
 [project.scripts]
 company-research = "company_research.cli:main"
 company-research-submit = "company_research.cli:submit"
+company-technology-mcp = "company_research.catalog_mcp:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/company_research"]

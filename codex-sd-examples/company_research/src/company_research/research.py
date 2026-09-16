@@ -1,17 +1,23 @@
 """One URL in, attributed company findings and explicit coverage statuses out."""
 
-import asyncio
 import json
 import logging
 import os
+from contextlib import AsyncExitStack
 from pathlib import Path
+from typing import Literal
 from uuid import uuid4
 
 import httpx
 from bs4 import BeautifulSoup
 from pydantic import ValidationError
 
-from company_research.analytics import summarize_technologies
+from company_research.analytics import (
+    accepted_finding,
+    source_supported_finding,
+    summarize_entities,
+    summarize_technologies,
+)
 from company_research.content import (
     HtmlWindow,
     merge_finding,
@@ -19,15 +25,19 @@ from company_research.content import (
     split_html,
 )
 from company_research.discovery import CrawlQueue, normalize_url, sitemap_urls
-from company_research.fetch import fetch_page, open_browser
-from company_research.llm import ModelBudgetExceeded, ModelUnavailable, OpenRouter
+from company_research.external_links import assess_external_links
+from company_research.fetch import BrowserUnavailable, fetch_page, open_browser
+from company_research.llm import ModelBudgetExceeded, ModelClient, ModelUnavailable
 from company_research.models import (
     OBJECTIVES,
     RECORD_TYPES,
     CandidateAssessment,
+    ChunkExtractionAttempt,
+    ExternalLink,
     Extraction,
     Finding,
     Findings,
+    JobDetailContext,
     ObjectiveStatus,
     Page,
     ResearchConfig,
@@ -42,11 +52,13 @@ from company_research.profiles import (
 from company_research.prompts import extraction_prompt, selection_prompt
 from company_research.resolution import resolve_technologies
 from company_research.review import (
+    REVIEW_OBJECTIVES,
     correct_reviewed_claims,
     repair_evidence,
     review_claims,
+    review_proposals,
 )
-from company_research.storage import utc_now, write_json
+from company_research.storage import content_hash, utc_now, write_json
 from company_research.technology_catalog import (
     TechnologyCatalog,
 )
@@ -54,7 +66,7 @@ from company_research.technology_catalog import (
 LOGGER = logging.getLogger(__name__)
 
 
-async def assess_links(queue: CrawlQueue, llm: OpenRouter, root: Path) -> list[dict]:
+async def assess_links(queue: CrawlQueue, llm: ModelClient, root: Path) -> list[dict]:
     errors = []
     for _ in range(queue.config.selection_batches_per_page):
         # Preserve capacity to extract the next page instead of consuming it all on ranking.
@@ -152,17 +164,19 @@ async def assess_links(queue: CrawlQueue, llm: OpenRouter, root: Path) -> list[d
 async def extract_window(
     window: HtmlWindow,
     page: Page,
-    llm: OpenRouter,
+    llm: ModelClient,
     root: Path,
     index: int,
     catalog: TechnologyCatalog | None = None,
     site_profile: dict | None = None,
+    attempt: int = 1,
 ) -> tuple[list[tuple[str, Finding]], bool, list[str], set[str]]:
     original = extraction_prompt(
         page.source_url,
         window.content,
         use_catalog=False,
         site_profile=site_profile,
+        known_job_detail=page.job_detail.model_dump() if page.job_detail else None,
     )
     extraction_schema = Extraction
     prompt = original
@@ -173,7 +187,7 @@ async def extract_window(
             reply = await llm.ask(
                 prompt,
                 extraction_schema.model_json_schema(),
-                task=f"extract:{page.page_id}:{index}",
+                task=f"extract:{page.page_id}:{index}:a{attempt}",
             )
         except (ModelBudgetExceeded, ModelUnavailable) as error:
             issues.append(str(error))
@@ -231,7 +245,7 @@ async def extract_window(
             }
         )
         write_json(
-            root / "extractions" / f"{page.page_id}-{index:03}.json",
+            root / "extractions" / f"{page.page_id}-{index:03}-a{attempt}.json",
             {
                 "page_id": page.page_id,
                 "source_start": window.start,
@@ -248,7 +262,7 @@ async def extract_window(
             )
         ):
             issues = await repair_evidence(
-                findings, window, page, llm, root, f"{page.page_id}-{index}"
+                findings, window, page, llm, root, f"{page.page_id}-{index}-a{attempt}"
             )
             attempts.append(
                 {
@@ -258,7 +272,7 @@ async def extract_window(
                 }
             )
             write_json(
-                root / "extractions" / f"{page.page_id}-{index:03}.json",
+                root / "extractions" / f"{page.page_id}-{index:03}-a{attempt}.json",
                 {
                     "page_id": page.page_id,
                     "source_start": window.start,
@@ -274,8 +288,29 @@ async def extract_window(
             + "\nCORRECTION: Return the complete JSON again. Fix these schema/JSON, catalog or evidence issues. Preserve correct data; copy separate exact supporting fragments including attribution. Never fabricate missing evidence:\n"
             + json.dumps(issues[:30])
         )
+    issues.extend(
+        await review_claims(
+            [
+                finding
+                for objective, finding in findings
+                if objective in REVIEW_OBJECTIVES
+            ],
+            llm,
+            root,
+            f"{page.page_id}-{index}-a{attempt}-source",
+        )
+    )
+    for objective in ("company_relationships", "technology_signals"):
+        corrections = await correct_reviewed_claims(
+            [finding for kind, finding in findings if kind == objective],
+            llm,
+            root,
+            f"{page.page_id}-{index}-a{attempt}-{objective}",
+        )
+        findings.extend((objective, finding) for finding in corrections)
+    source_complete = not issues
     if catalog is not None:
-        resolution_errors = await resolve_technologies(
+        metadata_errors = await process_technology_metadata(
             [
                 finding
                 for objective, finding in findings
@@ -284,15 +319,229 @@ async def extract_window(
             catalog,
             llm,
             root,
-            f"{page.page_id}-{index}",
+            f"{page.page_id}-{index}-a{attempt}",
         )
-        issues.extend(resolution_errors)
-        if resolution_errors:
-            assessed.discard("technology_signals")
-    return findings, not issues, issues, assessed
+        issues.extend(f"technology_metadata: {error}" for error in metadata_errors)
+    return findings, source_complete, issues, assessed
 
 
-def update_statuses(result: ResearchResult, queue: CrawlQueue, llm: OpenRouter) -> None:
+async def process_technology_metadata(
+    records: list[Finding],
+    catalog: TechnologyCatalog,
+    llm: ModelClient,
+    root: Path,
+    task: str,
+) -> list[str]:
+    """Resume catalog stages using existing claims; never re-extract source HTML."""
+    supported = [record for record in records if source_supported_finding(record)]
+    issues = await resolve_technologies(
+        [
+            record
+            for record in supported
+            if record.data.get("catalog_match") is None
+            or record.data.get("catalog_error")
+        ],
+        catalog,
+        llm,
+        root,
+        task,
+    )
+    issues.extend(
+        await review_proposals(supported, llm, root, task, catalog.category_options())
+    )
+    return issues
+
+
+def set_job_detail_context(page: Page, queue: CrawlQueue, html: str) -> None:
+    candidate = queue.candidates.get(page.requested_url)
+    if (
+        candidate is None
+        or not candidate.job_record_ids
+        or normalize_url(page.requested_url) != normalize_url(page.source_url)
+        or page.fetch_status != "fetched"
+    ):
+        page.job_detail = None
+        return
+    headings = {
+        h.get_text(" ", strip=True)
+        for h in BeautifulSoup(html, "html.parser").find_all("h1")
+    }
+    headings.discard("")
+    page.job_detail = (
+        JobDetailContext(url=page.source_url, title=next(iter(headings)))
+        if len(headings) == 1
+        else None
+    )
+
+
+async def extract_saved_page(
+    result: ResearchResult,
+    page: Page,
+    llm: ModelClient,
+    root: Path,
+    catalog: TechnologyCatalog,
+) -> None:
+    """Process saved native HTML, retrying only unfinished processing within run limits.
+
+    Completed chunks and semantic rejections are not repeated. Every attempt retains
+    its own artifacts; no browser or page-fetch operation is performed here.
+    """
+    if page.fetch_status != "fetched" or page.html_file is None:
+        raise ValueError("Extraction requires a fetched page with saved HTML")
+    html = (root / page.html_file).read_text(encoding="utf-8")
+    if content_hash(html) != page.html_sha256:
+        raise ValueError(f"Saved HTML hash mismatch: {page.page_id}")
+    windows = split_html(
+        html,
+        max_chars=result.config.chunk_chars,
+        overlap_chars=result.config.overlap_chars,
+    )
+    page.chunks_planned = len(windows)
+    retries = result.discovery.setdefault("saved_extraction_retries", [])
+    for index, window in enumerate(windows):
+        history = [a for a in page.extraction_attempts if a.chunk_index == index]
+        while len(history) < result.config.max_extraction_attempts:
+            if history and history[-1].status != "retry_pending":
+                break
+            if llm.unavailable or llm.remaining <= 3:
+                break
+            if history:
+                if len(retries) >= result.config.max_saved_extraction_retries:
+                    break
+                retries.append(
+                    {
+                        "page_id": page.page_id,
+                        "chunk_index": index,
+                        "attempt": len(history) + 1,
+                        "html_sha256": page.html_sha256,
+                        "started_at": utc_now(),
+                    }
+                )
+                LOGGER.info(
+                    "Retrying saved extraction %s chunk %s", page.page_id, index
+                )
+            attempt = ChunkExtractionAttempt(
+                chunk_index=index,
+                attempt=len(history) + 1,
+                started_at=utc_now(),
+                finished_at=None,
+                status="running",
+                call_ids=[],
+                errors=[],
+            )
+            page.extraction_attempts.append(attempt)
+            history.append(attempt)
+            first_call = len(llm.calls)
+            result.usage = llm.usage()
+            write_json(
+                root
+                / "extraction-attempts"
+                / f"{page.page_id}-{index:03}-a{attempt.attempt}.json",
+                {"html_sha256": page.html_sha256, **attempt.model_dump()},
+            )
+            write_json(root / "result.json", result.model_dump())
+            try:
+                findings, complete, errors, assessed = await extract_window(
+                    window,
+                    page,
+                    llm,
+                    root,
+                    index,
+                    catalog,
+                    result.site_profile.data if result.site_profile else None,
+                    attempt=attempt.attempt,
+                )
+                for objective, finding in findings:
+                    merge_finding(getattr(result.records, objective), finding)
+                page.objectives_examined = [
+                    o for o in OBJECTIVES if o in {*page.objectives_examined, *assessed}
+                ]
+                retryable = any(
+                    not error.startswith("technology_metadata:")
+                    and ("OpenRouter" in error or "ModelUnavailable" in error)
+                    for error in errors
+                ) or any(
+                    finding.data.get(key, {}).get("status") == "processing_failed"
+                    for _, finding in findings
+                    for key in ("interpretation_review",)
+                )
+                attempt.status = (
+                    "complete"
+                    if complete
+                    else "retry_pending"
+                    if retryable
+                    else "partial"
+                )
+                attempt.errors = errors
+            except (ModelBudgetExceeded, ModelUnavailable) as error:
+                attempt.status = "retry_pending"
+                attempt.errors = [str(error)]
+            except Exception as error:
+                attempt.status = "failed"
+                attempt.errors = [f"{type(error).__name__}: {error}"]
+            attempt.finished_at = utc_now()
+            attempt.call_ids = [c["call_id"] for c in llm.calls[first_call:]]
+            page.errors.extend(
+                error for error in attempt.errors if error not in page.errors
+            )
+            write_json(
+                root
+                / "extraction-attempts"
+                / f"{page.page_id}-{index:03}-a{attempt.attempt}.json",
+                {"html_sha256": page.html_sha256, **attempt.model_dump()},
+            )
+            write_json(root / "result.json", result.model_dump())
+    latest = {attempt.chunk_index: attempt for attempt in page.extraction_attempts}
+    page.chunks_completed = sum(
+        attempt.status == "complete" for attempt in latest.values()
+    )
+    page.extraction_status = (
+        "complete"
+        if windows and page.chunks_completed == len(windows)
+        else "partial"
+        if page.objectives_examined
+        else "failed"
+    )
+
+
+def update_statuses(
+    result: ResearchResult, queue: CrawlQueue, llm: ModelClient
+) -> None:
+    result.discovery["external_links"] = {
+        "pages_with_inventory": sum(
+            page.external_link_count is not None for page in result.pages
+        ),
+        "fetched_pages_without_inventory": [
+            page.page_id
+            for page in result.pages
+            if page.fetch_status in {"fetched", "duplicate"}
+            and page.external_link_count is None
+        ],
+        "observations": len(result.external_links),
+        "unique_urls": len({link.url for link in result.external_links}),
+        "destination_domains": len(
+            {link.destination_domain for link in result.external_links}
+        ),
+        "assessment_counts": {
+            status: sum(
+                link.assessment_status == status for link in result.external_links
+            )
+            for status in ("not_assessed", "assessed", "needs_review", "failed")
+        },
+        "note": "Observed external hyperlinks, including uncrawled destinations. Context assessments are source claims or hints, not verified corporate relationships.",
+    }
+    result.discovery["pending_technology_metadata"] = [
+        {
+            "record_id": record.record_id,
+            "technology": record.data["technology"],
+            "catalog_error": record.data.get("catalog_error"),
+            "proposal_review": record.data.get("proposal_review"),
+        }
+        for record in result.records.technology_signals
+        if source_supported_finding(record)
+        and (record.data.get("catalog_match") is None or not accepted_finding(record))
+    ]
+    result.entities = summarize_entities(result.records, result.pages)
     result.technology_summary = summarize_technologies(
         result.records.technology_signals
     )
@@ -306,7 +555,7 @@ def update_statuses(result: ResearchResult, queue: CrawlQueue, llm: OpenRouter) 
             for p in result.pages
         )
         records = getattr(result.records, objective)
-        supported = sum(r.evidence_status == "source_matched" for r in records)
+        supported = sum(accepted_finding(r) for r in records)
         negatives = sum(
             r.data["objective"] == objective and r.evidence_status == "source_matched"
             for r in result.records.explicit_negatives
@@ -348,6 +597,27 @@ def update_statuses(result: ResearchResult, queue: CrawlQueue, llm: OpenRouter) 
             note=note,
         )
     result.usage = llm.usage()
+    pending_extractions = []
+    for page in result.pages:
+        latest = {a.chunk_index: a for a in page.extraction_attempts}
+        for index in range(page.chunks_planned):
+            attempt = latest.get(index)
+            if attempt is not None and attempt.status not in {
+                "retry_pending",
+                "running",
+            }:
+                continue
+            pending_extractions.append(
+                {
+                    "page_id": page.page_id,
+                    "chunk_index": index,
+                    "attempts": attempt.attempt if attempt is not None else 0,
+                    "status": attempt.status
+                    if attempt is not None
+                    else "not_attempted",
+                }
+            )
+    result.discovery["pending_extractions"] = pending_extractions
     queue.coverage = {
         objective: status.model_dump()
         for objective, status in result.objectives.items()
@@ -360,6 +630,7 @@ async def research_company(
     url: str,
     *,
     api_key: str | None = None,
+    api: Literal["openrouter", "deepseek"] = "openrouter",
     output_dir: Path | None = None,
     config: ResearchConfig | None = None,
     technology_catalog: TechnologyCatalog,
@@ -369,11 +640,20 @@ async def research_company(
     The output directory must be empty/new. Partial results and every attempted
     model request are saved, including when a budget or external failure stops work.
     """
-    settings = config if config is not None else ResearchConfig()
+    settings = (
+        config
+        if config is not None
+        else (
+            ResearchConfig(model="deepseek-flash", provider=None)
+            if api == "deepseek"
+            else ResearchConfig()
+        )
+    )
     site_url = normalize_url(url)
-    key = api_key or os.environ.get("OPENROUTER_API_KEY")
+    key_name = "DEEPSEEK" if api == "deepseek" else "OPENROUTER_API_KEY"
+    key = api_key or os.environ.get(key_name)
     if not key:
-        raise ValueError("Set OPENROUTER_API_KEY or pass api_key")
+        raise ValueError(f"Set {key_name} or pass api_key")
     root = (
         output_dir
         if output_dir is not None
@@ -383,7 +663,7 @@ async def research_company(
         raise ValueError(f"Output directory is not empty: {root}")
     root.mkdir(parents=True, exist_ok=True)
     result = ResearchResult(
-        schema_version="1.4",
+        schema_version="1.10",
         run_id=uuid4().hex,
         technology_catalog={
             "version": technology_catalog.snapshot.version,
@@ -403,7 +683,7 @@ async def research_company(
         site_profile=None,
         company_overview=None,
         pages=[],
-        discovery={},
+        discovery={"model_api": api},
         usage={},
         errors=[],
         output_directory=str(root),
@@ -417,16 +697,21 @@ async def research_company(
         root / "settings.json",
         {
             "url": site_url,
+            "model_api": api,
             "config": settings.model_dump(),
             "objectives": OBJECTIVES,
             "extraction_schema": Extraction.model_json_schema(),
         },
     )
     async with (
-        httpx.AsyncClient(base_url="https://openrouter.ai/api/v1/") as model_http,
+        httpx.AsyncClient(
+            base_url="https://api.deepseek.com/"
+            if api == "deepseek"
+            else "https://openrouter.ai/api/v1/"
+        ) as model_http,
         httpx.AsyncClient() as web_http,
     ):
-        llm = OpenRouter(model_http, key, settings, root)
+        llm = ModelClient(model_http, key, settings, root, api=api)
         try:
             inventory = await sitemap_urls(web_http, site_url, settings)
             write_json(root / "sitemaps.json", inventory)
@@ -439,7 +724,9 @@ async def research_company(
                     queue.add(
                         candidate_url, source=inventory["url_sources"][candidate_url]
                     )
-            async with open_browser() as crawler:
+            async with AsyncExitStack() as browser_stack:
+                crawler = await browser_stack.enter_async_context(open_browser())
+                recoveries = result.discovery.setdefault("browser_recoveries", [])
                 next_url, focus = site_url, "input_url"
                 classification_attempts = 0
                 while len(result.pages) < settings.max_pages:
@@ -466,8 +753,55 @@ async def research_company(
                     )
                     result.pages.append(page)
                     LOGGER.info("Fetching %s (%s)", next_url, focus)
-                    html, links = await fetch_page(crawler, page, settings, root)
+                    while True:
+                        try:
+                            html, links = await fetch_page(
+                                crawler, page, settings, root
+                            )
+                            break
+                        except BrowserUnavailable:
+                            if len(recoveries) >= settings.max_browser_restarts:
+                                raise
+                            recovery = {
+                                "page_id": page.page_id,
+                                "failed_attempt": page.attempts,
+                                "started_at": utc_now(),
+                                "status": "restarting",
+                            }
+                            recoveries.append(recovery)
+                            LOGGER.warning(
+                                "Restarting browser for %s", page.requested_url
+                            )
+                            try:
+                                await browser_stack.aclose()
+                            except Exception as error:
+                                recovery["cleanup_error"] = str(error)[:500]
+                            try:
+                                crawler = await browser_stack.enter_async_context(
+                                    open_browser()
+                                )
+                            except Exception as error:
+                                recovery["status"] = "failed"
+                                raise BrowserUnavailable(
+                                    "Browser restart failed"
+                                ) from error
+                            recovery["status"] = "restarted"
+                            write_json(root / "browser-recoveries.json", recoveries)
                     if page.fetch_status == "fetched":
+                        inventory = root / "external-links" / f"{page.page_id}.json"
+                        if inventory.is_file():
+                            result.external_links.extend(
+                                ExternalLink.model_validate(value)
+                                for value in json.loads(
+                                    inventory.read_text(encoding="utf-8")
+                                )
+                            )
+                        # Persist before extraction/ranking can fail or exhaust budget.
+                        write_json(
+                            root / "external-links.json",
+                            [link.model_dump() for link in result.external_links],
+                        )
+                        write_json(root / "result.json", result.model_dump())
                         final_url = normalize_url(page.source_url)
                         duplicate = any(
                             p.page_id != page.page_id
@@ -491,6 +825,7 @@ async def research_company(
                                     source=page.source_url,
                                     title=link.get("title"),
                                     label=link.get("text"),
+                                    context=link.get("context"),
                                 )
                         if duplicate:
                             page.fetch_status = "duplicate"
@@ -544,85 +879,24 @@ async def research_company(
                                             "objective_order": queue.objective_order,
                                         },
                                     )
-                            outcomes = await asyncio.gather(
-                                *(
-                                    extract_window(
-                                        window,
-                                        page,
-                                        llm,
-                                        root,
-                                        i,
-                                        technology_catalog,
-                                        queue.site_profile,
-                                    )
-                                    for i, window in enumerate(windows)
-                                ),
-                                return_exceptions=True,
+                            set_job_detail_context(page, queue, html)
+                            await extract_saved_page(
+                                result, page, llm, root, technology_catalog
                             )
-                            for outcome in outcomes:
-                                if isinstance(outcome, BaseException):
-                                    page.errors.append(
-                                        f"{type(outcome).__name__}: {outcome}"
-                                    )
-                                else:
-                                    findings, complete, errors, assessed = outcome
-                                    page.chunks_completed += complete
-                                    page.errors.extend(errors)
-                                    page.objectives_examined = [
-                                        o
-                                        for o in OBJECTIVES
-                                        if o in {*page.objectives_examined, *assessed}
-                                    ]
-                                    for objective, finding in findings:
-                                        merge_finding(
-                                            getattr(result.records, objective), finding
-                                        )
-                            page.extraction_status = (
-                                "complete"
-                                if page.chunks_completed == page.chunks_planned
-                                else "partial"
-                                if page.objectives_examined
-                                or any(
-                                    isinstance(o, tuple) and bool(o[0])
-                                    for o in outcomes
+                    queue.observe_findings(
+                        page, result.records.jobs, result.records.company_profile
+                    )
+                    queue.observe_page_yield(page, result.records)
+                    if queue.permits_external_navigation(page.requested_url):
+                        for link in links:
+                            if isinstance(link.get("href"), str):
+                                queue.add(
+                                    link["href"],
+                                    source=page.requested_url,
+                                    title=link.get("title"),
+                                    label=link.get("text"),
+                                    context=link.get("context"),
                                 )
-                                else "failed"
-                            )
-                            claim_issues = await review_claims(
-                                [
-                                    finding
-                                    for objective in (
-                                        "company_relationships",
-                                        "technology_signals",
-                                    )
-                                    for finding in getattr(result.records, objective)
-                                    if any(
-                                        source.page_id == page.page_id
-                                        for source in finding.sources
-                                    )
-                                    and "interpretation_review" not in finding.data
-                                ],
-                                llm,
-                                root,
-                                page.page_id,
-                            )
-                            for objective in (
-                                "company_relationships",
-                                "technology_signals",
-                            ):
-                                corrections = await correct_reviewed_claims(
-                                    getattr(result.records, objective),
-                                    llm,
-                                    root,
-                                    f"{page.page_id}-{objective}",
-                                )
-                                for correction in corrections:
-                                    merge_finding(
-                                        getattr(result.records, objective), correction
-                                    )
-                            if claim_issues:
-                                page.errors.extend(claim_issues)
-                                page.extraction_status = "partial"
                     update_statuses(result, queue, llm)
                     write_json(root / "result.json", result.model_dump())
                     write_json(root / "queue.json", queue.snapshot())
@@ -635,14 +909,11 @@ async def research_company(
                         break
                     if llm.unavailable:
                         raise ModelUnavailable(
-                            "OpenRouter unavailable after repeated or permanent errors"
+                            f"{llm.api_name} unavailable after repeated or permanent errors"
                         )
                     result.errors.extend(await assess_links(queue, llm, root))
                     counts = {
-                        o: sum(
-                            r.evidence_status == "source_matched"
-                            for r in getattr(result.records, o)
-                        )
+                        o: sum(accepted_finding(r) for r in getattr(result.records, o))
                         for o in OBJECTIVES
                     }
                     selected = queue.pick(counts)
@@ -662,6 +933,9 @@ async def research_company(
                         break
                     candidate, focus = selected
                     next_url = candidate.url
+        except BrowserUnavailable as error:
+            result.stop_reason = "browser_unavailable"
+            result.errors.append({"stage": "browser", "error": str(error)})
         except ModelBudgetExceeded as error:
             result.stop_reason = "model_call_budget"
             result.errors.append({"stage": "model", "error": str(error)})
@@ -687,6 +961,7 @@ async def research_company(
             result.errors.append(
                 {"stage": "company_summary", "error": str(error)[:1000]}
             )
+        await assess_external_links(result.external_links, llm, root)
         result.finished_at = utc_now()
         update_statuses(result, queue, llm)
         any_examined = any(
