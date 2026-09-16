@@ -100,3 +100,13 @@ final merge remain integration work after page-level quality is evaluated.
 Not-selected means an uncalled analysis; failed means unsuccessful processing;
 processed with an empty array means no facts were returned. None establishes
 that the company lacks that information.
+
+## Mention-first implementation
+
+The reusable package now provides raw mention collection, a final relationship
+classifier, read-only catalog lookup and complete RustFS JSON submission. See
+[the evaluated results](MENTION_FLOW_RESULTS.md) and
+[the running guide](../company_research/PAGE_RESEARCH.md).
+The original one-pass/routed benchmark remains available through compatibility
+imports. `mention_replay.py` and `mention_validate.py` support independent replay
+of the classification and source-reference validation stages.

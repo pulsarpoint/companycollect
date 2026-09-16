@@ -2,6 +2,18 @@
 
 ## Resume here
 
+**Implemented: mention-first page workflow and complete RustFS submission (v0.16.0).**
+Read [the results](page_agent_lab/MENTION_FLOW_RESULTS.md) and
+[the running guide](company_research/PAGE_RESEARCH.md). Seven saved pages produced
+88 mentions, 174 other records and 446 links across five companies. Final complete
+JSON revisions were uploaded to the existing `crawls` bucket with read-back checksums.
+22/23 selected semantic controls passed; the unsupported AMD partnership is retained
+with an explicit manual-review flag. Source-linked does not mean semantically verified.
+Nontechnology quotation validation and fuzzy catalog identities remain unresolved;
+all five results are explicitly partial. The URL crawl controller has not yet been
+switched to this new page unit. Continue with that integration and focused validation
+work, not database/DNS/proposal ingestion.
+
 **Current scope: website crawler only.** Work on URL/page discovery, Crawl4AI,
 independent page extraction and link scoring, final technology classification,
 and complete JSON submission to RustFS/S3. DNS detection and integration with
@@ -28,7 +40,7 @@ ClickHouse parsing, tables, importer and proposal routing are deferred until the
 user resumes that work. Do not implement the previously suggested four-table
 schema or a database ingestion endpoint now. The existing proposal-only endpoint
 is separate and does not block complete S3 submissions. Use existing RustFS
-configuration; no uploader or upload has been implemented by this design update.
+configuration. The uploader and live uploads are now implemented; see the results above.
 
 **Latest user direction: defer technology relationships to a final agent.**
 Collect source-name mentions with original text sections, headings, source URLs

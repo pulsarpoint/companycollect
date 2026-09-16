@@ -4,12 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "company-research"
-version = "0.15.3"
+version = "0.16.0"
 description = "Objective-driven company research with Crawl4AI and DeepSeek"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "beautifulsoup4>=4.12,<5",
+    "boto3>=1.40,<2",
+    "jsonschema>=4.23,<5",
     "click>=8.1,<9",
     "clickhouse-driver>=0.2.9,<0.3",
     "cloakbrowser>=0.5.10,<0.6",
@@ -26,6 +28,8 @@ mcp = ["mcp>=1.28,<2"]
 
 [project.scripts]
 company-research = "company_research.cli:main"
+company-research-pages = "company_research.page_run:main"
+company-research-upload = "company_research.s3_results:main"
 company-research-submit = "company_research.cli:submit"
 company-technology-mcp = "company_research.catalog_mcp:main"
 

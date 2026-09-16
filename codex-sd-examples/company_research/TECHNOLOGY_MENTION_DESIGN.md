@@ -1,8 +1,9 @@
 # Collect mentions per page; classify relationships after crawling
 
 Accepted direction, 16 September 2026. This updates the page-agent design after
-the revised one-pass evaluation. **Design only: the current lab/runtime has not
-yet been changed to this contract or evaluated with it.**
+the revised one-pass evaluation. The reusable page/classifier implementation and
+saved-page runner are now available: [running guide](PAGE_RESEARCH.md). The existing
+URL crawler's queue has not yet been migrated to this unit.
 
 The user clarified the submission boundary: all research results, source sections,
 raw mentions and later classifications go into a complete JSON object in RustFS/S3.

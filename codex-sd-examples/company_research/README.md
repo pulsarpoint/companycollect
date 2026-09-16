@@ -3,16 +3,19 @@
 See the [research checkpoint](../RESEARCH_CHECKPOINT.md) for saved findings,
 known NOVELIC extraction gaps and next work. PDF/OCR experimentation is paused.
 
-The proposed [page-agent design](PAGE_AGENT_DESIGN.md) makes one page's extracted
-data and scored navigation targets the independently testable unit. It keeps queue
-scheduling in Python and merges source-backed results afterward. The design is
-saved; the current runtime has not yet been refactored to this contract.
+Version 0.16.0 implements [saved-page research and S3 submission](PAGE_RESEARCH.md):
+one page request collects all objectives, raw technology mentions and scored links;
+a bounded final pass classifies the mentions, followed by read-only catalog lookup.
+Complete JSON, original source text, exclusions and review items are stored in RustFS.
+The new package command is `company-research-pages`. The existing URL crawler still
+uses its earlier controller; integrating this page unit into that queue is next.
 
 The standalone [page-agent lab](../page_agent_lab/README.md) now implements both
 one-pass and routed-specialist variants. Its [seven-page results](../page_agent_lab/RESULTS.md)
 retained the selected facts in both versions; routing increased cost/time and added
 errors. One-pass is the user-approved integration baseline, with targeted specialists
-still to be tested. Neither variant is integrated into the crawler yet.
+still to be tested. Its common code now lives in the package; compatibility imports
+keep the original benchmark behavior unchanged.
 
 The [DSPy RLM experiment plan](DSPY_RLM_PLAN.md) is **postponed** and saved for
 future reference. The RLM implementation and runs have not started. Current work

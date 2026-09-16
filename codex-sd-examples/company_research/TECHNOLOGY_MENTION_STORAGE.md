@@ -5,8 +5,8 @@ as JSON to the existing RustFS S3 service**. Parsing those submissions and stori
 them in ClickHouse is a later task. This supersedes the earlier proposal to build
 four ClickHouse storage objects and a database ingestion endpoint now.
 
-This document records the submission contract; an uploader has not been
-implemented or run by this design update.
+Implemented by `s3_results.py` and exercised against the existing `crawls` bucket.
+See [the runnable page workflow](PAGE_RESEARCH.md) and its current limitations.
 
 ## Submission boundary
 

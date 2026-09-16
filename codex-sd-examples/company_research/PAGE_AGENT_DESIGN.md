@@ -17,7 +17,9 @@ Preserve the 0.15.2 baseline for the future autonomous comparison.
 sections per page; classify their company relationships after crawling. See
 [the mention-first design](TECHNOLOGY_MENTION_DESIGN.md). This supersedes the
 technology-signal portions below that ask the page agent for final classifications.
-The new contract is a design; it has not yet been implemented or benchmarked.
+This contract is now implemented as reusable package code and a saved-page runner:
+[running guide](PAGE_RESEARCH.md), [evaluated results](../page_agent_lab/MENTION_FLOW_RESULTS.md).
+The existing URL crawl controller still needs to be migrated to this page unit.
 
 **Submission boundary:** the complete research result, including all objectives,
 source text, mentions, classifications, links and coverage, goes to RustFS/S3 as
