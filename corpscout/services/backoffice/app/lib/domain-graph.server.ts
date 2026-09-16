@@ -170,13 +170,24 @@ export async function searchDomainGraph(
     clampPage(search.page),
     Math.max(1, Math.ceil(total / pageSize)),
   );
+  let offset = (page - 1) * pageSize;
+  let directionFilter: string = DIRECTION_FILTERS[search.direction];
+  // Mutual links sort first. Resolve names only for the group on this page.
+  if (search.direction === "all") {
+    if (Math.min(offset + pageSize, total) <= counts.mutual) {
+      directionFilter = "reciprocal = 1";
+    } else if (offset >= counts.mutual) {
+      directionFilter = "reciprocal = 0";
+      offset -= counts.mutual;
+    }
+  }
   const rows =
     total === 0
       ? []
       : await chQuery<DomainConnection>(
           `
     WITH connections AS (
-      SELECT * FROM (${ADJACENCY}) WHERE ${DIRECTION_FILTERS[search.direction]}
+      SELECT * FROM (${ADJACENCY}) WHERE ${directionFilter}
     )
     SELECT n.root_domain AS connected_domain, c.outgoing, c.incoming, c.reciprocal, n.n_hosts
     FROM (
@@ -189,7 +200,7 @@ export async function searchDomainGraph(
     LIMIT {limit:UInt32} OFFSET {offset:UInt64}
     ${QUERY_SETTINGS}
   `,
-          { ...graphParams, limit: pageSize, offset: (page - 1) * pageSize },
+          { ...graphParams, limit: pageSize, offset },
         );
   return { found: true, rows, counts, total, page, pageSize };
 }

@@ -91,6 +91,11 @@ beforeAll(async () => {
             "return.com",
             "inbound.com",
             "isolated.com",
+            "paged.com",
+            ...Array.from(
+              { length: 30 },
+              (_, index) => `neighbor-${String(index).padStart(2, "0")}.com`,
+            ),
           ]
         : ["original.com", "old-neighbor.se"];
     await state.client.insert({
@@ -116,6 +121,8 @@ beforeAll(async () => {
             [3, 4],
             [4, 0],
             [5, 0],
+            ...Array.from({ length: 30 }, (_, index) => [7, index + 8]),
+            ...Array.from({ length: 15 }, (_, index) => [index + 8, 7]),
           ]
         : [[0, 1]];
     await state.client.insert({
@@ -179,7 +186,7 @@ describe("real ClickHouse graph queries", () => {
     });
     const parts = await response.json<{ name: string; rows: string | number }>();
     expect(parts.map((part) => ({ ...part, rows: Number(part.rows) }))).toEqual([
-      { name: "by_node_id_lookup", rows: 9 },
+      { name: "by_node_id_lookup", rows: 40 },
     ]);
   });
   it("counts both directions, ignores self-links, and identifies direct reciprocity", async () => {
@@ -226,6 +233,36 @@ describe("real ClickHouse graph queries", () => {
       ),
     ).toEqual(["inbound.com", "return.com"]);
   });
+
+  it.each([
+    [1, 10, 0, 10],
+    [2, 10, 10, 20],
+    [999, 10, 20, 30],
+    [1, 15, 0, 15],
+    [2, 15, 15, 30],
+  ] as const)(
+    "preserves ordering across the mutual boundary on page %s with size %s",
+    async (page, pageSize, start, end) => {
+      const result = await searchDomainGraph({
+        ...search,
+        domain: "paged.com",
+        page,
+        pageSize,
+      });
+      const domains = Array.from(
+        { length: end - start },
+        (_, index) => `neighbor-${String(start + index).padStart(2, "0")}.com`,
+      );
+      expect(result.total).toBe(30);
+      expect(result.counts).toEqual({
+        all: 30,
+        mutual: 15,
+        outgoing: 15,
+        incoming: 0,
+      });
+      expect(result.rows.map((row) => row.connected_domain)).toEqual(domains);
+    },
+  );
 
   it("keeps reused numeric IDs isolated by release", async () => {
     const result = await searchDomainGraph({

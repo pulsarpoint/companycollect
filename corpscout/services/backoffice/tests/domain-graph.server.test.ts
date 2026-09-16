@@ -145,7 +145,7 @@ describe("ClickHouse domain graph search", () => {
   });
 
   it.each([
-    ["all", "1", 103],
+    ["all", "reciprocal = 0", 103],
     ["mutual", "reciprocal = 1", 21],
     ["outgoing", "outgoing = 1 AND incoming = 0", 62],
     ["incoming", "incoming = 1 AND outgoing = 0", 20],
@@ -190,7 +190,7 @@ describe("ClickHouse domain graph search", () => {
         seed_node_id: 7,
         release: search.release,
         limit: 50,
-        offset: (result.page - 1) * 50,
+        offset: (result.page - 1) * 50 - (direction === "all" ? 21 : 0),
       });
       const countSql = chQuery.mock.calls[1][0];
       expect(countSql).not.toContain("commoncrawl_domain_graph_nodes");
@@ -200,6 +200,37 @@ describe("ClickHouse domain graph search", () => {
       );
       for (const [query] of chQuery.mock.calls)
         expect(query).toContain("max_execution_time = 20");
+    },
+  );
+
+  it.each([
+    [1, "reciprocal = 1", 0],
+    [3, "reciprocal = 1", 100],
+    [4, "1", 150],
+    [5, "reciprocal = 0", 40],
+  ] as const)(
+    "resolves only the connection groups needed for all-connections page %s",
+    async (page, filter, offset) => {
+      chQuery.mockResolvedValueOnce([{ node_id: 7 }]);
+      chQuery.mockResolvedValueOnce([
+        {
+          total: "300",
+          mutual: "160",
+          outgoing_only: "70",
+          incoming_only: "70",
+        },
+      ]);
+      chQuery.mockResolvedValueOnce([]);
+      const result = await searchDomainGraph({
+        ...search,
+        direction: "all",
+        page,
+      });
+      expect(result.total).toBe(300);
+      expect(result.page).toBe(page);
+      const [sql, params] = chQuery.mock.calls[2];
+      expect(sql).toContain(`WHERE ${filter}`);
+      expect(params).toMatchObject({ limit: 50, offset });
     },
   );
 

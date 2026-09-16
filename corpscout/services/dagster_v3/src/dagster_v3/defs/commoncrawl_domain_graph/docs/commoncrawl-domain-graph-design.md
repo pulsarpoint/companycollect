@@ -173,6 +173,9 @@ numeric adjacency IDs only. It applies the chosen direction filter before joinin
 neighbor IDs to domain names. Counts therefore do not scan the node-name lookup
 projection, and a mutual-only search resolves names only for reciprocal neighbors.
 Alphabetical ordering within reciprocal/nonreciprocal results remains unchanged.
+For "All connections", a page entirely within the mutual or one-way group resolves
+names only for that group. Pages crossing the boundary retain both groups; pages
+after the boundary subtract the mutual count from their SQL offset.
 
 From `services/backoffice`, run `npm run typecheck`, `npm run build`, and
 `npx vitest run tests/domain-graph.server.test.ts tests/admin-graph.test.tsx`.
