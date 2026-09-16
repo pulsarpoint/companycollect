@@ -9,6 +9,15 @@ existing infrastructure detection pipelines are outside this task. The broader
 database plan has been moved to historical material; do not bring those branches
 back into the crawler workflow. ClickHouse parsing/storage remains deferred.
 
+**Central-system interaction is limited to technology catalog lookup.** Determine
+whether a discovered technology is already defined and retain its canonical
+identity when matched. Use the existing catalog search/local synced snapshot;
+keep source names and lookup results in the submitted JSON. A confirmed no-match
+can be marked not found; ambiguous/failed lookups remain unresolved, not new.
+Catalog membership does not establish company use. No central observation writes,
+catalog creation, proposal submission or other system integration is part of the
+current crawler task.
+
 **Latest correction: submit ALL research results as JSON to RustFS/S3.**
 Read [the submission contract](company_research/TECHNOLOGY_MENTION_STORAGE.md).
 The crawler's durable output is a complete, versioned result.json containing

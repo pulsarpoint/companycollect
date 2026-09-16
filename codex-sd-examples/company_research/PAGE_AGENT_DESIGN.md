@@ -5,6 +5,10 @@ scored next links, final technology classification and complete JSON submission
 to RustFS/S3. Earlier infrastructure-detection and database-integration planning
 has been retired from this workflow.
 
+The only central-system dependency is lookup of existing technology definitions.
+Return the matched canonical identity or an explicit lookup outcome in the S3
+JSON; all other downstream storage and system integration remain deferred.
+
 16 September 2026. **Standalone page unit and pilot completed; main runtime not
 changed.** Read [results](../page_agent_lab/RESULTS.md). DSPy RLM remains postponed.
 Preserve the 0.15.2 baseline for the future autonomous comparison.

@@ -78,6 +78,24 @@ Reclassification retains raw mentions and source sections, with new decisions
 in the new result revision. Catalog matches/proposal suggestions may be included
 when already available, but unresolved identity does not block submission.
 
+## Central technology lookup
+
+The crawler only needs to ask whether a technology is already defined in the
+central catalog. Use the existing search capability or its synced local snapshot.
+Preserve the source name and record the lookup outcome in the JSON:
+
+- Matched: include the existing canonical identity/name.
+- Not found: retain the source name as an unmatched candidate.
+- Ambiguous or failed lookup: retain that outcome; do not report a confirmed
+  absence or invent a canonical identity.
+
+Record the catalog snapshot/version used when available. Catalog membership and
+the technology's relationship to a company are independent decisions. An existing
+definition does not prove that the company uses it.
+
+The current task does not submit proposals or create central catalog entries.
+Any candidate descriptions/classifications stay in the S3 result for later use.
+
 ## Existing proposal endpoint
 
 `submitTechnologyProposals` currently stores only catalog proposals in `new_tech`

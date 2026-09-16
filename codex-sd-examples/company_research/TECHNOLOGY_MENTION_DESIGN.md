@@ -8,6 +8,8 @@ The user clarified the submission boundary: all research results, source section
 raw mentions and later classifications go into a complete JSON object in RustFS/S3.
 See [the submission contract](TECHNOLOGY_MENTION_STORAGE.md). Parsing and storing
 that JSON in ClickHouse is deferred. The proposal endpoint is a separate workflow.
+The only central-system interaction in scope is checking existing technology
+definitions and retaining canonical matches or unresolved lookup outcomes.
 
 ## Boundary
 
