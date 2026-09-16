@@ -9,7 +9,7 @@ from dagster_v3.defs.se_company.domain import tables
 from dagster_v3.defs.se_company.domain.evidence import digest, domain_evidence, json_text, requires_verification
 from dagster_v3.defs.se_company.domain.precedence import DOMAIN_PRECEDENCE
 
-FOLD_VERSION = "domain-fold-v1"
+FOLD_VERSION = "domain-fold-v2-source-support"
 LLM_THRESHOLD = 0.9
 COMPARE_COLUMNS = tuple(c for c in tables.MAIN_COLUMNS if c not in (
     "folded_at", "fold_version", "source_run_id", "last_seen_at", "fold_input_hash",
@@ -54,7 +54,11 @@ def fold_company(
         eligible = [r for r in candidates if effective_rank("association", r["source"], domain, precedence) > 0]
         if (association is None or association["source"] != "reviewer") and requires_verification(eligible):
             association = None
-        primary = winner("primary", domain, [r for r in candidates if r["is_primary"]], precedence)
+        supporting = [r for r in eligible if r["source"] in tables.EXTRACTOR_SOURCES and r["association"] != "not_connected" and effective_rank("primary", r["source"], domain, precedence) > 0]
+        supporting_sources = sorted({r["source"] for r in supporting})
+        strongest = winner("primary", domain, supporting, precedence)
+        primary = winner("primary", domain, [r for r in supporting if r["is_primary"]], precedence)
+        reviewer_primary = any(r["source"] == "reviewer" and r["is_primary"] and r["association"] == "connected" and r["confidence"] >= LLM_THRESHOLD for r in eligible)
         if not candidates and before is None and (decision is None or decision["action"] == "rejected"):
             continue
         evidence_hash = digest(json_text(domain_evidence(candidates)))
@@ -79,7 +83,7 @@ def fold_company(
             "association_source": association["source"] if association else "",
             "is_primary": 0, "primary_source": "",
             "confidence": float(association["confidence"] if association else max((r["confidence"] for r in candidates), default=0)),
-            **provenance, "evidence_hash": evidence_hash,
+            **provenance, "supporting_sources": supporting_sources, "evidence_hash": evidence_hash,
             "verification_status": "not_requested", "verification_reason": "", "verification_input_hash": "",
             "review_status": "unreviewed", "review_note": "", "reviewed_by": "", "reviewed_at": None, "reviewed_evidence_hash": "",
             "active": 0, "inactive_reason": "",
@@ -104,12 +108,13 @@ def fold_company(
         row["active"] = int(row["association"] == "connected" and (bool(candidates) or confirmed))
         row["inactive_reason"] = "" if row["active"] else "rejected" if row["association"] == "not_connected" else "withdrawn" if not candidates else "unverified"
         primary_scores[domain] = (
-            not (decision is not None and decision["action"] == "confirmed_primary"),
+            not ((decision is not None and decision["action"] == "confirmed_primary") or (decision is None and reviewer_primary)),
+            -len(supporting_sources),
+            -effective_rank("primary", strongest["source"], domain, precedence) if strongest else 0,
             primary is None,
-            -effective_rank("primary", primary["source"], domain, precedence) if primary else 0,
             -row["confidence"], domain,
         )
-        row["primary_source"] = "reviewer" if confirmed and decision["action"] == "confirmed_primary" else primary["source"] if primary else row["association_source"]
+        row["primary_source"] = "reviewer" if (confirmed and decision["action"] == "confirmed_primary") or (decision is None and reviewer_primary) else strongest["source"] if strongest else row["association_source"]
         output.append(row)
     active = [r for r in output if r["active"]]
     if active:

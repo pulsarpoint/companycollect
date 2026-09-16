@@ -7,7 +7,7 @@ sources; neither operation crawls or downloads websites.
 
 ## Storage
 
-Migration 000408 owns the tables:
+Migrations 000408 and 000417 own the tables:
 
 - `se_company_domain_suggestion`: current source observation by company/source/slot;
   typed claims plus source record, evidence, stable slot and removal tombstones.
@@ -39,19 +39,49 @@ acknowledges the storage flush, not just acceptance into an in-memory buffer.
 
 ## Sources and precedence
 
-Initial contributors are Wikidata official websites linked through Swedish identifiers or
+Contributors are Brave official-website answers, Wikidata official websites linked through Swedish identifiers or
 verified company LEIs, ESEF filing domain evidence, and Common Crawl identity matches.
 Each extractor owns its source rows. A source withdrawal writes a tombstone; it cannot
 remove another source's evidence. Source sync compares stable content, excluding routine
 run IDs and extraction timestamps, so rebuilding unchanged source tables is a no-op.
 
 Precedence is per field (`website`, `association`, `primary`): reviewer 20000,
-ESEF 900, Wikidata 800, Common Crawl 600. A high rank does not turn a weak mention into
+Brave 1000, ESEF 900, Wikidata 800, Common Crawl 600. A high rank does not turn a weak mention into
 proof. Company/domain overrides take precedence over company-wide and global ranks.
 A company can have many connected domains; primary selection is deterministic and picks
-at most one active domain. Reviewer primary decisions lead, followed by positive primary
-claims, source precedence, confidence and domain name. No uniqueness across companies:
+at most one active domain. Reviewer primary decisions lead, followed by the number of
+distinct supporting automated sources, then source precedence, primary claims, confidence
+and domain name. Multiple records from one source count once. Withdrawn, disabled and
+negative claims do not contribute support. The persisted `supporting_sources` list is
+shown in company detail cards and the review queue; source support is separate from
+verification. A corroborated domain beats a domain proposed only by Brave. No uniqueness across companies:
 a legitimate group domain may be shared.
+
+## Brave extraction
+
+`se_company_domain_suggestions_brave` belongs to `se_company_domain` and depends on
+`se_company_brave_domains`. It reads successful Swedish `official_website` answers,
+extracts unique registrable domains in first-mention order (including bare and Unicode
+hosts), and stores a JSON list in `se_company_domain_brave_extraction`. The checkpoint
+records the response ID, SHA-256 answer hash and extractor version per company. It does
+not assume response IDs are sortable: changed IDs, hashes or extractor versions are
+processed even when the new ID sorts before the old one. Empty lists are checkpointed too.
+
+The normal materialization scans only changed responses, pages company IDs from a fixed
+scratch scope, then reads current answers and saves suggestions in batches. `execute: true`
+applies the changes; the default previews them. `company_ids` is a test override, not the
+production selection mechanism. New answers arriving after scope preparation are picked
+up on the next materialization. `se_company_domain_brave_job` runs this source and its
+precedence; the normal sync and refresh jobs include it alongside the other sources.
+
+Each domain is a stable Brave source slot. A changed answer withdraws missing Brave slots
+without touching any other source. Synchronous suggestion inserts must finish before the
+checkpoint insert; a failed checkpoint is safely replayed without duplicating observations.
+The source pool serializes extraction runs. The full saved answer and query accompany each
+candidate as verification evidence. Answers can mention unrelated alternatives, so extraction
+is not a connected-domain verdict: candidates begin uncertain at confidence 0.5. The first
+mention is only a primary preference. Existing verification and human review decide whether
+the domain is connected before it can become the published primary.
 
 ## Verification
 
@@ -86,7 +116,7 @@ these as `verification_recovered`, so recovery never looks like an additional pa
 
 Sweden → Processing gains Domains with the same two global actions:
 
-1. **Sync inputs**: sync the three source suggestion sets and precedence.
+1. **Sync inputs**: sync the four source suggestion sets and precedence.
 2. **Full processing**: sync → `se_company_domain_verification` → `se_company_domain_publish`.
 
 Full processing has model and prompt configuration when verification is enabled, defaults

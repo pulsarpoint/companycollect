@@ -216,10 +216,10 @@ def test_batch_cap_and_reviewer_decisions_never_spend_unnecessary_calls(monkeypa
 
 def test_two_domain_jobs_include_global_sync_and_optional_verification_config():
     from dagster_clickhouse import ClickhouseResource
-    from dagster_v3.defs.se_company.domain import assets, common_crawl, esef, jobs, wikidata
+    from dagster_v3.defs.se_company.domain import assets, brave, common_crawl, esef, jobs, wikidata
     definitions = [assets.se_company_domain_publish, assets.se_company_domain_verification, assets.se_company_domain_precedence_clickhouse,
                    wikidata.se_company_domain_suggestions_wikidata, esef.se_company_domain_suggestions_esef_filing,
-                   common_crawl.se_company_domain_suggestions_common_crawl_identity]
+                   common_crawl.se_company_domain_suggestions_common_crawl_identity, brave.se_company_domain_suggestions_brave]
     own = set().union(*(asset.keys for asset in definitions))
     external = set().union(*(asset.dependency_keys for asset in definitions)) - own
     repo = dg.Definitions(assets=[*definitions, *(dg.AssetSpec(key) for key in external)],
@@ -603,3 +603,44 @@ def test_clickhouse_outage_fails_asset_and_stops_further_llm_calls(monkeypatch, 
     assert len(client.data[tables.VERIFICATION_TABLE]) == (0 if failure_stage == "startup" else 1)
     assert not client.data[tables.MAIN_TABLE]
     assert not result.asset_materializations_for_node("se_company_domain_publish")
+
+
+def test_distinct_source_support_beats_brave_and_duplicate_observations():
+    rows = [suggestion('brave', domain='brave.se'),
+            suggestion('esef_filing', domain='brave.se', slot='filing-one'),
+            suggestion('esef_filing', domain='brave.se', slot='filing-two'),
+            suggestion('wikidata', domain='supported.se', is_primary=0),
+            suggestion('esef_filing', domain='supported.se', is_primary=0),
+            suggestion('common_crawl_identity', domain='supported.se', is_primary=0)]
+    result, _ = fold(rows)
+    primary = next(row for row in result if row['is_primary'])
+    assert primary['root_domain'] == 'supported.se'
+    assert primary['supporting_sources'] == ['common_crawl_identity', 'esef_filing', 'wikidata']
+    brave_row = next(row for row in result if row['root_domain'] == 'brave.se')
+    assert brave_row['supporting_sources'] == ['brave', 'esef_filing']
+    # One source with repeated records still loses to two independent sources.
+    result, _ = fold([r for r in rows if r['source'] not in ('brave', 'common_crawl_identity')])
+    assert next(row for row in result if row['is_primary'])['root_domain'] == 'supported.se'
+
+
+def test_brave_breaks_equal_support_ties_but_never_overrides_human_primary():
+    rows = [suggestion('brave', domain='brave.se'), suggestion('esef_filing', domain='reviewed.se')]
+    result, _ = fold(rows)
+    assert next(row for row in result if row['is_primary'])['root_domain'] == 'brave.se'
+    for manual in ([rule('confirmed_primary', domain='reviewed.se')], []):
+        sources = rows if manual else [*rows, suggestion('reviewer', domain='reviewed.se')]
+        result, _ = fold(sources, rules=manual)
+        primary = next(row for row in result if row['is_primary'])
+        assert primary['root_domain'] == 'reviewed.se'
+        assert primary['primary_source'] == 'reviewer'
+
+
+def test_withdrawn_negative_and_disabled_sources_do_not_count_as_support():
+    rows = [suggestion('brave'), suggestion('esef_filing', association='not_connected'),
+            suggestion('wikidata', removed=1), suggestion('common_crawl_identity'),
+            suggestion('reviewer_draft')]
+    override = dict(company_id='', root_domain='', field='primary', source='common_crawl_identity', precedence=0, removed=0)
+    result, _ = fold(rows, precedence=[override])
+    assert result[0]['supporting_sources'] == ['brave']
+    assert not result[0]['active']
+    assert not result[0]['is_primary']

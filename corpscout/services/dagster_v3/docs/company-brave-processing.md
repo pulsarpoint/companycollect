@@ -352,3 +352,14 @@ verified bounded admission, eight real answers and a resume without new requests
 
 The [initialization asset pilot](company-brave-initialization-pilot-2026-09-15.md)
 verified selection, idempotent rematerialization and handoff to processing.
+
+## Swedish domain suggestions
+
+After publishing Brave responses, materialize `se_company_domain_suggestions_brave` in
+`se_company_domain` with `execute: true` (or use Sweden → Processing → Domains). It
+extracts a JSON domain list and saves per-company response-ID/hash checkpoints in
+`se_company_domain_brave_extraction`, then supplies `se_company_domain_verification`
+through the shared suggestion table. Empty lists also advance progress; changed answers
+replace only Brave's suggestions. See the [domain design](../src/dagster_v3/defs/se_company/domain/docs/domain-design.md)
+for verification and ranking. Human primary decisions lead; distinct source support
+comes next; Brave has the highest automated precedence when support counts tie.

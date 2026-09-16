@@ -8,7 +8,7 @@ SYNC_ASSETS = (*EXTRACTOR_ASSETS, "se_company_domain_precedence_clickhouse")
 
 se_company_domain_sync_job = dg.define_asset_job(
     "se_company_domain_sync_job", selection=dg.AssetSelection.assets(*SYNC_ASSETS),
-    description="Sync Wikidata, ESEF and Common Crawl observations and source precedence. No LLM calls or publishing.",
+    description="Sync Brave, Wikidata, ESEF and Common Crawl observations and source precedence. No LLM calls or publishing.",
 )
 se_company_domain_refresh_job = dg.define_asset_job(
     "se_company_domain_refresh_job",

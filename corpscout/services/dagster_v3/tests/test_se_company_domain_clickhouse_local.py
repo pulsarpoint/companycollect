@@ -44,7 +44,7 @@ def setup_sql():
 INSERT INTO corpscout.company_domains (country_code,company_id,root_domain,website_url,website_host,review_status,reviewed_by,reviewed_at,is_active,first_seen_at,last_seen_at,resolved_at)
 VALUES ('SE','5561552760','legacy.se','https://legacy.se','legacy.se','confirmed_related','operator','2026-09-13 00:00:00',1,'2026-09-13 00:00:00','2026-09-13 00:00:00','2026-09-13 00:00:00');
 """
-    return existing + seed + "\n" + (MIGRATIONS / "000408_corpscout_se_company_domain_entity.up.sql").read_text().split("CREATE ROLE")[0] + SCHEMA
+    return existing + seed + "\n" + (MIGRATIONS / "000408_corpscout_se_company_domain_entity.up.sql").read_text().split("CREATE ROLE")[0] + (MIGRATIONS / "000417_corpscout_se_company_domain_brave.up.sql").read_text() + SCHEMA
 
 
 @pytest.mark.parametrize("join_use_nulls", [0, 1])

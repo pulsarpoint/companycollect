@@ -1,4 +1,4 @@
-"""Swedish company-domain entity; column order is owned by migration 000408."""
+"""Swedish company-domain entity; column order is owned by migrations 000408 and 000417."""
 
 DATABASE = "corpscout"
 GROUP_NAME = "se_company_domain"
@@ -9,8 +9,8 @@ PRECEDENCE_TABLE = "se_company_domain_precedence"
 RULE_TABLE = "se_company_domain_rule"
 VERIFICATION_TABLE = "se_company_domain_verification"
 TABLES = (SUGGESTION_TABLE, MAIN_TABLE, HISTORY_TABLE, PRECEDENCE_TABLE, RULE_TABLE, VERIFICATION_TABLE)
-SOURCES = ("wikidata", "esef_filing", "common_crawl_identity", "reviewer", "reviewer_draft")
-EXTRACTOR_SOURCES = SOURCES[:3]
+EXTRACTOR_SOURCES = ("brave", "wikidata", "esef_filing", "common_crawl_identity")
+SOURCES = (*EXTRACTOR_SOURCES, "reviewer", "reviewer_draft")
 EXTRACTOR_ASSETS = tuple(f"se_company_domain_suggestions_{source}" for source in EXTRACTOR_SOURCES)
 FOLDED_FIELDS = ("website", "association", "primary")
 SUGGESTION_COLUMNS = (
@@ -26,7 +26,7 @@ MAIN_COLUMNS = (
     "evidence_hash", "verification_status", "verification_reason", "verification_input_hash",
     "review_status", "review_note", "reviewed_by", "reviewed_at", "reviewed_evidence_hash",
     "active", "inactive_reason", "first_seen_at", "last_seen_at", "folded_at",
-    "fold_version", "fold_input_hash", "source_run_id",
+    "fold_version", "fold_input_hash", "source_run_id", "supporting_sources",
 )
 HISTORY_COLUMNS = (*MAIN_COLUMNS, "changed_fields", "changed_at", "change_kind", "fold_run_id")
 PRECEDENCE_COLUMNS = ("company_id", "root_domain", "field", "source", "precedence", "removed", "decided_by", "note", "decided_at")

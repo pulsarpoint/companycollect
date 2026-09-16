@@ -430,6 +430,7 @@ EXPECTED_MIGRATIONS = (
     "000414_corpscout_se_company_brave_domains",
     "000415_corpscout_brave_history_query_settings",
     "000416_corpscout_brave_history_reader",
+    "000417_corpscout_se_company_domain_brave",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
