@@ -34,6 +34,9 @@ class BrowserFlowTests(unittest.IsolatedAsyncioTestCase):
     async def test_news_site_stops_after_homepage_without_sitemap_or_other_pages(self):
         await self.run_browser_flow(api="deepseek", skip_site=True)
 
+    async def test_robots_denial_preserves_reason_without_model_or_page_request(self):
+        await self.run_browser_flow(api="deepseek", deny_robots=True)
+
     async def test_closed_browser_retries_same_page_with_fresh_context(self):
         await self.run_browser_flow(restart_budget=1)
 
@@ -43,7 +46,11 @@ class BrowserFlowTests(unittest.IsolatedAsyncioTestCase):
         await self.run_browser_flow(restart_budget=0)
 
     async def run_browser_flow(
-        self, restart_budget: int | None = None, api="openrouter", skip_site=False
+        self,
+        restart_budget: int | None = None,
+        api="openrouter",
+        skip_site=False,
+        deny_robots=False,
     ):
         requested_paths = []
         browsers = []
@@ -61,7 +68,12 @@ class BrowserFlowTests(unittest.IsolatedAsyncioTestCase):
             def do_GET(self):
                 requested_paths.append(self.path)
                 if self.path == "/robots.txt":
-                    body, status = "User-agent: *\nAllow: /", 200
+                    body, status = (
+                        "User-agent: *\nDisallow: /"
+                        if deny_robots
+                        else "User-agent: *\nAllow: /",
+                        200,
+                    )
                 elif self.path == "/sitemap.xml":
                     body, status = (
                         "<urlset><url><loc>/contact</loc></url><url><loc>/jobs</loc></url>"
@@ -400,6 +412,27 @@ class BrowserFlowTests(unittest.IsolatedAsyncioTestCase):
                         else 2,
                     ),
                 )
+                if deny_robots:
+                    self.assertEqual(result.status, "needs_review")
+                    self.assertEqual(result.stop_reason, "initial_page_unavailable")
+                    self.assertEqual(result.usage["calls"], 0)
+                    self.assertEqual(len(result.pages), 1)
+                    self.assertEqual(result.pages[0].attempts, 1)
+                    self.assertEqual(result.pages[0].status_code, 403)
+                    self.assertIn(
+                        "Access denied by robots.txt", result.pages[0].errors[0]
+                    )
+                    self.assertNotIn("/", requested_paths)
+                    self.assertNotIn("/sitemap.xml", requested_paths)
+                    self.assertEqual(extraction_inputs, [])
+                    self.assertFalse((root / "sitemaps.json").exists())
+                    self.assertEqual(
+                        json.loads((root / "fetches/p0001-1.json").read_text())[
+                            "error"
+                        ],
+                        "Access denied by robots.txt",
+                    )
+                    return
                 if skip_site:
                     self.assertEqual(
                         result.status, "skip_crawling", result.model_dump()

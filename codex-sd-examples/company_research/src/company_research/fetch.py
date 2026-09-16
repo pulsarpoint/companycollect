@@ -7,7 +7,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from cloakbrowser import launch_async
-from crawl4ai import AsyncWebCrawler, BrowserConfig, CacheMode, CrawlerRunConfig
+from crawl4ai import (
+    AsyncWebCrawler,
+    BrowserConfig,
+    CacheMode,
+    CrawlerRunConfig,
+    CrawlResult,
+)
 
 from company_research.external_links import collect_external_links, context_payload
 from company_research.models import Page, ResearchConfig
@@ -71,7 +77,10 @@ async def fetch_page(
         try:
             async with asyncio.timeout(config.page_timeout_seconds + 30):
                 results = await crawler.arun(url=page.requested_url, config=run_config)  # ty: ignore[missing-argument] -- Crawl4AI decorator typing.
-            result = next(iter(results))
+            # Crawl4AI returns a bare result on robots denial, a container normally.
+            result = (
+                results if isinstance(results, CrawlResult) else next(iter(results))
+            )
             page.source_url = result.redirected_url or result.url
             page.status_code = result.status_code
             write_json(

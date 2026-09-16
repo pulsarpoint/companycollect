@@ -2,6 +2,14 @@
 
 ## Resume here
 
+**Requested-site check completed: Informer, B92 and Google (v0.17.1).**
+Both news homepages returned `skip_crawling` after one direct DeepSeek Flash/high
+classification call, with 112- and 152-word descriptions. No sitemap or further page
+was requested. Google's first-page fetch was denied by Crawl4AI's robots check,
+so it returned `needs_review` without a model call. Fixed the fetch adapter's handling
+of the bare CrawlResult returned on robots denial; preserved original failures and
+the corrected retry. See [the report](company_research/SITE_GATE_REQUESTED_RESULTS.md).
+
 **First-page company eligibility gate implemented (v0.17.0 / schema 1.11).**
 The URL crawler fetches and classifies its first page before sitemap discovery,
 link ranking or detailed extraction. Consumer content/news/community/search,

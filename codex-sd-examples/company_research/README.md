@@ -3,6 +3,11 @@
 See the [research checkpoint](../RESEARCH_CHECKPOINT.md) for saved findings,
 known NOVELIC extraction gaps and next work. PDF/OCR experimentation is paused.
 
+Version 0.17.1 handles Crawl4AI's bare result on robots denial as well as its normal
+result container. The [Informer/B92/Google test](SITE_GATE_REQUESTED_RESULTS.md)
+skipped both news portals after one model call each; Google's robots-check rejection
+now returns its actual reason and `needs_review`, without a model call.
+
 Version 0.17.0 adds a mandatory [first-page eligibility gate](SITE_PROFILE_FLOW.md)
 to `research_company` and the `company-research` URL command (result schema 1.11).
 Only an identified company/brand's own business site proceeds to sitemap discovery,

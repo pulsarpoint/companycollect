@@ -81,7 +81,9 @@ Google exposed a pre-existing fetch adapter error (`'tuple' object has no attrib
 'redirected_url'`), preserved after two fetch attempts. It was not retried through
 another browsing path or scored as a correct model classification. The crawler's
 failed-first-page path is tested to stop without model work, discovery or extraction.
-Resolving that fetch incompatibility is separate work.
+The subsequent [Informer/B92/Google test](SITE_GATE_REQUESTED_RESULTS.md) fixed that
+adapter incompatibility in 0.17.1 and identified the underlying robots-check denial.
+The original run artifacts remain unchanged.
 
 - Initial run: `data/site-gate-20260916-v1`, 12 calls, 105,836 input and 5,459 output tokens.
 - Revised replay: `data/site-gate-20260916-v2`, 12 calls, 95,431 input and 5,198 output tokens.
