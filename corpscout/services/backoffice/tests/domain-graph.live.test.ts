@@ -152,6 +152,15 @@ beforeAll(async () => {
       ],
     });
   }
+  const indexDdl = readFileSync(
+    new URL(
+      "../../../clickhouse/migrations/000419_corpscout_domain_graph_lookup_index.up.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  for (const query of indexDdl.split(";").filter((sql) => sql.trim()))
+    await state.client.command({ query });
 }, 60_000);
 
 afterAll(async () => {
@@ -160,6 +169,19 @@ afterAll(async () => {
 });
 
 describe("real ClickHouse graph queries", () => {
+  it("materializes the replacement lookup index for existing releases", async () => {
+    const response = await state.client!.query({
+      query: `
+      SELECT name, sum(rows) AS rows FROM system.projection_parts
+      WHERE active AND database='corpscout' AND table='commoncrawl_domain_graph_nodes'
+      GROUP BY name`,
+      format: "JSONEachRow",
+    });
+    const parts = await response.json<{ name: string; rows: string | number }>();
+    expect(parts.map((part) => ({ ...part, rows: Number(part.rows) }))).toEqual([
+      { name: "by_node_id_lookup", rows: 9 },
+    ]);
+  });
   it("counts both directions, ignores self-links, and identifies direct reciprocity", async () => {
     expect(
       (await getDomainGraphReleases()).map((row) => row.graph_release),

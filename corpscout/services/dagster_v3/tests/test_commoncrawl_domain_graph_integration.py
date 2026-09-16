@@ -138,6 +138,12 @@ def graph_ch():
         for statement in MIGRATION.read_text().split(";"):
             if statement.strip():
                 client.execute(statement)
+        index_migration = (
+            MIGRATION.parent / "000419_corpscout_domain_graph_lookup_index.up.sql"
+        )
+        for statement in index_migration.read_text().split(";"):
+            if statement.strip():
+                client.execute(statement)
         yield client
     finally:
         if client is not None:

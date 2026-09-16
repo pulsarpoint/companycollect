@@ -48,7 +48,7 @@ Migration `000418_corpscout_commoncrawl_domain_graph` owns three tables and a vi
 
 | Object | Grain and access |
 | --- | --- |
-| `commoncrawl_domain_graph_nodes` | `(graph_release, node_id)`; domain-name sort order plus `by_node_id` projection |
+| `commoncrawl_domain_graph_nodes` | `(graph_release, node_id)`; domain-name sort order plus `by_node_id_lookup` projection |
 | `commoncrawl_domain_graph_edges` | `(graph_release, source_node_id, target_node_id)`; outgoing sort order plus `by_target` projection for incoming links |
 | `commoncrawl_domain_graph_snapshots` | One published record per complete release, read with `FINAL` |
 | `commoncrawl_domain_connections` | Parameterized view returning connected domains and direction flags |
@@ -57,7 +57,20 @@ Raw gzip TSV is parsed by ClickHouse's native `url()` reader. The vertices conta
 `node_id`, reversed domain labels, and host count; SQL reverses the labels into the
 normal domain name. Edges contain two UInt32 IDs. Both native tables are partitioned
 by immutable release. Projections store both access orders and are maintained by
-ClickHouse during inserts and merges.
+ClickHouse during inserts and merges. Migration `000419_corpscout_domain_graph_lookup_index`
+replaces the original node-ID projection with a lookup projection containing only
+release, node ID, domain name and host count. Its 128-row index granules avoid
+reading thousands of unrelated names for each scattered neighbor ID. The migration
+materializes existing data before removing the old projection, and future imports
+inherit the projection through their cloned staging-table DDL. See ClickHouse's
+[projection settings](https://clickhouse.com/docs/reference/statements/alter/projection#with-settings).
+
+On a populated graph, materializing this projection can take many minutes and
+wait for existing merges. Set `read_timeout=1800` (seconds) in the migration
+connection URL, including when `.env` overrides the Makefile default. If the client
+disconnects, inspect `system.mutations` before retrying: ClickHouse keeps the
+materialization running. Complete and verify all remaining migration statements
+before marking that migration version clean; do not rewind the shared ledger.
 
 **Documented deviations from the normal DuckDB pipeline:** this is a direct bulk
 file-to-ClickHouse load, with no local analytical transform or company filtering.
@@ -130,7 +143,7 @@ Pass the normalized pay-level domain, without scheme, path, or `www`.
 
 The view restricts adjacency scans to the seed IDs before resolving neighbor names.
 This avoids joining the whole graph just to answer one-domain queries. Verify the
-incoming `by_target` and node `by_node_id` projections with `EXPLAIN`/query logs
+incoming `by_target` and node `by_node_id_lookup` projections with `EXPLAIN`/query logs
 after a full import. Broad hub domains naturally return much larger neighborhoods.
 
 ## Backoffice graph explorer
@@ -154,6 +167,12 @@ every 10 seconds while the page is visible. Search remains disabled until the
 snapshot marker is published. Dagster status failures do not block searches of
 published releases. Unpublished graphs, absent domains, isolated domains,
 empty direction filters, and query failures have distinct UI states.
+
+The UI resolves the searched domain once, then computes direction counts using
+numeric adjacency IDs only. It applies the chosen direction filter before joining
+neighbor IDs to domain names. Counts therefore do not scan the node-name lookup
+projection, and a mutual-only search resolves names only for reciprocal neighbors.
+Alphabetical ordering within reciprocal/nonreciprocal results remains unchanged.
 
 From `services/backoffice`, run `npm run typecheck`, `npm run build`, and
 `npx vitest run tests/domain-graph.server.test.ts tests/admin-graph.test.tsx`.

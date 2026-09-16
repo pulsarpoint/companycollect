@@ -187,11 +187,17 @@ describe("ClickHouse domain graph search", () => {
       expect(sql).not.toContain(search.domain);
       expect(sql).not.toContain(search.release);
       expect(params).toEqual({
-        domain: search.domain,
+        seed_node_id: 7,
         release: search.release,
         limit: 50,
         offset: (result.page - 1) * 50,
       });
+      const countSql = chQuery.mock.calls[1][0];
+      expect(countSql).not.toContain("commoncrawl_domain_graph_nodes");
+      expect(countSql).not.toContain("commoncrawl_domain_connections");
+      expect(sql.indexOf(`WHERE ${filter}`)).toBeLessThan(
+        sql.indexOf("INNER JOIN"),
+      );
       for (const [query] of chQuery.mock.calls)
         expect(query).toContain("max_execution_time = 20");
     },

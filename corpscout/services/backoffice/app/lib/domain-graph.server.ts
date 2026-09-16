@@ -75,8 +75,23 @@ export interface DomainGraphResult {
 // Keep interactive searches bounded, including queries against very large hubs.
 const QUERY_SETTINGS = `SETTINGS use_query_condition_cache = 0,
   max_execution_time = 20, max_threads = 4, max_memory_usage = 2000000000`;
-const CONNECTIONS = `corpscout.commoncrawl_domain_connections(
-  graph_release = {release:String}, domain = {domain:String})`;
+// Count and filter on numeric IDs before reading any neighbor names. Both edge
+// directions use their existing sorted indexes; self-links are not neighbors.
+const ADJACENCY = `
+  SELECT node_id, max(outgoing_link) AS outgoing, max(incoming_link) AS incoming,
+    toUInt8(outgoing AND incoming) AS reciprocal
+  FROM (
+    SELECT target_node_id AS node_id, toUInt8(1) AS outgoing_link, toUInt8(0) AS incoming_link
+    FROM corpscout.commoncrawl_domain_graph_edges
+    WHERE graph_release = {release:String} AND source_node_id = {seed_node_id:UInt32}
+    UNION ALL
+    SELECT source_node_id AS node_id, toUInt8(0) AS outgoing_link, toUInt8(1) AS incoming_link
+    FROM corpscout.commoncrawl_domain_graph_edges
+    WHERE graph_release = {release:String} AND target_node_id = {seed_node_id:UInt32}
+  )
+  WHERE node_id != {seed_node_id:UInt32}
+  GROUP BY node_id
+`;
 const DIRECTION_FILTERS = {
   all: "1",
   mutual: "reciprocal = 1",
@@ -123,6 +138,10 @@ export async function searchDomainGraph(
       pageSize,
     };
   }
+  const graphParams = {
+    release: search.release,
+    seed_node_id: seed[0].node_id,
+  };
 
   const [countRow] = await chQuery<{
     total: string;
@@ -135,10 +154,10 @@ export async function searchDomainGraph(
       countIf(reciprocal = 1) AS mutual,
       countIf(outgoing = 1 AND incoming = 0) AS outgoing_only,
       countIf(incoming = 1 AND outgoing = 0) AS incoming_only
-    FROM ${CONNECTIONS}
+    FROM (${ADJACENCY})
     ${QUERY_SETTINGS}
   `,
-    params,
+    graphParams,
   );
   const counts = {
     all: Number(countRow.total),
@@ -156,14 +175,21 @@ export async function searchDomainGraph(
       ? []
       : await chQuery<DomainConnection>(
           `
-    SELECT connected_domain, outgoing, incoming, reciprocal, n_hosts
-    FROM ${CONNECTIONS}
-    WHERE ${DIRECTION_FILTERS[search.direction]}
+    WITH connections AS (
+      SELECT * FROM (${ADJACENCY}) WHERE ${DIRECTION_FILTERS[search.direction]}
+    )
+    SELECT n.root_domain AS connected_domain, c.outgoing, c.incoming, c.reciprocal, n.n_hosts
+    FROM (
+      SELECT node_id, root_domain, n_hosts
+      FROM corpscout.commoncrawl_domain_graph_nodes
+      WHERE graph_release = {release:String} AND node_id IN (SELECT node_id FROM connections)
+    ) AS n
+    INNER JOIN connections AS c USING (node_id)
     ORDER BY reciprocal DESC, connected_domain ASC
     LIMIT {limit:UInt32} OFFSET {offset:UInt64}
     ${QUERY_SETTINGS}
   `,
-          { ...params, limit: pageSize, offset: (page - 1) * pageSize },
+          { ...graphParams, limit: pageSize, offset: (page - 1) * pageSize },
         );
   return { found: true, rows, counts, total, page, pageSize };
 }
