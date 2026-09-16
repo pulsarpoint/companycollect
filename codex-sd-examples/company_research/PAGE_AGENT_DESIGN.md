@@ -10,6 +10,10 @@ sections per page; classify their company relationships after crawling. See
 technology-signal portions below that ask the page agent for final classifications.
 The new contract is a design; it has not yet been implemented or benchmarked.
 
+**Submission boundary:** the complete research result, including all objectives,
+source text, mentions, classifications, links and coverage, goes to RustFS/S3 as
+versioned JSON. [ClickHouse parsing and ingestion are deferred](TECHNOLOGY_MENTION_STORAGE.md).
+
 Compare two internal implementations: a combined extraction request and a router
 followed by objective-specific extractors. Both retain the same page input and
 `data`/`links` outputs. See [the two-pass experiment and prompt examples](PAGE_AGENT_TWO_PASS.md).

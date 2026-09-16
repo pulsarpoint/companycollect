@@ -4,11 +4,10 @@ Accepted direction, 16 September 2026. This updates the page-agent design after
 the revised one-pass evaluation. **Design only: the current lab/runtime has not
 yet been changed to this contract or evaluated with it.**
 
-The user also confirmed persistence of this separation. See
-[the database contract](TECHNOLOGY_MENTION_STORAGE.md): source sections and raw
-mentions are retained, classifications are versioned, and analytical observations
-are derived from the selected complete revision. The existing proposal endpoint
-does not yet store this broader research output.
+The user clarified the submission boundary: all research results, source sections,
+raw mentions and later classifications go into a complete JSON object in RustFS/S3.
+See [the submission contract](TECHNOLOGY_MENTION_STORAGE.md). Parsing and storing
+that JSON in ClickHouse is deferred. The proposal endpoint is a separate workflow.
 
 ## Boundary
 
@@ -162,8 +161,10 @@ certainty. Conflicting dates, actors and signals remain separate observations.
 
 After classification, use the existing catalog search/MCP capability for eligible
 identities. Missing catalog membership does not erase a supported observation.
-Only eligible specific technologies can become new proposals, with the existing
-category/description requirements. Other technical context stays outside proposals.
+Only eligible specific technologies can become new proposal suggestions, with the
+existing category/description requirements. Other technical context stays outside
+proposals. Suggestions are retained in the S3 JSON; downstream database ingestion
+and proposal routing are deferred.
 Keep classification decisions separate from the immutable mention collection so
 they can be revised without another crawl.
 

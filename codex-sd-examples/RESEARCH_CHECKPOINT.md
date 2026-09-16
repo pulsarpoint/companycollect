@@ -2,19 +2,17 @@
 
 ## Resume here
 
-**Latest confirmation: persist raw mentions and later decisions separately.**
-Read [the storage contract](company_research/TECHNOLOGY_MENTION_STORAGE.md).
-Planned ClickHouse objects: company_research_sections, technology_mentions,
-technology_mention_classifications, technology_classification_revisions.
-Keep shared original sections in the database and full artifacts in RustFS;
-derive technology_observations from selected complete decision revisions.
-Keep canonical technology names and `(country_code, company_id)` identities.
-Known matches and excluded/review mentions must be persisted too: the current
-submitTechnologyProposals code only inserts new_tech proposals and counts known
-matches. Proposal approval changes catalog identity, never source text or a
-relationship's meaning. This is a saved contract, not an applied migration or an
-implemented ingestion path. Freeze the page/final-agent payload and implement
-storage/ingestion together; retain the existing domain detection path separately.
+**Latest correction: submit ALL research results as JSON to RustFS/S3.**
+Read [the submission contract](company_research/TECHNOLOGY_MENTION_STORAGE.md).
+The crawler's durable output is a complete, versioned result.json containing
+all objective results, raw mentions, original source/context text, final
+classifications, links, provenance, coverage and errors. Include known, unknown,
+ambiguous and excluded mentions. Preserve partial outcomes explicitly.
+ClickHouse parsing, tables, importer and proposal routing are deferred until the
+user resumes that work. Do not implement the previously suggested four-table
+schema or a database ingestion endpoint now. The existing proposal-only endpoint
+is separate and does not block complete S3 submissions. Use existing RustFS
+configuration; no uploader or upload has been implemented by this design update.
 
 **Latest user direction: defer technology relationships to a final agent.**
 Collect source-name mentions with original text sections, headings, source URLs
