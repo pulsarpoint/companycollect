@@ -8,6 +8,7 @@ import {
   ChevronRightIcon,
   DatabaseZapIcon,
   FlagIcon,
+  NetworkIcon,
   SearchIcon,
   Settings2Icon,
   SlidersHorizontalIcon,
@@ -120,6 +121,16 @@ export function AdminSidebar() {
         <SidebarGroup>
           <SidebarGroupLabel>Workspace</SidebarGroupLabel>
           <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                isActive={pathname === "/admin/graph"}
+                tooltip="Domain graph"
+                render={<Link to="/admin/graph" />}
+              >
+                <NetworkIcon />
+                <span>Graph</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
             <SidebarMenuItem>
               <SidebarMenuButton
                 isActive={

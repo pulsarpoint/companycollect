@@ -86,7 +86,7 @@ function AdminBreadcrumbs() {
     pathname.startsWith("/admin/se/companies/");
   const onPeoplePage = pathname === "/admin/se/people";
 
-  if (onEsefPage) {
+  if (onEsefPage || pathname === "/admin/graph") {
     return (
       <Breadcrumb>
         <BreadcrumbList>
@@ -95,7 +95,7 @@ function AdminBreadcrumbs() {
           </BreadcrumbItem>
           <BreadcrumbSeparator className="hidden sm:block" />
           <BreadcrumbItem>
-            <BreadcrumbPage>ESEF</BreadcrumbPage>
+            <BreadcrumbPage>{onEsefPage ? "ESEF" : "Graph"}</BreadcrumbPage>
           </BreadcrumbItem>
         </BreadcrumbList>
       </Breadcrumb>

@@ -100,6 +100,7 @@ export default [
   route("admin", "routes/admin-layout.tsx", [
     index("routes/admin-index.tsx"),
     route("esef", "routes/admin-esef.tsx"),
+    route("graph", "routes/admin-graph.tsx"),
     route("common-crawl", "routes/admin-common-crawl.tsx"),
     route(
       "common-crawl/:domain",
