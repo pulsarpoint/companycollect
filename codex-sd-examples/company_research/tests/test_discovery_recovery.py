@@ -227,6 +227,64 @@ class AttributionTests(unittest.TestCase):
         )
         self.assertIn("owner_not_in_evidence", result.sources[0].issues)
 
+    def test_phone_value_and_named_owner_use_independent_evidence_checks(self):
+        html = "<h2>Peter Grabe</h2><p>Mobil: +46 (0)70 559 11 67</p>"
+        record = {
+            "owner": "Peter Grabe",
+            "owner_kind": "person",
+            "type": "phone",
+            "value": "+46 (0)70 559 11 67",
+            "purpose": "Mobil",
+            "evidence": ["Peter Grabe", "Mobil: +46 (0)70 559 11 67"],
+        }
+        source = page(html).model_dump()
+        window = HtmlWindow(0, len(html), html)
+        result = source_finding("company_contacts", record, page=source, window=window)
+        self.assertEqual(result.evidence_status, "source_matched")
+        self.assertEqual(result.data["owner"], "Peter Grabe")
+        self.assertEqual(result.data["value"], record["value"])
+        self.assertEqual(
+            [fragment.text for fragment in result.sources[0].evidence],
+            record["evidence"],
+        )
+
+        unquoted_owner = source_finding(
+            "company_contacts",
+            record | {"evidence": ["Mobil: +46 (0)70 559 11 67"]},
+            page=source,
+            window=window,
+        )
+        self.assertIn("owner_not_in_evidence", unquoted_owner.sources[0].issues)
+
+        wrong_number = source_finding(
+            "company_contacts",
+            record | {"value": "+46 8 999 99 99"},
+            page=source,
+            window=window,
+        )
+        self.assertEqual(wrong_number.evidence_status, "needs_review")
+        self.assertIn("value_not_in_evidence", wrong_number.sources[0].issues)
+        self.assertNotIn("owner_not_in_evidence", wrong_number.sources[0].issues)
+
+    def test_digits_in_phone_do_not_establish_a_company_owner(self):
+        html = "<p>DemoWorks switchboard: +45 1234.</p>"
+        record = {
+            "owner": "Studio 12",
+            "owner_kind": "company",
+            "type": "phone",
+            "value": "+45 1234",
+            "purpose": None,
+            "evidence": ["DemoWorks switchboard: +45 1234."],
+        }
+        result = source_finding(
+            "company_contacts",
+            record,
+            page=page(html).model_dump(),
+            window=HtmlWindow(0, len(html), html),
+        )
+        self.assertEqual(result.evidence_status, "needs_review")
+        self.assertEqual(result.sources[0].issues, ["owner_not_in_evidence"])
+
     def test_catalog_failure_does_not_enter_technology_summary(self):
         html = "<h1>DemoWorks Engineer</h1><p>Our team develops tools in Python.</p>"
         record = finding(signal(), html)

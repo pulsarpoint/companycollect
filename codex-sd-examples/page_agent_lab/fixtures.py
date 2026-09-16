@@ -261,12 +261,18 @@ def control_set() -> dict:
         "Stadshypotek AB",
         "EFN Ekonomikanalen AB",
     ]:
+        # The ownership paragraph uses the short name below the legal-name heading.
+        source_name = (
+            "Handelsbanken Liv"
+            if subsidiary == "Handelsbanken Liv Försäkringsaktiebolag"
+            else subsidiary
+        )
         add(
             "subsidiaries",
             "company_relationships",
             subsidiary,
-            {"ownership_pair": [subsidiary]},
-            {"ownership_direction": [subsidiary]},
+            {"ownership_pair": [source_name]},
+            {"ownership_direction": [source_name]},
         )
     add(
         "subsidiaries",
@@ -290,7 +296,7 @@ def control_set() -> dict:
     for title in [
         "SAS-utvecklare inom Financial Crime Prevention",
         "Frontendutvecklare fokus infrastruktur",
-        "Data engineer/Data Warehouse Specialist inom Data Provisioning",
+        "Data engineer/Data Warehouse Specialist inom Data Provisioning till Handelsbanken",
     ]:
         add("careers", "jobs", title, {"title": [title]})
     negatives = [
@@ -339,7 +345,133 @@ def control_set() -> dict:
             },
         },
     ]
+    # Source-reviewed failures from the pilot; only future runs use these controls.
+    for page, objective, label, forbidden in [
+        (
+            "report_hub",
+            "technology_signals",
+            "no DOM technology",
+            {"technology": ["vp292.alertir.com", "shb-iframe", "Linkedin"]},
+        ),
+        (
+            "careers",
+            "locations",
+            "markets are not addresses",
+            {
+                "address": [
+                    "Sverige",
+                    "Nederländerna",
+                    "Storbritannien",
+                    "Norge",
+                    "Luxemburg",
+                    "USA",
+                ]
+            },
+        ),
+        (
+            "contacts",
+            "company_profile",
+            "people are not companies",
+            {
+                "company": [
+                    "Peter Grabe",
+                    "Andreas Skogelid",
+                    "Lars Kenneth Dahlqvist",
+                    "Susanna Överby",
+                ]
+            },
+        ),
+        (
+            "report_hub",
+            "company_relationships",
+            "markets are not counterparties",
+            {
+                "object_contains": [
+                    "Sverige",
+                    "Norge",
+                    "Nederländerna",
+                    "Storbritannien",
+                ]
+            },
+        ),
+        (
+            "data_job",
+            "technology_signals",
+            "capture date is not claim date",
+            {"as_of": ["2026-09-16"]},
+        ),
+        (
+            "data_job",
+            "technology_signals",
+            "target architecture is not deployment",
+            {
+                "technology": ["Microsoft Fabric", "Azure Databricks"],
+                "signal": ["stated_use"],
+            },
+        ),
+        (
+            "quality",
+            "technology_signals",
+            "AURIX service is not product sales",
+            {"technology": ["AURIX"], "signal": ["offers"]},
+        ),
+        (
+            "report_hub",
+            "products_services",
+            "report ordering is not a service",
+            {"name_contains": ["Beställ"]},
+        ),
+        (
+            "quality",
+            "document_links",
+            "purchase conditions are not reports",
+            {"document_url_contains": ["GeneralPurchaseConditions"]},
+        ),
+        (
+            "report_hub",
+            "document_links",
+            "order forms are not documents",
+            {"document_url_contains": ["/bestalla-arsredovisning", "/bestall-solvens"]},
+        ),
+        (
+            "contacts",
+            "document_links",
+            "archive hub is not a document",
+            {
+                "document_url": [
+                    "https://www.handelsbanken.com/sv/investor-relations/rapporter-och-presentationer"
+                ]
+            },
+        ),
+    ]:
+        negatives.append(
+            {
+                "id": f"{page}:{label}",
+                "page": page,
+                "objective": objective,
+                "forbidden": forbidden,
+            }
+        )
+    for page in ["data_job", "team_job"]:
+        negatives.append(
+            {
+                "id": f"{page}:hosting is not an explicit supplier claim",
+                "page": page,
+                "objective": "company_relationships",
+                "forbidden": {"subject": ["Jobylon"], "relationship": ["supplier_of"]},
+            }
+        )
+    for page in ["team_job", "subsidiaries"]:
+        negatives.append(
+            {
+                "id": f"{page}:relationship capture date is not claim date",
+                "page": page,
+                "objective": "company_relationships",
+                "forbidden": {"as_of": ["2026-09-16"]},
+            }
+        )
     return {
+        "version": "page-agent-controls/0.2",
         "positive": positives,
         "negative": negatives,
         "link_controls": [

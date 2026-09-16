@@ -306,7 +306,11 @@ def source_finding(
             # Each quotation still requires an exact contiguous match above.
             role_words = " ".join(re.findall(r"\w+", value))
             present = role_words in " ".join(re.findall(r"\w+", quoted))
-        if objective == "company_contacts" and data["type"] == "phone":
+        if (
+            objective == "company_contacts"
+            and data["type"] == "phone"
+            and key == "value"
+        ):
             digits = re.sub(r"\D", "", value)
             present = bool(digits) and digits in re.sub(r"\D", "", quoted)
         if not present:

@@ -1,0 +1,9 @@
+{
+  "run_directory": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/page_agent_lab/data/phone-validation-20260916",
+  "archive": "/Users/graovic/pulsarpoint/company-research-snapshots/20260916T160516Z-phone-validation/phone-validation.tar.gz",
+  "archive_sha256": "449b36c1205f8fd9ced622fd577d580c0094cd1a6655e64ec16255040336c27b",
+  "archive_bytes": 88076,
+  "files": 22,
+  "all_member_hashes_verified": true,
+  "manifest": "/Users/graovic/pulsarpoint/company-research-snapshots/20260916T160516Z-phone-validation/manifest.json"
+}

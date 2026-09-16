@@ -2,7 +2,33 @@
 
 ## Resume here
 
-**Completed standalone page-agent comparison; main runtime remains 0.15.2.**
+**One-pass baseline accepted; phone validation fixed in 0.15.3.**
+The user agreed to keep one page as the independent unit and use one combined
+request as the integration baseline. Targeted specialists remain a later test.
+Read [the follow-up](page_agent_lab/FOLLOW_UP.md). The main crawler's page-agent
+integration, queue rewrite and final merge are not yet implemented.
+
+Numeric phone matching now applies only to the value, not the owner's name.
+Positive/negative regression tests reproduce both false rejection of valid names
+and false acceptance of owner names containing digits. Replaying the original
+outputs removed 19 erroneous holds: six one-pass and thirteen routed records.
+All record data, quotations and IDs remained identical; all 146 original run
+files passed unchanged-hash checks. Source matching is not semantic approval.
+146 package tests plus six lab tests passed; four browser tests skipped.
+Ruff/type/format checks and 0.15.3 source/wheel builds passed.
+
+The lab prompt now specifies objective boundaries, explicit claim dates, actor/job
+quotes, planned adoption versus deployment, services versus product sales,
+navigation versus documents and source hints versus corporate relationships.
+Controls 0.2 correct two known name-matching expectations and add negative cases
+(40 positives, 19 negatives). Against the original outputs, the new negative
+checks pass 15/19 for one-pass and 4/19 for routed; this is a post-hoc baseline.
+The revised prompt has not had a model run. Next evaluate it with a bounded
+one-pass test before crawler integration. Email invisible-character matching and
+missing actor quotations remain separate work. No new paid calls or site fetches.
+Artifacts: page_agent_lab/data/phone-validation-20260916/.
+
+**Completed standalone page-agent comparison, using runtime 0.15.2.**
 Read [page-agent results](page_agent_lab/RESULTS.md) and [runner instructions](page_agent_lab/README.md).
 Seven saved pages, direct DeepSeek Flash/high: one pass used 7 calls, 3.18 minutes,
 estimated $0.10676; router plus specialists used 67 calls, 8.96 minutes, $0.48565.

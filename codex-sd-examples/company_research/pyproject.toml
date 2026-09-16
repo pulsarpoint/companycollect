@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "company-research"
-version = "0.15.2"
+version = "0.15.3"
 description = "Objective-driven company research with Crawl4AI and DeepSeek"
 readme = "README.md"
 requires-python = ">=3.12"

@@ -2,11 +2,14 @@
 
 Compare one combined extraction request with a router followed by independent
 objective-specific requests. This saved-page experiment sits alongside
-company_research; the main crawler remains at 0.15.2.
+company_research; the main crawler's scheduling is still separate from this lab.
 
 The [completed seven-page comparison](RESULTS.md) retained the selected facts in
 both variants. Routing cost more and introduced additional mistakes; the page
 boundary is useful, but all-page specialist routing is not the current recommendation.
+The user accepted one-pass as the integration baseline. The
+[follow-up](FOLLOW_UP.md) fixes phone evidence validation in 0.15.3 and prepares
+revised lab prompts/controls; those prompt changes have not had a model run.
 
 Each analysis returns data, links and a schema version. Data includes objective
 arrays, source provenance, per-objective processing status, rejected records and
@@ -66,10 +69,11 @@ are not in Git. Missing snapshots cause an explicit preparation error.
   truth. No corrections, semantic review agents or catalog calls run here.
 - One-pass runs first, routed second. Pages and specialists run concurrently
   within an arm. This single sample cannot isolate provider load/cache effects.
-- Forty selected factual checks, four negative checks and four link groups are
+- Forty selected factual checks, nineteen negative checks and four link groups are
   frozen from source review before calls. They are not exhaustive ground truth
   or an overall accuracy score. A separate diagnostic runs only known-positive
-  objective pairs skipped by the router.
+  objective pairs skipped by the router. The original completed pilot used four
+  negative checks; its saved controls and results are unchanged.
 
 Experiments save hashes of HTML, input inventories, controls and frozen code.
 Call artifacts retain prompts, schemas, responses, tokens and errors. Cost is

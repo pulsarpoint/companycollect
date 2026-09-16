@@ -1,5 +1,9 @@
 # One-pass versus routed page specialists — 16 September 2026
 
+Follow-up: the user accepted one-pass as the integration baseline. The
+[0.15.3 validation fix and next prompt/controls](FOLLOW_UP.md) are saved separately.
+The original run and all measurements below remain unchanged.
+
 **Keep the page-agent boundary. This pilot does not justify making routed
 specialists the default.** Both approaches retained the selected important facts.
 Routing increased total calls, elapsed time and cost, and some specialists added

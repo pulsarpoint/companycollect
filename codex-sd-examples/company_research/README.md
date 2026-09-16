@@ -11,7 +11,7 @@ saved; the current runtime has not yet been refactored to this contract.
 The standalone [page-agent lab](../page_agent_lab/README.md) now implements both
 one-pass and routed-specialist variants. Its [seven-page results](../page_agent_lab/RESULTS.md)
 retained the selected facts in both versions; routing increased cost/time and added
-errors. Use one-pass as the next integration baseline, with targeted specialists
+errors. One-pass is the user-approved integration baseline, with targeted specialists
 still to be tested. Neither variant is integrated into the crawler yet.
 
 The [DSPy RLM experiment plan](DSPY_RLM_PLAN.md) is **postponed** and saved for
@@ -23,6 +23,12 @@ autonomous diagnostic with source-guided follow-ups. Its [low/high reasoning com
 retained 31/38 technology controls at low and 36/38 at high, with higher cost and
 runtime and remaining taxonomy/scope failures. Link assessment did not show an overall
 improvement. The experiment uses explicit reasoning settings; defaults are unchanged.
+
+Version 0.15.3 fixes phone evidence checking: only the phone value uses numeric
+matching, while its owner still requires quoted textual evidence. A saved-output
+replay removed erroneous holds on 19 phone records without changing any facts,
+quotations or IDs. See the [page-agent follow-up](../page_agent_lab/FOLLOW_UP.md).
+The lab prompt/controls were also tightened; their model performance is untested.
 
 Version 0.15.2 preserves technology observations when restricting job evidence to
 role scope makes originally distinct company/team/role observations identical.
