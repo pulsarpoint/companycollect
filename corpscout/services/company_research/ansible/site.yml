@@ -1,0 +1,323 @@
+---
+- name: Deploy the Corpscout company crawler as a system service
+  hosts: company_research_hosts
+  become: true
+  gather_facts: false
+  vars_files:
+    - vars.yml
+
+  tasks:
+    - name: Build the locked service artifact on the control machine
+      delegate_to: localhost
+      become: false
+      check_mode: false
+      tags: [build]
+      block:
+        - name: Create a temporary artifact directory
+          ansible.builtin.tempfile:
+            state: directory
+            prefix: company-research-deploy-
+          register: company_research_build_dir
+          changed_when: false
+
+        - name: Build the application wheel
+          ansible.builtin.command:
+            argv: [uv, build, --wheel, --out-dir, "{{ company_research_build_dir.path }}"]
+            chdir: "{{ company_research_source_dir }}"
+          changed_when: false
+
+        - name: Export the service dependencies from the unchanged lockfile
+          ansible.builtin.command:
+            argv:
+              - uv
+              - export
+              - --locked
+              - --extra
+              - service
+              - --no-dev
+              - --no-emit-project
+              - --no-header
+              - --output-file
+              - "{{ company_research_build_dir.path }}/requirements.txt"
+            chdir: "{{ company_research_source_dir }}"
+          changed_when: false
+
+        - name: Locate the built wheel
+          ansible.builtin.find:
+            paths: "{{ company_research_build_dir.path }}"
+            patterns: "*.whl"
+          register: company_research_wheels
+
+        - name: Require exactly one application artifact
+          ansible.builtin.assert:
+            that: company_research_wheels.matched == 1
+
+        - name: Hash the application and locked dependencies
+          ansible.builtin.stat:
+            path: "{{ item }}"
+            checksum_algorithm: sha256
+          loop:
+            - "{{ company_research_wheels.files[0].path }}"
+            - "{{ company_research_build_dir.path }}/requirements.txt"
+          register: company_research_artifacts
+
+        - name: Identify the immutable release
+          ansible.builtin.set_fact:
+            company_research_release_id: >-
+              {{ ((company_research_artifacts.results | map(attribute='stat.checksum') | join(''))
+                  ~ company_research_python_version) | hash('sha256') }}
+            company_research_wheel_name: "{{ company_research_wheels.files[0].path | basename }}"
+
+        - name: Report the built release
+          ansible.builtin.debug:
+            msg: "Release {{ company_research_release_id }} built in {{ company_research_build_dir.path }}"
+
+    - name: Read optional controller secrets
+      ansible.builtin.include_vars:
+        file: secrets.yml
+      when: lookup('ansible.builtin.fileglob', playbook_dir ~ '/secrets.yml') | length > 0
+      no_log: true
+
+    - name: Require credentials for the selected inputs and default model
+      ansible.builtin.assert:
+        that:
+          - company_research_transport in ['rest', 'nats', 'both']
+          - company_research_deepseek | length > 0
+          - company_research_transport == 'nats' or company_research_api_token | length >= 32
+          - company_research_transport == 'rest' or company_research_nats_url | length > 0
+          - (company_research_deepseek | regex_search('[\x00-\x1f\x7f]')) is none
+          - (company_research_openrouter | regex_search('[\x00-\x1f\x7f]')) is none
+          - (company_research_api_token | regex_search('[\x00-\x1f\x7f]')) is none
+          - (company_research_nats_url | regex_search('[\x00-\x1f\x7f]')) is none
+        fail_msg: Set DEEPSEEK, a 32-character CRAWL_API_TOKEN, and NATS_URL in secrets.yml or the controller environment.
+      no_log: true
+
+    - name: Gather target platform information
+      ansible.builtin.setup:
+        gather_subset: [min]
+
+    - name: Require a supported Linux system with systemd
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.system == 'Linux'
+          - ansible_facts.os_family == 'Debian'
+          - ansible_facts.service_mgr == 'systemd'
+          - ansible_facts.architecture in ['x86_64', 'aarch64']
+        fail_msg: This playbook supports Debian/Ubuntu hosts using systemd.
+
+    - name: Record the release path
+      ansible.builtin.set_fact:
+        company_research_release_dir: "{{ company_research_deploy_dir }}/releases/{{ company_research_release_id }}"
+
+    - name: Install and activate the service
+      when: not ansible_check_mode
+      block:
+        - name: Install Python bootstrap and browser prerequisites
+          ansible.builtin.apt:
+            name: [python3-venv, python3-packaging, acl, ca-certificates, fonts-liberation, fonts-dejavu-core]
+            state: present
+            update_cache: true
+            cache_valid_time: 3600
+
+        - name: Create the service group
+          ansible.builtin.group:
+            name: "{{ company_research_user }}"
+            system: true
+
+        - name: Create the unprivileged service user
+          ansible.builtin.user:
+            name: "{{ company_research_user }}"
+            group: "{{ company_research_user }}"
+            system: true
+            shell: /usr/sbin/nologin
+            home: "{{ company_research_state_dir }}"
+            create_home: false
+
+        - name: Create root-owned application directories
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: directory
+            owner: root
+            group: root
+            mode: "0755"
+          loop:
+            - "{{ company_research_deploy_dir }}"
+            - "{{ company_research_release_dir }}"
+            - "{{ company_research_config_dir }}"
+
+        - name: Create persistent service state and browser cache
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: directory
+            owner: "{{ company_research_user }}"
+            group: "{{ company_research_user }}"
+            mode: "0700"
+          loop:
+            - "{{ company_research_state_dir }}"
+            - "{{ company_research_output_dir }}"
+            - "{{ company_research_cache_dir }}"
+
+        - name: Install the pinned uv tool in its own environment
+          ansible.builtin.pip:
+            name: "uv=={{ company_research_uv_version }}"
+            virtualenv: "{{ company_research_deploy_dir }}/tools"
+            virtualenv_command: /usr/bin/python3 -m venv
+            umask: "0022"
+
+        - name: Copy only the application wheel and locked dependency list
+          ansible.builtin.copy:
+            src: "{{ item }}"
+            dest: "{{ company_research_release_dir }}/"
+            owner: root
+            group: root
+            mode: "0644"
+          loop:
+            - "{{ company_research_wheels.files[0].path }}"
+            - "{{ company_research_build_dir.path }}/requirements.txt"
+
+        - name: Inspect release installation status
+          ansible.builtin.stat:
+            path: "{{ company_research_release_dir }}/.ready"
+          register: company_research_release_ready
+
+        - name: Prepare the new release without changing the running process
+          when: not company_research_release_ready.stat.exists
+          environment: "{{ company_research_install_environment }}"
+          block:
+            - name: Create the release environment using the pinned Python runtime
+              ansible.builtin.command:
+                argv:
+                  - "{{ company_research_uv }}"
+                  - venv
+                  - --python
+                  - "{{ company_research_python_version }}"
+                  - "{{ company_research_release_dir }}/.venv"
+                creates: "{{ company_research_release_dir }}/.venv/bin/python"
+
+            - name: Install the exact locked dependencies with hash verification
+              ansible.builtin.command:
+                argv:
+                  - "{{ company_research_uv }}"
+                  - pip
+                  - sync
+                  - --python
+                  - "{{ company_research_release_dir }}/.venv/bin/python"
+                  - --require-hashes
+                  - "{{ company_research_release_dir }}/requirements.txt"
+              changed_when: true
+
+            - name: Install the application wheel without resolving dependencies again
+              ansible.builtin.command:
+                argv:
+                  - "{{ company_research_uv }}"
+                  - pip
+                  - install
+                  - --python
+                  - "{{ company_research_release_dir }}/.venv/bin/python"
+                  - --no-deps
+                  - "{{ company_research_release_dir }}/{{ company_research_wheel_name }}"
+              changed_when: true
+
+            - name: Install Chromium operating-system libraries
+              ansible.builtin.command:
+                argv: ["{{ company_research_release_dir }}/.venv/bin/playwright", install-deps, chromium]
+              changed_when: true
+
+            - name: Download and launch the browser as the service account
+              become: true
+              become_user: "{{ company_research_user }}"
+              environment: "{{ company_research_runtime_environment }}"
+              ansible.builtin.command:
+                argv:
+                  - "{{ company_research_release_dir }}/.venv/bin/python"
+                  - -c
+                  - |
+                    import asyncio
+                    from company_research.fetch import open_browser
+                    async def check():
+                        async with open_browser():
+                            pass
+                    asyncio.run(check())
+              changed_when: true
+
+            - name: Mark the successfully prepared release
+              ansible.builtin.copy:
+                content: "{{ company_research_release_id }}\n"
+                dest: "{{ company_research_release_dir }}/.ready"
+                owner: root
+                group: root
+                mode: "0644"
+
+        - name: Install the service credentials
+          ansible.builtin.template:
+            src: company-research.env.j2
+            dest: "{{ company_research_env_file }}"
+            owner: root
+            group: "{{ company_research_user }}"
+            mode: "0640"
+          no_log: true
+          diff: false
+          notify: Restart company research
+
+        - name: Select the prepared release
+          ansible.builtin.file:
+            src: "{{ company_research_release_dir }}"
+            dest: "{{ company_research_deploy_dir }}/current"
+            state: link
+            owner: root
+            group: root
+          notify: Restart company research
+
+        - name: Install the systemd service
+          ansible.builtin.template:
+            src: company-research.service.j2
+            dest: "/etc/systemd/system/{{ company_research_service_name }}.service"
+            owner: root
+            group: root
+            mode: "0644"
+          notify: Restart company research
+
+        - name: Validate the installed systemd unit
+          ansible.builtin.command:
+            argv: [systemd-analyze, verify, "/etc/systemd/system/{{ company_research_service_name }}.service"]
+          changed_when: false
+
+        - name: Apply pending service changes
+          ansible.builtin.meta: flush_handlers
+
+        - name: Enable the service at boot and keep it running
+          ansible.builtin.systemd_service:
+            name: "{{ company_research_service_name }}"
+            daemon_reload: true
+            enabled: true
+            state: started
+
+        - name: Wait for the REST worker and JetStream input to be ready
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ company_research_port }}/healthz"
+            status_code: 200
+            use_proxy: false
+          register: company_research_health
+          until: company_research_health.status | default(0) == 200
+          retries: 30
+          delay: 2
+          when: company_research_transport != 'nats'
+
+    - name: Remove the temporary controller artifacts
+      ansible.builtin.file:
+        path: "{{ company_research_build_dir.path }}"
+        state: absent
+      delegate_to: localhost
+      become: false
+      check_mode: false
+      changed_when: false
+      when: company_research_build_dir is defined
+      tags: [always]
+
+  handlers:
+    - name: Restart company research
+      ansible.builtin.systemd_service:
+        name: "{{ company_research_service_name }}"
+        daemon_reload: true
+        enabled: true
+        state: restarted

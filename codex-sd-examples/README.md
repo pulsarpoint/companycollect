@@ -1,14 +1,29 @@
 # Company website crawler examples
 
+The current service has moved to
+[`corpscout/services/company_research`](../corpscout/services/company_research).
+This directory retains the earlier examples and experiment labs.
+
+The crawler also runs as a [local service](../corpscout/services/company_research/SERVICE.md), accepting
+REST, CLI and NATS JetStream requests. All inputs save local JSON results containing
+the crawl manifest and HTML content; REST/NATS jobs support deduplication and restart
+recovery. Service setup and its dependency lock live inside `../corpscout/services/company_research/`.
+
+The current package separates [HTML crawling and LLM analysis](../corpscout/services/company_research/CRAWL_AND_ANALYZE.md):
+`company-research-crawl` saves a local capture folder; `company-research-pages --crawl`
+processes it later. The crawler can also take an exact list of URLs with `--page`.
+Use `--pages URL1 URL2 ...` for a list and `--instructions "Get content of jobs pages"`
+to guide which pages the selector chooses on every discovery pass.
+
 Start with the [research checkpoint](RESEARCH_CHECKPOINT.md) for saved decisions,
 benchmark findings and the next website-extraction fixes. PDF/OCR experiments are paused.
 
-The combined [company_research package](company_research/README.md) accepts a URL
+The combined [company_research package](../corpscout/services/company_research/README.md) accepts a URL
 and returns attributed JSON for ten objectives, including technology signals from
 job descriptions, using Crawl4AI cleaned HTML and
 DeepSeek through OpenRouter. It provides a Python API and CLI, built-in prompts,
 page selection, overlapping extraction windows and explicit coverage/failure statuses.
-Install it separately with `pip install -e ./company_research`.
+Install it separately with `pip install -e ../corpscout/services/company_research`.
 
 The repository contains three approaches and one experiment harness:
 

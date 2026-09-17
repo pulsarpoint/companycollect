@@ -1,0 +1,263 @@
+{
+  "schema_version": "novelic-model-comparison/1.0",
+  "created_at": "2026-09-17T09:47:46.442247+00:00",
+  "status": "completed_with_partial_extraction_results",
+  "scope": "Same 26 saved NOVELIC pages and frozen catalog; extraction and classification only, not autonomous crawling. Source-derived development controls, not a blind general benchmark.",
+  "settings": {
+    "deepseek": {
+      "model": "deepseek-flash",
+      "api": "direct DeepSeek",
+      "reasoning": "high",
+      "deadline_seconds": 300
+    },
+    "glm": {
+      "model": "z-ai/glm-5.3-flash",
+      "api": "OpenRouter",
+      "provider": "Parasail (parasail/fp8)",
+      "reasoning": "low",
+      "deadline_seconds": 900
+    },
+    "shared": {
+      "output_allowance_tokens": 65536,
+      "json_mode": "json_object with identical schema in system prompt",
+      "page_concurrency": 3,
+      "classifier_execution": "sequential batches",
+      "initial_prompt_pairs_verified_identical": 26
+    },
+    "qualification": "Model-and-settings comparison: effort, transport/provider, temperature handling and deadline differ. GLM high/300s corpus attempts failed before meaningful extraction."
+  },
+  "deepseek": {
+    "calls": 108,
+    "input_tokens": 4729866,
+    "output_tokens": 1224883,
+    "total_tokens": 5954749,
+    "reasoning_tokens_included_in_output": 897288,
+    "cost_usd": 2.8120501200000003,
+    "cost_basis": "estimated_from_dated_peak_rates",
+    "elapsed_seconds": 3296.0,
+    "job_titles_recovered": 16,
+    "job_details_source_matched": 12,
+    "management_names_recovered": 16,
+    "management_source_matched": 0,
+    "independent_technology_names_recovered": 31,
+    "strict_relationship_controls_passed": 27,
+    "relationship_controls_after_explicit_scope_review": 31,
+    "raw_mentions": 407,
+    "classified_mentions": 364,
+    "mentions_needing_review": 43,
+    "cookie_vendor_mentions_checked": 28,
+    "cookie_vendor_company_attribution_errors": 4,
+    "selected_generic_format_false_positives": 3,
+    "raw_nontechnology_records": 680,
+    "source_matched_nontechnology_records": 220,
+    "objective_counts": {
+      "company_profile": {
+        "raw_records": 135,
+        "source_matched": 97
+      },
+      "company_contacts": {
+        "raw_records": 36,
+        "source_matched": 13
+      },
+      "locations": {
+        "raw_records": 12,
+        "source_matched": 9
+      },
+      "products_services": {
+        "raw_records": 406,
+        "source_matched": 54
+      },
+      "people": {
+        "raw_records": 23,
+        "source_matched": 2
+      },
+      "company_relationships": {
+        "raw_records": 13,
+        "source_matched": 12
+      },
+      "jobs": {
+        "raw_records": 33,
+        "source_matched": 29
+      },
+      "certifications_compliance": {
+        "raw_records": 19,
+        "source_matched": 2
+      },
+      "document_links": {
+        "raw_records": 3,
+        "source_matched": 2
+      }
+    },
+    "links": {
+      "occurrences": 1245,
+      "distinct_urls": 158,
+      "assessments": {
+        "assessed": 1245
+      }
+    },
+    "processing_status": "partial"
+  },
+  "glm": {
+    "calls": 78,
+    "input_tokens": 3617798,
+    "output_tokens": 240591,
+    "total_tokens": 3858389,
+    "reasoning_tokens_included_in_output": 21401,
+    "cost_usd": 0.6228756,
+    "cost_basis": "provider_reported",
+    "elapsed_seconds": 1462.0,
+    "job_titles_recovered": 16,
+    "job_details_source_matched": 14,
+    "management_names_recovered": 16,
+    "management_source_matched": 4,
+    "independent_technology_names_recovered": 28,
+    "strict_relationship_controls_passed": 27,
+    "relationship_controls_after_explicit_scope_review": 28,
+    "raw_mentions": 316,
+    "classified_mentions": 305,
+    "mentions_needing_review": 11,
+    "cookie_vendor_mentions_checked": 32,
+    "cookie_vendor_company_attribution_errors": 0,
+    "selected_generic_format_false_positives": 0,
+    "raw_nontechnology_records": 520,
+    "source_matched_nontechnology_records": 133,
+    "objective_counts": {
+      "company_profile": {
+        "raw_records": 101,
+        "source_matched": 71
+      },
+      "company_contacts": {
+        "raw_records": 22,
+        "source_matched": 8
+      },
+      "locations": {
+        "raw_records": 10,
+        "source_matched": 7
+      },
+      "products_services": {
+        "raw_records": 287,
+        "source_matched": 3
+      },
+      "people": {
+        "raw_records": 23,
+        "source_matched": 5
+      },
+      "company_relationships": {
+        "raw_records": 23,
+        "source_matched": 21
+      },
+      "jobs": {
+        "raw_records": 32,
+        "source_matched": 15
+      },
+      "certifications_compliance": {
+        "raw_records": 19,
+        "source_matched": 2
+      },
+      "document_links": {
+        "raw_records": 3,
+        "source_matched": 1
+      }
+    },
+    "links": {
+      "occurrences": 1245,
+      "distinct_urls": 158,
+      "assessments": {
+        "assessed": 1245
+      }
+    },
+    "processing_status": "partial"
+  },
+  "observed_reductions": {
+    "cost_percent": 77.84976890810182,
+    "tokens_percent": 35.204842387143444,
+    "runtime_percent": 55.643203883495154
+  },
+  "cache_normalized_estimates": {
+    "basis": "All input charged as uncached at captured provider rates; not an actual bill. DeepSeek input/output $0.30/$1.20 per million at baseline peak time; GLM Parasail $0.15/$0.50.",
+    "deepseek_usd": 2.8888194,
+    "glm_usd": 0.6629651999999999
+  },
+  "glm_technology_terms_including_combined_labels": 32,
+  "technology_controls_total": 32,
+  "manual_review": {
+    "scope_reviews": [
+      {
+        "page": "mechanical",
+        "name": "CATIA",
+        "mention_id": "c0561e51c182f557a662:m0001",
+        "accepted": true,
+        "reason": "The source describes NOVELIC mechanical engineering team skills. Team advertised_expertise is a supported narrower scope than the company-scope control; original control unchanged.",
+        "supporting_section": "c0561e51c182f557a662:native_cleaned_html:s0213"
+      }
+    ],
+    "grouped_technology_labels": [
+      {
+        "source_name": "VHDL/Verilog",
+        "names_present": [
+          "VHDL",
+          "Verilog"
+        ],
+        "disposition": "technical_context",
+        "issue": "Two named languages were combined and incorrectly excluded from specific technologies; the prompt explicitly includes languages."
+      },
+      {
+        "source_name": "Matlab/Simulink",
+        "names_present": [
+          "Matlab",
+          "Simulink"
+        ],
+        "disposition": "specific_technology",
+        "issue": "Two distinct tools remain a combined label; no separate technology identities or catalog matches."
+      }
+    ],
+    "management_roles": "All 16 returned names and roles are consistent with the frozen source-reviewed management role passages; quote validation still holds 12.",
+    "website_claims": [
+      "Sona Comstar subsidiary relationship, no ownership percentage invented",
+      "ISO 9001:2015 and ISO 14001:2015 website claims with original PDF URLs",
+      "IATF 16949:2016 working_toward, not certified",
+      "Three PDF links retained; document content not examined"
+    ],
+    "limitations": [
+      "Selected controls, not exhaustive precision/recall",
+      "Both outputs retain repeated source records rather than merged entities",
+      "Company-wide absence and autonomous discovery were not tested"
+    ]
+  },
+  "glm_validation": {
+    "page_retries": 2,
+    "classification_batches": 43,
+    "classification_retries": 7,
+    "invalid_json_responses": 1,
+    "oversized_classification_batches": 0,
+    "rejected_decisions": {
+      "Relationship cites a section outside this mention's source context": 2,
+      "Relationship must cite a primary mention section as well as any supporting context": 7
+    },
+    "explicit_needs_review_decisions": 1,
+    "notes": "All classifier batches eventually passed schema validation; nine decisions were rejected for reference problems, one was missing and one explicitly requested review. Classifier retries do not currently receive schema-error feedback.",
+    "missing_decisions": 1
+  },
+  "preliminary_diagnostics": {
+    "calls": 21,
+    "known_cost_usd": 0.046831750000000005,
+    "calls_with_unknown_usage_and_cost": 16,
+    "http_429_responses": 10,
+    "timeouts": 6,
+    "reported_cost_including_primary_run_usd": 0.6697073499999999,
+    "total_experiment_cost_known": false,
+    "notes": "Diagnostic/high-reasoning attempts are separate from the completed GLM low run. Unknown charges are not treated as zero."
+  },
+  "artifacts": {
+    "glm_json": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company_research/data/novelic-glm-low-20260917/result.json",
+    "glm_json_sha256": "4029bce029dccc1db639cc421601d38378779d5d1cd2ff163fa2f64ee8ee320e",
+    "glm_audit": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company_research/data/novelic-glm-low-20260917/quality-audit.json",
+    "deepseek_json": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company_research/data/novelic-guided-20260917/analysis/company-b1dbd6b65ef6/result.json",
+    "prompt_parity": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company_research/data/novelic-glm-low-20260917/prompt-parity.json",
+    "manual_review": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company_research/data/novelic-glm-low-20260917/manual-review.json"
+  },
+  "conclusion": "GLM low is materially cheaper and faster in this configuration, preserves the checked jobs/people, and avoids the selected DeepSeek cookie/format false positives. Combined technology names, language eligibility and evidence-validation holds remain; this is not a universal model winner or an unattended-ingestion pass.",
+  "next_test": "Require one technology per mention, add named-language eligibility examples, pass schema errors into retries, and compare GLM low with DeepSeek low on the same frozen controls. Evaluate provider-enforced JSON Schema as a separate transport variant.",
+  "runtime_default_changed": false,
+  "rustfs_writes": 0
+}

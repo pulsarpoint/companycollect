@@ -2,14 +2,13 @@
 
 import argparse
 import json
-import os
 from pathlib import Path
 
+import click
 from company_research.models import ResearchConfig
 from company_research.storage import write_json
-from dotenv import dotenv_values
 
-from company_research import mentions, page_run, s3_results
+from company_research import analysis, mentions
 
 
 def revalidate(previous):
@@ -61,7 +60,7 @@ def revalidate(previous):
         )
         else "partial"
     )
-    result = page_run.build_result(
+    result = analysis.build_result(
         previous["target_url"],
         previous["pages"],
         classification,
@@ -82,33 +81,21 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--env-file", type=Path, required=True)
-    parser.add_argument("--bucket")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
-    environment = {
-        key: value
-        for key, value in dotenv_values(args.env_file).items()
-        if value is not None
-    } | dict(os.environ)
-    client = s3_results.s3_client(environment) if args.bucket else None
+    results = []
     for path in sorted(args.input.glob("company-*/result.json")):
         result = revalidate(json.loads(path.read_text()))
         output = args.output / path.parent.name / "result.json"
         write_json(output, result)
-        if client is not None:
-            s3_results.upload_result(output, client, args.bucket)
-        print(
-            result["target_url"],
-            {
-                status: sum(
-                    item["status"] == status
-                    for item in result["technology_classification"]["decisions"]
-                )
-                for status in ("classified", "needs_review")
-            },
-            flush=True,
+        results.append(result)
+        click.echo(f"Validated {result['target_url']}", err=True)
+    click.echo(
+        json.dumps(
+            results[0] if len(results) == 1 else {"results": results},
+            ensure_ascii=False,
         )
+    )
 
 
 if __name__ == "__main__":

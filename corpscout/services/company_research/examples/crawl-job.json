@@ -1,0 +1,11 @@
+{
+  "request_id": "novelic-jobs-001",
+  "url": "https://www.novelic.com/",
+  "instructions": "Collect current job listings and full job descriptions. Skip employee stories and other employers.",
+  "site_info": true,
+  "config": {
+    "max_pages": 30,
+    "max_external_pages": 20,
+    "max_model_calls": 60
+  }
+}

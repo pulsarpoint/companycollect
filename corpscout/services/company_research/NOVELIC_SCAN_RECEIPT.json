@@ -1,0 +1,30 @@
+{
+  "status": "verified",
+  "remote_objects_status": "deleted_and_verified",
+  "remote_cleanup_receipt": "RUSTFS_CLEANUP_RECEIPT.json",
+  "archive": "/Users/graovic/pulsarpoint/company-research-snapshots/20260917T074834Z-novelic-scan/novelic-scan.tar.gz",
+  "archive_sha256": "f63249efb594642fd8cfbcdab19cd4bfcdc2c1663a4e0fd304e7c2799b7fa369",
+  "archive_bytes": 11904513,
+  "files": 607,
+  "uncompressed_bytes": 83809129,
+  "manifest": "/Users/graovic/pulsarpoint/company-research-snapshots/20260917T074834Z-novelic-scan/manifest.json",
+  "result_upload": {
+    "status": "verified",
+    "disposition": "created",
+    "bucket": "crawls",
+    "key": "company-research/9aafb182096f451b8f184b217f28dd1d/00af6a2ba39247ee9ab8c22588b5b7ba/result.json",
+    "uri": "s3://crawls/company-research/9aafb182096f451b8f184b217f28dd1d/00af6a2ba39247ee9ab8c22588b5b7ba/result.json",
+    "sha256": "5b5d409142fe3600bbc6d9bfeb6ce898762f1c7af8af96c8668c71c1d6a9169e",
+    "bytes": 23303067,
+    "verified_at": "2026-09-17T07:43:25+00:00"
+  },
+  "audit_upload": {
+    "status": "verified",
+    "bucket": "crawls",
+    "key": "company-research/9aafb182096f451b8f184b217f28dd1d/00af6a2ba39247ee9ab8c22588b5b7ba/quality-audit.json",
+    "uri": "s3://crawls/company-research/9aafb182096f451b8f184b217f28dd1d/00af6a2ba39247ee9ab8c22588b5b7ba/quality-audit.json",
+    "sha256": "e100b998806047f8da9c6fffcf9f01d821d9a88437916c7af8c7f7747d531b3f",
+    "bytes": 394131,
+    "verified_at": "2026-09-17T07:45:41+00:00"
+  }
+}

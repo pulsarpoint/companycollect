@@ -174,7 +174,12 @@ async def run(args) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--corpus", type=Path, default=Path("company_research/data"))
+    parser.add_argument(
+        "--corpus",
+        type=Path,
+        default=Path(__file__).resolve().parents[2]
+        / "corpscout/services/company_research/data",
+    )
     parser.add_argument("--env", type=Path, default=Path("jobs_extraction_lab/.env"))
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--mode", choices=["one_pass", "compare"], default="one_pass")

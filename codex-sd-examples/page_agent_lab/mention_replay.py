@@ -5,8 +5,11 @@ import asyncio
 import json
 import os
 import shutil
+import sys
+from contextlib import redirect_stdout
 from pathlib import Path
 
+import click
 import httpx
 from company_research.llm import ModelClient
 from company_research.models import ResearchConfig
@@ -14,7 +17,7 @@ from company_research.storage import content_hash, write_json
 from company_research.technology_catalog import TechnologyCatalog
 from dotenv import dotenv_values
 
-from company_research import mentions, page_agent, page_run, s3_results
+from company_research import analysis, mentions, page_agent
 
 
 async def run(args):
@@ -83,7 +86,7 @@ async def run(args):
                 "by_call": previous["model_usage"]["by_call"] + calls,
                 "includes_previous_revisions": True,
             }
-            result = page_run.build_result(
+            result = analysis.build_result(
                 previous["target_url"],
                 pages,
                 classification,
@@ -100,22 +103,17 @@ async def run(args):
             )
             destination = directory / "result.json"
             write_json(destination, result)
-            if args.bucket:
-                await asyncio.to_thread(
-                    s3_results.upload_result,
-                    destination,
-                    s3_results.s3_client(environment),
-                    args.bucket,
-                )
-            print(
+            click.echo(
                 f"Reclassified {previous['target_url']}: {len(classification['decisions'])} decisions, {len(calls)} calls",
-                flush=True,
+                err=True,
             )
+            return result
 
         try:
-            await asyncio.gather(*(revise(path) for path in args.result))
+            results = await asyncio.gather(*(revise(path) for path in args.result))
         finally:
             write_json(root / "usage.json", llm.usage())
+    return results[0] if len(results) == 1 else {"results": results}
 
 
 def main():
@@ -124,8 +122,9 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--catalog", type=Path, required=True)
     parser.add_argument("--env-file", type=Path, action="append", required=True)
-    parser.add_argument("--bucket")
-    asyncio.run(run(parser.parse_args()))
+    with redirect_stdout(sys.stderr):
+        result = asyncio.run(run(parser.parse_args()))
+    click.echo(json.dumps(result, ensure_ascii=False))
 
 
 if __name__ == "__main__":

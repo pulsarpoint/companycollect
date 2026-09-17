@@ -1,0 +1,344 @@
+{
+  "status": "deleted_and_verified",
+  "started_at": "2026-09-17T08:07:35.512308+00:00",
+  "scope": "All crawler experiment uploads in crawls/company-research/",
+  "bucket": "crawls",
+  "prefix": "company-research/",
+  "inventoried_at": "2026-09-17T08:06:49.731099+00:00",
+  "versioning": "disabled",
+  "object_count": 20,
+  "bytes": 82101127,
+  "objects": [
+    {
+      "key": "company-research/085fd329b2a84656b986667c343e165a/21cc563586a24ca399cd8628c4dd932d/result.json",
+      "size": 852683,
+      "etag": "\"81c3d087b584f333170a4fdf3e4b9be5\"",
+      "last_modified": "2026-09-16T19:23:33.318000+00:00",
+      "local_receipts": [
+        {
+          "file": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/page_agent_lab/data/mention-flow-validated-20260916/company-ffdca72ef7c5/upload-receipt.json",
+          "sha256": "224601f7a6c98ebdd55857d57c4eb60d4826ac0ef97cdc1f8089a28d345dc528"
+        }
+      ]
+    },
+    {
+      "key": "company-research/085fd329b2a84656b986667c343e165a/62dd8663cf0a41cc828adbdc0a9edb4d/result.json",
+      "size": 853492,
+      "etag": "\"2322e0783b0e1235ba0bf4864cca1720\"",
+      "last_modified": "2026-09-16T19:18:23.175000+00:00",
+      "local_receipts": [
+        {
+          "file": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/page_agent_lab/data/mention-flow-final-20260916/company-ffdca72ef7c5/upload-receipt.json",
+          "sha256": "bc27724db05636d1803ed37cf1bb07cb12aaac263e26442aa8543bea75471071"
+        }
+      ]
+    },
+    {
+      "key": "company-research/085fd329b2a84656b986667c343e165a/d6903d05d7b74dde99319f2212d6c4a8/result.json",
+      "size": 838022,
+      "etag": "\"446fef84074883705a57e2e09da7bc38\"",
+      "last_modified": "2026-09-16T19:14:04.459000+00:00",
+      "local_receipts": [
+        {
+          "file": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/page_agent_lab/data/mention-flow-v1-1-remaining-20260916/company-ffdca72ef7c5/upload-receipt.json",
+          "sha256": "20900c1658b978cae25151f25cbd7d0e9e54333df640a1055b394995dcd5ba3d"
+        }
+      ]
+    },
+    {
+      "key": "company-research/4204bf5cdb1a438a8451a1b7fc2eb113/0ae6d33d2c494f2b83a56e0a22e939e9/result.json",
+      "size": 10230615,
+      "etag": "\"01f9ae785f58b8daa107060d7d55e8ab\"",
+      "last_modified": "2026-09-16T19:23:31.295000+00:00",
+      "local_receipts": [
+        {
+          "file": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/page_agent_lab/data/mention-flow-validated-20260916/company-5a0868dd06e5/upload-receipt.json",
+          "sha256": "208a7c94fe3dbba74acf399b1777ba6f511abcc86faffd7467d406ba17ff96ae"
+        }
+      ]
+    },
+    {
+      "key": "company-research/4204bf5cdb1a438a8451a1b7fc2eb113/3c75c73b6904433c85289da84a8f3561/result.json",
+      "size": 10045286,
+      "etag": "\"fd1e8cc5e8ef0477fad0ef6602faa34c\"",
+      "last_modified": "2026-09-16T19:06:18.771000+00:00",
+      "local_receipts": [
+        {
+          "file": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/page_agent_lab/data/mention-flow-20260916/company-5a0868dd06e5/upload-receipt.json",
+          "sha256": "24dd2d0e13651cadd20b16bda61135160ba872460a016f84a009e06019e825b0"
+        }
+      ]
+    },
+    {
+      "key": "company-research/4204bf5cdb1a438a8451a1b7fc2eb113/74471c9952384ddda98c4b063dbad7be/result.json",
+      "size": 10239559,
+      "etag": "\"d8b27d317ebd1eebc08b7b56fff41096\"",
+      "last_modified": "2026-09-16T19:10:47.647000+00:00",
+      "local_receipts": [
+        {
+          "file": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/page_agent_lab/data/mention-flow-bank-revision-20260916/upload-receipt.json",
+          "sha256": "37a67a2c7cd1ab61a6616fd5ed35de1d24a5be586a41cb05fbe92941984403b4"
+        }
+      ]
+    },
+    {
+      "key": "company-research/4204bf5cdb1a438a8451a1b7fc2eb113/97ca4a79a0324687bb3ce85a9fccfe5d/result.json",
+      "size": 10226796,
+      "etag": "\"66f368e3a03669dae97a97ee4c514fc5\"",
+      "last_modified": "2026-09-16T19:19:09.392000+00:00",
+      "local_receipts": [
+        {
+          "file": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/page_agent_lab/data/mention-flow-final-20260916/company-5a0868dd06e5/upload-receipt.json",
+          "sha256": "e370b9eedfd2821712337b367128706d7098573dc91cf5c958682fa0223032ba"
+        }
+      ]
+    },
+    {
+      "key": "company-research/690e40323c1f4f12b7730295fa6b55be/915b10e7bb4c4215a2194568b29a9ddb/result.json",
+      "size": 1029663,
+      "etag": "\"2fd78d81ff692d27b84ba5ee4d217c91\"",
+      "last_modified": "2026-09-16T19:08:21.660000+00:00",
+      "local_receipts": [
+        {
+          "file": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/page_agent_lab/data/mention-flow-20260916/company-b1dbd6b65ef6/upload-receipt.json",
+          "sha256": "506e9f51f0e9449aa72c144940c35f18ca256c1607b3ff5d5936b98f68113b3f"
+        }
+      ]
+    },
+    {
+      "key": "company-research/7225362ee5a54a0f9131ef3761cb1fc7/59cd0d7c5c894bdf973e5f61a9d36af1/result.json",
+      "size": 1873375,
+      "etag": "\"dc5ed6575f8457b16401cfee3d30d0c2\"",
+      "last_modified": "2026-09-16T19:19:34.692000+00:00",
+      "local_receipts": [
+        {
+          "file": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/page_agent_lab/data/mention-flow-final-20260916/company-adc66d2844ec/upload-receipt.json",
+          "sha256": "0aa892ee1a6ae75a00f0b9a6dbb74ce01c8124b5f0458bb9c5f799054fecc893"
+        }
+      ]
+    },
+    {
+      "key": "company-research/7225362ee5a54a0f9131ef3761cb1fc7/7b17613f681d41d8adff796c707f1caf/result.json",
+      "size": 1872059,
+      "etag": "\"9265740e6edd486181cf3f1bb6b753c6\"",
+      "last_modified": "2026-09-16T19:23:32.414000+00:00",
+      "local_receipts": [
+        {
+          "file": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/page_agent_lab/data/mention-flow-validated-20260916/company-adc66d2844ec/upload-receipt.json",
+          "sha256": "269b61233b70bc6bbe1bd5e9d33808ab9583b21b1b3ef850fecf99b3b57bf3f1"
+        }
+      ]
+    },
+    {
+      "key": "company-research/7225362ee5a54a0f9131ef3761cb1fc7/7ff6030d630448c3a50cf41eba0d6a9e/result.json",
+      "size": 1872514,
+      "etag": "\"62eedf90c7d2998f8472df2c26f0069e\"",
+      "last_modified": "2026-09-16T19:26:12.149000+00:00",
+      "local_receipts": [
+        {
+          "file": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/page_agent_lab/data/mention-flow-review-20260916/oxide/upload-receipt.json",
+          "sha256": "efc75d8c436de72e0cc5dbaefa60b4a2b2303577661f9852a8eb5ccc92deaf1c"
+        }
+      ]
+    },
+    {
+      "key": "company-research/7225362ee5a54a0f9131ef3761cb1fc7/a1d46444d1cd4f5d9c3e0d99c7e965a9/result.json",
+      "size": 1842759,
+      "etag": "\"51cc95f325feeff5e4e735dc74ca208d\"",
+      "last_modified": "2026-09-16T19:13:20.602000+00:00",
+      "local_receipts": [
+        {
+          "file": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/page_agent_lab/data/mention-flow-v1-1-remaining-20260916/company-adc66d2844ec/upload-receipt.json",
+          "sha256": "e36b78e2f08bf4f28b3db510e7a5f2c04b8b578ea4a43b69fe63e70fb8ad4803"
+        }
+      ]
+    },
+    {
+      "key": "company-research/7c9eb8fc7d7142f49912c4d9ea731a39/83bb152117c442b8a8ed25f22a8040e9/result.json",
+      "size": 1024926,
+      "etag": "\"38918157df287c7b367560bb73b2efbe\"",
+      "last_modified": "2026-09-16T19:23:33.085000+00:00",
+      "local_receipts": [
+        {
+          "file": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/page_agent_lab/data/mention-flow-validated-20260916/company-c1bb70f013fd/upload-receipt.json",
+          "sha256": "20a338ae542cc7ef1ba95a4d84f499baaf37c7e05222585de5aaf322797eeb29"
+        }
+      ]
+    },
+    {
+      "key": "company-research/7c9eb8fc7d7142f49912c4d9ea731a39/8641c26f4a944aa58c9254164900a393/result.json",
+      "size": 1025733,
+      "etag": "\"620b5ab24e9f745f83ca184683385b8f\"",
+      "last_modified": "2026-09-16T19:18:08.677000+00:00",
+      "local_receipts": [
+        {
+          "file": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/page_agent_lab/data/mention-flow-final-20260916/company-c1bb70f013fd/upload-receipt.json",
+          "sha256": "f462d27a440356341707b94916ffb97162315a55dd3dc868493d0273b85ed016"
+        }
+      ]
+    },
+    {
+      "key": "company-research/7c9eb8fc7d7142f49912c4d9ea731a39/c09421ef46ea4bc498120125265b2eae/result.json",
+      "size": 989439,
+      "etag": "\"1fd6556fffdfec4881d30b9c89d5f2a6\"",
+      "last_modified": "2026-09-16T19:13:17.678000+00:00",
+      "local_receipts": [
+        {
+          "file": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/page_agent_lab/data/mention-flow-v1-1-remaining-20260916/company-c1bb70f013fd/upload-receipt.json",
+          "sha256": "9cb13442ffb3eda28b81ca15c29c46a9fff2f758769f42d460a1b466db63ad2a"
+        }
+      ]
+    },
+    {
+      "key": "company-research/9aafb182096f451b8f184b217f28dd1d/00af6a2ba39247ee9ab8c22588b5b7ba/quality-audit.json",
+      "size": 394131,
+      "etag": "\"644fcb14defe3e2659c0a39ff9d91f50\"",
+      "last_modified": "2026-09-17T07:45:41.073000+00:00",
+      "local_receipts": [
+        {
+          "file": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company_research/data/novelic-guided-20260917/quality-audit-upload-receipt.json",
+          "sha256": "e100b998806047f8da9c6fffcf9f01d821d9a88437916c7af8c7f7747d531b3f"
+        }
+      ]
+    },
+    {
+      "key": "company-research/9aafb182096f451b8f184b217f28dd1d/00af6a2ba39247ee9ab8c22588b5b7ba/result.json",
+      "size": 23303067,
+      "etag": "\"f6d534b1957343f4dee0ecdc4c957640\"",
+      "last_modified": "2026-09-17T07:43:23.642000+00:00",
+      "local_receipts": [
+        {
+          "file": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/company_research/data/novelic-guided-20260917/analysis/company-b1dbd6b65ef6/upload-receipt.json",
+          "sha256": "5b5d409142fe3600bbc6d9bfeb6ce898762f1c7af8af96c8668c71c1d6a9169e"
+        }
+      ]
+    },
+    {
+      "key": "company-research/e8b312d7d2c349e4bfc44cc028c1387d/19d1e4e271a7458892b06f2a9081748c/result.json",
+      "size": 1160919,
+      "etag": "\"9cf8759ccce08c65a491a3653cbc1ac5\"",
+      "last_modified": "2026-09-16T19:12:11.285000+00:00",
+      "local_receipts": [
+        {
+          "file": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/page_agent_lab/data/mention-flow-v1-1-remaining-20260916/company-b1dbd6b65ef6/upload-receipt.json",
+          "sha256": "c1b80716e0ab58fa2c5786cb2ea6421134b2a0a3af20bbdd5db8ba8811bd6fd4"
+        }
+      ]
+    },
+    {
+      "key": "company-research/e8b312d7d2c349e4bfc44cc028c1387d/2f0cd5297a974baf997fba3767440a2a/result.json",
+      "size": 1211462,
+      "etag": "\"df966179c4672b7f150077e1b6ffb8ca\"",
+      "last_modified": "2026-09-16T19:23:32.794000+00:00",
+      "local_receipts": [
+        {
+          "file": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/page_agent_lab/data/mention-flow-validated-20260916/company-b1dbd6b65ef6/upload-receipt.json",
+          "sha256": "fcccbfda24ec4cf2122c29ce51322409d238a5e03c75114a3e4952463bf239f9"
+        }
+      ]
+    },
+    {
+      "key": "company-research/e8b312d7d2c349e4bfc44cc028c1387d/93e5a32d1f7448338fb9aea5e8d35391/result.json",
+      "size": 1214627,
+      "etag": "\"b475cff24ed9b43568c7a4c2583dd935\"",
+      "last_modified": "2026-09-16T19:18:32.998000+00:00",
+      "local_receipts": [
+        {
+          "file": "/Users/graovic/pulsarpoint/ppoint/companycollect/codex-sd-examples/page_agent_lab/data/mention-flow-final-20260916/company-b1dbd6b65ef6/upload-receipt.json",
+          "sha256": "071bbab83c195f278adaf4d6c4cedc771b28b6d721517358b93c542762a8fe0b"
+        }
+      ]
+    }
+  ],
+  "local_files_deleted": false,
+  "deleted": [
+    {
+      "Key": "company-research/085fd329b2a84656b986667c343e165a/21cc563586a24ca399cd8628c4dd932d/result.json",
+      "VersionId": "null"
+    },
+    {
+      "Key": "company-research/085fd329b2a84656b986667c343e165a/62dd8663cf0a41cc828adbdc0a9edb4d/result.json",
+      "VersionId": "null"
+    },
+    {
+      "Key": "company-research/085fd329b2a84656b986667c343e165a/d6903d05d7b74dde99319f2212d6c4a8/result.json",
+      "VersionId": "null"
+    },
+    {
+      "Key": "company-research/4204bf5cdb1a438a8451a1b7fc2eb113/0ae6d33d2c494f2b83a56e0a22e939e9/result.json",
+      "VersionId": "null"
+    },
+    {
+      "Key": "company-research/4204bf5cdb1a438a8451a1b7fc2eb113/3c75c73b6904433c85289da84a8f3561/result.json",
+      "VersionId": "null"
+    },
+    {
+      "Key": "company-research/4204bf5cdb1a438a8451a1b7fc2eb113/74471c9952384ddda98c4b063dbad7be/result.json",
+      "VersionId": "null"
+    },
+    {
+      "Key": "company-research/4204bf5cdb1a438a8451a1b7fc2eb113/97ca4a79a0324687bb3ce85a9fccfe5d/result.json",
+      "VersionId": "null"
+    },
+    {
+      "Key": "company-research/690e40323c1f4f12b7730295fa6b55be/915b10e7bb4c4215a2194568b29a9ddb/result.json",
+      "VersionId": "null"
+    },
+    {
+      "Key": "company-research/7225362ee5a54a0f9131ef3761cb1fc7/59cd0d7c5c894bdf973e5f61a9d36af1/result.json",
+      "VersionId": "null"
+    },
+    {
+      "Key": "company-research/7225362ee5a54a0f9131ef3761cb1fc7/7b17613f681d41d8adff796c707f1caf/result.json",
+      "VersionId": "null"
+    },
+    {
+      "Key": "company-research/7225362ee5a54a0f9131ef3761cb1fc7/7ff6030d630448c3a50cf41eba0d6a9e/result.json",
+      "VersionId": "null"
+    },
+    {
+      "Key": "company-research/7225362ee5a54a0f9131ef3761cb1fc7/a1d46444d1cd4f5d9c3e0d99c7e965a9/result.json",
+      "VersionId": "null"
+    },
+    {
+      "Key": "company-research/7c9eb8fc7d7142f49912c4d9ea731a39/83bb152117c442b8a8ed25f22a8040e9/result.json",
+      "VersionId": "null"
+    },
+    {
+      "Key": "company-research/7c9eb8fc7d7142f49912c4d9ea731a39/8641c26f4a944aa58c9254164900a393/result.json",
+      "VersionId": "null"
+    },
+    {
+      "Key": "company-research/7c9eb8fc7d7142f49912c4d9ea731a39/c09421ef46ea4bc498120125265b2eae/result.json",
+      "VersionId": "null"
+    },
+    {
+      "Key": "company-research/9aafb182096f451b8f184b217f28dd1d/00af6a2ba39247ee9ab8c22588b5b7ba/quality-audit.json",
+      "VersionId": "null"
+    },
+    {
+      "Key": "company-research/9aafb182096f451b8f184b217f28dd1d/00af6a2ba39247ee9ab8c22588b5b7ba/result.json",
+      "VersionId": "null"
+    },
+    {
+      "Key": "company-research/e8b312d7d2c349e4bfc44cc028c1387d/19d1e4e271a7458892b06f2a9081748c/result.json",
+      "VersionId": "null"
+    },
+    {
+      "Key": "company-research/e8b312d7d2c349e4bfc44cc028c1387d/2f0cd5297a974baf997fba3767440a2a/result.json",
+      "VersionId": "null"
+    },
+    {
+      "Key": "company-research/e8b312d7d2c349e4bfc44cc028c1387d/93e5a32d1f7448338fb9aea5e8d35391/result.json",
+      "VersionId": "null"
+    }
+  ],
+  "errors": [],
+  "verification": {
+    "checked_at": "2026-09-17T08:07:35.858635+00:00",
+    "remaining_objects": [],
+    "remaining_versions": [],
+    "remaining_delete_markers": [],
+    "remaining_multipart_uploads": []
+  }
+}

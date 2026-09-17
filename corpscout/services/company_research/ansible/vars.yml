@@ -1,0 +1,41 @@
+---
+company_research_service_name: company-research
+company_research_user: company-research
+company_research_source_dir: "{{ playbook_dir }}/.."
+company_research_deploy_dir: /opt/companycollect/corpscout/company_research
+company_research_state_dir: /var/lib/company-research
+company_research_cache_dir: /var/cache/company-research
+company_research_output_dir: "{{ company_research_state_dir }}/results"
+company_research_config_dir: /etc/company-research
+company_research_env_file: "{{ company_research_config_dir }}/company-research.env"
+
+company_research_python_version: "3.12.12"
+company_research_uv_version: "0.11.7"
+company_research_uv: "{{ company_research_deploy_dir }}/tools/bin/uv"
+company_research_install_environment:
+  UV_PYTHON_INSTALL_DIR: "{{ company_research_deploy_dir }}/python"
+  UV_CACHE_DIR: "{{ company_research_deploy_dir }}/uv-cache"
+  UV_LINK_MODE: copy
+company_research_runtime_environment:
+  HOME: "{{ company_research_state_dir }}"
+  XDG_CACHE_HOME: "{{ company_research_cache_dir }}"
+  CLOAKBROWSER_CACHE_DIR: "{{ company_research_cache_dir }}/cloakbrowser"
+  CLOAKBROWSER_AUTO_UPDATE: "false"
+  PYTHONUNBUFFERED: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+
+company_research_transport: both
+company_research_listen_host: "0.0.0.0"
+company_research_port: 8080
+company_research_concurrency: 1
+company_research_max_pending: 100
+company_research_nats_stream: COMPANY_CRAWL
+company_research_nats_subject: company.crawl.requests
+company_research_nats_durable: company-crawl-132
+company_research_nats_create_stream: true
+
+# Override with the ignored secrets.yml or controller environment variables.
+company_research_deepseek: "{{ lookup('ansible.builtin.env', 'DEEPSEEK') }}"
+company_research_openrouter: "{{ lookup('ansible.builtin.env', 'OPENROUTER_API_KEY') }}"
+company_research_api_token: "{{ lookup('ansible.builtin.env', 'CRAWL_API_TOKEN') }}"
+company_research_nats_url: "{{ lookup('ansible.builtin.env', 'NATS_URL') }}"

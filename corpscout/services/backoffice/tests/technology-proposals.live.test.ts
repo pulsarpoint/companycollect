@@ -19,7 +19,7 @@ it.runIf(process.env.TECHNOLOGY_PROPOSAL_ISOLATED_TEST === "1")(
     const fixture = JSON.parse(
       readFileSync(
         resolve(
-          "../../../codex-sd-examples/company_research/tests/fixtures/technology_submission.json",
+          "../company_research/tests/fixtures/technology_submission.json",
         ),
         "utf8",
       ),
