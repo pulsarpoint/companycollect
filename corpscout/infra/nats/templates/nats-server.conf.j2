@@ -1,0 +1,30 @@
+# {{ ansible_managed }}
+# NATS server configuration — rendered by install.yml, validated with
+# `nats-server -t` before it replaces the live file.
+
+server_name: {{ nats_server_name }}
+
+listen: "{{ nats_listen_host }}:{{ nats_client_port }}"
+http: "{{ nats_monitor_host }}:{{ nats_monitor_port }}"
+
+jetstream {
+  # The server keeps its data in the jetstream/ subdirectory of store_dir.
+  store_dir: "{{ nats_mount_point }}"
+  max_file_store: {{ nats_max_file_store }}
+  max_memory_store: {{ nats_max_memory_store }}
+}
+
+accounts {
+  {{ nats_app_account }} {
+    jetstream: enabled
+    users: [
+      { user: "{{ nats_app_user }}", password: "{{ nats_app_password }}" }
+    ]
+  }
+  SYS {
+    users: [
+      { user: "{{ nats_sys_user }}", password: "{{ nats_sys_password }}" }
+    ]
+  }
+}
+system_account: SYS

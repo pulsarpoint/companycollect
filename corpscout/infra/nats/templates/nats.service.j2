@@ -1,0 +1,61 @@
+# {{ ansible_managed }}
+[Unit]
+Description=NATS Server (JetStream)
+Documentation=https://docs.nats.io/
+After=network-online.target
+Wants=network-online.target
+# Never start against the bare mount point directory on the root filesystem.
+RequiresMountsFor={{ nats_mount_point }}
+
+[Service]
+Type=simple
+User={{ nats_user }}
+Group={{ nats_group }}
+ExecStart=/usr/local/bin/nats-server -c {{ nats_config_dir }}/nats-server.conf
+# SIGHUP re-reads the config (accounts, users, limits) without dropping clients.
+ExecReload=/bin/kill -s HUP $MAINPID
+# nats-server exits 0 on SIGINT but 1 on SIGTERM, which systemd would record
+# as a failed stop.
+KillSignal=SIGINT
+TimeoutStopSec=60s
+
+Restart=always
+RestartSec=5s
+LimitNOFILE=800000
+
+# Sandbox — follows upstream util/nats-server-hardened.service, with two
+# corrections noted below.
+CapabilityBoundingSet=
+LockPersonality=true
+MemoryDenyWriteExecute=true
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+PrivateUsers=true
+ProcSubset=pid
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+# AF_NETLINK: the server enumerates interfaces to advertise its client URLs;
+# without it every start logs `Address "0.0.0.0" can not be resolved properly`.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+# `~` negates only as the first character of a line: upstream's single-line
+# form leaves the deny groups silently ignored (see systemd-analyze verify).
+# EPERM instead of the default SIGSYS kill, so a denied call cannot take the
+# broker down.
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
+UMask=0077
+ReadWritePaths={{ nats_mount_point }}
+
+[Install]
+WantedBy=multi-user.target
