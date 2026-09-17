@@ -9,6 +9,7 @@ import {
   DatabaseZapIcon,
   FlagIcon,
   NetworkIcon,
+  RadioTowerIcon,
   SearchIcon,
   Settings2Icon,
   SlidersHorizontalIcon,
@@ -169,6 +170,16 @@ export function AdminSidebar() {
               >
                 <BlocksIcon />
                 <span>Technologies</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                isActive={pathname === "/admin/nats"}
+                tooltip="NATS JetStream"
+                render={<Link to="/admin/nats" />}
+              >
+                <RadioTowerIcon />
+                <span>NATS</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
             <Collapsible
