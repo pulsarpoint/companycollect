@@ -13,9 +13,10 @@ from unittest.mock import patch
 import httpx
 from test_catalog_search import catalog_fixture
 
-from company_research import ResearchConfig, research_company
+from company_research import ResearchConfig
 from company_research.fetch import open_browser
 from company_research.models import OBJECTIVES, RECORD_TYPES
+from company_research.research import research_company
 from company_research.storage import content_hash
 
 

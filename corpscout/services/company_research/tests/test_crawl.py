@@ -14,12 +14,12 @@ import httpx
 from crawl4ai import CrawlResult
 from test_catalog_search import catalog_fixture
 from test_mentions import HTML, decision, mention
-from test_package import assessment, response
+from test_package import response
 from test_site_gate import classification
 
 from company_research import page_run
 from company_research.captures import load_crawl
-from company_research.crawl import crawl_company
+from company_research.crawl import DEFAULT_SELECTION_INSTRUCTIONS, crawl_company
 from company_research.models import OBJECTIVES, ResearchConfig
 from company_research.page_agent import PageInput
 from company_research.storage import content_hash, write_json
@@ -158,13 +158,25 @@ class CrawlTests(unittest.IsolatedAsyncioTestCase):
                             )
                         else:
                             self.assertIn("candidates", payload)
+                            self.assertEqual(
+                                payload["selection_instructions"],
+                                DEFAULT_SELECTION_INSTRUCTIONS,
+                            )
+                            self.assertNotIn("OBJECTIVES:\n", prompt)
+                            self.assertNotIn('"technology_signals"', prompt)
                             events.append("rank")
                             result = {
                                 "assessments": [
-                                    assessment(
-                                        c["candidate_id"], company_contacts="high"
-                                    ).model_dump()
-                                    | {"target_relevance": "target"}
+                                    {
+                                        "candidate_id": c["candidate_id"],
+                                        "target_relevance": "target",
+                                        "follow_scope": "single_page",
+                                        "requested_content": {
+                                            "potential": "high",
+                                            "role": "direct",
+                                        },
+                                        "reason": "Company contact information",
+                                    }
                                     for c in payload["candidates"]
                                 ]
                             }
@@ -180,6 +192,12 @@ class CrawlTests(unittest.IsolatedAsyncioTestCase):
                         ),
                     ),
                     patch.object(httpx.AsyncClient, "send", model_boundary),
+                    patch(
+                        "company_research.discovery.CrawlQueue.pick",
+                        side_effect=AssertionError(
+                            "Legacy research priorities disabled"
+                        ),
+                    ),
                 ):
                     manifest = await crawl_company(
                         "https://example.test/",
@@ -206,6 +224,11 @@ class CrawlTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(requested, list(responses))
                     self.assertEqual(manifest["stop_reason"], "page_budget")
                     self.assertEqual(manifest["usage"]["calls"], 2)
+                    self.assertEqual(manifest["processing"]["job_analysis"], "deferred")
+                    self.assertEqual(
+                        manifest["processing"]["technology_analysis"], "deferred"
+                    )
+                    self.assertIsNone(manifest["selection_instructions"])
 
     async def test_invalid_inputs_do_not_start_browser_or_create_output(self):
         with TemporaryDirectory() as temporary:
@@ -270,92 +293,106 @@ class CrawlTests(unittest.IsolatedAsyncioTestCase):
     async def test_crawl_to_llm_replay_never_recrawls_and_preserves_partial_capture(
         self,
     ):
-        requested = []
-        responses = {
-            "https://example.test/jobs": (HTML, [], 200, None),
-            "https://example.test/failure": ("denied", [], 403, None),
-        }
-        with TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            with patch(
-                "company_research.crawl.open_browser",
-                lambda responses=responses, requested=requested: browser_responses(
-                    responses, requested
-                ),
-            ):
-                await crawl_company(
-                    "https://example.test/",
-                    output_dir=root / "crawl",
-                    pages=list(responses),
-                )
-            files_before = {
-                str(path): content_hash(path.read_text(encoding="utf-8"))
-                for path in (root / "crawl").rglob("*")
-                if path.is_file()
+        for save_artifacts in (True, False):
+            requested = []
+            responses = {
+                "https://example.test/jobs": (HTML, [], 200, None),
+                "https://example.test/failure": ("denied", [], 403, None),
             }
-            catalog = root / "catalog.json"
-            write_json(catalog, catalog_fixture().snapshot.model_dump())
-
-            def handle(request):
-                self.assertEqual(request.url.host, "api.deepseek.com")
-                prompt = json.loads(request.content)["messages"][1]["content"]
-                if "SOURCE SNAPSHOT:" in prompt:
-                    snapshot = json.loads(prompt.split("SOURCE SNAPSHOT:\n")[1])
-                    document = {
-                        "data": {
-                            key: [] for key in OBJECTIVES if key != "technology_signals"
-                        },
-                        "technology_mentions": [mention(snapshot["source_sections"])],
-                        "links": [],
-                    }
-                else:
-                    batch = json.loads(
-                        prompt.split("MENTIONS AND ORIGINAL SECTIONS:\n")[1]
-                    )
-                    document = {"decisions": [decision(batch["mentions"][0])]}
-                return httpx.Response(200, json=response(document))
-
-            client = httpx.AsyncClient(
-                transport=httpx.MockTransport(handle),
-                base_url="https://api.deepseek.com/",
-            )
-            with (
-                patch.dict("os.environ", {"DEEPSEEK": "test-key"}),
-                patch(
-                    "company_research.analysis.httpx.AsyncClient", return_value=client
-                ),
-                patch(
+            with TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                with patch(
                     "company_research.crawl.open_browser",
-                    side_effect=AssertionError("Analysis must not fetch"),
-                ),
-            ):
-                result = await page_run.run(
-                    argparse.Namespace(
-                        crawl=root / "crawl",
-                        page=None,
-                        output=root / "analysis",
-                        api="deepseek",
-                        model="deepseek-flash",
-                        provider=None,
-                        reasoning_effort="high",
-                        timeout=30,
-                        env_file=[],
-                        catalog=catalog,
-                        offline_catalog=True,
+                    lambda responses=responses, requested=requested: browser_responses(
+                        responses, requested
+                    ),
+                ):
+                    await crawl_company(
+                        "https://example.test/",
+                        output_dir=root / "crawl",
+                        pages=list(responses),
+                        save_artifacts=save_artifacts,
                     )
-                )
-            self.assertEqual(result["crawl_status"], "partial")
-            self.assertEqual(result["processing_status"], "partial")
-            self.assertEqual(
-                result["pages"][0]["captures"]["native_cleaned_html"]["content"], HTML
-            )
-            self.assertEqual(len(result["crawl"]["pages"]), 2)
-            self.assertEqual(result["model_usage"]["calls"], 2)
-            self.assertEqual(
-                files_before,
-                {
+                files_before = {
                     str(path): content_hash(path.read_text(encoding="utf-8"))
                     for path in (root / "crawl").rglob("*")
                     if path.is_file()
-                },
-            )
+                }
+                catalog = root / "catalog.json"
+                write_json(catalog, catalog_fixture().snapshot.model_dump())
+
+                def handle(request):
+                    self.assertEqual(request.url.host, "api.deepseek.com")
+                    prompt = json.loads(request.content)["messages"][1]["content"]
+                    if "SOURCE SNAPSHOT:" in prompt:
+                        snapshot = json.loads(prompt.split("SOURCE SNAPSHOT:\n")[1])
+                        document = {
+                            "data": {
+                                key: []
+                                for key in OBJECTIVES
+                                if key != "technology_signals"
+                            },
+                            "technology_mentions": [
+                                mention(snapshot["source_sections"])
+                            ],
+                            "links": [],
+                        }
+                    else:
+                        batch = json.loads(
+                            prompt.split("MENTIONS AND ORIGINAL SECTIONS:\n")[1]
+                        )
+                        document = {"decisions": [decision(batch["mentions"][0])]}
+                    return httpx.Response(200, json=response(document))
+
+                client = httpx.AsyncClient(
+                    transport=httpx.MockTransport(handle),
+                    base_url="https://api.deepseek.com/",
+                )
+                with (
+                    patch.dict("os.environ", {"DEEPSEEK": "test-key"}),
+                    patch(
+                        "company_research.analysis.httpx.AsyncClient",
+                        return_value=client,
+                    ),
+                    patch(
+                        "company_research.crawl.open_browser",
+                        side_effect=AssertionError("Analysis must not fetch"),
+                    ),
+                ):
+                    result = await page_run.run(
+                        argparse.Namespace(
+                            crawl=root / "crawl"
+                            if save_artifacts
+                            else root / "crawl/result.json",
+                            page=None,
+                            output=root / "analysis",
+                            api="deepseek",
+                            model="deepseek-flash",
+                            provider=None,
+                            reasoning_effort="high",
+                            timeout=30,
+                            env_file=[],
+                            catalog=catalog,
+                            offline_catalog=True,
+                        )
+                    )
+                self.assertEqual(result["crawl_status"], "partial")
+                self.assertEqual(result["processing_status"], "partial")
+                self.assertEqual(
+                    result["pages"][0]["captures"]["native_cleaned_html"]["content"],
+                    HTML,
+                )
+                self.assertEqual(len(result["crawl"]["pages"]), 2)
+                self.assertEqual(result["model_usage"]["calls"], 2)
+                capture = json.loads((root / "crawl/result.json").read_text())
+                observed = capture["documents"][0]["input"]["observations"]
+                self.assertEqual(result["pages"][0]["observations"], observed)
+                self.assertEqual(result["page_observations"], [observed])
+                self.assertEqual(
+                    files_before,
+                    {
+                        str(path): content_hash(path.read_text(encoding="utf-8"))
+                        for path in (root / "crawl").rglob("*")
+                        if path.is_file()
+                    },
+                )

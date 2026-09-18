@@ -14,13 +14,14 @@ from dotenv import dotenv_values
 
 from company_research import catalog_config
 from company_research.analysis import analyze_pages
-from company_research.captures import load_crawl
+from company_research.captures import open_crawl
 from company_research.models import ResearchConfig
 
 
 async def run(args: argparse.Namespace) -> dict:
     if args.crawl is not None:
-        load_crawl(args.crawl)
+        with open_crawl(args.crawl):
+            pass
     root = args.output.resolve()
     if root.exists():
         raise ValueError(f"Analysis output directory already exists: {root}")
@@ -85,7 +86,7 @@ def main() -> None:
     inputs.add_argument(
         "--crawl",
         type=Path,
-        help="Local crawl folder or crawl-manifest.json; analyze without fetching pages",
+        help="Crawl folder, crawl-manifest.json or result.json; analyze without fetching pages",
     )
     parser.add_argument(
         "--output",

@@ -1,4 +1,7 @@
-"""One URL in, attributed company findings and explicit coverage statuses out."""
+"""Legacy combined research controller, retained for offline-analysis development.
+
+Not called by the crawl CLI, REST or JetStream. Active collection is in crawl.py.
+"""
 
 import json
 import logging

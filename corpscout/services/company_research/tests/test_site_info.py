@@ -157,6 +157,7 @@ class SiteInfoTests(unittest.IsolatedAsyncioTestCase):
             {"pages": ["/jobs"], "instructions": "Get jobs"},
             {"instructions": "Get jobs"},
             {"crawl": True},
+            {"crawl": "full"},
         ):
             with self.subTest(options=options):
                 result, requested, tasks, web = await self.run_case(

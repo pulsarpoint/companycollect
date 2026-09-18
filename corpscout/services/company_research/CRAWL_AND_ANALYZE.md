@@ -1,8 +1,85 @@
 # Crawl HTML, then analyze it
 
-Version 0.23.0 exposes collection through [REST, CLI and NATS JetStream](SERVICE.md).
-Every crawl additionally saves `result.json` with the complete manifest and cleaned
-HTML content. The existing capture files remain the input to later analysis.
+Collection runs through [REST, CLI and NATS JetStream](SERVICE.md).
+Version 0.24.0 saves a self-contained `result.json` for later analysis, with
+optional separate HTML captures and diagnostics.
+
+## Full crawl
+
+```bash
+company-research https://www.novelic.com/ --crawl full \
+  --output-dir runs/novelic-full --env-file .env
+```
+
+Version 0.29 starts at the homepage, checks company-site eligibility, discovers
+sitemap/page links and uses the LLM to select relevant pages across all four areas
+below. It follows useful contact/about/service/product pages, careers gateways,
+company-scoped external boards and individual job descriptions, plus financial
+information/report pages. Each fetched page is processed with deterministic parsers;
+there are no LLM job-extraction, technology-inference or catalog calls.
+
+Full mode defaults to **100 pages, 30 external pages and 100 model calls**.
+`--max-pages`, `--max-external-pages` and `--max-model-calls` override these limits.
+Robots policy and normal page/model timeouts still apply. “Full” describes the
+requested content scope, not guaranteed completeness: inspect `status`,
+`stop_reason`, errors and the saved queue for excluded, failed or unvisited pages.
+
+The saved `result.json` contains `documents[]`, with each page's `url`, cleaned
+(simplified) `html`, `input.links`, `input.headings`, and `input.observations`:
+contacts, readable text, JSON-LD/microdata, company identifiers and financial/report
+links. Rendered HTML is also retained for later offline interpretation. Raw JobPosting
+objects keep all published fields, including full descriptions; company/about text
+is preserved without inventing missing structured facts.
+
+`crawl.mode` is `full`, `crawl.elapsed_seconds` records elapsed collection time
+through browser cleanup (before final result serialization), and `crawl.usage`
+records prompt/completion tokens and per-call timing. Provider completion counts
+may include reasoning tokens; per-call provider usage retains the detailed split.
+
+Add `--site-info` for the brief first-page company description; the eligibility
+call supplies it. Bare `--crawl` keeps its previous behavior with `--site-info`.
+Use `--pages` or custom `--instructions` separately for restricted/targeted requests;
+they cannot be combined with `--crawl full`. REST/JetStream use `"crawl": "full"`,
+and Python uses `crawl_company(..., crawl="full")` with the same defaults and limits.
+
+The [live NOVELIC run](NOVELIC_FULL_CRAWL_20260918.md) collected 68 unique pages,
+including all 16 discovered job descriptions, in 510.199 seconds. It used 146,636
+input and 51,846 completion tokens; model calls took 263.837 seconds, fetching/link
+processing 220.042 seconds, and additional static observations/capture writes
+23.173 seconds. Three HTTP failures made the result partial. The report and linked
+JSON retain exact limits, failures, provider usage and source provenance.
+
+## Current collection scope
+
+Version 0.28.0 uses the collection flow for both `company-research` and
+`company-research-crawl`, as well as `python -m company_research`, REST and JetStream.
+Its default selection instructions request:
+
+- Contact pages, office locations and published contact/profile details.
+- Careers listings and full job descriptions, including company-scoped external boards.
+- Company identity, activities, products and services that explain what it does.
+- Financial-information pages, investor relations and report/filing links.
+
+Page selection uses the compact requested-content schema. It does not score
+technology objectives, prefer engineering jobs or use extracted job records to
+control navigation. `selection_instructions` records the caller's override (null
+for defaults); `effective_selection_instructions` records what the selector used.
+Exact page lists without instructions still fetch every supplied page with no LLM.
+`--site-info` alone still stops after the first page.
+
+The `processing` object marks `stage=collection`, with `job_analysis` and
+`technology_analysis` both `deferred`. Contacts and published structured data are
+extracted deterministically. JobPosting descriptions/fields and organization data
+stay as source claims in `documents[].input.observations.structured_data`; unstructured
+content stays in readable text and HTML. No job skills, technology usage or employment
+facts are inferred. Optional `site_info` remains a brief first-page description.
+Financial-link candidates are recorded separately in `observations.financial_links`;
+PDF/document bodies are not downloaded or interpreted.
+
+The old combined controller and analysis modules are preserved but disconnected
+from crawl entry points. The saved-page replay command documented below remains an
+explicit experimental tool; no analysis runs automatically after collection,
+S3 upload or ClickHouse import. A database-driven offline processor is future work.
 
 The package separates collection and interpretation into two runnable modules.
 Version 0.22.0 uses compact custom-instruction selection alongside the optional
@@ -16,8 +93,37 @@ brief site information introduced in v0.21.0:
   page extraction and final technology classification. It never starts a browser or
   fetches website pages. `company_research.page_run` supplies its CLI settings.
 
-The boundary is a versioned `crawl-manifest.json` and ordinary UTF-8 HTML files.
-Analysis can be repeated with another model against the same captures.
+The stages exchange a versioned `result.json`; saved capture folders are also
+accepted. Analysis can be repeated with another model against the same content.
+
+## Artifact retention
+
+Detailed artifacts are **saved by default during development**. Use
+`--save-artifacts` explicitly to retain HTML files, link/headings metadata,
+fetch outcomes, queue decisions and model-call diagnostics. Disable them with:
+
+```bash
+company-research-crawl https://www.novelic.com/ \
+  --pages https://www.novelic.com/careers/ \
+  --no-save-artifacts --output-dir runs/novelic-json
+
+company-research-pages --crawl runs/novelic-json/result.json \
+  --output runs/novelic-analysis --env-file .env
+```
+
+The Python API accepts `save_artifacts=False`; REST and JetStream accept
+`"save_artifacts": false` in each request. The default is `true` for all inputs.
+This controls retention: the current crawler still uses temporary working files,
+which are removed on normal exit, failure or cancellation. Only `result.json`
+remains in the crawl output directory when disabled. A forced process kill can
+leave OS temporary files for normal host cleanup.
+
+The final JSON bundles cleaned HTML, rendered HTML when available, page metadata,
+links and headings. It also preserves failures, site information and usage. The
+`crawl.artifacts_saved` field records the choice; paths to omitted files are not
+advertised. Analysis unpacks this JSON temporarily, validates identities/hashes,
+and uses the same inputs without fetching pages again. Artifact retention does
+not change which pages are selected or their HTML content.
 
 ## Get a brief description without a further crawl
 
@@ -194,14 +300,23 @@ be passed to the saved-page analyzer.
 
 ## Local output
 
+Every captured page includes [deterministic observations](PAGE_OBSERVATIONS.md)
+from its rendered HTML: metadata, structured entities, contacts, identifiers,
+tracker IDs, readable text, resource/document links and selected response headers.
+They remain in the portable JSON when artifacts are disabled and require no extra
+model calls. Observations remain distinct from LLM-derived company records.
+
+With artifact saving enabled:
+
 ```text
 runs/novelic-crawl/
+  result.json            # complete portable input for later analysis
   crawl-manifest.json
   site-info.json        # when requested, or when the site gate stops the crawl
   pages/
     p0001/
       page.html          # Crawl4AI cleaned HTML, without LLM rewriting
-      input.json         # source URL, hashes, timestamp, headings and link inventory
+      input.json         # source, hashes, headings, links and page observations
       link-page.html     # rendered source for additional evidence
     p0002/
       ...
@@ -234,7 +349,10 @@ company-research-pages \
   --env-file .env
 ```
 
-`--crawl` also accepts the manifest file itself. `--page PATH` remains available
+`--crawl` also accepts `result.json` (schema `company-crawl-result/1.1` or `/1.2`) or the
+manifest file itself. Earlier saved capture folders remain supported; older
+`company-crawl-result/1.0` JSON needs its original capture folder for analysis.
+`--page PATH` remains available
 for individual saved snapshot directories, and is mutually exclusive with `--crawl`.
 
 The analysis API/model/provider/reasoning/deadline options are unchanged. Optional
@@ -277,5 +395,6 @@ or a sequence of snapshot directories. Its explicit keyword arguments are
 `catalog_info` (catalog availability/provenance metadata). It returns the complete
 research dictionary. The CLI handles environment files and catalog loading.
 
-The historical `company-research URL` command still runs the older interleaved
-controller. Use the two commands above for the separated workflow.
+`company-research URL` is now an alias for collection. The former interleaved
+controller is retained in `company_research.research` for reference and is not
+exposed by a crawl command. Catalog flags belong only to the separate analysis tool.

@@ -21,6 +21,9 @@ ExecStart={{ company_research_deploy_dir }}/current/.venv/bin/company-research-s
     --concurrency {{ company_research_concurrency }} --max-pending {{ company_research_max_pending }} \
     --nats-stream {{ company_research_nats_stream }} \
     --nats-subject {{ company_research_nats_subject }} \
+    --nats-result-stream {{ company_research_nats_result_stream }} \
+    --nats-result-subject {{ company_research_nats_result_subject }} \
+    --nats-result-max-age {{ company_research_nats_result_max_age }} \
     --nats-durable {{ company_research_nats_durable }}{% if company_research_nats_create_stream %} --create-stream{% endif %}
 
 Restart=on-failure

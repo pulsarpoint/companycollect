@@ -12,16 +12,58 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+import httpx
 import nats
 from nats.aio.msg import Msg
 from nats.errors import Error as NatsError
 from test_crawl import browser_responses
+from test_package import response
+from test_site_info import COMPANY, HTML, SITE
 
 from company_research.service import CrawlService
 from company_research.service_nats import JetStreamInput, JetStreamSettings
 
 
 class JetStreamServiceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_full_discovery_request_returns_capture_and_is_acknowledged(self):
+        self.service.environment["DEEPSEEK"] = "test-key"
+
+        async def boundary(client, request, **kwargs):
+            if request.url.host == "api.deepseek.com":
+                return httpx.Response(200, json=response(COMPANY))
+            return httpx.Response(404)
+
+        with (
+            patch(
+                "company_research.crawl.open_browser",
+                lambda: browser_responses(
+                    {SITE: (HTML, [], 200, None)}, self.requested
+                ),
+            ),
+            patch.object(httpx.AsyncClient, "send", boundary),
+        ):
+            await self.js.publish(
+                self.settings.subject,
+                json.dumps(
+                    {
+                        "request_id": "full",
+                        "url": SITE,
+                        "crawl": "full",
+                        "config": {"max_pages": 40},
+                    }
+                ).encode(),
+            )
+            job = await self.wait_job("full")
+            await self.wait_acked(1)
+        self.assertEqual(job.state, "completed")
+        result = json.loads((self.service.root / job.result_file).read_text())
+        self.assertEqual(result["crawl"]["mode"], "full")
+        self.assertEqual(result["crawl"]["config"]["max_pages"], 40)
+        self.assertEqual(result["crawl"]["config"]["max_external_pages"], 30)
+        self.assertEqual(result["crawl"]["status"], "finished")
+        self.assertEqual(result["documents"][0]["html"], HTML)
+        self.assertEqual(result["crawl"]["usage"]["calls"], 1)
+
     async def asyncSetUp(self):
         binary = os.environ.get("NATS_SERVER") or shutil.which("nats-server")
         if binary is None:
@@ -118,7 +160,12 @@ class JetStreamServiceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_progress_ack_and_duplicate_request_do_not_repeat_crawl(self):
         self.hold.clear()
-        payload = {"request_id": "long-job", "url": self.url, "pages": [self.url]}
+        payload = {
+            "request_id": "long-job",
+            "url": self.url,
+            "pages": [self.url],
+            "save_artifacts": False,
+        }
         await self.js.publish(self.settings.subject, json.dumps(payload).encode())
         async with asyncio.timeout(5):
             while "long-job" not in self.service.jobs:
@@ -133,6 +180,13 @@ class JetStreamServiceTests(unittest.IsolatedAsyncioTestCase):
         self.hold.set()
         job = await self.wait_job("long-job")
         self.assertTrue((self.service.root / job.result_file).is_file())
+        self.assertEqual(
+            [
+                path.name
+                for path in (self.service.root / job.result_file).parent.iterdir()
+            ],
+            ["result.json"],
+        )
         await self.wait_acked(1)
         await self.js.publish(self.settings.subject, json.dumps(payload).encode())
         await self.wait_acked(2)
@@ -221,7 +275,7 @@ class JetStreamServiceTests(unittest.IsolatedAsyncioTestCase):
         await self.service.close()
         restarted = CrawlService(self.service.root, {}, concurrency=1, max_pending=2)
         await restarted.start()
-        worker = JetStreamInput(restarted, self.settings)
+        worker = JetStreamInput(restarted, self.settings, self.input.results)
         try:
             await worker.start()
             await self.js.publish(

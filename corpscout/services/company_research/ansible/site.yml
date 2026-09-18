@@ -78,6 +78,23 @@
       when: lookup('ansible.builtin.fileglob', playbook_dir ~ '/secrets.yml') | length > 0
       no_log: true
 
+    - name: Validate optional S3 delivery settings
+      ansible.builtin.assert:
+        that:
+          - company_research_s3_bucket | length == 0 or company_research_transport in ['nats', 'both']
+          - (company_research_s3_access_key | length == 0) == (company_research_s3_secret_key | length == 0)
+          - (item | regex_search('[\x00-\x1f\x7f]')) is none
+        fail_msg: S3 requires a NATS input and either a complete credential pair or the AWS credential provider chain.
+      loop:
+        - "{{ company_research_s3_bucket }}"
+        - "{{ company_research_s3_endpoint_url }}"
+        - "{{ company_research_s3_prefix }}"
+        - "{{ company_research_s3_region }}"
+        - "{{ company_research_s3_access_key }}"
+        - "{{ company_research_s3_secret_key }}"
+        - "{{ company_research_s3_session_token }}"
+      no_log: true
+
     - name: Require credentials for the selected inputs and default model
       ansible.builtin.assert:
         that:

@@ -17,6 +17,7 @@ from crawl4ai import (
 
 from company_research.external_links import collect_external_links, context_payload
 from company_research.models import Page, ResearchConfig
+from company_research.page_observations import public_response_headers
 from company_research.storage import content_hash, utc_now, write_json
 
 
@@ -92,6 +93,12 @@ async def fetch_page(
                     "status_code": result.status_code,
                     "error": (result.error_message or "")[:1000],
                     "metadata": result.metadata,
+                    "html_representation": "rendered_html"
+                    if result.html
+                    else "cleaned_html",
+                    "response_headers": public_response_headers(result.response_headers)
+                    if result.response_headers is not None
+                    else None,
                 },
             )
             if (

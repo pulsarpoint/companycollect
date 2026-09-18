@@ -433,6 +433,9 @@ EXPECTED_MIGRATIONS = (
     "000417_corpscout_se_company_domain_brave",
     "000418_corpscout_commoncrawl_domain_graph",
     "000419_corpscout_domain_graph_lookup_index",
+    "000420_corpscout_website_crawl_results",
+    "000421_corpscout_website_crawl_s3_domain_identity",
+    "000422_corpscout_website_crawl_page_observations",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}

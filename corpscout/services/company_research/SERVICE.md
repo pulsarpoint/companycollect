@@ -1,9 +1,21 @@
-# Local crawl service
+# Crawl service
 
-Version 0.23.0 accepts work through REST, the existing CLI, and NATS JetStream.
-All three call `company_research.crawl.crawl_company`. Results stay on the local
-filesystem. This service collects pages and optionally describes the site; the
+Version 0.29.0 accepts work through REST, the CLI, and NATS JetStream.
+All three call `company_research.crawl.crawl_company`. Results remain available
+locally; JetStream requests can additionally deliver to S3 and publish durable
+completion events. This service collects pages and optionally describes the site; the
 later LLM fact-analysis module remains separate.
+
+Default discovery collects contacts, jobs and their descriptions, company/about
+information, and financial-information links. Technology inference, tracker/resource
+inventory and job interpretation are deferred. Custom `instructions` replace the
+default selection request; explicit page lists and `site_info` retain their behavior.
+Both `company-research` and `company-research-crawl` now call this collection flow.
+See [scope and preserved source data](CRAWL_AND_ANALYZE.md#current-collection-scope).
+
+[ClickHouse storage and queries](CLICKHOUSE.md) provide website-keyed history,
+separate JSON section columns, and direct SQL reads of uploaded S3 bundles.
+Importing into the stored table is currently explicit.
 
 For a native systemd installation on `192.168.88.132`, use the
 [Ansible deployment](ansible/README.md). It preserves server-local results under
@@ -67,6 +79,14 @@ execution exception instead produces a failed job and a local error JSON file.
 
 REST and JetStream use the same JSON object:
 
+For automatic discovery across contacts, jobs, company information and financial
+links, submit `{"url": "https://www.novelic.com/", "crawl": "full"}`.
+This defaults to 100 pages and 30 external pages; `config` can override the limits.
+Do not combine `"crawl": "full"` with `pages` or `instructions`. The CLI equivalent
+is `company-research https://www.novelic.com/ --crawl full --output-dir runs/novelic`.
+Results include links, cleaned HTML, deterministic observations, elapsed time and
+LLM navigation usage. See [full-crawl behavior and limits](CRAWL_AND_ANALYZE.md#full-crawl).
+
 ```json
 {
   "request_id": "novelic-jobs-001",
@@ -85,6 +105,11 @@ REST and JetStream use the same JSON object:
   instructions every supplied page is fetched.
 - `instructions` controls page selection. Remote callers send the text itself;
   the CLI also supports `--instructions-file`.
+- `save_artifacts` defaults to `true` during development. Set it to `false` to
+  retain only the bundled `result.json` in the crawl attempt directory. CLI:
+  `--no-save-artifacts` (or `--save-artifacts` to enable). Saved job/request state
+  remains necessary for restart recovery and deduplication. Reusing an ID with a
+  different retention setting is a request conflict.
 - `site_info: true` alone describes the input page and stops. Combine it with
   `pages`, `instructions`, or `crawl: true` to continue crawling.
 - `api` defaults to `deepseek`. Optional `config` fields override `ResearchConfig`
@@ -164,24 +189,142 @@ asyncio.run(submit())
 ```
 
 The durable pull consumer fetches one message at a time and sends progress acks
-while its crawl is queued/running. It acknowledges completion only after a terminal
-local JSON result exists and is readable. A lost ack/redelivery reuses that result.
+while its crawl or result delivery is running. In local-only mode it acknowledges
+completion after a terminal local JSON result exists and is readable.
+A lost ack/redelivery reuses that result.
 Queue pressure or a failed local write leaves the message retryable. Invalid or
 conflicting requests are terminated only after a rejection receipt is saved under
 `rejected/`; those receipts exclude raw input. Crawler outcomes such as `partial`
 or `needs_review` are saved results and are acknowledged, not retried indefinitely.
-No result/event is published to another NATS subject in this version.
+Configure S3 delivery below to receive completion events on a separate subject.
 
 The implementation uses the documented [NATS Python pull/ack APIs](https://nats-io.github.io/nats.py/modules.html)
 and [FastAPI lifespan handling](https://fastapi.tiangolo.com/advanced/events/).
 
+## S3 results and completion events
+
+Set `CRAWL_S3_BUCKET` in the service environment, or pass `--s3-bucket`, to enable
+S3 delivery **for JetStream requests**. REST and the standalone CLI retain their
+local behavior. With no bucket configured, the existing local-only NATS behavior
+remains available. Example for the existing RustFS installation:
+
+```dotenv
+CRAWL_S3_BUCKET=crawls
+CRAWL_S3_ENDPOINT_URL=http://rustfs:9000
+CRAWL_S3_PREFIX=company-crawls
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=replace-me
+AWS_SECRET_ACCESS_KEY=replace-me
+```
+
+```bash
+uv run --extra service company-research-service \
+  --transport both --output-dir ./data/crawl-service --env-file .env \
+  --create-stream
+```
+
+The bucket must already exist. Provision read/head and conditional put access to
+the selected prefix. Use `--s3-endpoint-url`, `--s3-prefix`, and `--s3-region` to
+override environment settings. Leave the endpoint empty for AWS S3. Credentials
+come from the environment file or the normal AWS credential provider chain;
+temporary credentials can include `AWS_SESSION_TOKEN`. No credentials or bucket
+choices are accepted in crawl requests, and objects are not made public.
+
+The delivery order is:
+
+1. Save the crawl result locally.
+2. Upload `<prefix>/<request_id>/result.json.gz`. This is the same portable JSON,
+   including the manifest, site description and collected HTML.
+3. If `save_artifacts` is true and additional files exist, upload
+   `<prefix>/<request_id>/artifacts.tar.gz` with the attempt's diagnostics and
+   separate captures. With `false`, only the compressed result is uploaded.
+4. Persist `jobs/<request_id>/delivery.json` containing the event to publish.
+5. Publish the event through JetStream and persist its server acknowledgement.
+6. Acknowledge the original request.
+
+The default result stream is `COMPANY_CRAWL_RESULTS`, subject
+`company.crawl.results`. `--create-stream` creates it with file storage, limits
+retention and a seven-day retention period, allowing multiple independent durable
+consumers. Override with `--nats-result-stream`, `--nats-result-subject` and
+`--nats-result-max-age` (seconds, applied when creating a stream). Existing streams
+must include the exact result subject and use file storage with limits retention;
+the service validates these properties and does not change their settings.
+
+A completion event has this shape (hashes shortened here):
+
+```json
+{
+  "schema_version": "company-crawl-event/1.0",
+  "event_id": "crawl-...",
+  "request_id": "novelic-jobs-001",
+  "state": "completed",
+  "crawl_status": "finished",
+  "finished_at": "2026-09-17T20:00:00+00:00",
+  "page_count": 16,
+  "error": null,
+  "result": {
+    "bucket": "crawls",
+    "key": "company-crawls/novelic-jobs-001/result.json.gz",
+    "sha256": "...",
+    "bytes": 12345,
+    "content_type": "application/json",
+    "content_encoding": "gzip"
+  },
+  "artifacts": null
+}
+```
+
+Each object descriptor's `sha256` and `bytes` describe the **compressed object
+bytes**. A `version_id` is included when the store returns one. Download with an
+S3 client configured for the same endpoint, verify the hash, decompress with gzip,
+and read the JSON. The next LLM module can use that downloaded JSON as its input.
+An artifact descriptor, when present, uses `application/gzip` without HTTP content
+encoding because its payload is a gzip archive.
+
+Every valid terminal job emits an event, including partial, skipped, review-needed
+and failed crawls. A service execution failure uploads its safe error JSON in the
+same `result.json.gz` slot and emits `state: failed`. `completed` means the crawler
+produced a result; inspect `crawl_status` for the crawl outcome. Invalid/conflicting
+requests emit `state: rejected`, a safe error code, the input stream and message
+sequence, and `result: null` before termination. Rejections omit the untrusted
+request ID and raw input; use the publisher's stream/sequence receipt to correlate.
+
+Uploads use deterministic gzip bytes and conditional creation
+([S3 conditional writes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html)).
+An existing object is accepted only when its stored request/content hashes, size
+and content headers match. A different object is never overwritten. The selected
+S3-compatible server must support `If-None-Match: *`. Reported storage errors leave
+delivery pending; the service never retries with unconditional writes.
+
+Upload or publication failure leaves the request retryable. A restart resumes
+delivery from the local result/outbox without recrawling. A crash before the outbox
+is written may repeat a conditional upload; a lost publication acknowledgement
+may repeat the event. `Nats-Msg-Id` is the stable `event_id`, using
+[JetStream deduplication](https://docs.nats.io/using-nats/developer/develop_jetstream/model_deep_dive).
+Consumers must also deduplicate `event_id`, since the broker's deduplication window
+is finite. This is at-least-once delivery, not an end-to-end exactly-once guarantee.
+
+Keep local state and use stable request IDs across publisher retries. Local results
+are retained even after upload during development. Do not change the destination
+of an existing outbox; use a new output directory and new request IDs for a new
+destination. `delivery.json` records whether publication completed; the ordinary
+job state describes crawl completion, which may precede S3/event delivery. Remote
+object deletion or result-stream expiry after acknowledgement is not automatically
+repaired. Set storage and event retention to cover downstream processing delays.
+
 ## Local output and recovery
+
+The layout below shows the development default, `save_artifacts: true`. With
+`false`, each completed attempt retains just `result.json`; `request.json` and
+`job.json` still track the service job. Temporary processing files are cleaned up
+when the crawl exits. See [retention behavior](CRAWL_AND_ANALYZE.md#artifact-retention).
 
 ```text
 data/crawl-service/
   jobs/novelic-jobs-001/
     request.json
     job.json
+    delivery.json               # S3 outbox and completion publication receipt
     attempts/0001/
       result.json
       crawl-manifest.json
@@ -192,21 +335,27 @@ data/crawl-service/
   rejected/                     # invalid JetStream request receipts
 ```
 
-`result.json` is a portable document with schema `company-crawl-result/1.0`:
+`result.json` is a portable document with schema `company-crawl-result/1.2`:
 
 ```json
 {
-  "schema_version": "company-crawl-result/1.0",
-  "crawl": {"status": "finished", "site_info": null, "pages": []},
+  "schema_version": "company-crawl-result/1.2",
+  "crawl": {"status": "finished", "artifacts_saved": false, "site_info": null, "pages": []},
   "documents": [
-    {"page_id": "p0001", "url": "https://example.com/", "html": "<h1>Example</h1>", "html_sha256": "..."}
+    {"page_id": "p0001", "url": "https://example.com/", "html": "<h1>Example</h1>", "html_sha256": "...", "input": {}, "rendered_html": null}
   ]
 }
 ```
 
-The shortened `crawl` example omits most manifest fields. Actual JSON includes
-the complete manifest and cleaned HTML for each fetched page. HTML captures remain
-available for `company-research-pages --crawl <attempt-directory>`.
+This shortened example omits most manifest fields and the document's input
+metadata. Actual JSON includes the complete manifest, cleaned and optional rendered
+HTML, page metadata, target URL, headings, observed links and
+[deterministic observations](PAGE_OBSERVATIONS.md) in `documents[].input.observations`.
+Both retention modes can be analyzed with
+`company-research-pages --crawl <attempt-directory>/result.json`.
+Separate HTML captures are also accepted when retained.
+Older 1.1 bundles remain accepted for analysis; observations were not collected
+in those runs. No new request option is needed for observation collection.
 
 JSON publication uses atomic replacement. Restarting the service recovers queued
 or interrupted jobs from disk. Interrupted work gets a new attempt directory;
@@ -227,6 +376,24 @@ when restarting; copying only application code does not preserve completed jobs.
 uv run --extra service python -m unittest discover -s tests
 # Set NATS_SERVER=/path/to/nats-server to include real JetStream integration tests.
 ```
+
+Version 0.25 includes S3 HTTP boundary tests with the actual boto3 client and
+isolated JetStream integration tests. They cover conditional object writes,
+conflicts, slow uploads with progress acknowledgements, upload failures, restart
+between upload and publication, lost publication acknowledgements, failed local
+publication receipts, safe rejection/error events and request redelivery.
+The complete Python 3.14 suite passed: 226 tests, with seven existing/optional
+skips. Ruff, changed-module type checks, Ansible syntax/lint and the locked
+deployment wheel/dependency build passed.
+All 33 service tests also passed on Python 3.12.12, the deployment's Python version.
+
+The [live RustFS/NOVELIC receipt](data/s3-delivery-20260917/summary.json) records
+two real Careers crawls with artifacts disabled/enabled. Both captured 79,294 HTML
+characters with zero LLM calls. Downloaded JSON passed hash and replay validation;
+conditional reuploads returned the original objects, duplicate requests reused
+the results, and each request produced one completion event with zero pending
+acknowledgements. An isolated local broker was used; test objects are retained
+under the unique prefix recorded in that receipt.
 
 The service tests cover REST authentication and validation, capacity, result
 retrieval, request conflicts, restart recovery, partial API configuration, site-info

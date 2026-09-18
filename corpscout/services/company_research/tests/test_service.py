@@ -51,6 +51,7 @@ class CrawlServiceTests(unittest.IsolatedAsyncioTestCase):
         app = create_app(self.service, api_token="test-token")
         payload = {
             "request_id": "example-1",
+            "save_artifacts": False,
             "url": "https://example.test",
             "pages": ["/jobs"],
         }
@@ -75,6 +76,14 @@ class CrawlServiceTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result.status_code, 200)
                 document = result.json()
                 self.assertEqual(document["documents"][0]["html"], HTML)
+                self.assertFalse(document["crawl"]["artifacts_saved"])
+                self.assertEqual(
+                    [
+                        path.name
+                        for path in (self.root / job.result_file).parent.iterdir()
+                    ],
+                    ["result.json"],
+                )
                 self.assertEqual(document["crawl"]["usage"]["calls"], 0)
                 duplicate = await client.post("/v1/crawls", json=payload)
                 self.assertEqual(duplicate.json()["attempt"], 1)
@@ -148,12 +157,19 @@ class CrawlServiceTests(unittest.IsolatedAsyncioTestCase):
         await self.service.close()
         saved.state, saved.result_file, saved.finished_at = "running", None, None
         write_json(self.root / "jobs/saved/job.json", saved.model_dump())
+        # Older persisted requests predate the optional retention field.
+        legacy_request = request.model_dump()
+        legacy_request.pop("save_artifacts")
+        write_json(self.root / "jobs/saved/request.json", legacy_request)
         restarted = CrawlService(self.root, {}, concurrency=1, max_pending=1)
         await restarted.start()
         try:
             adopted = await restarted.wait("saved")
             self.assertEqual(adopted.state, "completed")
             self.assertEqual(adopted.attempt, 1)
+            self.assertEqual(
+                restarted.submit(request, source="rest").state, "completed"
+            )
             self.assertEqual(self.requested, [URL])
         finally:
             await restarted.close()
@@ -214,6 +230,8 @@ class CrawlServiceTests(unittest.IsolatedAsyncioTestCase):
         model_requests = []
 
         async def send(client, request, **kwargs):
+            if request.url.host == "example.test":
+                return httpx.Response(404, request=request)
             if request.url.host != "api.deepseek.com":
                 return await original_send(client, request, **kwargs)
             data = json.loads(request.content)
@@ -283,6 +301,20 @@ class CrawlServiceTests(unittest.IsolatedAsyncioTestCase):
                         model_requests[-1]["selection_instructions"], "Get current jobs"
                     )
                     self.assertEqual(self.requested, [SITE, URL])
+                    full = await client.post(
+                        "/v1/crawls",
+                        json={"request_id": "full", "url": SITE, "crawl": "full"},
+                    )
+                    self.assertEqual(full.status_code, 202)
+                    await asyncio.wait_for(self.service.wait("full"), 5)
+                    result = (await client.get("/v1/crawls/full/result")).json()
+                    self.assertEqual(result["crawl"]["mode"], "full")
+                    self.assertEqual(result["crawl"]["config"]["max_pages"], 100)
+                    self.assertEqual(
+                        result["crawl"]["config"]["max_external_pages"], 30
+                    )
+                    self.assertEqual(result["crawl"]["status"], "finished")
+                    self.assertEqual(self.requested, [SITE, URL, SITE])
         for path in self.root.rglob("*.json"):
             self.assertNotIn("model-secret", path.read_text())
 
@@ -303,6 +335,7 @@ class CrawlCliResultTests(unittest.TestCase):
                         URL,
                         "--output-dir",
                         str(output),
+                        "--no-save-artifacts",
                     ],
                 ),
                 patch(
@@ -318,6 +351,8 @@ class CrawlCliResultTests(unittest.TestCase):
             self.assertEqual(result["crawl"], manifest)
             self.assertEqual(result["documents"][0]["html"], HTML)
             self.assertEqual(manifest["status"], "finished")
+            self.assertEqual([path.name for path in output.iterdir()], ["result.json"])
+            self.assertFalse(manifest["artifacts_saved"])
 
 
 if __name__ == "__main__":

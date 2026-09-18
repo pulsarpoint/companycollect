@@ -1,6 +1,6 @@
-"""One company website URL in, attributed JSON findings out."""
+"""Collect company source pages for later offline interpretation."""
 
-from company_research.models import ResearchConfig, ResearchResult
-from company_research.research import research_company
+from company_research.crawl import crawl_company
+from company_research.models import ResearchConfig
 
-__all__ = ["ResearchConfig", "ResearchResult", "research_company"]
+__all__ = ["ResearchConfig", "crawl_company"]

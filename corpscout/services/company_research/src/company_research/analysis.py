@@ -4,6 +4,7 @@ import asyncio
 import shutil
 import uuid
 from collections.abc import Sequence
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Literal
 
@@ -11,7 +12,7 @@ import click
 import httpx
 
 from company_research import mentions, page_agent
-from company_research.captures import load_crawl
+from company_research.captures import open_crawl
 from company_research.llm import ModelClient
 from company_research.models import ResearchConfig
 from company_research.storage import content_hash, utc_now, write_json
@@ -64,6 +65,13 @@ def build_result(
         "site_coverage": "not_established",
         "config": config.model_dump(),
         "pages": pages,
+        "page_observations": [
+            page["observations"]
+            for page in pages
+            if page.get("observations") is not None
+        ]
+        if any(page.get("observations") is not None for page in pages)
+        else None,
         "technology_classification": classification,
         "coverage": coverage,
         "catalog": catalog_info,
@@ -115,47 +123,48 @@ async def analyze_pages(
     The output folder must be new. Source captures are copied and hash-checked
     before model calls. A partial crawl remains partial in the analysis output.
     """
-    crawl = None
-    if isinstance(source, Path):
-        crawl, page_paths = load_crawl(source)
-    else:
-        page_paths = list(source)
-    if not page_paths:
-        raise ValueError("Supply at least one captured page")
-    if not api_key:
-        raise ValueError("An analysis API key is required")
-    root = output_dir.resolve()
-    root.mkdir(parents=True, exist_ok=False)
-    groups: dict[str, list[Path]] = {}
-    if catalog is not None:
-        write_json(root / "catalog.json", catalog.snapshot.model_dump())
-    snapshots = root / "inputs"
-    snapshots.mkdir()
-    code = root / "code"
-    code.mkdir()
-    for path in Path(__file__).parent.glob("*.py"):
-        shutil.copyfile(path, code / path.name)
-    seen_pages = set()
-    for index, path in enumerate(page_paths):
-        frozen = snapshots / f"{index:03}-{path.name}"
-        frozen.mkdir()
-        for name in ("input.json", "page.html", "link-page.html"):
-            source = path / name
-            if source.exists():
-                shutil.copyfile(source, frozen / name)
-        page = page_agent.PageInput.load(frozen)
-        identity = (page.target_url, page.page["page_id"])
-        if identity in seen_pages:
-            raise ValueError(
-                "Duplicate page ID for the same target in supplied captures"
-            )
-        seen_pages.add(identity)
-        rendered_path = frozen / "link-page.html"
-        if rendered_path.is_file() and content_hash(
-            rendered_path.read_text(encoding="utf-8")
-        ) != page.page.get("link_html_sha256"):
-            raise ValueError("Frozen rendered capture hash mismatch")
-        groups.setdefault(page.target_url, []).append(frozen)
+    with ExitStack() as inputs:
+        crawl = None
+        if isinstance(source, Path):
+            crawl, page_paths = inputs.enter_context(open_crawl(source))
+        else:
+            page_paths = list(source)
+        if not page_paths:
+            raise ValueError("Supply at least one captured page")
+        if not api_key:
+            raise ValueError("An analysis API key is required")
+        root = output_dir.resolve()
+        root.mkdir(parents=True, exist_ok=False)
+        groups: dict[str, list[Path]] = {}
+        if catalog is not None:
+            write_json(root / "catalog.json", catalog.snapshot.model_dump())
+        snapshots = root / "inputs"
+        snapshots.mkdir()
+        code = root / "code"
+        code.mkdir()
+        for path in Path(__file__).parent.glob("*.py"):
+            shutil.copyfile(path, code / path.name)
+        seen_pages = set()
+        for index, path in enumerate(page_paths):
+            frozen = snapshots / f"{index:03}-{path.name}"
+            frozen.mkdir()
+            for name in ("input.json", "page.html", "link-page.html"):
+                source = path / name
+                if source.exists():
+                    shutil.copyfile(source, frozen / name)
+            page = page_agent.PageInput.load(frozen)
+            identity = (page.target_url, page.page["page_id"])
+            if identity in seen_pages:
+                raise ValueError(
+                    "Duplicate page ID for the same target in supplied captures"
+                )
+            seen_pages.add(identity)
+            rendered_path = frozen / "link-page.html"
+            if rendered_path.is_file() and content_hash(
+                rendered_path.read_text(encoding="utf-8")
+            ) != page.page.get("link_html_sha256"):
+                raise ValueError("Frozen rendered capture hash mismatch")
+            groups.setdefault(page.target_url, []).append(frozen)
     manifest: dict = {
         "status": "running",
         "started_at": utc_now(),

@@ -33,6 +33,18 @@ company_research_nats_stream: COMPANY_CRAWL
 company_research_nats_subject: company.crawl.requests
 company_research_nats_durable: company-crawl-132
 company_research_nats_create_stream: true
+company_research_nats_result_stream: COMPANY_CRAWL_RESULTS
+company_research_nats_result_subject: company.crawl.results
+company_research_nats_result_max_age: 604800
+
+# Empty bucket keeps local-only delivery. Set to crawls to enable RustFS/S3.
+company_research_s3_bucket: "{{ lookup('ansible.builtin.env', 'CRAWL_S3_BUCKET') }}"
+company_research_s3_endpoint_url: "{{ lookup('ansible.builtin.env', 'CRAWL_S3_ENDPOINT_URL') }}"
+company_research_s3_prefix: company-crawls
+company_research_s3_region: us-east-1
+company_research_s3_access_key: "{{ lookup('ansible.builtin.env', 'AWS_ACCESS_KEY_ID') }}"
+company_research_s3_secret_key: "{{ lookup('ansible.builtin.env', 'AWS_SECRET_ACCESS_KEY') }}"
+company_research_s3_session_token: "{{ lookup('ansible.builtin.env', 'AWS_SESSION_TOKEN') }}"
 
 # Override with the ignored secrets.yml or controller environment variables.
 company_research_deepseek: "{{ lookup('ansible.builtin.env', 'DEEPSEEK') }}"

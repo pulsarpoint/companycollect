@@ -62,7 +62,7 @@ def normalize_url(value: str, base_url: str | None = None) -> str:
 
 
 def crawlable_url(url: str) -> bool:
-    path = urlsplit(url).path.casefold()
+    path = urlsplit(url).path.rstrip("/").casefold()
     if re.search(
         r"\.(?:pdf|zip|gz|xml|json|jpg|jpeg|png|svg|gif|webp|mp4|mp3|css|js|ico|xlsx?|docx?)$",
         path,
@@ -302,7 +302,9 @@ class CrawlQueue:
         if self.allowed_urls is not None and url not in self.allowed_urls:
             self.excluded["outside_page_list"] += 1
             return
-        if re.search(r"\.(?:pdf|xlsx?|docx?)(?:$)", urlsplit(url).path, re.IGNORECASE):
+        if re.search(
+            r"\.(?:pdf|xlsx?|docx?)$", urlsplit(url).path.rstrip("/"), re.IGNORECASE
+        ):
             if (
                 len(self.document_candidates) < self.config.max_candidates
                 or url in self.document_candidates

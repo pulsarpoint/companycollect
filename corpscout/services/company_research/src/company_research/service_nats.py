@@ -1,4 +1,4 @@
-"""Durable JetStream input; local result publication precedes acknowledgement."""
+"""Durable crawl input with optional S3 delivery and a JetStream completion outbox."""
 
 import asyncio
 import hashlib
@@ -14,7 +14,7 @@ from nats.errors import TimeoutError as NatsTimeoutError
 from nats.js.api import AckPolicy, ConsumerConfig, RetentionPolicy, StorageType
 from nats.js.client import JetStreamContext
 from nats.js.errors import NotFoundError
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from company_research.service import (
     CrawlRequest,
@@ -22,6 +22,7 @@ from company_research.service import (
     RequestConflict,
     ServiceUnavailable,
 )
+from company_research.service_results import ResultDeliveryError, S3Results
 from company_research.storage import utc_now, write_json
 
 LOGGER = logging.getLogger(__name__)
@@ -41,15 +42,37 @@ class JetStreamSettings(BaseModel):
     ack_wait: float = Field(default=60, ge=1)
     create_stream: bool = False
     credentials: Path | None = Field(default=None, exclude=True)
+    result_stream: str = Field(
+        default="COMPANY_CRAWL_RESULTS", pattern=r"^[A-Za-z0-9_-]+$"
+    )
+    result_subject: str = Field(
+        default="company.crawl.results",
+        pattern=r"^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$",
+    )
+    result_max_age: float = Field(default=7 * 24 * 3600, gt=0)
+
+    @model_validator(mode="after")
+    def distinct_streams(self) -> "JetStreamSettings":
+        if self.result_stream == self.stream or self.result_subject == self.subject:
+            raise ValueError(
+                "Crawl requests and results must use separate streams and subjects"
+            )
+        return self
 
 
 class JetStreamInput:
-    def __init__(self, service: CrawlService, settings: JetStreamSettings):
+    def __init__(
+        self,
+        service: CrawlService,
+        settings: JetStreamSettings,
+        results: S3Results | None = None,
+    ):
         self.service = service
         self.settings = settings
         self.client: Client | None = None
         self.subscription: JetStreamContext.PullSubscription | None = None
         self.task: asyncio.Task | None = None
+        self.results = results
 
     async def start(self) -> None:
         async def connection_error(error: Exception) -> None:
@@ -64,6 +87,30 @@ class JetStreamInput:
         )
         try:
             js = self.client.jetstream()
+            if self.results is not None:
+                try:
+                    result_info = await js.stream_info(self.settings.result_stream)
+                except NotFoundError:
+                    if not self.settings.create_stream:
+                        raise ValueError(
+                            "NATS result stream is missing; provision it or use --create-stream"
+                        ) from None
+                    result_info = await js.add_stream(
+                        name=self.settings.result_stream,
+                        subjects=[self.settings.result_subject],
+                        retention=RetentionPolicy.LIMITS,
+                        storage=StorageType.FILE,
+                        max_age=self.settings.result_max_age,
+                    )
+                if (
+                    result_info.config.retention != RetentionPolicy.LIMITS
+                    or result_info.config.storage != StorageType.FILE
+                    or self.settings.result_subject
+                    not in (result_info.config.subjects or [])
+                ):
+                    raise ValueError(
+                        "Result stream must use file storage, limits retention and the result subject"
+                    )
             try:
                 await js.stream_info(self.settings.stream)
             except NotFoundError:
@@ -127,7 +174,7 @@ class JetStreamInput:
                 for message in messages:
                     try:
                         await self.process(message)
-                    except (OSError, ServiceUnavailable) as error:
+                    except (OSError, ServiceUnavailable, ResultDeliveryError) as error:
                         LOGGER.error("NATS job deferred (%s)", type(error).__name__)
                         await message.nak(delay=5)
             except NatsTimeoutError:
@@ -150,9 +197,11 @@ class JetStreamInput:
             job = self.service.submit(request, source="jetstream")
         except (ValueError, ValidationError, RequestConflict) as error:
             # Never persist rejected raw input: it may contain accidental credentials.
-            write_json(
-                self.service.root / "rejected" / f"{delivery_id}.json",
-                {
+            rejection_file = self.service.root / "rejected" / f"{delivery_id}.json"
+            if rejection_file.exists():
+                rejection = json.loads(rejection_file.read_text(encoding="utf-8"))
+            else:
+                rejection = {
                     "rejected_at": utc_now(),
                     "stream": metadata.stream,
                     "sequence": metadata.sequence.stream,
@@ -160,34 +209,102 @@ class JetStreamInput:
                     "reason": "request_id_conflict"
                     if isinstance(error, RequestConflict)
                     else "invalid_request",
-                },
-            )
+                }
+                write_json(rejection_file, rejection)
+            if self.results is not None:
+                event = {
+                    "schema_version": "company-crawl-event/1.0",
+                    "event_id": f"rejected-{delivery_id}",
+                    "request_id": None,
+                    "state": "rejected",
+                    "error": rejection["reason"],
+                    "request_stream": metadata.stream,
+                    "request_sequence": metadata.sequence.stream,
+                    "finished_at": rejection["rejected_at"],
+                    "result": None,
+                }
+                await self.publish_event(event)
             await message.term()
             return
-        waiter = asyncio.create_task(self.service.wait(job.request_id))
+        waiter = asyncio.create_task(self.deliver(job.request_id))
         try:
             while True:
-                try:
-                    completed = await asyncio.wait_for(
-                        asyncio.shield(waiter), timeout=self.settings.ack_wait / 3
-                    )
-                except TimeoutError:
+                done, _ = await asyncio.wait(
+                    {waiter}, timeout=self.settings.ack_wait / 3
+                )
+                if not done:
                     if not self.service.healthy():
                         raise ServiceUnavailable("Crawl workers stopped") from None
                     await message.in_progress()
                     continue
-                assert completed.result_file is not None
-                # A missing/unreadable file must leave the delivery retryable.
-                json.loads(
-                    (self.service.root / completed.result_file).read_text(
-                        encoding="utf-8"
-                    )
-                )
+                # Publication timeouts must propagate, not become progress heartbeats.
+                await waiter
                 await message.ack_sync()
                 return
         finally:
             waiter.cancel()
             await asyncio.gather(waiter, return_exceptions=True)
+
+    async def publish_event(self, event: dict):
+        assert self.client is not None
+        return await self.client.jetstream().publish(
+            self.settings.result_subject,
+            json.dumps(event, ensure_ascii=False).encode(),
+            stream=self.settings.result_stream,
+            headers={"Nats-Msg-Id": event["event_id"]},
+        )
+
+    async def deliver(self, request_id: str) -> None:
+        completed = await self.service.wait(request_id)
+        assert completed.result_file is not None
+        if self.results is None:
+            # Local-only mode retains its existing acknowledgement contract.
+            try:
+                json.loads(
+                    (self.service.root / completed.result_file).read_text(
+                        encoding="utf-8"
+                    )
+                )
+            except ValueError as error:
+                raise ResultDeliveryError("Saved result is not valid JSON") from error
+            return
+        outbox_file = self.service.root / "jobs" / request_id / "delivery.json"
+        destination = {
+            "s3": self.results.settings.model_dump(),
+            "stream": self.settings.result_stream,
+            "subject": self.settings.result_subject,
+        }
+        outbox: dict
+        if outbox_file.exists():
+            outbox = json.loads(outbox_file.read_text(encoding="utf-8"))
+            if outbox["destination"] != destination:
+                raise ResultDeliveryError(
+                    "Saved delivery belongs to a different destination"
+                )
+        else:
+            try:
+                event = await asyncio.to_thread(
+                    self.results.prepare_event, self.service.root, completed
+                )
+            except ValueError as error:
+                raise ResultDeliveryError(
+                    "Saved result or request is invalid"
+                ) from error
+            outbox = {
+                "schema_version": "company-crawl-delivery/1.0",
+                "destination": destination,
+                "event": event,
+                "published": None,
+            }
+            write_json(outbox_file, outbox)
+        if outbox["published"] is None:
+            receipt = await self.publish_event(outbox["event"])
+            outbox["published"] = {
+                "stream": receipt.stream,
+                "sequence": receipt.seq,
+                "published_at": utc_now(),
+            }
+            write_json(outbox_file, outbox)
 
     async def close(self) -> None:
         if self.task is not None:

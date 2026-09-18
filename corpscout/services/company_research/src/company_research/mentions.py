@@ -321,6 +321,7 @@ class MentionPageAgent:
             "data": data,
             "links": links,
             "source": page.page,
+            "observations": page.observations,
             "source_sections": sections,
             "technology_mentions": mentions,
             "captures": {

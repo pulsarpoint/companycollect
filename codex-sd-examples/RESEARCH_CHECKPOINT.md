@@ -1,6 +1,104 @@
-# Company extraction checkpoint — 17 September 2026
+# Company extraction checkpoint — 18 September 2026
 
 ## Resume here
+
+**Full crawl implemented and measured (v0.29.0).** `--crawl full` / REST and
+JetStream `"crawl": "full"` selects all four areas with default limits of 100 pages,
+30 external pages and 100 model calls. Custom instructions/page lists remain
+separate modes. Deterministic extraction returns links, cleaned HTML and source
+observations; `elapsed_seconds` and usage expose run cost/speed. PDF/document URLs
+ending in `/` are now retained as references rather than selected as HTML pages.
+The [live NOVELIC benchmark](../corpscout/services/company_research/NOVELIC_FULL_CRAWL_20260918.md)
+attempted 76 URLs, kept 68 unique captures, deduplicated five redirects, and recorded
+two 404s plus one 403 (`partial`). All 16 discovered job details were captured with
+full JobPosting descriptions. Wall time 510.199s; LLM 263.837s; fetch/render/link
+processing 220.042s; extra static observations/capture writing 23.173s. DeepSeek
+Flash/high made 40 calls (one site gate, 39 selections), using 146,636 input and
+51,846 completion tokens (198,482 total). The 20 financial-link candidates came
+from third-party partner-profile menus, not established NOVELIC reports. No model
+job/technology analysis, S3 upload, database write or deployment ran. An earlier
+diagnostic was stopped to fix `.pdf/` filtering and is recorded separately.
+255 tests passed with 14 optional/live skips, including CLI/REST/real JetStream;
+portable hash replay, ClickHouse mapping, Ruff, type checks and lock checks passed.
+Artifacts: `../corpscout/services/company_research/data/novelic-full-crawl-20260918-verified/`.
+
+**Collection scope narrowed (v0.28.0).** CLI (`company-research` and
+`company-research-crawl`), REST and JetStream now share the collection-only path.
+Default compact selection requests contacts, job listings/descriptions, company
+information and financial/report links, with no technology objective or engineering
+reserve. Custom instructions, explicit lists and site-info retain their behavior.
+Tracker/resource extraction is deferred (`null` fields); raw HTML, metadata,
+headers, contacts, identifiers and JSON-LD/microdata remain available. New
+`financial_links` are explicitly heuristic/unexamined references. Observation
+schema is 1.1 inside the existing portable result schema 1.2. Legacy research and
+analysis code is preserved, but no crawl command invokes it. Saved-page analysis
+is still an explicit experimental tool; database-triggered processing is not wired.
+The 250-test suite passed (14 optional/live skips). Offline replay of the 26 saved
+NOVELIC pages retained all HTML/structured data, all 16 full JobPosting descriptions,
+three emails and three phones, with zero LLM/network calls. No financial-link
+candidates appeared in those pages. Portable replay and ClickHouse row mapping
+passed; no new S3 upload, database write or service deployment was performed.
+Receipt: `../corpscout/services/company_research/data/novelic-collection-only-replay-20260918/summary.json`.
+
+**Page observations implemented (v0.27.0).** Every successfully captured page now
+collects metadata, JSON-LD/microdata, readable text, contacts/profile links,
+identifiers, tracker IDs, resources/document links and selected response headers
+without added page fetches or LLM calls. Observations have source/hash provenance
+and stay separate from company facts. Portable schema 1.2 embeds them in
+`documents[].input.observations`, including with artifacts disabled; 1.1 replay
+remains supported. Analysis preserves them without expanding model prompts.
+Migration 422 adds `page_observations` to ClickHouse storage/latest/S3 projections.
+It is applied live (clean ledger 422); the S3 and stored projections were compared
+with the new NOVELIC result and match exactly. The receipt is in
+`../corpscout/services/company_research/data/page-observations-20260918/summary.json`.
+The fresh NOVELIC homepage/Careers run captured 39 JSON-LD nodes with zero model
+calls, passed replay checks and retained only its `result.json` locally. This is
+HTML collection parity work; Wappalyzer, embedding and NACE processing are not run.
+See [the observation contract](../corpscout/services/company_research/PAGE_OBSERVATIONS.md)
+and [local capture](../corpscout/services/company_research/data/novelic-observations-20260918/result.json).
+
+**ClickHouse website results implemented (v0.26.0).** Migrations 420/421 add
+`corpscout.website_crawl_results`, its latest-per-domain/stage view, and
+`corpscout.website_crawl_results_s3` for direct RustFS JSON queries. Sections such
+as jobs/services/contacts are separate validated JSON-text columns. Unprocessed
+sections remain NULL. Raw crawl and LLM-analysis stages remain separate, and
+reimported results deduplicate by canonical content ID. `company-research-clickhouse`
+imports exact S3 paths or local result JSON. Import is explicit; no background
+consumer or new crawler acknowledgement dependency was added. Existing NOVELIC
+S3 bundles and a saved partial GLM analysis populate the live table. Named-collection
+administration was enabled for the ClickHouse administrator without restarting the
+database, and infrastructure configuration preserves it on future deployments.
+See [the query/import guide](../corpscout/services/company_research/CLICKHOUSE.md)
+and [live receipt](../corpscout/services/company_research/data/clickhouse-results-20260917/summary.json).
+
+**S3/JetStream results implemented (v0.25.0).** Set `CRAWL_S3_BUCKET` or
+`--s3-bucket` to enable uploads for NATS requests. The worker writes deterministic
+`result.json.gz` with embedded HTML and optional `artifacts.tar.gz`, saves an event
+outbox, publishes `company.crawl.results` through JetStream, then acknowledges the
+request. Upload/publication retries reuse completed crawls; consumers deduplicate
+stable event IDs. Local recovery state remains required. REST and CLI keep local
+output behavior. Ansible includes the S3/result-stream settings, and its ignored
+private configuration points to the existing RustFS `crawls` bucket. Deployment
+to `192.168.88.132` still requires working SSH access; local validation and real
+RustFS tests do not imply that the remote systemd service was deployed.
+The complete Python 3.14 suite passed (226 tests, seven skips), along with Ruff,
+changed-module type checks, Ansible syntax/lint and its locked deployment build.
+All 33 service tests also passed on Python 3.12.12.
+See [the delivery contract](../corpscout/services/company_research/SERVICE.md#s3-results-and-completion-events)
+and [live RustFS/NOVELIC receipt](../corpscout/services/company_research/data/s3-delivery-20260917/summary.json).
+
+**Optional artifacts implemented (v0.24.0).** Detailed crawl files remain enabled
+by default during development. `--no-save-artifacts` or REST/JetStream
+`"save_artifacts": false` retains just `result.json` in each crawl attempt;
+durable service request/job files remain. Schema `company-crawl-result/1.1`
+bundles cleaned/rendered HTML and the complete page input, allowing later analysis
+with `company-research-pages --crawl result.json` without recrawling. Temporary
+working/replay files are cleaned on exit; retained historical captures still work.
+205 Python tests passed (seven existing/optional skips), including real JetStream
+tests. Fresh NOVELIC CLI/REST/JetStream runs all saved only their bundled result,
+and all three results passed replay validation. See the
+[retention guide](../corpscout/services/company_research/CRAWL_AND_ANALYZE.md#artifact-retention)
+and [live receipt](../corpscout/services/company_research/data/artifact-retention-20260917/summary.json).
 
 **Service relocated.** The complete package, local crawl data, tests, benchmarks,
 lockfile and documentation now live in `companycollect/corpscout/services/company_research`.
@@ -19,7 +117,7 @@ interrupted jobs recover on restart in new attempt directories; already saved
 results survive lost acks/crashes. One process owns each local output directory.
 The existing crawl CLI retains its flags/stdout and now additionally writes
 `result.json`, containing the full manifest and collected HTML. Captures remain
-available for later analysis. No remote output storage or result-event publishing.
+available for later analysis. Remote output/event publishing was added in v0.25.
 Partial configuration overrides retain the chosen API's model defaults.
 
 Read [service startup, API, message and output contracts](../corpscout/services/company_research/SERVICE.md).

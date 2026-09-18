@@ -30,6 +30,23 @@
         state: absent
 
     # ---------------------------------------------------------------- config
+    - name: Create the administrator configuration directory
+      ansible.builtin.file:
+        path: "{{ clickhouse_dir }}/users.d"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Enable named collection administration for the configured administrator
+      ansible.builtin.template:
+        src: named-collections.xml.j2
+        dest: "{{ clickhouse_dir }}/users.d/named-collections.xml"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Apply compose
+
     - name: Copy docker-compose.yml
       ansible.builtin.copy:
         src: docker-compose.yml
@@ -92,13 +109,13 @@
       register: ping_probe
 
     - name: Report service state
-      ansible.builtin.command: systemctl is-active clickhouse-compose
-      changed_when: false
+      ansible.builtin.systemd_service:
+        name: clickhouse-compose
       register: svc_state
 
     - name: Show verification result
       ansible.builtin.debug:
-        msg: "clickhouse-compose {{ svc_state.stdout }}, /ping answered {{ ping_probe.content | trim }}"
+        msg: "clickhouse-compose {{ svc_state.status.ActiveState }}, /ping answered {{ ping_probe.content | trim }}"
 
   handlers:
     # Recreates only containers whose effective config changed; deliberately
@@ -108,3 +125,7 @@
       ansible.builtin.command:
         cmd: docker compose up -d --remove-orphans
         chdir: "{{ clickhouse_dir }}"
+      register: clickhouse_compose_apply
+      changed_when: >-
+        (clickhouse_compose_apply.stdout ~ clickhouse_compose_apply.stderr)
+        is search('Creating|Created|Recreating|Recreated|Starting|Started|Removing|Removed')

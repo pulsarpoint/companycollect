@@ -27,7 +27,8 @@ class CrawlRequest(StrictModel):
     pages: list[str] | None = Field(default=None, min_length=1, max_length=1000)
     instructions: str | None = Field(default=None, max_length=20000)
     site_info: bool = False
-    crawl: bool | None = None
+    save_artifacts: bool = True
+    crawl: bool | Literal["full"] | None = None
     api: Literal["deepseek", "openrouter"] = "deepseek"
     config: ResearchConfig | None = None
 
@@ -52,6 +53,12 @@ class CrawlRequest(StrictModel):
 
     @model_validator(mode="after")
     def crawl_options(self):
+        if self.crawl == "full" and (
+            self.pages is not None or self.instructions is not None
+        ):
+            raise ValueError(
+                'crawl="full" cannot be combined with pages or instructions; omit crawl for targeted collection'
+            )
         if self.crawl is False and (
             not self.site_info
             or self.pages is not None
@@ -206,7 +213,9 @@ class CrawlService:
             raise ServiceUnavailable("Crawl workers are unavailable")
         folder = self.root / "jobs" / request.request_id
         if request.request_id in self.jobs:
-            previous = json.loads((folder / "request.json").read_text(encoding="utf-8"))
+            previous = CrawlRequest.model_validate_json(
+                (folder / "request.json").read_text(encoding="utf-8")
+            ).model_dump()
             if previous != request.model_dump():
                 raise RequestConflict(
                     "request_id already belongs to a different request"
@@ -271,6 +280,7 @@ class CrawlService:
                 pages=request.pages,
                 instructions=request.instructions,
                 site_info=request.site_info,
+                save_artifacts=request.save_artifacts,
                 crawl=request.crawl,
                 api=request.api,
                 config=request.config,
@@ -298,6 +308,8 @@ class CrawlService:
                 {
                     "schema_version": "company-crawl-error/1.0",
                     "request_id": job.request_id,
+                    "url": request.url,
+                    "finished_at": utc_now(),
                     "error": job.error,
                 },
             )

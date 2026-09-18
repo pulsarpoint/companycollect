@@ -12,6 +12,7 @@ services:
     volumes:
       - ./data/clickhouse:/var/lib/clickhouse
       - ./config.d/system-log-retention.xml:/etc/clickhouse-server/config.d/system-log-retention.xml:ro
+      - ./users.d/named-collections.xml:/etc/clickhouse-server/users.d/named-collections.xml:ro
     healthcheck:
       test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
       interval: 5s

@@ -1,8 +1,11 @@
 # Complete research JSON output
 
 Current direction, 17 September 2026: the crawler returns a complete JSON object.
-Storage belongs to its caller. The earlier RustFS/S3 submission design is superseded;
-the upload module, command, bucket option and storage dependency have been removed.
+Storage belongs to its caller. The earlier full-research RustFS/S3 submission design
+is superseded. Its upload module and command remain removed. Separately, version
+0.25 adds S3 storage in the [crawl service's JetStream transport](SERVICE.md#s3-results-and-completion-events)
+for raw crawl bundles and completion events. It does not change this analysis
+command's JSON output contract; the S3 dependency belongs to the service extra.
 
 ```text
 Crawl4AI → page agents → collected page results
@@ -43,7 +46,7 @@ mentions and failed attempts available even when validation rejects a decision.
 
 Reclassification preserves original captures and mentions and produces a new
 revision with changed decisions. The caller decides whether and where to retain
-the returned JSON. The crawler performs no object-store writes.
+the returned JSON. The standalone analysis command performs no object-store writes.
 
 ## Central technology lookup
 

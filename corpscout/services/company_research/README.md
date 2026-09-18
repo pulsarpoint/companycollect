@@ -5,6 +5,52 @@ Run setup and commands from this directory; see [the service guide](SERVICE.md).
 The Python package name and command names remain `company_research` and
 `company-research-*`. Saved captures and benchmark data moved with the package.
 
+Version 0.29.0 adds `--crawl full` (REST/JetStream: `"crawl": "full"`). It uses LLM
+navigation across contacts, jobs, company information and financial/report pages,
+with deterministic extraction and bundled links/cleaned HTML. Full mode defaults
+to 100 pages and 30 external pages, with explicit overrides; it reports elapsed
+time and model usage. See [full-crawl usage](CRAWL_AND_ANALYZE.md#full-crawl).
+The [live NOVELIC benchmark](NOVELIC_FULL_CRAWL_20260918.md) collected 68 unique
+pages and all 16 discovered jobs in 8m30s, using 198,482 tokens across 40 DeepSeek
+Flash/high calls. It ended `partial`: two URLs returned 404 and one returned 403.
+Five redirects were deduplicated. The report separates model, fetching and static
+processing time and records raw-data/financial-link attribution limitations.
+
+Version 0.28.0 makes `company-research`, `company-research-crawl`,
+`python -m company_research`, REST and JetStream use the same collection-only flow.
+Default discovery looks for **contacts, job listings/descriptions, about-company
+content (including activities/services), and financial-information links**.
+Custom instructions and explicit page lists remain supported. LLM calls are limited
+to site eligibility/optional brief descriptions and page selection. Job analysis,
+technology inference, tracker/resource inventories and catalog lookup are disabled
+in this flow; their implementations remain available for future offline processing.
+Collected HTML, readable text and published JSON-LD/microdata are kept intact.
+See [collection scope](CRAWL_AND_ANALYZE.md#current-collection-scope).
+
+Version 0.27.0 added [deterministic page observations](PAGE_OBSERVATIONS.md): metadata,
+readable text, JSON-LD/microdata, contacts, company identifiers, tracker IDs,
+document/resource links and selected response headers. Every successful capture
+keeps these in its JSON even when detailed artifacts are disabled, with no extra
+fetches or LLM calls. Migration 422 exposes `page_observations` in ClickHouse.
+
+Version 0.26.0 adds [ClickHouse website results and S3 queries](CLICKHOUSE.md).
+The result table preserves history with jobs, services, contacts and other JSON
+sections in separate columns. A latest view keeps crawl/analysis stages separate;
+an external S3 view reads uploaded bundles directly. `company-research-clickhouse`
+imports saved or S3 results without recrawling.
+
+Version 0.25.0 adds [S3 delivery for JetStream requests](SERVICE.md#s3-results-and-completion-events).
+The worker uploads compressed JSON with collected HTML, publishes a durable
+completion event and then acknowledges the request. Delivery resumes from saved
+state after failures; optional diagnostics upload alongside the result. Enable
+with `CRAWL_S3_BUCKET` or `--s3-bucket`. REST and CLI keep their local output.
+
+Version 0.24.0 makes separate crawl artifacts optional. They remain enabled by
+default during development; use `--no-save-artifacts` or a REST/JetStream request
+with `"save_artifacts": false` to retain only the bundled `result.json` in each
+crawl attempt. The JSON includes complete inputs for later analysis, which accepts
+`--crawl path/to/result.json`. See [artifact settings](CRAWL_AND_ANALYZE.md#artifact-retention).
+
 Version 0.23.0 adds a [local crawl service](SERVICE.md) with REST, the existing
 CLI, and NATS JetStream inputs. All use the same crawler and publish `result.json`
 with the full manifest and collected HTML. REST/NATS share persisted jobs,
@@ -220,14 +266,13 @@ source-backed mapping decisions, an alias output file, and a replay script.
 ```sh
 python -m pip install -e .
 company-research https://www.example.com --env-file /path/to/crawler.env \
-  --technology-catalog data/technology-catalog.json \
   --output-dir data/example > example.json
 ```
 
-Requires Python 3.12 or newer. Configure `OPENROUTER_API_KEY` and ClickHouse connection
-variables in the environment or the explicitly supplied env file. Each crawl refreshes
-the catalog before making model calls; use `--offline-catalog` with an explicit snapshot
-path for a reproducible offline lookup. The package never automatically
+Requires Python 3.12 or newer. Configure `DEEPSEEK` for automatic discovery, or
+`OPENROUTER_API_KEY` with `--api openrouter`. Explicit page lists without site-info or
+selection instructions require no model key. No technology catalog or database
+connection is needed to crawl. The package never automatically
 searches other projects for credentials. Browser binaries are downloaded by
 CloakBrowser on first use; this needs internet access and a supported browser host.
 
@@ -236,19 +281,23 @@ Python API:
 ```python
 import asyncio
 from pathlib import Path
-from company_research import ResearchConfig, research_company
-from company_research.technology_catalog import TechnologyCatalog
+from company_research.crawl import crawl_company
+from company_research.models import ResearchConfig
 
 result = asyncio.run(
-    research_company(
+    crawl_company(
         "https://www.example.com",
         output_dir=Path("data/example"),
         config=ResearchConfig(max_pages=20),
-        technology_catalog=TechnologyCatalog.read(Path("data/technology-catalog.json")),
     )
 )
-print(result.model_dump_json(indent=2))
+print(result["status"])  # Full collected HTML and observations are in data/example/result.json.
 ```
+
+The sections below describe the preserved legacy analysis implementation, which
+does not run as part of collection. Its old controller lives in
+`company_research.research`; it is no longer the package-level Python API or CLI.
+The saved-page analysis command remains an explicit, separate experimental tool.
 
 `result.records` contains the ten objective arrays plus scoped explicit negative
 statements. Each finding includes its data, stable record ID, source URL(s), snapshot

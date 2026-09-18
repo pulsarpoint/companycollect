@@ -38,6 +38,31 @@ consumer `company-crawl-132`. The playbook allows the service to create a missin
 stream; it does not change an existing stream's configuration or install another
 NATS server. Set `company_research_transport: rest` for REST only.
 
+To enable S3 results and durable completion events for JetStream, add these
+settings to the ignored `secrets.yml` (the bucket must already exist):
+
+```yaml
+company_research_s3_bucket: crawls
+company_research_s3_endpoint_url: http://rustfs:9000
+company_research_s3_access_key: replace-me
+company_research_s3_secret_key: replace-me
+```
+
+The default object prefix is `company-crawls`. Override
+`company_research_s3_prefix` in deployment variables if needed. The environment
+file carries S3 credentials with the same permissions and output suppression as
+the other secrets. Leave the endpoint empty for AWS S3; the AWS credential provider
+chain can supply credentials instead. Controller environment equivalents are
+`CRAWL_S3_BUCKET`, `CRAWL_S3_ENDPOINT_URL`, `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY` and optional `AWS_SESSION_TOKEN`.
+
+The service creates `COMPANY_CRAWL_RESULTS` for `company.crawl.results` with file
+storage and seven-day limits retention when S3 and stream creation are enabled.
+The `company_research_nats_result_*` variables control those defaults. Ensure the
+NATS account can publish results and create/read both configured streams. Local
+job state, results and delivery receipts stay under the persistent output folder.
+See [delivery and retry behavior](../SERVICE.md#s3-results-and-completion-events).
+
 ## Installed layout
 
 | Path | Purpose |
@@ -102,6 +127,11 @@ sudo -u company-research env \
   --env-file /etc/company-research/company-research.env \
   --output-dir /var/lib/company-research/cli-novelic-info
 ```
+
+Detailed crawl artifacts are enabled by default while developing. Add
+`--no-save-artifacts` to a crawl command, or `"save_artifacts": false` to a REST
+or JetStream request, to retain just the bundled result in that crawl directory.
+The service's request/job files still persist for recovery.
 
 To inspect the build without connecting to the server:
 

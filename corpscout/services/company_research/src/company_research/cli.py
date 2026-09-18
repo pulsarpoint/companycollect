@@ -1,4 +1,8 @@
-"""URL-only CLI with JSON on stdout and progress on stderr."""
+"""Archived combined research command and explicit saved-result submission.
+
+All crawl entry points now use crawl.main. The combined implementation is kept
+here for reference while job and technology interpretation move to offline work.
+"""
 
 import asyncio
 import logging
@@ -13,6 +17,9 @@ from dotenv import dotenv_values
 
 from company_research.analytics import technology_submission_records
 from company_research.catalog_config import load_catalog
+
+# Preserve the old installed entry point until the package is reinstalled.
+from company_research.crawl import main
 from company_research.models import ResearchConfig, ResearchResult
 from company_research.research import research_company
 
@@ -35,7 +42,7 @@ from company_research.research import research_company
     is_flag=True,
     help="Use the specified snapshot without refreshing it.",
 )
-def main(
+def _archived_research(
     url: str,
     output_dir: Path | None,
     env_file: Path | None,

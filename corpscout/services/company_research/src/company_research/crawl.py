@@ -6,9 +6,11 @@ import json
 import logging
 import os
 import sys
+import time
 from collections.abc import Sequence
-from contextlib import AsyncExitStack, redirect_stdout
+from contextlib import AsyncExitStack, nullcontext, redirect_stdout
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Literal
 from uuid import uuid4
 
@@ -29,19 +31,33 @@ from company_research.fetch import BrowserUnavailable, fetch_page, open_browser
 from company_research.link_selection import assess_links
 from company_research.llm import ModelBudgetExceeded, ModelClient, ModelUnavailable
 from company_research.models import (
-    OBJECTIVES,
     Page,
     RequestedContentAssessment,
     ResearchConfig,
 )
 from company_research.profiles import (
     classify_site,
-    profile_objectives,
     site_information,
 )
 from company_research.storage import utc_now, write_json
 
 LOGGER = logging.getLogger(__name__)
+
+DEFAULT_SELECTION_INSTRUCTIONS = """Collect all useful source pages for these four areas:
+1. Contact information: contact pages, office addresses, email, phone and profile links.
+2. Jobs: careers listings and full job descriptions, including the target employer's
+   external job board and its individual ads. Collect all useful job pages within budget.
+3. About the company: identity, activities, products and services that describe what
+   the company does. Include useful service/product detail pages as well as overviews.
+4. Financial information: investor relations, financial statements, annual reports
+   and filings. Find the pages linking to these documents; document links are saved
+   without downloading the documents.
+Choose pages for their source content only. Do not analyze jobs, infer skills or
+technology usage, or seek technology-stack evidence. Skip engineering blogs,
+tutorials, employee stories and news unless they directly provide the requested
+company or financial information. Preserve job descriptions even when they mention
+technologies; interpretation belongs to later offline processing.
+"""
 
 
 async def select_next_page(
@@ -53,12 +69,12 @@ async def select_next_page(
     if queue.available() and llm.remaining <= 0:
         raise ModelBudgetExceeded("Navigation model budget exhausted")
     manifest["errors"].extend(await assess_links(queue, llm, root, reserved_calls=0))
-    selected = queue.pick(dict.fromkeys(OBJECTIVES, 0))
+    selected = queue.pick_for_instructions()
     while selected is None and queue.assessment_batch() and llm.remaining > 0:
         manifest["errors"].extend(
             await assess_links(queue, llm, root, reserved_calls=0)
         )
-        selected = queue.pick(dict.fromkeys(OBJECTIVES, 0))
+        selected = queue.pick_for_instructions()
     if selected is None:
         manifest["stop_reason"] = (
             "model_call_budget"
@@ -221,7 +237,6 @@ async def collect_pages(
                     manifest["stop_reason"] = "site_info_complete"
                     break
                 queue.site_profile = profile.data
-                queue.objective_order = profile_objectives(profile)
                 if not requested:
                     async with httpx.AsyncClient() as web_http:
                         inventory = await sitemap_urls(web_http, site_url, settings)
@@ -270,7 +285,8 @@ async def crawl_company(
     pages: Sequence[str] | None = None,
     instructions: str | None = None,
     site_info: bool = False,
-    crawl: bool | None = None,
+    save_artifacts: bool = True,
+    crawl: bool | Literal["full"] | None = None,
     config: ResearchConfig | None = None,
     api: Literal["deepseek", "openrouter"] = "deepseek",
     api_key: str | None = None,
@@ -279,14 +295,28 @@ async def crawl_company(
 
     Supplied pages restrict the allowed URLs. Without instructions all are fetched
     without LLM calls; with instructions the selector chooses useful pages from
-    that list. Without a list, discover pages from the target site. Instructions
-    guide every selection pass. Fact extraction runs separately on saved HTML.
+    that list. Without a list, discover contacts, jobs, company information and
+    financial-information pages. Instructions guide every selection pass. Job and
+    technology interpretation are deferred to offline processing of stored data.
+
+    crawl="full" discovers all four areas with default limits of 100 pages and 30
+    external pages. Explicit config limits override these defaults. Use pages or
+    instructions separately for restricted/targeted collection.
 
     site_info alone describes the input page and stops. Combine it with pages,
     instructions, or crawl=True to also crawl. With a page list it explicitly
     requests the input page before the list; that page counts toward max_pages.
+
+    save_artifacts=False retains only result.json; temporary working captures are
+    removed when the run exits. The bundled JSON remains sufficient for analysis.
     """
     site_url = normalize_url(url)
+    if crawl is not None and not isinstance(crawl, bool) and crawl != "full":
+        raise ValueError('crawl must be true, false, or "full"')
+    if crawl == "full" and (pages is not None or instructions is not None):
+        raise ValueError(
+            'crawl="full" cannot be combined with pages or instructions; omit crawl for targeted collection'
+        )
     if instructions is not None:
         instructions = instructions.strip()
         if not instructions:
@@ -296,7 +326,7 @@ async def crawl_company(
     crawl_requested = (
         not site_info or pages is not None or instructions is not None
         if crawl is None
-        else crawl
+        else crawl is not False
     )
     if not crawl_requested and (
         not site_info or pages is not None or instructions is not None
@@ -310,6 +340,7 @@ async def crawl_company(
             if api == "deepseek"
             else {}
         )
+        | ({"max_pages": 100, "max_external_pages": 30} if crawl == "full" else {})
         | (config.model_dump(exclude_unset=True) if config is not None else {})
     )
     requested = (
@@ -337,138 +368,172 @@ async def crawl_company(
     key = (api_key or os.environ.get(credential)) if needs_model else None
     if needs_model and not key:
         raise ValueError(f"Set {credential} or pass api_key for automatic discovery")
-    root = output_dir.resolve()
-    if root.exists() and (not root.is_dir() or any(root.iterdir())):
-        raise ValueError(f"Output directory is not empty: {root}")
-    root.mkdir(parents=True, exist_ok=True)
-    queue = CrawlQueue(
-        site_url,
-        settings,
-        instructions=instructions,
-        allowed_urls=set(requested) if pages is not None else None,
-    )
-    for candidate_url in requested or [site_url]:
-        queue.add(
-            candidate_url, source=site_url, label=None if requested else "Input website"
+    destination = output_dir.resolve()
+    if destination.exists() and (
+        not destination.is_dir() or any(destination.iterdir())
+    ):
+        raise ValueError(f"Output directory is not empty: {destination}")
+    destination.mkdir(parents=True, exist_ok=True)
+    started = time.monotonic()
+    with (
+        nullcontext(destination)
+        if save_artifacts
+        else TemporaryDirectory(prefix="company-crawl-work-")
+    ) as workspace:
+        root = Path(workspace)
+        queue = CrawlQueue(
+            site_url,
+            settings,
+            instructions=instructions
+            if instructions is not None or pages is not None
+            else DEFAULT_SELECTION_INSTRUCTIONS,
+            allowed_urls=set(requested) if pages is not None else None,
         )
-    manifest: dict = {
-        "schema_version": "company-crawl/1.0",
-        "run_id": uuid4().hex,
-        "input_url": url,
-        "site_url": site_url,
-        "mode": "site_info"
-        if not crawl_requested
-        else "supplied_pages"
-        if pages is not None
-        else "discovery",
-        "requested_pages": requested,
-        "selection_instructions": instructions,
-        "site_info_requested": site_info,
-        "crawl_requested": crawl_requested,
-        "site_info": None,
-        "started_at": utc_now(),
-        "finished_at": None,
-        "status": "running",
-        "stop_reason": None,
-        "config": settings.model_dump(),
-        "pages": [],
-        "site_gate": {
-            "decision": "not_requested",
-            "reason": "supplied_pages"
-            if pages is not None and not site_info
-            else "pending",
-        },
-        "sitemap": {"status": "not_requested"},
-        "selection_feedback": "navigation_only; extraction coverage and record yields are unavailable",
-        "site_coverage": "not_established",
-        "errors": [],
-        "browser_recoveries": [],
-        "usage": {"calls": 0},
-    }
-    write_json(root / "crawl-manifest.json", manifest)
-    llm = None
-    try:
-        async with AsyncExitStack() as stack:
-            if needs_model:
-                model_http = await stack.enter_async_context(
-                    httpx.AsyncClient(
-                        base_url="https://api.deepseek.com/"
-                        if api == "deepseek"
-                        else "https://openrouter.ai/api/v1/"
+        # Nominate source pages without the legacy engineering/technology priorities.
+        queue.objective_order = [
+            "company_contacts",
+            "jobs",
+            "company_profile",
+            "document_links",
+            "locations",
+            "products_services",
+        ]
+        for candidate_url in requested or [site_url]:
+            queue.add(
+                candidate_url,
+                source=site_url,
+                label=None if requested else "Input website",
+            )
+        manifest: dict = {
+            "schema_version": "company-crawl/1.0",
+            "artifacts_saved": save_artifacts,
+            "run_id": uuid4().hex,
+            "input_url": url,
+            "site_url": site_url,
+            "mode": "site_info"
+            if not crawl_requested
+            else "full"
+            if crawl == "full"
+            else "supplied_pages"
+            if pages is not None
+            else "discovery",
+            "requested_pages": requested,
+            "selection_instructions": instructions,
+            "effective_selection_instructions": queue.instructions,
+            "processing": {
+                "stage": "collection",
+                "job_analysis": "deferred",
+                "technology_analysis": "deferred",
+            },
+            "site_info_requested": site_info,
+            "crawl_requested": crawl_requested,
+            "site_info": None,
+            "started_at": utc_now(),
+            "finished_at": None,
+            "status": "running",
+            "stop_reason": None,
+            "config": settings.model_dump(),
+            "pages": [],
+            "site_gate": {
+                "decision": "not_requested",
+                "reason": "supplied_pages"
+                if pages is not None and not site_info
+                else "pending",
+            },
+            "sitemap": {"status": "not_requested"},
+            "selection_feedback": "navigation_only; extraction coverage and record yields are unavailable",
+            "site_coverage": "not_established",
+            "errors": [],
+            "browser_recoveries": [],
+            "usage": {"calls": 0},
+        }
+        write_json(root / "crawl-manifest.json", manifest)
+        llm = None
+        try:
+            async with AsyncExitStack() as stack:
+                if needs_model:
+                    model_http = await stack.enter_async_context(
+                        httpx.AsyncClient(
+                            base_url="https://api.deepseek.com/"
+                            if api == "deepseek"
+                            else "https://openrouter.ai/api/v1/"
+                        )
+                    )
+                    assert key is not None
+                    llm = ModelClient(model_http, key, settings, root, api=api)
+                await collect_pages(root, manifest, queue, llm)
+        except (BrowserUnavailable, ModelBudgetExceeded, ModelUnavailable) as error:
+            manifest["stop_reason"] = (
+                "browser_unavailable"
+                if isinstance(error, BrowserUnavailable)
+                else "model_call_budget"
+                if isinstance(error, ModelBudgetExceeded)
+                else "model_unavailable"
+            )
+            manifest["errors"].append({"stage": "crawl", "error": str(error)})
+        except Exception as error:
+            manifest["stop_reason"] = "run_error"
+            message = str(error).replace(key, "[REDACTED]") if key else str(error)
+            manifest["errors"].append(
+                {"stage": "crawl", "error": f"{type(error).__name__}: {message[:1000]}"}
+            )
+            LOGGER.error("Crawl stopped: %s", manifest["errors"][-1]["error"])
+        finally:
+            manifest["finished_at"] = utc_now()
+            manifest["elapsed_seconds"] = round(time.monotonic() - started, 3)
+            if llm is not None:
+                manifest["usage"] = llm.usage()
+            if (not requested or site_info) and manifest["site_gate"][
+                "decision"
+            ] not in {
+                "continue_crawling",
+                "skip_crawling",
+            }:
+                manifest["status"] = "needs_review"
+                manifest["site_gate"]["decision"] = "needs_review"
+                manifest["stop_reason"] = (
+                    manifest["stop_reason"] or "site_eligibility_uncertain"
+                )
+            if manifest["status"] == "running":
+                manifest["stop_reason"] = manifest["stop_reason"] or "interrupted"
+                success = any(
+                    page["fetch_status"] == "fetched" for page in manifest["pages"]
+                )
+                incomplete = (
+                    manifest["stop_reason"]
+                    not in {
+                        "supplied_pages_exhausted",
+                        "no_promising_candidates",
+                        "no_matching_candidates",
+                        "site_info_complete",
+                    }
+                    or bool(manifest["errors"])
+                    or any(
+                        page["fetch_status"] in {"pending", "failed"}
+                        for page in manifest["pages"]
                     )
                 )
-                assert key is not None
-                llm = ModelClient(model_http, key, settings, root, api=api)
-            await collect_pages(root, manifest, queue, llm)
-    except (BrowserUnavailable, ModelBudgetExceeded, ModelUnavailable) as error:
-        manifest["stop_reason"] = (
-            "browser_unavailable"
-            if isinstance(error, BrowserUnavailable)
-            else "model_call_budget"
-            if isinstance(error, ModelBudgetExceeded)
-            else "model_unavailable"
-        )
-        manifest["errors"].append({"stage": "crawl", "error": str(error)})
-    except Exception as error:
-        manifest["stop_reason"] = "run_error"
-        message = str(error).replace(key, "[REDACTED]") if key else str(error)
-        manifest["errors"].append(
-            {"stage": "crawl", "error": f"{type(error).__name__}: {message[:1000]}"}
-        )
-        LOGGER.error("Crawl stopped: %s", manifest["errors"][-1]["error"])
-    finally:
-        manifest["finished_at"] = utc_now()
-        if llm is not None:
-            manifest["usage"] = llm.usage()
-        if (not requested or site_info) and manifest["site_gate"]["decision"] not in {
-            "continue_crawling",
-            "skip_crawling",
-        }:
-            manifest["status"] = "needs_review"
-            manifest["site_gate"]["decision"] = "needs_review"
-            manifest["stop_reason"] = (
-                manifest["stop_reason"] or "site_eligibility_uncertain"
-            )
-        if manifest["status"] == "running":
-            manifest["stop_reason"] = manifest["stop_reason"] or "interrupted"
-            success = any(
-                page["fetch_status"] == "fetched" for page in manifest["pages"]
-            )
-            incomplete = (
-                manifest["stop_reason"]
-                not in {
-                    "supplied_pages_exhausted",
-                    "no_promising_candidates",
-                    "no_matching_candidates",
-                    "site_info_complete",
-                }
-                or bool(manifest["errors"])
-                or any(
-                    page["fetch_status"] in {"pending", "failed"}
-                    for page in manifest["pages"]
+                manifest["status"] = (
+                    "finished"
+                    if not incomplete
+                    and manifest["stop_reason"] == "no_matching_candidates"
+                    else "failed"
+                    if not success
+                    else "partial"
+                    if incomplete
+                    else "finished"
                 )
-            )
-            manifest["status"] = (
-                "finished"
-                if not incomplete
-                and manifest["stop_reason"] == "no_matching_candidates"
-                else "failed"
-                if not success
-                else "partial"
-                if incomplete
-                else "finished"
-            )
-        if not requested or instructions is not None:
-            write_json(root / "queue.json", queue.snapshot())
-        if manifest["site_info"] is None and (
-            site_info or manifest["status"] in {"skip_crawling", "needs_review"}
-        ):
-            manifest["site_info"] = site_information(None, manifest["site_url"])
-        if manifest["site_info"] is not None:
-            write_json(root / "site-info.json", manifest["site_info"])
-        write_json(root / "crawl-manifest.json", manifest)
-        save_crawl_result(root, manifest)
-    return manifest
+            if not requested or instructions is not None:
+                write_json(root / "queue.json", queue.snapshot())
+            if manifest["site_info"] is None and (
+                site_info or manifest["status"] in {"skip_crawling", "needs_review"}
+            ):
+                manifest["site_info"] = site_information(None, manifest["site_url"])
+            if manifest["site_info"] is not None:
+                write_json(root / "site-info.json", manifest["site_info"])
+            write_json(root / "crawl-manifest.json", manifest)
+            save_crawl_result(root, manifest, destination=destination)
+        return manifest
 
 
 def main() -> None:
@@ -477,16 +542,23 @@ def main() -> None:
     parser.add_argument("url", help="Target company website")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument(
+        "--save-artifacts",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Retain separate HTML and diagnostic files (development default). Use --no-save-artifacts for result.json only.",
+    )
+    parser.add_argument(
         "--site-info",
         action="store_true",
         help="Describe the input page in a few sentences. Alone, stop there; with pages/instructions/--crawl, continue crawling.",
     )
     parser.add_argument(
         "--crawl",
-        action="store_const",
+        nargs="?",
+        choices=["full"],
         const=True,
         default=None,
-        help="Continue normal discovery with --site-info, even without pages or instructions.",
+        help="Use --crawl full for all four collection areas (100 pages/30 external by default). Bare --crawl continues discovery with --site-info.",
     )
     parser.add_argument(
         "--pages",
@@ -547,6 +619,7 @@ def main() -> None:
                     pages=args.pages,
                     instructions=instructions,
                     site_info=args.site_info,
+                    save_artifacts=args.save_artifacts,
                     crawl=args.crawl,
                     config=config,
                     api=args.api,

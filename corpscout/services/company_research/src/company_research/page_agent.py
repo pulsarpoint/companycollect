@@ -15,6 +15,7 @@ from pydantic import Field, ValidationError
 from company_research.content import HtmlWindow, source_finding
 from company_research.llm import ModelBudgetExceeded, ModelClient, ModelUnavailable
 from company_research.models import OBJECTIVES, RECORD_TYPES, Objective, StrictModel
+from company_research.page_observations import observation_hash
 from company_research.page_prompts import COMMON, LINKS, ROUTER, RULES
 from company_research.storage import content_hash, utc_now, write_json
 
@@ -42,6 +43,7 @@ class PageInput:
     links: list[dict]
     headings: list[dict]
     target_url: str
+    observations: dict | None = None
 
     @classmethod
     def load(cls, root: Path) -> "PageInput":
@@ -49,6 +51,12 @@ class PageInput:
         html = (root / "page.html").read_text(encoding="utf-8")
         if content_hash(html) != metadata["page"]["html_sha256"]:
             raise ValueError("Frozen page hash mismatch")
+        expected = metadata["page"].get("observations_sha256")
+        if expected is not None and (
+            not isinstance(metadata.get("observations"), dict)
+            or observation_hash(metadata["observations"]) != expected
+        ):
+            raise ValueError("Frozen observations hash mismatch")
         return cls(html=html, **metadata)
 
     def payload(self) -> str:

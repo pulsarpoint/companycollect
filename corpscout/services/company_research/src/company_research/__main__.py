@@ -1,4 +1,4 @@
-from company_research.cli import main
+from company_research.crawl import main
 
 if __name__ == "__main__":
     main()
