@@ -25,6 +25,7 @@ import {
 import {
   seCompaniesTabFromPath,
   seCompaniesTabLabel,
+  seCompaniesTabPath,
 } from "~/lib/se-companies-tabs";
 
 /**
@@ -180,6 +181,10 @@ function AdminBreadcrumbs() {
     // Companies > <Tab>. Info is the section index, so it is the leaf on the
     // bare root; every other tab shows Companies as a link back to Info.
     const tab = seCompaniesTabFromPath(pathname);
+    // Domains > <domain>: the one tab with its own detail pages
+    // (/admin/se/companies/domains/<domain>), so the tab becomes a link back.
+    const domainLeaf =
+      tab === "domains" ? decodeURIComponent(pathname.split("/")[5] ?? "") : "";
     return (
       <Breadcrumb>
         <BreadcrumbList>
@@ -204,7 +209,21 @@ function AdminBreadcrumbs() {
             <>
               <BreadcrumbSeparator />
               <BreadcrumbItem>
-                <BreadcrumbPage>{seCompaniesTabLabel(tab)}</BreadcrumbPage>
+                {domainLeaf === "" ? (
+                  <BreadcrumbPage>{seCompaniesTabLabel(tab)}</BreadcrumbPage>
+                ) : (
+                  <BreadcrumbLink render={<Link to={seCompaniesTabPath(tab)} />}>
+                    {seCompaniesTabLabel(tab)}
+                  </BreadcrumbLink>
+                )}
+              </BreadcrumbItem>
+            </>
+          )}
+          {domainLeaf === "" ? null : (
+            <>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem>
+                <BreadcrumbPage className="font-mono">{domainLeaf}</BreadcrumbPage>
               </BreadcrumbItem>
             </>
           )}

@@ -180,6 +180,10 @@ export default [
       index("routes/admin-se-companies-info.tsx"),
       route("geocoding", "routes/admin-se-companies-geocoding.tsx"),
       route("financial", "routes/admin-se-companies-financial.tsx"),
+      // Every (company, domain) row of the SE domain entity, then one domain:
+      // the companies claiming it and its Common Crawl graph neighbours.
+      route("domains", "routes/admin-se-companies-domains.tsx"),
+      route("domains/:domain", "routes/admin-se-companies-domain.tsx"),
     ]),
     // The all-people LIST area: a sibling of se/companies, not one of its tabs --
     // every published person across every company, server-paged and filtered.

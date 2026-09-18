@@ -1,16 +1,9 @@
 import type { Route } from "./+types/admin-graph";
 import { useEffect, useState } from "react";
-import {
-  ArrowLeftRightIcon,
-  CheckIcon,
-  LoaderCircleIcon,
-  NetworkIcon,
-  SearchIcon,
-} from "lucide-react";
-import { Form, Link, useNavigation, useRevalidator } from "react-router";
-import { DataTablePagination } from "~/components/data-table/pagination";
+import { LoaderCircleIcon, NetworkIcon, SearchIcon } from "lucide-react";
+import { Form, useNavigation, useRevalidator } from "react-router";
+import { DomainConnections } from "~/components/admin/domain-connections";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
-import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
   Empty,
@@ -31,16 +24,6 @@ import {
   NativeSelectOption,
 } from "~/components/ui/native-select";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "~/components/ui/table";
-import { commonCrawlDomainPath } from "~/lib/common-crawl";
-import {
-  GRAPH_DIRECTIONS,
   domainGraphPath,
   graphDomainError,
   parseDomainGraphSearch,
@@ -57,12 +40,6 @@ import type {
 } from "~/lib/domain-graph.server";
 
 const nf = new Intl.NumberFormat("en-US");
-const directionLabels = {
-  all: "All connections",
-  mutual: "Mutual links",
-  outgoing: "Outgoing only",
-  incoming: "Incoming only",
-};
 
 export async function loader({ request }: Route.LoaderArgs) {
   const search = parseDomainGraphSearch(new URL(request.url));
@@ -367,139 +344,23 @@ export default function AdminGraph({ loaderData }: Route.ComponentProps) {
           </EmptyHeader>
         </Empty>
       ) : (
-        <section
-          className="flex flex-col gap-4"
-          aria-label="Domain connections"
-        >
-          <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <DomainConnections
+          direction={search.direction}
+          result={result}
+          title={
             <h2 className="break-all text-lg font-semibold">{search.domain}</h2>
-            <p className="text-sm text-muted-foreground tabular-nums">
-              {nf.format(result.counts.all)} connected domains ·{" "}
-              {nf.format(result.counts.mutual)} mutual
-            </p>
-          </div>
-          <nav
-            className="flex flex-wrap gap-2"
-            aria-label="Connection direction"
-          >
-            {GRAPH_DIRECTIONS.map((direction) => (
-              <Button
-                key={direction}
-                variant={search.direction === direction ? "secondary" : "ghost"}
-                size="sm"
-                nativeButton={false}
-                render={
-                  <Link
-                    to={domainGraphPath({ ...search, direction, page: 1 })}
-                    aria-current={
-                      search.direction === direction ? "page" : undefined
-                    }
-                    preventScrollReset
-                  />
-                }
-              >
-                {directionLabels[direction]}{" "}
-                <span className="text-muted-foreground tabular-nums">
-                  {nf.format(result.counts[direction])}
-                </span>
-              </Button>
-            ))}
-          </nav>
-          {result.rows.length === 0 ? (
-            <Empty className="min-h-48 border">
-              <EmptyHeader>
-                <EmptyTitle>
-                  {result.counts.all === 0
-                    ? "No connections in this release"
-                    : "No connections in this direction"}
-                </EmptyTitle>
-                <EmptyDescription>
-                  {result.counts.all === 0
-                    ? "The domain exists in this graph, but has no links to other domains."
-                    : "Choose another direction to see this domain’s connections."}
-                </EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          ) : (
-            <div className="overflow-hidden rounded-lg border">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="min-w-64">Connected domain</TableHead>
-                    <TableHead>Links from searched domain</TableHead>
-                    <TableHead>Links back to searched domain</TableHead>
-                    <TableHead>Website evidence</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {result.rows.map((row) => (
-                    <TableRow key={row.connected_domain}>
-                      <TableCell className="py-3">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Link
-                            to={domainGraphPath({
-                              domain: row.connected_domain,
-                              release: search.release,
-                              pageSize: search.pageSize,
-                            })}
-                            className="font-mono font-medium underline-offset-4 hover:underline"
-                          >
-                            {row.connected_domain}
-                          </Link>
-                          {row.reciprocal === 1 ? (
-                            <Badge variant="secondary">
-                              <ArrowLeftRightIcon />
-                              Mutual
-                            </Badge>
-                          ) : null}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        {row.outgoing === 1 ? (
-                          <span className="inline-flex items-center gap-1.5">
-                            <CheckIcon className="size-3.5" />
-                            Yes
-                          </span>
-                        ) : (
-                          <span className="text-muted-foreground">No</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {row.incoming === 1 ? (
-                          <span className="inline-flex items-center gap-1.5">
-                            <CheckIcon className="size-3.5" />
-                            Yes
-                          </span>
-                        ) : (
-                          <span className="text-muted-foreground">No</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <Link
-                          to={commonCrawlDomainPath(row.connected_domain)}
-                          className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-                          aria-label={`Inspect website evidence for ${row.connected_domain}`}
-                        >
-                          Inspect
-                        </Link>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-          <DataTablePagination
-            total={result.total}
-            page={result.page}
-            pageSize={result.pageSize}
-            itemsLabel="connected domains"
-          />
-          <p className="text-xs text-muted-foreground">
-            Links indicate a connection in the crawl, including links to shared
-            services. They do not establish common ownership.
-          </p>
-        </section>
+          }
+          directionHref={(direction) =>
+            domainGraphPath({ ...search, direction, page: 1 })
+          }
+          connectedDomainHref={(domain) =>
+            domainGraphPath({
+              domain,
+              release: search.release,
+              pageSize: search.pageSize,
+            })
+          }
+        />
       )}
       {resultRelease ? (
         <p className="text-xs text-muted-foreground">

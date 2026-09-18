@@ -15,6 +15,7 @@ export const SE_COMPANIES_TABS = [
   { value: "info", label: "Info" },
   { value: "geocoding", label: "Geocoding" },
   { value: "financial", label: "Financial" },
+  { value: "domains", label: "Domains" },
 ] as const;
 
 export type SeCompaniesTab = (typeof SE_COMPANIES_TABS)[number]["value"];
