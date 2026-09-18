@@ -1,6 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { createMemoryRouter, RouterProvider } from "react-router";
+import { createMemoryRouter, MemoryRouter, RouterProvider } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { AdminSidebar } from "~/components/admin/admin-sidebar";
+import { SidebarProvider } from "~/components/ui/sidebar";
 
 const server = vi.hoisted(() => ({
   listSeDomainsPage: vi.fn(),
@@ -42,6 +44,44 @@ function render(element: React.ReactElement, search = ""): string {
   });
   return renderToStaticMarkup(<RouterProvider router={router} />);
 }
+
+describe("sidebar", () => {
+  function sidebarItems(pathname: string): Record<string, boolean> {
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={[pathname]}>
+        <SidebarProvider>
+          <AdminSidebar />
+        </SidebarProvider>
+      </MemoryRouter>,
+    );
+    const active: Record<string, boolean> = {};
+    for (const to of ["/admin/se/companies", "/admin/se/companies/domains", "/admin/se/people"]) {
+      const item = html.split("<li").find((chunk) => chunk.includes(`href="${to}"`));
+      expect(item, `sidebar entry ${to}`).toBeDefined();
+      active[to] = item!.includes('data-active=""');
+    }
+    return active;
+  }
+
+  it("has a Sweden > Domains entry, active on the list and on a domain page but not on other Companies tabs", () => {
+    expect(sidebarItems("/admin/se/companies/domains")).toEqual({
+      "/admin/se/companies": false,
+      "/admin/se/companies/domains": true,
+      "/admin/se/people": false,
+    });
+    expect(sidebarItems("/admin/se/companies/domains/example.se")).toEqual({
+      "/admin/se/companies": false,
+      "/admin/se/companies/domains": true,
+      "/admin/se/people": false,
+    });
+    expect(sidebarItems("/admin/se/companies/geocoding")).toEqual({
+      "/admin/se/companies": true,
+      "/admin/se/companies/domains": false,
+      "/admin/se/people": false,
+    });
+    expect(sidebarItems("/admin/se/companies")["/admin/se/companies"]).toBe(true);
+  });
+});
 
 describe("companies tabs", () => {
   it("has a Domains tab that stays active on a domain's detail page", () => {

@@ -8,6 +8,7 @@ import {
   ChevronRightIcon,
   DatabaseZapIcon,
   FlagIcon,
+  GlobeIcon,
   NetworkIcon,
   RadioTowerIcon,
   SearchIcon,
@@ -46,10 +47,21 @@ const COUNTRY_NAVIGATION = [
     items: [
       {
         // One entry for the whole tabbed list area (Info · Geocoding ·
-        // Financial). exact:false so it stays active on every tab.
+        // Financial). exact:false so it stays active on every tab -- except
+        // Domains, which has its own entry below and wins by longest match.
         title: "Companies",
         to: "/admin/se/companies",
         icon: Building2Icon,
+        exact: false,
+      },
+      {
+        // The Domains tab of the Companies area, surfaced on its own: the
+        // domain entity (and its shared-domain review) is looked up directly
+        // often enough to deserve a sidebar entry. Active on the list and on
+        // every /domains/<domain> page.
+        title: "Domains",
+        to: "/admin/se/companies/domains",
+        icon: GlobeIcon,
         exact: false,
       },
       {
@@ -64,6 +76,29 @@ const COUNTRY_NAVIGATION = [
     ],
   },
 ] as const;
+
+type CountryNavigationItem = (typeof COUNTRY_NAVIGATION)[number]["items"][number];
+
+function matchesCountryItem(item: CountryNavigationItem, pathname: string): boolean {
+  return item.exact
+    ? pathname === item.to
+    : pathname === item.to || pathname.startsWith(`${item.to}/`);
+}
+
+/**
+ * The one country entry a path lights up: of the entries whose `to` covers the
+ * path, the most specific (longest `to`). Companies covers its whole tabbed
+ * area, Domains only its own tab and detail pages -- on /companies/domains/x
+ * both match, and Domains wins; on /companies/geocoding only Companies does.
+ */
+function activeCountryItem(
+  items: readonly CountryNavigationItem[],
+  pathname: string,
+): CountryNavigationItem | undefined {
+  return items
+    .filter((item) => matchesCountryItem(item, pathname))
+    .sort((a, b) => b.to.length - a.to.length)[0];
+}
 
 const GENERAL_NAVIGATION = [
   {
@@ -283,12 +318,7 @@ export function AdminSidebar() {
                       {country.items.map((item) => (
                         <SidebarMenuSubItem key={item.to}>
                           <SidebarMenuSubButton
-                            isActive={
-                              item.exact
-                                ? pathname === item.to
-                                : pathname === item.to ||
-                                  pathname.startsWith(`${item.to}/`)
-                            }
+                            isActive={activeCountryItem(country.items, pathname) === item}
                             render={<Link to={item.to} />}
                           >
                             <item.icon />
