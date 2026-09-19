@@ -1,0 +1,35 @@
+# Managed by Ansible.
+[Unit]
+Description=Corpscout independent browser pool and HTTP API
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+User={{ browser_service_user }}
+Group={{ browser_service_user }}
+WorkingDirectory={{ browser_service_deploy_dir }}/current
+EnvironmentFile={{ browser_service_env_file }}
+{% for name, value in browser_service_runtime_environment.items() %}
+Environment="{{ name }}={{ value }}"
+{% endfor %}
+ExecStart={{ browser_service_deploy_dir }}/current/.venv/bin/browser-service
+
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=360s
+# Let the service cancel recovery and flush profiles before children are killed.
+KillMode=mixed
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths={{ browser_service_state_dir }} {{ browser_service_cache_dir }}
+
+[Install]
+WantedBy=multi-user.target

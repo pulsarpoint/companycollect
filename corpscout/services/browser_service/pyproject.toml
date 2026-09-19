@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "corpscout-browser-service"
+version = "0.2.2"
+description = "Persistent browser pool with durable HTTP session leases"
+requires-python = ">=3.12"
+dependencies = [
+    "cloakbrowser>=0.5.10",
+    "playwright>=1.58,<2",
+    "httpx>=0.28,<1",
+    "pydantic>=2.12,<3",
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.42,<1",
+    "websockets>=15,<17",
+    "python-dotenv>=1,<2",
+]
+
+[project.scripts]
+browser-service = "browser_service.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/browser_service"]
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "B"]

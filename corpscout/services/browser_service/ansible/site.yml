@@ -1,0 +1,328 @@
+---
+- name: Deploy the Corpscout browser service as a system service
+  hosts: browser_service_hosts
+  become: true
+  gather_facts: false
+  vars_files:
+    - vars.yml
+
+  tasks:
+    - name: Build the locked service artifact on the control machine
+      delegate_to: localhost
+      become: false
+      check_mode: false
+      tags: [build]
+      block:
+        - name: Refresh CloakBrowser to the latest compatible release
+          ansible.builtin.command:
+            argv: [uv, lock, --upgrade-package, cloakbrowser]
+            chdir: "{{ browser_service_source_dir }}"
+          register: browser_service_dependency_refresh
+          changed_when: "'Updated ' in browser_service_dependency_refresh.stderr"
+
+        - name: Create a temporary artifact directory
+          ansible.builtin.tempfile:
+            state: directory
+            prefix: browser-service-deploy-
+          register: browser_service_build_dir
+          changed_when: false
+
+        - name: Build the application wheel
+          ansible.builtin.command:
+            argv: [uv, build, --wheel, --out-dir, "{{ browser_service_build_dir.path }}"]
+            chdir: "{{ browser_service_source_dir }}"
+          changed_when: false
+
+        - name: Export the service dependencies from the unchanged lockfile
+          ansible.builtin.command:
+            argv:
+              - uv
+              - export
+              - --locked
+              - --no-dev
+              - --no-emit-project
+              - --no-header
+              - --output-file
+              - "{{ browser_service_build_dir.path }}/requirements.txt"
+            chdir: "{{ browser_service_source_dir }}"
+          changed_when: false
+
+        - name: Locate the built wheel
+          ansible.builtin.find:
+            paths: "{{ browser_service_build_dir.path }}"
+            patterns: "*.whl"
+          register: browser_service_wheels
+
+        - name: Require exactly one application artifact
+          ansible.builtin.assert:
+            that: browser_service_wheels.matched == 1
+
+        - name: Hash the application and locked dependencies
+          ansible.builtin.stat:
+            path: "{{ item }}"
+            checksum_algorithm: sha256
+          loop:
+            - "{{ browser_service_wheels.files[0].path }}"
+            - "{{ browser_service_build_dir.path }}/requirements.txt"
+          register: browser_service_artifacts
+
+        - name: Identify the immutable release
+          ansible.builtin.set_fact:
+            browser_service_release_id: >-
+              {{ ((browser_service_artifacts.results | map(attribute='stat.checksum') | join(''))
+                  ~ browser_service_python_version) | hash('sha256') }}
+            browser_service_wheel_name: "{{ browser_service_wheels.files[0].path | basename }}"
+
+        - name: Report the built release
+          ansible.builtin.debug:
+            msg: "Release {{ browser_service_release_id }} built in {{ browser_service_build_dir.path }}"
+
+    - name: Read optional controller secrets
+      ansible.builtin.include_vars:
+        file: secrets.yml
+      when: lookup('ansible.builtin.fileglob', playbook_dir ~ '/secrets.yml') | length > 0
+      no_log: true
+
+    - name: Require an independent browser API credential
+      ansible.builtin.assert:
+        that:
+          - browser_service_api_token | length >= 32
+          - (browser_service_api_token | regex_search('[\x00-\x1f\x7f]')) is none
+        fail_msg: Set browser_service_api_token in the ignored secrets.yml.
+      no_log: true
+
+    - name: Gather target platform information
+      ansible.builtin.setup:
+        gather_subset: [min]
+
+    - name: Require a supported Linux system with systemd
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.system == 'Linux'
+          - ansible_facts.os_family == 'Debian'
+          - ansible_facts.service_mgr == 'systemd'
+          - ansible_facts.architecture in ['x86_64', 'aarch64']
+        fail_msg: This playbook supports Debian/Ubuntu hosts using systemd.
+
+    - name: Record the release path
+      ansible.builtin.set_fact:
+        browser_service_release_dir: "{{ browser_service_deploy_dir }}/releases/{{ browser_service_release_id }}"
+
+    - name: Install and activate the service
+      when: not ansible_check_mode
+      block:
+        - name: Install Python bootstrap and browser prerequisites
+          ansible.builtin.apt:
+            name: [python3-venv, python3-packaging, acl, ca-certificates, fonts-liberation, fonts-dejavu-core]
+            state: present
+            update_cache: true
+            cache_valid_time: 3600
+
+        - name: Install virtual display and browser control tools
+          ansible.builtin.apt:
+            name: [xvfb, xauth, x11vnc, openbox]
+            state: present
+
+        - name: Create the service group
+          ansible.builtin.group:
+            name: "{{ browser_service_user }}"
+            system: true
+
+        - name: Create the unprivileged service user
+          ansible.builtin.user:
+            name: "{{ browser_service_user }}"
+            group: "{{ browser_service_user }}"
+            system: true
+            shell: /usr/sbin/nologin
+            home: "{{ browser_service_state_dir }}"
+            create_home: false
+
+        - name: Create root-owned application directories
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: directory
+            owner: root
+            group: root
+            mode: "0755"
+          loop:
+            - "{{ browser_service_deploy_dir }}"
+            - "{{ browser_service_release_dir }}"
+            - "{{ browser_service_config_dir }}"
+
+        - name: Create persistent service state and browser cache
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: directory
+            owner: "{{ browser_service_user }}"
+            group: "{{ browser_service_user }}"
+            mode: "0700"
+          loop:
+            - "{{ browser_service_state_dir }}"
+            - "{{ browser_service_cache_dir }}"
+
+        - name: Install the pinned uv tool in its own environment
+          ansible.builtin.pip:
+            name: "uv=={{ browser_service_uv_version }}"
+            virtualenv: "{{ browser_service_deploy_dir }}/tools"
+            virtualenv_command: /usr/bin/python3 -m venv
+            umask: "0022"
+
+        - name: Copy only the application wheel and locked dependency list
+          ansible.builtin.copy:
+            src: "{{ item }}"
+            dest: "{{ browser_service_release_dir }}/"
+            owner: root
+            group: root
+            mode: "0644"
+          loop:
+            - "{{ browser_service_wheels.files[0].path }}"
+            - "{{ browser_service_build_dir.path }}/requirements.txt"
+
+        - name: Inspect release installation status
+          ansible.builtin.stat:
+            path: "{{ browser_service_release_dir }}/.ready"
+          register: browser_service_release_ready
+
+        - name: Prepare the new release without changing the running process
+          when: not browser_service_release_ready.stat.exists
+          environment: "{{ browser_service_install_environment }}"
+          block:
+            - name: Create the release environment using the pinned Python runtime
+              ansible.builtin.command:
+                argv:
+                  - "{{ browser_service_uv }}"
+                  - venv
+                  - --python
+                  - "{{ browser_service_python_version }}"
+                  - "{{ browser_service_release_dir }}/.venv"
+                creates: "{{ browser_service_release_dir }}/.venv/bin/python"
+
+            - name: Install the exact locked dependencies with hash verification
+              ansible.builtin.command:
+                argv:
+                  - "{{ browser_service_uv }}"
+                  - pip
+                  - sync
+                  - --python
+                  - "{{ browser_service_release_dir }}/.venv/bin/python"
+                  - --require-hashes
+                  - "{{ browser_service_release_dir }}/requirements.txt"
+              changed_when: true
+
+            - name: Install the application wheel without resolving dependencies again
+              ansible.builtin.command:
+                argv:
+                  - "{{ browser_service_uv }}"
+                  - pip
+                  - install
+                  - --python
+                  - "{{ browser_service_release_dir }}/.venv/bin/python"
+                  - --no-deps
+                  - "{{ browser_service_release_dir }}/{{ browser_service_wheel_name }}"
+              changed_when: true
+
+            - name: Install Chromium operating-system libraries
+              ansible.builtin.command:
+                argv: ["{{ browser_service_release_dir }}/.venv/bin/playwright", install-deps, chromium]
+              changed_when: true
+
+            - name: Download and launch the browser as the service account
+              become: true
+              become_user: "{{ browser_service_user }}"
+              environment: "{{ browser_service_runtime_environment }}"
+              ansible.builtin.command:
+                argv:
+                  - "{{ browser_service_release_dir }}/.venv/bin/python"
+                  - -c
+                  - |
+                    import asyncio
+                    from browser_service.virtual_desktop import open_virtual_browser
+                    async def check():
+                        async with open_virtual_browser():
+                            pass
+                    asyncio.run(check())
+              changed_when: true
+
+            - name: Mark the successfully prepared release
+              ansible.builtin.copy:
+                content: "{{ browser_service_release_id }}\n"
+                dest: "{{ browser_service_release_dir }}/.ready"
+                owner: root
+                group: root
+                mode: "0644"
+
+        - name: Activate the prepared browser service
+          when: browser_service_activate | bool
+          block:
+            - name: Install the service credentials
+              ansible.builtin.template:
+                src: browser-service.env.j2
+                dest: "{{ browser_service_env_file }}"
+                owner: root
+                group: "{{ browser_service_user }}"
+                mode: "0640"
+              no_log: true
+              diff: false
+              notify: Restart browser service
+
+            - name: Select the prepared release
+              ansible.builtin.file:
+                src: "{{ browser_service_release_dir }}"
+                dest: "{{ browser_service_deploy_dir }}/current"
+                state: link
+                owner: root
+                group: root
+              notify: Restart browser service
+
+            - name: Install the systemd service
+              ansible.builtin.template:
+                src: browser-service.service.j2
+                dest: "/etc/systemd/system/{{ browser_service_service_name }}.service"
+                owner: root
+                group: root
+                mode: "0644"
+              notify: Restart browser service
+
+            - name: Validate the installed systemd unit
+              ansible.builtin.command:
+                argv: [systemd-analyze, verify, "/etc/systemd/system/{{ browser_service_service_name }}.service"]
+              changed_when: false
+
+            - name: Apply pending service changes
+              ansible.builtin.meta: flush_handlers
+
+            - name: Enable the service at boot and keep it running
+              ansible.builtin.systemd_service:
+                name: "{{ browser_service_service_name }}"
+                daemon_reload: true
+                enabled: true
+                state: started
+
+            - name: Wait for the browser service to be ready
+              ansible.builtin.uri:
+                url: "http://127.0.0.1:{{ browser_service_port }}/healthz"
+                status_code: 200
+                use_proxy: false
+              register: browser_service_health
+              until: browser_service_health.status | default(0) == 200
+              retries: 30
+              delay: 2
+
+    - name: Remove the temporary controller artifacts
+      ansible.builtin.file:
+        path: "{{ browser_service_build_dir.path }}"
+        state: absent
+      delegate_to: localhost
+      become: false
+      check_mode: false
+      changed_when: false
+      when: browser_service_build_dir is defined
+      tags: [always]
+
+  handlers:
+    - name: Restart browser service
+      ansible.builtin.systemd_service:
+        name: "{{ browser_service_service_name }}"
+        daemon_reload: true
+        enabled: true
+        state: restarted

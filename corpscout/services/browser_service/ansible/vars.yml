@@ -1,0 +1,30 @@
+---
+browser_service_service_name: browser-service
+browser_service_user: browser-service
+browser_service_source_dir: "{{ playbook_dir }}/.."
+browser_service_deploy_dir: /opt/companycollect/corpscout/browser_service
+browser_service_state_dir: /var/lib/browser-service
+browser_service_cache_dir: /var/cache/browser-service
+browser_service_config_dir: /etc/browser-service
+browser_service_env_file: "{{ browser_service_config_dir }}/browser-service.env"
+browser_service_python_version: "3.12.12"
+browser_service_uv_version: "0.11.7"
+browser_service_uv: "{{ browser_service_deploy_dir }}/tools/bin/uv"
+browser_service_install_environment:
+  UV_PYTHON_INSTALL_DIR: "{{ browser_service_deploy_dir }}/python"
+  UV_CACHE_DIR: "{{ browser_service_deploy_dir }}/uv-cache"
+  UV_LINK_MODE: copy
+browser_service_runtime_environment:
+  HOME: "{{ browser_service_state_dir }}"
+  XDG_CACHE_HOME: "{{ browser_service_cache_dir }}"
+  CLOAKBROWSER_CACHE_DIR: "{{ browser_service_cache_dir }}/cloakbrowser"
+  CLOAKBROWSER_AUTO_UPDATE: "false"
+  PYTHONUNBUFFERED: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+browser_service_activate: true
+browser_service_listen_host: "0.0.0.0"
+browser_service_port: 8081
+browser_service_count: 2
+browser_service_idle_timeout_seconds: 120
+browser_service_max_pending: 100
+browser_service_api_token: "{{ lookup('ansible.builtin.env', 'BROWSER_API_TOKEN') }}"
