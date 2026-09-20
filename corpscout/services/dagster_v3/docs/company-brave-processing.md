@@ -356,7 +356,8 @@ verified selection, idempotent rematerialization and handoff to processing.
 ## Swedish domain suggestions
 
 After publishing Brave responses, materialize `se_company_domain_suggestions_brave` in
-`se_company_domain` with `execute: true` (or use Sweden → Processing → Domains). It
+`se_company_domain` (or use Sweden → Processing → Domains). Writes are enabled by
+default; set `execute: false` only for a preview without saving suggestions or checkpoints. It
 extracts a JSON domain list and saves per-company response-ID/hash checkpoints in
 `se_company_domain_brave_extraction`, then supplies `se_company_domain_verification`
 through the shared suggestion table. Empty lists also advance progress; changed answers

@@ -2,11 +2,13 @@
 
 import json
 import subprocess
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 
+import dagster as dg
 import pytest
+from dagster_clickhouse import ClickhouseResource
 
-from dagster_v3.defs.se_company.basic_info.extract import ExtractConfig
 from dagster_v3.defs.se_company.domain import brave, tables
 from tests.clickhouse_local import clickhouse_local_command
 from tests.test_se_company_domain import STAMP, suggestion
@@ -110,6 +112,44 @@ CREATE TABLE corpscout.se_company_brave_domains (
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("preview", [False, True])
+def test_materialization_saves_by_default_and_preserves_explicit_preview(monkeypatch, preview):
+    client = LocalClient(join_use_nulls=0)
+    client.answer("5561552760", "with-domain", "Official website: www.example.se")
+    client.answer("5560000002", "without-domain", "No official website found.")
+    monkeypatch.setattr(ClickhouseResource, "get_connection", lambda self: nullcontext(client))
+    asset = brave.se_company_domain_suggestions_brave
+    run_config = (
+        {"ops": {"se_company_domain_suggestions_brave": {"config": {"execute": False}}}}
+        if preview
+        else {}
+    )
+
+    result = dg.materialize(
+        [asset, *(dg.AssetSpec(key) for key in asset.dependency_keys)],
+        run_config=run_config,
+        resources={
+            "clickhouse": ClickhouseResource(
+                host="localhost", user="test", password="", database="corpscout"
+            )
+        },
+    )
+
+    assert result.success
+    metadata = result.asset_materializations_for_node("se_company_domain_suggestions_brave")[0].metadata
+    assert metadata["domains"].value == 1
+    assert metadata["empty_answers"].value == 1
+    assert metadata["suggestions_written"].value == (0 if preview else 1)
+    assert metadata["checkpoints_written"].value == (0 if preview else 2)
+    assert client.execute(
+        "SELECT root_domain FROM corpscout.se_company_domain_suggestion FINAL WHERE source='brave'"
+    ) == ([] if preview else [("example.se",)])
+    assert client.execute(
+        f"SELECT domains_json FROM corpscout.{brave.CHECKPOINT_TABLE} FINAL ORDER BY company_id"
+    ) == ([] if preview else [("[]",), ('["example.se"]',)])
+
+
+@pytest.mark.integration
 @pytest.mark.parametrize("join_use_nulls", [0, 1])
 def test_incremental_checkpoint_replay_and_empty_withdrawal(join_use_nulls):
     client = LocalClient(join_use_nulls)
@@ -128,12 +168,12 @@ def test_incremental_checkpoint_replay_and_empty_withdrawal(join_use_nulls):
     def run(**config):
         return brave.process_brave_answers(
             client,
-            config=ExtractConfig(**config),
+            config=brave.BraveExtractConfig(**config),
             run_id="test",
             log=lambda *args: None,
         )
 
-    assert run()["companies"] == 2
+    assert run(execute=False)["companies"] == 2
     assert (
         client.execute(f"SELECT count() FROM corpscout.{brave.CHECKPOINT_TABLE}")[0][0]
         == 0

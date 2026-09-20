@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
+from pydantic import Field
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.esef_filings.website_candidates import registrable_domain_for_host
@@ -56,6 +57,13 @@ WEBSITE_PATTERN = re.compile(
     r"(?:/[^\s<>\"'`*]*)?",
     re.IGNORECASE,
 )
+
+
+class BraveExtractConfig(ExtractConfig):
+    execute: bool = Field(
+        default=True,
+        description="Save Brave domain suggestions and extraction checkpoints. Set false to preview without saving.",
+    )
 
 
 def extract_domains(answer: str) -> list[str]:
@@ -174,7 +182,7 @@ def suggestion_rows(
 
 
 def process_brave_answers(
-    client, *, config: ExtractConfig, run_id: str, log: Callable
+    client, *, config: BraveExtractConfig, run_id: str, log: Callable
 ) -> dict:
     params = {"extractor_version": EXTRACTOR_VERSION}
     scope_sql = CHANGED_SQL
@@ -312,11 +320,11 @@ def process_brave_answers(
     pool="se_company_domain_brave",
     deps=["se_company_brave_domains"],
     metadata={"table": "corpscout.se_company_domain_suggestion", "source": "brave"},
-    description="Extract a JSON domain list from each new official-website Brave response. Save response-ID/hash checkpoints after source suggestions, including empty lists. Candidates retain the original answer for domain verification.",
+    description="Extract and save domain suggestions from each new official-website Brave response. Save response-ID/hash checkpoints with JSON domain lists after source suggestions, including empty lists. Candidates retain the original answer for domain verification. Writes are enabled by default; execute=false previews without saving.",
 )
 def se_company_domain_suggestions_brave(
     context: dg.AssetExecutionContext,
-    config: ExtractConfig,
+    config: BraveExtractConfig,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
     assert_clickhouse_tables_exist(

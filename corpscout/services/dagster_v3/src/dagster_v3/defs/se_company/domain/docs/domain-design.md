@@ -68,8 +68,9 @@ not assume response IDs are sortable: changed IDs, hashes or extractor versions 
 processed even when the new ID sorts before the old one. Empty lists are checkpointed too.
 
 The normal materialization scans only changed responses, pages company IDs from a fixed
-scratch scope, then reads current answers and saves suggestions in batches. `execute: true`
-applies the changes; the default previews them. `company_ids` is a test override, not the
+scratch scope, then reads current answers and saves suggestions in batches. Writes are
+enabled by default (`execute: true`); set `execute: false` to preview without saving
+suggestions or checkpoints. `company_ids` is a test override, not the
 production selection mechanism. New answers arriving after scope preparation are picked
 up on the next materialization. `se_company_domain_brave_job` runs this source and its
 precedence; the normal sync and refresh jobs include it alongside the other sources.
