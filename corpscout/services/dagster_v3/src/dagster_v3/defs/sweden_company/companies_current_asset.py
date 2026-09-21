@@ -1,4 +1,4 @@
-"""Force-refresh `corpscout.se_companies_serving` at the end of the weekly geocoding run.
+"""Refresh `corpscout.se_companies_serving` after geocoding or domain publication.
 
 Migration 000335 makes `se_companies_serving` a REFRESHABLE MATERIALIZED VIEW that ClickHouse
 rebuilds on its own; 000366 moved that cadence to HOURLY, OFFSET 45 MINUTE (restated by 000393's
@@ -11,8 +11,10 @@ that data landed. Issuing
 the admin surfaces read fresh rows the moment the run finishes rather than at the next auto-refresh.
 
 Both are SYSTEM statements against a name ClickHouse owns -- there is no DuckDB work and no pool to
-take. `deps` are the two assets that produce its freshest inputs: the centroids and the address
-entity's geocode-cache warm. The store-append asset it used to name retired with the old address
+take. `deps` include the centroids, the address entity's geocode-cache warm, and domain
+publication, which updates the current domains counted by `has_domains`.
+Selecting this asset downstream of domain publication refreshes the company list in the same run.
+The store-append asset it used to name retired with the old address
 chain in slice 4b; the warm step is what now puts the week's new OSM extract into
 `se_address_geocodes`, so it is what this must follow. Ordered LAST in the weekly, after
 everything the view reads is current.
@@ -47,16 +49,15 @@ ROW_COUNT_SQL = f"SELECT count() FROM {QUALIFIED_SE_COMPANIES_SERVING_VIEW}"
 
 @dg.asset(
     name=COMPANIES_CURRENT_ASSET_KEY,
-    deps=[dg.AssetKey(CENTROIDS_ASSET_KEY), dg.AssetKey(WARM_ASSET_KEY)],
+    deps=[dg.AssetKey(CENTROIDS_ASSET_KEY), dg.AssetKey(WARM_ASSET_KEY), dg.AssetKey("se_company_domain_publish")],
     group_name=GROUP_NAME,
     kinds={"python", "clickhouse"},
     metadata={"view": QUALIFIED_SE_COMPANIES_SERVING_VIEW},
     description=(
-        "Forces an immediate refresh of the corpscout.se_companies_serving refreshable "
-        "materialized view at the end of the weekly Sweden geocoding run -- SYSTEM REFRESH "
-        "VIEW then SYSTEM WAIT VIEW -- so the companies/geocoding admin surfaces read the "
-        "week's fresh centroid and geocode data at once rather than waiting up to the "
-        "next scheduled auto-refresh."
+        "Refresh corpscout.se_companies_serving after geocoding or domain publication "
+        "and wait for completion. Updates company-list data, including has_domains for "
+        "current unverified source candidates. Select this downstream asset with "
+        "se_company_domain_publish to update the company list in the same run."
     ),
 )
 def sweden_companies_current_clickhouse(
