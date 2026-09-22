@@ -1,0 +1,133 @@
+
+PLAY [Deploy the Corpscout browser service as a system service] ****************
+
+TASK [Validate browser runtime settings] ***************************************
+ok: [browser-service] => 
+    changed: false
+    msg: All assertions passed
+
+TASK [Refresh CloakBrowser to the latest compatible release] *******************
+ok: [browser-service -> localhost]
+
+TASK [Create a temporary artifact directory] ***********************************
+ok: [browser-service -> localhost]
+
+TASK [Build the application wheel] *********************************************
+ok: [browser-service -> localhost]
+
+TASK [Export the service dependencies from the unchanged lockfile] *************
+ok: [browser-service -> localhost]
+
+TASK [Locate the built wheel] **************************************************
+ok: [browser-service -> localhost]
+
+TASK [Require exactly one application artifact] ********************************
+ok: [browser-service -> localhost] => 
+    changed: false
+    msg: All assertions passed
+
+TASK [Hash the application and locked dependencies] ****************************
+ok: [browser-service -> localhost] => (item=/var/folders/3d/ft4cxzhj2lg2gmwycfh8xg400000gn/T/browser-service-deploy-ecnt9btj/corpscout_browser_service-0.8.0-py3-none-any.whl)
+ok: [browser-service -> localhost] => (item=/var/folders/3d/ft4cxzhj2lg2gmwycfh8xg400000gn/T/browser-service-deploy-ecnt9btj/requirements.txt)
+
+TASK [Identify the immutable release] ******************************************
+ok: [browser-service -> localhost]
+
+TASK [Report the built release] ************************************************
+ok: [browser-service -> localhost] => 
+    msg: Release c7a0c14ed25632f0b8d6c2f3e87c6614555140651e4389bd3100c8dc0b987590 built
+        in /var/folders/3d/ft4cxzhj2lg2gmwycfh8xg400000gn/T/browser-service-deploy-ecnt9btj
+
+TASK [Read optional controller secrets] ****************************************
+ok: [browser-service]
+
+TASK [Require an independent browser API credential] ***************************
+ok: [browser-service]
+
+TASK [Gather target platform information] **************************************
+ok: [browser-service]
+
+TASK [Require a supported Linux system with systemd] ***************************
+ok: [browser-service] => 
+    changed: false
+    msg: All assertions passed
+
+TASK [Record the release path] *************************************************
+ok: [browser-service]
+
+TASK [Install Python bootstrap and browser prerequisites] **********************
+ok: [browser-service]
+
+TASK [Install virtual display and browser control tools] ***********************
+ok: [browser-service]
+
+TASK [Create the service group] ************************************************
+ok: [browser-service]
+
+TASK [Create the unprivileged service user] ************************************
+ok: [browser-service]
+
+TASK [Create root-owned application directories] *******************************
+ok: [browser-service] => (item=/opt/companycollect/corpscout/browser_service)
+changed: [browser-service] => (item=/opt/companycollect/corpscout/browser_service/releases/c7a0c14ed25632f0b8d6c2f3e87c6614555140651e4389bd3100c8dc0b987590)
+ok: [browser-service] => (item=/etc/browser-service)
+
+TASK [Create persistent service state and browser cache] ***********************
+ok: [browser-service] => (item=/var/lib/browser-service)
+ok: [browser-service] => (item=/var/cache/browser-service)
+
+TASK [Install the pinned uv tool in its own environment] ***********************
+ok: [browser-service]
+
+TASK [Copy only the application wheel and locked dependency list] **************
+changed: [browser-service] => (item=/var/folders/3d/ft4cxzhj2lg2gmwycfh8xg400000gn/T/browser-service-deploy-ecnt9btj/corpscout_browser_service-0.8.0-py3-none-any.whl)
+changed: [browser-service] => (item=/var/folders/3d/ft4cxzhj2lg2gmwycfh8xg400000gn/T/browser-service-deploy-ecnt9btj/requirements.txt)
+
+TASK [Inspect release installation status] *************************************
+ok: [browser-service]
+
+TASK [Create the release environment using the pinned Python runtime] **********
+changed: [browser-service]
+
+TASK [Install the exact locked dependencies with hash verification] ************
+changed: [browser-service]
+
+TASK [Install the application wheel without resolving dependencies again] ******
+changed: [browser-service]
+
+TASK [Install Chromium operating-system libraries] *****************************
+changed: [browser-service]
+
+TASK [Download and launch the browser as the service account] ******************
+changed: [browser-service]
+
+TASK [Mark the successfully prepared release] **********************************
+changed: [browser-service]
+
+TASK [Install the service credentials] *****************************************
+skipping: [browser-service]
+
+TASK [Select the prepared release] *********************************************
+skipping: [browser-service]
+
+TASK [Install the systemd service] *********************************************
+skipping: [browser-service]
+
+TASK [Validate the installed systemd unit] *************************************
+skipping: [browser-service]
+
+TASK [Apply pending service changes] *******************************************
+skipping: [browser-service]
+
+TASK [Enable the service at boot and keep it running] **************************
+skipping: [browser-service]
+
+TASK [Wait for the browser service to be ready] ********************************
+skipping: [browser-service]
+
+TASK [Remove the temporary controller artifacts] *******************************
+ok: [browser-service -> localhost]
+
+PLAY RECAP *********************************************************************
+browser-service            : ok=31   changed=8    unreachable=0    failed=0    skipped=6    rescued=0    ignored=0   
+

@@ -1,0 +1,12 @@
+import {readFileSync,writeFileSync} from 'node:fs';
+import {chQuery} from '../../app/lib/clickhouse.server';
+import {runStatus} from '../../app/lib/dagster.server';
+import {crawlerFetch} from '../../app/lib/crawler.server';
+const folder='output/failed-crawl-recheck-20260921';
+const receipt=JSON.parse(readFileSync(`${folder}/receipt.json`,'utf8'));
+const run=await runStatus(receipt.runId);
+const rows=await chQuery<any>(`SELECT domain,request_id,state,crawl_status,successful,error,s3_state,s3_path,started_at,finished_at FROM website_site_info_results FINAL WHERE run_id={run:String} ORDER BY domain`,{run:run.runId});
+const submissions=await chQuery<any>(`SELECT domain,request_id FROM website_crawl_submissions FINAL WHERE run_id={run:String} ORDER BY domain`,{run:run.runId});
+const jobs=await Promise.allSettled(submissions.map(async(s:any)=>{const job=await(await crawlerFetch(`/v1/crawls/${s.request_id}/status`)).json();return{domain:s.domain,request_id:s.request_id,state:job.state,reason:job.reason,error:job.error,current_url:job.current_url,collected_pages:job.collected_pages,s3_state:job.s3_state,challenge_agent_running:job.challenge_agent_running,challenge_agent_results:job.challenge_agent_results.map((r:any)=>({status:r.status,reason:r.reason,model:r.model})),challenge_agent_budget_exhausted:job.challenge_agent_budget_exhausted};}));
+const output={runId:run.runId,status:run.status,selected:receipt.domains.length,rows,jobs:jobs.map((r,i)=>r.status==='fulfilled'?r.value:{domain:submissions[i].domain,error:String(r.reason)})};
+writeFileSync(`${folder}/progress.json`,JSON.stringify(output,null,2));console.log(JSON.stringify(output,null,2));

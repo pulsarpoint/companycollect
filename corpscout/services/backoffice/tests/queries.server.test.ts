@@ -18,6 +18,8 @@ import {
   getCompanyTechnologyIpInventory,
   getCompanyTechnologyInfrastructure,
   getCompanyTechnologyDetail,
+  getDomainTechnologyInfrastructure,
+  getDomainTechnologyDetail,
   getCountryStats,
   getTechnologyIpDetail,
   searchCompanies,
@@ -922,5 +924,40 @@ describe("empties-last sorting (Finland has 1,205 nameless registry stubs)", () 
   it("total still counts the stubs (ordering only, no filtering)", async () => {
     const result = await searchCompanies(fi, { pageSize: 25 });
     expect(result.total).toBeGreaterThan(460_000); // 460,200 incl. the 1,205 stubs
+  }, 30_000);
+});
+
+
+describe("domain technology data", () => {
+  it("returns the same technology history directly by domain", async () => {
+    const [company, domain] = await Promise.all([
+      getCompanyTechnologyDetail(se, "5594643297", "100.se"),
+      getDomainTechnologyDetail("100.se"),
+    ]);
+    expect(domain.webTechnologyHistory).toEqual(company.webTechnologyHistory);
+    expect(domain.technologyCatalog).toEqual(company.technologyCatalog);
+  }, 30_000);
+
+  it("includes every stored DNS owner and record type, including DNS-only names and RRSIG", async () => {
+    const expected = await chQuery<{ hostname: string; type: string; value: string; priority: number }>(
+      `SELECT name AS hostname, toString(record_type) AS type, toString(value) AS value,
+        toUInt16(priority) AS priority
+       FROM commoncrawl_domain_dns_records
+       WHERE root_domain = {domain:String}
+       GROUP BY name, record_type, value, priority`,
+      { domain: "100.se" },
+    );
+    const first = await getDomainTechnologyInfrastructure("100.se", { pageSize: 25 });
+    const hostnames = [...first.hostnames];
+    for (let page = 2; page <= Math.ceil(first.summary.totalHostnames / 25); page++) {
+      hostnames.push(...(await getDomainTechnologyInfrastructure("100.se", { page, pageSize: 25 })).hostnames);
+    }
+    const actual = hostnames.flatMap((hostname) => hostname.records.map((record) => ({
+      hostname: hostname.hostname, type: record.type, value: record.value, priority: record.priority,
+    })));
+    const keys = (rows: typeof expected) => rows.map((row) => JSON.stringify(row)).sort();
+    expect(expected.some((record) => record.type === "RRSIG")).toBe(true);
+    expect(expected.some((record) => record.hostname === "_dmarc.100.se")).toBe(true);
+    expect(keys(actual)).toEqual(keys(expected));
   }, 30_000);
 });

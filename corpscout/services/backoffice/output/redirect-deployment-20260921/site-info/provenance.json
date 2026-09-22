@@ -1,0 +1,60 @@
+[
+  {
+    "domain": "advokatsamfundet.se",
+    "input_url": "https://advokatsamfundet.se/",
+    "site_url": "https://www.advokatsamfundet.se/",
+    "status": "skip_crawling",
+    "description": "The website of Sveriges advokatsamfund, the Swedish Bar Association, the professional body for Swedish advocates. It states that only those admitted by the association may call themselves advokat, and provides a public lawyer search plus guidance for those hiring a lawyer. The site also serves members and law firms with tools, model documents and negotiated framework agreements, including AI services for legal work. It publishes news, press material and the magazine Advokaten, hosts a legal library, and offers professional courses through Advokatakademien, with links to disciplinary and consumer dispute bodies.",
+    "pages": [
+      {
+        "requested_url": "https://advokatsamfundet.se/",
+        "source_url": "https://www.advokatsamfundet.se/",
+        "redirects": [
+          {
+            "url": "https://advokatsamfundet.se/",
+            "status_code": 301,
+            "location": "https://www.advokatsamfundet.se/"
+          }
+        ],
+        "navigation_attempts": [
+          {
+            "url": "https://advokatsamfundet.se/",
+            "error": null
+          }
+        ]
+      }
+    ],
+    "s3_path": "crawls/company-crawls/dagster-crawl-7ab096809e40e1ec6be3dca6f6f07a057d358243ef4c81d36712c5947f1c014a/attempts/0001/result.json.gz"
+  },
+  {
+    "domain": "aga.se",
+    "input_url": "https://aga.se/",
+    "site_url": "https://www.linde-gas.se/shop/sv/se-ig/home",
+    "status": "finished",
+    "description": "Linde Gas Sverige's Swedish webshop and customer portal for industrial gases, gas equipment and applications. The site sells gases such as argon, oxygen, nitrogen, acetylene, helium, carbon dioxide, propane, refrigerants, welding and shielding gases, speciality and medical gases, together with burners, regulators, cutting and welding equipment, medical-technical products and accessories, plus rentals and delivery. Listed applications include welding, cutting, heating, freezing and cooling, inerting, water treatment, food processing and healthcare, and the company describes serving metallurgical, chemical, food, glass, electronics, pharmaceutical, construction and research customers as well as private buyers of grill gas. A customer portal supports online ordering, invoices and cylinder management.",
+    "pages": [
+      {
+        "requested_url": "https://aga.se/",
+        "source_url": "https://www.linde-gas.se/shop/sv/se-ig/home",
+        "redirects": [
+          {
+            "url": "http://aga.se/",
+            "status_code": 301,
+            "location": "https://www.linde-gas.se/shop/sv/se-ig/home"
+          }
+        ],
+        "navigation_attempts": [
+          {
+            "url": "https://aga.se/",
+            "error": "ERR_SSL_PROTOCOL_ERROR"
+          },
+          {
+            "url": "http://aga.se/",
+            "error": null
+          }
+        ]
+      }
+    ],
+    "s3_path": "crawls/company-crawls/dagster-crawl-47cd60f3434431cd724136c76418856343f90a440c856c64f646a39e4e17103b/attempts/0001/result.json.gz"
+  }
+]

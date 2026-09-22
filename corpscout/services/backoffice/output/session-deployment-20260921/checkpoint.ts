@@ -1,0 +1,16 @@
+import {writeFileSync,readFileSync} from 'node:fs';
+import {runStatus,dagsterGraphqlUrl} from '../../app/lib/dagster.server';
+import {browserRequest} from '../../app/lib/browser-service.server';
+import {chQuery} from '../../app/lib/clickhouse.server';
+const folder='output/session-deployment-20260921';
+const [saved]=JSON.parse(readFileSync(`${folder}/original-runs.json`,'utf8'));
+const execution=JSON.parse(saved.tags['brave/execution']);
+const run=await runStatus(saved.runId);
+const unrelated=await runStatus('9da5e2b5-4529-4780-b8b4-74cd53326e8d');
+const browser=await(await browserRequest('/v1/server')).json();
+const checkpoint=await chQuery("SELECT count() total,countIf(status='success') successful,countIf(status='error') failed,uniqExact(input_id) distinct_inputs FROM corpscout.company_brave_search_results FINAL WHERE execution_id={id:UUID}",{id:execution.execution_id});
+const definitions=await chQuery("SELECT name,engine,create_table_query FROM system.tables WHERE database='corpscout' AND (name LIKE '%brave%' OR name LIKE 'website%results%' OR create_table_query LIKE '%se_company_brave_domains%') ORDER BY name");
+const counts=await chQuery("SELECT 'se_company_brave_domains' name,count() rows FROM corpscout.se_company_brave_domains FINAL UNION ALL SELECT 'company_brave_search_results',count() FROM corpscout.company_brave_search_results FINAL UNION ALL SELECT 'website_site_info_results',count() FROM corpscout.website_site_info_results FINAL");
+const output={runStatus:run.status,execution,unrelated:{runId:unrelated.runId,status:unrelated.status,selectedAssets:unrelated.selectedAssets},browser:{version:browser.version,active:browser.leases?.filter((r:any)=>['starting','ready','releasing'].includes(r.state)).map((r:any)=>({id:r.id,state:r.state,domain:r.domain}))},checkpoint,counts,definitions};
+if(run.status==='CANCELED')writeFileSync(`${folder}/drained-checkpoint.json`,JSON.stringify(output,null,2),{mode:0o600});
+console.log(JSON.stringify({...output,definitions:definitions.map((r:any)=>({name:r.name,engine:r.engine}))},null,2));

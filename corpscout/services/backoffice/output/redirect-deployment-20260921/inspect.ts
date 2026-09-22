@@ -1,0 +1,13 @@
+import {writeFileSync} from 'node:fs';
+import {listRuns,runStatus,dagsterGraphqlUrl} from '../../app/lib/dagster.server';
+import {browserRequest} from '../../app/lib/browser-service.server';
+import {loadCrawls} from '../../app/lib/crawler.server';
+const runs=await listRuns({job:"company_brave_search_workflow",limit:100});
+const active=runs.filter(r=>['STARTED','STARTING','QUEUED','CANCELING'].includes(r.status) && (r.jobName.includes('brave')||r.selectedAssets?.includes('se_company_brave_domains')));
+const detail=await Promise.all(active.map(r=>runStatus(r.runId)));
+writeFileSync('output/redirect-deployment-20260921/original-runs.json',JSON.stringify(detail,null,2),{mode:0o600});
+const server=await(await browserRequest('/v1/server')).json();
+const crawls=await loadCrawls(new URLSearchParams());
+console.log(JSON.stringify({runs:detail,browser:{version:server.version,leases:server.leases.filter((r:any)=>r.state==='ready').map((r:any)=>({id:r.id,request_id:r.request_id,domain:r.domain,operation:r.operation}))},crawls:crawls.attempts.filter(r=>!['completed','failed','cancelled'].includes(r.state)).map(r=>({id:r.request_id,state:r.state}))},null,2));
+const introspection=await fetch(dagsterGraphqlUrl(),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:'{ __type(name:"Mutation") { fields { name args { name type { kind name ofType {kind name} } } type {kind name} } } }'})}).then(r=>r.json());
+console.log(JSON.stringify(introspection.data?.__type.fields.filter((f:any)=>/terminate/i.test(f.name))));

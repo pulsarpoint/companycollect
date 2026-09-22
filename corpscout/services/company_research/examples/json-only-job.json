@@ -1,0 +1,7 @@
+{
+  "request_id": "novelic-json-001",
+  "url": "https://www.novelic.com/",
+  "pages": ["https://www.novelic.com/careers/"],
+  "save_artifacts": false,
+  "config": {"max_pages": 1}
+}

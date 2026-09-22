@@ -1,0 +1,10 @@
+{
+  "runId": "1c147fa2-8890-466e-88f4-b31e34c86030",
+  "status": "QUEUED",
+  "runUrl": "http://dagster:3000/runs/1c147fa2-8890-466e-88f4-b31e34c86030",
+  "batchId": "bb542573-4b85-4a3d-8442-d1d0d6194d06",
+  "count": 1,
+  "domains": [
+    "aga.se"
+  ]
+}

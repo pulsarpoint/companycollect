@@ -1,0 +1,134 @@
+{
+  "runId": "cdc00d29-c184-42fd-b2bc-65ef2c9576db",
+  "status": "SUCCESS",
+  "selected": 5,
+  "rows": [
+    {
+      "domain": "abogaranti.se",
+      "request_id": "dagster-crawl-23f98afbb88541bc0903078aefc9e5a4ff4d5aabe53776b50ce5fc468eb3277f",
+      "state": "completed",
+      "crawl_status": "needs_review",
+      "successful": false,
+      "error": "",
+      "s3_state": "uploaded",
+      "s3_path": "crawls/company-crawls/dagster-crawl-23f98afbb88541bc0903078aefc9e5a4ff4d5aabe53776b50ce5fc468eb3277f/attempts/0001/result.json.gz",
+      "started_at": "2026-09-21 21:39:43.000000",
+      "finished_at": "2026-09-21 21:39:46.000000"
+    },
+    {
+      "domain": "addage.org",
+      "request_id": "dagster-crawl-d573341301c5740a61e696808770021d8cb46fbd856ba5cb827fee6e09662438",
+      "state": "completed",
+      "crawl_status": "needs_review",
+      "successful": false,
+      "error": "",
+      "s3_state": "uploaded",
+      "s3_path": "crawls/company-crawls/dagster-crawl-d573341301c5740a61e696808770021d8cb46fbd856ba5cb827fee6e09662438/attempts/0001/result.json.gz",
+      "started_at": "2026-09-21 21:39:43.000000",
+      "finished_at": "2026-09-21 21:39:47.000000"
+    },
+    {
+      "domain": "adlibris.com",
+      "request_id": "dagster-crawl-f327a31c4fc34e46d6f92b8b79dbfe72b21e83911482d0097f71cf4efe7a95e1",
+      "state": "completed",
+      "crawl_status": "needs_review",
+      "successful": false,
+      "error": "",
+      "s3_state": "uploaded",
+      "s3_path": "crawls/company-crawls/dagster-crawl-f327a31c4fc34e46d6f92b8b79dbfe72b21e83911482d0097f71cf4efe7a95e1/attempts/0001/result.json.gz",
+      "started_at": "2026-09-21 21:39:51.000000",
+      "finished_at": "2026-09-21 21:39:54.000000"
+    },
+    {
+      "domain": "allabolag.se",
+      "request_id": "dagster-crawl-a2c234d76f15d10d4af246611794da5b997de1a89238a4e75e008b923aa7c32e",
+      "state": "failed",
+      "crawl_status": "failed",
+      "successful": false,
+      "error": "human_assistance_timeout",
+      "s3_state": "uploaded",
+      "s3_path": "crawls/company-crawls/dagster-crawl-a2c234d76f15d10d4af246611794da5b997de1a89238a4e75e008b923aa7c32e/attempts/0001/result.json.gz",
+      "started_at": "2026-09-21 21:39:51.000000",
+      "finished_at": "2026-09-21 21:40:06.000000"
+    },
+    {
+      "domain": "alltele.se",
+      "request_id": "dagster-crawl-54a21d4664d1f4dffd801e453eef96001f0ee37691f495472c9c02ff0f565a0c",
+      "state": "completed",
+      "crawl_status": "needs_review",
+      "successful": false,
+      "error": "",
+      "s3_state": "uploaded",
+      "s3_path": "crawls/company-crawls/dagster-crawl-54a21d4664d1f4dffd801e453eef96001f0ee37691f495472c9c02ff0f565a0c/attempts/0001/result.json.gz",
+      "started_at": "2026-09-21 21:40:11.000000",
+      "finished_at": "2026-09-21 21:40:15.000000"
+    }
+  ],
+  "jobs": [
+    {
+      "domain": "abogaranti.se",
+      "request_id": "dagster-crawl-23f98afbb88541bc0903078aefc9e5a4ff4d5aabe53776b50ce5fc468eb3277f",
+      "state": "completed",
+      "reason": "Fetching page",
+      "error": null,
+      "current_url": "https://abogaranti.se/",
+      "collected_pages": 0,
+      "s3_state": "uploaded",
+      "challenge_agent_running": false,
+      "challenge_agent_results": [],
+      "challenge_agent_budget_exhausted": false
+    },
+    {
+      "domain": "addage.org",
+      "request_id": "dagster-crawl-d573341301c5740a61e696808770021d8cb46fbd856ba5cb827fee6e09662438",
+      "state": "completed",
+      "reason": "Fetching page",
+      "error": null,
+      "current_url": "https://addage.org/",
+      "collected_pages": 0,
+      "s3_state": "uploaded",
+      "challenge_agent_running": false,
+      "challenge_agent_results": [],
+      "challenge_agent_budget_exhausted": false
+    },
+    {
+      "domain": "adlibris.com",
+      "request_id": "dagster-crawl-f327a31c4fc34e46d6f92b8b79dbfe72b21e83911482d0097f71cf4efe7a95e1",
+      "state": "completed",
+      "reason": "Fetching page",
+      "error": null,
+      "current_url": "https://adlibris.com/",
+      "collected_pages": 0,
+      "s3_state": "uploaded",
+      "challenge_agent_running": false,
+      "challenge_agent_results": [],
+      "challenge_agent_budget_exhausted": false
+    },
+    {
+      "domain": "allabolag.se",
+      "request_id": "dagster-crawl-a2c234d76f15d10d4af246611794da5b997de1a89238a4e75e008b923aa7c32e",
+      "state": "failed",
+      "reason": "Saved 0 pages; stopped at blocked on https://allabolag.se/. Human assistance timed out. Available for interactive retry.",
+      "error": "human_assistance_timeout",
+      "current_url": "https://allabolag.se/",
+      "collected_pages": 0,
+      "s3_state": "uploaded",
+      "challenge_agent_running": false,
+      "challenge_agent_results": [],
+      "challenge_agent_budget_exhausted": false
+    },
+    {
+      "domain": "alltele.se",
+      "request_id": "dagster-crawl-54a21d4664d1f4dffd801e453eef96001f0ee37691f495472c9c02ff0f565a0c",
+      "state": "completed",
+      "reason": "Fetching page",
+      "error": null,
+      "current_url": "https://alltele.se/",
+      "collected_pages": 0,
+      "s3_state": "uploaded",
+      "challenge_agent_running": false,
+      "challenge_agent_results": [],
+      "challenge_agent_budget_exhausted": false
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "time": "2026-09-20T21:56:37.099Z",
+  "status": "SUCCESS",
+  "saved": 7,
+  "successful_count": 0,
+  "unsuccessful_count": 7,
+  "submitted": 7,
+  "active": [],
+  "failures": [
+    {
+      "domain": "allabolag.se",
+      "error": "human_assistance_timeout",
+      "reason": "Saved 0 pages; stopped at blocked on https://allabolag.se/. Human assistance timed out. Available for interactive retry."
+    }
+  ]
+}

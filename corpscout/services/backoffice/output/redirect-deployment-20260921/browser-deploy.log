@@ -1,0 +1,139 @@
+
+PLAY [Deploy the Corpscout browser service as a system service] ****************
+
+TASK [Validate initial browser pool counts] ************************************
+ok: [browser-service] => 
+    changed: false
+    msg: All assertions passed
+
+TASK [Refresh CloakBrowser to the latest compatible release] *******************
+ok: [browser-service -> localhost]
+
+TASK [Create a temporary artifact directory] ***********************************
+ok: [browser-service -> localhost]
+
+TASK [Build the application wheel] *********************************************
+ok: [browser-service -> localhost]
+
+TASK [Export the service dependencies from the unchanged lockfile] *************
+ok: [browser-service -> localhost]
+
+TASK [Locate the built wheel] **************************************************
+ok: [browser-service -> localhost]
+
+TASK [Require exactly one application artifact] ********************************
+ok: [browser-service -> localhost] => 
+    changed: false
+    msg: All assertions passed
+
+TASK [Hash the application and locked dependencies] ****************************
+ok: [browser-service -> localhost] => (item=/var/folders/3d/ft4cxzhj2lg2gmwycfh8xg400000gn/T/browser-service-deploy-cvwlvy8o/corpscout_browser_service-0.7.4-py3-none-any.whl)
+ok: [browser-service -> localhost] => (item=/var/folders/3d/ft4cxzhj2lg2gmwycfh8xg400000gn/T/browser-service-deploy-cvwlvy8o/requirements.txt)
+
+TASK [Identify the immutable release] ******************************************
+ok: [browser-service -> localhost]
+
+TASK [Report the built release] ************************************************
+ok: [browser-service -> localhost] => 
+    msg: Release de43c9410de2ded4fc49778247fbbf0a227a4b9c43e5a5023429a529f28aceee built
+        in /var/folders/3d/ft4cxzhj2lg2gmwycfh8xg400000gn/T/browser-service-deploy-cvwlvy8o
+
+TASK [Read optional controller secrets] ****************************************
+ok: [browser-service]
+
+TASK [Require an independent browser API credential] ***************************
+ok: [browser-service]
+
+TASK [Gather target platform information] **************************************
+ok: [browser-service]
+
+TASK [Require a supported Linux system with systemd] ***************************
+ok: [browser-service] => 
+    changed: false
+    msg: All assertions passed
+
+TASK [Record the release path] *************************************************
+ok: [browser-service]
+
+TASK [Install Python bootstrap and browser prerequisites] **********************
+ok: [browser-service]
+
+TASK [Install virtual display and browser control tools] ***********************
+ok: [browser-service]
+
+TASK [Create the service group] ************************************************
+ok: [browser-service]
+
+TASK [Create the unprivileged service user] ************************************
+ok: [browser-service]
+
+TASK [Create root-owned application directories] *******************************
+ok: [browser-service] => (item=/opt/companycollect/corpscout/browser_service)
+changed: [browser-service] => (item=/opt/companycollect/corpscout/browser_service/releases/de43c9410de2ded4fc49778247fbbf0a227a4b9c43e5a5023429a529f28aceee)
+ok: [browser-service] => (item=/etc/browser-service)
+
+TASK [Create persistent service state and browser cache] ***********************
+ok: [browser-service] => (item=/var/lib/browser-service)
+ok: [browser-service] => (item=/var/cache/browser-service)
+
+TASK [Install the pinned uv tool in its own environment] ***********************
+ok: [browser-service]
+
+TASK [Copy only the application wheel and locked dependency list] **************
+changed: [browser-service] => (item=/var/folders/3d/ft4cxzhj2lg2gmwycfh8xg400000gn/T/browser-service-deploy-cvwlvy8o/corpscout_browser_service-0.7.4-py3-none-any.whl)
+changed: [browser-service] => (item=/var/folders/3d/ft4cxzhj2lg2gmwycfh8xg400000gn/T/browser-service-deploy-cvwlvy8o/requirements.txt)
+
+TASK [Inspect release installation status] *************************************
+ok: [browser-service]
+
+TASK [Create the release environment using the pinned Python runtime] **********
+changed: [browser-service]
+
+TASK [Install the exact locked dependencies with hash verification] ************
+changed: [browser-service]
+
+TASK [Install the application wheel without resolving dependencies again] ******
+changed: [browser-service]
+
+TASK [Install Chromium operating-system libraries] *****************************
+changed: [browser-service]
+
+TASK [Download and launch the browser as the service account] ******************
+changed: [browser-service]
+
+TASK [Mark the successfully prepared release] **********************************
+changed: [browser-service]
+
+TASK [Install the service credentials] *****************************************
+ok: [browser-service]
+
+TASK [Select the prepared release] *********************************************
+changed: [browser-service]
+
+TASK [Install the systemd service] *********************************************
+ok: [browser-service]
+
+TASK [Validate the installed systemd unit] *************************************
+ok: [browser-service]
+
+TASK [Apply pending service changes] *******************************************
+
+RUNNING HANDLER [Restart browser service] **************************************
+changed: [browser-service]
+
+TASK [Enable the service at boot and keep it running] **************************
+ok: [browser-service]
+
+TASK [Wait for the browser service to be ready] ********************************
+FAILED - RETRYING: [browser-service]: Wait for the browser service to be ready (29 retries left).
+FAILED - RETRYING: [browser-service]: Wait for the browser service to be ready (28 retries left).
+FAILED - RETRYING: [browser-service]: Wait for the browser service to be ready (27 retries left).
+FAILED - RETRYING: [browser-service]: Wait for the browser service to be ready (26 retries left).
+ok: [browser-service]
+
+TASK [Remove the temporary controller artifacts] *******************************
+ok: [browser-service -> localhost]
+
+PLAY RECAP *********************************************************************
+browser-service            : ok=38   changed=10   unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+

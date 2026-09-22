@@ -1,0 +1,444 @@
+{
+  "runId": "958b85d0-f442-4901-b090-370fa223f5c5",
+  "requested": 50,
+  "saved": 7,
+  "successful": 0,
+  "unsuccessful": 7,
+  "s3_verified": 7,
+  "issues": [],
+  "failures": [
+    {
+      "domain": "abogaranti.se",
+      "error": "",
+      "status": "needs_review",
+      "stop_reason": "browser_unavailable"
+    },
+    {
+      "domain": "addage.org",
+      "error": "",
+      "status": "needs_review",
+      "stop_reason": "browser_unavailable"
+    },
+    {
+      "domain": "adlibris.com",
+      "error": "",
+      "status": "needs_review",
+      "stop_reason": "initial_page_unavailable"
+    },
+    {
+      "domain": "advokatsamfundet.se",
+      "error": "",
+      "status": "needs_review",
+      "stop_reason": "browser_unavailable"
+    },
+    {
+      "domain": "aga.se",
+      "error": "",
+      "status": "needs_review",
+      "stop_reason": "browser_unavailable"
+    },
+    {
+      "domain": "allabolag.se",
+      "error": "human_assistance_timeout",
+      "status": "failed",
+      "stop_reason": "human_assistance_timeout"
+    },
+    {
+      "domain": "alltele.se",
+      "error": "",
+      "status": "needs_review",
+      "stop_reason": "browser_unavailable"
+    }
+  ],
+  "results": [
+    {
+      "domain": "abogaranti.se",
+      "request_id": "dagster-crawl-b34099f9e0ea22debb4ebf5ad63ac7b37ec8ad4f2a05809705867b670d8b5f3d",
+      "attempt": 1,
+      "successful": false,
+      "state": "completed",
+      "crawl_status": "needs_review",
+      "error": "",
+      "started_at": "2026-09-20 21:55:09.000000",
+      "finished_at": "2026-09-20 21:55:12.000000",
+      "site_info": {
+        "source_url": "https://abogaranti.se/",
+        "scope": "first_page_only",
+        "evidence_status": "needs_review",
+        "crawl_decision": "needs_review",
+        "site_description": "The site's purpose and company activities could not be determined from the first page.",
+        "site_types": [
+          "unknown"
+        ],
+        "operator_name": null,
+        "purpose": null,
+        "business_activities": [],
+        "evidence": []
+      },
+      "pages": 1,
+      "model_usage": {
+        "calls": 0,
+        "successful_responses": 0,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "by_call": []
+      },
+      "s3_path": "crawls/company-crawls/dagster-crawl-b34099f9e0ea22debb4ebf5ad63ac7b37ec8ad4f2a05809705867b670d8b5f3d/attempts/0001/result.json.gz",
+      "s3_state": "uploaded",
+      "issues": [],
+      "s3_readable": true,
+      "s3_info_matches": true,
+      "s3_identity_matches": true,
+      "document_count": 0,
+      "document_fields": [],
+      "input_fields": [],
+      "stop_reason": "browser_unavailable",
+      "crawl_errors": [
+        {
+          "stage": "crawl",
+          "error": "Assigned browser is unavailable; retry in the same session"
+        }
+      ],
+      "html_bytes": 0,
+      "html_hashes_match": true,
+      "pages_match": true,
+      "usage_matches": true,
+      "observations_match": true
+    },
+    {
+      "domain": "addage.org",
+      "request_id": "dagster-crawl-658fca5bc8d0bc2f0822557a83e6458fd94881dba8527380df14593f68a97fb0",
+      "attempt": 1,
+      "successful": false,
+      "state": "completed",
+      "crawl_status": "needs_review",
+      "error": "",
+      "started_at": "2026-09-20 21:55:17.000000",
+      "finished_at": "2026-09-20 21:55:20.000000",
+      "site_info": {
+        "source_url": "https://addage.org/",
+        "scope": "first_page_only",
+        "evidence_status": "needs_review",
+        "crawl_decision": "needs_review",
+        "site_description": "The site's purpose and company activities could not be determined from the first page.",
+        "site_types": [
+          "unknown"
+        ],
+        "operator_name": null,
+        "purpose": null,
+        "business_activities": [],
+        "evidence": []
+      },
+      "pages": 1,
+      "model_usage": {
+        "calls": 0,
+        "successful_responses": 0,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "by_call": []
+      },
+      "s3_path": "crawls/company-crawls/dagster-crawl-658fca5bc8d0bc2f0822557a83e6458fd94881dba8527380df14593f68a97fb0/attempts/0001/result.json.gz",
+      "s3_state": "uploaded",
+      "issues": [],
+      "s3_readable": true,
+      "s3_info_matches": true,
+      "s3_identity_matches": true,
+      "document_count": 0,
+      "document_fields": [],
+      "input_fields": [],
+      "stop_reason": "browser_unavailable",
+      "crawl_errors": [
+        {
+          "stage": "crawl",
+          "error": "Assigned browser is unavailable; retry in the same session"
+        }
+      ],
+      "html_bytes": 0,
+      "html_hashes_match": true,
+      "pages_match": true,
+      "usage_matches": true,
+      "observations_match": true
+    },
+    {
+      "domain": "adlibris.com",
+      "request_id": "dagster-crawl-214c5e0140baec1e4afa35ce5e84d39fb5913f3eec7114f4003f6590ea9830b9",
+      "attempt": 1,
+      "successful": false,
+      "state": "completed",
+      "crawl_status": "needs_review",
+      "error": "",
+      "started_at": "2026-09-20 21:55:23.000000",
+      "finished_at": "2026-09-20 21:55:26.000000",
+      "site_info": {
+        "source_url": "https://adlibris.com/",
+        "scope": "first_page_only",
+        "evidence_status": "needs_review",
+        "crawl_decision": "needs_review",
+        "site_description": "The site's purpose and company activities could not be determined from the first page.",
+        "site_types": [
+          "unknown"
+        ],
+        "operator_name": null,
+        "purpose": null,
+        "business_activities": [],
+        "evidence": []
+      },
+      "pages": 1,
+      "model_usage": {
+        "calls": 0,
+        "successful_responses": 0,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "by_call": []
+      },
+      "s3_path": "crawls/company-crawls/dagster-crawl-214c5e0140baec1e4afa35ce5e84d39fb5913f3eec7114f4003f6590ea9830b9/attempts/0001/result.json.gz",
+      "s3_state": "uploaded",
+      "issues": [],
+      "s3_readable": true,
+      "s3_info_matches": true,
+      "s3_identity_matches": true,
+      "document_count": 0,
+      "document_fields": [],
+      "input_fields": [],
+      "stop_reason": "initial_page_unavailable",
+      "crawl_errors": [],
+      "html_bytes": 0,
+      "html_hashes_match": true,
+      "pages_match": true,
+      "usage_matches": true,
+      "observations_match": true
+    },
+    {
+      "domain": "advokatsamfundet.se",
+      "request_id": "dagster-crawl-2fab079236483b51843a4df545039cd9f943103be8e4e3a07db89f8ca04c562d",
+      "attempt": 1,
+      "successful": false,
+      "state": "completed",
+      "crawl_status": "needs_review",
+      "error": "",
+      "started_at": "2026-09-20 21:55:27.000000",
+      "finished_at": "2026-09-20 21:55:30.000000",
+      "site_info": {
+        "source_url": "https://advokatsamfundet.se/",
+        "scope": "first_page_only",
+        "evidence_status": "needs_review",
+        "crawl_decision": "needs_review",
+        "site_description": "The site's purpose and company activities could not be determined from the first page.",
+        "site_types": [
+          "unknown"
+        ],
+        "operator_name": null,
+        "purpose": null,
+        "business_activities": [],
+        "evidence": []
+      },
+      "pages": 1,
+      "model_usage": {
+        "calls": 0,
+        "successful_responses": 0,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "by_call": []
+      },
+      "s3_path": "crawls/company-crawls/dagster-crawl-2fab079236483b51843a4df545039cd9f943103be8e4e3a07db89f8ca04c562d/attempts/0001/result.json.gz",
+      "s3_state": "uploaded",
+      "issues": [],
+      "s3_readable": true,
+      "s3_info_matches": true,
+      "s3_identity_matches": true,
+      "document_count": 0,
+      "document_fields": [],
+      "input_fields": [],
+      "stop_reason": "browser_unavailable",
+      "crawl_errors": [
+        {
+          "stage": "crawl",
+          "error": "Assigned browser is unavailable; retry in the same session"
+        }
+      ],
+      "html_bytes": 0,
+      "html_hashes_match": true,
+      "pages_match": true,
+      "usage_matches": true,
+      "observations_match": true
+    },
+    {
+      "domain": "aga.se",
+      "request_id": "dagster-crawl-db6ff879ee8cc32f85565752a9831e0eb425b835055c923e05e6b20bebb4b54c",
+      "attempt": 1,
+      "successful": false,
+      "state": "completed",
+      "crawl_status": "needs_review",
+      "error": "",
+      "started_at": "2026-09-20 21:55:34.000000",
+      "finished_at": "2026-09-20 21:55:36.000000",
+      "site_info": {
+        "source_url": "https://aga.se/",
+        "scope": "first_page_only",
+        "evidence_status": "needs_review",
+        "crawl_decision": "needs_review",
+        "site_description": "The site's purpose and company activities could not be determined from the first page.",
+        "site_types": [
+          "unknown"
+        ],
+        "operator_name": null,
+        "purpose": null,
+        "business_activities": [],
+        "evidence": []
+      },
+      "pages": 1,
+      "model_usage": {
+        "calls": 0,
+        "successful_responses": 0,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "by_call": []
+      },
+      "s3_path": "crawls/company-crawls/dagster-crawl-db6ff879ee8cc32f85565752a9831e0eb425b835055c923e05e6b20bebb4b54c/attempts/0001/result.json.gz",
+      "s3_state": "uploaded",
+      "issues": [],
+      "s3_readable": true,
+      "s3_info_matches": true,
+      "s3_identity_matches": true,
+      "document_count": 0,
+      "document_fields": [],
+      "input_fields": [],
+      "stop_reason": "browser_unavailable",
+      "crawl_errors": [
+        {
+          "stage": "crawl",
+          "error": "Assigned browser is unavailable; retry in the same session"
+        }
+      ],
+      "html_bytes": 0,
+      "html_hashes_match": true,
+      "pages_match": true,
+      "usage_matches": true,
+      "observations_match": true
+    },
+    {
+      "domain": "allabolag.se",
+      "request_id": "dagster-crawl-79dfe52c9bf19f77732014a166811299e7407af7448a4017e3f6efb902937107",
+      "attempt": 1,
+      "successful": false,
+      "state": "failed",
+      "crawl_status": "failed",
+      "error": "human_assistance_timeout",
+      "started_at": "2026-09-20 21:55:38.000000",
+      "finished_at": "2026-09-20 21:55:53.000000",
+      "site_info": {
+        "source_url": "https://allabolag.se/",
+        "scope": "first_page_only",
+        "evidence_status": "needs_review",
+        "crawl_decision": "needs_review",
+        "site_description": "The site's purpose and company activities could not be determined from the first page.",
+        "site_types": [
+          "unknown"
+        ],
+        "operator_name": null,
+        "purpose": null,
+        "business_activities": [],
+        "evidence": []
+      },
+      "pages": 1,
+      "model_usage": {
+        "calls": 0,
+        "successful_responses": 0,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "by_call": []
+      },
+      "s3_path": "crawls/company-crawls/dagster-crawl-79dfe52c9bf19f77732014a166811299e7407af7448a4017e3f6efb902937107/attempts/0001/result.json.gz",
+      "s3_state": "uploaded",
+      "issues": [],
+      "s3_readable": true,
+      "s3_info_matches": true,
+      "s3_identity_matches": true,
+      "document_count": 0,
+      "document_fields": [],
+      "input_fields": [],
+      "stop_reason": "human_assistance_timeout",
+      "crawl_errors": [
+        {
+          "stage": "crawl",
+          "error": "blocked: human assistance timed out after 10 seconds"
+        }
+      ],
+      "html_bytes": 0,
+      "html_hashes_match": true,
+      "pages_match": true,
+      "usage_matches": true,
+      "observations_match": true
+    },
+    {
+      "domain": "alltele.se",
+      "request_id": "dagster-crawl-e0fc513f58c13cd50415798338138017ab22259b26e8d0a740ce377c216abbee",
+      "attempt": 1,
+      "successful": false,
+      "state": "completed",
+      "crawl_status": "needs_review",
+      "error": "",
+      "started_at": "2026-09-20 21:55:58.000000",
+      "finished_at": "2026-09-20 21:56:03.000000",
+      "site_info": {
+        "source_url": "https://alltele.se/",
+        "scope": "first_page_only",
+        "evidence_status": "needs_review",
+        "crawl_decision": "needs_review",
+        "site_description": "The site's purpose and company activities could not be determined from the first page.",
+        "site_types": [
+          "unknown"
+        ],
+        "operator_name": null,
+        "purpose": null,
+        "business_activities": [],
+        "evidence": []
+      },
+      "pages": 1,
+      "model_usage": {
+        "calls": 0,
+        "successful_responses": 0,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "by_call": []
+      },
+      "s3_path": "crawls/company-crawls/dagster-crawl-e0fc513f58c13cd50415798338138017ab22259b26e8d0a740ce377c216abbee/attempts/0001/result.json.gz",
+      "s3_state": "uploaded",
+      "issues": [],
+      "s3_readable": true,
+      "s3_info_matches": true,
+      "s3_identity_matches": true,
+      "document_count": 0,
+      "document_fields": [],
+      "input_fields": [],
+      "stop_reason": "browser_unavailable",
+      "crawl_errors": [
+        {
+          "stage": "crawl",
+          "error": "Assigned browser is unavailable; retry in the same session"
+        }
+      ],
+      "html_bytes": 0,
+      "html_hashes_match": true,
+      "pages_match": true,
+      "usage_matches": true,
+      "observations_match": true
+    }
+  ],
+  "expected_fresh_skips": 43,
+  "note": "The 43 domains without new responses were correctly skipped because their successful results are fresh."
+}

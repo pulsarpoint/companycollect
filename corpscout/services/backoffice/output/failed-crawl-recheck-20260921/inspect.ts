@@ -1,0 +1,16 @@
+import 'dotenv/config';
+import {writeFileSync} from 'node:fs';
+import {chQuery} from '../../app/lib/clickhouse.server';
+import {browserRequest} from '../../app/lib/browser-service.server';
+import {listRuns} from '../../app/lib/dagster.server';
+import {loadCrawls} from '../../app/lib/crawler.server';
+const batches=await chQuery(`SELECT run_id,count() n,countIf(NOT successful) failed,min(finished_at) first_finished FROM website_site_info_results FINAL GROUP BY run_id ORDER BY first_finished`);
+const failures=await chQuery(`SELECT domain,website_url,request_id,run_id,finished_at,crawl_status,error,s3_path,work_key FROM website_site_info_results FINAL WHERE NOT successful ORDER BY finished_at`);
+const latest=await chQuery(`SELECT domain,request_id,state,successful,error,finished_at FROM website_site_info_results FINAL ORDER BY finished_at DESC LIMIT 1 BY domain`);
+const inputs=await chQuery(`SELECT domain,enabled,headless,proxy_route,page_mode FROM website_site_info_requests_current ORDER BY domain`);
+const browser=await(await browserRequest('/v1/server')).json();
+const activeRuns=await listRuns({job:'website_site_info_results_job',limit:20,statuses:['STARTED','STARTING','QUEUED']});
+const crawls=await loadCrawls(new URLSearchParams());
+const output={batches,failures,latest,inputs,browser:{version:browser.version,settings:browser.settings},activeRuns,activeCrawls:crawls.attempts.filter(r=>!['completed','failed','cancelled'].includes(r.state))};
+writeFileSync('output/failed-crawl-recheck-20260921/inspection.json',JSON.stringify(output,null,2));
+console.log(JSON.stringify({...output,latest:latest.filter((l:any)=>failures.some((f:any)=>f.domain===l.domain)),inputs:inputs.filter((l:any)=>failures.some((f:any)=>f.domain===l.domain))},null,2));

@@ -1,0 +1,6 @@
+{
+  "status": 409,
+  "body": {
+    "detail": "Browser tab is unavailable; reopen it in the same session"
+  }
+}

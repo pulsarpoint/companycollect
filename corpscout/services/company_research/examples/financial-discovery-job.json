@@ -1,0 +1,15 @@
+{
+  "request_id": "novelic-financial-discovery-001",
+  "url": "https://www.novelic.com/",
+  "instructions": "Find NOVELIC financial statements, annual accounts, filings and acquisition disclosures. Follow parent-company or filing sources to documents about NOVELIC. Keep document links and source content; financial interpretation is deferred.",
+  "save_artifacts": true,
+  "config": {
+    "web_search": true,
+    "max_pages": 20,
+    "max_external_pages": 12,
+    "max_search_queries": 3,
+    "max_source_domains": 3,
+    "max_source_pages_per_domain": 4,
+    "max_source_depth": 3
+  }
+}

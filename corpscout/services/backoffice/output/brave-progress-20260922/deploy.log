@@ -1,0 +1,151 @@
+
+PLAY [Hot-sync Corpscout Dagster definitions without restarting active runs] ***
+
+TASK [Try to acquire the Dagster deployment lock] ******************************
+changed: [dagster]
+
+TASK [Record ownership of the Dagster deployment lock] *************************
+ok: [dagster]
+
+TASK [Require exclusive Dagster deployment access] *****************************
+ok: [dagster] => 
+    changed: false
+    msg: All assertions passed
+
+TASK [dagster_dev : Inspect the local Dagster content tree] ********************
+ok: [dagster -> localhost] => (item=/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/dagster_v3/ansible/../pyproject.toml)
+ok: [dagster -> localhost] => (item=/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/dagster_v3/ansible/../uv.lock)
+ok: [dagster -> localhost] => (item=/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/dagster_v3/ansible/../src/dagster_v3/definitions.py)
+ok: [dagster -> localhost] => (item=/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/dagster_v3/ansible/../src/dagster_v3/defs)
+ok: [dagster -> localhost] => (item=/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/dagster_v3/ansible/../src/dagster_v3/defs/finland_ytj/dbt/dbt_project.yml)
+ok: [dagster -> localhost] => (item=/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/dagster_v3/ansible/../src/dagster_v3/defs/finland_ytj/dbt/target/manifest.json)
+ok: [dagster -> localhost] => (item=/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/dagster_v3/ansible/../src/dagster_v3/defs/exchange_rates_v2/dbt/dbt_project.yml)
+ok: [dagster -> localhost] => (item=/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/dagster_v3/ansible/../src/dagster_v3/defs/exchange_rates_v2/dbt/target/manifest.json)
+ok: [dagster -> localhost] => (item=/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/dagster_v3/ansible/../src/dagster_v3/defs/.local_defs_state/DbtProjectComponent__dbt__/project/dbt_project.yml)
+ok: [dagster -> localhost] => (item=/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/dagster_v3/ansible/../src/dagster_v3/defs/.local_defs_state/DbtProjectComponent__dbt__/project/target/manifest.json)
+ok: [dagster -> localhost] => (item=/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/dagster_v3/ansible/../src/dagster_v3/defs/.local_defs_state/DbtProjectComponent__dbt____web-features/project/dbt_project.yml)
+ok: [dagster -> localhost] => (item=/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/dagster_v3/ansible/../src/dagster_v3/defs/.local_defs_state/DbtProjectComponent__dbt____web-features/project/target/manifest.json)
+ok: [dagster -> localhost] => (item=/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/dagster_v3/ansible/../src/dagster_v3/defs/.local_defs_state/DbtProjectComponent__dbt____company-serving/project/dbt_project.yml)
+ok: [dagster -> localhost] => (item=/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/dagster_v3/ansible/../src/dagster_v3/defs/.local_defs_state/DbtProjectComponent__dbt____company-serving/project/target/manifest.json)
+ok: [dagster -> localhost] => (item=/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/dagster_v3/ansible/../exchange_rates)
+
+TASK [dagster_dev : Require a complete local Dagster content tree] *************
+ok: [dagster -> localhost] => 
+    changed: false
+    msg: All assertions passed
+
+TASK [dagster_dev : Verify hot-sync tools on the control machine] **************
+ok: [dagster -> localhost]
+
+TASK [dagster_dev : Validate local Dagster definitions before hot-sync] ********
+ok: [dagster -> localhost]
+
+TASK [dagster_dev : Require the running Dagster development service] ***********
+ok: [dagster]
+
+TASK [dagster_dev : Inspect the target Dagster executable] *********************
+ok: [dagster]
+
+TASK [dagster_dev : Require the existing target Dagster environment] ***********
+ok: [dagster] => 
+    changed: false
+    msg: All assertions passed
+
+TASK [dagster_dev : Verify rsync on the Dagster host] **************************
+ok: [dagster]
+
+TASK [dagster_dev : Capture the Dagster supervisor before hot-sync] ************
+ok: [dagster]
+
+TASK [dagster_dev : Preview the Dagster content hot-sync] **********************
+changed: [dagster -> localhost]
+
+TASK [dagster_dev : Preview the exchange_rates package hot-sync] ***************
+ok: [dagster -> localhost]
+
+TASK [dagster_dev : Preview the dependency manifest hot-sync] ******************
+ok: [dagster -> localhost]
+
+TASK [dagster_dev : Record the Dagster hot-sync decision] **********************
+ok: [dagster]
+
+TASK [dagster_dev : Record the combined Dagster hot-sync decision] *************
+ok: [dagster]
+
+TASK [dagster_dev : Report the Dagster hot-sync preview] ***********************
+ok: [dagster] => 
+    msg:
+        content_changed: true
+        dependency_manifests_changed: false
+        exchange_rates_changed: false
+        service_restart_requested: false
+        synchronized_trees:
+        - src/dagster_v3
+        - exchange_rates
+        - pyproject.toml+uv.lock
+
+TASK [dagster_dev : Remove stale Dagster hot-sync release directories] *********
+ok: [dagster] => (item=/opt/companycollect/corpscout/.dagster-v3-hot-sync-next)
+ok: [dagster] => (item=/opt/companycollect/corpscout/.dagster-v3-hot-sync-previous)
+
+TASK [dagster_dev : Create the isolated Dagster hot-sync release tree] *********
+changed: [dagster] => (item=/opt/companycollect/corpscout/.dagster-v3-hot-sync-next)
+changed: [dagster] => (item=/opt/companycollect/corpscout/.dagster-v3-hot-sync-next/src)
+changed: [dagster] => (item=/opt/companycollect/corpscout/.dagster-v3-hot-sync-next/src/dagster_v3)
+changed: [dagster] => (item=/opt/companycollect/corpscout/.dagster-v3-hot-sync-next/exchange_rates)
+
+TASK [dagster_dev : Stage the complete Dagster definitions tree outside the watched checkout] ***
+changed: [dagster -> localhost]
+
+TASK [dagster_dev : Stage the complete exchange_rates package outside the watched checkout] ***
+changed: [dagster -> localhost]
+
+TASK [dagster_dev : Stage the Dagster dependency manifests] ********************
+changed: [dagster -> localhost]
+
+TASK [dagster_dev : Link server-owned runtime state into the isolated release tree] ***
+changed: [dagster] => (item=(censored due to no_log))
+changed: [dagster] => (item=(censored due to no_log))
+changed: [dagster] => (item=(censored due to no_log))
+
+TASK [dagster_dev : Synchronize the dependency manifests without restarting the service] ***
+skipping: [dagster]
+
+TASK [dagster_dev : Install changed dependencies into the running environment] ***
+skipping: [dagster]
+
+TASK [dagster_dev : Validate the isolated Dagster release on the target] *******
+ok: [dagster]
+
+TASK [dagster_dev : Atomically promote the validated Dagster source release] ***
+changed: [dagster]
+
+TASK [dagster_dev : Reload only the synchronized Dagster code location] ********
+changed: [dagster]
+
+TASK [dagster_dev : Require the Dagster code-location reload to succeed] *******
+ok: [dagster] => 
+    changed: false
+    msg: All assertions passed
+
+TASK [dagster_dev : Wait for the hot-reloaded Dagster code location] ***********
+ok: [dagster]
+
+TASK [dagster_dev : Remove validated Dagster hot-sync release leftovers] *******
+changed: [dagster] => (item=/opt/companycollect/corpscout/.dagster-v3-hot-sync-next)
+changed: [dagster] => (item=/opt/companycollect/corpscout/.dagster-v3-hot-sync-previous)
+
+TASK [dagster_dev : Re-read the Dagster supervisor after hot-sync] *************
+ok: [dagster]
+
+TASK [dagster_dev : Require hot-sync to preserve the running Dagster supervisor] ***
+ok: [dagster] => 
+    changed: false
+    msg: All assertions passed
+
+TASK [Release the Dagster deployment lock] *************************************
+changed: [dagster]
+
+PLAY RECAP *********************************************************************
+dagster                    : ok=33   changed=11   unreachable=0    failed=0    skipped=2    rescued=0    ignored=0   
+

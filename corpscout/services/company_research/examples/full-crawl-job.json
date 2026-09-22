@@ -1,0 +1,8 @@
+{
+  "request_id": "novelic-full-001",
+  "url": "https://www.novelic.com/",
+  "crawl": "full",
+  "save_artifacts": true,
+  "challenge_agent_max_runs": 3,
+  "challenge_agent_model": "deepseek-flash"
+}

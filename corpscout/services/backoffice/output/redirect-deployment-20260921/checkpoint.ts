@@ -1,0 +1,10 @@
+import {readFileSync,writeFileSync} from 'node:fs';
+import {dagsterGraphqlUrl,runStatus} from '../../app/lib/dagster.server';
+import {chQuery} from '../../app/lib/clickhouse.server';
+const [run]=JSON.parse(readFileSync('output/redirect-deployment-20260921/original-runs.json','utf8'));
+const execution=JSON.parse(run.tags['brave/execution']);
+const counts=await chQuery('SELECT count() AS total,countIf(status=\'success\') AS successful,countIf(status=\'error\') AS failed,uniqExact(input_id) AS distinct_inputs FROM corpscout.company_brave_search_results FINAL WHERE execution_id={id:UUID}',{id:execution.execution_id});
+writeFileSync('output/redirect-deployment-20260921/checkpoint-before.json',JSON.stringify({execution,counts},null,2));
+console.log(JSON.stringify({run:run.runId,execution:execution.execution_id,task:execution.task_id,selected:execution.source_info.total,counts}));
+const body=await fetch(dagsterGraphqlUrl(),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:'{ policy:__type(name:"TerminateRunPolicy"){enumValues{name}} mutation:__type(name:"Mutation"){fields{name type{kind name ofType{kind name}}}} result:__type(name:"TerminateRunResult"){possibleTypes{name fields{name}}} }'})}).then(r=>r.json());
+console.log(JSON.stringify({policy:body.data?.policy,result:body.data?.result,mutation:body.data?.mutation.fields.filter((r:any)=>r.name==='terminateRun'),errors:body.errors}));

@@ -1,0 +1,16 @@
+{
+  "runId": "53553372-bb74-4e7b-9d0a-f8e0e6b64e0f",
+  "status": "SUCCESS",
+  "startTime": 1790016832.731576,
+  "endTime": 1790016878.086851,
+  "metadata": {
+    "runId": "53553372-bb74-4e7b-9d0a-f8e0e6b64e0f",
+    "timestamp": 1790016875896,
+    "numbers": {
+      "completed": 2,
+      "unsuccessful": 0,
+      "fresh_skipped": 0,
+      "recovered": 0
+    }
+  }
+}

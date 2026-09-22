@@ -1,0 +1,13 @@
+{
+  "run": "19ac7955-07a7-46d9-beef-b92d45d06580",
+  "status": "CANCELED",
+  "execution": "ce521036-669b-4b96-8d1d-a71147c3bfa4",
+  "total": 736554,
+  "counts": {
+    "processed": 22485,
+    "succeeded": 22169,
+    "failed": 316,
+    "distinct_inputs": 22485
+  },
+  "active": []
+}

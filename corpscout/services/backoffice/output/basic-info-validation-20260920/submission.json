@@ -1,0 +1,16 @@
+{
+  "intent": "start-inputs",
+  "crawl_type": "site_info",
+  "domains": "[\"100.se\",\"1700-tal.se\",\"2030sekretariatet.se\",\"2525.se\",\"abba.se\",\"abogaranti.se\",\"academedia.se\",\"acando.com\",\"addage.org\",\"addalot.se\",\"adlibris.com\",\"adtraction.com\",\"advancedclinic.se\",\"advania.is\",\"advania.no\",\"advania.se\",\"advokatsamfundet.se\",\"aftonbladet.se\",\"aga.se\",\"agrando.se\",\"agria.dk\",\"agria.fi\",\"agria.no\",\"agria.se\",\"agriatierversicherung.de\",\"aikfotboll.se\",\"airclim.org\",\"ajtte.com\",\"akademiskahus.se\",\"akademssr.se\",\"aklagare.se\",\"alaskafilmtv.com\",\"alastorpress.com\",\"ale.se\",\"alecta.se\",\"alemsorgel.se\",\"aleris.se\",\"alfieatkins.com\",\"alfons.se\",\"algoryx.se\",\"alingsas.se\",\"allabolag.se\",\"allente.dk\",\"allente.fi\",\"allente.no\",\"allente.se\",\"aller.se\",\"alltele.se\",\"almhult.se\",\"almi.se\"]",
+  "batch_id": "ee0c80ba-bc37-4dcc-9e94-907dee618318",
+  "challenge_agent_model": "deepseek-flash",
+  "challenge_agent_max_runs": "3",
+  "api": "deepseek",
+  "model": "deepseek-flash",
+  "max_pages": "1",
+  "max_model_calls": "20",
+  "page_selection": "basic_info",
+  "max_in_flight": "3",
+  "refresh_interval_days": "30",
+  "force_refresh": "false"
+}

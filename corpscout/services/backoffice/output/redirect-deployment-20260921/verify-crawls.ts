@@ -1,0 +1,10 @@
+import {existsSync,writeFileSync} from 'node:fs';
+import {startSavedCrawls} from '../../app/lib/crawl-inputs.server';
+const folder='output/redirect-deployment-20260921/site-info';
+if(existsSync(`${folder}/receipt.json`))throw new Error('Verification receipt exists');
+const settings={intent:'start-inputs',crawl_type:'site_info',domains:JSON.stringify(['aga.se','advokatsamfundet.se']),batch_id:crypto.randomUUID(),challenge_agent_model:'deepseek-flash',challenge_agent_max_runs:'3',api:'deepseek',model:'deepseek-flash',max_pages:'1',max_model_calls:'20',page_selection:'basic_info',max_in_flight:'2',refresh_interval_days:'30',force_refresh:'false'};
+const form=new FormData();for(const [k,v]of Object.entries(settings))form.set(k,v);
+writeFileSync(`${folder}/submission.json`,JSON.stringify(settings,null,2));
+const receipt=await startSavedCrawls(form);
+writeFileSync(`${folder}/receipt.json`,JSON.stringify(receipt,null,2));
+console.log(JSON.stringify(receipt));

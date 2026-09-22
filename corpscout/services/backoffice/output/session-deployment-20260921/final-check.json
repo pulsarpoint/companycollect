@@ -1,0 +1,291 @@
+{
+  "crawlRun": "1c147fa2-8890-466e-88f4-b31e34c86030",
+  "requestId": "dagster-crawl-2cd5078f78bf41a64ac7a152c85dccbe474a8deb366946149c974138b6fdceca",
+  "domain": "aga.se",
+  "archiveStatus": "finished",
+  "s3Path": "crawls/company-crawls/dagster-crawl-2cd5078f78bf41a64ac7a152c85dccbe474a8deb366946149c974138b6fdceca/attempts/0001/result.json.gz",
+  "crawl": {
+    "schema_version": "company-crawl/1.0",
+    "artifacts_saved": true,
+    "run_id": "c876bc639831403c96bbba86fe5786de",
+    "input_url": "https://aga.se/",
+    "site_url": "https://www.linde-gas.se/shop/sv/se-ig/home",
+    "mode": "site_info",
+    "requested_pages": [],
+    "selection_instructions": null,
+    "effective_selection_instructions": "Collect all useful source pages for these four areas:\n1. Contact information: contact pages, office addresses, email, phone and profile links.\n2. Jobs: careers listings and full job descriptions, including the target employer's\n   external job board and its individual ads. Collect all useful job pages within budget.\n3. About the company: identity, activities, products and services that describe what\n   the company does. Include useful service/product detail pages as well as overviews.\n4. Financial information: investor relations, financial statements, annual reports\n   and filings. Find the pages linking to these documents; document links are saved\n   without downloading the documents.\nChoose pages for their source content only. Do not analyze jobs, infer skills or\ntechnology usage, or seek technology-stack evidence. Skip engineering blogs,\ntutorials, employee stories and news unless they directly provide the requested\ncompany or financial information. Preserve job descriptions even when they mention\ntechnologies; interpretation belongs to later offline processing.\n",
+    "processing": {
+      "stage": "collection",
+      "job_analysis": "deferred",
+      "technology_analysis": "deferred"
+    },
+    "site_info_requested": true,
+    "crawl_requested": false,
+    "site_info": {
+      "source_url": "https://www.linde-gas.se/shop/sv/se-ig/home",
+      "scope": "first_page_only",
+      "evidence_status": "source_matched",
+      "crawl_decision": "continue_crawling",
+      "site_description": "Linde Gas Sverige is the Swedish online shop of Linde, an industrial gases company, whose site is titled \"Gaser, utrustning och applikationer\". The shop sells gases such as oxygen, nitrogen, argon, acetylene, helium, carbon dioxide, hydrogen, welding and shielding gases, medical gases and food-industry gases, together with gas equipment and accessories including regulators, burner systems, cutting equipment and medical-technical products. Products are organized by gas type and by application areas such as welding, cutting, heating, freezing, fish farming and inverting. The site also presents services such as gas cylinder services, automatic gas supply, certification, analysis and risk assessment, training and cryogenic transport, and offers a customer portal for ordering and managing gas supplies.",
+      "site_types": [
+        "company"
+      ],
+      "operator_name": "Linde plc",
+      "purpose": "Online shop and customer portal for industrial, medical and specialty gases and related gas equipment",
+      "business_activities": [
+        "Supply of industrial gases (oxygen, nitrogen, argon, acetylene, helium, carbon dioxide, hydrogen)",
+        "Welding and shielding gases",
+        "Medical gases and medical-technical equipment",
+        "Gases for the food and beverage industry",
+        "Gas equipment, regulators, burner systems and cutting equipment",
+        "Gas-supply, certification, analysis, training and transport services"
+      ],
+      "evidence": [
+        "Gaser, utrustning och applikationer | Linde Gas Sverige",
+        "Linde är det världsledande företaget inom industrigaser.",
+        "Våra produkter och tillämpningar",
+        "Linde plc",
+        "Medicinska gaser",
+        "Kundportal - online-hubb för inköp och hantering av dina gaser",
+        "Beställa/Returnera",
+        "© Linde 2025"
+      ]
+    },
+    "started_at": "2026-09-21T21:35:16+00:00",
+    "finished_at": "2026-09-21T21:35:38+00:00",
+    "status": "finished",
+    "stop_reason": "site_info_complete",
+    "config": {
+      "model": "deepseek-flash",
+      "provider": null,
+      "reasoning_effort": "high",
+      "max_pages": 1,
+      "max_external_pages": 3,
+      "max_source_domains": 3,
+      "max_source_pages_per_domain": 4,
+      "max_source_depth": 3,
+      "web_search": false,
+      "max_search_queries": 3,
+      "search_results_per_query": 5,
+      "search_context_chars": 12000,
+      "job_detail_reserve": 5,
+      "engineering_page_reserve": 3,
+      "max_extraction_attempts": 2,
+      "max_saved_extraction_retries": 5,
+      "max_review_attempts": 2,
+      "max_proposal_corrections": 1,
+      "statement_batch_size": 20,
+      "catalog_resolution_batch_size": 12,
+      "max_candidates": 1000,
+      "max_sitemap_urls": 500,
+      "max_sitemap_files": 20,
+      "selection_batch_size": 20,
+      "selection_batches_per_page": 1,
+      "max_assessment_attempts": 2,
+      "external_link_batch_size": 20,
+      "max_external_link_assessment_calls": 3,
+      "max_model_calls": 20,
+      "model_timeout_seconds": 180,
+      "max_http_attempts": 2,
+      "max_corrections": 1,
+      "max_output_tokens": 65536,
+      "max_technology_tool_rounds": 6,
+      "summary_input_chars": 100000,
+      "chunk_chars": 60000,
+      "overlap_chars": 4000,
+      "extraction_concurrency": 3,
+      "page_timeout_seconds": 45,
+      "page_attempts": 2,
+      "max_browser_restarts": 2,
+      "exploration_pages": 3,
+      "check_robots_txt": true
+    },
+    "pages": [
+      {
+        "page_id": "p0001",
+        "requested_url": "https://aga.se/",
+        "source_url": "https://www.linde-gas.se/shop/sv/se-ig/home",
+        "redirects": [
+          {
+            "url": "http://aga.se/",
+            "status_code": 301,
+            "location": "https://www.linde-gas.se/shop/sv/se-ig/home"
+          }
+        ],
+        "navigation_attempts": [
+          {
+            "url": "https://aga.se/",
+            "error": "ERR_SSL_PROTOCOL_ERROR"
+          },
+          {
+            "url": "http://aga.se/",
+            "error": null
+          }
+        ],
+        "selected_for": "input_url",
+        "fetched_at": "2026-09-21T21:35:17+00:00",
+        "status_code": 200,
+        "fetch_status": "fetched",
+        "attempts": 1,
+        "html_sha256": "8ced8d5f1eb1335ca32e93cb5b1d9654f92c1895b83e7fb9caa5d9a2af8fb289",
+        "html_file": "pages/p0001/page.html",
+        "errors": [],
+        "external_links_file": "external-links/p0001.json",
+        "external_link_count": 25,
+        "link_html_file": "pages/p0001/link-page.html",
+        "link_html_sha256": "5d72adce796e12d29d9cccdd45dd6c82a447fa579203e0bea5f21ef5c24c0551",
+        "observations_sha256": "46905ce1c86bdb7eb4aefe6ebc52fe1345ccc3fbd8a42fec38520f4903c699bc",
+        "snapshot": "pages/p0001"
+      }
+    ],
+    "site_gate": {
+      "decision": "continue_crawling",
+      "profile": {
+        "record_id": "1707d333f59718c1f08ae8e6",
+        "data": {
+          "crawl_decision": "continue_crawling",
+          "site_description": "Linde Gas Sverige is the Swedish online shop of Linde, an industrial gases company, whose site is titled \"Gaser, utrustning och applikationer\". The shop sells gases such as oxygen, nitrogen, argon, acetylene, helium, carbon dioxide, hydrogen, welding and shielding gases, medical gases and food-industry gases, together with gas equipment and accessories including regulators, burner systems, cutting equipment and medical-technical products. Products are organized by gas type and by application areas such as welding, cutting, heating, freezing, fish farming and inverting. The site also presents services such as gas cylinder services, automatic gas supply, certification, analysis and risk assessment, training and cryogenic transport, and offers a customer portal for ordering and managing gas supplies.",
+          "site_types": [
+            "company"
+          ],
+          "research_profiles": [
+            "manufacturer",
+            "service_provider"
+          ],
+          "purpose": "Online shop and customer portal for industrial, medical and specialty gases and related gas equipment",
+          "operator_name": "Linde plc",
+          "business_activities": [
+            "Supply of industrial gases (oxygen, nitrogen, argon, acetylene, helium, carbon dioxide, hydrogen)",
+            "Welding and shielding gases",
+            "Medical gases and medical-technical equipment",
+            "Gases for the food and beverage industry",
+            "Gas equipment, regulators, burner systems and cutting equipment",
+            "Gas-supply, certification, analysis, training and transport services"
+          ]
+        },
+        "sources": [
+          {
+            "url": "https://www.linde-gas.se/shop/sv/se-ig/home",
+            "page_id": "p0001",
+            "fetched_at": "2026-09-21T21:35:17+00:00",
+            "html_sha256": "8ced8d5f1eb1335ca32e93cb5b1d9654f92c1895b83e7fb9caa5d9a2af8fb289",
+            "chunk_start": 0,
+            "chunk_end": 89305,
+            "evidence": [
+              {
+                "text": "Gaser, utrustning och applikationer | Linde Gas Sverige",
+                "matched_in": "text"
+              },
+              {
+                "text": "Linde är det världsledande företaget inom industrigaser.",
+                "matched_in": "text"
+              },
+              {
+                "text": "Våra produkter och tillämpningar",
+                "matched_in": "text"
+              },
+              {
+                "text": "Linde plc",
+                "matched_in": "text"
+              },
+              {
+                "text": "Medicinska gaser",
+                "matched_in": "text"
+              },
+              {
+                "text": "Kundportal - online-hubb för inköp och hantering av dina gaser",
+                "matched_in": "text"
+              },
+              {
+                "text": "Beställa/Returnera",
+                "matched_in": "text"
+              },
+              {
+                "text": "© Linde 2025",
+                "matched_in": "text"
+              }
+            ],
+            "evidence_status": "source_matched",
+            "issues": []
+          }
+        ],
+        "evidence_status": "source_matched"
+      },
+      "scope": "first_page_only"
+    },
+    "sitemap": {
+      "status": "not_requested"
+    },
+    "web_search": {
+      "provider": "brave_browser",
+      "status": "not_requested",
+      "phases": [],
+      "queries": [],
+      "errors": []
+    },
+    "selection_feedback": "navigation_only; extraction coverage and record yields are unavailable",
+    "site_coverage": "not_established",
+    "errors": [],
+    "browser_recoveries": [],
+    "usage": {
+      "calls": 1,
+      "successful_responses": 1,
+      "known_cost_usd": 0,
+      "unknown_cost_calls": 1,
+      "prompt_tokens": 40773,
+      "completion_tokens": 1684,
+      "by_call": [
+        {
+          "call_id": 1,
+          "task": "site_classification",
+          "attempt": 1,
+          "started_at": "2026-09-21T21:35:29+00:00",
+          "api": "deepseek",
+          "http_status": 200,
+          "elapsed_seconds": 9.162,
+          "response_id": "7c6d5062-ad50-4d5e-ae59-12ce1e2b8cc5",
+          "provider": null,
+          "response_model": "deepseek-flash",
+          "usage": {
+            "prompt_tokens": 40773,
+            "completion_tokens": 1684,
+            "total_tokens": 42457,
+            "prompt_tokens_details": {
+              "cached_tokens": 2048
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 1244
+            },
+            "prompt_cache_hit_tokens": 2048,
+            "prompt_cache_miss_tokens": 38725
+          },
+          "finish_reason": "stop"
+        }
+      ]
+    },
+    "elapsed_seconds": 21.768,
+    "discovery": {
+      "navigation_sources": {},
+      "source_pages": {},
+      "document_links": [],
+      "excluded": {}
+    },
+    "challenge_agent_max_runs": 3,
+    "challenge_agent_model": "deepseek-flash",
+    "challenge_agent_budget_exhausted": false,
+    "challenge_agent_results": []
+  },
+  "braveRun": "19ac7955-07a7-46d9-beef-b92d45d06580",
+  "braveExecution": "ce521036-669b-4b96-8d1d-a71147c3bfa4",
+  "totals": {
+    "total": 15927,
+    "distinct_inputs": 15927,
+    "resumed_results": 9,
+    "resumed_successes": 9
+  },
+  "successfulProjection": 9,
+  "unrelatedRun": {
+    "id": "9da5e2b5-4529-4780-b8b4-74cd53326e8d",
+    "status": "STARTED"
+  }
+}

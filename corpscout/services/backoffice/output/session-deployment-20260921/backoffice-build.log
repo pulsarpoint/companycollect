@@ -1,0 +1,324 @@
+
+> backoffice@ build /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/backoffice
+> react-router build
+
+The `envFile` option is deprecated, please use `envDir: false` instead.
+The `envFile` option is deprecated, please use `envDir: false` instead.
+Using Vite Environment API
+vite v8.1.4 building client environment for production...
+[2Ktransforming...✓ 3817 modules transformed.
+rendering chunks...
+computing gzip size...
+build/client/assets/geist-cyrillic-ext-wght-normal-DjL33-gN.woff2               7.42 kB
+build/client/assets/geist-vietnamese-wght-normal-6IgcOCM7.woff2                 8.00 kB
+build/client/assets/geist-cyrillic-wght-normal-BEAKL7Jp.woff2                  15.08 kB
+build/client/assets/geist-latin-ext-wght-normal-DC-KSUi6.woff2                 16.51 kB
+build/client/assets/geist-latin-wght-normal-BgDaEnEv.woff2                     29.40 kB
+build/client/.vite/manifest.json                                              111.61 kB │ gzip: 11.32 kB
+build/client/assets/leaflet-vh-t_kPv.css                                       15.09 kB │ gzip:  6.36 kB
+build/client/assets/root-CPUS1z5M.css                                         155.28 kB │ gzip: 24.94 kB
+build/client/assets/admin-api-codex-thread-BvRk9kiK.js                          0.00 kB │ gzip:  0.02 kB
+build/client/assets/admin-api-codex-thread-messages-BvRk9kiK.js                 0.00 kB │ gzip:  0.02 kB
+build/client/assets/admin-api-codex-threads-BvRk9kiK.js                         0.00 kB │ gzip:  0.02 kB
+build/client/assets/admin-api-technology-submissions-BvRk9kiK.js                0.00 kB │ gzip:  0.02 kB
+build/client/assets/admin-browser-profiles-redirect-BvRk9kiK.js                 0.00 kB │ gzip:  0.02 kB
+build/client/assets/admin-browser-redirect-BvRk9kiK.js                          0.00 kB │ gzip:  0.02 kB
+build/client/assets/admin-crawl-result-json-BvRk9kiK.js                         0.00 kB │ gzip:  0.02 kB
+build/client/assets/admin-crawls-events-BvRk9kiK.js                             0.00 kB │ gzip:  0.02 kB
+build/client/assets/admin-se-company-actions-BvRk9kiK.js                        0.00 kB │ gzip:  0.02 kB
+build/client/assets/admin-se-company-info-geocoding-redirect-BvRk9kiK.js        0.00 kB │ gzip:  0.02 kB
+build/client/assets/admin-se-company-info-redirect-BvRk9kiK.js                  0.00 kB │ gzip:  0.02 kB
+build/client/assets/admin-se-company-info-run-BvRk9kiK.js                       0.00 kB │ gzip:  0.02 kB
+build/client/assets/company-facts-document-BvRk9kiK.js                          0.00 kB │ gzip:  0.02 kB
+build/client/assets/company-same-address-BvRk9kiK.js                            0.00 kB │ gzip:  0.02 kB
+build/client/assets/company-section-BvRk9kiK.js                                 0.00 kB │ gzip:  0.02 kB
+build/client/assets/country-contracts-cpv-BvRk9kiK.js                           0.00 kB │ gzip:  0.02 kB
+build/client/assets/country-facet-options-BvRk9kiK.js                           0.00 kB │ gzip:  0.02 kB
+build/client/assets/country-geocode-BvRk9kiK.js                                 0.00 kB │ gzip:  0.02 kB
+build/client/assets/home-BvRk9kiK.js                                            0.00 kB │ gzip:  0.02 kB
+build/client/assets/tech-icon-BvRk9kiK.js                                       0.00 kB │ gzip:  0.02 kB
+build/client/assets/owner-NnnQFEU-.js                                           0.06 kB │ gzip:  0.07 kB
+build/client/assets/countries-2xtqEC-Q.js                                       0.07 kB │ gzip:  0.08 kB
+build/client/assets/company-layout-ClHiQRXg.js                                  0.07 kB │ gzip:  0.09 kB
+build/client/assets/country-layout-CeKSEbGL.js                                  0.07 kB │ gzip:  0.09 kB
+build/client/assets/common-crawl-DuC5t0ti.js                                    0.08 kB │ gzip:  0.10 kB
+build/client/assets/procurement-paths-BGkJiGOS.js                               0.08 kB │ gzip:  0.09 kB
+build/client/assets/admin-index-CSDcV9rO.js                                     0.09 kB │ gzip:  0.11 kB
+build/client/assets/admin-se-company-index-CSDcV9rO.js                          0.09 kB │ gzip:  0.11 kB
+build/client/assets/financials-country-CSDcV9rO.js                              0.09 kB │ gzip:  0.11 kB
+build/client/assets/inertValue-D050Y-ak.js                                      0.10 kB │ gzip:  0.12 kB
+build/client/assets/useRender-DBZUGIM9.js                                       0.11 kB │ gzip:  0.12 kB
+build/client/assets/isElementDisabled-KSuuBj8D.js                               0.11 kB │ gzip:  0.11 kB
+build/client/assets/check-DPgyoLa9.js                                           0.12 kB │ gzip:  0.14 kB
+build/client/assets/chevron-down-CQ94hJQU.js                                    0.12 kB │ gzip:  0.14 kB
+build/client/assets/chevron-up-DYooR4ym.js                                      0.12 kB │ gzip:  0.14 kB
+build/client/assets/chevron-right-DJvihIYJ.js                                   0.13 kB │ gzip:  0.14 kB
+build/client/assets/serializeValue-B_EucO5O.js                                  0.13 kB │ gzip:  0.12 kB
+build/client/assets/FieldItemContext-B7MAYbLE.js                                0.14 kB │ gzip:  0.13 kB
+build/client/assets/loader-circle-Cq6vP41W.js                                   0.14 kB │ gzip:  0.15 kB
+build/client/assets/DirectionContext-Dd7am0bU.js                                0.15 kB │ gzip:  0.14 kB
+build/client/assets/x-DqLnTRNh.js                                               0.15 kB │ gzip:  0.15 kB
+build/client/assets/use-effective-search-CUJ-4tCi.js                            0.16 kB │ gzip:  0.15 kB
+build/client/assets/arrow-left-D62-mQU-.js                                      0.16 kB │ gzip:  0.16 kB
+build/client/assets/arrow-right-CrFd6ROv.js                                     0.16 kB │ gzip:  0.16 kB
+build/client/assets/arrow-up-right-B68GTNDE.js                                  0.16 kB │ gzip:  0.15 kB
+build/client/assets/search-CM5BA6ho.js                                          0.17 kB │ gzip:  0.16 kB
+build/client/assets/circle-check-z-mmvIwV.js                                    0.17 kB │ gzip:  0.16 kB
+build/client/assets/list-filter-hkytFRdx.js                                     0.19 kB │ gzip:  0.16 kB
+build/client/assets/info-DZ2ASLpi.js                                            0.20 kB │ gzip:  0.17 kB
+build/client/assets/ToolbarRootContext-Bo7Miiz6.js                              0.23 kB │ gzip:  0.19 kB
+build/client/assets/activity-BpK6cNqx.js                                        0.23 kB │ gzip:  0.19 kB
+build/client/assets/skeleton-9InkD_9u.js                                        0.24 kB │ gzip:  0.20 kB
+build/client/assets/globe-CEFuvNMH.js                                           0.24 kB │ gzip:  0.19 kB
+build/client/assets/database-DCiNEnMG.js                                        0.24 kB │ gzip:  0.20 kB
+build/client/assets/circle-alert-BO_iPeVV.js                                    0.25 kB │ gzip:  0.18 kB
+build/client/assets/external-link-D3UJHee4.js                                   0.25 kB │ gzip:  0.19 kB
+build/client/assets/search-x-BKEJ1UIy.js                                        0.25 kB │ gzip:  0.19 kB
+build/client/assets/map-pin-COc_26ci.js                                         0.25 kB │ gzip:  0.22 kB
+build/client/assets/triangle-alert-C4ZkQg-o.js                                  0.26 kB │ gzip:  0.21 kB
+build/client/assets/stringifyLocale-BGnxqWCD.js                                 0.28 kB │ gzip:  0.24 kB
+build/client/assets/send-1VRbJAAL.js                                            0.29 kB │ gzip:  0.23 kB
+build/client/assets/users-CJcE9o3L.js                                           0.30 kB │ gzip:  0.22 kB
+build/client/assets/ComposedChart-Dtqos4JO.js                                   0.31 kB │ gzip:  0.24 kB
+build/client/assets/BarChart-ByVy1L8R.js                                        0.31 kB │ gzip:  0.24 kB
+build/client/assets/countries-CaWrkZ6n.js                                       0.32 kB │ gzip:  0.23 kB
+build/client/assets/shield-check-C8vwxHGc.js                                    0.32 kB │ gzip:  0.24 kB
+build/client/assets/refresh-cw-DC2XhzPH.js                                      0.32 kB │ gzip:  0.22 kB
+build/client/assets/admin-se-company-technology-ip-addresses-BOeHMi4r.js        0.32 kB │ gzip:  0.23 kB
+build/client/assets/admin-se-company-technology-web-intelligence-D7v4uDJ8.js    0.32 kB │ gzip:  0.23 kB
+build/client/assets/bot-DCigFPVo.js                                             0.32 kB │ gzip:  0.22 kB
+build/client/assets/useValueAsRef-yfkPNoLj.js                                   0.34 kB │ gzip:  0.22 kB
+build/client/assets/company-technology-ip-addresses-LhQjYVXx.js                 0.35 kB │ gzip:  0.27 kB
+build/client/assets/company-technology-web-intelligence-DvtXsUa3.js             0.35 kB │ gzip:  0.26 kB
+build/client/assets/file-search-BkQFNFVQ.js                                     0.37 kB │ gzip:  0.26 kB
+build/client/assets/calendar-clock-BosZna9d.js                                  0.37 kB │ gzip:  0.25 kB
+build/client/assets/building-2-XFOperxJ.js                                      0.38 kB │ gzip:  0.24 kB
+build/client/assets/network-C_5fqfB3.js                                         0.38 kB │ gzip:  0.23 kB
+build/client/assets/file-text-DEScP544.js                                       0.38 kB │ gzip:  0.25 kB
+build/client/assets/CompositeItem-CeSLjnBZ.js                                   0.39 kB │ gzip:  0.27 kB
+build/client/assets/earth-E1DiHQsa.js                                           0.39 kB │ gzip:  0.26 kB
+build/client/assets/shadowDom-D73i2XzQ.js                                       0.40 kB │ gzip:  0.27 kB
+build/client/assets/se-companies-tabs-Bm4kJp0J.js                               0.41 kB │ gzip:  0.23 kB
+build/client/assets/country-layout-DaOVDb_K.js                                  0.41 kB │ gzip:  0.26 kB
+build/client/assets/admin-se-company-technology-infrastructure-DoI0d6N0.js      0.41 kB │ gzip:  0.28 kB
+build/client/assets/company-layout-DMcwmFfN.js                                  0.41 kB │ gzip:  0.25 kB
+build/client/assets/tags-CGmJTDtq.js                                            0.41 kB │ gzip:  0.28 kB
+build/client/assets/jsx-runtime-DYfQNk55.js                                     0.42 kB │ gzip:  0.29 kB
+build/client/assets/useValueChanged-DTPC7FBo.js                                 0.42 kB │ gzip:  0.31 kB
+build/client/assets/company-technology-infrastructure-LOHhCGAN.js               0.44 kB │ gzip:  0.31 kB
+build/client/assets/label-DjuqLYSF.js                                           0.46 kB │ gzip:  0.29 kB
+build/client/assets/admin-se-company-esef-notes-BM4bHJ3K.js                     0.46 kB │ gzip:  0.33 kB
+build/client/assets/company-esef-report-notes-DG6pjqUm.js                       0.47 kB │ gzip:  0.33 kB
+build/client/assets/admin-se-company-financial-ibRfW448.js                      0.47 kB │ gzip:  0.30 kB
+build/client/assets/company-esef-financial-report-C3agl_sz.js                   0.49 kB │ gzip:  0.35 kB
+build/client/assets/se-person-fields-C01VU7G_.js                                0.51 kB │ gzip:  0.31 kB
+build/client/assets/company-technology-ip-address-zEQHt3he.js                   0.52 kB │ gzip:  0.36 kB
+build/client/assets/company-tabs-C65Ottn4.js                                    0.53 kB │ gzip:  0.22 kB
+build/client/assets/legal-form-B7UeVtjH.js                                      0.55 kB │ gzip:  0.34 kB
+build/client/assets/useCompositeItem-Bo0buD6a.js                                0.57 kB │ gzip:  0.38 kB
+build/client/assets/money-FcmSkYNR.js                                           0.57 kB │ gzip:  0.37 kB
+build/client/assets/se-domain-selection-DsiH5s-p.js                             0.57 kB │ gzip:  0.30 kB
+build/client/assets/admin-se-company-technology-DsU43iR1.js                     0.57 kB │ gzip:  0.37 kB
+build/client/assets/company-technology-DWAhbpjv.js                              0.57 kB │ gzip:  0.38 kB
+build/client/assets/useAriaLabelledBy-CldoE1u6.js                               0.58 kB │ gzip:  0.39 kB
+build/client/assets/mini-map-inner-C0uY_YnS.js                                  0.59 kB │ gzip:  0.42 kB
+build/client/assets/ip-address-D6Rzxa6Y.js                                      0.62 kB │ gzip:  0.39 kB
+build/client/assets/definition-list-BzXaqbsS.js                                 0.63 kB │ gzip:  0.38 kB
+build/client/assets/dist-C1RJhgYD.js                                            0.64 kB │ gzip:  0.39 kB
+build/client/assets/separator-BnsdD7Ex.js                                       0.65 kB │ gzip:  0.38 kB
+build/client/assets/norway-financial-reports-BriJvr4F.js                        0.65 kB │ gzip:  0.42 kB
+build/client/assets/browser-tabs-Dl9ypgUc.js                                    0.66 kB │ gzip:  0.34 kB
+build/client/assets/se-company-tabs-DKT4Ee2N.js                                 0.71 kB │ gzip:  0.36 kB
+build/client/assets/domain-source-support-C3VPkanE.js                           0.71 kB │ gzip:  0.44 kB
+build/client/assets/admin-se-companies-financial-H_uZ_7mT.js                    0.73 kB │ gzip:  0.47 kB
+build/client/assets/admin-se-company-contracts-DY5WnFPl.js                      0.73 kB │ gzip:  0.41 kB
+build/client/assets/admin-se-company-technology-ip-address-Bm-3MEpd.js          0.74 kB │ gzip:  0.45 kB
+build/client/assets/se-company-info-payload-Y4fSy--Y.js                         0.77 kB │ gzip:  0.44 kB
+build/client/assets/textarea-BkADMChh.js                                        0.79 kB │ gzip:  0.42 kB
+build/client/assets/procurement-columns-BtupE1uy.js                             0.80 kB │ gzip:  0.55 kB
+build/client/assets/admin-se-company-esef-document-z8hNknAq.js                  0.82 kB │ gzip:  0.50 kB
+build/client/assets/useTriggerFocusGuards-C-nsZcNU.js                           0.85 kB │ gzip:  0.47 kB
+build/client/assets/company-source-strip-C6gq_Tbw.js                            0.86 kB │ gzip:  0.54 kB
+build/client/assets/admin-se-company-esef-layout-1CfP2moY.js                    0.92 kB │ gzip:  0.54 kB
+build/client/assets/technology-label-CISt0ZOQ.js                                0.96 kB │ gzip:  0.56 kB
+build/client/assets/root-CPBP1YPn.js                                            0.98 kB │ gzip:  0.54 kB
+build/client/assets/admin-se-companies-layout-RxP8-c7Q.js                       1.09 kB │ gzip:  0.56 kB
+build/client/assets/technologies-CEzC3156.js                                    1.18 kB │ gzip:  0.43 kB
+build/client/assets/column-header-rtoH3gLN.js                                   1.21 kB │ gzip:  0.69 kB
+build/client/assets/se-company-technology-empty-_6NUWZB3.js                     1.23 kB │ gzip:  0.58 kB
+build/client/assets/table-CjfGsFiv.js                                           1.25 kB │ gzip:  0.50 kB
+build/client/assets/admin-common-crawl-domain-HUsiszBt.js                       1.34 kB │ gzip:  0.70 kB
+build/client/assets/alert-DWWgVvBz.js                                           1.35 kB │ gzip:  0.61 kB
+build/client/assets/createLucideIcon-qBf7MZhn.js                                1.37 kB │ gzip:  0.77 kB
+build/client/assets/createBaseUIEventDetails-D6IMkrp_.js                        1.38 kB │ gzip:  0.77 kB
+build/client/assets/browser-desktop-BuLTQtc4.js                                 1.41 kB │ gzip:  0.82 kB
+build/client/assets/address-map-inner-gQqbzVDS.js                               1.44 kB │ gzip:  0.84 kB
+build/client/assets/badge-B9o0972b.js                                           1.46 kB │ gzip:  0.67 kB
+build/client/assets/top-companies-table-C_pwvXsO.js                             1.49 kB │ gzip:  0.71 kB
+build/client/assets/native-select-RggP2TKP.js                                   1.50 kB │ gzip:  0.71 kB
+build/client/assets/fold-run-poller-CX0Ba73M.js                                 1.52 kB │ gzip:  0.81 kB
+build/client/assets/empty-B8Vej7ad.js                                           1.58 kB │ gzip:  0.62 kB
+build/client/assets/with-selector-BISLH-K2.js                                   1.62 kB │ gzip:  0.71 kB
+build/client/assets/esef-disclosure-reader-DLXlp0LB.js                          1.64 kB │ gzip:  0.73 kB
+build/client/assets/esef-report-notes-view-BVEYD5KV.js                          1.79 kB │ gzip:  0.78 kB
+build/client/assets/list-filter-sheet-DUEhUeK3.js                               1.79 kB │ gzip:  0.84 kB
+build/client/assets/card-Dm0Hh3E1.js                                            1.86 kB │ gzip:  0.67 kB
+build/client/assets/shell-C3uzaVfY.js                                           1.90 kB │ gzip:  0.87 kB
+build/client/assets/fields-lH5fz7gP.js                                          2.00 kB │ gzip:  1.05 kB
+build/client/assets/useFocus-DvAG4T-n.js                                        2.12 kB │ gzip:  1.03 kB
+build/client/assets/evidence-BjhtLn8m.js                                        2.26 kB │ gzip:  0.86 kB
+build/client/assets/se-company-info-filters-CIDWYRA3.js                         2.28 kB │ gzip:  1.00 kB
+build/client/assets/procurements-BaRjBNKy.js                                    2.37 kB │ gzip:  0.98 kB
+build/client/assets/dialog-CphmHI-5.js                                          2.44 kB │ gzip:  0.95 kB
+build/client/assets/collapsible-NUZFFeEi.js                                     2.47 kB │ gzip:  1.09 kB
+build/client/assets/useRegisterFieldControl-BG3AOaR8.js                         2.57 kB │ gzip:  1.20 kB
+build/client/assets/input-B7IRUjho.js                                           2.57 kB │ gzip:  1.30 kB
+build/client/assets/useCompositeListItem-Cjl5hRjC.js                            2.74 kB │ gzip:  1.24 kB
+build/client/assets/company-technology-layout-BcrSPXcS.js                       2.75 kB │ gzip:  1.14 kB
+build/client/assets/procurement-record-BTCW0kTR.js                              2.79 kB │ gzip:  1.21 kB
+build/client/assets/admin-technology-proposals-BMfcd6uD.js                      2.79 kB │ gzip:  1.10 kB
+build/client/assets/admin-se-company-technology-layout-BPwRfDjR.js              2.80 kB │ gzip:  1.15 kB
+build/client/assets/sheet-BsVZCHPB.js                                           3.00 kB │ gzip:  0.96 kB
+build/client/assets/useTransitionStatus-CDLbOoxV.js                             3.00 kB │ gzip:  1.30 kB
+build/client/assets/admin-settings-people-prompts-DHz60AOA.js                   3.01 kB │ gzip:  1.29 kB
+build/client/assets/shared-BRJ--XOd.js                                          3.08 kB │ gzip:  1.29 kB
+build/client/assets/input-group-Cg9Vcko7.js                                     3.11 kB │ gzip:  1.13 kB
+build/client/assets/admin-settings-domain-prompts-DYde-l1b.js                   3.13 kB │ gzip:  1.33 kB
+build/client/assets/button-BaARzo2w.js                                          3.15 kB │ gzip:  1.14 kB
+build/client/assets/country-trade-B3VAXV-q.js                                   3.28 kB │ gzip:  1.18 kB
+build/client/assets/admin-se-company-layout-BZY0Nq77.js                         3.31 kB │ gzip:  1.36 kB
+build/client/assets/field-CboXZclX.js                                           3.39 kB │ gzip:  1.20 kB
+build/client/assets/react-dom-BRSbvI1o.js                                       3.53 kB │ gzip:  1.33 kB
+build/client/assets/company-financials-Jr9upuFU.js                              3.59 kB │ gzip:  1.55 kB
+build/client/assets/admin-general-roles-D6Bj0Bi0.js                             3.75 kB │ gzip:  1.30 kB
+build/client/assets/switch-Dj8X2AJ8.js                                          3.81 kB │ gzip:  1.85 kB
+build/client/assets/CompositeRoot-Bru0EECJ.js                                   3.85 kB │ gzip:  1.75 kB
+build/client/assets/public-contracts-section-CtHOUl_i.js                        4.05 kB │ gzip:  1.26 kB
+build/client/assets/country-economy-D0A4hiZV.js                                 4.10 kB │ gzip:  1.41 kB
+build/client/assets/admin-se-companies-domain-CqT-Pksl.js                       4.15 kB │ gzip:  1.54 kB
+build/client/assets/admin-browser-settings-BChK_PFS.js                          4.17 kB │ gzip:  1.58 kB
+build/client/assets/domain-connections-BZ5341rn.js                              4.18 kB │ gzip:  1.61 kB
+build/client/assets/YAxis-C4-eg9UK.js                                           4.21 kB │ gzip:  1.83 kB
+build/client/assets/useRenderElement-Ce1q7iEB.js                                4.26 kB │ gzip:  1.85 kB
+build/client/assets/company-layout-main-DjfMF5lH.js                             4.37 kB │ gzip:  1.74 kB
+build/client/assets/country-domain-suggestions-CIg1Mcb8.js                      4.49 kB │ gzip:  1.89 kB
+build/client/assets/useCollapsiblePanel-BL0GKPeK.js                             4.70 kB │ gzip:  2.02 kB
+build/client/assets/useButton-B_nHmO3M.js                                       4.76 kB │ gzip:  2.11 kB
+build/client/assets/admin-technologies-Dh1-CcMd.js                              4.83 kB │ gzip:  1.79 kB
+build/client/assets/admin-se-companies-geocoding-B7ie1Bs4.js                    4.85 kB │ gzip:  1.78 kB
+build/client/assets/admin-se-company-technology-mail-security-DXbckLFw.js       4.89 kB │ gzip:  1.92 kB
+build/client/assets/country-overview-C3qfbJqX.js                                4.92 kB │ gzip:  1.96 kB
+build/client/assets/getRadiusAndStrokeWidthFromDot-B8Abvk_6.js                  5.08 kB │ gzip:  1.73 kB
+build/client/assets/country-layout-main-ClajA6kh.js                             5.15 kB │ gzip:  2.10 kB
+build/client/assets/financials-section-DhybbJdg.js                              5.50 kB │ gzip:  1.75 kB
+build/client/assets/toggle-group-DYC0i2t5.js                                    5.56 kB │ gzip:  2.13 kB
+build/client/assets/esef-report-view-BLvGW-l3.js                                5.84 kB │ gzip:  1.86 kB
+build/client/assets/admin-settings-llms-local-xdFvPwNy.js                       5.86 kB │ gzip:  1.94 kB
+build/client/assets/country-business-lUV7NHJG.js                                5.89 kB │ gzip:  2.47 kB
+build/client/assets/admin-common-crawl-BjfZs05p.js                              5.93 kB │ gzip:  2.20 kB
+build/client/assets/technology-ip-addresses-section-C-46aNct.js                 6.01 kB │ gzip:  1.87 kB
+build/client/assets/country-markets-ALYUjwjJ.js                                 6.03 kB │ gzip:  2.48 kB
+build/client/assets/admin-graph-CasPqg1R.js                                     6.06 kB │ gzip:  2.31 kB
+build/client/assets/pagination-B28pR26r.js                                      6.10 kB │ gzip:  2.06 kB
+build/client/assets/admin-se-company-esef-CvGstMwd.js                           6.23 kB │ gzip:  1.74 kB
+build/client/assets/accordion-3KBVymil.js                                       6.28 kB │ gzip:  2.48 kB
+build/client/assets/CartesianGrid-ubBSwbhU.js                                   6.33 kB │ gzip:  2.23 kB
+build/client/assets/checkbox-BtltUhOR.js                                        6.39 kB │ gzip:  2.93 kB
+build/client/assets/admin-se-people-DczDHkvL.js                                 6.40 kB │ gzip:  2.19 kB
+build/client/assets/admin-browser-sessions-Bh0MtkVX.js                          7.13 kB │ gzip:  2.52 kB
+build/client/assets/admin-se-company-esef-llm-B5Wfcaoe.js                       7.16 kB │ gzip:  2.22 kB
+build/client/assets/language-CdfeTtPf.js                                        7.76 kB │ gzip:  3.00 kB
+build/client/assets/radio-group-Xy1wzKRr.js                                     7.84 kB │ gzip:  3.41 kB
+build/client/assets/company-financial-report-bs8goSap.js                        7.88 kB │ gzip:  2.51 kB
+build/client/assets/admin-crawler-servers-Bxvt-gh_.js                           8.28 kB │ gzip:  2.63 kB
+build/client/assets/react-Ca03aNmg.js                                           8.34 kB │ gzip:  3.23 kB
+build/client/assets/composite-tcdff6VJ.js                                       8.37 kB │ gzip:  3.32 kB
+build/client/assets/company-facts-Dc3dfLkA.js                                   8.83 kB │ gzip:  3.01 kB
+build/client/assets/se-domains-table-CGQ2wc1Q.js                                8.93 kB │ gzip:  3.03 kB
+build/client/assets/admin-crawl-result-C_gzozDq.js                              9.08 kB │ gzip:  3.06 kB
+build/client/assets/admin-se-company-domains-DuuwHs1_.js                        9.12 kB │ gzip:  2.83 kB
+build/client/assets/admin-technology-detail-Coe5gm3i.js                         9.28 kB │ gzip:  2.83 kB
+build/client/assets/technology-ip-address-detail-Bk2Kldha.js                    9.46 kB │ gzip:  2.74 kB
+build/client/assets/country-address-quality-BjP7BMaY.js                         9.53 kB │ gzip:  3.14 kB
+build/client/assets/web-technology-history-section-BCym9RHU.js                 10.42 kB │ gzip:  2.97 kB
+build/client/assets/admin-settings-llms-BlddVrlc.js                            10.43 kB │ gzip:  3.09 kB
+build/client/assets/DialogTrigger-DPtA8Gof.js                                  10.51 kB │ gzip:  3.71 kB
+build/client/assets/tabs-CvpPSe_0.js                                           10.55 kB │ gzip:  3.91 kB
+build/client/assets/admin-se-companies-info-RUVZYiSs.js                        10.82 kB │ gzip:  3.68 kB
+build/client/assets/safePolygon-CquKes3e.js                                    10.85 kB │ gzip:  3.92 kB
+build/client/assets/admin-se-company-jobs-CsXNLo8q.js                          10.90 kB │ gzip:  3.53 kB
+build/client/assets/tslib.es6-BQuGvBOj.js                                      11.18 kB │ gzip:  4.04 kB
+build/client/assets/popover-DYxD3uCs.js                                        11.46 kB │ gzip:  4.43 kB
+build/client/assets/Area-BcdwGS7h.js                                           11.72 kB │ gzip:  4.24 kB
+build/client/assets/admin-technology-proposal-B9DE_mx0.js                      11.72 kB │ gzip:  4.53 kB
+build/client/assets/procurement-source-DUGsg_D-.js                             12.00 kB │ gzip:  3.91 kB
+build/client/assets/lib-AuC3c1Zm.js                                            12.20 kB │ gzip:  4.91 kB
+build/client/assets/admin-se-company-listed-Dg4_nqiO.js                        12.82 kB │ gzip:  3.62 kB
+build/client/assets/br-contract-r7P-qGTy.js                                    13.20 kB │ gzip:  4.82 kB
+build/client/assets/technology-infrastructure-section-CdT7QdWQ.js              13.39 kB │ gzip:  3.58 kB
+build/client/assets/company-domain-suggestions-By8GGaOk.js                     13.70 kB │ gzip:  4.30 kB
+build/client/assets/admin-nats-BlifSDwZ.js                                     14.86 kB │ gzip:  4.58 kB
+build/client/assets/admin-browser-testing-BAyNiK9w.js                          15.00 kB │ gzip:  4.93 kB
+build/client/assets/country-contracts-C-uuoCFH.js                              15.50 kB │ gzip:  4.99 kB
+build/client/assets/admin-layout-C66tzZOf.js                                   16.36 kB │ gzip:  4.06 kB
+build/client/assets/country-contract-detail-CoUeGCuP.js                        18.01 kB │ gzip:  4.85 kB
+build/client/assets/admin-se-company-info-ZrxhMXK0.js                          18.39 kB │ gzip:  5.57 kB
+build/client/assets/country-statistics-charts-F7C0UyUo.js                      21.45 kB │ gzip:  7.03 kB
+build/client/assets/admin-se-processing-D0x9b5Sk.js                            22.08 kB │ gzip:  6.90 kB
+build/client/assets/Bar-Bq0VzvOk.js                                            22.97 kB │ gzip:  7.07 kB
+build/client/assets/financial-demo-TUuRFrt7.js                                 23.16 kB │ gzip:  6.93 kB
+build/client/assets/web-intelligence-section-DcuTTdwH.js                       25.21 kB │ gzip:  5.71 kB
+build/client/assets/admin-se-companies-domains-CAtn5Bid.js                     25.42 kB │ gzip:  9.02 kB
+build/client/assets/sidebar-DKWQmF5N.js                                        25.55 kB │ gzip:  8.36 kB
+build/client/assets/admin-se-company-address-BCEjtc-U.js                       26.37 kB │ gzip:  7.57 kB
+build/client/assets/usePositioner-DXOFUzN2.js                                  27.00 kB │ gzip: 10.37 kB
+build/client/assets/utils-B6KiDbIe.js                                          27.26 kB │ gzip:  8.69 kB
+build/client/assets/errorBoundaries-BS-Jys0i.js                                33.34 kB │ gzip: 11.63 kB
+build/client/assets/admin-se-company-person-CpcQQnMs.js                        34.61 kB │ gzip:  9.49 kB
+build/client/assets/se-financials-view-D-GkIgNG.js                             35.58 kB │ gzip:  9.96 kB
+build/client/assets/useOpenInteractionType-BjOYaqmo.js                         39.08 kB │ gzip: 13.55 kB
+build/client/assets/select-Bdbb3UAw.js                                         39.86 kB │ gzip: 14.27 kB
+build/client/assets/data-table-C8zEXbHc.js                                     47.39 kB │ gzip: 12.56 kB
+build/client/assets/admin-esef-BpZy3v-1.js                                     55.86 kB │ gzip: 18.18 kB
+build/client/assets/country-companies-CWP4buNM.js                              57.12 kB │ gzip: 19.46 kB
+build/client/assets/country-company-detail-B-NU4LQ_.js                         63.39 kB │ gzip: 16.12 kB
+build/client/assets/countries-CZH-VJCk.js                                      67.69 kB │ gzip: 10.41 kB
+build/client/assets/admin-crawls-DhmqsLnG.js                                   69.37 kB │ gzip: 20.02 kB
+build/client/assets/components-C4JFUqom.js                                     74.15 kB │ gzip: 24.53 kB
+build/client/assets/xbrl-facts-accordion-KrwkEDK-.js                           86.95 kB │ gzip: 35.22 kB
+build/client/assets/leaflet-B4hKP4wL.js                                       152.73 kB │ gzip: 44.75 kB
+build/client/assets/countries-main-DHX-FFaU.js                                177.14 kB │ gzip: 67.58 kB
+build/client/assets/entry.client-Bn5munKa.js                                  182.53 kB │ gzip: 57.78 kB
+build/client/assets/rfb-Cw3mtRGP.js                                           187.69 kB │ gzip: 56.58 kB
+build/client/assets/chart-lLGWk-EF.js                                         316.65 kB │ gzip: 96.10 kB
+
+✓ built in 2.02s
+vite v8.1.4 building ssr environment for production...
+[2Ktransforming...✓ 413 modules transformed.
+rendering chunks...
+
+✓ 9 assets cleaned from React Router server build.
+build/client/assets/leaflet-vh-t_kPv.css
+build/client/assets/geist-cyrillic-ext-wght-normal-DjL33-gN.woff2
+build/client/assets/geist-cyrillic-wght-normal-BEAKL7Jp.woff2
+build/client/assets/geist-vietnamese-wght-normal-6IgcOCM7.woff2
+build/client/assets/geist-latin-ext-wght-normal-DC-KSUi6.woff2
+build/client/assets/geist-latin-wght-normal-BgDaEnEv.woff2
+build/server/assets/leaflet-vh-t_kPv.css
+build/server/assets/leaflet-vh-t_kPv.css
+build/server/assets/server-build-CPUS1z5M.css
+
+computing gzip size...
+build/server/.vite/manifest.json                                       3.10 kB │ gzip:   0.51 kB
+build/server/assets/geist-cyrillic-ext-wght-normal-DjL33-gN.woff2      7.42 kB
+build/server/assets/geist-vietnamese-wght-normal-6IgcOCM7.woff2        8.00 kB
+build/server/assets/geist-cyrillic-wght-normal-BEAKL7Jp.woff2         15.08 kB
+build/server/assets/geist-latin-ext-wght-normal-DC-KSUi6.woff2        16.51 kB
+build/server/assets/geist-latin-wght-normal-BgDaEnEv.woff2            29.40 kB
+build/server/assets/leaflet-vh-t_kPv.css                              15.09 kB │ gzip:   6.36 kB
+build/server/assets/server-build-CPUS1z5M.css                        155.28 kB │ gzip:  24.94 kB
+build/server/assets/mini-map-inner-B6FNQMzz.js                         0.91 kB │ gzip:   0.54 kB
+build/server/assets/address-map-inner-BFjMAd7e.js                      1.99 kB │ gzip:   1.05 kB
+build/server/index.js                                              2,433.74 kB │ gzip: 530.97 kB
+
+✓ built in 679ms

@@ -1,0 +1,27 @@
+{
+  "execution": {
+    "execution_id": "ce521036-669b-4b96-8d1d-a71147c3bfa4",
+    "task_id": "a9b44804-acb0-4085-8d4b-997a4f9d0594",
+    "started_at": "2026-09-20T21:42:05.279547+00:00",
+    "source_info": {
+      "total": 736554,
+      "relation": "corpscout.company_brave_search_input",
+      "upper_id": "SE:5932001745",
+      "table_uuid": "ed67e5fa-2bb1-429a-85d5-8368115f8cd5",
+      "selection_task_id": "a9b44804-acb0-4085-8d4b-997a4f9d0594"
+    },
+    "input_relation": "corpscout.company_brave_search_input",
+    "force": false,
+    "rescan_old": false,
+    "query_type": "official_website",
+    "query_template": "Find the official website of {company_name}."
+  },
+  "counts": [
+    {
+      "total": 14462,
+      "successful": 14261,
+      "failed": 201,
+      "distinct_inputs": 14462
+    }
+  ]
+}

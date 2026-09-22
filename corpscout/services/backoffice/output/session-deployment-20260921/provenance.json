@@ -1,0 +1,10 @@
+{
+  "browser_service": {
+    "modules": 13,
+    "sourceMatches": true
+  },
+  "company_research": {
+    "modules": 47,
+    "sourceMatches": true
+  }
+}

@@ -1,0 +1,17 @@
+import {writeFileSync} from 'node:fs';
+import {dagsterGraphqlUrl,runStatus} from '../../app/lib/dagster.server';
+import {browserRequest} from '../../app/lib/browser-service.server';
+import {loadCrawls} from '../../app/lib/crawler.server';
+import {chQuery} from '../../app/lib/clickhouse.server';
+const folder='output/session-deployment-20260921';
+const gql=await fetch(dagsterGraphqlUrl(),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:'{ runsOrError(filter:{statuses:[STARTED,STARTING,QUEUED,CANCELING]}) { __typename ... on Runs { results {runId status jobName} } } }'})}).then(r=>r.json());
+if(gql.errors || gql.data?.runsOrError.__typename!=='Runs') throw new Error(JSON.stringify(gql));
+const runs=gql.data.runsOrError.results;
+const brave=await Promise.all(runs.filter((r:any)=>/brave/i.test(r.jobName)).map((r:any)=>runStatus(r.runId)));
+writeFileSync(`${folder}/original-runs.json`,JSON.stringify(brave,null,2),{mode:0o600});
+const browser=await(await browserRequest('/v1/server')).json();
+const crawls=await loadCrawls(new URLSearchParams());
+const tables=await chQuery("SELECT name,engine,total_rows FROM system.tables WHERE database='corpscout' AND (name LIKE '%brave%' OR name LIKE 'website%results%') ORDER BY name");
+const output={runs,brave,browser:{version:browser.version,pool:browser.pool,settings:browser.settings,active:browser.leases.filter((r:any)=>['starting','ready','releasing'].includes(r.state)).map((r:any)=>({id:r.id,request_id:r.request_id,domain:r.domain}))},crawls:crawls.attempts.filter(r=>!['completed','failed','cancelled'].includes(r.state)),tables};
+writeFileSync(`${folder}/preflight.json`,JSON.stringify(output,null,2),{mode:0o600});
+console.log(JSON.stringify(output,null,2));

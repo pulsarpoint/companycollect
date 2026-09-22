@@ -923,23 +923,23 @@ export async function getCompanyTechnologyDetail(
 ): Promise<CompanyTechnologyDetail> {
   const domains = await getCompanyDomains(country, id);
   const selectedDomain = selectedCompanyDomain(domains, requestedDomain);
-  const webTechnologyHistory = selectedDomain
-    ? await getCompanyWebTechnologyHistory(selectedDomain.domain)
-    : null;
-  // Every name a technology page renders (summary rows, snapshot detections,
-  // newly/no-longer-detected badges) appears in the summary list, so one batch
-  // lookup covers the whole page.
+  return {
+    domains,
+    selectedDomain: selectedDomain?.domain ?? "",
+    ...(selectedDomain
+      ? await getDomainTechnologyDetail(selectedDomain.domain)
+      : { webTechnologyHistory: null, technologyCatalog: {} }),
+  };
+}
+
+export async function getDomainTechnologyDetail(domain: string) {
+  const webTechnologyHistory = await getCompanyWebTechnologyHistory(domain);
   const technologyCatalog = webTechnologyHistory
     ? await loadTechnologyCatalogEntries(
         webTechnologyHistory.technologies.map((technology) => technology.name),
       )
     : {};
-  return {
-    domains,
-    selectedDomain: selectedDomain?.domain ?? "",
-    webTechnologyHistory,
-    technologyCatalog,
-  };
+  return { webTechnologyHistory, technologyCatalog };
 }
 
 export type TechnologyHostnameEvidence = "certificate" | "dns";
@@ -1250,6 +1250,25 @@ const technologyHostnameInventorySql = `WITH evidence AS (
   FROM domain_hostnames_state
   WHERE root_domain = {domain:String}
   GROUP BY hostname
+  UNION ALL
+  SELECT
+    name AS hostname,
+    if(name = {domain:String}, '',
+      substring(name, 1, greatest(toInt64(length(name)) - toInt64(length({domain:String})) - 1, 0))
+    ),
+    toUInt8(0),
+    toUInt8(1),
+    toUInt8(startsWith(name, '*.')),
+    '', '', '', CAST([], 'Array(String)'),
+    toString(min(first_seen)),
+    toString(max(last_seen)),
+    'dns',
+    toUInt8(countIf(record_type = 'A') > 0),
+    toUInt8(countIf(record_type = 'AAAA') > 0),
+    toUInt8(countIf(record_type = 'CNAME') > 0)
+  FROM commoncrawl_domain_dns_records
+  WHERE root_domain = {domain:String}
+  GROUP BY name
 ), inventory AS (
   SELECT
     hostname,
@@ -1261,8 +1280,8 @@ const technologyHostnameInventorySql = `WITH evidence AS (
     anyIf(evidence.certificate_last_seen, evidence.has_certificate = 1) AS certificate_last_seen,
     anyIf(evidence.certificate_expires_at, evidence.has_certificate = 1) AS certificate_expires_at,
     anyIf(evidence.certificate_source_logs, evidence.has_certificate = 1) AS certificate_source_logs,
-    anyIf(evidence.dns_first_seen, evidence.has_dns = 1) AS dns_first_seen,
-    anyIf(evidence.dns_last_seen, evidence.has_dns = 1) AS dns_last_seen,
+    minIf(evidence.dns_first_seen, evidence.has_dns = 1) AS dns_first_seen,
+    maxIf(evidence.dns_last_seen, evidence.has_dns = 1) AS dns_last_seen,
     anyIf(evidence.dns_discovery_source, evidence.has_dns = 1) AS dns_discovery_source,
     max(evidence.has_ipv4) AS has_ipv4,
     max(evidence.has_ipv6) AS has_ipv6,
@@ -1293,7 +1312,6 @@ const technologyDnsRecordsSql = `SELECT
 FROM commoncrawl_domain_dns_records
 WHERE root_domain = {domain:String}
   AND name IN {hostnames:Array(String)}
-  AND record_type != 'RRSIG'
 GROUP BY name, record_type, value, priority
 ORDER BY hostname, type, priority, value`;
 
@@ -1482,7 +1500,13 @@ export async function getCompanyTechnologyInfrastructure(
   const selectedDomain = selectedCompanyDomain(domains, opts.domain);
   if (!selectedDomain) return null;
 
-  const domain = selectedDomain.domain;
+  return getDomainTechnologyInfrastructure(selectedDomain.domain, opts);
+}
+
+export async function getDomainTechnologyInfrastructure(
+  domain: string,
+  opts: { page?: number; pageSize?: number } = {},
+): Promise<CompanyTechnologyInfrastructure> {
   const pageSize = PAGE_SIZES.includes(opts.pageSize as 25 | 50 | 100)
     ? (opts.pageSize as number)
     : 50;
@@ -1664,7 +1688,13 @@ export async function getCompanyTechnologyIpInventory(
   const selectedDomain = selectedCompanyDomain(domains, opts.domain);
   if (!selectedDomain) return null;
 
-  const domain = selectedDomain.domain;
+  return getDomainTechnologyIpInventory(selectedDomain.domain, opts);
+}
+
+export async function getDomainTechnologyIpInventory(
+  domain: string,
+  opts: { page?: number; pageSize?: number } = {},
+): Promise<CompanyTechnologyIpInventory> {
   const pageSize = PAGE_SIZES.includes(opts.pageSize as 25 | 50 | 100)
     ? (opts.pageSize as number)
     : 25;
@@ -1895,6 +1925,17 @@ export async function getCompanyTechnologyIpDetail(
   const selectedDomain = selectedCompanyDomain(domains, opts.domain);
   if (!selectedDomain) return null;
 
+  return getDomainTechnologyIpDetail(selectedDomain.domain, address, opts);
+}
+
+export async function getDomainTechnologyIpDetail(
+  domain: string,
+  address: string,
+  opts: { exactPage?: number; segmentPage?: number } = {},
+): Promise<CompanyTechnologyIpDetail | null> {
+  const version = isIP(address);
+  if (version !== 4 && version !== 6) return null;
+
   const [companyRows, coverageRows] = await Promise.all([
     chQuery<{
       hostnames: string[];
@@ -1915,7 +1956,7 @@ export async function getCompanyTechnologyIpDetail(
         ) = toIPv6({ip:String})
       HAVING length(hostnames) > 0`,
       {
-        domain: selectedDomain.domain,
+        domain,
         recordType: version === 4 ? "A" : "AAAA",
         ip: address,
       },
@@ -1940,7 +1981,7 @@ export async function getCompanyTechnologyIpDetail(
       ip: address,
       version,
       networkSegment: metadata?.networkSegment ?? address,
-      companyDomain: selectedDomain.domain,
+      companyDomain: domain,
       limit: pageSize,
       offset: (page - 1) * pageSize,
     });
@@ -1956,12 +1997,12 @@ export async function getCompanyTechnologyIpDetail(
   let exactTotal = Number(exactRows[0]?.total_connections ?? 0);
   if (
     exactPage === 1 &&
-    !exactRows.some((row) => row.domain === selectedDomain.domain)
+    !exactRows.some((row) => row.domain === domain)
   ) {
     exactRows.unshift({
       ip: address,
       version,
-      domain: selectedDomain.domain,
+      domain,
       hostnames: companyObservation.hostnames,
       sources: [],
       discoveries: [],
@@ -1993,7 +2034,7 @@ export async function getCompanyTechnologyIpDetail(
   const visibleSegmentRows = segmentRows.slice(0, pageSize);
 
   return {
-    companyDomain: selectedDomain.domain,
+    companyDomain: domain,
     companyHostnames: companyObservation.hostnames,
     historyIndexCoverage: {
       completedPartitions: Number(coverageRows[0]?.completed_partitions ?? 0),

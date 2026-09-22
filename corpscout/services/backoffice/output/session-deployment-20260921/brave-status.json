@@ -1,0 +1,101 @@
+{
+  "runId": "19ac7955-07a7-46d9-beef-b92d45d06580",
+  "status": "STARTED",
+  "executionId": "ce521036-669b-4b96-8d1d-a71147c3bfa4",
+  "activeRuns": [
+    {
+      "runId": "19ac7955-07a7-46d9-beef-b92d45d06580",
+      "status": "STARTED",
+      "task": "a9b44804-acb0-4085-8d4b-997a4f9d0594"
+    }
+  ],
+  "counts": [
+    {
+      "route": "crawl_proxy1",
+      "status": "error",
+      "error_type": "HTTPError",
+      "error_stage": "browser_service",
+      "results": 1,
+      "latest_result": "2026-09-21 21:38:38.109243"
+    },
+    {
+      "route": "crawl_proxy1",
+      "status": "success",
+      "error_type": "",
+      "error_stage": "",
+      "results": 20,
+      "latest_result": "2026-09-21 21:41:35.929168"
+    },
+    {
+      "route": "crawl_proxy2",
+      "status": "success",
+      "error_type": "",
+      "error_stage": "",
+      "results": 13,
+      "latest_result": "2026-09-21 21:41:45.529534"
+    },
+    {
+      "route": "crawl_proxy3",
+      "status": "error",
+      "error_type": "HTTPError",
+      "error_stage": "browser_service",
+      "results": 1,
+      "latest_result": "2026-09-21 21:39:20.903295"
+    },
+    {
+      "route": "crawl_proxy3",
+      "status": "success",
+      "error_type": "",
+      "error_stage": "",
+      "results": 13,
+      "latest_result": "2026-09-21 21:41:31.795239"
+    },
+    {
+      "route": "direct",
+      "status": "success",
+      "error_type": "",
+      "error_stage": "",
+      "results": 17,
+      "latest_result": "2026-09-21 21:41:40.366031"
+    }
+  ],
+  "recency": {
+    "checked_at": "2026-09-21 21:41:51",
+    "latest_result": "2026-09-21 21:41:45.529534",
+    "seconds_since_result": 6,
+    "results_last_two_minutes": 20
+  },
+  "browser": {
+    "version": "0.8.0",
+    "healthy": true,
+    "capacity": {
+      "occupied": 4,
+      "available": 2
+    },
+    "active": [
+      {
+        "state": "ready",
+        "domain": "search.brave.com",
+        "session": "0929c5b393214f828dd32d2236a9d165"
+      },
+      {
+        "state": "ready",
+        "domain": "search.brave.com",
+        "session": "0b21c3420182491592b448beae1a3485"
+      },
+      {
+        "state": "ready",
+        "domain": "search.brave.com",
+        "session": "07df479dcf1449bba26315c01f081059"
+      },
+      {
+        "state": "ready",
+        "domain": "search.brave.com",
+        "session": "a685d75be5a342229b6216a4a0cc1ab1"
+      }
+    ]
+  },
+  "crawler": {
+    "status": "ok"
+  }
+}

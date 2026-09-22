@@ -1,0 +1,26 @@
+{
+  "runId": "ea691d13-1f11-4f33-b3ec-bbc0548b4783",
+  "status": "STARTED",
+  "execution_id": "ce521036-669b-4b96-8d1d-a71147c3bfa4",
+  "config": {
+    "ops": {
+      "company_brave_search_results": {
+        "config": {
+          "execution_id": "ce521036-669b-4b96-8d1d-a71147c3bfa4",
+          "progress_log_every": 100,
+          "progress_log_interval_seconds": 30
+        }
+      }
+    }
+  },
+  "counts": [
+    {
+      "processed": 22488,
+      "succeeded": 22172,
+      "failed": 316,
+      "distinct_inputs": 22488,
+      "new_results": 3,
+      "latest": "2026-09-22 07:07:11.131507"
+    }
+  ]
+}

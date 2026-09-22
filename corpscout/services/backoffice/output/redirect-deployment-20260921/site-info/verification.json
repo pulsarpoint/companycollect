@@ -1,0 +1,227 @@
+{
+  "runId": "53553372-bb74-4e7b-9d0a-f8e0e6b64e0f",
+  "requested": 2,
+  "saved": 2,
+  "successful": 2,
+  "unsuccessful": 0,
+  "missing": [],
+  "s3_verified": 2,
+  "issues": [],
+  "failures": [],
+  "results": [
+    {
+      "domain": "advokatsamfundet.se",
+      "request_id": "dagster-crawl-7ab096809e40e1ec6be3dca6f6f07a057d358243ef4c81d36712c5947f1c014a",
+      "attempt": 1,
+      "successful": true,
+      "state": "completed",
+      "crawl_status": "skip_crawling",
+      "error": "",
+      "started_at": "2026-09-21 18:54:10.000000",
+      "finished_at": "2026-09-21 18:54:25.000000",
+      "site_info": {
+        "source_url": "https://www.advokatsamfundet.se/",
+        "scope": "first_page_only",
+        "evidence_status": "source_matched",
+        "crawl_decision": "skip_crawling",
+        "site_description": "The website of Sveriges advokatsamfund, the Swedish Bar Association, the professional body for Swedish advocates. It states that only those admitted by the association may call themselves advokat, and provides a public lawyer search plus guidance for those hiring a lawyer. The site also serves members and law firms with tools, model documents and negotiated framework agreements, including AI services for legal work. It publishes news, press material and the magazine Advokaten, hosts a legal library, and offers professional courses through Advokatakademien, with links to disciplinary and consumer dispute bodies.",
+        "site_types": [
+          "nonprofit"
+        ],
+        "operator_name": "Sveriges advokatsamfund",
+        "purpose": "Represent and regulate the Swedish legal profession and provide services and information for advocates, law firms and the public seeking legal representation.",
+        "business_activities": [
+          "Representing and regulating the Swedish advocates' profession",
+          "Public lawyer search for clients seeking legal representation",
+          "Membership services and tools for law firms",
+          "Framework agreements and model documents for advocates",
+          "Professional training through Advokatakademien",
+          "News publishing and the magazine Advokaten"
+        ],
+        "evidence": [
+          "Endast den som har blivit antagen av Advokatsamfundet får kalla sig advokat.",
+          "Sök advokat",
+          "För dig som vill anlita en advokat",
+          "Advokatsamfundet har förhandlat fram ramavtal med fyra olika AI-leverantörer",
+          "Utbildningar till dig som ska bli advokat eller söker fortbildning.",
+          "En av Sveriges viktigaste tidskrifter inom rättsområdet, grundad 1935.",
+          "Disciplinnämnden",
+          "Sveriges advokatsamfund"
+        ]
+      },
+      "pages": 1,
+      "model_usage": {
+        "calls": 1,
+        "successful_responses": 1,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 1,
+        "prompt_tokens": 16998,
+        "completion_tokens": 1132,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "site_classification",
+            "attempt": 1,
+            "started_at": "2026-09-21T18:54:15+00:00",
+            "api": "deepseek",
+            "http_status": 200,
+            "elapsed_seconds": 7.848,
+            "response_id": "39552e55-0dd2-410f-8f58-6b2a1874ffc5",
+            "provider": null,
+            "response_model": "deepseek-flash",
+            "usage": {
+              "prompt_tokens": 16998,
+              "completion_tokens": 1132,
+              "total_tokens": 18130,
+              "prompt_tokens_details": {
+                "cached_tokens": 2176
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 736
+              },
+              "prompt_cache_hit_tokens": 2176,
+              "prompt_cache_miss_tokens": 14822
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "s3_path": "crawls/company-crawls/dagster-crawl-7ab096809e40e1ec6be3dca6f6f07a057d358243ef4c81d36712c5947f1c014a/attempts/0001/result.json.gz",
+      "s3_state": "uploaded",
+      "issues": [],
+      "s3_readable": true,
+      "s3_info_matches": true,
+      "s3_identity_matches": true,
+      "document_count": 1,
+      "document_fields": [
+        "page_id",
+        "url",
+        "html",
+        "html_sha256",
+        "input",
+        "rendered_html"
+      ],
+      "input_fields": [
+        "page",
+        "target_url",
+        "links",
+        "headings",
+        "observations"
+      ],
+      "stop_reason": "not_company_website",
+      "crawl_errors": [],
+      "html_bytes": 37671,
+      "html_hashes_match": true,
+      "pages_match": true,
+      "usage_matches": true,
+      "observations_match": true
+    },
+    {
+      "domain": "aga.se",
+      "request_id": "dagster-crawl-47cd60f3434431cd724136c76418856343f90a440c856c64f646a39e4e17103b",
+      "attempt": 1,
+      "successful": true,
+      "state": "completed",
+      "crawl_status": "finished",
+      "error": "",
+      "started_at": "2026-09-21 18:54:10.000000",
+      "finished_at": "2026-09-21 18:54:32.000000",
+      "site_info": {
+        "source_url": "https://www.linde-gas.se/shop/sv/se-ig/home",
+        "scope": "first_page_only",
+        "evidence_status": "source_matched",
+        "crawl_decision": "continue_crawling",
+        "site_description": "Linde Gas Sverige's Swedish webshop and customer portal for industrial gases, gas equipment and applications. The site sells gases such as argon, oxygen, nitrogen, acetylene, helium, carbon dioxide, propane, refrigerants, welding and shielding gases, speciality and medical gases, together with burners, regulators, cutting and welding equipment, medical-technical products and accessories, plus rentals and delivery. Listed applications include welding, cutting, heating, freezing and cooling, inerting, water treatment, food processing and healthcare, and the company describes serving metallurgical, chemical, food, glass, electronics, pharmaceutical, construction and research customers as well as private buyers of grill gas. A customer portal supports online ordering, invoices and cylinder management.",
+        "site_types": [
+          "company"
+        ],
+        "operator_name": "Linde Gas Sverige",
+        "purpose": "Online shop and customer portal through which Linde Gas Sverige sells industrial, medical and speciality gases and related gas equipment, and presents associated applications and services.",
+        "business_activities": [
+          "Supply of industrial gases (argon, oxygen, nitrogen, acetylene, helium, carbon dioxide, hydrogen, propane)",
+          "Welding and shielding gases, speciality gases and medical gases",
+          "Gas equipment: burners, regulators, cutting and welding equipment, medical-technical products, accessories",
+          "Gas applications support: welding, cutting, heating, freezing, inerting, food and water treatment",
+          "Cylinder rental, delivery and refill/return services",
+          "Online customer portal for ordering, invoices and cylinder management",
+          "Services such as certification, analysis, risk assessment, training and technical advice"
+        ],
+        "evidence": [
+          "Gaser, utrustning och applikationer | Linde Gas Sverige",
+          "Linde är det världsledande företaget inom industrigaser.",
+          "Våra produkter och tillämpningar",
+          "Kundportal - online-hubb för inköp och hantering av dina gaser",
+          "Handla online",
+          "Köp gaser och utrustning",
+          "© Linde 2025"
+        ]
+      },
+      "pages": 1,
+      "model_usage": {
+        "calls": 1,
+        "successful_responses": 1,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 1,
+        "prompt_tokens": 40772,
+        "completion_tokens": 1154,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "site_classification",
+            "attempt": 1,
+            "started_at": "2026-09-21T18:54:23+00:00",
+            "api": "deepseek",
+            "http_status": 200,
+            "elapsed_seconds": 6.799,
+            "response_id": "34f70fc0-babf-4afd-b623-0cc30df145eb",
+            "provider": null,
+            "response_model": "deepseek-flash",
+            "usage": {
+              "prompt_tokens": 40772,
+              "completion_tokens": 1154,
+              "total_tokens": 41926,
+              "prompt_tokens_details": {
+                "cached_tokens": 2176
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 702
+              },
+              "prompt_cache_hit_tokens": 2176,
+              "prompt_cache_miss_tokens": 38596
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "s3_path": "crawls/company-crawls/dagster-crawl-47cd60f3434431cd724136c76418856343f90a440c856c64f646a39e4e17103b/attempts/0001/result.json.gz",
+      "s3_state": "uploaded",
+      "issues": [],
+      "s3_readable": true,
+      "s3_info_matches": true,
+      "s3_identity_matches": true,
+      "document_count": 1,
+      "document_fields": [
+        "page_id",
+        "url",
+        "html",
+        "html_sha256",
+        "input",
+        "rendered_html"
+      ],
+      "input_fields": [
+        "page",
+        "target_url",
+        "links",
+        "headings",
+        "observations"
+      ],
+      "stop_reason": "site_info_complete",
+      "crawl_errors": [],
+      "html_bytes": 90034,
+      "html_hashes_match": true,
+      "pages_match": true,
+      "usage_matches": true,
+      "observations_match": true
+    }
+  ]
+}

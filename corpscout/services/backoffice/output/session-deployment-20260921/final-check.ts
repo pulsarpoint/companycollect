@@ -1,0 +1,18 @@
+import {readFileSync,writeFileSync} from 'node:fs';
+import {chQuery} from '../../app/lib/clickhouse.server';
+import {readCrawlArchive} from '../../app/lib/crawl-results.server';
+import {runStatus} from '../../app/lib/dagster.server';
+const folder='output/session-deployment-20260921';
+const progress=JSON.parse(readFileSync(`${folder}/progress.json`,'utf8'));
+const [crawl]=progress.crawl.rows;
+if(!crawl?.successful||progress.crawl.status!=='SUCCESS')throw new Error('Crawl check not completed');
+const archive=await readCrawlArchive(crawl.s3_path);
+const result=JSON.parse(archive.result_json);
+const before=JSON.parse(readFileSync(`${folder}/drained-checkpoint.json`,'utf8'));
+const [totals]=await chQuery<any>("SELECT count() total,uniqExact(input_id) distinct_inputs,countIf(source_run_id={run:String}) resumed_results,countIf(source_run_id={run:String} AND status='success') resumed_successes FROM company_brave_search_results FINAL WHERE execution_id={execution:UUID}",{run:progress.brave.runId,execution:before.execution.execution_id});
+if(totals.resumed_successes<4||totals.total!==totals.distinct_inputs||totals.total!==before.checkpoint[0].total+totals.resumed_results)throw new Error('Brave checkpoint continuity failed');
+const unrelated=await runStatus(before.unrelated.runId);
+const successfulProjection=await chQuery<any>("SELECT count() n FROM se_company_brave_search_results_latest_success FINAL WHERE source_run_id={run:String}",{run:progress.brave.runId});
+if(successfulProjection[0].n<4)throw new Error('Brave success projection not updated');
+const output={crawlRun:progress.crawl.runId,requestId:archive.request_id,domain:archive.domain,archiveStatus:archive.status,s3Path:crawl.s3_path,crawl:result.crawl,site_info:result.site_info,braveRun:progress.brave.runId,braveExecution:before.execution.execution_id,totals,successfulProjection:successfulProjection[0].n,unrelatedRun:{id:unrelated.runId,status:unrelated.status}};
+writeFileSync(`${folder}/final-check.json`,JSON.stringify(output,null,2));console.log(JSON.stringify(output,null,2));

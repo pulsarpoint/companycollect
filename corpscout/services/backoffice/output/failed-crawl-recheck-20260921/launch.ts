@@ -1,0 +1,14 @@
+import {existsSync,readFileSync,writeFileSync} from 'node:fs';
+import {startSavedCrawls} from '../../app/lib/crawl-inputs.server';
+const folder='output/failed-crawl-recheck-20260921';
+if(existsSync(`${folder}/receipt.json`))throw new Error('Run already submitted; inspect receipt');
+const inspection=JSON.parse(readFileSync(`${folder}/inspection.json`,'utf8'));
+const first=inspection.batches.find((b:any)=>b.n===50);
+const domains=inspection.failures.filter((f:any)=>f.run_id===first.run_id&&!inspection.latest.find((l:any)=>l.domain===f.domain)?.successful).map((r:any)=>r.domain);
+if(domains.length!==5||inspection.activeRuns.length||inspection.activeCrawls.length)throw new Error('Review changed selection or active work');
+const settings={intent:'start-inputs',crawl_type:'site_info',domains:JSON.stringify(domains),batch_id:crypto.randomUUID(),challenge_agent_model:'deepseek-flash',challenge_agent_max_runs:'3',api:'deepseek',model:'deepseek-flash',max_pages:'1',max_model_calls:'20',page_selection:'basic_info',max_in_flight:'2',refresh_interval_days:'30',force_refresh:'true'};
+const form=new FormData();for(const[k,v]of Object.entries(settings))form.set(k,v);
+writeFileSync(`${folder}/submission.json`,JSON.stringify(settings,null,2));
+const receipt=await startSavedCrawls(form);
+writeFileSync(`${folder}/receipt.json`,JSON.stringify(receipt,null,2));
+console.log(JSON.stringify(receipt));

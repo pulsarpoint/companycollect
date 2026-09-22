@@ -1,5 +1,4 @@
 import {
-  NavLink,
   Outlet,
   useLocation,
   useNavigate,
@@ -17,7 +16,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "~/components/ui/select";
-import { Tabs, TabsList, TabsTrigger } from "~/components/ui/tabs";
+import { TechnologySectionTabs } from "~/components/detail/technology-section-tabs";
 import {
   technologySectionFromPath,
   technologyTabSupported,
@@ -127,42 +126,11 @@ export default function CompanyTechnologyLayout({
         </Field>
       </div>
 
-      <Tabs value={section}>
-        <TabsList>
-          <TabsTrigger
-            value="overview"
-            render={<NavLink to={`${basePath}${domainSearch}`} end />}
-            nativeButton={false}
-          >
-            Overview
-          </TabsTrigger>
-          <TabsTrigger
-            value="web-intelligence"
-            render={
-              <NavLink to={`${basePath}/web-intelligence${domainSearch}`} />
-            }
-            nativeButton={false}
-          >
-            Web intelligence
-          </TabsTrigger>
-          <TabsTrigger
-            value="infrastructure"
-            render={
-              <NavLink to={`${basePath}/infrastructure${domainSearch}`} />
-            }
-            nativeButton={false}
-          >
-            Infrastructure
-          </TabsTrigger>
-          <TabsTrigger
-            value="ip-addresses"
-            render={<NavLink to={`${basePath}/ip-addresses${domainSearch}`} />}
-            nativeButton={false}
-          >
-            IP addresses
-          </TabsTrigger>
-        </TabsList>
-      </Tabs>
+      <TechnologySectionTabs
+        basePath={basePath}
+        section={section}
+        search={domainSearch}
+      />
 
       <Outlet />
     </div>

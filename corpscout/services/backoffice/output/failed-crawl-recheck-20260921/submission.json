@@ -1,0 +1,16 @@
+{
+  "intent": "start-inputs",
+  "crawl_type": "site_info",
+  "domains": "[\"abogaranti.se\",\"addage.org\",\"adlibris.com\",\"allabolag.se\",\"alltele.se\"]",
+  "batch_id": "19ea6d58-e390-4594-80a9-3b8ca713bc70",
+  "challenge_agent_model": "deepseek-flash",
+  "challenge_agent_max_runs": "3",
+  "api": "deepseek",
+  "model": "deepseek-flash",
+  "max_pages": "1",
+  "max_model_calls": "20",
+  "page_selection": "basic_info",
+  "max_in_flight": "2",
+  "refresh_interval_days": "30",
+  "force_refresh": "true"
+}

@@ -1,0 +1,983 @@
+{
+  "batches": [
+    {
+      "run_id": "5baeabac-372f-47e7-b9b9-f358f63c6b57",
+      "n": 1,
+      "failed": 0,
+      "first_finished": "2026-09-20 20:41:26.000000"
+    },
+    {
+      "run_id": "21641399-34d9-48fe-9747-7c011915c1d2",
+      "n": 50,
+      "failed": 7,
+      "first_finished": "2026-09-20 21:46:05.000000"
+    },
+    {
+      "run_id": "958b85d0-f442-4901-b090-370fa223f5c5",
+      "n": 7,
+      "failed": 7,
+      "first_finished": "2026-09-20 21:55:12.000000"
+    },
+    {
+      "run_id": "cf9b4063-4005-47bd-88be-25e5db6d930f",
+      "n": 1,
+      "failed": 1,
+      "first_finished": "2026-09-21 08:11:54.000000"
+    },
+    {
+      "run_id": "53553372-bb74-4e7b-9d0a-f8e0e6b64e0f",
+      "n": 2,
+      "failed": 0,
+      "first_finished": "2026-09-21 18:54:25.000000"
+    },
+    {
+      "run_id": "1c147fa2-8890-466e-88f4-b31e34c86030",
+      "n": 1,
+      "failed": 0,
+      "first_finished": "2026-09-21 21:35:38.000000"
+    }
+  ],
+  "failures": [
+    {
+      "domain": "abogaranti.se",
+      "website_url": "https://abogaranti.se",
+      "request_id": "dagster-crawl-7fa71c8474025c0de0a080110097cf398685512615e88b4385ec70a66db7cc89",
+      "run_id": "21641399-34d9-48fe-9747-7c011915c1d2",
+      "finished_at": "2026-09-20 21:46:46.000000",
+      "crawl_status": "needs_review",
+      "error": "",
+      "s3_path": "crawls/company-crawls/dagster-crawl-7fa71c8474025c0de0a080110097cf398685512615e88b4385ec70a66db7cc89/attempts/0001/result.json.gz",
+      "work_key": "11052071eeb439e2d4d0977b511b540ff9cdfd70ebf830700731cc9d28da899d"
+    },
+    {
+      "domain": "addage.org",
+      "website_url": "https://addage.org",
+      "request_id": "dagster-crawl-416ae563c260d32a5436589000123bb40fb8a84f89a80bf5594e25e93222583f",
+      "run_id": "21641399-34d9-48fe-9747-7c011915c1d2",
+      "finished_at": "2026-09-20 21:47:06.000000",
+      "crawl_status": "needs_review",
+      "error": "",
+      "s3_path": "crawls/company-crawls/dagster-crawl-416ae563c260d32a5436589000123bb40fb8a84f89a80bf5594e25e93222583f/attempts/0001/result.json.gz",
+      "work_key": "e1898c5571848a429829163c9025ee2508ee5980800a2ba36b8162a52d49d581"
+    },
+    {
+      "domain": "adlibris.com",
+      "website_url": "https://adlibris.com",
+      "request_id": "dagster-crawl-893dafafc632ac3c5388bbf7ea47ed0023f583b512916be15f17b8828049c265",
+      "run_id": "21641399-34d9-48fe-9747-7c011915c1d2",
+      "finished_at": "2026-09-20 21:47:16.000000",
+      "crawl_status": "needs_review",
+      "error": "",
+      "s3_path": "crawls/company-crawls/dagster-crawl-893dafafc632ac3c5388bbf7ea47ed0023f583b512916be15f17b8828049c265/attempts/0001/result.json.gz",
+      "work_key": "611f7e587cfbffaec3463e5bedf3e48c433ad73cdef02708ea22e8dfb4d320dd"
+    },
+    {
+      "domain": "advokatsamfundet.se",
+      "website_url": "https://advokatsamfundet.se",
+      "request_id": "dagster-crawl-edd738715d18037bae3256f1ed225be8bba96bcbdccf90d96bd214e7e06ea9ce",
+      "run_id": "21641399-34d9-48fe-9747-7c011915c1d2",
+      "finished_at": "2026-09-20 21:48:15.000000",
+      "crawl_status": "needs_review",
+      "error": "",
+      "s3_path": "crawls/company-crawls/dagster-crawl-edd738715d18037bae3256f1ed225be8bba96bcbdccf90d96bd214e7e06ea9ce/attempts/0001/result.json.gz",
+      "work_key": "94c1065f3c375215dbe4904327855315f8f65447838324e116b862dfdc0ca9d4"
+    },
+    {
+      "domain": "aga.se",
+      "website_url": "https://aga.se",
+      "request_id": "dagster-crawl-8f01f1cc3f93feb9dd70e2980465a8215ab7b0f473466c5160d675f7e6d987c3",
+      "run_id": "21641399-34d9-48fe-9747-7c011915c1d2",
+      "finished_at": "2026-09-20 21:48:37.000000",
+      "crawl_status": "needs_review",
+      "error": "",
+      "s3_path": "crawls/company-crawls/dagster-crawl-8f01f1cc3f93feb9dd70e2980465a8215ab7b0f473466c5160d675f7e6d987c3/attempts/0001/result.json.gz",
+      "work_key": "8aaa21de72233106e6fd0e72665e2411f78084eece84b4159d1ec612e4d6e811"
+    },
+    {
+      "domain": "allabolag.se",
+      "website_url": "https://allabolag.se",
+      "request_id": "dagster-crawl-9b0b43cb2c38e2d3b8d34d06b62c6d401611ce8c01d723453aba9b90c90df4f6",
+      "run_id": "21641399-34d9-48fe-9747-7c011915c1d2",
+      "finished_at": "2026-09-20 21:52:50.000000",
+      "crawl_status": "failed",
+      "error": "human_assistance_timeout",
+      "s3_path": "crawls/company-crawls/dagster-crawl-9b0b43cb2c38e2d3b8d34d06b62c6d401611ce8c01d723453aba9b90c90df4f6/attempts/0001/result.json.gz",
+      "work_key": "de44e25aa67a3c96ad8fa2372027c5f0c81b08c49f292922ed46123caa1e9544"
+    },
+    {
+      "domain": "alltele.se",
+      "website_url": "https://alltele.se",
+      "request_id": "dagster-crawl-c2dc5e84f52165521b34988bc71d8362d35759d24659283ef54623281c451ff6",
+      "run_id": "21641399-34d9-48fe-9747-7c011915c1d2",
+      "finished_at": "2026-09-20 21:53:34.000000",
+      "crawl_status": "needs_review",
+      "error": "",
+      "s3_path": "crawls/company-crawls/dagster-crawl-c2dc5e84f52165521b34988bc71d8362d35759d24659283ef54623281c451ff6/attempts/0001/result.json.gz",
+      "work_key": "14aee6e2632e6fadd18db627a51b140cdaa2209eb678627c7855687366e4db1a"
+    },
+    {
+      "domain": "abogaranti.se",
+      "website_url": "https://abogaranti.se",
+      "request_id": "dagster-crawl-b34099f9e0ea22debb4ebf5ad63ac7b37ec8ad4f2a05809705867b670d8b5f3d",
+      "run_id": "958b85d0-f442-4901-b090-370fa223f5c5",
+      "finished_at": "2026-09-20 21:55:12.000000",
+      "crawl_status": "needs_review",
+      "error": "",
+      "s3_path": "crawls/company-crawls/dagster-crawl-b34099f9e0ea22debb4ebf5ad63ac7b37ec8ad4f2a05809705867b670d8b5f3d/attempts/0001/result.json.gz",
+      "work_key": "11052071eeb439e2d4d0977b511b540ff9cdfd70ebf830700731cc9d28da899d"
+    },
+    {
+      "domain": "addage.org",
+      "website_url": "https://addage.org",
+      "request_id": "dagster-crawl-658fca5bc8d0bc2f0822557a83e6458fd94881dba8527380df14593f68a97fb0",
+      "run_id": "958b85d0-f442-4901-b090-370fa223f5c5",
+      "finished_at": "2026-09-20 21:55:20.000000",
+      "crawl_status": "needs_review",
+      "error": "",
+      "s3_path": "crawls/company-crawls/dagster-crawl-658fca5bc8d0bc2f0822557a83e6458fd94881dba8527380df14593f68a97fb0/attempts/0001/result.json.gz",
+      "work_key": "e1898c5571848a429829163c9025ee2508ee5980800a2ba36b8162a52d49d581"
+    },
+    {
+      "domain": "adlibris.com",
+      "website_url": "https://adlibris.com",
+      "request_id": "dagster-crawl-214c5e0140baec1e4afa35ce5e84d39fb5913f3eec7114f4003f6590ea9830b9",
+      "run_id": "958b85d0-f442-4901-b090-370fa223f5c5",
+      "finished_at": "2026-09-20 21:55:26.000000",
+      "crawl_status": "needs_review",
+      "error": "",
+      "s3_path": "crawls/company-crawls/dagster-crawl-214c5e0140baec1e4afa35ce5e84d39fb5913f3eec7114f4003f6590ea9830b9/attempts/0001/result.json.gz",
+      "work_key": "611f7e587cfbffaec3463e5bedf3e48c433ad73cdef02708ea22e8dfb4d320dd"
+    },
+    {
+      "domain": "advokatsamfundet.se",
+      "website_url": "https://advokatsamfundet.se",
+      "request_id": "dagster-crawl-2fab079236483b51843a4df545039cd9f943103be8e4e3a07db89f8ca04c562d",
+      "run_id": "958b85d0-f442-4901-b090-370fa223f5c5",
+      "finished_at": "2026-09-20 21:55:30.000000",
+      "crawl_status": "needs_review",
+      "error": "",
+      "s3_path": "crawls/company-crawls/dagster-crawl-2fab079236483b51843a4df545039cd9f943103be8e4e3a07db89f8ca04c562d/attempts/0001/result.json.gz",
+      "work_key": "94c1065f3c375215dbe4904327855315f8f65447838324e116b862dfdc0ca9d4"
+    },
+    {
+      "domain": "aga.se",
+      "website_url": "https://aga.se",
+      "request_id": "dagster-crawl-db6ff879ee8cc32f85565752a9831e0eb425b835055c923e05e6b20bebb4b54c",
+      "run_id": "958b85d0-f442-4901-b090-370fa223f5c5",
+      "finished_at": "2026-09-20 21:55:36.000000",
+      "crawl_status": "needs_review",
+      "error": "",
+      "s3_path": "crawls/company-crawls/dagster-crawl-db6ff879ee8cc32f85565752a9831e0eb425b835055c923e05e6b20bebb4b54c/attempts/0001/result.json.gz",
+      "work_key": "8aaa21de72233106e6fd0e72665e2411f78084eece84b4159d1ec612e4d6e811"
+    },
+    {
+      "domain": "allabolag.se",
+      "website_url": "https://allabolag.se",
+      "request_id": "dagster-crawl-79dfe52c9bf19f77732014a166811299e7407af7448a4017e3f6efb902937107",
+      "run_id": "958b85d0-f442-4901-b090-370fa223f5c5",
+      "finished_at": "2026-09-20 21:55:53.000000",
+      "crawl_status": "failed",
+      "error": "human_assistance_timeout",
+      "s3_path": "crawls/company-crawls/dagster-crawl-79dfe52c9bf19f77732014a166811299e7407af7448a4017e3f6efb902937107/attempts/0001/result.json.gz",
+      "work_key": "de44e25aa67a3c96ad8fa2372027c5f0c81b08c49f292922ed46123caa1e9544"
+    },
+    {
+      "domain": "alltele.se",
+      "website_url": "https://alltele.se",
+      "request_id": "dagster-crawl-e0fc513f58c13cd50415798338138017ab22259b26e8d0a740ce377c216abbee",
+      "run_id": "958b85d0-f442-4901-b090-370fa223f5c5",
+      "finished_at": "2026-09-20 21:56:03.000000",
+      "crawl_status": "needs_review",
+      "error": "",
+      "s3_path": "crawls/company-crawls/dagster-crawl-e0fc513f58c13cd50415798338138017ab22259b26e8d0a740ce377c216abbee/attempts/0001/result.json.gz",
+      "work_key": "14aee6e2632e6fadd18db627a51b140cdaa2209eb678627c7855687366e4db1a"
+    },
+    {
+      "domain": "advokatsamfundet.se",
+      "website_url": "https://advokatsamfundet.se",
+      "request_id": "dagster-crawl-c89bc0fa7f320bbfeb7d889c01b03bac2d003ae4a0a4c6778f4364b1564d042d",
+      "run_id": "cf9b4063-4005-47bd-88be-25e5db6d930f",
+      "finished_at": "2026-09-21 08:11:54.000000",
+      "crawl_status": "needs_review",
+      "error": "",
+      "s3_path": "crawls/company-crawls/dagster-crawl-c89bc0fa7f320bbfeb7d889c01b03bac2d003ae4a0a4c6778f4364b1564d042d/attempts/0001/result.json.gz",
+      "work_key": "94c1065f3c375215dbe4904327855315f8f65447838324e116b862dfdc0ca9d4"
+    }
+  ],
+  "latest": [
+    {
+      "domain": "aga.se",
+      "request_id": "dagster-crawl-2cd5078f78bf41a64ac7a152c85dccbe474a8deb366946149c974138b6fdceca",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-21 21:35:38.000000"
+    },
+    {
+      "domain": "advokatsamfundet.se",
+      "request_id": "dagster-crawl-7ab096809e40e1ec6be3dca6f6f07a057d358243ef4c81d36712c5947f1c014a",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-21 18:54:25.000000"
+    },
+    {
+      "domain": "alltele.se",
+      "request_id": "dagster-crawl-e0fc513f58c13cd50415798338138017ab22259b26e8d0a740ce377c216abbee",
+      "state": "completed",
+      "successful": false,
+      "error": "",
+      "finished_at": "2026-09-20 21:56:03.000000"
+    },
+    {
+      "domain": "allabolag.se",
+      "request_id": "dagster-crawl-79dfe52c9bf19f77732014a166811299e7407af7448a4017e3f6efb902937107",
+      "state": "failed",
+      "successful": false,
+      "error": "human_assistance_timeout",
+      "finished_at": "2026-09-20 21:55:53.000000"
+    },
+    {
+      "domain": "adlibris.com",
+      "request_id": "dagster-crawl-214c5e0140baec1e4afa35ce5e84d39fb5913f3eec7114f4003f6590ea9830b9",
+      "state": "completed",
+      "successful": false,
+      "error": "",
+      "finished_at": "2026-09-20 21:55:26.000000"
+    },
+    {
+      "domain": "addage.org",
+      "request_id": "dagster-crawl-658fca5bc8d0bc2f0822557a83e6458fd94881dba8527380df14593f68a97fb0",
+      "state": "completed",
+      "successful": false,
+      "error": "",
+      "finished_at": "2026-09-20 21:55:20.000000"
+    },
+    {
+      "domain": "abogaranti.se",
+      "request_id": "dagster-crawl-b34099f9e0ea22debb4ebf5ad63ac7b37ec8ad4f2a05809705867b670d8b5f3d",
+      "state": "completed",
+      "successful": false,
+      "error": "",
+      "finished_at": "2026-09-20 21:55:12.000000"
+    },
+    {
+      "domain": "almi.se",
+      "request_id": "dagster-crawl-76d89092ef7f65306da8996f671afa84f7ed2dcf28b371cbed75cd8738c2702d",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:53:53.000000"
+    },
+    {
+      "domain": "almhult.se",
+      "request_id": "dagster-crawl-719facd46fe287ce57f981e82c483383885f28d271b2e0aada7436c18519a055",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:53:51.000000"
+    },
+    {
+      "domain": "aller.se",
+      "request_id": "dagster-crawl-f4b57d7e4cfa48dfe85f47974c056bf1ce5b736fee9028ef3ab5dacb206efa8d",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:53:33.000000"
+    },
+    {
+      "domain": "allente.se",
+      "request_id": "dagster-crawl-4cc5ae508f114b4be8e455059cc5b6cbb454411b07bd2c98e941cc296c9f3ad0",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:53:30.000000"
+    },
+    {
+      "domain": "allente.no",
+      "request_id": "dagster-crawl-7b74e1d8cdbadcdf4c6a9708e3fd4308cf5a4314c92a658bb6363188df12a2e4",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:53:12.000000"
+    },
+    {
+      "domain": "allente.fi",
+      "request_id": "dagster-crawl-012dad744aad510a571bd70892ba0db077c56a8f3fa5d9133f9d7318c0cb1f15",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:53:03.000000"
+    },
+    {
+      "domain": "allente.dk",
+      "request_id": "dagster-crawl-3df7e8b1c68a6e3e20500c4f50d3507ed3c30550d24c799611854a77749b7250",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:53:02.000000"
+    },
+    {
+      "domain": "alingsas.se",
+      "request_id": "dagster-crawl-e84f4d9e6a4a3032f592300d3b439b2f6d6cd345ee69de480f38e420bb694070",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:52:35.000000"
+    },
+    {
+      "domain": "algoryx.se",
+      "request_id": "dagster-crawl-086c225ecfdd0023b17984521312c421df13f28ff6a40d57e9c896c9935da3bb",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:52:35.000000"
+    },
+    {
+      "domain": "alfons.se",
+      "request_id": "dagster-crawl-bab5b5a8a567ea2939dc4f0a4e711c0f78602c021f37be38c83afba3f0a398fb",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:52:18.000000"
+    },
+    {
+      "domain": "alfieatkins.com",
+      "request_id": "dagster-crawl-579dfd0bc05b065bf00b3134bed2aa954aabfc37e281aae6c41f545fd067b465",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:52:09.000000"
+    },
+    {
+      "domain": "aleris.se",
+      "request_id": "dagster-crawl-96894dd737d2bca64d5fe671faaa25a480b20556bfc65520fc8514df5f50ce12",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:52:01.000000"
+    },
+    {
+      "domain": "alemsorgel.se",
+      "request_id": "dagster-crawl-48ff539b237c9e336576844415bc8019acc5acf6a3c2cee57c0980cf9a03b441",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:51:45.000000"
+    },
+    {
+      "domain": "ale.se",
+      "request_id": "dagster-crawl-a7d6ecc0e15443833816f00d35ddd24f3ea7450f84d4cad915229bff9e829a5c",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:51:31.000000"
+    },
+    {
+      "domain": "alecta.se",
+      "request_id": "dagster-crawl-90335ec93bdb7c0cb89ef131545c4c363d9042d2f8109dcdc67edeaaf4ea0289",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:51:30.000000"
+    },
+    {
+      "domain": "alastorpress.com",
+      "request_id": "dagster-crawl-84135a9ad80e750d3972220ecfb6efad7b097aff72801e23add5b35b9f5bc843",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:51:15.000000"
+    },
+    {
+      "domain": "aklagare.se",
+      "request_id": "dagster-crawl-b5d04e8dab3489468084bd9b4cd4edc4019da866f5a2bcdb2ba0bbaab3c950b3",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:51:02.000000"
+    },
+    {
+      "domain": "alaskafilmtv.com",
+      "request_id": "dagster-crawl-15c35de3f18222a11c72ac52b85132bfa349216b0db411d33642c4c346e764c2",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:51:00.000000"
+    },
+    {
+      "domain": "akademssr.se",
+      "request_id": "dagster-crawl-4fe36162c4d44b91b3b67c4f4f531f1bd0b8f650993ac89bcc33d69457ac971d",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:50:39.000000"
+    },
+    {
+      "domain": "ajtte.com",
+      "request_id": "dagster-crawl-65b4dc67539668fa2e4c05fb864a26ead7a664cefa64344c6f3cfced4d2ccf6e",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:50:20.000000"
+    },
+    {
+      "domain": "akademiskahus.se",
+      "request_id": "dagster-crawl-beda8edbcf8795e5f9baed22983d2e5d636c48045619ee622ad6d4540d139382",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:50:15.000000"
+    },
+    {
+      "domain": "airclim.org",
+      "request_id": "dagster-crawl-32cd225e12c6a83aeb26a68138d122d29d99566de50391cc5b96d2e164a8154c",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:49:49.000000"
+    },
+    {
+      "domain": "aikfotboll.se",
+      "request_id": "dagster-crawl-b175b27992fdb145d05895c514fc2e249deb21af1d16426059bce968777a4db9",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:49:43.000000"
+    },
+    {
+      "domain": "agriatierversicherung.de",
+      "request_id": "dagster-crawl-45a252d191c968245cedd3ca1fefeb9d1d4538339bd9df8624a4074c36595843",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:49:36.000000"
+    },
+    {
+      "domain": "agria.se",
+      "request_id": "dagster-crawl-ec35d08f5301c12a386c72d08eef3813a92a9bcf8b95db5284996314be4b7b40",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:49:18.000000"
+    },
+    {
+      "domain": "agria.fi",
+      "request_id": "dagster-crawl-3025b5da6cfabde68988ed5bfd6f49d4bdf318bf6d29ce9ea47c029f282cc223",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:49:09.000000"
+    },
+    {
+      "domain": "agria.no",
+      "request_id": "dagster-crawl-d87425adb3aaafa47d9bf8d52802e891f7391934b21016e7c42e2746b29e4cc4",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:49:06.000000"
+    },
+    {
+      "domain": "agria.dk",
+      "request_id": "dagster-crawl-12c6e0591ccc86b621977c495320648550a3cd31fdb77d3a535567474a69a513",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:48:49.000000"
+    },
+    {
+      "domain": "agrando.se",
+      "request_id": "dagster-crawl-fde4c416a08112c9685427214552f15644cf9eb0b8ff21fca2cb59a805362150",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:48:46.000000"
+    },
+    {
+      "domain": "aftonbladet.se",
+      "request_id": "dagster-crawl-707eb920b4b44f90e9ea1209ceb7e0fd3b816b23d56566a187c8116c2a8e9d8c",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:48:29.000000"
+    },
+    {
+      "domain": "advania.se",
+      "request_id": "dagster-crawl-975a21052ebc4031b37260c3173eb101421b516c7f0e665767f33b3b46b7ad93",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:48:21.000000"
+    },
+    {
+      "domain": "advania.no",
+      "request_id": "dagster-crawl-e5459f4efbff7887c3021e7a235722b5ebb0f7b2b112f18d75d61ed58f80f81b",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:48:06.000000"
+    },
+    {
+      "domain": "advania.is",
+      "request_id": "dagster-crawl-1db9a52f9c9636739bcfd2a1ae66c4f103ff90bc39919b3764ebbdf3b4be66d8",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:47:55.000000"
+    },
+    {
+      "domain": "advancedclinic.se",
+      "request_id": "dagster-crawl-5b24a7570092fbb4eab955b64e0ffb61ba6d513536f4fe27b32222a5c63153d9",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:47:51.000000"
+    },
+    {
+      "domain": "adtraction.com",
+      "request_id": "dagster-crawl-1366b34515e6585e4e9487210f108009c09f81345ff103619b42bf3f75aacfc9",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:47:33.000000"
+    },
+    {
+      "domain": "addalot.se",
+      "request_id": "dagster-crawl-4e25246114a03486a075b0705ddff4b6809d1527c5ab77618ce72d23a55f2f1e",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:47:24.000000"
+    },
+    {
+      "domain": "acando.com",
+      "request_id": "dagster-crawl-a6b02db19687f061d5371423a51db63ceeb568067e3dd949a0311eac8d94fe2d",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:47:04.000000"
+    },
+    {
+      "domain": "academedia.se",
+      "request_id": "dagster-crawl-138df8ecd6c5150092823cd059437d4db31db761a066b1da8a9b9e5c08ec861c",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:47:03.000000"
+    },
+    {
+      "domain": "abba.se",
+      "request_id": "dagster-crawl-29729b48cd24978655b81a268ff8c21778dc5895148b782f5fa2d2f962d03ad7",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:46:46.000000"
+    },
+    {
+      "domain": "2525.se",
+      "request_id": "dagster-crawl-969bffbcf5d2b10b42e3b46ee407089f610be6199f289f5e19058000978bceb7",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:46:43.000000"
+    },
+    {
+      "domain": "2030sekretariatet.se",
+      "request_id": "dagster-crawl-e3ee6e6e7bb8c6a119426d84cd17a601e2c29f6ecc561dd3ac39c2daee2f2394",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:46:23.000000"
+    },
+    {
+      "domain": "1700-tal.se",
+      "request_id": "dagster-crawl-f518b2c2df71be9cdec4fd4b277cc1b748603adaf18d21614f81f6aa1cf3c8e7",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:46:06.000000"
+    },
+    {
+      "domain": "100.se",
+      "request_id": "dagster-crawl-d5afc95cdb2ec6a6a4036fbd2eca5ff06b80e838c7a73a6cc4f45133069b3125",
+      "state": "completed",
+      "successful": true,
+      "error": "",
+      "finished_at": "2026-09-20 21:46:05.000000"
+    }
+  ],
+  "inputs": [
+    {
+      "domain": "100.se",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "1700-tal.se",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "2030sekretariatet.se",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "2525.se",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "abba.se",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "abogaranti.se",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "academedia.se",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "acando.com",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "addage.org",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "addalot.se",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "adlibris.com",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "adtraction.com",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "advancedclinic.se",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "advania.is",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "advania.no",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "advania.se",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "advokatsamfundet.se",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "aftonbladet.se",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "aga.se",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "agrando.se",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "agria.dk",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "agria.fi",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "agria.no",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "agria.se",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "agriatierversicherung.de",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "aikfotboll.se",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "airclim.org",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "ajtte.com",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "akademiskahus.se",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "akademssr.se",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "aklagare.se",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "alaskafilmtv.com",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "alastorpress.com",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "ale.se",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "alecta.se",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "alemsorgel.se",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "aleris.se",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "alfieatkins.com",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "alfons.se",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "algoryx.se",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "alingsas.se",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "allabolag.se",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "allente.dk",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "allente.fi",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "allente.no",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "allente.se",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "aller.se",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "alltele.se",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "almhult.se",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    },
+    {
+      "domain": "almi.se",
+      "enabled": true,
+      "headless": true,
+      "proxy_route": "direct",
+      "page_mode": "discover"
+    }
+  ],
+  "browser": {
+    "version": "0.8.0",
+    "settings": {
+      "source": "sqlite",
+      "startup": {
+        "max_browsers": 6,
+        "idle_timeout_seconds": 120,
+        "session_retention_days": 7
+      },
+      "current": {
+        "max_browsers": 6,
+        "idle_timeout_seconds": 120,
+        "session_retention_days": 7
+      },
+      "capacity": {
+        "occupied": 4,
+        "available": 2
+      }
+    }
+  },
+  "activeRuns": [],
+  "activeCrawls": []
+}

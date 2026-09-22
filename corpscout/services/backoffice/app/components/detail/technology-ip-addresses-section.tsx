@@ -118,7 +118,7 @@ export function TechnologyIpAddressesSection({
                 <TableHeader>
                   <TableRow>
                     <TableHead>Address</TableHead>
-                    <TableHead>Company hostnames</TableHead>
+                    <TableHead>Domain hostnames</TableHead>
                     <TableHead>Location</TableHead>
                     <TableHead>Network</TableHead>
                     <TableHead>Network segment</TableHead>

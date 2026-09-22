@@ -1,0 +1,11 @@
+{
+  "runId": "53553372-bb74-4e7b-9d0a-f8e0e6b64e0f",
+  "status": "QUEUED",
+  "runUrl": "http://dagster:3000/runs/53553372-bb74-4e7b-9d0a-f8e0e6b64e0f",
+  "batchId": "307c0fad-0df6-479b-9671-900024bf0333",
+  "count": 2,
+  "domains": [
+    "aga.se",
+    "advokatsamfundet.se"
+  ]
+}

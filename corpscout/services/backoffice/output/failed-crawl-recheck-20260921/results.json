@@ -1,0 +1,265 @@
+[
+  {
+    "domain": "abogaranti.se",
+    "request_id": "dagster-crawl-23f98afbb88541bc0903078aefc9e5a4ff4d5aabe53776b50ce5fc468eb3277f",
+    "state": "completed",
+    "crawl_status": "needs_review",
+    "successful": false,
+    "error": "",
+    "s3_state": "uploaded",
+    "s3_path": "crawls/company-crawls/dagster-crawl-23f98afbb88541bc0903078aefc9e5a4ff4d5aabe53776b50ce5fc468eb3277f/attempts/0001/result.json.gz",
+    "elapsed_seconds": 3,
+    "archive_verified": true,
+    "stop_reason": "initial_page_unavailable",
+    "errors": [],
+    "site_info": {
+      "source_url": "https://abogaranti.se/",
+      "scope": "first_page_only",
+      "evidence_status": "needs_review",
+      "crawl_decision": "needs_review",
+      "site_description": "The site's purpose and company activities could not be determined from the first page.",
+      "site_types": [
+        "unknown"
+      ],
+      "operator_name": null,
+      "purpose": null,
+      "business_activities": [],
+      "evidence": []
+    },
+    "final_url": "https://abogaranti.se/",
+    "pages": [
+      {
+        "requested_url": "https://abogaranti.se/",
+        "source_url": "https://abogaranti.se/",
+        "status_code": null,
+        "fetch_status": "failed",
+        "errors": [
+          "Fetch returned HTTP None; Browser fetch failed (ERR_NAME_NOT_RESOLVED)",
+          "Fetch returned HTTP None; Browser fetch failed (ERR_NAME_NOT_RESOLVED)"
+        ],
+        "navigation_attempts": [
+          {
+            "url": "https://abogaranti.se/",
+            "error": "ERR_NAME_NOT_RESOLVED"
+          }
+        ]
+      }
+    ],
+    "challenge_agent_results": [],
+    "usage": {
+      "calls": 0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0
+    }
+  },
+  {
+    "domain": "addage.org",
+    "request_id": "dagster-crawl-d573341301c5740a61e696808770021d8cb46fbd856ba5cb827fee6e09662438",
+    "state": "completed",
+    "crawl_status": "needs_review",
+    "successful": false,
+    "error": "",
+    "s3_state": "uploaded",
+    "s3_path": "crawls/company-crawls/dagster-crawl-d573341301c5740a61e696808770021d8cb46fbd856ba5cb827fee6e09662438/attempts/0001/result.json.gz",
+    "elapsed_seconds": 4,
+    "archive_verified": true,
+    "stop_reason": "initial_page_unavailable",
+    "errors": [],
+    "site_info": {
+      "source_url": "https://addage.org/",
+      "scope": "first_page_only",
+      "evidence_status": "needs_review",
+      "crawl_decision": "needs_review",
+      "site_description": "The site's purpose and company activities could not be determined from the first page.",
+      "site_types": [
+        "unknown"
+      ],
+      "operator_name": null,
+      "purpose": null,
+      "business_activities": [],
+      "evidence": []
+    },
+    "final_url": "https://addage.org/",
+    "pages": [
+      {
+        "requested_url": "https://addage.org/",
+        "source_url": "https://addage.org/",
+        "status_code": null,
+        "fetch_status": "failed",
+        "errors": [
+          "Fetch returned HTTP None; Browser fetch failed (ERR_CERT_COMMON_NAME_INVALID)",
+          "Fetch returned HTTP None; Browser fetch failed (ERR_CERT_COMMON_NAME_INVALID)"
+        ],
+        "navigation_attempts": [
+          {
+            "url": "https://addage.org/",
+            "error": "ERR_CERT_COMMON_NAME_INVALID"
+          }
+        ]
+      }
+    ],
+    "challenge_agent_results": [],
+    "usage": {
+      "calls": 0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0
+    }
+  },
+  {
+    "domain": "adlibris.com",
+    "request_id": "dagster-crawl-f327a31c4fc34e46d6f92b8b79dbfe72b21e83911482d0097f71cf4efe7a95e1",
+    "state": "completed",
+    "crawl_status": "needs_review",
+    "successful": false,
+    "error": "",
+    "s3_state": "uploaded",
+    "s3_path": "crawls/company-crawls/dagster-crawl-f327a31c4fc34e46d6f92b8b79dbfe72b21e83911482d0097f71cf4efe7a95e1/attempts/0001/result.json.gz",
+    "elapsed_seconds": 3,
+    "archive_verified": true,
+    "stop_reason": "initial_page_unavailable",
+    "errors": [],
+    "site_info": {
+      "source_url": "https://adlibris.com/",
+      "scope": "first_page_only",
+      "evidence_status": "needs_review",
+      "crawl_decision": "needs_review",
+      "site_description": "The site's purpose and company activities could not be determined from the first page.",
+      "site_types": [
+        "unknown"
+      ],
+      "operator_name": null,
+      "purpose": null,
+      "business_activities": [],
+      "evidence": []
+    },
+    "final_url": "https://adlibris.com/",
+    "pages": [
+      {
+        "requested_url": "https://adlibris.com/",
+        "source_url": "https://adlibris.com/",
+        "status_code": 403,
+        "fetch_status": "failed",
+        "errors": [
+          "Fetch returned HTTP 403; robots.txt unavailable (HTTP 429)"
+        ],
+        "navigation_attempts": [
+          {
+            "url": "https://adlibris.com/",
+            "error": "robots.txt unavailable (HTTP 429)"
+          }
+        ]
+      }
+    ],
+    "challenge_agent_results": [],
+    "usage": {
+      "calls": 0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0
+    }
+  },
+  {
+    "domain": "allabolag.se",
+    "request_id": "dagster-crawl-a2c234d76f15d10d4af246611794da5b997de1a89238a4e75e008b923aa7c32e",
+    "state": "failed",
+    "crawl_status": "failed",
+    "successful": false,
+    "error": "human_assistance_timeout",
+    "s3_state": "uploaded",
+    "s3_path": "crawls/company-crawls/dagster-crawl-a2c234d76f15d10d4af246611794da5b997de1a89238a4e75e008b923aa7c32e/attempts/0001/result.json.gz",
+    "elapsed_seconds": 15,
+    "archive_verified": true,
+    "stop_reason": "human_assistance_timeout",
+    "errors": [
+      {
+        "stage": "crawl",
+        "error": "blocked: human assistance timed out after 10 seconds"
+      }
+    ],
+    "site_info": {
+      "source_url": "https://allabolag.se/",
+      "scope": "first_page_only",
+      "evidence_status": "needs_review",
+      "crawl_decision": "needs_review",
+      "site_description": "The site's purpose and company activities could not be determined from the first page.",
+      "site_types": [
+        "unknown"
+      ],
+      "operator_name": null,
+      "purpose": null,
+      "business_activities": [],
+      "evidence": []
+    },
+    "final_url": "https://allabolag.se/",
+    "pages": [
+      {
+        "requested_url": "https://allabolag.se/",
+        "source_url": "https://www.allabolag.se/",
+        "status_code": 403,
+        "fetch_status": "failed",
+        "errors": [
+          "blocked: human assistance timed out after 10 seconds"
+        ],
+        "navigation_attempts": []
+      }
+    ],
+    "challenge_agent_results": [],
+    "usage": {
+      "calls": 0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0
+    }
+  },
+  {
+    "domain": "alltele.se",
+    "request_id": "dagster-crawl-54a21d4664d1f4dffd801e453eef96001f0ee37691f495472c9c02ff0f565a0c",
+    "state": "completed",
+    "crawl_status": "needs_review",
+    "successful": false,
+    "error": "",
+    "s3_state": "uploaded",
+    "s3_path": "crawls/company-crawls/dagster-crawl-54a21d4664d1f4dffd801e453eef96001f0ee37691f495472c9c02ff0f565a0c/attempts/0001/result.json.gz",
+    "elapsed_seconds": 4,
+    "archive_verified": true,
+    "stop_reason": "initial_page_unavailable",
+    "errors": [],
+    "site_info": {
+      "source_url": "https://alltele.se/",
+      "scope": "first_page_only",
+      "evidence_status": "needs_review",
+      "crawl_decision": "needs_review",
+      "site_description": "The site's purpose and company activities could not be determined from the first page.",
+      "site_types": [
+        "unknown"
+      ],
+      "operator_name": null,
+      "purpose": null,
+      "business_activities": [],
+      "evidence": []
+    },
+    "final_url": "https://alltele.se/",
+    "pages": [
+      {
+        "requested_url": "https://alltele.se/",
+        "source_url": "https://alltele.se/",
+        "status_code": null,
+        "fetch_status": "failed",
+        "errors": [
+          "Fetch returned HTTP None; Browser fetch failed (ERR_NAME_NOT_RESOLVED)",
+          "Fetch returned HTTP None; Browser fetch failed (ERR_NAME_NOT_RESOLVED)"
+        ],
+        "navigation_attempts": [
+          {
+            "url": "https://alltele.se/",
+            "error": "ERR_NAME_NOT_RESOLVED"
+          }
+        ]
+      }
+    ],
+    "challenge_agent_results": [],
+    "usage": {
+      "calls": 0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0
+    }
+  }
+]

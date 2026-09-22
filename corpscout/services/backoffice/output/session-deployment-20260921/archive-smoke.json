@@ -1,0 +1,8 @@
+{
+  "domain": "aga.se",
+  "request_id": "dagster-crawl-47cd60f3434431cd724136c76418856343f90a440c856c64f646a39e4e17103b",
+  "attempt": 1,
+  "status": "finished",
+  "schema": "company-crawl-result/1.2",
+  "jsonBytes": 1496017
+}

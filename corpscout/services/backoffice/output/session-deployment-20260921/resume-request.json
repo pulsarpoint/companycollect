@@ -1,0 +1,32 @@
+{
+  "request": {
+    "job": "company_brave_search_job",
+    "runConfig": {
+      "ops": {
+        "company_brave_search_results": {
+          "config": {
+            "execution_id": "ce521036-669b-4b96-8d1d-a71147c3bfa4"
+          }
+        }
+      }
+    },
+    "tags": {
+      "corpscout/company_area": "brave",
+      "corpscout/company_operation": "process",
+      "corpscout/country_iso2": "SE",
+      "corpscout/request_id": "a9b44804-acb0-4085-8d4b-997a4f9d0594",
+      "corpscout/requested_by": "backoffice",
+      "corpscout/resumed_after": "browser-service-0.8.0",
+      "corpscout/trigger_source": "backoffice",
+      "processing/task_id": "a9b44804-acb0-4085-8d4b-997a4f9d0594"
+    }
+  },
+  "checkpoint": [
+    {
+      "total": 15918,
+      "successful": 15709,
+      "failed": 209,
+      "distinct_inputs": 15918
+    }
+  ]
+}

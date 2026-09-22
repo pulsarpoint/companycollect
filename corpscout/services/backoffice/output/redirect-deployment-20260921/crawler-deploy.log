@@ -1,0 +1,132 @@
+
+PLAY [Deploy the Corpscout company crawler as a system service] ****************
+
+TASK [Create a temporary artifact directory] ***********************************
+ok: [company-research -> localhost]
+
+TASK [Build the application wheel] *********************************************
+ok: [company-research -> localhost]
+
+TASK [Export the service dependencies from the unchanged lockfile] *************
+ok: [company-research -> localhost]
+
+TASK [Locate the built wheel] **************************************************
+ok: [company-research -> localhost]
+
+TASK [Require exactly one application artifact] ********************************
+ok: [company-research -> localhost] => 
+    changed: false
+    msg: All assertions passed
+
+TASK [Hash the application and locked dependencies] ****************************
+ok: [company-research -> localhost] => (item=/var/folders/3d/ft4cxzhj2lg2gmwycfh8xg400000gn/T/company-research-deploy-sgt9ucgf/company_research-0.39.1-py3-none-any.whl)
+ok: [company-research -> localhost] => (item=/var/folders/3d/ft4cxzhj2lg2gmwycfh8xg400000gn/T/company-research-deploy-sgt9ucgf/requirements.txt)
+
+TASK [Identify the immutable release] ******************************************
+ok: [company-research -> localhost]
+
+TASK [Report the built release] ************************************************
+ok: [company-research -> localhost] => 
+    msg: Release 7bdd9439e710b420eb080bfb152dd97db12d910a38d2ce930d822e509ddc4d95 built
+        in /var/folders/3d/ft4cxzhj2lg2gmwycfh8xg400000gn/T/company-research-deploy-sgt9ucgf
+
+TASK [Read optional controller secrets] ****************************************
+ok: [company-research]
+
+TASK [Validate optional S3 delivery settings] **********************************
+ok: [company-research] => (item=(censored due to no_log))
+ok: [company-research] => (item=(censored due to no_log))
+ok: [company-research] => (item=(censored due to no_log))
+ok: [company-research] => (item=(censored due to no_log))
+ok: [company-research] => (item=(censored due to no_log))
+ok: [company-research] => (item=(censored due to no_log))
+ok: [company-research] => (item=(censored due to no_log))
+
+TASK [Require credentials for the selected inputs and default model] ***********
+ok: [company-research]
+
+TASK [Gather target platform information] **************************************
+ok: [company-research]
+
+TASK [Require a supported Linux system with systemd] ***************************
+ok: [company-research] => 
+    changed: false
+    msg: All assertions passed
+
+TASK [Record the release path] *************************************************
+ok: [company-research]
+
+TASK [Install Python bootstrap prerequisites] **********************************
+ok: [company-research]
+
+TASK [Create the service group] ************************************************
+ok: [company-research]
+
+TASK [Create the unprivileged service user] ************************************
+ok: [company-research]
+
+TASK [Create root-owned application directories] *******************************
+ok: [company-research] => (item=/opt/companycollect/corpscout/company_research)
+changed: [company-research] => (item=/opt/companycollect/corpscout/company_research/releases/7bdd9439e710b420eb080bfb152dd97db12d910a38d2ce930d822e509ddc4d95)
+ok: [company-research] => (item=/etc/company-research)
+
+TASK [Create persistent service state and browser cache] ***********************
+ok: [company-research] => (item=/var/lib/company-research)
+ok: [company-research] => (item=/var/lib/company-research/results)
+ok: [company-research] => (item=/var/cache/company-research)
+
+TASK [Install the pinned uv tool in its own environment] ***********************
+ok: [company-research]
+
+TASK [Copy only the application wheel and locked dependency list] **************
+changed: [company-research] => (item=/var/folders/3d/ft4cxzhj2lg2gmwycfh8xg400000gn/T/company-research-deploy-sgt9ucgf/company_research-0.39.1-py3-none-any.whl)
+changed: [company-research] => (item=/var/folders/3d/ft4cxzhj2lg2gmwycfh8xg400000gn/T/company-research-deploy-sgt9ucgf/requirements.txt)
+
+TASK [Inspect release installation status] *************************************
+ok: [company-research]
+
+TASK [Create the release environment using the pinned Python runtime] **********
+changed: [company-research]
+
+TASK [Install the exact locked dependencies with hash verification] ************
+changed: [company-research]
+
+TASK [Install the application wheel without resolving dependencies again] ******
+changed: [company-research]
+
+TASK [Verify the HTTP-only crawler imports without browser dependencies] *******
+ok: [company-research]
+
+TASK [Mark the successfully prepared release] **********************************
+changed: [company-research]
+
+TASK [Install the service credentials] *****************************************
+ok: [company-research]
+
+TASK [Select the prepared release] *********************************************
+changed: [company-research]
+
+TASK [Install the systemd service] *********************************************
+ok: [company-research]
+
+TASK [Validate the installed systemd unit] *************************************
+ok: [company-research]
+
+TASK [Apply pending service changes] *******************************************
+
+RUNNING HANDLER [Restart company research] *************************************
+changed: [company-research]
+
+TASK [Enable the service at boot and keep it running] **************************
+ok: [company-research]
+
+TASK [Wait for the REST worker and JetStream input to be ready] ****************
+FAILED - RETRYING: [company-research]: Wait for the REST worker and JetStream input to be ready (29 retries left).
+ok: [company-research]
+
+TASK [Remove the temporary controller artifacts] *******************************
+ok: [company-research -> localhost]
+
+PLAY RECAP *********************************************************************
+company-research           : ok=35   changed=8    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+

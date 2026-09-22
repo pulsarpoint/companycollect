@@ -116,44 +116,46 @@ function DnsRecordsTable({
   }
 
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Type</TableHead>
-          <TableHead>Value</TableHead>
-          <TableHead>First observed</TableHead>
-          <TableHead>Last observed</TableHead>
-          <TableHead>Evidence</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {hostname.records.map((record) => (
-          <TableRow key={`${record.type}:${record.priority}:${record.value}`}>
-            <TableCell>
-              <Badge variant="outline">{record.type}</Badge>
-            </TableCell>
-            <TableCell className="max-w-md whitespace-normal">
-              <span className="break-all font-mono text-xs">
-                {record.value}
-              </span>
-            </TableCell>
-            <TableCell className="text-muted-foreground text-xs tabular-nums">
-              {formatObservedAt(record.firstSeen)}
-            </TableCell>
-            <TableCell className="text-muted-foreground text-xs tabular-nums">
-              {formatObservedAt(record.lastSeen)}
-            </TableCell>
-            <TableCell>
-              {wasSeenInLatestScan(record, scanResolvedAt) ? (
-                <Badge variant="secondary">Latest scan</Badge>
-              ) : (
-                <Badge variant="outline">Historical</Badge>
-              )}
-            </TableCell>
+    <div className="max-h-[32rem] overflow-auto rounded-lg border">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Type</TableHead>
+            <TableHead>Value</TableHead>
+            <TableHead>First observed</TableHead>
+            <TableHead>Last observed</TableHead>
+            <TableHead>Evidence</TableHead>
           </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+        </TableHeader>
+        <TableBody>
+          {hostname.records.map((record) => (
+            <TableRow key={`${record.type}:${record.priority}:${record.value}`}>
+              <TableCell>
+                <Badge variant="outline">{record.type}</Badge>
+              </TableCell>
+              <TableCell className="max-w-md whitespace-normal">
+                <span className="break-all font-mono text-xs">
+                  {record.value}
+                </span>
+              </TableCell>
+              <TableCell className="text-muted-foreground text-xs tabular-nums">
+                {formatObservedAt(record.firstSeen)}
+              </TableCell>
+              <TableCell className="text-muted-foreground text-xs tabular-nums">
+                {formatObservedAt(record.lastSeen)}
+              </TableCell>
+              <TableCell>
+                {wasSeenInLatestScan(record, scanResolvedAt) ? (
+                  <Badge variant="secondary">Latest scan</Badge>
+                ) : (
+                  <Badge variant="outline">Historical</Badge>
+                )}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
   );
 }
 
@@ -348,8 +350,7 @@ function HostnameDetails({
         <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
           <h4 className="text-sm font-medium">DNS records</h4>
           <span className="text-muted-foreground text-xs">
-            DNSSEC signatures are summarized at domain level; RRSIG rows are
-            omitted.
+            All observed record types are included, including DNSSEC signatures.
           </span>
         </div>
         <DnsRecordsTable hostname={hostname} scanResolvedAt={scanResolvedAt} />
@@ -465,7 +466,7 @@ export function TechnologyInfrastructureSection({
                   {numberFormat.format(summary.dnsHostnames)} DNS-confirmed
                 </p>
                 <p className="text-muted-foreground mt-1 text-xs">
-                  Answered with A, AAAA, or CNAME
+                  Observed in DNS records
                 </p>
               </div>
             </div>

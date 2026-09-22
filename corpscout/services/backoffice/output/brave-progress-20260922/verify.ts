@@ -1,0 +1,10 @@
+import {readFileSync,writeFileSync} from 'node:fs';
+import {runStatus} from '../../app/lib/dagster.server';
+import {chQuery} from '../../app/lib/clickhouse.server';
+const folder='output/brave-progress-20260922';
+const receipt=JSON.parse(readFileSync(`${folder}/resumed-run.json`,'utf8'));
+const run=await runStatus(receipt.runId);
+const execution=JSON.parse(run.tags['brave/execution']??'{}');
+const counts=await chQuery<any>(`SELECT count() processed,countIf(status='success') succeeded,countIf(status='error') failed,uniqExact(input_id) distinct_inputs,countIf(source_run_id={run:String}) new_results,max(completed_at) latest FROM company_brave_search_results FINAL WHERE execution_id={id:UUID}`,{id:'ce521036-669b-4b96-8d1d-a71147c3bfa4',run:run.runId});
+const output={runId:run.runId,status:run.status,execution_id:execution.execution_id,config:run.runConfig,counts};
+writeFileSync(`${folder}/verification.json`,JSON.stringify(output,null,2));console.log(JSON.stringify(output,null,2));

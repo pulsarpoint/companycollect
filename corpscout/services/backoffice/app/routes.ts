@@ -193,7 +193,14 @@ export default [
       // Every (company, domain) row of the SE domain entity, then one domain:
       // the companies claiming it and its Common Crawl graph neighbours.
       route("domains", "routes/admin-se-companies-domains.tsx"),
-      route("domains/:domain", "routes/admin-se-companies-domain.tsx"),
+      route("domains/:domain", "routes/admin-se-companies-domain.tsx", [
+        index("routes/admin-se-domain-technology.tsx"),
+        route("web-intelligence", "routes/admin-se-domain-web-intelligence.tsx"),
+        route("infrastructure", "routes/admin-se-domain-infrastructure.tsx"),
+        route("ip-addresses", "routes/admin-se-domain-ip-addresses.tsx"),
+        route("ip-addresses/:address", "routes/admin-se-domain-ip-address.tsx"),
+        route("mail-security", "routes/admin-se-domain-mail-security.tsx"),
+      ]),
     ]),
     // The all-people LIST area: a sibling of se/companies, not one of its tabs --
     // every published person across every company, server-paged and filtered.

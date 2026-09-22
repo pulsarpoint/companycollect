@@ -1,0 +1,176 @@
+[
+  {
+    "domain": "abogaranti.se",
+    "s3_path": "crawls/company-crawls/dagster-crawl-7fa71c8474025c0de0a080110097cf398685512615e88b4385ec70a66db7cc89/attempts/0001/result.json.gz",
+    "schema": "company-crawl-result/1.2",
+    "status": "needs_review",
+    "stop_reason": "browser_unavailable",
+    "errors": [
+      {
+        "stage": "crawl",
+        "error": "Assigned browser is unavailable; retry in the same session"
+      }
+    ],
+    "site_info": {
+      "source_url": "https://abogaranti.se/",
+      "scope": "first_page_only",
+      "evidence_status": "needs_review",
+      "crawl_decision": "needs_review",
+      "site_description": "The site's purpose and company activities could not be determined from the first page.",
+      "site_types": [
+        "unknown"
+      ],
+      "operator_name": null,
+      "purpose": null,
+      "business_activities": [],
+      "evidence": []
+    },
+    "pages": [
+      {
+        "url": "https://abogaranti.se/",
+        "status": null,
+        "errors": []
+      }
+    ],
+    "challenge_agent_results": []
+  },
+  {
+    "domain": "addage.org",
+    "s3_path": "crawls/company-crawls/dagster-crawl-416ae563c260d32a5436589000123bb40fb8a84f89a80bf5594e25e93222583f/attempts/0001/result.json.gz",
+    "schema": "company-crawl-result/1.2",
+    "status": "needs_review",
+    "stop_reason": "browser_unavailable",
+    "errors": [
+      {
+        "stage": "crawl",
+        "error": "Assigned browser is unavailable; retry in the same session"
+      }
+    ],
+    "site_info": {
+      "source_url": "https://addage.org/",
+      "scope": "first_page_only",
+      "evidence_status": "needs_review",
+      "crawl_decision": "needs_review",
+      "site_description": "The site's purpose and company activities could not be determined from the first page.",
+      "site_types": [
+        "unknown"
+      ],
+      "operator_name": null,
+      "purpose": null,
+      "business_activities": [],
+      "evidence": []
+    },
+    "pages": [
+      {
+        "url": "https://addage.org/",
+        "status": null,
+        "errors": []
+      }
+    ],
+    "challenge_agent_results": []
+  },
+  {
+    "domain": "adlibris.com",
+    "s3_path": "crawls/company-crawls/dagster-crawl-893dafafc632ac3c5388bbf7ea47ed0023f583b512916be15f17b8828049c265/attempts/0001/result.json.gz",
+    "schema": "company-crawl-result/1.2",
+    "status": "needs_review",
+    "stop_reason": "initial_page_unavailable",
+    "errors": [],
+    "site_info": {
+      "source_url": "https://adlibris.com/",
+      "scope": "first_page_only",
+      "evidence_status": "needs_review",
+      "crawl_decision": "needs_review",
+      "site_description": "The site's purpose and company activities could not be determined from the first page.",
+      "site_types": [
+        "unknown"
+      ],
+      "operator_name": null,
+      "purpose": null,
+      "business_activities": [],
+      "evidence": []
+    },
+    "pages": [
+      {
+        "url": "https://adlibris.com/",
+        "status": 403,
+        "errors": [
+          "Fetch returned HTTP 403; robots.txt unavailable (HTTP 429)"
+        ]
+      }
+    ],
+    "challenge_agent_results": []
+  },
+  {
+    "domain": "allabolag.se",
+    "s3_path": "crawls/company-crawls/dagster-crawl-9b0b43cb2c38e2d3b8d34d06b62c6d401611ce8c01d723453aba9b90c90df4f6/attempts/0001/result.json.gz",
+    "schema": "company-crawl-result/1.2",
+    "status": "failed",
+    "stop_reason": "human_assistance_timeout",
+    "errors": [
+      {
+        "stage": "crawl",
+        "error": "blocked: human assistance timed out after 10 seconds"
+      }
+    ],
+    "site_info": {
+      "source_url": "https://allabolag.se/",
+      "scope": "first_page_only",
+      "evidence_status": "needs_review",
+      "crawl_decision": "needs_review",
+      "site_description": "The site's purpose and company activities could not be determined from the first page.",
+      "site_types": [
+        "unknown"
+      ],
+      "operator_name": null,
+      "purpose": null,
+      "business_activities": [],
+      "evidence": []
+    },
+    "pages": [
+      {
+        "url": "https://www.allabolag.se/",
+        "status": 403,
+        "errors": [
+          "blocked: human assistance timed out after 10 seconds"
+        ]
+      }
+    ],
+    "challenge_agent_results": []
+  },
+  {
+    "domain": "alltele.se",
+    "s3_path": "crawls/company-crawls/dagster-crawl-c2dc5e84f52165521b34988bc71d8362d35759d24659283ef54623281c451ff6/attempts/0001/result.json.gz",
+    "schema": "company-crawl-result/1.2",
+    "status": "needs_review",
+    "stop_reason": "browser_unavailable",
+    "errors": [
+      {
+        "stage": "crawl",
+        "error": "Assigned browser is unavailable; retry in the same session"
+      }
+    ],
+    "site_info": {
+      "source_url": "https://alltele.se/",
+      "scope": "first_page_only",
+      "evidence_status": "needs_review",
+      "crawl_decision": "needs_review",
+      "site_description": "The site's purpose and company activities could not be determined from the first page.",
+      "site_types": [
+        "unknown"
+      ],
+      "operator_name": null,
+      "purpose": null,
+      "business_activities": [],
+      "evidence": []
+    },
+    "pages": [
+      {
+        "url": "https://alltele.se/",
+        "status": null,
+        "errors": []
+      }
+    ],
+    "challenge_agent_results": []
+  }
+]

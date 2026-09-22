@@ -1,0 +1,9 @@
+{
+  "dropped": [
+    "company_brave_search_latest",
+    "website_crawl_results_s3",
+    "website_full_crawl_results_current",
+    "website_jobs_crawl_results_current",
+    "website_site_info_results_current"
+  ]
+}

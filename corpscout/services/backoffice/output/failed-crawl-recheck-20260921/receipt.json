@@ -1,0 +1,14 @@
+{
+  "runId": "cdc00d29-c184-42fd-b2bc-65ef2c9576db",
+  "status": "QUEUED",
+  "runUrl": "http://dagster:3000/runs/cdc00d29-c184-42fd-b2bc-65ef2c9576db",
+  "batchId": "19ea6d58-e390-4594-80a9-3b8ca713bc70",
+  "count": 5,
+  "domains": [
+    "abogaranti.se",
+    "addage.org",
+    "adlibris.com",
+    "allabolag.se",
+    "alltele.se"
+  ]
+}

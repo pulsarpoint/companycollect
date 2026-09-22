@@ -1,0 +1,33 @@
+{
+  "rows": [
+    {
+      "run_id": "958b85d0-f442-4901-b090-370fa223f5c5",
+      "rows": 7,
+      "domains": 7,
+      "successes": 0,
+      "unsuccessful": 7
+    },
+    {
+      "run_id": "21641399-34d9-48fe-9747-7c011915c1d2",
+      "rows": 50,
+      "domains": 50,
+      "successes": 43,
+      "unsuccessful": 7
+    }
+  ],
+  "submitted": [
+    {
+      "run_id": "958b85d0-f442-4901-b090-370fa223f5c5",
+      "requests": 7
+    },
+    {
+      "run_id": "21641399-34d9-48fe-9747-7c011915c1d2",
+      "requests": 50
+    }
+  ],
+  "freshness": [
+    {
+      "fresh_domains": 43
+    }
+  ]
+}

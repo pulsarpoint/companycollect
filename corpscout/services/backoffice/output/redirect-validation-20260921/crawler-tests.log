@@ -1,0 +1,24 @@
+Executing <Task finished name='Task-2' coro=<ArtifactRetentionTests.test_both_modes_publish_replayable_results() done, defined at /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/company_research/tests/test_artifacts.py:22> result=None created at /Users/graovic/.local/share/uv/python/cpython-3.14.2-macos-aarch64-none/lib/python3.14/asyncio/runners.py:109> took 0.131 seconds
+Verification browser recovery failed in browser-1 (OSError)
+Verification browser recovery failed in browser-1 (OSError)
+Verification browser recovery failed in browser-1 (OSError)
+Collected 000-p0001: 1 raw mentions
+Finished https://example.test/: 1 decisions
+Collected 000-p0000: 1 raw mentions
+Finished https://example.test/: 1 decisions
+/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/company_research/src/company_research/content.py:238: MarkupResemblesLocatorWarning: The input passed in on this line looks more like a URL than HTML or XML.
+
+If you meant to use Beautiful Soup to parse the web page found at a certain URL, then something has gone wrong. You should use an Python package like 'requests' to fetch the content behind the URL. Once you have the content as a string, you can feed that string into Beautiful Soup.
+
+However, if you want to parse some data that happens to look like a URL, then nothing has gone wrong: you are using Beautiful Soup correctly, and this warning is spurious and can be filtered. To make this warning go away, run this code before calling the BeautifulSoup constructor:
+
+    from bs4 import MarkupResemblesLocatorWarning
+    import warnings
+
+    warnings.filterwarnings("ignore", category=MarkupResemblesLocatorWarning)
+    
+  BeautifulSoup(fragment, "html.parser").get_text(" ", strip=True)
+----------------------------------------------------------------------
+Ran 366 tests in 76.139s
+
+OK (skipped=45)

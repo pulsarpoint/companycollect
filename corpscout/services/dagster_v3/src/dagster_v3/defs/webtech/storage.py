@@ -18,6 +18,14 @@ from dagster_v3.defs.webtech.models import (
     WebtechCandidate,
 )
 
+from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
+from dagster_v3.defs.webtech.technologies import (
+    WEBTECH_TECHNOLOGY_TABLE,
+    insert_technology_rows,
+    load_technology_catalog,
+    technology_rows,
+)
+
 WEBTECH_CLICKHOUSE_DATABASE = "corpscout"
 WEBTECH_RESULT_TABLE = "webtech_domain_scan_results"
 
@@ -64,9 +72,7 @@ def parse_webtech_s3_path(value: str) -> WebtechS3Destination:
     if parsed.query or parsed.fragment:
         raise ValueError("WEBTECH_S3_PATH must not contain a query or fragment")
     prefix = parsed.path.strip("/")
-    if prefix == "" or any(
-        part in {"", ".", ".."} for part in prefix.split("/")
-    ):
+    if prefix == "" or any(part in {"", ".", ".."} for part in prefix.split("/")):
         raise ValueError("WEBTECH_S3_PATH must contain a valid prefix")
     return WebtechS3Destination(bucket=parsed.netloc, prefix=prefix)
 
@@ -157,7 +163,9 @@ def read_final_manifest(
     ):
         raise ValueError("final manifest identity does not match the Dagster output")
     if len(manifest.results) != reference.total_count:
-        raise ValueError("final manifest result count does not match the remote snapshot")
+        raise ValueError(
+            "final manifest result count does not match the remote snapshot"
+        )
     return manifest
 
 
@@ -175,8 +183,21 @@ def index_final_results(
         destination=destination,
         reference=reference,
     )
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=WEBTECH_CLICKHOUSE_DATABASE,
+        tables=[
+            WEBTECH_RESULT_TABLE,
+            WEBTECH_TECHNOLOGY_TABLE,
+            "technology_catalog",
+            "technology_aliases",
+        ],
+    )
+    with clickhouse.get_connection() as client:
+        catalog = load_technology_catalog(client)
     recorded_at = datetime.now(UTC)
     rows = []
+    detections = []
     seen_domains: set[str] = set()
     for result_reference in manifest.results:
         if result_reference.root_domain in seen_domains:
@@ -195,6 +216,16 @@ def index_final_results(
             result_reference=result_reference,
             manifest=manifest,
         )
+        detections.extend(
+            technology_rows(
+                document,
+                result_reference,
+                catalog,
+                bucket=destination.bucket,
+                run_id=dagster_run_id,
+                recorded_at=recorded_at,
+            )
+        )
         rows.append(
             _clickhouse_row(
                 document,
@@ -207,6 +238,8 @@ def index_final_results(
 
     if rows:
         with clickhouse.get_connection() as client:
+            # Publish the result index only after its complete detection set.
+            insert_technology_rows(client, detections)
             client.execute(
                 f"""
                 INSERT INTO {WEBTECH_CLICKHOUSE_DATABASE}.{WEBTECH_RESULT_TABLE}
@@ -243,9 +276,7 @@ def _validate_result_identity(
         or document.outcome != result_reference.outcome
         or _technology_count(document.report) != result_reference.technology_count
     ):
-        raise ValueError(
-            f"result identity mismatch: {result_reference.object_key}"
-        )
+        raise ValueError(f"result identity mismatch: {result_reference.object_key}")
 
 
 def _clickhouse_row(

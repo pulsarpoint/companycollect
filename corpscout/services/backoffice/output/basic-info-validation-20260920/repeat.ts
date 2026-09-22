@@ -1,0 +1,12 @@
+import {readFileSync,writeFileSync} from 'node:fs';
+import {startSavedCrawls} from '../../app/lib/crawl-inputs.server';
+const root='output/basic-info-validation-20260920';
+const done=JSON.parse(readFileSync(`${root}/completion.json`,'utf8'));
+if(done.status!=='SUCCESS')throw new Error('Original batch must finish before the verification replay');
+const settings=JSON.parse(readFileSync(`${root}/submission.json`,'utf8'));
+settings.batch_id=crypto.randomUUID();settings.max_in_flight='1';
+writeFileSync(`${root}/repeat/submission.json`,JSON.stringify(settings,null,2));
+const form=new FormData();for(const [k,v] of Object.entries(settings))form.set(k,String(v));
+const receipt=await startSavedCrawls(form);
+writeFileSync(`${root}/repeat/receipt.json`,JSON.stringify(receipt,null,2));
+console.log(JSON.stringify(receipt));

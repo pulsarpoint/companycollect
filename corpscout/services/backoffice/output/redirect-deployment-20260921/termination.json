@@ -1,0 +1,11 @@
+{
+  "data": {
+    "terminateRun": {
+      "__typename": "TerminateRunSuccess",
+      "run": {
+        "runId": "ce521036-669b-4b96-8d1d-a71147c3bfa4",
+        "status": "STARTED"
+      }
+    }
+  }
+}

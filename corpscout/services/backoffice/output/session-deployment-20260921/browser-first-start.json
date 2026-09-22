@@ -1,0 +1,216 @@
+{
+  "version": "0.8.0",
+  "healthy": true,
+  "settings": {
+    "source": "sqlite",
+    "startup": {
+      "max_browsers": 6,
+      "idle_timeout_seconds": 120,
+      "session_retention_days": 7
+    },
+    "current": {
+      "max_browsers": 6,
+      "idle_timeout_seconds": 120,
+      "session_retention_days": 7
+    },
+    "capacity": {
+      "occupied": 0,
+      "available": 6
+    }
+  },
+  "active": [],
+  "saved": [
+    {
+      "id": "8cee3ebbab7155cf87e7315d1bb63f44",
+      "state": "closed",
+      "headless": true,
+      "route": "crawl_proxy2",
+      "label": "Imported headless-4 · crawl_proxy2",
+      "pinned": true
+    },
+    {
+      "id": "24a4f68ca8ae56dc8ae330aea372df03",
+      "state": "closed",
+      "headless": true,
+      "route": "crawl_proxy1",
+      "label": "Imported headless-4 · crawl_proxy1",
+      "pinned": true
+    },
+    {
+      "id": "94c061a26073566bad73e671b8432cf7",
+      "state": "closed",
+      "headless": true,
+      "route": "crawl_proxy3",
+      "label": "Imported headless-4 · crawl_proxy3",
+      "pinned": true
+    },
+    {
+      "id": "44b4240976285144b6f5eff232b7f553",
+      "state": "closed",
+      "headless": true,
+      "route": "direct",
+      "label": "Imported headless-4 · direct",
+      "pinned": true
+    },
+    {
+      "id": "8b9344dd979558848dbe8a075b5dfe9d",
+      "state": "closed",
+      "headless": true,
+      "route": "crawl_proxy2",
+      "label": "Imported headless-3 · crawl_proxy2",
+      "pinned": true
+    },
+    {
+      "id": "494b80eb6962535f99b7ca4459e2b2cf",
+      "state": "closed",
+      "headless": true,
+      "route": "crawl_proxy1",
+      "label": "Imported headless-3 · crawl_proxy1",
+      "pinned": true
+    },
+    {
+      "id": "e3731623255d52e09eb375f254cbf16f",
+      "state": "closed",
+      "headless": true,
+      "route": "crawl_proxy3",
+      "label": "Imported headless-3 · crawl_proxy3",
+      "pinned": true
+    },
+    {
+      "id": "87cd01636852554c8f4dbb8b18002b6d",
+      "state": "closed",
+      "headless": true,
+      "route": "direct",
+      "label": "Imported headless-3 · direct",
+      "pinned": true
+    },
+    {
+      "id": "0c37c2c88f2f56a987c696c88e394733",
+      "state": "closed",
+      "headless": false,
+      "route": "crawl_proxy2",
+      "label": "Imported browser-2 · crawl_proxy2",
+      "pinned": true
+    },
+    {
+      "id": "df4c73f4c7515c538c651e54782f6793",
+      "state": "closed",
+      "headless": false,
+      "route": "crawl_proxy1",
+      "label": "Imported browser-2 · crawl_proxy1",
+      "pinned": true
+    },
+    {
+      "id": "38cbe0f74e11530cacdf895467a8667f",
+      "state": "closed",
+      "headless": false,
+      "route": "crawl_proxy3",
+      "label": "Imported browser-2 · crawl_proxy3",
+      "pinned": true
+    },
+    {
+      "id": "3797960b505055e79d49354b0a124ffc",
+      "state": "closed",
+      "headless": false,
+      "route": "direct",
+      "label": "Imported browser-2 · direct",
+      "pinned": true
+    },
+    {
+      "id": "e8ef33c55af654e99b514099d8588487",
+      "state": "closed",
+      "headless": true,
+      "route": "crawl_proxy2",
+      "label": "Imported headless-2 · crawl_proxy2",
+      "pinned": true
+    },
+    {
+      "id": "eeb5e477438b523a97c84589d0f9e5c3",
+      "state": "closed",
+      "headless": true,
+      "route": "crawl_proxy1",
+      "label": "Imported headless-2 · crawl_proxy1",
+      "pinned": true
+    },
+    {
+      "id": "48e468180d4d516a9b299aa8734fd480",
+      "state": "closed",
+      "headless": true,
+      "route": "crawl_proxy3",
+      "label": "Imported headless-2 · crawl_proxy3",
+      "pinned": true
+    },
+    {
+      "id": "56f44d3fd09653ac86ecc6805b428409",
+      "state": "closed",
+      "headless": true,
+      "route": "direct",
+      "label": "Imported headless-2 · direct",
+      "pinned": true
+    },
+    {
+      "id": "b72499f8b20f575491e627dff582a050",
+      "state": "closed",
+      "headless": false,
+      "route": "crawl_proxy2",
+      "label": "Imported browser-1 · crawl_proxy2",
+      "pinned": true
+    },
+    {
+      "id": "aa5db9d0aac154028102acd66c034c38",
+      "state": "closed",
+      "headless": false,
+      "route": "crawl_proxy1",
+      "label": "Imported browser-1 · crawl_proxy1",
+      "pinned": true
+    },
+    {
+      "id": "456c0efdf4c15ff0bb25976ce63266e1",
+      "state": "closed",
+      "headless": false,
+      "route": "crawl_proxy3",
+      "label": "Imported browser-1 · crawl_proxy3",
+      "pinned": true
+    },
+    {
+      "id": "221292ee1f255a15aefb5e8701fa006a",
+      "state": "closed",
+      "headless": false,
+      "route": "direct",
+      "label": "Imported browser-1 · direct",
+      "pinned": true
+    },
+    {
+      "id": "4fb64f94d524554bab40ff33467b9a97",
+      "state": "closed",
+      "headless": true,
+      "route": "crawl_proxy2",
+      "label": "Imported headless-1 · crawl_proxy2",
+      "pinned": true
+    },
+    {
+      "id": "c1e54719fbc6535281d0a560d0ae0f03",
+      "state": "closed",
+      "headless": true,
+      "route": "crawl_proxy1",
+      "label": "Imported headless-1 · crawl_proxy1",
+      "pinned": true
+    },
+    {
+      "id": "34c23b65fa515f90bfa141373fffc9f4",
+      "state": "closed",
+      "headless": true,
+      "route": "crawl_proxy3",
+      "label": "Imported headless-1 · crawl_proxy3",
+      "pinned": true
+    },
+    {
+      "id": "98852b3494015ab09a51376f0b55ec2b",
+      "state": "closed",
+      "headless": true,
+      "route": "direct",
+      "label": "Imported headless-1 · direct",
+      "pinned": true
+    }
+  ]
+}

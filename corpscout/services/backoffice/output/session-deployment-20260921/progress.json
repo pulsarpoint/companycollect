@@ -1,0 +1,107 @@
+{
+  "brave": {
+    "runId": "19ac7955-07a7-46d9-beef-b92d45d06580",
+    "status": "STARTED",
+    "rows": [
+      {
+        "route": "direct",
+        "status": "success",
+        "error_type": "",
+        "error_stage": "",
+        "n": 1
+      },
+      {
+        "route": "crawl_proxy1",
+        "status": "success",
+        "error_type": "",
+        "error_stage": "",
+        "n": 1
+      },
+      {
+        "route": "crawl_proxy2",
+        "status": "success",
+        "error_type": "",
+        "error_stage": "",
+        "n": 1
+      },
+      {
+        "route": "crawl_proxy3",
+        "status": "success",
+        "error_type": "",
+        "error_stage": "",
+        "n": 1
+      }
+    ]
+  },
+  "crawl": {
+    "runId": "1c147fa2-8890-466e-88f4-b31e34c86030",
+    "status": "SUCCESS",
+    "rows": [
+      {
+        "domain": "aga.se",
+        "request_id": "dagster-crawl-2cd5078f78bf41a64ac7a152c85dccbe474a8deb366946149c974138b6fdceca",
+        "state": "completed",
+        "successful": true,
+        "error": "",
+        "s3_path": "crawls/company-crawls/dagster-crawl-2cd5078f78bf41a64ac7a152c85dccbe474a8deb366946149c974138b6fdceca/attempts/0001/result.json.gz"
+      }
+    ],
+    "submissions": [
+      {
+        "request_id": "dagster-crawl-2cd5078f78bf41a64ac7a152c85dccbe474a8deb366946149c974138b6fdceca"
+      }
+    ],
+    "job": {
+      "state": "completed",
+      "reason": "Fetching page",
+      "error": null,
+      "collected_pages": 1,
+      "browser_lease_id": "a73cab70a7234c999f553f45b1499cad",
+      "browser_execution_id": "3b44c8d80a384ffe8cbe6ecbf547be8a",
+      "s3_state": "uploaded",
+      "crawl_status": "finished"
+    }
+  },
+  "browser": {
+    "version": "0.8.0",
+    "settings": {
+      "source": "sqlite",
+      "startup": {
+        "max_browsers": 6,
+        "idle_timeout_seconds": 120,
+        "session_retention_days": 7
+      },
+      "current": {
+        "max_browsers": 6,
+        "idle_timeout_seconds": 120,
+        "session_retention_days": 7
+      },
+      "capacity": {
+        "occupied": 4,
+        "available": 2
+      }
+    },
+    "active": [
+      {
+        "session_id": "0929c5b393214f828dd32d2236a9d165",
+        "state": "ready",
+        "domain": "search.brave.com"
+      },
+      {
+        "session_id": "a685d75be5a342229b6216a4a0cc1ab1",
+        "state": "ready",
+        "domain": "search.brave.com"
+      },
+      {
+        "session_id": "07df479dcf1449bba26315c01f081059",
+        "state": "ready",
+        "domain": "search.brave.com"
+      },
+      {
+        "session_id": "0b21c3420182491592b448beae1a3485",
+        "state": "ready",
+        "domain": "search.brave.com"
+      }
+    ]
+  }
+}

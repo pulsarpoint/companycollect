@@ -1,0 +1,12 @@
+import {writeFileSync,existsSync,readFileSync} from 'node:fs';
+import {runStatus} from '../../app/lib/dagster.server';
+import {chQuery} from '../../app/lib/clickhouse.server';
+import {browserRequest} from '../../app/lib/browser-service.server';
+const folder='output/brave-progress-20260922';
+const run=await runStatus('19ac7955-07a7-46d9-beef-b92d45d06580');
+if(!existsSync(`${folder}/original-runs.json`))writeFileSync(`${folder}/original-runs.json`,JSON.stringify([run],null,2),{mode:0o600});
+const execution=JSON.parse(run.tags['brave/execution']);
+const [counts]=await chQuery<any>(`SELECT count() processed,countIf(status='success') succeeded,countIf(status='error') failed,uniqExact(input_id) distinct_inputs FROM company_brave_search_results FINAL WHERE execution_id={id:UUID}`,{id:execution.execution_id});
+const browser=await(await browserRequest('/v1/server')).json();
+const output={run:run.runId,status:run.status,execution:execution.execution_id,total:execution.source_info.total,counts,active:browser.leases.filter((r:any)=>!r.ended_at).map((r:any)=>({id:r.id,domain:r.domain,state:r.state}))};
+writeFileSync(`${folder}/checkpoint.json`,JSON.stringify(output,null,2));console.log(JSON.stringify(output,null,2));

@@ -1,0 +1,414 @@
+{
+  "runs": [
+    {
+      "runId": "952c6607-49b4-4667-9572-7b10fd9471d6",
+      "status": "STARTED",
+      "jobName": "company_brave_search_job"
+    },
+    {
+      "runId": "016d2b41-c020-45fd-a677-f9aaac732e5e",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "c2c02bc5-c049-4101-b80f-183aa9a1544b",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "198c0847-1b04-4202-abfb-ecdeb215ca39",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "4aa098d1-7935-4b2e-9061-d04c66748dff",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "34ec2fcb-9d54-4b17-8835-bbe1347d0cf9",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "29427159-0e50-42bc-bfb4-966dc8a1198f",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "3e20712d-b719-4989-973a-ef1be12c6904",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "83639eae-7779-4213-b3b5-20a66a0fe8c0",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "2c6ed2ad-2928-4dea-a3c1-1ee64159df33",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "8ed2dc63-6ee9-416a-baad-c1119452d313",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "9a76e5bf-1a84-400d-ab46-3c8ef22cd90f",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "6bbb2d42-5574-4f2b-89ed-65f0a3d52fe4",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "db0eb090-53d0-4142-b82c-f82d2e8f449e",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "8cf08fe5-e88a-4ed6-82f2-9f6e7e1c3311",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "1779090a-edd2-439a-9fb1-9049f224758a",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "7111b321-fda9-4516-8c4c-127a73283c40",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "b8bf58f5-6c53-4d34-863a-b14bf4ee2aa5",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "6db4d14c-068d-4f75-9aaa-fefe99ccb671",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "353b209a-789f-4f45-b750-2607cc26f5c8",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "35720189-5cee-4152-8f92-4fda7cacdcea",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "405ead34-8e8e-4635-a9d7-626c32238eaa",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "3cedbf1e-18e4-447d-bded-1226a08feedd",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "1cb871a1-5d4a-4a55-aa92-07bd17a5d4e4",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "26321007-3780-4173-86a2-522ba9d0781c",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "b4e3f0ba-6362-4280-a843-0ae3ee28360f",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "fae7ee82-977f-4ce4-8988-2d3a74c926b3",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "197ce213-aa9f-4574-a920-63072b77038c",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "5f9fd3a8-7f34-4784-8001-8d2b6d9199bb",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "aa6a577a-9ea2-406b-a36a-d5616a0f5d0a",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "7c086064-78e9-4fc4-aafa-318691caba00",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "f3c48598-b813-44ec-a525-bdb5a2731309",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "ac288808-8fba-4709-9aa1-a2e8f96cb625",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "131d48ba-f9b1-4f0b-9f0d-46f638943193",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "d105881a-dddf-4f37-b1f1-6ed85b45b5f4",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "59c63026-5547-4cc1-af87-7171e075fb3b",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "e27bc89d-f05f-4762-9746-8df87938c520",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "2d99e40c-ca79-493a-9fe3-b93d557bdbfb",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "788be926-8036-4bd1-9e44-74bcf09dd486",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "82f810dc-6454-424c-9682-cd045c4aba9f",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "5d4a927e-95f6-4619-a5b4-1dc4a12b9e60",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "b0ec6dcf-a89c-462d-a4f6-cdbb7ce2ef8f",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "46aeacbf-6436-45e5-968d-e36be5f95361",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "a8ccf614-b57e-4444-baec-b455edd09299",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "7e0c0133-0054-4d60-9e83-b753d1d4101a",
+      "status": "QUEUED",
+      "jobName": "__ASSET_JOB"
+    },
+    {
+      "runId": "9da5e2b5-4529-4780-b8b4-74cd53326e8d",
+      "status": "STARTED",
+      "jobName": "__ASSET_JOB"
+    }
+  ],
+  "brave": [
+    {
+      "runId": "952c6607-49b4-4667-9572-7b10fd9471d6",
+      "status": "STARTED",
+      "jobName": "company_brave_search_job",
+      "startTime": 1790016879.635599,
+      "endTime": null,
+      "runConfig": {
+        "ops": {
+          "se_company_brave_domains": {
+            "config": {
+              "execution_id": "ce521036-669b-4b96-8d1d-a71147c3bfa4"
+            }
+          }
+        }
+      },
+      "selectedAssets": null,
+      "tags": {
+        "brave/execution": "{\"execution_id\": \"ce521036-669b-4b96-8d1d-a71147c3bfa4\", \"task_id\": \"a9b44804-acb0-4085-8d4b-997a4f9d0594\", \"started_at\": \"2026-09-20T21:42:05.279547+00:00\", \"source_info\": {\"total\": 736554, \"relation\": \"corpscout.company_brave_search_input\", \"upper_id\": \"SE:5932001745\", \"table_uuid\": \"ed67e5fa-2bb1-429a-85d5-8368115f8cd5\", \"selection_task_id\": \"a9b44804-acb0-4085-8d4b-997a4f9d0594\"}, \"input_relation\": \"corpscout.company_brave_search_input\", \"force\": false, \"rescan_old\": false, \"query_type\": \"official_website\", \"query_template\": \"Find the official website of {company_name}.\"}",
+        "corpscout/company_area": "brave",
+        "corpscout/company_operation": "process",
+        "corpscout/country_iso2": "SE",
+        "corpscout/request_id": "a9b44804-acb0-4085-8d4b-997a4f9d0594",
+        "corpscout/requested_by": "backoffice",
+        "corpscout/resumed_after": "browser-service-0.7.4",
+        "corpscout/trigger_source": "backoffice",
+        "dagster/code_location": "dagster_v3",
+        "processing/task_id": "a9b44804-acb0-4085-8d4b-997a4f9d0594"
+      }
+    }
+  ],
+  "browser": {
+    "version": "0.7.4",
+    "pool": {
+      "source": "sqlite",
+      "startup": {
+        "headless_count": 0,
+        "headed_count": 2
+      },
+      "desired": {
+        "headless_count": 4,
+        "headed_count": 2
+      },
+      "current": {
+        "headless_count": 4,
+        "headed_count": 2
+      },
+      "draining": [],
+      "applying": false
+    },
+    "settings": {
+      "source": "startup",
+      "startup": {
+        "idle_timeout_seconds": 120
+      },
+      "current": {
+        "idle_timeout_seconds": 120
+      }
+    },
+    "active": [
+      {
+        "id": "81eefa81d0114df5b58c72f223bed033",
+        "request_id": "dagster-eb5df05c-3b72-5121-8dc4-6118cd0bdd24",
+        "domain": "search.brave.com"
+      },
+      {
+        "id": "0e127b51065946eba52281ec034885ea",
+        "request_id": "dagster-a5704634-9d6b-5754-81d2-99468c917645",
+        "domain": "search.brave.com"
+      },
+      {
+        "id": "47d2264f5f174243b8b0f836021f39d3",
+        "request_id": "dagster-88b0393c-42fe-5637-b210-1bbb9bcd54bf",
+        "domain": "search.brave.com"
+      },
+      {
+        "id": "2fba97ab72944f8784acc2037ef85251",
+        "request_id": "dagster-7e454bfc-c468-588b-8c0f-bb99672c2451",
+        "domain": "search.brave.com"
+      }
+    ]
+  },
+  "crawls": [],
+  "tables": [
+    {
+      "name": "company_brave_search_input",
+      "engine": "MergeTree",
+      "total_rows": 1474753
+    },
+    {
+      "name": "company_brave_search_latest",
+      "engine": "View",
+      "total_rows": null
+    },
+    {
+      "name": "company_brave_search_results",
+      "engine": "ReplacingMergeTree",
+      "total_rows": 26863
+    },
+    {
+      "name": "se_company_brave_domains",
+      "engine": "ReplacingMergeTree",
+      "total_rows": 22640
+    },
+    {
+      "name": "se_company_brave_domains_history",
+      "engine": "View",
+      "total_rows": null
+    },
+    {
+      "name": "se_company_brave_search_successes",
+      "engine": "MaterializedView",
+      "total_rows": null
+    },
+    {
+      "name": "se_company_domain_brave_extraction",
+      "engine": "ReplacingMergeTree",
+      "total_rows": 21648
+    },
+    {
+      "name": "website_crawl_results",
+      "engine": "ReplacingMergeTree",
+      "total_rows": 5
+    },
+    {
+      "name": "website_crawl_results_latest",
+      "engine": "View",
+      "total_rows": null
+    },
+    {
+      "name": "website_crawl_results_s3",
+      "engine": "View",
+      "total_rows": null
+    },
+    {
+      "name": "website_full_crawl_results",
+      "engine": "ReplacingMergeTree",
+      "total_rows": 0
+    },
+    {
+      "name": "website_full_crawl_results_current",
+      "engine": "View",
+      "total_rows": null
+    },
+    {
+      "name": "website_full_crawl_results_latest_success",
+      "engine": "View",
+      "total_rows": null
+    },
+    {
+      "name": "website_jobs_crawl_results",
+      "engine": "ReplacingMergeTree",
+      "total_rows": 0
+    },
+    {
+      "name": "website_jobs_crawl_results_current",
+      "engine": "View",
+      "total_rows": null
+    },
+    {
+      "name": "website_jobs_crawl_results_latest_success",
+      "engine": "View",
+      "total_rows": null
+    },
+    {
+      "name": "website_site_info_results",
+      "engine": "ReplacingMergeTree",
+      "total_rows": 61
+    },
+    {
+      "name": "website_site_info_results_current",
+      "engine": "View",
+      "total_rows": null
+    },
+    {
+      "name": "website_site_info_results_latest_success",
+      "engine": "View",
+      "total_rows": null
+    }
+  ]
+}

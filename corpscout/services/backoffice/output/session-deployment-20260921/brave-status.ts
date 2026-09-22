@@ -1,0 +1,15 @@
+import {writeFileSync,readFileSync} from 'node:fs';
+import {runStatus,listRuns} from '../../app/lib/dagster.server';
+import {chQuery} from '../../app/lib/clickhouse.server';
+import {browserRequest} from '../../app/lib/browser-service.server';
+import {crawlerFetch} from '../../app/lib/crawler.server';
+const folder='output/session-deployment-20260921';
+const receipt=JSON.parse(readFileSync(`${folder}/resumed-run.json`,'utf8'));
+const run=await runStatus(receipt.runId);
+const active=await listRuns({job:'company_brave_search_job',limit:20,statuses:['STARTED','STARTING','QUEUED','CANCELING']});
+const counts=await chQuery<any>(`SELECT route,toString(status) status,error_type,error_stage,count() results,max(completed_at) latest_result FROM company_brave_search_results FINAL WHERE source_run_id={run:String} GROUP BY route,status,error_type,error_stage ORDER BY route,status`,{run:run.runId});
+const [recency]=await chQuery<any>(`SELECT now() checked_at,max(completed_at) latest_result,dateDiff('second',max(completed_at),now()) seconds_since_result,countIf(completed_at>=now()-INTERVAL 2 MINUTE) results_last_two_minutes FROM company_brave_search_results FINAL WHERE source_run_id={run:String}`,{run:run.runId});
+const browser=await(await browserRequest('/v1/server')).json();
+const crawler=await(await crawlerFetch('/healthz')).json();
+const output={runId:run.runId,status:run.status,executionId:JSON.parse(run.tags['brave/execution']??'{}').execution_id,activeRuns:active.map(r=>({runId:r.runId,status:r.status,task:r.tags['processing/task_id']})),counts,recency,browser:{version:browser.version,healthy:browser.healthy,capacity:browser.settings.capacity,active:browser.leases.filter((r:any)=>!r.ended_at).map((r:any)=>({state:r.state,domain:r.domain,session:r.session_id}))},crawler};
+writeFileSync(`${folder}/brave-status.json`,JSON.stringify(output,null,2));console.log(JSON.stringify(output,null,2));

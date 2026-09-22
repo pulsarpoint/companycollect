@@ -36,13 +36,10 @@ WEBTECH_DOMAIN_LIMIT = 1_000_000
 WEBTECH_PARTITION_COUNT = 128
 WEBTECH_DEFAULT_CRAWL_ID = "CC-MAIN-2026-apr-may-jun"
 WEBTECH_PARTITION_KEYS = tuple(
-    f"hash_{partition_index:03d}"
-    for partition_index in range(WEBTECH_PARTITION_COUNT)
+    f"hash_{partition_index:03d}" for partition_index in range(WEBTECH_PARTITION_COUNT)
 )
 WEBTECH_REMOTE_POOL = "webtech_remote_scanner"
-WEBTECH_CANDIDATE_ASSET_KEY = dg.AssetKey(
-    "commoncrawl_webtech_candidates_manifest"
-)
+WEBTECH_CANDIDATE_ASSET_KEY = dg.AssetKey("commoncrawl_webtech_candidates_manifest")
 WEBTECH_REMOTE_SCAN_ASSET_KEY = dg.AssetKey("commoncrawl_webtech_remote_scan")
 WEBTECH_RESULT_ASSET_KEY = dg.AssetKey("commoncrawl_webtech_results_clickhouse")
 WEBTECH_MONITOR_INTERVAL_SECONDS = 2
@@ -120,8 +117,7 @@ def load_webtech_candidates(
     )
     if len(candidates) > WEBTECH_DOMAIN_LIMIT:
         raise RuntimeError(
-            f"Partition {partition_key} returned too many candidates: "
-            f"{len(candidates)}"
+            f"Partition {partition_key} returned too many candidates: {len(candidates)}"
         )
     if len({candidate.root_domain for candidate in candidates}) != len(candidates):
         raise RuntimeError(f"Partition {partition_key} returned duplicate domains")
@@ -286,7 +282,7 @@ def build_webtech_assets(
         backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
         description=(
             "Validates every result named by the final remote manifest and "
-            "indexes its queryable fields in ClickHouse."
+            "indexes scan metadata and individual catalog-linked technologies in ClickHouse."
         ),
     )
     def results_clickhouse(
@@ -322,6 +318,9 @@ def build_webtech_assets(
                 "crawl_id": reference.crawl_id,
                 "partition_key": reference.partition_key,
                 "indexed_count": indexed_count,
+                "technology_count": reference.technology_count,
+                "result_table": "corpscout.webtech_domain_scan_results",
+                "technology_table": "corpscout.webtech_domain_technologies",
                 "outcome_counts": reference.outcome_counts,
                 "technology_count": reference.technology_count,
                 "scan_elapsed_seconds": round(reference.elapsed_seconds, 3),
