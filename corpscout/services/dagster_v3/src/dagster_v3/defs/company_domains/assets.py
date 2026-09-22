@@ -1,38 +1,49 @@
-"""Fixed ClickHouse inputs with durable PostgreSQL progress and Brave responses."""
+"""Brave searches checkpoint completed outcomes directly in ClickHouse."""
 
+import json
 import os
+from collections.abc import Iterator
 from contextlib import closing
-from threading import Event, Thread
+from datetime import UTC, datetime
+from threading import Lock
 from time import monotonic
-from typing import Literal, Self
-from uuid import UUID
+from typing import Literal
+from uuid import UUID, uuid5
 
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, field_validator
 
 from dagster_v3.defs.common.clickhouse_queue import (
     ClickHouseInputQueue,
     validate_relation,
 )
-from dagster_v3.defs.common.processing import (
-    ProcessingResource,
-    render_query,
-    work_key,
-)
-from dagster_v3.defs.company_domains.publication import publish_results
+from dagster_v3.defs.common.processing import ProcessingResource, render_query
 from dagster_v3.defs.company_domains.browser import (
     ROUTES,
     BraveBrowserResource,
     BraveSearchResult,
     CompanySearchInput,
 )
+from dagster_v3.defs.company_domains.results import (
+    RESULT_TABLE,
+    insert_results,
+    page_outcomes,
+    repair_current_answers,
+    result_record,
+    search_is_due,
+)
 
 PROCESSOR_VERSION = "brave-v2"
+EXECUTION_TAG = "brave/execution"
 
 
 class BraveSearchConfig(dg.Config):
     task_id: str | None = None
+    execution_id: str | None = Field(
+        default=None,
+        description="Original Dagster run ID to resume, including a forced execution.",
+    )
     mode: Literal["process", "publish"] = "process"
     input_relation: str | None = None
     input_namespace: str = Field(default="company", min_length=1)
@@ -40,52 +51,142 @@ class BraveSearchConfig(dg.Config):
     query_template: str = Field(
         default="Find the official website of {company_name}.", min_length=1
     )
+    force: bool = Field(
+        default=False, description="Search again regardless of previous outcomes."
+    )
+    rescan_old: bool = Field(
+        default=False, description="Rescan completed searches older than 30 days."
+    )
     requests_per_route: int = Field(default=1, ge=1, le=8)
     input_batch_size: int = Field(default=100, ge=4, le=10_000)
-    freshness_days: int = Field(default=30, ge=0)
-    max_attempts: int = Field(default=3, ge=1, le=10)
-    retry_failed: bool = False
     answer_timeout_seconds: int = Field(default=60, ge=1, le=600)
-    max_answer_timeout_seconds: int = Field(default=180, ge=1, le=600)
-    retry_seconds: int = Field(default=60, ge=0, le=3600)
-    lease_seconds: int = Field(default=300, ge=30, le=3600)
-    export_batch_size: int = Field(default=100, ge=1, le=10_000)
-    export_interval_seconds: int = Field(default=30, ge=1, le=3600)
-
-    @model_validator(mode="after")
-    def validate_timeouts(self) -> Self:
-        if self.max_answer_timeout_seconds < self.answer_timeout_seconds:
-            raise ValueError(
-                "maximum answer timeout must cover the initial answer timeout"
-            )
-        if self.retry_failed and self.mode != "process":
-            raise ValueError("retry_failed requires process mode")
-        return self
+    progress_log_every: int = Field(default=100, ge=1, le=100_000)
+    progress_log_interval_seconds: int = Field(default=30, ge=1, le=3600)
 
     @field_validator("input_relation")
     @classmethod
     def named_relation(cls, value: str | None) -> str | None:
         return validate_relation(value) if value is not None else None
 
-    @field_validator("task_id")
+    @field_validator("task_id", "execution_id")
     @classmethod
     def stable_task_id(cls, value: str | None) -> str | None:
         return str(UUID(value)) if value is not None else None
 
 
+def prepare_execution(
+    context: dg.AssetExecutionContext,
+    config: BraveSearchConfig,
+    clickhouse: ClickhouseResource,
+    processing: ProcessingResource,
+) -> dict:
+    """Keep one execution's selection, query and age cutoff fixed across Dagster retries."""
+    execution_id = config.execution_id or context.run.root_run_id or context.run.run_id
+    original = context.instance.get_run_by_id(execution_id)
+    if original is None:
+        raise ValueError("execution_id must identify the original Dagster run")
+    supplied = (
+        context.run.run_config.get("ops", {})
+        .get("company_brave_search_results", {})
+        .get("config", {})
+    )
+    current_run = context.instance.get_run_by_id(context.run.run_id)
+    tagged_task = current_run.tags.get("processing/task_id")
+    if config.task_id and tagged_task and config.task_id != tagged_task:
+        raise ValueError("processing task_id differs from the prepared selection")
+    if EXECUTION_TAG in original.tags:
+        execution = json.loads(original.tags[EXECUTION_TAG])
+        task_id = config.task_id or tagged_task
+        if task_id is not None and task_id != execution["task_id"]:
+            raise ValueError("execution_id belongs to a different input task")
+        for name in (
+            "query_type",
+            "query_template",
+            "force",
+            "rescan_old",
+            "input_relation",
+        ):
+            if name in supplied and getattr(config, name) != execution.get(name):
+                raise ValueError(
+                    f"resume must keep {name} unchanged; start a new execution instead"
+                )
+        context.instance.add_run_tags(
+            context.run.run_id, {EXECUTION_TAG: original.tags[EXECUTION_TAG]}
+        )
+        return execution
+    if config.execution_id is not None:
+        raise ValueError("the original run has no saved Brave execution to resume")
+    if config.mode == "publish":
+        raise ValueError(
+            "publish mode requires execution_id from a previous Brave execution"
+        )
+    task_id = config.task_id or tagged_task or context.run.run_id
+    # Initialization stores a single selection manifest in PostgreSQL. No item,
+    # result, lease, retry or progress record is written there by this processor.
+    with processing.get_store() as store:
+        task = store.task(task_id)
+        if task is None:
+            if config.input_relation is None:
+                raise ValueError(
+                    "initialize company_brave_search_input or supply a prepared input_relation"
+                )
+            source = ClickHouseInputQueue(clickhouse, config.input_relation)
+            store.register(
+                task_id,
+                processor=PROCESSOR_VERSION,
+                config={
+                    "input_relation": config.input_relation,
+                    "query_type": config.query_type,
+                    "query_template": config.query_template,
+                },
+                work_config={},
+                source_info=source.inspect(),
+            )
+            task = store.task(task_id)
+        if task["processor"] != PROCESSOR_VERSION or task["status"] not in {
+            "selected",
+            "ready",
+        }:
+            raise ValueError("the Brave input task is not ready")
+        query = {
+            name: getattr(config, name)
+            if name in supplied
+            else task["config"].get(name, getattr(config, name))
+            for name in ("query_type", "query_template")
+        }
+        if task["status"] == "selected":
+            task = store.activate_selection(task_id, config=query, work_config={})
+    execution = {
+        "execution_id": execution_id,
+        "task_id": task_id,
+        "started_at": datetime.now(UTC).isoformat(),
+        "source_info": task["source_info"],
+        "input_relation": task["source_info"]["relation"],
+        "force": config.force,
+        "rescan_old": config.rescan_old,
+        **query,
+    }
+    tags = {EXECUTION_TAG: json.dumps(execution), "processing/task_id": task_id}
+    context.instance.add_run_tags(execution_id, tags)
+    if execution_id != context.run.run_id:
+        context.instance.add_run_tags(context.run.run_id, tags)
+    return execution
+
+
 @dg.asset(
     deps=["company_brave_search_input"],
     group_name="brave_domain_search",
-    kinds={"python", "browser", "postgres", "clickhouse"},
+    kinds={"python", "browser", "clickhouse"},
     pool="company_domains_brave",
     tags={"source": "brave", "country": "SE"},
-    metadata={"dagster/table_name": "corpscout.se_company_brave_domains"},
-    description="Latest successful Brave answers for Swedish companies in corpscout.se_company_brave_domains. "
-    "Read a fixed ClickHouse input queue, render the query template, and collect copied Brave "
-    "responses with four continuously refilled routes. PostgreSQL holds task progress and responses; "
-    "closed batches are archived to S3 and latest successful answers are imported into the Swedish output table by ClickHouse SQL. Supply task_id to resume or mode=publish to replay exports.",
+    metadata={"dagster/table_name": RESULT_TABLE},
+    description="Search selected Swedish companies and save completed answers or errors directly "
+    "in company_brave_search_results. Existing outcomes are skipped unless force=true, or "
+    "rescan_old=true and the latest outcome is older than 30 days. Successful answers feed "
+    "se_company_brave_search_results_latest_success. Resume with execution_id; saved outcomes are never searched twice "
+    "within that execution, including forced executions.",
 )
-def se_company_brave_domains(
+def company_brave_search_results(
     context: dg.AssetExecutionContext,
     config: BraveSearchConfig,
     clickhouse: ClickhouseResource,
@@ -93,320 +194,229 @@ def se_company_brave_domains(
     company_brave_browser: BraveBrowserResource,
     processing: ProcessingResource,
 ) -> dg.MaterializeResult:
-    if (
-        config.mode == "process"
-        and config.input_batch_size < len(ROUTES) * config.requests_per_route
-    ):
+    if config.input_batch_size < len(ROUTES) * config.requests_per_route:
         raise ValueError("input_batch_size must cover all configured request slots")
-    current_run = context.instance.get_run_by_id(context.run.run_id)
-    tagged_task_id = current_run.tags.get("processing/task_id") if current_run else None
-    if config.task_id and tagged_task_id and config.task_id != tagged_task_id:
-        raise ValueError(
-            "processing task_id differs from the task prepared in this run"
-        )
-    task_id = config.task_id or tagged_task_id or context.run.run_id
-    # Persist identity in the event log before selection so interrupted preparation is traceable.
-    context.add_output_metadata({"task_id": task_id})
-    context.log.info("Brave task_id=%s mode=%s", task_id, config.mode)
-    with processing.get_store() as store:
-        task = store.task(task_id)
-        if task is None:
-            if config.mode == "publish":
-                raise ValueError("publish mode requires an existing task_id")
-            if config.input_relation is None:
+    execution = prepare_execution(context, config, clickhouse, processing)
+    execution_id = execution["execution_id"]
+    outcome_counts_sql = (
+        f"SELECT countIf(status='success'),countIf(status='error') FROM {RESULT_TABLE} FINAL "
+        "WHERE execution_id=%(execution_id)s"
+    )
+    context.add_output_metadata(
+        {"task_id": execution["task_id"], "execution_id": execution_id}
+    )
+    with processing_clickhouse.get_connection() as client:
+        for relation in (
+            RESULT_TABLE,
+            "corpscout.company_brave_search_results_latest",
+            "corpscout.se_company_brave_search_results_latest_success",
+        ):
+            if client.execute(f"EXISTS TABLE {relation}") != [(1,)]:
                 raise ValueError(
-                    "initialize company_brave_search_input and supply its task_id, or provide a prepared input_relation"
+                    f"apply the Brave ClickHouse migration before processing: {relation}"
                 )
-            saved_config = {
-                key: getattr(config, key)
-                for key in (
-                    "input_relation",
-                    "input_namespace",
-                    "query_type",
-                    "query_template",
-                    "freshness_days",
-                )
-            }
-            source = ClickHouseInputQueue(clickhouse, config.input_relation)
-            store.register(
-                task_id,
-                processor=PROCESSOR_VERSION,
-                config=saved_config,
-                work_config={
-                    key: saved_config[key] for key in ("input_namespace", "query_type")
-                },
-                source_info=source.inspect(),
-            )
-            task = store.task(task_id)
-        if task["processor"] != PROCESSOR_VERSION:
-            raise ValueError("task belongs to a different processor version")
-        if task["status"] == "selected" and config.mode == "process":
-            task = store.activate_selection(
-                task_id,
-                config={
-                    key: getattr(config, key)
-                    for key in (
-                        "input_namespace",
-                        "query_type",
-                        "query_template",
-                        "freshness_days",
-                    )
-                },
-                work_config={
-                    key: getattr(config, key)
-                    for key in ("input_namespace", "query_type")
-                },
-            )
-        if task["status"] != "ready":
-            raise ValueError("task is not ready for processing")
-        if config.retry_failed:
-            requeued = store.retry_failed(task_id, max_attempts=config.max_attempts)
-            context.log.info("Brave task=%s requeued_failed=%s", task_id, requeued)
-        # A resume always uses the registered selection and template.
-        saved_config = task["config"]
-        source_info = task["source_info"]
-        source = (
-            ClickHouseInputQueue(
-                clickhouse,
-                source_info["relation"],
-                selection_task_id=source_info.get("selection_task_id"),
-            )
-            if source_info
-            else None
+        repair_current_answers(client, execution_id=execution_id)
+        [(succeeded, failed)] = client.execute(
+            outcome_counts_sql, {"execution_id": execution_id}
         )
-        input_cache = {}
-        errors = []
-        stopped = Event()
+    source_info = execution["source_info"]
+    source = ClickHouseInputQueue(
+        clickhouse,
+        source_info["relation"],
+        selection_task_id=source_info.get("selection_task_id"),
+    )
+    if config.mode == "process":
+        with clickhouse.get_connection() as client:
+            if source.identity(client) != source_info["table_uuid"]:
+                raise ValueError("input queue was replaced; resume requires the fixed selection")
+            predicate = "input_id <= %(upper)s"
+            params = {"upper": source_info["upper_id"]}
+            if source.selection_task_id is not None:
+                predicate += " AND task_id=%(task_id)s"
+                params["task_id"] = source.selection_task_id
+            [(total, companies_count)] = client.execute(
+                f"SELECT count(),uniqExact(tuple(country_code,company_id)) "
+                f"FROM {source.relation} WHERE {predicate}", params,
+            )
+            if total != source_info["total"] or companies_count != total:
+                raise ValueError("input selection changed or contains duplicate companies")
+    counts = {"skipped": 0, "scanned": 0, "succeeded": succeeded, "failed": failed}
+    counts_lock = Lock()
+    resumed_count = succeeded + failed
+    last_reported_count = resumed_count
+    last_reported_at = monotonic()
+    pending: dict[str, dict] = {}
+    started_at = datetime.fromisoformat(execution["started_at"])
 
-        def maintain_leases():
-            while not stopped.wait(config.lease_seconds / 3):
-                try:
-                    store.heartbeat(
-                        context.run.run_id, lease_seconds=config.lease_seconds
-                    )
-                except Exception as error:
-                    errors.append(type(error).__name__)
-                    stopped.set()
+    def report_progress(*, phase: str = "running") -> None:
+        nonlocal last_reported_count, last_reported_at
+        with counts_lock:
+            processed = counts["succeeded"] + counts["failed"]
+            accounted = processed + counts["skipped"]
+            now = monotonic()
+            if (
+                phase == "running"
+                and accounted - last_reported_count < config.progress_log_every
+                and now - last_reported_at < config.progress_log_interval_seconds
+            ):
+                return
+            total = source_info["total"]
+            context.log.info(
+                "Brave progress execution=%s phase=%s total=%d processed=%d remaining=%d "
+                "succeeded=%d failed=%d skipped=%d progress=%.2f%% new_results=%d",
+                execution_id,
+                phase,
+                total,
+                processed,
+                total - accounted,
+                counts["succeeded"],
+                counts["failed"],
+                counts["skipped"],
+                100 * accounted / total if total else 100,
+                processed - resumed_count,
+            )
+            last_reported_count = accounted
+            last_reported_at = now
 
-        heartbeat = Thread(target=maintain_leases, name="brave_leases", daemon=True)
-        claims = {}
-
-        def companies():
-            # iter_answers serializes this generator while browser workers run independently.
-            while not stopped.is_set():
-                item = store.claim(
-                    task_id,
-                    owner=context.run.run_id,
-                    lease_seconds=config.lease_seconds,
-                    max_attempts=config.max_attempts,
-                )
-                if item is None:
-                    current = store.task(task_id)
-                    if current["admitted_count"] == current["total"]:
-                        return
-                    open_count = current["admitted_count"] - sum(
-                        current[key]
-                        for key in (
-                            "succeeded_count",
-                            "terminal_failed_count",
-                            "skipped_count",
-                            "cancelled_count",
-                        )
-                    )
-                    available = config.input_batch_size - open_count
-                    if available <= 0:
-                        return
-                    rows = source.read(
-                        source_info, after=current["source_cursor"], limit=available
-                    )
-                    if not rows:
-                        raise ValueError(
-                            "fixed input queue ended before its registered total"
-                        )
-                    for values in rows:
-                        render_query(saved_config["query_template"], values)
-                    if store.admit(
-                        task_id,
-                        after=current["source_cursor"],
-                        input_ids=[row["input_id"] for row in rows],
-                        capacity=config.input_batch_size,
-                    ):
-                        input_cache.update((row["input_id"], row) for row in rows)
-                        context.log.info(
-                            "Brave task=%s admitted=%s/%s",
-                            task_id,
-                            current["admitted_count"] + len(rows),
-                            current["total"],
-                        )
-                    continue
-                values = input_cache.pop(item.input_id, None)
-                if values is None:
-                    values = source.read(source_info, input_id=item.input_id)[0]
-                query = render_query(saved_config["query_template"], values)
-                key = work_key(
-                    PROCESSOR_VERSION,
-                    task["work_config"],
-                    saved_config["query_template"],
-                    values,
-                    query,
-                )
-                if store.skip_if_fresh(
-                    item, work_key=key, freshness_days=saved_config["freshness_days"]
+    def companies() -> Iterator[CompanySearchInput]:
+        after = None
+        while rows := source.read(
+            source_info, after=after, limit=config.input_batch_size
+        ):
+            for values in rows:
+                if (
+                    values.get("country_code") != "SE"
+                    or not values.get("company_id")
+                    or not values.get("company_name")
                 ):
-                    continue
-                timeout_count = 0
-                if item.attempt > 1:
-                    # Indexed by task/input/attempt; archived response text is not needed.
-                    # Older failures have no stage: conservatively treat those timeouts
-                    # as eligible, without inventing a stage for their history.
-                    with store.transaction() as cursor:
-                        cursor.execute(
-                            """SELECT count(*) AS timeouts FROM processing.results
-                            WHERE task_id=%s AND input_id=%s AND attempt<%s
-                              AND status='error' AND payload->>'error_type'='TimeoutError'
-                              AND coalesce(payload->>'error_stage','') IN ('','answer_generation')""",
-                            (task_id, item.input_id, item.attempt),
-                        )
-                        timeout_count = cursor.fetchone()["timeouts"]
-                answer_timeout_ms = 1000 * min(
-                    config.answer_timeout_seconds * (1 + timeout_count),
-                    config.max_answer_timeout_seconds,
-                )
-                # Retain only request/result attribution while the browser is active.
-                claims[item.lease_token] = (
-                    item,
-                    key,
-                    {
-                        "query": query,
-                        "company_id": str(values.get("company_id") or item.input_id),
-                        "company_name": str(values.get("company_name") or ""),
-                        "country_code": str(values.get("country_code") or ""),
-                    },
-                )
-                yield CompanySearchInput(
-                    item.input_id,
-                    str(values.get("company_name") or item.input_id),
-                    query,
-                    item.lease_token,
-                    answer_timeout_ms,
-                )
-
-        def save(result: BraveSearchResult):
-            item, key, attribution = claims.pop(result.company.request_id)
-            if result.status == "success" and not result.answer.strip():
-                raise ValueError("cannot save an empty successful Brave response")
-            store.complete(
-                item,
-                status=result.status,
-                work_key=key,
-                completed_at=result.fetched_at,
-                payload={
-                    **attribution,
-                    "answer_text": result.answer,
-                    "route": result.route,
-                    "source_url": result.source_url,
-                    "error_type": result.error_type,
-                    "error_stage": result.error_stage,
-                    "elapsed_ms": result.elapsed_ms,
-                    "answer_timeout_ms": result.company.answer_timeout_ms,
-                    "source_run_id": context.run.run_id,
-                },
-                max_attempts=config.max_attempts,
-                retry_seconds=config.retry_seconds,
-            )
-
-        last_export = monotonic()
-        saved_since_export = 0
-        try:
-            heartbeat.start()
-            with processing_clickhouse.get_connection() as client:
-                if config.mode == "process":
-                    while not stopped.is_set() and store.progress(task_id)["remaining"]:
-                        with closing(
-                            company_brave_browser.iter_answers(
-                                companies(),
-                                requests_per_route=config.requests_per_route,
-                                on_result=save,
-                            )
-                        ) as results:
-                            for result in results:
-                                saved_since_export += 1
-                                if (
-                                    saved_since_export >= config.export_batch_size
-                                    or monotonic() - last_export
-                                    >= config.export_interval_seconds
-                                ):
-                                    try:
-                                        publish_results(
-                                            store,
-                                            client,
-                                            task_id,
-                                            batch_size=config.export_batch_size,
-                                        )
-                                    except Exception as error:
-                                        context.log.warning(
-                                            "Publication deferred (%s); responses are saved in PostgreSQL",
-                                            type(error).__name__,
-                                        )
-                                    last_export = monotonic()
-                                    saved_since_export = 0
-                                context.log.info(
-                                    "Brave task=%s input=%s route=%s status=%s error=%s stage=%s answer_timeout_ms=%s elapsed_ms=%s",
-                                    task_id,
-                                    result.company.company_id,
-                                    result.route,
-                                    result.status,
-                                    result.error_type,
-                                    result.error_stage,
-                                    result.company.answer_timeout_ms,
-                                    result.elapsed_ms,
-                                )
-                        if store.progress(task_id)["remaining"]:
-                            stopped.wait(1)
-                if errors:
-                    raise dg.Failure(
-                        "Lease maintenance failed; resume the saved task",
-                        metadata={"task_id": task_id},
+                    raise ValueError(
+                        "the Swedish Brave asset requires SE company_id and company_name inputs"
                     )
-                publish_results(
-                    store, client, task_id, batch_size=config.export_batch_size
+            with processing_clickhouse.get_connection() as client:
+                latest, completed = page_outcomes(
+                    client,
+                    rows,
+                    query_type=execution["query_type"],
+                    execution_id=execution_id,
                 )
-        finally:
-            stopped.set()
-            heartbeat.join()
-            store.release(context.run.run_id, max_attempts=config.max_attempts)
-        counts = store.progress(task_id)
-        metadata = {
-            key: value
-            for key, value in counts.items()
-            if key not in ("task_id", "processor", "status")
-        }
-        metadata.update(
-            task_id=task_id,
-            output_tables="corpscout.se_company_brave_domains",
-            request_slots=len(ROUTES) * config.requests_per_route,
-        )
-        if config.mode == "process" and counts["terminal_failed"]:
-            raise dg.Failure(
-                "Task finished with failed items; responses and progress are saved",
-                metadata=metadata,
+            for values in rows:
+                counts["scanned"] += 1
+                if values["input_id"] in completed:
+                    report_progress()
+                    continue
+                if not search_is_due(
+                    latest.get((values["country_code"], values["company_id"])),
+                    force=execution["force"],
+                    rescan_old=execution["rescan_old"],
+                    started_at=started_at,
+                ):
+                    with counts_lock:
+                        counts["skipped"] += 1
+                    report_progress()
+                    continue
+                query = render_query(execution["query_template"], values)
+                request_id = str(uuid5(UUID(execution_id), values["input_id"]))
+                pending[request_id] = values
+                yield CompanySearchInput(
+                    values["input_id"],
+                    values["company_name"],
+                    query,
+                    request_id,
+                    config.answer_timeout_seconds * 1000,
+                )
+            after = rows[-1]["input_id"]
+        if counts["scanned"] != source_info["total"]:
+            raise ValueError(
+                "fixed input selection changed; refusing to mark missing inputs complete"
             )
-        return dg.MaterializeResult(metadata=metadata)
+
+    def save(result: BraveSearchResult) -> None:
+        record = result_record(
+            result,
+            pending[result.company.request_id],
+            task_id=execution["task_id"],
+            execution_id=execution_id,
+            query_type=execution["query_type"],
+            source_run_id=context.run.run_id,
+            processor_version=PROCESSOR_VERSION,
+        )
+        # Each browser route waits for durable acknowledgement before taking another input.
+        # Connections are per writer: the native ClickHouse client is not thread-safe.
+        with processing_clickhouse.get_connection() as client:
+            insert_results(client, [record])
+        del pending[result.company.request_id]
+        # Only acknowledged writes advance live totals; resume reloads them from ClickHouse.
+        with counts_lock:
+            counts["succeeded" if result.status == "success" else "failed"] += 1
+        report_progress()
+
+    if config.mode == "process":
+        report_progress(phase="start")
+        with closing(
+            company_brave_browser.iter_answers(
+                companies(),
+                requests_per_route=config.requests_per_route,
+                on_result=save,
+            )
+        ) as answers:
+            for result in answers:
+                context.log.info(
+                    "Brave execution=%s input=%s route=%s status=%s error=%s stage=%s elapsed_ms=%s",
+                    execution_id,
+                    result.company.company_id,
+                    result.route,
+                    result.status,
+                    result.error_type,
+                    result.error_stage,
+                    result.elapsed_ms,
+                )
+    with processing_clickhouse.get_connection() as client:
+        repair_current_answers(client, execution_id=execution_id)
+        [(succeeded, failed)] = client.execute(
+            outcome_counts_sql, {"execution_id": execution_id}
+        )
+    metadata = {
+        "task_id": execution["task_id"],
+        "execution_id": execution_id,
+        "total": source_info["total"],
+        "succeeded": succeeded,
+        "failed": failed,
+        "skipped": counts["skipped"],
+        "force": execution["force"],
+        "rescan_old": execution["rescan_old"],
+        "results_table": RESULT_TABLE,
+        "output_tables": "corpscout.se_company_brave_search_results_latest_success",
+        "request_slots": len(ROUTES) * config.requests_per_route,
+    }
+    if config.mode == "process":
+        remaining = source_info["total"] - counts["skipped"] - succeeded - failed
+        if remaining != 0:
+            raise ValueError("ClickHouse outcomes do not account for the complete input selection")
+        metadata["remaining"] = remaining
+        with counts_lock:
+            counts.update(succeeded=succeeded, failed=failed)
+        report_progress(phase="finished")
+    if config.mode == "process" and failed:
+        raise dg.Failure(
+            "Brave completed with failed searches; outcomes are saved. Use a new forced execution to retry.",
+            metadata=metadata,
+            allow_retries=False,
+        )
+    return dg.MaterializeResult(metadata=metadata)
 
 
 company_brave_search_job = dg.define_asset_job(
     name="company_brave_search_job",
-    selection=dg.AssetSelection.assets(se_company_brave_domains),
+    selection=dg.AssetSelection.assets(company_brave_search_results),
 )
 
 defs = dg.Definitions(
-    assets=[se_company_brave_domains],
+    assets=[company_brave_search_results],
     jobs=[company_brave_search_job],
     resources={
         "company_brave_browser": BraveBrowserResource(
-            crawl_proxy1=dg.EnvVar("crawl_proxy1"),
-            crawl_proxy2=dg.EnvVar("crawl_proxy2"),
-            crawl_proxy3=dg.EnvVar("crawl_proxy3"),
+            api_url=dg.EnvVar("BROWSER_API_URL"),
+            api_token=dg.EnvVar("BROWSER_API_TOKEN"),
         ),
         "processing": ProcessingResource(postgres_url=dg.EnvVar("PROCESSING_PG_URL")),
         "processing_clickhouse": ClickhouseResource(

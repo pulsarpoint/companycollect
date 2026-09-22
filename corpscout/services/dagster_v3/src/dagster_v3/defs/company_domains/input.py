@@ -212,7 +212,7 @@ company_brave_search_input_job = dg.define_asset_job(
 company_brave_search_workflow = dg.define_asset_job(
     "company_brave_search_workflow",
     selection=dg.AssetSelection.assets(
-        "company_brave_search_input", "se_company_brave_domains"
+        "company_brave_search_input", "company_brave_search_results"
     ),
 )
 defs = dg.Definitions(

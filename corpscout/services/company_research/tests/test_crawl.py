@@ -11,13 +11,13 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import httpx
-from crawl4ai import CrawlResult
 from test_catalog_search import catalog_fixture
 from test_mentions import HTML, decision, mention
 from test_package import response
 from test_site_gate import classification
 
 from company_research import page_run
+from company_research.browser import PageCapture
 from company_research.captures import load_crawl
 from company_research.crawl import DEFAULT_SELECTION_INSTRUCTIONS, crawl_company
 from company_research.models import OBJECTIVES, ResearchConfig
@@ -27,21 +27,24 @@ from company_research.storage import content_hash, write_json
 
 @asynccontextmanager
 async def browser_responses(responses: dict, requested: list[str]):
-    async def arun(*, url, config):
+    async def navigate(url, *, timeout_seconds, check_robots_txt):
         requested.append(url)
         html, links, status, redirect = responses[url]
-        return CrawlResult(
-            url=url,
+        return PageCapture(
+            url=redirect or url,
             html=html,
             cleaned_html=html,
-            success=200 <= status < 400,
             status_code=status,
-            redirected_url=redirect,
-            links={"internal": links, "external": []},
-            error_message="denied" if status == 403 else "",
+            headers={},
+            metadata={},
+            links=links,
+            error="denied" if status == 403 else None,
+            redirects=[{"url": url, "location": redirect, "status_code": 301}]
+            if redirect else [],
+            navigation_attempts=[{"url": url, "error": None}],
         )
 
-    yield SimpleNamespace(arun=arun)
+    yield SimpleNamespace(navigate=navigate)
 
 
 class CrawlTests(unittest.IsolatedAsyncioTestCase):

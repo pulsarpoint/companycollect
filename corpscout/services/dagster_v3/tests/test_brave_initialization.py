@@ -12,7 +12,7 @@ import pytest
 from dagster_v3.defs.common.clickhouse_queue import ClickHouseInputQueue
 from dagster_v3.defs.common.processing import ProcessingResource, ProcessingStore
 from dagster_v3.defs.company_domains import browser as brave
-from dagster_v3.defs.company_domains.assets import se_company_brave_domains
+from dagster_v3.defs.company_domains.assets import company_brave_search_results
 from dagster_v3.defs.company_domains.input import (
     INPUT_RELATION,
     BraveInputConfig,
@@ -22,7 +22,7 @@ from tests.test_brave_publication import (
     archive_s3 as archive_s3,
     clickhouse as clickhouse,
 )
-from tests.test_company_domains_brave import BrowserFixture, PROXIES
+from tests.test_company_domains_brave import brave_api as brave_api
 from tests.test_company_domains_brave_integration import MIGRATION
 
 pytest_plugins = ["tests.test_processing_store"]
@@ -290,13 +290,12 @@ def test_initialization_lock_fences_competing_preparers(store):
     "explicit_task_id", [None, "b3509ce0-624c-40a7-be0b-9ea87b7b0625"]
 )
 def test_combined_materialization_shares_task_and_saves_custom_queries(
-    store, task_inputs, monkeypatch, explicit_task_id
+    store, task_inputs, monkeypatch, explicit_task_id, brave_api
 ):
     queue, dsn = store
     client, resource = task_inputs
-    fixture = BrowserFixture()
+    fixture = brave_api()
     fixture.release_slow.set()
-    monkeypatch.setattr(brave, "launch", fixture.launch)
     client.execute(
         "INSERT INTO corpscout.se_company_basic_info VALUES",
         [(str(i), f"Company {i}", "active") for i in range(8)],
@@ -305,7 +304,7 @@ def test_combined_materialization_shares_task_and_saves_custom_queries(
         "clickhouse": resource,
         "processing_clickhouse": resource,
         "processing": ProcessingResource(postgres_url=dsn),
-        "company_brave_browser": brave.BraveBrowserResource(**PROXIES),
+        "company_brave_browser": brave.BraveBrowserResource(**fixture.config),
     }
     config = {
         "source_relation": "corpscout.se_company_basic_info",
@@ -317,16 +316,15 @@ def test_combined_materialization_shares_task_and_saves_custom_queries(
     if explicit_task_id is not None:
         config["task_id"] = explicit_task_id
     result = dg.materialize(
-        [company_brave_search_input, se_company_brave_domains],
+        [company_brave_search_input, company_brave_search_results],
         resources=resources,
         run_config={
             "ops": {
                 "company_brave_search_input": {"config": config},
-                "se_company_brave_domains": {
+                "company_brave_search_results": {
                     "config": {
                         "query_template": "Who owns {company_name}?",
                         "query_type": "owner",
-                        "freshness_days": 0,
                         "input_batch_size": 4,
                     }
                 },
@@ -336,22 +334,22 @@ def test_combined_materialization_shares_task_and_saves_custom_queries(
     assert result.success
     task = explicit_task_id or result.run_id
     assert queue.task(task)["source_info"]["selection_task_id"] == task
-    assert queue.progress(task)["succeeded"] == 8
-    assert queue.progress(task)["remaining"] == queue.progress(task)["unpublished"] == 0
+    assert client.execute("SELECT count() FROM corpscout.company_brave_search_results FINAL WHERE task_id=%(task)s", {"task": task}) == [(8,)]
+    with queue.transaction() as cursor:
+        cursor.execute("SELECT count(*) FROM processing.items")
+        assert cursor.fetchone()["count"] == 0
     assert fixture.total_peak == 4
     assert client.execute(
-        "SELECT count(),uniqExact(query) FROM corpscout.se_company_brave_domains WHERE task_id=%(task)s AND query_type='owner' AND startsWith(query,'Who owns Company ')",
+        "SELECT count(),uniqExact(query) FROM corpscout.se_company_brave_search_results_latest_success WHERE task_id=%(task)s AND query_type='owner' AND startsWith(query,'Who owns Company ')",
         {"task": task},
     ) == [(8, 8)]
     # Rerunning initialization after processing is also idempotent.
     initialize(resource, dsn, task, company_ids=config["company_ids"])
     before = len(fixture.queries)
     assert dg.materialize(
-        [se_company_brave_domains],
+        [company_brave_search_results],
         resources=resources,
-        run_config={
-            "ops": {"se_company_brave_domains": {"config": {"task_id": task}}}
-        },
+        run_config={"ops": {"company_brave_search_results": {"config": {"task_id": task}}}},
     ).success
     assert len(fixture.queries) == before
 

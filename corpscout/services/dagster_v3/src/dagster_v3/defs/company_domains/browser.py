@@ -1,32 +1,23 @@
-"""Brave Ask → finished answer → Copy, using Ratsit's direct/proxy browsers."""
+"""Concurrent Brave Ask requests; browser execution belongs to browser-service."""
 
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from queue import Full, Queue
 from threading import Event, Lock
-from time import monotonic
-from typing import Literal, Self
-from urllib.parse import urlencode
+from time import monotonic, sleep
+from typing import Literal
+from urllib.parse import urlsplit
+from uuid import uuid4
 
 import dagster as dg
-from cloakbrowser import launch
-from playwright.sync_api import Page
-from pydantic import Field, model_validator
+from dlt.sources.helpers.requests import Session
+from pydantic import Field
+from requests.exceptions import RequestException
 
 BRAVE_ORIGIN = "https://search.brave.com"
 ROUTES = ("direct", "crawl_proxy1", "crawl_proxy2", "crawl_proxy3")
-
-# Capture what Brave's Copy button writes without using the OS-wide clipboard.
-# Multiple browsers (even separate contexts) can otherwise read each other's answer.
-COPY_CAPTURE_SCRIPT = """(() => {
-    window.__companyBraveCopiedText = null;
-    Object.defineProperty(navigator.clipboard, 'writeText', {
-        configurable: true,
-        value: async (text) => { window.__companyBraveCopiedText = String(text); }
-    });
-})();"""
 
 
 @dataclass(frozen=True)
@@ -56,73 +47,150 @@ class BraveSearchResult:
     error_type: str = ""
     error_stage: str = ""
     elapsed_ms: int = 0
-
-
-class BraveStepError(Exception):
-    """A safe browser failure, without credential-bearing Playwright messages."""
-
-    def __init__(self, stage: str, error_type: str):
-        self.stage = stage
-        self.error_type = error_type
-        super().__init__(f"Brave {stage} failed ({error_type})")
-
-
-def copy_brave_answer(
-    page: Page, query: str, *, timeout_ms: int, answer_timeout_ms: int
-) -> str:
-    """Open Ask explicitly and capture the completed answer's private Copy text."""
-    stage = "page_setup"
-    try:
-        page.set_default_timeout(timeout_ms)
-        page.add_init_script(COPY_CAPTURE_SCRIPT)
-        stage = "page_load"
-        page.goto(
-            f"{BRAVE_ORIGIN}/ask?{urlencode({'q': query})}",
-            wait_until="domcontentloaded",
-            timeout=timeout_ms,
-        )
-        # Ask shows these answer actions after generation. Its question also has an
-        # icon-only Copy button; only the answer's button contains the text "Copy".
-        stage = "answer_generation"
-        page.get_by_role("button", name="Try again", exact=True).wait_for(
-            state="visible", timeout=answer_timeout_ms
-        )
-        stage = "copy"
-        page.get_by_role("button", name="Copy", exact=True).filter(
-            has_text="Copy"
-        ).click()
-        page.wait_for_function(
-            "() => typeof window.__companyBraveCopiedText === 'string' "
-            "&& window.__companyBraveCopiedText.trim().length > 0"
-        )
-        answer = page.evaluate("() => window.__companyBraveCopiedText")
-        if not isinstance(answer, str) or not answer.strip():
-            raise ValueError("Brave Copy returned no answer")
-        return answer
-    except Exception as error:
-        raise BraveStepError(stage, type(error).__name__) from None
+    challenge_runs: list[dict] = field(default_factory=list)
 
 
 class BraveBrowserResource(dg.ConfigurableResource):
-    """Persistent, thread-confined browsers drawing from one lazy company iterator."""
+    """Bounded HTTP workers drawing from one lazy company iterator."""
 
-    crawl_proxy1: str
-    crawl_proxy2: str
-    crawl_proxy3: str
-    page_timeout_ms: int = Field(default=60_000, gt=0)
+    api_url: str
+    api_token: str = Field(repr=False)
+    page_timeout_ms: int = Field(default=60_000, gt=0, le=300_000)
+    request_timeout_seconds: int = Field(default=900, gt=0, le=1800)
+    capacity_timeout_seconds: int = Field(default=120, gt=0)
+    challenge_agent_max_runs: int | None = Field(default=None, ge=0, le=1000)
+    challenge_agent_model: str | None = None
 
-    @model_validator(mode="after")
-    def validate_routes(self) -> Self:
-        proxies = [
-            self.crawl_proxy1.strip(),
-            self.crawl_proxy2.strip(),
-            self.crawl_proxy3.strip(),
-        ]
-        if any(not proxy for proxy in proxies) or len(set(proxies)) != 3:
+    def setup_for_execution(self, context: dg.InitResourceContext) -> None:
+        parsed = urlsplit(self.api_url)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+        ):
             raise ValueError(
-                "all three Brave crawl proxies must be configured and distinct"
+                "Brave requires an HTTP browser-service URL without credentials"
             )
-        return self
+        if not self.api_token.strip():
+            raise ValueError("Brave requires a browser-service API token")
+        if self.challenge_agent_model not in {
+            None,
+            "deepseek-flash",
+            "z-ai/glm-5.3-flash",
+        }:
+            raise ValueError("Unsupported Brave CAPTCHA agent model")
+
+    def ask(
+        self,
+        http: Session,
+        company: CompanySearchInput,
+        route: str,
+        *,
+        session_id: str | None = None,
+    ) -> BraveSearchResult:
+        """Reuse a request ID after transport failures; never repeat a finished query."""
+        started = monotonic()
+        request_id = f"dagster-{company.request_id}"
+        payload = {
+            "request_id": request_id,
+            "query": company.query,
+            "route": route,
+            "page_timeout_seconds": self.page_timeout_ms / 1000,
+            "answer_timeout_seconds": company.answer_timeout_ms / 1000,
+            "timeout_seconds": self.request_timeout_seconds,
+        }
+        if session_id is not None:
+            payload["session_id"] = session_id
+        if self.challenge_agent_max_runs is not None:
+            payload["challenge_agent_max_runs"] = self.challenge_agent_max_runs
+        if self.challenge_agent_model is not None:
+            payload["challenge_agent_model"] = self.challenge_agent_model
+        deadline = started + self.capacity_timeout_seconds
+        submitted = False
+        poll = False
+        try:
+            while monotonic() < deadline:
+                try:
+                    timeout = (10, min(30, max(0.1, deadline - monotonic())))
+                    if poll:
+                        response = http.get(
+                            f"{self.api_url.rstrip('/')}/v1/brave/requests/{request_id}",
+                            timeout=timeout,
+                        )
+                    else:
+                        response = http.post(
+                            f"{self.api_url.rstrip('/')}/v1/brave/ask",
+                            json=payload,
+                            timeout=timeout,
+                        )
+                except RequestException:
+                    # The POST may already be executing. Recover through its status endpoint.
+                    poll = True
+                    if not submitted:
+                        submitted = True
+                        deadline = monotonic() + self.request_timeout_seconds + 30
+                    sleep(1)
+                    continue
+                if response.status_code == 404 and poll:
+                    poll = False
+                elif response.status_code == 503 or (
+                    response.status_code == 409 and response.headers.get("Retry-After")
+                ):
+                    poll = response.status_code == 409
+                else:
+                    response.raise_for_status()
+                    data = response.json()
+                    if data["status"] == "running":
+                        poll = True
+                        if not submitted:
+                            submitted = True
+                            deadline = monotonic() + self.request_timeout_seconds + 30
+                    elif data["status"] == "interrupted":
+                        raise RuntimeError("Browser service interrupted the request")
+                    else:
+                        if (
+                            data["request_id"] != request_id
+                            or data["query"] != company.query
+                            or data["route"] != route
+                        ):
+                            raise ValueError(
+                                "Browser service returned a different request"
+                            )
+                        success = data["status"] == "success"
+                        if success and (
+                            not isinstance(data["answer"], str)
+                            or not data["answer"].strip()
+                        ):
+                            raise ValueError("Browser service returned an empty answer")
+                        return BraveSearchResult(
+                            company,
+                            company.query,
+                            route,
+                            data["source_url"],
+                            datetime.fromisoformat(data["fetched_at"]),
+                            "success" if success else "error",
+                            answer=data["answer"] if success else "",
+                            error_type=data["error_type"],
+                            error_stage=data["error_stage"],
+                            elapsed_ms=data["elapsed_ms"],
+                            challenge_runs=data.get("challenge_runs", []),
+                        )
+                sleep(1)
+            raise TimeoutError("Browser service request timed out")
+        except Exception as error:  # noqa: BLE001 - isolate and sanitize each company's HTTP failure
+            # Never retain HTTP exception messages: URLs/headers can contain secrets.
+            return BraveSearchResult(
+                company,
+                company.query,
+                route,
+                BRAVE_ORIGIN,
+                datetime.now(UTC),
+                "error",
+                error_type=type(error).__name__,
+                error_stage="browser_service",
+                elapsed_ms=round((monotonic() - started) * 1000),
+            )
 
     def iter_answers(
         self,
@@ -131,12 +199,7 @@ class BraveBrowserResource(dg.ConfigurableResource):
         requests_per_route: int,
         on_result: Callable[[BraveSearchResult], None],
     ) -> Iterator[BraveSearchResult]:
-        """Refill a route immediately when it finishes, without fixed batch barriers.
-
-        Only one thread advances the input at a time. Browser/Playwright objects never
-        cross threads. The bounded result queue also bounds unpersisted answers when
-        storage slows down. Closing this generator stops further company claims.
-        """
+        """Persist each result before claiming the next company on an idle route."""
         if requests_per_route < 1:
             raise ValueError("requests_per_route must be positive")
         worker_count = len(ROUTES) * requests_per_route
@@ -145,7 +208,6 @@ class BraveBrowserResource(dg.ConfigurableResource):
         )
         stopped = Event()
         input_lock = Lock()
-        proxies = (None, self.crawl_proxy1, self.crawl_proxy2, self.crawl_proxy3)
 
         def next_company() -> CompanySearchInput | None:
             with input_lock:
@@ -159,96 +221,33 @@ class BraveBrowserResource(dg.ConfigurableResource):
                 except Full:
                     continue
 
-        def worker(route: str, proxy: str | None) -> None:
-            browser = None
+        def worker(route: str) -> None:
+            session_id = uuid4().hex
             try:
                 company = next_company()
                 if company is None:
                     return
-                try:
-                    browser = launch(headless=True, proxy=proxy)
-                    browser_context = browser.new_context(locale="en-US")
-                except Exception:
-                    raise RuntimeError(
-                        f"Brave browser route {route} failed to start"
-                    ) from None
-                try:
+                with Session(raise_for_status=False) as http:
+                    http.headers["Authorization"] = f"Bearer {self.api_token}"
                     while company is not None and not stopped.is_set():
-                        page = None
-                        query = company.query
-                        started = monotonic()
-                        try:
-                            page = browser_context.new_page()
-                            answer = copy_brave_answer(
-                                page,
-                                query,
-                                timeout_ms=self.page_timeout_ms,
-                                answer_timeout_ms=company.answer_timeout_ms,
-                            )
-                            result = BraveSearchResult(
-                                company,
-                                query,
-                                route,
-                                page.url,
-                                datetime.now(UTC),
-                                "success",
-                                answer,
-                                elapsed_ms=round((monotonic() - started) * 1000),
-                            )
-                        except Exception as error:
-                            # Playwright error messages can contain credential-bearing
-                            # proxy URLs. Keep the error category, never the raw message.
-                            result = BraveSearchResult(
-                                company,
-                                query,
-                                route,
-                                BRAVE_ORIGIN,
-                                datetime.now(UTC),
-                                "error",
-                                error_type=(
-                                    error.error_type
-                                    if isinstance(error, BraveStepError)
-                                    else type(error).__name__
-                                ),
-                                error_stage=(
-                                    error.stage
-                                    if isinstance(error, BraveStepError)
-                                    else "page_setup"
-                                ),
-                                elapsed_ms=round((monotonic() - started) * 1000),
-                            )
-                        try:
-                            # Preserve the answer even when browser cleanup fails.
-                            on_result(result)
-                        finally:
-                            if page is not None:
-                                page.close()
+                        result = self.ask(http, company, route, session_id=session_id)
+                        on_result(result)
                         send(result)
                         company = next_company()
-                finally:
-                    browser_context.close()
-            except BaseException as error:
-                # Do not strand the consumer if a worker or the input iterator fails.
-                # Sanitize browser lifecycle errors, which can expose proxy credentials.
+            except BaseException as error:  # noqa: BLE001 - always notify the result consumer when a worker exits
                 send(
                     RuntimeError(f"Brave route {route} failed ({type(error).__name__})")
                 )
             finally:
-                try:
-                    if browser is not None:
-                        browser.close()
-                except Exception:
-                    send(RuntimeError(f"Brave route {route} failed to close"))
-                finally:
-                    send(None)
+                send(None)
 
         with ThreadPoolExecutor(
-            max_workers=worker_count, thread_name_prefix="brave_browser"
+            max_workers=worker_count, thread_name_prefix="brave_http"
         ) as executor:
             futures = [
-                executor.submit(worker, route, proxy)
+                executor.submit(worker, route)
                 for _ in range(requests_per_route)
-                for route, proxy in zip(ROUTES, proxies, strict=True)
+                for route in ROUTES
             ]
             finished = 0
             try:

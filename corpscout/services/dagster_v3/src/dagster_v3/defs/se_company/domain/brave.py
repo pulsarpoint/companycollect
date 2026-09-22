@@ -42,7 +42,7 @@ SOURCE_COLUMNS = (
 )
 SOURCE_SQL = """SELECT company_id,result_id,answer_text,lower(hex(SHA256(answer_text))) AS answer_hash,
     query,source_url,completed_at
-FROM corpscout.se_company_brave_domains FINAL
+FROM corpscout.se_company_brave_search_results_latest_success FINAL
 WHERE country_code='SE' AND query_type='official_website' AND status='success'"""
 CHANGED_SQL = f"""SELECT answer.company_id FROM ({SOURCE_SQL}) AS answer
 LEFT ANTI JOIN (SELECT * FROM corpscout.{CHECKPOINT_TABLE} FINAL) AS processed
@@ -318,7 +318,7 @@ def process_brave_answers(
     group_name=tables.GROUP_NAME,
     kinds={"clickhouse", "python"},
     pool="se_company_domain_brave",
-    deps=["se_company_brave_domains"],
+    deps=["company_brave_search_results"],
     metadata={"table": "corpscout.se_company_domain_suggestion", "source": "brave"},
     description="Extract and save domain suggestions from each new official-website Brave response. Save response-ID/hash checkpoints with JSON domain lists after source suggestions, including empty lists. Candidates retain the original answer for domain verification. Writes are enabled by default; execute=false previews without saving.",
 )
@@ -330,7 +330,7 @@ def se_company_domain_suggestions_brave(
     assert_clickhouse_tables_exist(
         clickhouse,
         database=tables.DATABASE,
-        tables=("se_company_brave_domains", CHECKPOINT_TABLE, tables.SUGGESTION_TABLE),
+        tables=("se_company_brave_search_results_latest_success", CHECKPOINT_TABLE, tables.SUGGESTION_TABLE),
     )
     with clickhouse.get_connection() as client:
         counts = process_brave_answers(

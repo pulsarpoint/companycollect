@@ -10,6 +10,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 import httpx
+from browser_http_fixture import install_browser_api
 from test_crawl import browser_responses
 from test_package import response
 from test_selection_instructions import requested_assessment
@@ -27,6 +28,7 @@ URL = "https://example.test/jobs"
 
 class CrawlServiceTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        install_browser_api(self)
         self.temporary = TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name) / "results"
@@ -35,7 +37,7 @@ class CrawlServiceTests(unittest.IsolatedAsyncioTestCase):
         self.hold.set()
 
         @asynccontextmanager
-        async def browser():
+        async def browser(*_args, **_):
             await self.hold.wait()
             async with browser_responses(
                 {URL: (HTML, [], 200, None)}, self.requested
@@ -46,6 +48,42 @@ class CrawlServiceTests(unittest.IsolatedAsyncioTestCase):
         self.browser_patch.start()
         self.addCleanup(self.browser_patch.stop)
         self.service = CrawlService(self.root, {}, concurrency=1, max_pending=1)
+
+    async def test_validation_preserves_overrides_without_creating_a_job(self):
+        app = create_app(self.service, api_token="test-token")
+        payload = {
+            "request_id": "validate-only",
+            "url": "example.test",
+            "crawl": "full",
+            "api": "openrouter",
+            "config": {"max_pages": 5},
+        }
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app), base_url="http://service"
+            ) as client:
+                response = await client.post("/v1/crawls/validate", json=payload)
+                self.assertEqual(response.status_code, 401)
+                client.headers["Authorization"] = "Bearer test-token"
+                response = await client.post("/v1/crawls/validate", json=payload)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(
+                    response.json(), payload | {"url": "https://example.test/"}
+                )
+                for invalid in (
+                    payload | {"pages": [URL]},
+                    payload | {"instructions": "Find jobs"},
+                    payload | {"config": {"max_pages": 0}},
+                    payload | {"unknown": True},
+                ):
+                    with self.subTest(invalid=invalid):
+                        response = await client.post(
+                            "/v1/crawls/validate", json=invalid
+                        )
+                        self.assertEqual(response.status_code, 422)
+                self.assertEqual(self.service.jobs, {})
+                self.assertTrue(self.service.queue.empty())
+                self.assertEqual(self.requested, [])
 
     async def test_rest_result_and_idempotency_survive_restart(self):
         app = create_app(self.service, api_token="test-token")
@@ -220,7 +258,7 @@ class CrawlServiceTests(unittest.IsolatedAsyncioTestCase):
     async def test_rest_preserves_site_info_only_and_instruction_selection(self):
         self.service.environment["DEEPSEEK"] = "model-secret"
 
-        def browser():
+        def browser(*_args, **_):
             return browser_responses(
                 {SITE: (COMPANY_HTML, [], 200, None), URL: (HTML, [], 200, None)},
                 self.requested,
@@ -239,6 +277,10 @@ class CrawlServiceTests(unittest.IsolatedAsyncioTestCase):
             prompt = data["messages"][1]["content"]
             source = json.loads(prompt.split("INPUT DATA:\n")[1])
             model_requests.append(source)
+            if "max_new_queries" in source:
+                return httpx.Response(
+                    200, json=response({"queries": []}), request=request
+                )
             document = (
                 COMPANY
                 if source.get("task") == "site_classification"
@@ -320,6 +362,9 @@ class CrawlServiceTests(unittest.IsolatedAsyncioTestCase):
 
 
 class CrawlCliResultTests(unittest.TestCase):
+    def setUp(self):
+        install_browser_api(self)
+
     def test_existing_cli_preserves_stdout_and_writes_portable_json(self):
         with TemporaryDirectory() as directory:
             output = Path(directory) / "crawl"
@@ -340,7 +385,9 @@ class CrawlCliResultTests(unittest.TestCase):
                 ),
                 patch(
                     "company_research.crawl.open_browser",
-                    lambda: browser_responses({URL: (HTML, [], 200, None)}, requested),
+                    lambda *_args, **_: browser_responses(
+                        {URL: (HTML, [], 200, None)}, requested
+                    ),
                 ),
                 redirect_stdout(stdout),
                 redirect_stderr(io.StringIO()),

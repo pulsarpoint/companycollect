@@ -101,6 +101,11 @@ usefulness; low = unlikely to contribute; unknown = insufficient metadata.
 requested_content.role: direct = likely contains requested content; navigation =
 likely leads to it; none = no plausible contribution. High/medium require direct
 or navigation; low requires none. Unknown may use none.
+priority: 0-100, higher means visit sooner among pages with the same role and
+potential. Set it explicitly for every candidate. Use 90-100 for target-specific
+evidence or the most direct collection index, 60-80 for relevant gateways, and
+20-50 for broad overviews. For subsidiary financials, the subsidiary accounts
+index must outrank generic investor gateways and whole-group annual reports.
 
 Target scope applies even to useful content. target_relevance: target = target's
 own page; target_evidence = an external page specifically about the target, such
@@ -112,6 +117,40 @@ follow_scope is single_page normally. Use target_navigation only for navigation
 explicitly scoped to the target employer or its documents. External employer
 boards can lead to that employer's ads; partner profiles and global directories
 do not authorize navigating another company's site or other employers' jobs.
+
+Exception for requested document/financial discovery: source_navigation permits
+bounded traversal of a parent company's investor/subsidiary-report pages or a
+filing/registry source. Source owner and evidence subject are different concepts:
+source_navigation always requires requested_content.role=navigation and potential
+high or medium. Use single_page for direct evidence, not source_navigation.
+the parent homepage is related_company but can lead to reports ABOUT the target.
+For a new source, supply navigation_source.kind (parent_company or filing_source)
+and navigation_source.evidence: a short EXACT quotation from one supplied link
+context. Parent status must be explicitly stated on the target's own website;
+partners, customers and vague group references do not qualify. A filing source
+needs explicit report/filing/registry context, not a domain-name guess. Search
+snippets are discovery hints, not verified facts or confirmation of ownership.
+For candidates with a non-null navigation_root, the supplied navigation_sources
+records the relationship evidence already accepted for bounded navigation. Reuse
+that source approval; do not reject its children just because their own labels
+do not repeat the ownership quotation. This remains a navigation hypothesis,
+not independently verified ownership. navigation_source may be null for children:
+follow only relevant investor/report/filing gateways on that same domain. Keep
+source_navigation for those gateways even when they mention the target. Choose
+target_evidence/single_page for actual target-specific HTML reports. Do not crawl
+the parent's products, jobs or other subsidiaries. Unrelated never qualifies.
+Return navigation_source=null for ordinary links. Never attribute parent totals
+or another subsidiary's reports to the target. Exhausting links does not establish
+that the requested information is absent.
+
+For financial/ownership discovery, a target's investment, funding, strategic
+partnership or next-phase-of-growth announcement can be a medium/navigation
+candidate even when its title does not say acquisition or financial statements.
+Inspect plausible announcements to discover owners and filing sources; the title
+alone neither proves nor disproves ownership. Once a parent source is approved,
+prefer subsidiary-account indexes over generic group investor pages. A generic
+'For more information, visit ...' quote does not itself establish parent status:
+quote the actual relationship statement, not the invitation to visit a website.
 
 For jobs requests, listings and descriptions are useful, and careers gateways,
 pagination and target-scoped external boards can lead to them. Finding one page
@@ -128,7 +167,7 @@ request-specific link signals and target connection or uncertainty.
 """
 
 EXTRACTION_INSTRUCTIONS = """Extract all identifiable supported records for all objectives
-from this source window of native Crawl4AI cleaned HTML. It may be one of several overlapping windows from a page. Return only the schema JSON.
+from this source window of simplified HTML. It may be one of several overlapping windows from a page. Return only the schema JSON.
 Keep separately named legal entities separate. An expansion into 'DemoWorks India
 Private Ltd' does not make that the legal name of 'DemoWorks' and does not establish
 subsidiary ownership. A pool of ISO-certified experts is staff expertise, not company
@@ -383,6 +422,7 @@ def selection_prompt(
     candidates: list[dict],
     *,
     site_profile: dict | None = None,
+    navigation_sources: dict | None = None,
     coverage: dict | None = None,
     instructions: str | None = None,
 ) -> str:
@@ -397,6 +437,7 @@ def selection_prompt(
                     {
                         "base_url": base_url,
                         "site_profile_hypothesis": site_profile,
+                        "navigation_sources": navigation_sources or {},
                         "candidates": candidates,
                         "selection_instructions": instructions,
                     },

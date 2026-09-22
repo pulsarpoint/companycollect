@@ -69,7 +69,7 @@ def _archived_research(
         config = ResearchConfig.model_validate(
             {k: v for k, v in values.items() if v is not None}
         )
-        # Crawl4AI/browser libraries also print progress. Keep stdout machine-readable.
+        # Browser libraries also print progress. Keep stdout machine-readable.
         with redirect_stdout(sys.stderr):
             result = asyncio.run(
                 research_company(

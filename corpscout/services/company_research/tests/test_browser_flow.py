@@ -11,10 +11,10 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 import httpx
+from native_browser_fixture import open_test_browser as open_browser
 from test_catalog_search import catalog_fixture
 
 from company_research import ResearchConfig
-from company_research.fetch import open_browser
 from company_research.models import OBJECTIVES, RECORD_TYPES
 from company_research.research import research_company
 from company_research.storage import content_hash
@@ -224,7 +224,7 @@ class BrowserFlowTests(unittest.IsolatedAsyncioTestCase):
                     # Kill the real Playwright context while the crawler is doing model work.
                     await browsers[
                         0
-                    ].crawler_strategy.browser_manager.default_context.close()
+                    ].context.close()
                 document = {
                     "crawl_decision": "continue_crawling",
                     "site_description": "DemoWorks provides engineering services.",

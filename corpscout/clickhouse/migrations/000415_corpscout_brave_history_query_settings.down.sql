@@ -1,8 +1,8 @@
 CREATE DATABASE IF NOT EXISTS corpscout;
 
-DROP VIEW IF EXISTS corpscout.se_company_brave_domains_history;
+DROP VIEW IF EXISTS corpscout.se_company_brave_search_results_s3_archive;
 
-CREATE TABLE corpscout.se_company_brave_domains_history
+CREATE TABLE corpscout.se_company_brave_search_results_s3_archive
 (
 result_id String,
     task_id String,

@@ -7,13 +7,14 @@ import {
 } from "~/lib/se-domains-filters";
 
 describe("se domains filters", () => {
-  it("reads the seven filters off the URL, trimmed and capped", () => {
+  it("reads the filters off the URL, trimmed and capped", () => {
     const params = new URLSearchParams(
-      "domain= Example.SE &company=5560125220&association=connected&status=active&minConfidence=0.7&maxConfidence=0.9&shared=1",
+      "domain= Example.SE &company=5560125220&source= brave &association=connected&status=active&minConfidence=0.7&maxConfidence=0.9&shared=1",
     );
     expect(parseSeDomainsFilters(params)).toEqual({
       domain: "example.se",
       company: "5560125220",
+      source: "brave",
       association: "connected",
       status: "active",
       minConfidence: "0.7",
@@ -24,10 +25,17 @@ describe("se domains filters", () => {
 
   it("drops values the catalogue does not know and confidences outside 0..1", () => {
     const params = new URLSearchParams(
-      "association=maybe&status=gone&minConfidence=1.5&maxConfidence=abc&shared=yes&company=abc",
+      "association=maybe&source=unknown&status=gone&minConfidence=1.5&maxConfidence=abc&shared=yes&company=abc",
     );
     expect(parseSeDomainsFilters(params)).toEqual(EMPTY_SE_DOMAINS_FILTERS);
     expect(parseSeDomainsFilters(new URLSearchParams(""))).toEqual(EMPTY_SE_DOMAINS_FILTERS);
+  });
+
+  it.each(["brave", "wikidata", "esef_filing", "common_crawl_identity"])("preserves source %s in pagination links", (source) => {
+    const filters = parseSeDomainsFilters(new URLSearchParams({ source }));
+    expect(filters.source).toBe(source);
+    expect(seDomainsHref(filters, 2, 100)).toBe(`/admin/se/companies/domains?source=${source}&page=2&pageSize=100`);
+    expect(parseSeDomainsFilters(new URLSearchParams("source=__any__")).source).toBe("");
   });
 
   it("builds the list href with only the non-empty filters, page and non-default size", () => {

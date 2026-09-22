@@ -18,7 +18,7 @@ from dagster_clickhouse import ClickhouseResource
 from dagster_v3.defs.common.processing import ProcessingResource
 from dagster_v3.defs.company_domains.assets import (
     BraveSearchConfig,
-    se_company_brave_domains,
+    company_brave_search_results,
 )
 from dagster_v3.defs.company_domains import browser as brave
 from dagster_v3.defs.company_domains import publication
@@ -27,7 +27,7 @@ from dagster_v3.defs.company_domains.publication import (
     EXPORT_DESTINATION,
     publish_results,
 )
-from tests.test_company_domains_brave import BrowserFixture, PROXIES
+from tests.test_company_domains_brave import SERVICE, brave_api as brave_api
 from tests.test_company_domains_brave_integration import MIGRATION
 from tests.test_processing_store import prepare_task, claim, complete
 from dagster_v3.defs.common.clickhouse_queue import ClickHouseInputQueue
@@ -170,6 +170,7 @@ def clickhouse(store, tmp_path, archive_s3):
             "000416_corpscout_brave_history_reader.up.sql",
             "000411_corpscout_company_processing_input.up.sql",
             "000412_corpscout_company_brave_search_input.up.sql",
+            "000428_corpscout_brave_search_outcomes.up.sql",
         ):
             for statement in MIGRATION.with_name(migration).read_text().split(";"):
                 if statement.strip():
@@ -207,7 +208,7 @@ def test_import_survives_partial_insert_and_lost_acknowledgment(
     batch = queue.export_batch(task, limit=100, destination=EXPORT_DESTINATION)
     # Simulate an interrupted import after only part of the closed batch arrived.
     client.execute(
-        PUBLISH_SQL.format(table="se_company_brave_domains") + " AND input_id='0'",
+        PUBLISH_SQL.format(table="se_company_brave_search_results_latest_success") + " AND input_id='0'",
         {"batch_id": batch.batch_id, "country": "SE", "path": "pending"},
     )
     real_ack = publication.acknowledge_archive
@@ -223,7 +224,7 @@ def test_import_survives_partial_insert_and_lost_acknowledgment(
     assert publish_results(queue, client, task, batch_size=100) == 2
     assert queue.progress(task)["unpublished"] == 0
     rows = client.execute(
-        "SELECT input_id,answer_text FROM corpscout.se_company_brave_domains FINAL ORDER BY input_id"
+        "SELECT input_id,answer_text FROM corpscout.se_company_brave_search_results_latest_success FINAL ORDER BY input_id"
     )
     assert rows == [
         ("0", "Original åäö\nhttps://example.se/"),
@@ -233,13 +234,12 @@ def test_import_survives_partial_insert_and_lost_acknowledgment(
 
 
 def test_materialization_pages_renders_processes_and_resumes_without_searching(
-    store, clickhouse, monkeypatch
+    store, clickhouse, monkeypatch, brave_api
 ):
     queue, dsn = store
     client, resource = clickhouse
-    fixture = BrowserFixture()
+    fixture = brave_api()
     fixture.release_slow.set()
-    monkeypatch.setattr(brave, "launch", fixture.launch)
     client.execute(
         "INSERT INTO corpscout.company_brave_search_input VALUES",
         [(str(i), str(i), f"Company {i} AB", "SE") for i in range(8)],
@@ -251,147 +251,40 @@ def test_materialization_pages_renders_processes_and_resumes_without_searching(
         "input_batch_size": 4,
         "query_type": "website",
         "query_template": "Find {company_name}",
-        "export_batch_size": 4,
     }
     resources = {
         "clickhouse": resource,
         "processing_clickhouse": resource,
         "processing": ProcessingResource(postgres_url=dsn),
-        "company_brave_browser": brave.BraveBrowserResource(**PROXIES),
+        "company_brave_browser": brave.BraveBrowserResource(**fixture.config),
     }
     result = dg.materialize(
-        [se_company_brave_domains],
+        [company_brave_search_results],
         resources=resources,
-        run_config={"ops": {"se_company_brave_domains": {"config": config}}},
+        run_config={"ops": {"company_brave_search_results": {"config": config}}},
     )
     assert result.success
-    assert queue.progress(task)["succeeded"] == 8
-    assert queue.progress(task)["unpublished"] == 0
+    assert client.execute("SELECT count() FROM corpscout.company_brave_search_results FINAL") == [(8,)]
+    with queue.transaction() as cursor:
+        cursor.execute("SELECT count(*) FROM processing.items")
+        assert cursor.fetchone()["count"] == 0
     assert client.execute(
-        "SELECT count() FROM corpscout.se_company_brave_domains FINAL"
+        "SELECT count() FROM corpscout.se_company_brave_search_results_latest_success FINAL"
     ) == [(8,)]
 
     def unexpected_launch(**kwargs):
         pytest.fail("resume repeated a saved Brave search")
 
-    monkeypatch.setattr(brave, "launch", unexpected_launch)
-    client.execute("TRUNCATE TABLE corpscout.company_brave_search_input")
+    monkeypatch.setattr(brave, "Session", unexpected_launch)
     result = dg.materialize(
-        [se_company_brave_domains],
+        [company_brave_search_results],
         resources=resources,
-        run_config={
-            "ops": {"se_company_brave_domains": {"config": {"task_id": task}}}
-        },
+        run_config={"ops": {"company_brave_search_results": {"config": {"task_id": task}}}},
     )
     assert result.success
     assert queue.progress(task)["total"] == 8
 
 
-def test_adaptive_timeouts_survive_resume_and_retry_only_failed_items(
-    store, clickhouse, monkeypatch
-):
-    queue, dsn = store
-    client, resource = clickhouse
-    fixture = BrowserFixture()
-    fixture.release_slow.set()
-    monkeypatch.setattr(brave, "launch", fixture.launch)
-    attempts = {str(i): [] for i in range(5)}
-
-    def copy_answer(page, query, *, timeout_ms, answer_timeout_ms):
-        company = query.rsplit(" ", 1)[1]
-        attempts[company].append(answer_timeout_ms)
-        attempt = len(attempts[company])
-        if company == "0" and attempt <= 3:
-            raise brave.BraveStepError("answer_generation", "TimeoutError")
-        if company == "1" and attempt == 1:
-            raise brave.BraveStepError("copy", "TimeoutError")
-        if company == "2" and attempt == 1:
-            raise brave.BraveStepError("answer_generation", "RuntimeError")
-        if company == "4" and attempt == 1:
-            # Historical timeouts have no stage; they still qualify for a longer wait.
-            raise brave.BraveStepError("", "TimeoutError")
-        page.url = "https://search.brave.com/ask"
-        return f"Answer for {query}"
-
-    monkeypatch.setattr(brave, "copy_brave_answer", copy_answer)
-    client.execute(
-        "INSERT INTO corpscout.company_brave_search_input VALUES",
-        [(str(i), str(i), f"Company {i}", "SE") for i in range(5)],
-    )
-    task = str(uuid4())
-    resources = {
-        "clickhouse": resource,
-        "processing_clickhouse": resource,
-        "processing": ProcessingResource(postgres_url=dsn),
-        "company_brave_browser": brave.BraveBrowserResource(**PROXIES),
-    }
-    config = {
-        "task_id": task,
-        "input_relation": "corpscout.company_brave_search_input",
-        "query_template": "Find {company_name}",
-        "max_attempts": 1,
-        "retry_seconds": 0,
-    }
-    first = dg.materialize(
-        [se_company_brave_domains],
-        resources=resources,
-        run_config={"ops": {"se_company_brave_domains": {"config": config}}},
-        raise_on_error=False,
-    )
-    assert not first.success
-    assert queue.progress(task)["terminal_failed"] == 4
-    assert queue.progress(task)["succeeded"] == 1
-    assert all(timeouts == [60_000] for timeouts in attempts.values())
-    assert queue.retry_failed(task, max_attempts=1) == 0
-
-    # A larger budget alone must not silently restart a finished failed selection.
-    config = {"task_id": task, "max_attempts": 5, "retry_seconds": 0}
-    resumed = dg.materialize(
-        [se_company_brave_domains],
-        resources=resources,
-        run_config={"ops": {"se_company_brave_domains": {"config": config}}},
-        raise_on_error=False,
-    )
-    assert not resumed.success
-    assert all(timeouts == [60_000] for timeouts in attempts.values())
-    config["retry_failed"] = True
-    retried = dg.materialize(
-        [se_company_brave_domains],
-        resources=resources,
-        run_config={"ops": {"se_company_brave_domains": {"config": config}}},
-    )
-    assert retried.success
-    assert attempts == {
-        "0": [60_000, 120_000, 180_000, 180_000],
-        "1": [60_000, 60_000],
-        "2": [60_000, 60_000],
-        "3": [60_000],
-        "4": [60_000, 120_000],
-    }
-    assert queue.progress(task)["succeeded"] == 5
-    assert queue.progress(task)["remaining"] == 0
-    assert queue.progress(task)["terminal_failed"] == 0
-    assert queue.progress(task)["unpublished"] == 0
-    assert queue.retry_failed(task, max_attempts=5) == 0
-    with queue.transaction() as cursor:
-        cursor.execute(
-            "SELECT attempt,payload FROM processing.results WHERE task_id=%s AND input_id='0' ORDER BY attempt",
-            (task,),
-        )
-        history = cursor.fetchall()
-    assert [row["attempt"] for row in history] == [1, 2, 3, 4]
-    assert [row["payload"]["answer_timeout_ms"] for row in history] == attempts["0"]
-    assert all(
-        row["payload"]["error_stage"] == "answer_generation" for row in history[:3]
-    )
-    assert all("elapsed_ms" in row["payload"] for row in history)
-    assert all("answer_text" not in row["payload"] for row in history)
-    assert client.execute(
-        "SELECT count() FROM corpscout.se_company_brave_domains FINAL"
-    ) == [(5,)]
-    assert client.execute(
-        "SELECT count() FROM corpscout.se_company_brave_domains_history"
-    ) == [(11,)]
 
 
 def test_physical_queue_supports_custom_template_columns_and_rejects_views(
@@ -496,71 +389,6 @@ def test_queue_rejects_duplicate_ids_and_missing_retry_inputs(store, clickhouse)
         source.read(info, input_id="1")
 
 
-def test_clickhouse_outage_does_not_repeat_saved_browser_work(
-    store, clickhouse, monkeypatch
-):
-    queue, dsn = store
-    client, resource = clickhouse
-    fixture = BrowserFixture()
-    fixture.release_slow.set()
-    monkeypatch.setattr(brave, "launch", fixture.launch)
-    client.execute(
-        "INSERT INTO corpscout.company_brave_search_input VALUES",
-        [(str(i), str(i), f"Company {i}", "SE") for i in range(8)],
-    )
-    task = str(uuid4())
-    resources = {
-        "clickhouse": resource,
-        "processing_clickhouse": resource,
-        "processing": ProcessingResource(postgres_url=dsn),
-        "company_brave_browser": brave.BraveBrowserResource(**PROXIES),
-    }
-    client.execute(
-        "RENAME TABLE corpscout.se_company_brave_domains TO corpscout.unavailable_brave_info"
-    )
-    result = dg.materialize(
-        [se_company_brave_domains],
-        resources=resources,
-        run_config={
-            "ops": {
-                "se_company_brave_domains": {
-                    "config": {
-                        "task_id": task,
-                        "input_relation": "corpscout.company_brave_search_input",
-                        "export_batch_size": 4,
-                    }
-                }
-            }
-        },
-        raise_on_error=False,
-    )
-    assert not result.success
-    assert queue.progress(task)["succeeded"] == 8
-    assert queue.progress(task)["unpublished"] == 8
-
-    def unexpected_browser(**kwargs):
-        pytest.fail("export recovery repeated an already saved search")
-
-    monkeypatch.setattr(brave, "launch", unexpected_browser)
-    client.execute(
-        "RENAME TABLE corpscout.unavailable_brave_info TO corpscout.se_company_brave_domains"
-    )
-    result = dg.materialize(
-        [se_company_brave_domains],
-        resources=resources,
-        run_config={
-            "ops": {
-                "se_company_brave_domains": {
-                    "config": {"task_id": task, "mode": "publish"}
-                }
-            }
-        },
-    )
-    assert result.success
-    assert queue.progress(task)["unpublished"] == 0
-    assert client.execute(
-        "SELECT count() FROM corpscout.se_company_brave_domains FINAL"
-    ) == [(8,)]
 
 
 def test_provisioned_publisher_can_import_but_cannot_update_postgres(
@@ -617,7 +445,7 @@ def test_provisioned_publisher_can_import_but_cannot_update_postgres(
     try:
         assert publish_results(queue, publisher, task, batch_size=100) == 1
         with pytest.raises(Exception):
-            publisher.execute("TRUNCATE TABLE corpscout.se_company_brave_domains")
+            publisher.execute("TRUNCATE TABLE corpscout.se_company_brave_search_results_latest_success")
     finally:
         publisher.disconnect()
     with closing(psycopg2.connect(dsn)) as admin:
@@ -658,18 +486,16 @@ def test_fixed_upper_bound_excludes_later_inputs_and_missing_rows_cannot_finish(
     def unexpected_launch(**kwargs):
         pytest.fail("empty source must not launch a Brave request")
 
-    monkeypatch.setattr(brave, "launch", unexpected_launch)
+    monkeypatch.setattr(brave, "Session", unexpected_launch)
     result = dg.materialize(
-        [se_company_brave_domains],
+        [company_brave_search_results],
         resources={
             "clickhouse": resource,
             "processing_clickhouse": resource,
             "processing": ProcessingResource(postgres_url=dsn),
-            "company_brave_browser": brave.BraveBrowserResource(**PROXIES),
+            "company_brave_browser": brave.BraveBrowserResource(**SERVICE),
         },
-        run_config={
-            "ops": {"se_company_brave_domains": {"config": {"task_id": task}}}
-        },
+        run_config={"ops": {"company_brave_search_results": {"config": {"task_id": task}}}},
         raise_on_error=False,
     )
     assert not result.success
@@ -695,10 +521,10 @@ def test_archive_preserves_attempts_current_never_regresses_and_can_rebuild(
     )
     assert publish_results(queue, client, failed, batch_size=100) == 1
     assert client.execute(
-        "SELECT answer_text FROM corpscout.se_company_brave_domains FINAL"
+        "SELECT answer_text FROM corpscout.se_company_brave_search_results_latest_success FINAL"
     ) == [("New answer åäö\nhttps://example.se",)]
     history = client.execute(
-        "SELECT answer_text FROM corpscout.se_company_brave_domains_history ORDER BY completed_at"
+        "SELECT answer_text FROM corpscout.se_company_brave_search_results_s3_archive ORDER BY completed_at"
     )
     assert history == [
         ("Original answer",),
@@ -717,7 +543,7 @@ def test_archive_preserves_attempts_current_never_regresses_and_can_rebuild(
     # Repeated filtered history reads must stay complete with the server cache enabled.
     for status, count in (("error", 1), ("success", 2), ("missing", 0), ("success", 2)):
         assert client.execute(
-            "SELECT count() FROM corpscout.se_company_brave_domains_history WHERE status=%(status)s",
+            "SELECT count() FROM corpscout.se_company_brave_search_results_s3_archive WHERE status=%(status)s",
             {"status": status},
             settings={"use_query_condition_cache": 1},
         ) == [(count,)]
@@ -727,17 +553,17 @@ def test_archive_preserves_attempts_current_never_regresses_and_can_rebuild(
     assert queue.skip_if_fresh(item, work_key="test-work-0", freshness_days=30)
     assert queue.progress(cached)["skipped"] == 1
     # Rebuild the current table entirely with SQL from S3, after PG payload pruning.
-    client.execute("TRUNCATE TABLE corpscout.se_company_brave_domains")
+    client.execute("TRUNCATE TABLE corpscout.se_company_brave_search_results_latest_success")
     client.execute(
-        "INSERT INTO corpscout.se_company_brave_domains ("
+        "INSERT INTO corpscout.se_company_brave_search_results_latest_success ("
         + publication.COLUMNS_SQL
         + ", archive_path) "
         "SELECT "
         + publication.COLUMNS_SQL
-        + ", _path FROM corpscout.se_company_brave_domains_history WHERE status='success'"
+        + ", _path FROM corpscout.se_company_brave_search_results_s3_archive WHERE status='success'"
     )
     assert client.execute(
-        "SELECT answer_text FROM corpscout.se_company_brave_domains FINAL"
+        "SELECT answer_text FROM corpscout.se_company_brave_search_results_latest_success FINAL"
     ) == [("New answer åäö\nhttps://example.se",)]
 
 
@@ -768,7 +594,7 @@ def test_archive_mismatch_retains_postgres_payload_and_leaves_batch_pending(
         )
         assert cursor.fetchone()["answer"] == "Correct response"
     assert client.execute(
-        "SELECT count() FROM corpscout.se_company_brave_domains FINAL"
+        "SELECT count() FROM corpscout.se_company_brave_search_results_latest_success FINAL"
     ) == [(0,)]
 
 
@@ -784,11 +610,11 @@ def test_other_country_requires_its_own_destination_and_is_not_misrouted(
             'UPDATE processing.results SET payload=payload || \'{"country_code":"NO"}\'::jsonb WHERE task_id=%s',
             (task,),
         )
-    with pytest.raises(ValueError, match="no_company_brave_domains"):
+    with pytest.raises(ValueError, match="no_company_brave_search_results_latest_success"):
         publish_results(queue, client, task, batch_size=100)
     assert queue.progress(task)["unpublished"] == 1
     assert client.execute(
-        "SELECT count() FROM corpscout.se_company_brave_domains FINAL"
+        "SELECT count() FROM corpscout.se_company_brave_search_results_latest_success FINAL"
     ) == [(0,)]
 
 
@@ -800,14 +626,14 @@ def test_history_reader_only_needs_select_on_the_country_view(store, clickhouse)
     publish_results(queue, client, task, batch_size=100)
     client.execute("CREATE USER brave_reader IDENTIFIED BY 'test'")
     client.execute(
-        "GRANT SELECT ON corpscout.se_company_brave_domains_history TO brave_reader"
+        "GRANT SELECT ON corpscout.se_company_brave_search_results_s3_archive TO brave_reader"
     )
     reader = Client(
         host="127.0.0.1", port=resource.port, user="brave_reader", password="test"
     )
     try:
         assert reader.execute(
-            "SELECT count() FROM corpscout.se_company_brave_domains_history WHERE status='success'"
+            "SELECT count() FROM corpscout.se_company_brave_search_results_s3_archive WHERE status='success'"
         ) == [(1,)]
         with pytest.raises(Exception):
             reader.execute(

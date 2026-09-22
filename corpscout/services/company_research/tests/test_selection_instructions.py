@@ -9,6 +9,8 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 import httpx
+from browser_http_fixture import install_browser_api, no_model_requests
+from browser_http_fixture import original_send as browser_fixture_send
 from pydantic import ValidationError
 from test_crawl import browser_responses
 from test_package import assessment, response
@@ -37,6 +39,9 @@ def requested_assessment(
 
 
 class SelectionInstructionTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        install_browser_api(self)
+
     async def test_external_page_limit_is_reported_as_a_budget_not_no_matching_pages(
         self,
     ):
@@ -113,6 +118,8 @@ class SelectionInstructionTests(unittest.IsolatedAsyncioTestCase):
         }
 
         async def model_boundary(client, request, **kwargs):
+            if request.url.host == "browser-fixture":
+                return await browser_fixture_send(client, request, **kwargs)
             self.assertEqual(request.url.host, "api.deepseek.com")
             body = json.loads(request.content)
             prompt = next(m["content"] for m in body["messages"] if m["role"] == "user")
@@ -160,7 +167,7 @@ class SelectionInstructionTests(unittest.IsolatedAsyncioTestCase):
             with (
                 patch(
                     "company_research.crawl.open_browser",
-                    lambda: browser_responses(pages, requested),
+                    lambda *_args, **_: browser_responses(pages, requested),
                 ),
                 patch.object(httpx.AsyncClient, "send", model_boundary),
             ):
@@ -241,8 +248,8 @@ class SelectionInstructionTests(unittest.IsolatedAsyncioTestCase):
                 with (
                     patch(
                         "company_research.crawl.open_browser",
-                        lambda pages=pages, requested=requested: browser_responses(
-                            pages, requested
+                        lambda *_args, pages=pages, requested=requested, **_: (
+                            browser_responses(pages, requested)
                         ),
                     ),
                     patch.object(httpx.AsyncClient, "send", model_boundary),
@@ -313,6 +320,9 @@ class SelectionInstructionTests(unittest.IsolatedAsyncioTestCase):
 
 
 class CompactSelectionTests(unittest.TestCase):
+    def setUp(self):
+        install_browser_api(self)
+
     def test_compact_contract_rejects_broad_fields_and_missing_scope(self):
         value = requested_assessment({"candidate_id": "c1"}, "navigation")
         RequestedContentAssessment.model_validate(value)
@@ -343,6 +353,8 @@ class CompactSelectionTests(unittest.TestCase):
                 "requested_content",
                 "target_relevance",
                 "follow_scope",
+                "navigation_source",
+                "priority",
                 "reason",
             },
         )
@@ -353,6 +365,9 @@ class CompactSelectionTests(unittest.TestCase):
 
 
 class PageListCliTests(unittest.TestCase):
+    def setUp(self):
+        install_browser_api(self)
+
     def test_cli_reads_custom_instructions_file_and_selects_within_page_list(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -365,6 +380,8 @@ class PageListCliTests(unittest.TestCase):
             }
 
             async def model_boundary(client, request, **kwargs):
+                if request.url.host == "browser-fixture":
+                    return await browser_fixture_send(client, request, **kwargs)
                 prompt = json.loads(request.content)["messages"][1]["content"]
                 data = json.loads(prompt.split("INPUT DATA:\n")[1])
                 self.assertEqual(data["selection_instructions"], instructions)
@@ -400,7 +417,7 @@ class PageListCliTests(unittest.TestCase):
                 ),
                 patch(
                     "company_research.crawl.open_browser",
-                    lambda: browser_responses(pages, requested),
+                    lambda *_args, **_: browser_responses(pages, requested),
                 ),
                 patch.object(httpx.AsyncClient, "send", model_boundary),
                 patch.dict("os.environ", {"DEEPSEEK": "test-key"}),
@@ -439,14 +456,18 @@ class PageListCliTests(unittest.TestCase):
                 ),
                 patch(
                     "company_research.crawl.open_browser",
-                    lambda: browser_responses(pages, requested),
+                    lambda *_args, **_: browser_responses(pages, requested),
                 ),
                 patch.object(
                     httpx.AsyncClient,
                     "send",
-                    side_effect=AssertionError("No model call for explicit pages"),
+                    new=no_model_requests,
                 ),
-                patch.dict("os.environ", {}, clear=True),
+                patch.dict(
+                    "os.environ",
+                    {"BROWSER_API_URL": "http://browser-fixture"},
+                    clear=True,
+                ),
                 redirect_stdout(stdout),
                 redirect_stderr(io.StringIO()),
             ):

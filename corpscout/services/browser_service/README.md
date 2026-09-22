@@ -1,139 +1,269 @@
 # Browser service
 
-Independent HTTP service owning a fixed pool of Chromium/Xvfb desktops. The crawler
-has no Chromium, Playwright, CDP, VNC, or local profile dependency at runtime.
-Backoffice uses this service directly at **Browsers → Servers & sessions / Saved profiles**.
+An HTTP service that creates CloakBrowser processes on demand. A **session** owns
+its persistent profile; an **execution** owns a running browser; a **request** owns
+one crawl or Brave query. The crawler has no browser runtime dependency.
 
-**Browsers → Testing** (`/admin/browsers/testing`) sends raw API requests through
-Backoffice using its server-side service credential. Enter a URL and send the first
-navigation request; the service assigns a browser automatically. Optionally choose
-a specific browser before sending. Later requests use the same session ID.
-Edit the JSON freely to exercise new options and validation failures. The tester
-shows the API status separately from the target page status, the raw response,
-HTML source, screenshots, and the last ten requests for replay. **Connect browser**
-opens the assigned desktop. Finish with the release preset. No automatic requests,
-retries or heartbeats run; use the heartbeat preset explicitly to extend a session,
-or leave it idle to test expiry. History stays in page memory only.
+## Run and configure
 
-Each domain attempt uses one existing browser exclusively. Site and search tabs
-use the same caller-generated session ID and share that profile's login state.
-The service never increases the configured pool. Explicit legacy reservations wait
-FIFO. New implicit sessions return 503 without creating a reservation when capacity
-is unavailable, so the same request and ID can be retried later.
-
-## Run
-
-Linux requires Xvfb, xauth, x11vnc, Openbox and Playwright's Chromium system libraries.
+Linux headed sessions require Xvfb, xauth, x11vnc, Openbox and Chromium system libraries.
 
 ```sh
 uv sync
-cp .env.example .env
-uv run browser-service --env-file .env
+uv run browser-service --env-file .env --max-browsers 6 --session-retention-days 7
 ```
 
-`BROWSER_API_TOKEN` is required beyond loopback. The API and management endpoints use
-`Authorization: Bearer …`. Tokens, cookies, CDP/VNC ports and profile files stay private.
-Use HTTPS when crossing an untrusted network.
+Defaults: six concurrent browsers, 120 seconds idle timeout, seven days profile
+retention. Startup opens **zero browsers**. `--max-browsers` overrides
+`BROWSER_MAX_BROWSERS`; `--idle-timeout-seconds` overrides
+`BROWSER_IDLE_TIMEOUT_SECONDS`; `--session-retention-days` overrides
+`BROWSER_SESSION_RETENTION_DAYS`. Zero capacity pauses new executions.
 
-## API
+**Browsers → Settings** stores all three settings in SQLite. Precedence:
+**SQLite → CLI → environment → defaults**. Changes apply without restart.
+Reducing capacity lets current work finish. Idle-timeout changes take effect at
+the next request or heartbeat; retention changes at the next use, close or pin.
+`GET /v1/browser/settings` returns `source`, `startup`, `current`, and `capacity`.
+`PUT` accepts all three settings; `DELETE` removes the SQLite override.
 
-This is a small API inspired by Zyte's request shape, not a claim of wire compatibility.
-`/docs` provides the request schemas.
+`--base-profile` / `BROWSER_BASE_PROFILE` points to a closed Chromium user-data
+folder. New sessions receive an independent copy; existing sessions are never
+reset from the template. The default template is an empty `base-profile/` under
+the state directory. Close its browser before copying; active lock files are
+rejected. The service never writes browser state into the template.
 
-1. Generate a fresh UUID (32 lowercase hexadecimal characters) for each crawl attempt.
-   Persist it, then send `POST /v1/browser/extract` directly:
+`BROWSER_API_TOKEN` is required beyond loopback. Use `Authorization: Bearer …`.
+Cookies, proxy credentials, profile contents and CDP/VNC ports remain private.
 
-   ```json
-   {"session":{"id":"bde287b88bf844299991028cbaf18673"},"tab":"site","url":"https://example.com/","browserHtml":true,"screenshot":false,"checkRobotsTxt":true,"timeoutSeconds":60}
-   ```
+## Session API
 
-   On the first URL request, the service allocates an existing browser and records
-   its mapping in SQLite before navigation. The initial URL supplies the domain label.
-   Concurrent first requests for the same ID share one assignment and serialize.
-   No reservation call or status polling is needed.
-2. Optionally include `"browserId":"browser-2"` in that first extract request to
-   select a specific browser. Omit it for automatic assignment. If the selected
-   browser is busy or unavailable, return 503 without falling back to another
-   browser or leaving a queued reservation. Unknown browser IDs return 422.
-3. Subsequent requests only need the same `session.id`; they always use its assigned
-   browser, including site and search tabs. Supplying a conflicting browserId returns
-   409. Responses include `session.profileId` and `generation`.
+Reserve explicitly for a crawl:
 
-   Response: session, final URL, target statusCode, allowlisted response headers,
-   raw browserHtml, optional base64 PNG screenshot, and error. Omitting URL captures
-   the current document without navigation. The crawler handles HTML simplification,
-   link/context extraction and company interpretation.
-4. `POST /v1/browser/sessions/{id}/tabs/{name}` accepts `open`, `focus`, `close`, or
-   `recover`. Recovery takes the pending URL and optional `reopenClosedTab` (false).
-   Closing one tab does not reopen it automatically. Whole-browser recovery preserves
-   the assigned profile and changes its generation; it never confirms human verification.
-5. `DELETE /v1/browser/sessions/{id}` releases idempotently. The service saves the profile
-   and cookies, then restarts that browser with a blank tab before another assignment.
+```json
+POST /v1/browser/sessions
+{"requestId":"crawl-001","domain":"example.com","headless":true}
+```
 
-Sessions expire after **120 seconds without crawler activity**, configured on the
-service. Heartbeats (`POST /v1/browser/sessions/{id}/heartbeat`) and browser operations
-renew the deadline. The crawler sends heartbeats every 20 seconds, including while
-waiting for capacity or human assistance. GET status, management reads and desktop
-connections do **not** renew it. In-flight operations are protected from idle expiry,
-with a maximum operation duration of 310 seconds. If release cannot reach the service,
-expiry still reclaims the browser.
+The 201 response contains `id` (saved session), `executionId`, `generation`, mode,
+route, state and retention deadline. Supply `id` to reopen a saved session or retry
+a capacity rejection. IDs use 32 lowercase hexadecimal characters. Capacity
+exhaustion returns 503 with `Retry-After: 1` and `detail.sessionId`; the identity is
+saved but no browser is launched. There is no service-side queue.
 
-SQLite (`sessions.sqlite3`, WAL) records the session ID, request, domain, profile,
-generation, state, last request, deadline and completion. A process lock prevents two
-services owning the same profiles. A browser-service restart marks previous assignments
-`interrupted` and starts blank browsers; expired/released/interrupted IDs return **410**
-and cannot be reused. Unknown IDs return 404. A new crawl attempt needs a fresh ID.
-The crawler's own restart does not stop the browser service.
+One session can have only one active request. Repeating the same reservation is
+idempotent while active; another request gets 409. Every start/stop counts toward
+the global maximum until cleanup completes. A closed session can reopen headed or
+headless. Its proxy route cannot change.
 
-The existing `POST /v1/browser/sessions` endpoint remains supported for crawler
-compatibility and explicit FIFO queueing. It accepts `{id, requestId, domain}`;
-callers poll `GET /v1/browser/sessions/{id}` until ready, then extract as above.
-Repeating the POST is idempotent; changing the request/domain for an ID returns 409.
-GET, heartbeat, capture without a URL, tab controls and desktop connections never
-implicitly create a session.
+Navigate using the returned IDs:
 
-## Management
+```json
+POST /v1/browser/extract
+{"session":{"id":"<session-id>","executionId":"<execution-id>"},"tab":"site","url":"https://example.com/","browserHtml":true}
+```
 
-- `GET /v1/server`: server, desktops, configured timeout and recent assignment history.
-- `GET /v1/browser-sessions`: saved profiles and open tabs.
-- `POST /v1/browser-sessions/{profile}/start|stop|settings|tabs`: profile controls.
-- `POST /v1/browser-sessions/{profile}/tabs/{tab}/focus`; `GET …/inspect`.
-- Desktop, profile, and lease `browser-ticket` endpoints return 30-second, single-use
-  WebSocket tickets. The browser connects directly to this service, not through crawler.
-- `GET /healthz`: service readiness.
+Alternatively the first extract request can omit `session` to create one, or supply
+only a saved `session.id` to reopen it. Optional `headless` and `route` apply at
+startup. Subsequent extracts must include the current `executionId`. Site and search
+tabs share the same profile. Omitting `url` captures the existing tab. Output includes
+HTML, final URL, status, public response headers, redirects and optional screenshot.
 
-Disruptive profile controls reject assigned profiles. Auto-restart is independently
-configurable per profile. Private Chromium profiles and saved session cookies live in
-`profiles/browser-N`; they are never included in crawl archives.
+Send `X-Browser-Execution-Id` for heartbeat, DELETE and named-tab operations:
+
+- `GET /v1/browser/sessions/{id}`: inspect active or closed identity without launching.
+- `POST …/{id}/heartbeat`: extend the active execution's idle deadline.
+- `POST …/{id}/tabs/{name}`: `open`, `focus`, `close`, or `recover`.
+- `DELETE …/{id}`: save cookies, close the browser, release capacity, retain profile.
+
+A stale execution ID returns 409 and cannot close or alter a newer execution.
+Recovery keeps the profile and lease, rotates the browser generation, and does not
+confirm verification. Closed tabs are reopened only when explicitly requested.
+
+Crawlers heartbeat every 20 seconds. GET/status reads and desktop connections do
+not extend deadlines. In-flight operations hold ownership until complete; browser
+API operations are bounded at 310 seconds. Idle expiry closes the browser, but its
+saved identity remains reusable. Session retention starts again after use/close.
+Expired profiles are deleted only while unowned and unpinned; reopening returns
+410. Execution history and metadata remain in SQLite. Retention does not yet remove
+Brave/agent diagnostic files.
+
+State layout:
+
+```text
+sessions.sqlite3       settings, sessions, executions (plus preserved legacy history)
+base-profile/          closed template
+sessions/<id>/profile/ persistent Chromium state
+sessions/<id>/session.json   private session-cookie snapshot
+```
+
+SQLite `BEGIN IMMEDIATE` and a unique active-owner index enforce capacity and profile
+exclusivity. A process lock prevents multiple service instances sharing a state
+folder. On service restart, unfinished executions become interrupted; saved sessions
+stay closed until requested. Systemd owns browser child processes during shutdown.
+
+## Backoffice and management
+
+**Browsers → Saved sessions** lists profiles, active executions, retention and pins.
+Create a headed session, reopen a closed session, stop/save a manual browser, or pin
+its profile. Active crawl/Brave sessions reject disruptive manual controls.
+**Connect** uses Xvfb/noVNC only for running headed sessions. Tickets are single-use,
+last 30 seconds and are tied to the live browser generation.
+
+**Browsers → Testing** lets operators edit raw requests, select headed/headless,
+inspect HTML/screenshots and close/reopen the same session. It carries execution IDs
+between responses and requests; no automatic heartbeats or retries run there.
+
+Management endpoints are authenticated:
+
+- `GET /v1/server`: readiness, desktops, settings, capacity and execution history.
+- `GET /v1/browser-sessions`: saved sessions and active tabs.
+- `POST /v1/browser-sessions`: create/open a manual session.
+- `POST …/{id}/start`: reopen; `{ "headless": false }` enables the desktop.
+- `POST …/{id}/stop`: close; supply `{ "executionId": "…" }`.
+- `POST …/{id}/settings`: `{ "pinned": true }` prevents profile expiry.
+- `POST …/{id}/tabs`: open a manual tab; `POST …/tabs/{tab}/focus`; `GET …/inspect`.
+- `GET /healthz`: readiness.
+
+Existing [CAPTCHA assistance](CHALLENGE_AGENT.md) runs on the same active tab.
 
 ## Deployment and migration
 
-`ansible/site.yml` deploys an independent wheel, locked environment, system user and
-`browser-service.service` on port 8081. State: `/var/lib/browser-service`; configuration:
-`/etc/browser-service/browser-service.env`. Copy `ansible/secrets.yml.example` to the
-ignored `secrets.yml` and set a separate random API token. Use
-`-e browser_service_activate=false` to prepare without starting/restarting it.
+Ansible deploys the wheel and systemd unit on port 8081. State is
+`/var/lib/browser-service`; configuration is `/etc/browser-service/browser-service.env`.
+Use the ignored Ansible secrets file. `browser_service_max_browsers`,
+`browser_service_idle_timeout_seconds`, `browser_service_session_retention_days`, and
+`browser_service_base_profile` set startup values. SQLite still takes precedence.
+`-e browser_service_activate=false` prepares a release without activating it.
 
-Each deployment first runs `uv lock --upgrade-package cloakbrowser` to select the
-latest stable CloakBrowser package compatible with the service, with no upper
-version limit. The resulting `uv.lock` is exported with hashes and used for the
-whole release; review and retain its changes alongside the release. The running
-service does not update its Python dependencies between deployments.
+Deploy the updated browser service, crawler and Backoffice together after draining
+active requests. The old fixed-slot clients lack execution IDs. Also update Dagster's
+Brave HTTP client to retain one session per route worker. Coordinate any pending
+ClickHouse naming migration separately before activating its changed consumers.
 
-For the initial extraction, stop the old crawler, copy its entire private
-`results/.browser-sessions/` directory into `/var/lib/browser-service/profiles/`, and
-change ownership to `browser-service`. Keep the old copy for rollback. Never run both
-services against the same Chromium profile directory. Start this service, configure
-`BROWSER_API_URL` and `BROWSER_API_TOKEN` in crawler and Backoffice, then deploy crawler
-0.37.0. Backoffice optionally uses `BROWSER_PUBLIC_URL` for desktop WebSockets.
+Back up the complete state folder while the old service is stopped. First startup:
+
+1. Renames old lease history to `legacy_sessions`, preserving it.
+2. Converts saved headless + headed counts into one `max_browsers` override.
+3. Copies each existing `profiles/<slot>/profile` and route-specific profile into a
+   deterministic saved session, preserving cookies. Imported sessions are pinned and
+   labeled with their old slot/route. Originals remain available for rollback.
+4. Opens no browsers until requested.
+
+Old lease IDs were request identities and are not reusable saved-session IDs; use
+imported session IDs shown in Backoffice. Rolling back requires restoring the state
+backup with the older release. Never run old/new processes against the same profiles.
+Ansible refreshes CloakBrowser's compatible version at build time and records it in
+`uv.lock`; running services have automatic package updates disabled.
 
 ## Validation
 
 ```sh
 uv run python -m unittest discover -s tests -v
+COMPANY_RESEARCH_XVFB_TEST=1 BRAVE_NATIVE_TEST=1 uv run python -m unittest discover -s tests -v
 ```
 
-The crawler's `test_browser_pool_native.py` exercises real Linux/Xvfb browsers through
-a listening HTTP API: parallel manual crawls, authenticated site/search sharing,
-closed-tab recovery rules, cookie/storage preservation and recycling. Tests use private
-temporary profiles and a local website fixture, never real verification challenges.
+Native tests use isolated profiles, local pages, intercepted Brave responses and a
+fixture model endpoint. They check cookies/localStorage across close/reopen and
+headed/headless changes, VNC connectivity, extraction, cancellation, and challenge
+handling without contacting real CAPTCHA providers.
+
+## Brave Ask
+
+Dagster submits a query to the browser service; the service owns navigation,
+answer completion, Copy, proxy routing, and CAPTCHA assistance. It uses the
+same global capacity limit and launches a headless browser by default. Headed requests use the same Xvfb/noVNC access as crawls.
+
+`POST /v1/brave/ask` uses the usual browser API bearer token:
+
+```json
+{
+  "request_id": "brave-example-001",
+  "query": "What is the official website of Novelic?",
+  "route": "direct",
+  "answer_timeout_seconds": 180,
+  "challenge_agent_max_runs": 3,
+  "challenge_agent_model": "deepseek-flash"
+}
+```
+
+Optional `headless: true/false` selects the mode. `session_id` reopens a saved profile;
+omitting it creates a new identity. Results include `session_id` and `execution_id`.
+The browser closes after each query. Dagster reuses one session per route worker
+within a run, so sequential queries retain cookies without keeping Chromium open. Routes are `direct` and the
+configured `crawl_proxy1`, `crawl_proxy2`, `crawl_proxy3`. Set the corresponding
+`BROWSER_CRAWL_PROXY1/2/3` environment variables in browser-service, or the
+`browser_service_crawl_proxy1/2/3` Ansible secrets. Proxy URLs are never accepted
+in requests or returned to clients. Each session belongs to exactly one proxy route. Reusing its ID preserves cookies;
+changing its route returns 409. Create another session to use another route.
+
+The service detects visible verification controls during navigation, answer
+waiting, and Copy. It invokes the existing screenshot/CDP agent, then checks
+the page itself and resumes the exact query. `challenge_agent_max_runs` defaults
+to 3; 0 disables assistance. `deepseek-flash` uses `DEEPSEEK`;
+`z-ai/glm-5.3-flash` uses `OPENROUTER_API_KEY`. Exhaustion returns
+`status: blocked`, `error_stage: captcha`, `error_type: AgentBudgetExhausted`.
+An agent's completion claim does not make the query successful: a nonempty
+answer must be copied from the requested Ask page.
+
+The response contains `status` (`success`, `blocked`, `error`), `answer`,
+`source_url`, timestamps, duration, error stage/category, and `challenge_runs`.
+The page-load budget defaults to 60 seconds, answer generation to 180 seconds,
+and the whole request to 900 seconds (maximum 1800). Agent time is excluded from
+the answer budget but included in the overall deadline. Each agent invocation
+is limited to 12 actions and 120 seconds. Increasing the run limit does not
+remove the overall deadline.
+
+Requests and results are retained at `brave-requests/<request_id>/` in the state
+directory. CAPTCHA HTML/screenshots are saved there; agent actions and screenshots
+remain in `challenge-runs/`. `GET /v1/brave/requests/<request_id>` returns live
+progress or the saved result. `/v1/server` also exposes the active operation so
+Backoffice's browser assignments show answer generation or CAPTCHA assistance.
+These local diagnostics have no automatic retention policy yet.
+
+Submitting the same request ID and payload returns the saved result. A duplicate
+in-flight request returns 409 with `Retry-After`; capacity exhaustion returns 503
+without recording a new request. Reusing an ID for different input returns 409.
+An interrupted process requires a new request ID. Dagster polls the original ID
+after a transport failure rather than repeating the search, and continues to own
+company selection, adaptive answer timeouts, S3 archiving and ClickHouse publication.
+
+Run the real browser/CDP fixture tests without contacting Brave:
+
+```bash
+BRAVE_NATIVE_TEST=1 CLOAKBROWSER_AUTO_UPDATE=false uv run python -m unittest discover -s tests -p test_brave_native.py
+```
+
+Brave's proof-of-work verification can return HTTP 429 on the original Ask URL.
+The detector recognizes its “Verify” / “Switch to traditional CAPTCHA” controls
+and allows a short render delay before treating a rejected document as a hard
+access failure. A plain 429 without verification UI returns `RateLimited`; 401
+and 403 return `Unauthorized` and `Forbidden`. All failures retain `http_status`
+and best-effort `failure_evidence` (title, Retry-After, HTML and screenshot),
+including failures that never started the CAPTCHA agent.
+
+Ask can also show an “I'm not a robot” verification dialog over an answer error.
+This dialog takes precedence over the answer footer. Completion checks use the
+footer's explicitly labeled retry icon, because the inline error has a separate
+text button with the same accessible name, “Try again”. Known browser failures
+are reported as `AmbiguousElement`, `NavigationInterrupted`, `BrowserClosed`, or
+`TimeoutError`; other Playwright errors use `BrowserError`. Raw exception text is
+not returned because it can contain credentials or page content.
+
+### Website redirects
+
+Browser extraction follows redirects and returns the final `url`, HTTP
+`redirects` (`url`, `status_code`, `location`), and `navigationAttempts`.
+For an HTTPS root URL that fails with a TLS protocol/cipher error, navigation
+makes one HTTP attempt to discover legacy redirects such as AGA → Linde.
+Certificate errors, non-root paths, and query-bearing URLs do not trigger this
+fallback. Certificate verification stays enabled.
+
+`robots.txt` is fetched in a temporary Chromium tab using the same browser
+context. The temporary tab is closed after reading it. The final destination's
+robots policy is checked before returning redirected content for analysis.
+DNS/TLS failures are returned as failed captures with Chromium's error code,
+instead of being mistaken for a closed browser.
+
+```bash
+BROWSER_NAVIGATION_NATIVE_TEST=1 CLOAKBROWSER_AUTO_UPDATE=false uv run python -m unittest discover -s tests -p test_navigation.py
+```

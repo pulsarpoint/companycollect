@@ -7,6 +7,16 @@
     - vars.yml
 
   tasks:
+    - name: Validate browser runtime settings
+      ansible.builtin.assert:
+        that:
+          - browser_service_max_browsers is integer
+          - browser_service_max_browsers >= 0
+          - browser_service_max_browsers <= 64
+          - browser_service_session_retention_days | float > 0
+          - browser_service_session_retention_days | float <= 3650
+        fail_msg: Configure zero to sixty-four browsers and positive session retention.
+
     - name: Build the locked service artifact on the control machine
       delegate_to: localhost
       become: false

@@ -1,10 +1,18 @@
 # Crawl service
 
-Version 0.29.0 accepts work through REST, the CLI, and NATS JetStream.
+Version 0.39.0 accepts work through REST, the CLI, and NATS JetStream.
 All three call `company_research.crawl.crawl_company`. Results remain available
-locally; JetStream requests can additionally deliver to S3 and publish durable
-completion events. This service collects pages and optionally describes the site; the
+locally; service requests can additionally deliver to S3, and JetStream requests
+publish durable completion events. This service collects pages and optionally describes the site; the
 later LLM fact-analysis module remains separate.
+
+With `CRAWL_CHALLENGE_AGENT_ENABLED=true`, REST and JetStream website CAPTCHA
+failures invoke the browser service's selected agent once per requested URL, with
+a default of three runs per crawl attempt (`CRAWL_CHALLENGE_AGENT_MAX_RUNS`),
+with request overrides and doubled budgets on retries after exhaustion.
+The crawler checks actual access afterward and continues automatically on success.
+This is enabled in the server's Ansible configuration; see
+[automatic CAPTCHA assistance](HUMAN_ASSISTANCE.md#automatic-captcha-assistance).
 
 Default discovery collects contacts, jobs and their descriptions, company/about
 information, and financial-information links. Technology inference, tracker/resource
@@ -32,8 +40,9 @@ cp .env.example .env
 
 Fill in the needed keys in `.env`, or set environment variables. The package has
 its own `pyproject.toml` and `uv.lock`; no sibling experiment package or its virtual
-environment is required. Python 3.12+ and the browser runtime used by CloakBrowser
-are required. Initial browser startup may download its runtime.
+environment is required. Python 3.12+ is required. Browsers run in the independent
+[browser service](../browser_service/README.md); set `BROWSER_API_URL` and
+`BROWSER_API_TOKEN`. The crawler requires no display or browser runtime.
 
 `DEEPSEEK` is used by the default direct DeepSeek API. `OPENROUTER_API_KEY` is used
 when a request specifies `"api": "openrouter"`. Exact page lists without
@@ -70,10 +79,12 @@ beyond localhost. This prototype is for trusted callers: it fetches caller-suppl
 URLs and does not provide network isolation or a public multi-tenant URL policy.
 TLS termination can be provided by the deployment's reverse proxy.
 
-The job state is `queued`, `running`, `completed`, or `failed`. `completed` means
-the crawler published a result; inspect `crawl_status` for its actual outcome
-(`finished`, `partial`, `skip_crawling`, `needs_review`, or `failed`). A service-level
-execution exception instead produces a failed job and a local error JSON file.
+The job state is `queued`, `running`, `blocked`, `captcha`, `awaiting_human`,
+`completed`, `failed`, or `cancelled`. A failed crawl produces a `failed` job even
+when it has a saved result. For completed jobs, inspect `crawl_status` for
+`finished`, `partial`, `skip_crawling`, or `needs_review`. A service-level execution
+exception produces a failed job and a local error JSON file. See
+[human assistance](HUMAN_ASSISTANCE.md) for live status, filtering and manual retries.
 
 ## Request format
 
@@ -82,6 +93,15 @@ REST and JetStream use the same JSON object:
 For automatic discovery across contacts, jobs, company information and financial
 links, submit `{"url": "https://www.novelic.com/", "crawl": "full"}`.
 This defaults to 100 pages and 30 external pages; `config` can override the limits.
+Full mode also enables Brave web search (three queries by default). Disable it
+with `"config": {"web_search": false}`. Targeted instruction requests enable it
+with `"config": {"web_search": true}`. Page lists and site-info-only requests never
+search. Parent/filing navigation defaults to three source domains, four pages per
+source and depth three; override `max_source_domains`,
+`max_source_pages_per_domain`, `max_source_depth`, `max_search_queries` or
+`search_results_per_query` in `config`. These limits apply identically to CLI,
+REST and JetStream. See [source discovery](CRAWL_AND_ANALYZE.md#source-discovery)
+for evidence requirements, search failures and the retained JSON provenance.
 Do not combine `"crawl": "full"` with `pages` or `instructions`. The CLI equivalent
 is `company-research https://www.novelic.com/ --crawl full --output-dir runs/novelic`.
 Results include links, cleaned HTML, deterministic observations, elapsed time and
@@ -145,6 +165,14 @@ writes `result.json`; CLI stdout keeps its existing crawl-manifest shape.
 
 ## NATS JetStream
 
+Backoffice's **Crawler → New test crawl** can publish full requests directly to
+the existing stream. Its server first calls authenticated `POST /v1/crawls/validate`,
+which uses the same `CrawlRequest` validation as REST and JetStream and returns a
+normalized payload without enqueueing work or allocating a browser. Omitted config
+defaults remain omitted so model-provider defaults are selected by the worker.
+All inputs use the independent browser service configured by `BROWSER_API_URL`
+and `BROWSER_API_TOKEN`; the request cannot select an old browser implementation.
+
 For a local test broker, run a `nats-server` with JetStream enabled:
 
 ```bash
@@ -188,8 +216,13 @@ async def submit():
 asyncio.run(submit())
 ```
 
-The durable pull consumer fetches one message at a time and sends progress acks
-while its crawl or result delivery is running. In local-only mode it acknowledges
+The durable pull consumer processes up to `--concurrency` messages at once and
+sends progress acks independently while each crawl or result delivery is running.
+Its maximum unacknowledged delivery count is aligned with this worker's concurrency
+at startup, including when updating an existing durable consumer. Excess requests
+remain in JetStream until a delivery slot is free. Shutdown cancels all delivery
+waiters; unacknowledged messages remain eligible for redelivery.
+In local-only mode it acknowledges
 completion after a terminal local JSON result exists and is readable.
 A lost ack/redelivery reuses that result.
 Queue pressure or a failed local write leaves the message retryable. Invalid or
@@ -204,9 +237,10 @@ and [FastAPI lifespan handling](https://fastapi.tiangolo.com/advanced/events/).
 ## S3 results and completion events
 
 Set `CRAWL_S3_BUCKET` in the service environment, or pass `--s3-bucket`, to enable
-S3 delivery **for JetStream requests**. REST and the standalone CLI retain their
-local behavior. With no bucket configured, the existing local-only NATS behavior
-remains available. Example for the existing RustFS installation:
+S3 delivery for REST, JetStream and manual service requests. The standalone crawl
+CLI keeps local output. With no bucket configured, local-only service operation
+remains available when human assistance is disabled. Human assistance requires S3.
+Example for the existing RustFS installation:
 
 ```dotenv
 CRAWL_S3_BUCKET=crawls
@@ -233,14 +267,16 @@ choices are accepted in crawl requests, and objects are not made public.
 The delivery order is:
 
 1. Save the crawl result locally.
-2. Upload `<prefix>/<request_id>/result.json.gz`. This is the same portable JSON,
+2. Upload `<prefix>/<request_id>/attempts/0001/result.json.gz`. This is the same portable JSON,
    including the manifest, site description and collected HTML.
 3. If `save_artifacts` is true and additional files exist, upload
-   `<prefix>/<request_id>/artifacts.tar.gz` with the attempt's diagnostics and
-   separate captures. With `false`, only the compressed result is uploaded.
+   `<prefix>/<request_id>/attempts/0001/artifacts.tar.gz` with the attempt's diagnostics
+   and separate captures. Failed and cancelled attempts retain available diagnostics
+   regardless of `save_artifacts`. The attempt number changes on execution retries.
 4. Persist `jobs/<request_id>/delivery.json` containing the event to publish.
 5. Publish the event through JetStream and persist its server acknowledgement.
-6. Acknowledge the original request.
+6. Acknowledge the original request. Steps 4–6 apply to JetStream inputs; REST and
+   manual attempts expose upload state through the status API and SQLite history.
 
 The default result stream is `COMPANY_CRAWL_RESULTS`, subject
 `company.crawl.results`. `--create-stream` creates it with file storage, limits
@@ -264,7 +300,7 @@ A completion event has this shape (hashes shortened here):
   "error": null,
   "result": {
     "bucket": "crawls",
-    "key": "company-crawls/novelic-jobs-001/result.json.gz",
+    "key": "company-crawls/novelic-jobs-001/attempts/0001/result.json.gz",
     "sha256": "...",
     "bytes": 12345,
     "content_type": "application/json",
@@ -283,8 +319,8 @@ encoding because its payload is a gzip archive.
 
 Every valid terminal job emits an event, including partial, skipped, review-needed
 and failed crawls. A service execution failure uploads its safe error JSON in the
-same `result.json.gz` slot and emits `state: failed`. `completed` means the crawler
-produced a result; inspect `crawl_status` for the crawl outcome. Invalid/conflicting
+attempt's `result.json.gz` slot and emits `state: failed`. Failed crawls also emit
+`state: failed`; inspect `crawl_status` for the detailed crawl outcome. Invalid/conflicting
 requests emit `state: rejected`, a safe error code, the input stream and message
 sequence, and `result: null` before termination. Rejections omit the untrusted
 request ID and raw input; use the publisher's stream/sequence receipt to correlate.
@@ -366,11 +402,23 @@ HTTP/model requests; this is not exactly-once execution.
 The initial implementation runs **one process per local output directory**,
 enforced by a filesystem lock (Linux/macOS). Use `--transport both` to share that
 store between REST and NATS. `--concurrency` defaults to 1; `--max-pending` defaults
-to 100 and counts queued plus running jobs. Multiple independent hosts with
+to 100 and counts all nonterminal jobs in each queue. Interactive retries have a
+separate queue with `CRAWL_MANUAL_CONCURRENCY` workers (default 2), so a paused manual attempt does not leave other profiles idle.
+The browser API still limits all inputs to one global browser capacity; busy claims retry
+without creating a browser-side queue. Normal REST/JetStream execution remains bounded by
+`--concurrency`. Multiple independent hosts with
 separate local disks do not share deduplication state. Keep the output directory
 when restarting; copying only application code does not preserve completed jobs.
 
+Crawler worker concurrency and browser capacity are configured independently.
+Manual attempts share the same browser capacity, even though they have a separate
+crawler queue.
+
 ## Validation
+
+The [five-request parallel validation](JETSTREAM_PARALLEL_VALIDATION_20260919.md)
+records a live Backoffice → JetStream → browser → S3 → ClickHouse test with two
+workers, including browser release after CAPTCHA failures.
 
 ```bash
 uv run --extra service python -m unittest discover -s tests
@@ -424,3 +472,38 @@ updated locations. A [fresh NOVELIC smoke run](data/service-relocation-20260917/
 again completed through CLI, REST and JetStream with local JSON results and no
 pending acknowledgements. The virtual environment was rebuilt at the new path;
 historical JSON receipts retain their original paths as provenance.
+# Live status and interactive retries
+
+See [HUMAN_ASSISTANCE.md](HUMAN_ASSISTANCE.md) for the SQLite attempt history, live
+status API, company-page failure deadlines, durable Brave search pauses, S3 archives
+and Backoffice noVNC controls. Brave verification resumes the same pending search
+only after explicit activation and confirmation. Manual retries use a separate worker and preserve the original failure.
+
+## Browser request API
+
+All crawls use the [external browser API](BROWSER_API.md). Browser ownership,
+management and remote desktops live in the independent browser service. Manual
+worker concurrency is configured with `CRAWL_MANUAL_CONCURRENCY` (default 2).
+The browser service alone controls capacity and expires idle leases after 120 seconds.
+
+### CAPTCHA request options
+
+Since 0.38.0, JSON requests accept `challenge_agent_max_runs` (3–1000) and
+`challenge_agent_model` (`deepseek-flash` or `z-ai/glm-5.3-flash`). Request overrides
+apply identically to REST and JetStream. The service-wide enable switch still
+controls whether automatic assistance is available. See [human assistance](HUMAN_ASSISTANCE.md#request-budgets-and-retries-0380)
+for retry escalation and Backoffice controls. These are CAPTCHA model settings;
+`api` and `config.model` continue to control page discovery.
+
+## Browser capacity and mode
+
+The browser service launches browsers on demand under `--max-browsers` (default 6).
+Backoffice **Browsers → Settings** persists capacity, idle timeout and retention in
+SQLite; these values override CLI/environment settings. Normal crawls are headless;
+interactive retries request a headed browser with Xvfb/noVNC. Both share the limit.
+
+`session_id` in a crawl request reuses an existing profile. Without it, the crawler
+creates a saved session. Retries automatically preserve the failed attempt's ID.
+Each active attempt also has a distinct `browser_execution_id`; delayed commands
+cannot affect a newer execution. Completion closes Chromium, retains the profile,
+and releases capacity. See [browser API](BROWSER_API.md) for the full contract.

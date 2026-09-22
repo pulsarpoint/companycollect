@@ -1,25 +1,24 @@
 # Brave processing
 
-`se_company_brave_domains`, in the `brave_domain_search` group, processes a **fixed
-selection stored in a physical ClickHouse input table**. PostgreSQL stores results
-and progress. Starting a three-million-company task creates one PostgreSQL task
-record; it does not copy three million inputs into PostgreSQL.
+`company_brave_search_input` freezes a company selection in ClickHouse.
+`company_brave_search_results` searches that selection and writes each completed outcome
+straight to `corpscout.company_brave_search_results`, including errors. The group is
+`brave_domain_search`; job names remain `company_brave_search_input_job`,
+`company_brave_search_job`, and `company_brave_search_workflow`.
 
-The Swedish output asset matches `corpscout.se_company_brave_domains`. The shared
-`company_brave_search_input` asset is in the same group. Browser, retry and publication
-code is shared; additional countries should register their own output assets alongside
-their country tables. The existing job names remain `company_brave_search_job` and
-`company_brave_search_workflow`.
+Dagster owns run execution and the `company_domains_brave` concurrency pool (limit 1).
+The browser service owns the browser requests. ClickHouse owns completed attempts,
+skipping, age checks, and result counts. There are no new per-company PostgreSQL
+claims, leases, retries, progress counters, or response/outbox records.
 
-Dagster tracks the asset run. PostgreSQL tracks the individual company IDs inside
-that run, so a failed run can resume without repeating saved work. Progress counts
-are logged and attached to the Dagster materialization.
+The initializer still uses one `processing.tasks` PostgreSQL record per fixed
+selection to retain its fingerprint, table UUID, upper bound, total and query defaults.
+This is selection metadata, not processing progress. Do not use the legacy
+`processing.task_progress` view to monitor new executions. Dagster metadata reports
+`succeeded`, `failed`, `skipped`, and the execution ID; exact attempt counts are also
+available from ClickHouse.
 
-## Initialize the input selection
-
-Materialize `company_brave_search_input` independently, or launch
-`company_brave_search_input_job`. It receives filter parameters and runs one
-`INSERT SELECT` entirely inside ClickHouse:
+## Prepare the fixed input selection
 
 ```yaml
 ops:
@@ -33,334 +32,177 @@ ops:
         status: [active]
 ```
 
-`source_relation` can refer to another country's table or view. Column mappings
-are configurable: `company_id_column` defaults to `company_id` and
-`company_name_column` defaults to `company_name`. `country_code` is used for
-attribution and prefixes input IDs, such as `SE:5560004615`; it is not automatically
-included in the Brave prompt. `source_final: true` applies ClickHouse `FINAL` when
-reading sources such as the Swedish ReplacingMergeTree registry.
+Initialization runs `INSERT SELECT` inside ClickHouse. It returns `task_id` and
+`selected_companies`. Rows are saved under that task in
+`corpscout.company_brave_search_input`, with input IDs such as `SE:5560004615`.
+A task's selection must remain unchanged while processing or recovery is unfinished.
 
-`company_ids` is reserved for testing. Production selections use `filters`, which
-maps source column names to allowed values (including `company_id` when selecting
-specific companies): values within a column use `IN`; different columns
-are combined with `AND`. Column names are validated and values are bound as query
-parameters. These are scalar equality filters, not raw SQL expressions.
-`company_name_pattern` adds a bound `ILIKE` pattern, `company_id_length` selects
-an ID length, and `excluded_company_ids` removes unchecked rows from a query selection.
-`max_companies` optionally limits the selection in ID order. To deliberately
-select an entire source without filters or a limit, supply `select_all: true`.
+The source and company ID/name columns are configurable. `filters` maps scalar
+column names to allowed values; values within one column use `IN`, different columns
+use `AND`. Values are bound parameters. `company_name_pattern`, `company_id_length`,
+`excluded_company_ids`, and `max_companies` further restrict selection. `company_ids`
+is intended for tests. An unrestricted selection requires explicit `select_all: true`.
 
-In the backoffice, select rows on Sweden → Companies and click **Send for Brave
-analysis**. The action launches `company_brave_search_workflow`: initialization
-from `corpscout.se_companies_serving` with the selected filters, followed by
-processing with the default official-website query. “Select all matching” sends
-filters and exclusions, without expanding all matching IDs in the backoffice.
-The saved selection reflects the serving table when initialization executes.
+Reinitializing a task with the same selection fingerprint reuses its rows. Changed
+filters require a new task ID. Failed initialization recovers only that task's
+unconfirmed rows; a zero-row selection is valid. Its separate `company_brave_input`
+pool allows selection preparation while another task is searching.
 
-The asset creates a task ID (or accepts an explicit UUID), inserts the selected
-company rows under that `task_id` in `corpscout.company_brave_search_input`, and
-validates the fixed selection. PostgreSQL stores its identity, configuration
-fingerprint and exact total, with status `selected`. It contains no input payloads
-or per-company progress rows until processing begins.
+Backoffice's **Send for Brave analysis** launches `company_brave_search_workflow`
+against `corpscout.se_companies_serving`. Query-based selections retain filters and
+exclusions without expanding all matching IDs in the backoffice. The initializer
+passes its task ID to the search asset via the `processing/task_id` run tag.
 
-Inspect the materialization's `task_id` and `selected_companies` metadata. You can
-also inspect the selected rows before running Brave:
-
-```sql
-SELECT input_id, company_id, company_name, country_code
-FROM corpscout.company_brave_search_input
-WHERE task_id = 'the-task-UUID'
-ORDER BY input_id;
-```
-
-Each task retains its own fixed selection in the same physical table. Initializing
-another task does not clear or append to an existing task's selection. Do not
-manually modify a task's rows while it has unfinished work. The original registry
-can change without affecting an already prepared selection.
-
-Rematerializing initialization with the same task ID and filters reuses its saved
-selection, even after processing has begun. Changed filters require a new task ID.
-If initialization fails before the selection is confirmed, retrying stops that
-task's outstanding insert, removes only its unconfirmed rows and reruns selection.
-Other tasks' rows and results remain intact. Initialization has its own
-`company_brave_input` pool, so another selection can be prepared while a Brave
-processing task is running. A PostgreSQL session lock excludes
-competing initializers of the same task; no transaction stays open during the
-ClickHouse query. A zero-match selection is valid and reports a total of zero.
-
-## Process the prepared selection
-
-Materialize `se_company_brave_domains`, or launch `company_brave_search_job`,
-with the task ID returned by initialization:
+## Search and rescan rules
 
 ```yaml
 ops:
-  se_company_brave_domains:
+  company_brave_search_results:
     config:
-      task_id: "the-task-UUID"
+      task_id: "the-initialization-task-UUID"
       query_type: official_website
       query_template: "Find the official website of {company_name}."
+      force: false
+      rescan_old: false
       requests_per_route: 1
       input_batch_size: 100
-      freshness_days: 0
-      export_batch_size: 100
-      export_interval_seconds: 30
+      answer_timeout_seconds: 60
+      progress_log_every: 100
+      progress_log_interval_seconds: 30
 ```
 
-The first processing run freezes the query configuration and changes the task from
-`selected` to `ready`. Its source relation, selected rows and total already exist.
-There is no need to pass `company_ids` or the input table again.
+Run logs include `Brave progress` at startup, completion, and after 100 newly
+accounted inputs or 30 seconds when a result or skip advances the input loop.
+Both thresholds are configurable. `processed` is the number of saved success/error
+outcomes across the whole execution, including before a resume; `new_results`
+counts only this run's acknowledged writes. `skipped` counts other existing outcomes
+that do not need a new search. `remaining = total - processed - skipped` includes
+in-flight and unexamined inputs, so it can also decrease as cached inputs are found.
+The percentage includes processed and skipped entries. Counters advance after
+ClickHouse acknowledges a write; final totals are read back from ClickHouse.
 
-To initialize and process together, launch `company_brave_search_workflow` with
-both `ops` configurations, omitting `task_id` from the processing configuration.
-The initialization asset records the task ID in the run tag `processing/task_id`;
-the downstream asset reads that tag. An explicit task ID on initialization is
-passed through too. The asset dependency ensures initialization finishes first.
-Dagster's launchpad YAML is run configuration, not a separate discovered YAML file.
+Search identity is `(country_code, company_id, query_type)`. The latest completed
+attempt is selected by `(completed_at, result_id)`, whether its status is `success`
+or `error`.
 
-The worker reads at most `input_batch_size` rows into memory. It atomically commits
-their IDs and the admission cursor to PostgreSQL. The cursor means “admitted for
-processing”, never “everything before this ID succeeded”. Claims, retry dates,
-lease tokens and accepted result IDs are compact per-item progress records.
-Unadmitted inputs have no PostgreSQL item record.
+| Condition | Action |
+| --- | --- |
+| No completed outcome | Search |
+| `force: true` | Search regardless of previous outcomes |
+| `force: false`, `rescan_old: false` | Skip completed searches regardless of age |
+| `force: false`, `rescan_old: true` | Search when the latest outcome is strictly older than 30 days |
 
-As slots open, the worker claims pending IDs or admits another bounded page.
-On restart, unfinished IDs are recovered and their input values are read from
-ClickHouse again. A replaced table UUID, missing retry input or early end of the
-queue fails the run rather than silently skipping unfinished work. These checks
-do not make a mutable table immutable: retaining the prepared selection unchanged
-is part of the input contract.
+The 30-day cutoff uses UTC and is fixed when the execution starts. A changed company
+name, prompt, or processor version does not implicitly bypass this identity: use
+`force` to deliberately refresh an existing search type. Different query types do
+not suppress each other. This asset accepts Swedish company inputs only.
 
-For an existing independently prepared custom input table, the processing asset
-still accepts `input_relation` when creating a task. Such a table must have a
-unique nonempty String `input_id` and `ORDER BY input_id`; views are not queues.
-The shared Brave input table is instead scoped by the initialized task ID and has
-`ORDER BY (input_id, task_id)` plus a task ID skipping index.
-A custom domain input table can expose `input_id` and `domain`, with:
+Each selected company receives one completed search attempt per execution. A saved
+error is a completed outcome, not an automatically requeued company. Transport
+recovery at the browser-service boundary reuses the same request ID. A run with
+search errors reports failure with `allow_retries=False` and includes saved counts;
+a new forced execution can search those companies again.
 
-```yaml
-input_relation: corpscout.my_domain_selection
-input_namespace: domain
-query_type: domain_owner
-query_template: "Which company owns {domain}?"
+`freshness_days`, `retry_failed`, `max_attempts`, `retry_seconds`, `lease_seconds`,
+`max_answer_timeout_seconds`, `export_batch_size`, and `export_interval_seconds` no
+longer apply. Use `force`/`rescan_old`, `answer_timeout_seconds`, and execution recovery.
+
+Custom physical input tables remain supported through `input_relation`; they need
+unique nonempty `input_id` values and `country_code`, `company_id`, `company_name`
+columns. Query templates can use other named columns. The registered table UUID,
+upper bound and row count protect recovery from replaced or missing inputs.
+
+## Results and durable writes
+
+`corpscout.company_brave_search_results` stores full answer text, status,
+completion time, company/query attribution, route, error type/stage, timing,
+CAPTCHA diagnostics, task/execution/run IDs, and attempt identity. Failed searches
+are retained alongside successes. There is no TTL.
+
+`result_id` is derived from execution ID and input ID before submitting to the
+browser service. A retry reuses that identity. Separate executions get new IDs and
+preserve history. `ReplacingMergeTree` removes duplicate writes of the same attempt;
+use `FINAL` for exact history and counts before merges occur.
+
+The writer sends `async_insert=1, wait_for_async_insert=1`. Each browser route waits
+for storage acknowledgement before taking another input. Connections are separate
+per concurrent writer. A failed insert stops processing, and restarting rechecks
+ClickHouse before submitting requests. There is no fallback PostgreSQL outbox.
+
+`company_brave_search_results_latest` exposes the full latest attempt, including failures,
+for each `(country_code, company_id, query_type)`. The `se_company_brave_search_successes`
+materialized view feeds successful answers to the existing
+`corpscout.se_company_brave_search_results_latest_success` table. Read this successful-answer projection with `FINAL`.
+A failed rescan never removes the previous successful answer. New writes use empty
+legacy archive/export identifiers because their full history is now in ClickHouse.
+
+```sql
+SELECT * FROM corpscout.company_brave_search_results_latest
+WHERE country_code = 'SE' AND company_id = '5560004615';
+
+SELECT status, answer_text, error_type, error_stage, completed_at
+FROM corpscout.company_brave_search_results FINAL
+WHERE country_code = 'SE' AND company_id = '5560004615'
+ORDER BY completed_at DESC, result_id DESC;
+
+SELECT status, count()
+FROM corpscout.company_brave_search_results FINAL
+WHERE execution_id = 'the-original-Dagster-run-UUID'
+GROUP BY status;
 ```
 
-Placeholders are simple column names; missing/empty values, attribute access,
-conversions and format expressions are rejected. Templates are rendered in memory
-from the selected row and never become SQL. PostgreSQL saves the rendered request
-with its response, not arbitrary input columns.
+## Resume an execution
 
-## Requests, results and recovery
-
-Four routes (`direct`, `crawl_proxy1`, `crawl_proxy2`, `crawl_proxy3`) each allow one
-request by default. Fast routes save their result and refill while slower routes
-are still busy. `requests_per_route` supports 1–8; `input_batch_size` must cover all
-configured request slots. The Dagster pool `company_domains_brave` limits concurrent
-materializations to one, preserving the existing proxy traffic limit.
-
-The browser opens Brave's **Ask** page, waits for completed answer actions and
-captures the answer's Copy text. It distinguishes that button from the question's
-Copy button. The copied answer is stored as `answer_text`, together with query,
-company attribution, route, source URL, status and result identity. Domain extraction
-is a separate concern; an answer can contain more than one website.
-
-PostgreSQL saves each response and its progress transition in the same synchronous
-transaction. Claims use `FOR UPDATE SKIP LOCKED` and renewable lease tokens. A stale
-worker cannot overwrite a reclaimed attempt. Defaults are three attempts, a
-60-second retry delay and a 300-second lease. Crashed attempts count toward the
-budget; graceful exit releases unfinished claims.
-
-Answer generation starts with `answer_timeout_seconds: 60`. Each saved answer-generation
-`TimeoutError` adds another 60 seconds for that company, capped by
-`max_answer_timeout_seconds: 180`: normally 60 → 120 → 180 seconds. The count is
-read from PostgreSQL attempt history, so retries on another route or after a restart
-retain their allowance. A new company starts at 60 seconds. Page-load and Copy
-timeouts, and non-timeout failures, do not increase the answer wait. Legacy timeouts
-without a recorded stage also qualify for an increase. Navigation and Copy operations
-retain the browser resource's `page_timeout_ms` (60 seconds by default); these are
-per-operation limits, not a single deadline for the whole request.
-
-Every attempt records `error_stage` (`page_setup`, `page_load`, `answer_generation`
-or `copy`), `error_type`, `answer_timeout_ms` and whole-request `elapsed_ms` in its
-PostgreSQL payload and Dagster logs. Successful attempts have an empty error stage.
-These compact diagnostics remain in PostgreSQL after the response text is archived;
-the S3 response schema is unchanged. Raw browser exceptions are never stored because
-they can include proxy credentials.
-
-Resume with only the original task ID:
+Dagster retries reuse the original run ID as the execution ID. For manual recovery:
 
 ```yaml
 ops:
-  se_company_brave_domains:
+  company_brave_search_results:
     config:
-      task_id: "the-original-task-UUID"
+      execution_id: "the-original-Dagster-run-UUID"
 ```
 
-Once an item reaches `terminal_failed`, an ordinary resume leaves it finished.
-To retry those failures, explicitly set `retry_failed: true` and increase
-`max_attempts` above their existing attempt count, for example to 6 after an initial
-three-attempt run. This requeues only failed items with remaining budget, preserving
-all attempt numbers and history. Successful, cached, cancelled and still-pending
-items are not requeued. Reusing the same setting does not reset the retry budget.
+The original run retains the selection, query, rescan settings, and start time in
+its `brave/execution` tag. Recovery requires that Dagster run to remain available.
+Saved outcomes belonging to that execution are always skipped, including forced
+executions. A new run with `task_id` and `force: true` instead starts another search
+of the selection. Explicit changes to a resumed execution's query or skip policy
+are rejected; omit those fields when resuming.
 
-After processing starts, the saved input relation, namespace, template, query type
-and freshness policy remain fixed. Operational settings such as route concurrency and batch size can
-change. A completed task can resume without access to its input table. Use
-`mode: publish` with the task ID to publish saved responses without Brave requests.
+`mode: publish` with `execution_id` repairs the successful-answer projection from
+ClickHouse without reading the input table or launching Brave. Normal execution
+also repairs its saved successes on entry and completion, covering an interrupted
+materialized-view write.
 
-`freshness_days` defaults to 30; zero forces fresh requests. Only published
-successes are reused. The work fingerprint covers processor version, namespace,
-query type, template, rendered query and input values, but not task ID or queue
-name. Reuse is checked as each item is claimed and recorded as `skipped` progress.
+## Cutover from the PostgreSQL outbox
 
-## Progress and publication
+1. Finish or stop old Brave workers before importing; do not let old and new writers overlap.
+2. Apply ClickHouse migration **428**. Update the existing `processing_publisher`
+   grants with SELECT/INSERT on `company_brave_search_results` and SELECT on
+   `company_brave_search_results_latest`, retaining the current-table permissions.
+3. Run `uv run python scripts/migrate-brave-results.py --execute` using the existing
+   processing PostgreSQL/ClickHouse environment variables.
+4. The importer loads existing country latest-success tables and S3 archive views, then migrates every
+   Postgres result, including unpublished answers and errors. Archived answer text
+   is combined with the retained PostgreSQL diagnostics. Each batch is compared
+   field-by-field after insertion. Missing answers or mismatched rows stop cutover.
+5. Deploy the new definitions only after verification succeeds. Retain the old
+   PostgreSQL data and S3 objects; the importer never deletes or acknowledges them.
 
-Read live counts in PostgreSQL:
+The import is replayable and will not replace direct-write results with incomplete
+legacy rows. Old S3 history views remain available for audit. New search history is
+in ClickHouse. The legacy publication module remains only for old-outbox recovery
+and cutover tests, not for new search executions.
 
-```sql
-SELECT * FROM processing.task_progress WHERE task_id = 'task-uuid';
-SELECT total, admitted_count, source_cursor
-FROM processing.tasks WHERE task_id = 'task-uuid';
-```
+## Result naming
 
-`total = queued + running + retry_wait + succeeded + terminal_failed + skipped + cancelled`.
-`queued` includes unadmitted ClickHouse inputs. `remaining = queued + running + retry_wait`.
-Terminal counts update transactionally; progress polling reads counters and bounded
-open work instead of scanning millions of finished item records. `status = ready`
-means the task can be processed; completion is represented by `remaining = 0`.
+`company_brave_search_results` is both the primary Dagster asset and its physical
+ClickHouse history table. `company_brave_search_results_latest` is the latest-attempt
+view. The Swedish successful-answer projection is
+`se_company_brave_search_results_latest_success`; the older Parquet archive is
+`se_company_brave_search_results_s3_archive`. New results are written directly to
+ClickHouse, so this legacy S3 archive is not a mirror of new search outcomes.
 
-Saved outcomes are assigned to closed export batches. ClickHouse writes the full
-batch directly from `processing.brave_export` to immutable Parquet files in the
-`company-brave-history` S3 bucket, using the server-owned `brave_history` named
-collection. File paths are stable by country and batch ID:
-`v1/country=SE/batch_id=<uuid>/results.parquet`. Retries reuse and verify those
-files instead of appending duplicates or overwriting history.
-
-After verifying every archived field against PostgreSQL, ClickHouse bulk imports
-successful responses with `INSERT SELECT FROM postgresql(...)` into the country's
-current table. For Sweden this is **`corpscout.se_company_brave_domains`**. Its
-replacement key is `(company_id, query_type)` and its version is `completed_at`.
-Read with `FINAL` for the latest successful answer before background merges finish.
-An older export cannot replace a newer answer, and an unsuccessful refresh leaves
-the previous successful answer available. The response is the complete copied
-Brave text, not an extracted or independently verified domain.
-
-Only after both checks pass does one PostgreSQL transaction mark the batch
-published/archived, save its paths, row counts and content digests in
-`processing.export_batches.archive_manifest`, and remove `answer_text` from the
-outbox payload. Result IDs, attribution, progress and freshness-cache references
-remain in PostgreSQL. Any failure before acknowledgment leaves the response there
-for retry. No Brave request is needed to retry publication.
-
-The history view disables ClickHouse's query condition cache for its S3 reads.
-During cutover on 26.5.1, a filtered read returned zero successful responses with
-that cache enabled and all 308 with it disabled. The setting belongs to the view,
-so callers do not need to remember it. Its definer is the provisioned
-`processing_publisher` user: other readers need only `SELECT` on the country
-history view, without direct S3 or named-collection access.
-
-All attempts, including errors and superseded answers, remain queryable through
-**`corpscout.se_company_brave_domains_history`**, a view over the S3 table function. It stores no
-second physical copy of history in ClickHouse. For example:
-
-```sql
-SELECT company_id, query_type, answer_text, completed_at, archive_path
-FROM corpscout.se_company_brave_domains FINAL
-WHERE company_id = '5560004615';
-
-SELECT result_id, task_id, status, answer_text, completed_at, _path
-FROM corpscout.se_company_brave_domains_history
-WHERE company_id = '5560004615'
-ORDER BY completed_at DESC;
-```
-
-For a known batch, filter `_path` or query `s3(brave_history, filename='...')`
-directly to avoid scanning the entire history. The current table can be rebuilt
-using `INSERT INTO corpscout.se_company_brave_domains SELECT *, _path FROM
-corpscout.se_company_brave_domains_history WHERE status='success'`. `FINAL`
-then resolves multiple successful versions for the same company and query type.
-
-Input remains shared across countries. Output routes by the captured `country_code`
-to `<country>_company_brave_domains` and its `_history` table. Provision that
-country's migration and output asset first; an absent destination keeps its responses in PostgreSQL
-and fails publication instead of putting them into Sweden's table.
-
-`unpublished` counts saved outcomes awaiting acknowledgment, including failed
-attempts. A publication outage does not make successful searches pending again.
-Flushes happen at the configured result count, on the first completion after the
-time threshold, and at the end. There is no distributed transaction: a crash after
-receiving an external answer but before saving it can repeat that request.
-
-## Deployment and scope
-
-The output asset was renamed from `company_brave_search_results` to
-`se_company_brave_domains`, and both Brave assets moved from `company_domains` to
-`brave_domain_search`. Existing task IDs, input rows, PostgreSQL progress and response
-history are unchanged. Use `ops.se_company_brave_domains.config` in new run YAML.
-Earlier Dagster runs retain their original asset keys in the event log.
-
-PostgreSQL uses the existing server shared with Dagster, in the application's
-`corpscout` database and `processing` schema. Dagster's internal metadata is in its
-separate `dagster` database. The instances share server resources.
-
-Apply PostgreSQL migration `000120_processing_clickhouse_input` after `000119` and
-ClickHouse migration `000411` after `000410`. The PostgreSQL migration preserves
-old result/export data and refuses to remove input payloads while legacy tasks
-are unfinished. It is forward-only. Deploy the matching worker code after applying
-it; old workers require columns that the migration removes.
-
-The input table was renamed in place by ClickHouse migration `000412`, preserving
-its data and UUID. Apply PostgreSQL migration `000121` afterward to update saved
-task references. Apply this pair while Brave tasks are idle.
-
-Initialization additionally requires ClickHouse migration `000413` and PostgreSQL
-migration `000122`. They add task-scoped input rows and the `selected` task state.
-The ClickHouse table UUID and existing rows are preserved. Earlier pilot rows use
-an empty selection task ID; migration 122 binds old tasks to that legacy selection.
-Deploy the matching reader and initialization asset after applying both migrations.
-
-Current-table/S3 publication requires ClickHouse migrations `000414`–`000416` and PostgreSQL
-migration `000123`. Finish or gracefully pause old Brave workers before applying
-123; it changes existing batch destination identities. Run
-`scripts/provision-processing-storage.py` first to provision the archive bucket,
-named collection and roles, using the existing private credentials file. S3
-credentials come from `CORPSCOUT_S3_*`, never materialization parameters. The
-optional `--s3-endpoint-for-clickhouse` is for hosts where the ClickHouse server
-uses a different network address from the provisioning process.
-
-Publish each existing task once with the new worker. Previously published batches
-without an archive receipt are backfilled as well. Verify complete history and
-current-table coverage before dropping the retired `company_brave_info`,
-`company_brave_info_deduplicated`, empty `company_brave_search_results`, and unused
-`se_company_brave_input` view. Migrations 409/410 retain their version files but no
-longer create the retired objects; migration 414 does not drop live data.
-
-Existing `PROCESSING_PG_URL` and `PROCESSING_CLICKHOUSE_*` credentials remain valid.
-Retain the private provisioning credentials file. Back up PostgreSQL progress,
-ClickHouse inputs/current tables, access metadata, and **the authoritative
-`company-brave-history` S3 bucket**. This bucket has no expiry policy. It is not a
-rebuildable source-download cache: once an answer is pruned from PostgreSQL, its
-historical content lives in S3.
-
-This change applies to Brave only. Translation, Ratsit and webtech remain unchanged.
-Tests use disposable PostgreSQL 17, ClickHouse 26.5 and RustFS servers, including a real
-three-million-row ClickHouse queue with only 100 admitted PostgreSQL IDs, concurrent
-claims, restart recovery, migration preservation and replayable publication.
-
-The [live ClickHouse-input pilot](company-brave-clickhouse-input-pilot-2026-09-15.md)
-verified bounded admission, eight real answers and a resume without new requests.
-
-The [initialization asset pilot](company-brave-initialization-pilot-2026-09-15.md)
-verified selection, idempotent rematerialization and handoff to processing.
-
-## Swedish domain suggestions
-
-After publishing Brave responses, materialize `se_company_domain_suggestions_brave` in
-`se_company_domain` (or use Sweden → Processing → Domains). Writes are enabled by
-default; set `execute: false` only for a preview without saving suggestions or checkpoints. It
-extracts a JSON domain list and saves per-company response-ID/hash checkpoints in
-`se_company_domain_brave_extraction`, then supplies `se_company_domain_verification`
-through the shared suggestion table. Empty lists also advance progress; changed answers
-replace only Brave's suggestions. See the [domain design](../src/dagster_v3/defs/se_company/domain/docs/domain-design.md)
-for verification and ranking. Human primary decisions lead; distinct source support
-comes next; Brave has the highest automated precedence when support counts tie.
+The job names and `brave/execution` tags are unchanged. To resume an execution
+created before the asset rename, launch `company_brave_search_job` with the new
+`company_brave_search_results` config key and the original `execution_id`.

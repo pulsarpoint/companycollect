@@ -85,6 +85,11 @@ class Selection(StrictModel):
     assessments: list[CandidateAssessment]
 
 
+class NavigationSource(StrictModel):
+    kind: Literal["parent_company", "filing_source"]
+    evidence: str = Field(min_length=8, max_length=500)
+
+
 class RequestedContentAssessment(StrictModel):
     """Only the relevance and scope needed to navigate a custom request."""
 
@@ -93,7 +98,9 @@ class RequestedContentAssessment(StrictModel):
     target_relevance: Literal[
         "target", "target_evidence", "related_company", "unrelated", "unknown"
     ]
-    follow_scope: Literal["single_page", "target_navigation"]
+    follow_scope: Literal["single_page", "target_navigation", "source_navigation"]
+    navigation_source: NavigationSource | None = None
+    priority: int = Field(default=50, ge=0, le=100)
     reason: str = Field(min_length=1, max_length=300)
 
     @model_validator(mode="after")
@@ -110,6 +117,16 @@ class RequestedContentAssessment(StrictModel):
             and self.requested_content.role != "none"
         ):
             raise ValueError("Low requested-content relevance must use role none")
+        if self.follow_scope == "source_navigation" and (
+            self.requested_content.role != "navigation"
+            or self.requested_content.potential not in {"high", "medium"}
+        ):
+            raise ValueError("Source navigation requires useful navigation potential")
+        if (
+            self.navigation_source is not None
+            and self.follow_scope != "source_navigation"
+        ):
+            raise ValueError("Navigation-source evidence requires source_navigation")
         return self
 
 
@@ -161,7 +178,9 @@ class ExternalLink(StrictModel):
     fetched_at: str
     html_file: str
     html_sha256: str
-    extraction_method: Literal["rendered_html", "cleaned_html", "crawl4ai_links"]
+    extraction_method: Literal[
+        "rendered_html", "cleaned_html", "browser_links", "crawl4ai_links"
+    ]
     anchor_index: int | None
     anchor_text: str | None
     title: str | None
@@ -765,6 +784,13 @@ class ResearchConfig(StrictModel):
     reasoning_effort: Literal["none", "low", "medium", "high"] = "low"
     max_pages: int = Field(default=20, ge=1, le=500)
     max_external_pages: int = Field(default=3, ge=0)
+    max_source_domains: int = Field(default=3, ge=0, le=20)
+    max_source_pages_per_domain: int = Field(default=4, ge=1, le=50)
+    max_source_depth: int = Field(default=3, ge=0, le=10)
+    web_search: bool = False
+    max_search_queries: int = Field(default=3, ge=0, le=20)
+    search_results_per_query: int = Field(default=5, ge=1, le=20)
+    search_context_chars: int = Field(default=12000, ge=1000, le=60000)
     job_detail_reserve: int = Field(default=5, ge=0)
     engineering_page_reserve: int = Field(default=3, ge=0)
     max_extraction_attempts: int = Field(default=2, ge=1, le=5)
@@ -893,6 +919,8 @@ class Page(StrictModel):
     page_id: str
     requested_url: str
     source_url: str
+    redirects: list[dict] = Field(default_factory=list)
+    navigation_attempts: list[dict] = Field(default_factory=list)
     selected_for: str
     fetched_at: str
     status_code: int | None

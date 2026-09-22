@@ -116,6 +116,16 @@ export default [
     // Read-only status of the NATS JetStream server, from its HTTP monitoring
     // endpoint: server, streams, and how far each consumer has processed.
     route("nats", "routes/admin-nats.tsx"),
+    route("crawls", "routes/admin-crawls.tsx"),
+    route("crawls/results", "routes/admin-crawl-result.tsx"),
+    route("crawls/result.json", "routes/admin-crawl-result-json.ts"),
+    route("browsers", "routes/admin-crawler-servers.tsx"),
+    route("crawls/servers", "routes/admin-browser-redirect.ts"),
+    route("browsers/profiles", "routes/admin-browser-sessions.tsx"),
+    route("browsers/testing", "routes/admin-browser-testing.tsx"),
+    route("browsers/settings", "routes/admin-browser-settings.tsx"),
+    route("browser-sessions", "routes/admin-browser-profiles-redirect.ts"),
+    route("crawls/events", "routes/admin-crawls-events.ts"),
     route("general/roles", "routes/admin-general-roles.tsx"),
     route("settings/llms", "routes/admin-settings-llms.tsx"),
     route("settings/people-prompts", "routes/admin-settings-people-prompts.tsx"),

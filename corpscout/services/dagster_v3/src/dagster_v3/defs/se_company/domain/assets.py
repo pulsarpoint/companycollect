@@ -52,7 +52,7 @@ def se_company_domain_precedence_clickhouse(
 
 
 @dg.asset(
-    group_name=tables.GROUP_NAME, kinds={"clickhouse", "python"}, pool="se_company_domain_fold",
+    group_name=tables.GROUP_NAME, kinds={"clickhouse", "python", "llm"}, pool="se_company_domain_fold",
     deps=[*tables.EXTRACTOR_ASSETS, "se_company_domain_precedence_clickhouse"],
     description="Send all eligible uncertain or conflicting company-domain suggestions to the configured LLM. Store the verdict, confidence score (0–1), explanation, evidence citations and every attempt in se_company_domain_verification. Reuse successful unchanged inputs. No profile means no LLM calls.",
 )
@@ -83,7 +83,7 @@ def se_company_domain_verification(
 
 
 @dg.asset(
-    group_name=tables.GROUP_NAME, kinds={"clickhouse", "python", "llm"}, pool="se_company_domain_fold",
+    group_name=tables.GROUP_NAME, kinds={"clickhouse", "python"}, pool="se_company_domain_fold",
     deps=["se_company_domain_verification"],
     description="Fold Swedish company domains from source suggestions, precedence, reviewer decisions and stored current-input LLM verdicts. Append change history before publication. This step never calls an LLM.",
 )

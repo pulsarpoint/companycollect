@@ -69,6 +69,10 @@ describe("se-domains-list.server", () => {
       where: ["d.association = {association:String}"],
       params: { association: "uncertain" },
     });
+    expect(buildSeDomainsFilter({ ...EMPTY, source: "brave" })).toEqual({
+      where: ["has(d.sources, {source:String})"],
+      params: { source: "brave" },
+    });
     expect(buildSeDomainsFilter({ ...EMPTY, status: "active" })).toEqual({
       where: ["d.active = 1"],
       params: {},
@@ -91,13 +95,13 @@ describe("se-domains-list.server", () => {
     clickhouse.query
       .mockResolvedValueOnce([ROW, { ...ROW, company_id: "5560125221", confidence: 0.6 }])
       .mockResolvedValueOnce([{ company_id: "5560125220", legal_name: "Example AB" }]);
-    const { rows } = await listSeDomainsPage({ ...EMPTY, shared: "1", page: 2, pageSize: 50 });
+    const { rows } = await listSeDomainsPage({ ...EMPTY, source: "brave", shared: "1", page: 2, pageSize: 50 });
 
     const [listSql, listParams] = clickhouse.query.mock.calls[0];
-    expect(listSql).toContain("WHERE s.company_count > 1");
+    expect(listSql).toContain("WHERE has(d.sources, {source:String}) AND s.company_count > 1");
     expect(listSql).toContain("ORDER BY d.confidence DESC, d.root_domain, d.company_id");
     expect(listSql).toContain("LIMIT {limit:UInt32} OFFSET {offset:UInt32}");
-    expect(listParams).toEqual({ limit: 50, offset: 50 });
+    expect(listParams).toEqual({ source: "brave", limit: 50, offset: 50 });
     expect(clickhouse.query.mock.calls[1]).toEqual([
       DOMAINS_COMPANY_NAMES_SQL,
       { companyIds: ["5560125220", "5560125221"] },
@@ -117,10 +121,10 @@ describe("se-domains-list.server", () => {
     clickhouse.query.mockResolvedValueOnce([
       { rows: "11370", domains: "9355", companies: "8735", shared: "718" },
     ]);
-    const counts = await loadSeDomainsCounts({ ...EMPTY, minConfidence: "0.9" });
+    const counts = await loadSeDomainsCounts({ ...EMPTY, source: "brave", minConfidence: "0.9" });
     const [sql, params] = clickhouse.query.mock.calls[0];
-    expect(sql).toContain("WHERE d.confidence >= {minConfidence:Float64}");
-    expect(params).toEqual({ minConfidence: 0.9 });
+    expect(sql).toContain("WHERE has(d.sources, {source:String}) AND d.confidence >= {minConfidence:Float64}");
+    expect(params).toEqual({ source: "brave", minConfidence: 0.9 });
     expect(counts).toEqual({ rows: 11370, domains: 9355, companies: 8735, shared: 718 });
   });
 

@@ -185,6 +185,9 @@ class EsefWebsiteEvidence:
     page_id: str
     surrounding_text: str
     suggested_role: str
+    # Only the independent domain extractor enriches this; legacy artifact
+    # extraction and readers can continue using surrounding_text.
+    source_context: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)

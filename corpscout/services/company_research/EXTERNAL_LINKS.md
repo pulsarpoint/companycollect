@@ -25,16 +25,17 @@ context samples do not alter or cap the complete observation inventory.
 
 ## Where context comes from
 
-New fetches inspect Crawl4AI's rendered `result.html` before cleanup and save it under
+New fetches inspect the browser's rendered HTML before cleanup and save it under
 `link-html/<page-id>.html`. This retains header/footer structure and logo labels that
-cleanup may remove. The existing native `cleaned_html` used by company extraction is
-unchanged. Semantic HTML elements and ARIA roles identify regions; unknown structure
+cleanup may remove. Simplified HTML is stored separately for later extraction.
+Semantic HTML elements and ARIA roles identify regions; unknown structure
 is not guessed from a destination URL. DOM occurrences may include responsive/hidden
 navigation; visibility is not independently measured.
 
 If rendered HTML is unavailable, extraction uses cleaned HTML and says so. Additional
-links returned by Crawl4AI but absent from the chosen HTML receive
-`extraction_method=crawl4ai_links` and unknown location/context. The original Crawl4AI
+links returned by the browser capture but absent from the chosen HTML receive
+`extraction_method=browser_links` and unknown location/context. Historical
+`crawl4ai_links` values remain readable. The original browser
 link metadata is saved under `fetches/<page-id>-links.json`. Its normalized duplicate
 of an already captured DOM destination is not counted as another occurrence.
 
@@ -119,7 +120,7 @@ For example, these are two distinct source observations (illustrative):
 Tests cover full URLs, repeated contexts, source redirects, base URLs, private tenants,
 internal subdomains, skipped crawl targets, logo/header context, metadata fallback,
 malformed model output, invented evidence/entities and exhausted assessment budgets.
-Browser tests exercise actual Crawl4AI fetching and final JSON, including browser recovery.
+Browser tests exercise actual CloakBrowser fetching and final JSON, including browser recovery.
 
 An offline replay of the six saved Memgraph/Oxide/RT-RK pages found **49 occurrences**:
 13 Memgraph, 24 Oxide and 12 RT-RK. Inputs and results are saved under

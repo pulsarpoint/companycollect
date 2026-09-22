@@ -49,6 +49,76 @@ processing 220.042 seconds, and additional static observations/capture writes
 23.173 seconds. Three HTTP failures made the result partial. The report and linked
 JSON retain exact limits, failures, provider usage and source provenance.
 
+## Source discovery
+
+Version 0.30 enables objective-driven web search with `--crawl full`. For a
+targeted crawl, opt in explicitly:
+
+```bash
+company-research https://www.novelic.com/ \
+  --instructions "Find company financial statements and acquisition disclosures" \
+  --web-search --output-dir runs/novelic-financial --env-file .env
+```
+
+Use `--no-web-search` to restrict discovery to website/sitemap links. Page lists
+remain strict, and `--site-info` alone never searches. Web search uses Brave's
+ordinary result cards through the existing browser runtime; generated answers and
+advertising are excluded. No additional API credential is required. Search markup,
+rate limits or blocking can make it unavailable; failures are recorded explicitly
+and make the result partial while ordinary page collection continues.
+
+The navigation model proposes one initial query, can refine it after collecting
+source pages, and can search again when eligible page links are exhausted. A
+bounded excerpt from the three latest captures informs follow-up queries; it
+remains unverified source text, not extracted financial facts. Queries include the quoted target name.
+Results are unverified candidate links, subject to the usual model selection and
+page limits. PDF search results are retained as document references, not fetched.
+There is no form submission or interactive registry lookup in this version.
+
+The selector can follow a parent's investor/subsidiary-report pages or a filing
+source with `follow_scope=source_navigation`. New sources require an exact
+quotation from supplied context; parent evidence must come from the target's own
+site. These are source-matched navigation hypotheses, not independently verified
+ownership. Traversal stays on that source's registrable domain, and every page is
+still assessed against the caller's objective. Parent products, jobs and other
+subsidiaries are excluded from target selection. Source owner and target subject
+remain separate; financial amounts are not extracted or attributed during crawling.
+
+| Limit | Default | CLI / REST and JetStream `config` |
+| --- | ---: | --- |
+| Search requests | 3 | `--max-search-queries` / `max_search_queries` |
+| Results per query | 5 | `search_results_per_query` |
+| Total source-text characters per search-planning pass | 12,000 | `search_context_chars` |
+| Parent/filing source domains | 3 | `--max-source-domains` / `max_source_domains` |
+| Pages per approved source domain | 4 | `--max-source-pages-per-domain` / `max_source_pages_per_domain` |
+| Link depth beyond source entry page | 3 | `--max-source-depth` / `max_source_depth` |
+
+Set `max_source_domains=0` to disable expanded source navigation. Source pages
+also consume global/external page budgets. Search planning consumes the existing
+model-call/token budget; search result pages have a separate query limit and are
+not company captures. These bounds do not establish complete coverage.
+The selector assigns an explicit 0-100 priority to break ties between equally
+useful pages; target-specific report indexes precede broad investor gateways.
+Useful navigation blocked by source page/domain limits produces a partial result
+with `source_page_budget` or `source_domain_budget`, rather than reporting no matches.
+
+`result.json` always preserves:
+
+- `crawl.web_search`: queries, reasons, timestamps, result URLs/titles/snippets,
+  result ranks, elapsed search times and failures.
+- `crawl.discovery`: source approvals, source page counts, document references
+  with labels/context and exclusion counters.
+- Page `selection`: target relevance, follow scope, selection reason and source
+  entry URL where applicable.
+- Document observations: source URL, nearby row text, heading and page title.
+  Financial links record whether the match came from the anchor/URL, surrounding
+  context or the title of a document's source page. A match is not verification of
+  a document's contents or subject.
+
+Separate `searches/` HTML/JSON and queue/model diagnostics are retained only when
+artifacts are enabled. Financial interpretation and PDF/OCR processing remain
+offline; this change collects document references and source HTML.
+
 ## Current collection scope
 
 Version 0.28.0 uses the collection flow for both `company-research` and
@@ -85,7 +155,7 @@ The package separates collection and interpretation into two runnable modules.
 Version 0.22.0 uses compact custom-instruction selection alongside the optional
 brief site information introduced in v0.21.0:
 
-- `company_research.crawl`: discover useful pages, render them with Crawl4AI, and
+- `company_research.crawl`: discover useful pages, render them with CloakBrowser, and
   save their cleaned HTML in a local folder. No company-fact extraction, technology
   classification, catalog lookup, full company-overview generation or uploads run
   here. The first-page eligibility call can also return a brief site description.
@@ -315,7 +385,7 @@ runs/novelic-crawl/
   site-info.json        # when requested, or when the site gate stops the crawl
   pages/
     p0001/
-      page.html          # Crawl4AI cleaned HTML, without LLM rewriting
+      page.html          # deterministic simplified HTML, without LLM rewriting
       input.json         # source, hashes, headings, links and page observations
       link-page.html     # rendered source for additional evidence
     p0002/
@@ -398,3 +468,16 @@ research dictionary. The CLI handles environment files and catalog loading.
 `company-research URL` is now an alias for collection. The former interleaved
 controller is retained in `company_research.research` for reference and is not
 exposed by a crawl command. Catalog flags belong only to the separate analysis tool.
+
+## Redirect provenance
+
+Classification and discovery use the first page's final destination, including
+redirects to another domain. The original input stays in `crawl.input_url`; the
+destination is `crawl.site_url` and `crawl.site_info.source_url`. ClickHouse keeps
+the original domain as the request/result key.
+
+Each page retains `requested_url`, final `source_url`, HTTP `redirects`, and
+`navigation_attempts` (including an HTTPS failure followed by an HTTP attempt
+when the browser discovers a legacy redirect). These fields are included in
+the local result, S3 JSON and the ClickHouse `pages` section. An HTTP fallback
+is an attempted connection, not a server-issued redirect.

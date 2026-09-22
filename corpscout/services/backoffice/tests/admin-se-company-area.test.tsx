@@ -355,15 +355,53 @@ describe("domains tab", () => {
     expect(html).toContain("beijerbygg.se");
     expect(html).toContain(">primary<");
     expect(html).toContain(">unreviewed<");
-    expect(html).toContain("confidence 100%");
+    expect(html).toContain("source score 100%");
     expect(html).toContain(">wikidata<");
     expect(html).toContain("1 distinct source");
-    expect(html).toContain("Human primary decisions come first");
+    expect(html).toContain("Primary marks the preferred website");
     expect(html).toContain("official_website_claim");
     expect(html).toContain("http://www.wikidata.org/entity/Q10427772");
     expect(html).toContain(
       `href="/countries/se/domain-suggestions?q=${COMPANY_ID}"`,
     );
+  });
+
+  it("shows an unverified non-primary Brave domain in the main company list", () => {
+    const html = render(
+      <SeCompanyDomainsTab companyId={COMPANY_ID} domains={[{
+        ...domain,
+        source_names: ["brave"],
+        supporting_sources: ["brave"],
+        suggested_primary: 0,
+        is_active: 0,
+        association: "uncertain",
+        inactive_reason: "unverified",
+        verification_status: "not_attempted",
+      }]} />,
+      seCompanyTabPath(COMPANY_ID, "domains"),
+    );
+    expect(html).toContain("beijerbygg.se");
+    expect(html).toContain(">Unverified<");
+    expect(html).toContain(">brave<");
+    expect(html).not.toContain(">primary<");
+    expect(html).not.toContain(">inactive<");
+    expect(html).not.toContain("Website candidate review history");
+    expect(html).not.toContain("No current company domains");
+  });
+
+  it("keeps rejected and withdrawn domains in history while showing unverified domains", () => {
+    const html = render(
+      <SeCompanyDomainsTab companyId={COMPANY_ID} domains={[
+        { ...domain, root_domain: "candidate.se", is_active: 0, inactive_reason: "unverified" },
+        { ...domain, root_domain: "rejected.se", is_active: 0, inactive_reason: "unverified", review_status: "rejected" },
+        { ...domain, root_domain: "withdrawn.se", is_active: 0, inactive_reason: "withdrawn" },
+      ]} />,
+      seCompanyTabPath(COMPANY_ID, "domains"),
+    );
+    expect(html).toContain("candidate.se");
+    expect(html).toContain("Website candidate review history (2)");
+    expect(html).not.toContain("rejected.se");
+    expect(html).not.toContain("withdrawn.se");
   });
 
   it("says so when no source suggested a domain, and still offers the queue", () => {

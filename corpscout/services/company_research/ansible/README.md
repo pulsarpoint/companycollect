@@ -5,7 +5,18 @@ Deploys the service to `192.168.88.132` as the system unit
 and a durable JetStream consumer against the NATS URL supplied in secrets.
 The existing Corpscout broker is `192.168.88.129:4222`.
 
-The target must be Debian/Ubuntu with systemd, SSH access and sudo privileges.
+The crawler uses the independent [browser service](../../browser_service/README.md).
+Deploy that service first, then configure `company_research_browser_api_url` and
+`company_research_browser_api_token`. This playbook no longer installs Chromium,
+Playwright, Xvfb or desktop tools. It preserves crawl results and queues.
+
+Human assistance remains enabled by default and requires S3 settings. All scans use
+an externally reserved profile. Normal REST/JetStream requests have two worker
+slots, configured with `company_research_concurrency`, matching the two browsers
+on this deployment. The durable consumer keeps excess requests pending in JetStream.
+Manual retries have two worker slots by default,
+configured with `company_research_manual_concurrency`; browser capacity is external.
+
 Set the SSH user/key in `inventory.ini`, or override with Ansible's
 `-e ansible_user=... --private-key ...`. The controller needs Ansible and `uv`.
 SSH host-key verification stays enabled.
@@ -38,7 +49,7 @@ consumer `company-crawl-132`. The playbook allows the service to create a missin
 stream; it does not change an existing stream's configuration or install another
 NATS server. Set `company_research_transport: rest` for REST only.
 
-To enable S3 results and durable completion events for JetStream, add these
+To store failed attempts and results in S3, add these
 settings to the ignored `secrets.yml` (the bucket must already exist):
 
 ```yaml
@@ -71,6 +82,7 @@ See [delivery and retry behavior](../SERVICE.md#s3-results-and-completion-events
 | `/opt/companycollect/corpscout/company_research/current` | Symlink to the prepared release |
 | `/etc/company-research/company-research.env` | Model keys, REST token and NATS connection URL |
 | `/var/lib/company-research/results` | Persistent request, job and result JSON, plus HTML captures |
+| `/var/lib/company-research/results/crawl-history.sqlite3` | Searchable attempt history and durable status events |
 | `/var/cache/company-research` | Browser downloads and runtime caches |
 | `/etc/systemd/system/company-research.service` | System unit, enabled at boot |
 
@@ -85,6 +97,9 @@ when its release, configuration or unit changes. Previous releases and JSON
 results are retained. An interrupted crawl is recovered by the service on restart.
 The system unit has automatic restart, journald logs and write access limited to
 its state/cache directories plus private temporary storage.
+`KillMode=mixed` lets the main service cancel browser recovery and flush profiles
+before systemd terminates any remaining children. The existing 90-second shutdown
+deadline still bounds cleanup.
 
 ## Verify and operate
 

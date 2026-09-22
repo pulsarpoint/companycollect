@@ -1,4 +1,3 @@
-import asyncio
 import json
 import unittest
 from pathlib import Path
@@ -6,90 +5,30 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-import httpx
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
+from test_browser_api import BrowserAPITests
 
 from browser_service.api import create_app
-from browser_service.browser_sessions import BrowserSessions, PersistentBrowserSession
-from browser_service.runtime import BrowserService
+from browser_service.browser_sessions import PersistentBrowserSession
+from browser_service.runtime import BrowserRuntimeSettings, BrowserService
+from browser_service.session_store import SessionStore
 from browser_service.virtual_desktop import ACTIVE_DESKTOPS, VirtualDesktop
 
 
 class SavedBrowserTests(unittest.IsolatedAsyncioTestCase):
-    async def test_auto_restart_setting_is_validated_and_persisted_per_profile(self):
-        with TemporaryDirectory() as directory:
-            service = BrowserService(
-                Path(directory), count=2, max_pending=5, idle_timeout=120
-            )
-            app = create_app(service, api_token="private")
-            async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app), base_url="http://test"
-            ) as client:
-                endpoint = "/v1/browser-sessions/browser-1/settings"
-                self.assertEqual(
-                    (
-                        await client.post(endpoint, json={"auto_restart": False})
-                    ).status_code,
-                    401,
-                )
-                client.headers["Authorization"] = "Bearer private"
-                self.assertEqual(
-                    (
-                        await client.post(endpoint, json={"auto_restart": "false"})
-                    ).status_code,
-                    422,
-                )
-                response = await client.post(endpoint, json={"auto_restart": False})
-                self.assertEqual(response.status_code, 200)
-                self.assertFalse(response.json()["auto_restart"])
-                self.assertTrue(service.pool.sessions["browser-2"].auto_restart)
-                first = service.pool.sessions["browser-1"]
-                restored = PersistentBrowserSession("browser-1", first.root)
-                self.assertFalse(restored.auto_restart)
-                self.assertEqual(
-                    (first.root / "settings.json").stat().st_mode & 0o777, 0o600
-                )
-
-    async def test_explicit_stop_and_disabled_setting_cancel_pending_restarts(self):
-        with TemporaryDirectory() as directory:
-            session = PersistentBrowserSession("browser-1", Path(directory))
-            session.start = AsyncMock()
-            session.wanted_running = True
-            session.schedule_restart()
-            original = session.restart_task
-            session.schedule_restart()
-            self.assertIs(session.restart_task, original)
-            await session.stop()
-            await asyncio.sleep(0)
-            session.start.assert_not_called()
-            self.assertEqual(session.state, "stopped")
-            self.assertFalse(session.wanted_running)
-            session.wanted_running = True
-            session.schedule_restart()
-            await session.set_auto_restart(False)
-            self.assertIsNone(session.restart_task)
-            session.start.assert_not_called()
-            await session.stop()
-
-    async def test_failed_automatic_restart_is_not_retried_in_a_loop(self):
-        with TemporaryDirectory() as directory:
-            session = PersistentBrowserSession("browser-1", Path(directory))
-            session.wanted_running = True
-            session.start = AsyncMock(
-                side_effect=RuntimeError("fixture startup failure")
-            )
-            session.schedule_restart()
-            with self.assertLogs("browser_service.browser_sessions", level="WARNING"):
-                await session.restart_task
-            self.assertIsNone(session.restart_task)
-            session.start.assert_awaited_once_with(restore_tabs=False)
-            self.assertEqual(session.state, "error")
-            await session.stop()
-
     async def test_saved_session_cookies_are_private_and_not_in_status(self):
         with TemporaryDirectory() as directory:
-            session = PersistentBrowserSession("browser-1", Path(directory))
+            store = SessionStore(Path(directory) / "sessions.sqlite3")
+            self.addCleanup(store.close)
+            session = PersistentBrowserSession(
+                "browser-1",
+                Path(directory),
+                store,
+                headless=True,
+                route="direct",
+                proxy=None,
+            )
             session.context = SimpleNamespace(
                 cookies=AsyncMock(
                     return_value=[{"name": "session", "value": "private-cookie"}]
@@ -105,70 +44,58 @@ class SavedBrowserTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("private-cookie", json.dumps(await session.snapshot()))
             self.assertNotIn("cookies", await session.snapshot())
 
-    async def test_profile_roots_and_configuration_are_independent(self):
-        with TemporaryDirectory() as directory:
-            pool = BrowserSessions(Path(directory), 2)
-            self.assertEqual(list(pool.sessions), ["browser-1", "browser-2"])
-            self.assertNotEqual(
-                pool.sessions["browser-1"].root, pool.sessions["browser-2"].root
-            )
-            for count in (-1, 17):
-                with self.assertRaises(ValueError):
-                    BrowserSessions(Path(directory), count)
 
-    async def test_api_authentication_and_tab_url_validation(self):
-        with TemporaryDirectory() as directory:
-            service = BrowserService(
-                Path(directory), count=2, max_pending=5, idle_timeout=120
-            )
-            session = service.pool.sessions["browser-1"]
-            session.open_tab = AsyncMock(return_value="tab-one")
-            app = create_app(service, api_token="secret-token")
-            async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app), base_url="http://test"
-            ) as client:
-                self.assertEqual(
-                    (await client.get("/v1/browser-sessions")).status_code, 401
-                )
-                client.headers["Authorization"] = "Bearer secret-token"
-                sessions = (await client.get("/v1/browser-sessions")).json()["sessions"]
-                self.assertEqual(len(sessions), 2)
-                self.assertEqual(
-                    (
-                        await client.post("/v1/browser-sessions/browser-9/start")
-                    ).status_code,
-                    404,
-                )
-                for url in (
-                    "file:///etc/passwd",
-                    "javascript:alert(1)",
-                    "https://user:password@example.com",
-                ):
-                    response = await client.post(
-                        "/v1/browser-sessions/browser-1/tabs", json={"url": url}
+class ManualSessionTests(BrowserAPITests):
+    async def test_manual_start_stop_pin_and_url_validation(self):
+        response = await self.http.post(
+            "/v1/browser-sessions", json={"headless": False}
+        )
+        self.assertEqual(response.status_code, 201, response.text)
+        identifier = response.json()["id"]
+        execution = self.service.get(identifier).execution_id
+        profile = self.service.get(identifier).profile
+        profile.open_tab = AsyncMock(return_value="tab-one")
+        for url in (
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "https://user:pass@example.test",
+        ):
+            self.assertEqual(
+                (
+                    await self.http.post(
+                        f"/v1/browser-sessions/{identifier}/tabs", json={"url": url}
                     )
-                    self.assertEqual(response.status_code, 422)
-                session.open_tab.assert_not_called()
-                response = await client.post(
-                    "/v1/browser-sessions/browser-1/tabs",
-                    json={"url": "https://melexis.com/"},
-                )
-                self.assertEqual(response.status_code, 200)
-                session.open_tab.assert_awaited_once_with("https://melexis.com/")
-                self.assertEqual(
-                    (
-                        await client.post(
-                            "/v1/browser-sessions/browser-1/browser-ticket"
-                        )
-                    ).status_code,
-                    409,
-                )
-
-    async def test_stopped_session_does_not_accept_new_tabs(self):
-        with TemporaryDirectory() as directory:
-            session = PersistentBrowserSession("browser-1", Path(directory))
-            with self.assertRaisesRegex(ValueError, "Start"):
-                await session.open_tab("https://example.com/")
+                ).status_code,
+                422,
+            )
+        profile.open_tab.assert_not_called()
+        response = await self.http.post(
+            f"/v1/browser-sessions/{identifier}/tabs",
+            json={"url": "https://example.test"},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        for value, status in (("true", 422), (True, 200)):
+            response = await self.http.post(
+                f"/v1/browser-sessions/{identifier}/settings", json={"pinned": value}
+            )
+            self.assertEqual(response.status_code, status)
+        self.assertTrue(self.service.store.session(identifier)["pinned"])
+        self.assertEqual(
+            (
+                await self.http.post(f"/v1/browser-sessions/{identifier}/stop", json={})
+            ).status_code,
+            409,
+        )
+        response = await self.http.post(
+            f"/v1/browser-sessions/{identifier}/stop", json={"executionId": execution}
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        response = await self.http.post(
+            f"/v1/browser-sessions/{identifier}/start", json={"headless": True}
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(self.service.get(identifier).profile.headless)
+        self.assertNotEqual(self.service.get(identifier).execution_id, execution)
 
 
 class SavedBrowserTickets(unittest.TestCase):
@@ -178,7 +105,10 @@ class SavedBrowserTickets(unittest.TestCase):
             patch.dict(ACTIVE_DESKTOPS, {}, clear=True),
         ):
             service = BrowserService(
-                Path(directory), count=1, max_pending=5, idle_timeout=120
+                Path(directory),
+                settings=BrowserRuntimeSettings(
+                    max_browsers=1, idle_timeout_seconds=120, session_retention_days=7
+                ),
             )
             self.addCleanup(service.store.close)
             desktop = VirtualDesktop(101, 201, "saved", "browser-1")
@@ -187,7 +117,7 @@ class SavedBrowserTickets(unittest.TestCase):
             self.assertEqual(client.get("/v1/server").status_code, 401)
             client.headers["Authorization"] = "Bearer private-token"
             data = client.get("/v1/server").json()
-            self.assertEqual(data["sessions"][0]["name"], "browser-1")
+            self.assertEqual(data["sessions"], [])
             for private in ("vnc_port", "cdp_port", "private-token", "cookies"):
                 self.assertNotIn(private, json.dumps(data))
             endpoint = f"/v1/desktops/{desktop.id}/browser-ticket"

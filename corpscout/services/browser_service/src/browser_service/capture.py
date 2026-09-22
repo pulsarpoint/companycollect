@@ -1,6 +1,6 @@
 """Generic browser capture and safe response metadata."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -18,6 +18,8 @@ class PageCapture:
     status_code: int | None
     headers: dict[str, str]
     error: str | None
+    redirects: list[dict] = field(default_factory=list)
+    navigation_attempts: list[dict] = field(default_factory=list)
 
 
 def utc_now() -> str:

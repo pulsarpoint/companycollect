@@ -85,7 +85,8 @@ def publish_batch(store: ProcessingStore, client, batch: ExportBatch) -> None:
             raise ValueError(
                 "Brave output requires a two-letter uppercase country code"
             )
-        table = f"{country.lower()}_company_brave_domains"
+        table = f"{country.lower()}_company_brave_search_results_latest_success"
+        archive = f"{country.lower()}_company_brave_search_results_s3_archive"
         if client.execute(f"EXISTS TABLE corpscout.{table}") != [(1,)]:
             raise ValueError(
                 f"Provision corpscout.{table} before publishing this country's results"
@@ -93,7 +94,7 @@ def publish_batch(store: ProcessingStore, client, batch: ExportBatch) -> None:
         # Schema belongs to migrations. Reuse it for empty/missing S3 file discovery.
         structure = ", ".join(
             f"{column[0]} {column[1]}"
-            for column in client.execute(f"DESCRIBE TABLE corpscout.{table}_history")
+            for column in client.execute(f"DESCRIBE TABLE corpscout.{archive}")
             if column[0] in EXPORT_COLUMNS
         )
         path = f"v1/country={country}/batch_id={batch.batch_id}/results.parquet"

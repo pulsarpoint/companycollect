@@ -436,6 +436,14 @@ EXPECTED_MIGRATIONS = (
     "000420_corpscout_website_crawl_results",
     "000421_corpscout_website_crawl_s3_domain_identity",
     "000422_corpscout_website_crawl_page_observations",
+    "000423_corpscout_esef_domain_relationships",
+    "000424_corpscout_esef_relationship_projection",
+    "000425_corpscout_website_domain_relationships",
+    "000426_corpscout_website_crawl_s3_attempt_identity",
+    "000427_corpscout_se_companies_serving_current_domains",
+    "000428_corpscout_brave_search_outcomes",
+    "000429_corpscout_website_crawl_requests",
+    "000430_corpscout_website_crawl_type_results",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}

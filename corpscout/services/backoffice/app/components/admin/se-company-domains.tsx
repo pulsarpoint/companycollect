@@ -1,5 +1,7 @@
-import { DomainSourceSupport, DOMAIN_RANKING_EXPLANATION } from "~/components/domain-suggestions/domain-source-support";
+import { DomainSourceSupport } from "~/components/domain-suggestions/domain-source-support";
 import { CompanySourceStrip } from "~/components/admin/company-source-strip";
+import { SeDomainRelationships } from "~/components/admin/se-domain-relationships";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "~/components/ui/collapsible";
 import { GlobeIcon } from "lucide-react";
 import { Link } from "react-router";
 import { Badge } from "~/components/ui/badge";
@@ -19,7 +21,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "~/components/ui/empty";
-import type { SeCompanyDomainRow } from "~/lib/se-company-domains.server";
+import type { SeCompanyDomainRow, SeDomainRelationship } from "~/lib/se-company-domains.server";
 
 /** The unreviewed-domain queue, pre-filtered to this company. The queue reads
  * its filter from `?q=`, which matches on company id as well as name. */
@@ -32,6 +34,7 @@ function confidencePercent(value: number): string {
 }
 
 function DomainCard({ row }: { row: SeCompanyDomainRow }) {
+  const unverified = !row.is_active && row.review_status !== "rejected" && row.inactive_reason === "unverified";
   // The four source arrays are parallel by construction (one entry per source
   // that evidenced this domain), so they are zipped rather than listed apart.
   const sources = row.source_names.map((name, index) => ({
@@ -55,9 +58,10 @@ function DomainCard({ row }: { row: SeCompanyDomainRow }) {
           >
             {row.review_status}
           </Badge>
-          {row.is_active ? null : <Badge variant="outline">inactive</Badge>}
+          {unverified ? <Badge variant="outline">Unverified</Badge> : row.is_active ? null : <Badge variant="outline">inactive</Badge>}
           <Badge variant="outline">
-            confidence {confidencePercent(row.suggested_confidence)}
+            {row.association === "not_connected" ? "rejection confidence" : row.verification_status === "success" ? "assessment confidence" : "source score"}{" "}
+            {confidencePercent(row.suggested_confidence)}
           </Badge>
         </div>
         <CardDescription>
@@ -117,9 +121,10 @@ function DomainCard({ row }: { row: SeCompanyDomainRow }) {
           valueClassName="break-all"
           entries={[
             ["Website host", text(row.website_host)],
-            ["Verification", text(row.verification_status?.replaceAll("_", " ") ?? "")],
+            ["Website assessment", text(row.association === "not_connected" ? "Not a company website" : row.association === "connected" ? "Connected company website" : "Unverified company domain")],
+            ["Verification processing", text(row.verification_status === "success" ? "Completed" : row.verification_status?.replaceAll("_", " ") ?? "")],
             ["Verification reason", text(row.verification_reason ?? "")],
-            ["Inactive reason", text(row.is_active ? "" : (row.inactive_reason?.replaceAll("_", " ") ?? ""))],
+            ["Inactive reason", text(row.is_active || unverified ? "" : (row.inactive_reason?.replaceAll("_", " ") ?? ""))],
             ["Reviewed by", text(row.reviewed_by)],
             ["Reviewed at", text(row.reviewed_at)],
             ["Review note", text(row.review_note)],
@@ -141,11 +146,15 @@ function DomainCard({ row }: { row: SeCompanyDomainRow }) {
 export function SeCompanyDomainsTab({
   companyId,
   domains,
+  relationships = [],
 }: {
   companyId: string;
   domains: SeCompanyDomainRow[];
+  relationships?: SeDomainRelationship[];
 }) {
-  if (domains.length === 0) {
+  const currentDomains = domains.filter((row) => row.review_status !== "rejected" && (row.is_active || row.inactive_reason === "unverified"));
+  const historyDomains = domains.filter((row) => !currentDomains.includes(row));
+  if (domains.length === 0 && relationships.length === 0) {
     return (
       <Empty className="border">
         <EmptyHeader>
@@ -177,7 +186,7 @@ export function SeCompanyDomainsTab({
       <CompanySourceStrip
         sources={domains.flatMap((row) => row.source_names)}
       />
-      <p className="text-muted-foreground text-sm">{DOMAIN_RANKING_EXPLANATION}</p>
+      <p className="text-muted-foreground text-sm">Domains reported by sources such as Brave appear here before verification. Unverified domains still count as company domains. Primary marks the preferred website.</p>
       <div className="text-sm">
         <Link
           className="underline underline-offset-2"
@@ -186,9 +195,21 @@ export function SeCompanyDomainsTab({
           Review these in the domain queue
         </Link>
       </div>
-      {domains.map((row) => (
+      <h2 className="text-lg font-medium">Company domains</h2>
+      {currentDomains.map((row) => (
         <DomainCard key={row.root_domain} row={row} />
       ))}
+      {currentDomains.length === 0 ? <p className="text-sm text-muted-foreground">No current company domains recorded.</p> : null}
+      <SeDomainRelationships relationships={relationships} />
+      {historyDomains.length > 0 ? <Collapsible>
+        <CollapsibleTrigger className="text-sm underline underline-offset-4">
+          Website candidate review history ({historyDomains.length})
+        </CollapsibleTrigger>
+        <CollapsibleContent className="flex flex-col gap-4 pt-4">
+          <p className="text-sm text-muted-foreground">These domains were considered as company websites. Their mentions may still describe useful connections.</p>
+          {historyDomains.map((row) => <DomainCard key={row.root_domain} row={row} />)}
+        </CollapsibleContent>
+      </Collapsible> : null}
     </section>
   );
 }

@@ -1,9 +1,4 @@
-import { useState } from "react";
-import { Form, Link } from "react-router";
-import { ListFilterIcon, XIcon } from "lucide-react";
 import { legalFormOptionLabel } from "~/lib/se-legal-form";
-import { Badge } from "~/components/ui/badge";
-import { Button } from "~/components/ui/button";
 import { Checkbox } from "~/components/ui/checkbox";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
@@ -14,14 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "~/components/ui/select";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from "~/components/ui/sheet";
+import { ListFilterSheet } from "~/components/admin/list-filter-sheet";
 import type {
   SeCompanyInfoCorrectionFilterOptions,
   SeCompanyInfoFilterOptions,
@@ -40,7 +28,6 @@ import {
   PROFILE_SOURCE_VALUES,
   profileSourceLabel,
   selectValue,
-  type FilterChip,
   type SeCompanyInfoCorrectionsTableFilters,
   type SeCompanyInfoTableFilters,
   type TableView,
@@ -121,23 +108,6 @@ function ViewFields({ view }: { view: TableView }) {
       <input type="hidden" name="sort" value={view.sort} />
       <input type="hidden" name="dir" value={view.dir} />
     </>
-  );
-}
-
-function SheetActions({ clearHref }: { clearHref: string }) {
-  return (
-    <div className="mt-auto flex gap-2 border-t p-4">
-      <Button type="submit" className="flex-1">
-        Apply
-      </Button>
-      <Button
-        variant="outline"
-        nativeButton={false}
-        render={<Link to={clearHref} />}
-      >
-        Clear
-      </Button>
-    </div>
   );
 }
 
@@ -317,75 +287,6 @@ export function SeCompanyInfoCorrectionsFilterFields({
   );
 }
 
-/** The button, its active-filter count, and one removable chip per applied
- * filter. Each chip's X re-navigates to the same page without that one param
- * (built from the filter state, never from the live location, so a pending
- * navigation cannot make a chip point at a URL that re-adds it). */
-function FilterBar({
-  chips,
-  clearHref,
-  hrefWithout,
-  title,
-  description,
-  children,
-}: {
-  chips: FilterChip[];
-  clearHref: string;
-  hrefWithout: (param: string) => string;
-  title: string;
-  description: string;
-  children: React.ReactNode;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      <Sheet open={open} onOpenChange={setOpen}>
-        <SheetTrigger render={<Button variant="outline" size="sm" />}>
-          <ListFilterIcon data-icon="inline-start" />
-          Filters
-          {chips.length > 0 ? (
-            <Badge variant="secondary" className="ml-1 px-1.5">
-              {chips.length}
-            </Badge>
-          ) : null}
-        </SheetTrigger>
-        <SheetContent side="right" className="flex w-full flex-col sm:max-w-sm">
-          <SheetHeader>
-            <SheetTitle>{title}</SheetTitle>
-            <SheetDescription>{description}</SheetDescription>
-          </SheetHeader>
-          {/* Applying navigates, which leaves this component mounted -- close
-              the sheet on submit so the reviewer sees the filtered table. */}
-          <Form
-            method="get"
-            className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto"
-            onSubmit={() => setOpen(false)}
-          >
-            {children}
-          </Form>
-        </SheetContent>
-      </Sheet>
-      {chips.map((chip) => (
-        <Badge key={chip.param} variant="secondary" className="gap-1 pr-1">
-          {chip.label}
-          <Link
-            to={hrefWithout(chip.param)}
-            aria-label={`Remove filter ${chip.label}`}
-            className="rounded-sm opacity-70 hover:opacity-100"
-          >
-            <XIcon className="size-3" />
-          </Link>
-        </Badge>
-      ))}
-      {chips.length > 0 ? (
-        <Button variant="ghost" size="sm" nativeButton={false} render={<Link to={clearHref} />}>
-          Clear all
-        </Button>
-      ) : null}
-    </div>
-  );
-}
-
 export function SeCompanyInfoFilterSheet({
   filters,
   view,
@@ -396,7 +297,7 @@ export function SeCompanyInfoFilterSheet({
   options: SeCompanyInfoFilterOptions;
 }) {
   return (
-    <FilterBar
+    <ListFilterSheet
       chips={infoFilterChips(filters)}
       clearHref={infoListSearch(EMPTY_INFO_FILTERS, view)}
       hrefWithout={(param) => infoListSearch(filters, view, param)}
@@ -404,8 +305,7 @@ export function SeCompanyInfoFilterSheet({
       description="Every filter is a URL parameter, so a filtered list can be shared or bookmarked. Sorting and page size are kept."
     >
       <SeCompanyInfoFilterFields filters={filters} options={options} view={view} />
-      <SheetActions clearHref={infoListSearch(EMPTY_INFO_FILTERS, view)} />
-    </FilterBar>
+    </ListFilterSheet>
   );
 }
 
@@ -424,7 +324,7 @@ export function SeCompanyInfoCorrectionsFilterSheet({
   statuses?: readonly string[];
 }) {
   return (
-    <FilterBar
+    <ListFilterSheet
       chips={correctionFilterChips(filters)}
       clearHref={correctionsListSearch(EMPTY_CORRECTION_FILTERS, view)}
       hrefWithout={(param) => correctionsListSearch(filters, view, param)}
@@ -438,7 +338,6 @@ export function SeCompanyInfoCorrectionsFilterSheet({
         kinds={kinds}
         statuses={statuses}
       />
-      <SheetActions clearHref={correctionsListSearch(EMPTY_CORRECTION_FILTERS, view)} />
-    </FilterBar>
+    </ListFilterSheet>
   );
 }

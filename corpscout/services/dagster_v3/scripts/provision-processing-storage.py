@@ -162,10 +162,16 @@ def main():
         client.execute("GRANT POSTGRES ON *.* TO processing_publisher")
         client.execute("GRANT CREATE TEMPORARY TABLE ON *.* TO processing_publisher")
         client.execute(
-            "GRANT SELECT, INSERT ON corpscout.se_company_brave_domains TO processing_publisher"
+            "GRANT SELECT, INSERT ON corpscout.se_company_brave_search_results_latest_success TO processing_publisher"
         )
         client.execute(
-            "GRANT SELECT ON corpscout.se_company_brave_domains_history TO processing_publisher"
+            "GRANT SELECT, INSERT ON corpscout.company_brave_search_results TO processing_publisher"
+        )
+        client.execute(
+            "GRANT SELECT ON corpscout.company_brave_search_results_latest TO processing_publisher"
+        )
+        client.execute(
+            "GRANT SELECT ON corpscout.se_company_brave_search_results_s3_archive TO processing_publisher"
         )
     finally:
         client.disconnect()

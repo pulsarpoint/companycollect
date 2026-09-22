@@ -97,6 +97,26 @@ def main() -> None:
             concurrency=args.concurrency,
             max_pending=args.max_pending,
         )
+        results = None
+        bucket = args.s3_bucket or environment.get("CRAWL_S3_BUCKET")
+        if bucket:
+            storage_values = {
+                "bucket": bucket,
+                "prefix": args.s3_prefix or environment.get("CRAWL_S3_PREFIX"),
+                "endpoint_url": args.s3_endpoint_url
+                or environment.get("CRAWL_S3_ENDPOINT_URL")
+                or None,
+                "region": args.s3_region
+                or environment.get("AWS_REGION")
+                or environment.get("AWS_DEFAULT_REGION"),
+            }
+            storage_settings = S3Settings.model_validate(
+                {k: v for k, v in storage_values.items() if v is not None}
+            )
+            results = S3Results(storage_settings, environment)
+        service.results = results
+        if service.human_enabled and results is None:
+            parser.error("Human assistance requires S3 storage for failed attempts")
         jetstream = None
         if args.transport in {"nats", "both"}:
             values = {
@@ -115,26 +135,7 @@ def main() -> None:
             settings = JetStreamSettings.model_validate(
                 {k: v for k, v in values.items() if v is not None}
             )
-            results = None
-            bucket = args.s3_bucket or environment.get("CRAWL_S3_BUCKET")
-            if bucket:
-                storage_values = {
-                    "bucket": bucket,
-                    "prefix": args.s3_prefix or environment.get("CRAWL_S3_PREFIX"),
-                    "endpoint_url": args.s3_endpoint_url
-                    or environment.get("CRAWL_S3_ENDPOINT_URL")
-                    or None,
-                    "region": args.s3_region
-                    or environment.get("AWS_REGION")
-                    or environment.get("AWS_DEFAULT_REGION"),
-                }
-                storage_settings = S3Settings.model_validate(
-                    {k: v for k, v in storage_values.items() if v is not None}
-                )
-                results = S3Results(storage_settings, environment)
             jetstream = JetStreamInput(service, settings, results)
-        elif args.s3_bucket:
-            parser.error("S3 delivery requires --transport nats or both")
     except ValidationError as error:
         parser.error(
             str(
@@ -155,6 +156,9 @@ def main() -> None:
             create_app(service, api_token=api_token, jetstream=jetstream),
             host=args.host,
             port=args.port,
+            access_log=False,
+            # Long-lived SSE/VNC connections must not prevent profile shutdown.
+            timeout_graceful_shutdown=10,
         )
 
 

@@ -136,7 +136,7 @@ class JetStreamInput:
                         filter_subject=self.settings.subject,
                         ack_policy=AckPolicy.EXPLICIT,
                         ack_wait=self.settings.ack_wait,
-                        max_ack_pending=1,
+                        max_ack_pending=self.service.concurrency,
                         max_deliver=-1,
                     ),
                 )
@@ -150,6 +150,9 @@ class JetStreamInput:
                 raise ValueError(
                     "Existing NATS consumer configuration does not match this worker"
                 )
+            if info.config.max_ack_pending != self.service.concurrency:
+                info.config.max_ack_pending = self.service.concurrency
+                await js.add_consumer(self.settings.stream, config=info.config)
             self.subscription = await js.pull_subscribe_bind(
                 stream=self.settings.stream, durable=self.settings.durable
             )
@@ -168,20 +171,36 @@ class JetStreamInput:
 
     async def consume(self) -> None:
         assert self.subscription is not None
-        while True:
-            try:
-                messages = await self.subscription.fetch(batch=1, timeout=1)
+        pending: set[asyncio.Task] = set()
+        async with asyncio.TaskGroup() as group:
+            while True:
+                if len(pending) >= self.service.concurrency:
+                    await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                    continue
+                try:
+                    messages = await self.subscription.fetch(
+                        batch=self.service.concurrency - len(pending), timeout=1
+                    )
+                except NatsTimeoutError:
+                    continue
+                except NatsError as error:
+                    LOGGER.error("NATS input retry (%s)", type(error).__name__)
+                    await asyncio.sleep(1)
+                    continue
                 for message in messages:
-                    try:
-                        await self.process(message)
-                    except (OSError, ServiceUnavailable, ResultDeliveryError) as error:
-                        LOGGER.error("NATS job deferred (%s)", type(error).__name__)
-                        await message.nak(delay=5)
-            except NatsTimeoutError:
-                continue
-            except NatsError as error:
-                LOGGER.error("NATS input retry (%s)", type(error).__name__)
-                await asyncio.sleep(1)
+                    task = group.create_task(self.process_or_defer(message))
+                    pending.add(task)
+                    task.add_done_callback(pending.discard)
+
+    async def process_or_defer(self, message: Msg) -> None:
+        try:
+            try:
+                await self.process(message)
+            except (OSError, ServiceUnavailable, ResultDeliveryError) as error:
+                LOGGER.error("NATS job deferred (%s)", type(error).__name__)
+                await message.nak(delay=5)
+        except NatsError as error:
+            LOGGER.error("NATS delivery retry (%s)", type(error).__name__)
 
     async def process(self, message: Msg) -> None:
         metadata = message.metadata

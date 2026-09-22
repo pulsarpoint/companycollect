@@ -1,4 +1,4 @@
-"""A headed browser desktop shared by crawl assistance and saved sessions."""
+"""Managed browser subprocesses, with an Xvfb/VNC desktop only when headed."""
 
 import asyncio
 import os
@@ -19,7 +19,7 @@ from browser_service.capture import utc_now
 @dataclass(frozen=True)
 class VirtualDesktop:
     cdp_port: int
-    vnc_port: int
+    vnc_port: int | None
     kind: str = "interactive"
     owner: str | None = None
     id: str = field(default_factory=lambda: uuid4().hex)
@@ -35,27 +35,31 @@ async def open_virtual_browser(
     *,
     kind: str = "interactive",
     owner: str | None = None,
+    headless: bool = False,
+    proxy: str | None = None,
 ) -> AsyncIterator[VirtualDesktop]:
     with socket.socket() as cdp, socket.socket() as vnc:
         cdp.bind(("127.0.0.1", 0))
         vnc.bind(("127.0.0.1", 0))
-        cdp_port, vnc_port = cdp.getsockname()[1], vnc.getsockname()[1]
+        cdp_port = cdp.getsockname()[1]
+        vnc_port = None if headless else vnc.getsockname()[1]
     process = await asyncio.create_subprocess_exec(
-        "xvfb-run",
-        "-a",
-        "-s",
-        "-screen 0 1440x1000x24 -nolisten tcp",
+        *(
+            []
+            if headless
+            else ["xvfb-run", "-a", "-s", "-screen 0 1440x1000x24 -nolisten tcp"]
+        ),
         sys.executable,
         "-m",
         "browser_service.browser_process",
         "--cdp-port",
         str(cdp_port),
-        "--vnc-port",
-        str(vnc_port),
+        *(["--headless"] if headless else ["--vnc-port", str(vnc_port)]),
         *(["--profile", str(profile)] if profile is not None else []),
         start_new_session=True,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
+        env={**os.environ, "BROWSER_PROCESS_PROXY": proxy or ""},
     )
     desktop = VirtualDesktop(cdp_port, vnc_port, kind, owner)
     try:
@@ -69,16 +73,18 @@ async def open_virtual_browser(
                             f"http://127.0.0.1:{cdp_port}/json/version"
                         )
                         if response.status_code == 200:
-                            _, writer = await asyncio.open_connection(
-                                "127.0.0.1", vnc_port
-                            )
-                            writer.close()
-                            await writer.wait_closed()
+                            if vnc_port is not None:
+                                _, writer = await asyncio.open_connection(
+                                    "127.0.0.1", vnc_port
+                                )
+                                writer.close()
+                                await writer.wait_closed()
                             break
                     except (httpx.TransportError, OSError):
                         pass
                     await asyncio.sleep(0.1)
-        ACTIVE_DESKTOPS[desktop.id] = desktop
+        if not headless:
+            ACTIVE_DESKTOPS[desktop.id] = desktop
         yield desktop
     finally:
         ACTIVE_DESKTOPS.pop(desktop.id, None)

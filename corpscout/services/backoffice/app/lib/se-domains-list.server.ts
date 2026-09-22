@@ -128,6 +128,10 @@ export function buildSeDomainsFilter(filters: SeDomainsFilters): SeDomainsFilter
     where.push("d.company_id = {company:String}");
     params.company = filters.company;
   }
+  if (filters.source !== "") {
+    where.push("has(d.sources, {source:String})");
+    params.source = filters.source;
+  }
   if (filters.association !== "") {
     where.push("d.association = {association:String}");
     params.association = filters.association;

@@ -127,6 +127,13 @@ directories and logs.
 
 Use the full `sync.yml` deployment whenever `pyproject.toml`, `uv.lock`, `.env`,
 the Ansible role, service configuration, or non-package runtime files changed.
+An exception is adding resource-only API settings, such as `BROWSER_API_URL`
+and `BROWSER_API_TOKEN`: Dagster's secrets loader rereads `.env` when the code
+location and new run workers start. These can accompany a content hot-sync
+without restarting existing runs. Verify the reloaded location and its resource
+initialization. Changes to daemon, metadata storage, or systemd settings still
+require the full deployment. The unit's environment revision will be reconciled
+at the next full deployment.
 The hot-sync preserves already-running processes, but code loaded by a future
 step or subprocess may use the new implementation; avoid changing the contract
 of an in-flight multi-step job.

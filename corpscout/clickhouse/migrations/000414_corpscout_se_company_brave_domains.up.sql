@@ -1,6 +1,6 @@
 CREATE DATABASE IF NOT EXISTS corpscout;
 
-CREATE TABLE corpscout.se_company_brave_domains
+CREATE TABLE corpscout.se_company_brave_search_results_latest_success
 (
     result_id String,
     task_id String,
@@ -29,7 +29,7 @@ ENGINE = ReplacingMergeTree(completed_at)
 ORDER BY (company_id, query_type);
 
 -- Full immutable responses live in S3. Provision brave_history before this migration.
-CREATE TABLE corpscout.se_company_brave_domains_history
+CREATE TABLE corpscout.se_company_brave_search_results_s3_archive
 (
     result_id String,
     task_id String,

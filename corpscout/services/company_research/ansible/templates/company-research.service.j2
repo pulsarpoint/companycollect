@@ -29,7 +29,8 @@ ExecStart={{ company_research_deploy_dir }}/current/.venv/bin/company-research-s
 Restart=on-failure
 RestartSec=10s
 TimeoutStopSec=90s
-KillMode=control-group
+# Allow crawl cancellation to release external browser leases.
+KillMode=mixed
 UMask=0077
 NoNewPrivileges=true
 ProtectSystem=strict

@@ -127,3 +127,38 @@ physical table/column identity), plus `000252` (the complete multilingual key:
 uv run pytest tests/test_translator_load.py -q        # loader contract (scan SQL, chunking, static insert)
 uv run pytest tests/test_text_translations_schema.py -q
 ```
+
+## Brave Ask browser execution
+
+The company Brave search asset now calls browser-service `POST /v1/brave/ask`.
+Set `BROWSER_API_URL` and `BROWSER_API_TOKEN` in the Dagster environment.
+Configure the three named proxy routes on browser-service using
+`BROWSER_CRAWL_PROXY1/2/3`; Dagster sends route names, never proxy credentials.
+Other sources that still use `crawl_proxy1/2/3` retain their existing settings.
+
+Dagster continues to claim companies lazily, persist each answer before refilling
+a route, apply adaptive answer timeouts, and archive/publish through the existing
+Postgres/S3/ClickHouse workflow. Browser pool capacity is enforced by the service.
+The resource waits up to 120 seconds for capacity and recovers responses by
+request ID after network interruptions. CAPTCHA evidence is included in archived
+responses under `challenge_runs`; live progress appears in Backoffice browser
+assignments. Resource overrides `challenge_agent_max_runs` and
+`challenge_agent_model` are optional; omission uses browser-service defaults.
+A failed processing retry gets a new lease token and therefore a new browser
+request ID. Replaying a transport request retains the original request ID.
+
+## Crawl input and result assets
+
+Backoffice domain selections launch the input assets, which own the three
+`website_*_requests` ClickHouse tables. Separate result assets read enabled inputs
+in priority order, apply the asset's freshness policy, call the crawler HTTP API,
+wait for completion and store sections and S3 paths in `website_*_results`.
+Materializing an input table never starts a crawl. Result materialization means
+responses were persisted; metadata distinguishes valid successes from unsuccessful
+or partial outcomes.
+
+Execution settings are required when materializing the results assets, including
+CAPTCHA model/budget, crawl model API/name, page and model-call limits, and page-selection
+mode. Backoffice `/admin/crawls` provides these controls. Read the
+[processing guide](src/dagster_v3/defs/website_crawl/docs/website-crawl-processing.md)
+for examples, recovery, database identities and deployment requirements.

@@ -217,6 +217,21 @@ export function AdminSidebar() {
                 <span>NATS</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                isActive={pathname.startsWith("/admin/crawls")}
+                tooltip="Crawler attempts and human assistance"
+                render={<Link to="/admin/crawls" />}
+              >
+                <BotIcon />
+                <span>Crawler</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton isActive={pathname.startsWith("/admin/browsers")} tooltip="Browser servers and saved profiles" render={<Link to="/admin/browsers" />}>
+                <BotIcon /><span>Browsers</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
             <Collapsible
               defaultOpen={pathname.startsWith("/admin/general/")}
               className="group/collapsible"

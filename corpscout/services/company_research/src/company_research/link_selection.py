@@ -34,6 +34,7 @@ async def assess_links(
             queue.site_url,
             [c.prompt_data() for c in batch],
             site_profile=queue.site_profile,
+            navigation_sources=queue.navigation_sources,
             coverage=queue.coverage,
             instructions=queue.instructions,
         )
@@ -67,8 +68,16 @@ async def assess_links(
                             if queue.instructions is not None
                             else CandidateAssessment
                         ).model_validate(value)
-                    except ValidationError:
-                        issues.append("Invalid candidate assessment schema")
+                    except ValidationError as error:
+                        issues.append(
+                            "Invalid candidate assessment schema: "
+                            + "; ".join(
+                                ".".join(map(str, item["loc"])) + ": " + item["msg"]
+                                for item in error.errors(
+                                    include_input=False, include_url=False
+                                )
+                            )[:1000]
+                        )
                         continue
                     if assessment.candidate_id not in by_id:
                         issues.append("Unknown candidate ID")
@@ -77,6 +86,13 @@ async def assess_links(
                         issues.append("Duplicate candidate ID")
                         continue
                     seen.add(assessment.candidate_id)
+                    if isinstance(assessment, RequestedContentAssessment):
+                        issue = queue.navigation_source_error(
+                            by_id[assessment.candidate_id], assessment
+                        )
+                        if issue is not None:
+                            issues.append(issue)
+                            continue
                     if isinstance(assessment, CandidateAssessment) and any(
                         p.potential in {"high", "medium"} and p.role == "none"
                         for p in (getattr(assessment.objectives, o) for o in OBJECTIVES)

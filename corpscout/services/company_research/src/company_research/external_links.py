@@ -209,7 +209,7 @@ def collect_external_links(
         )
         observations.append(observation)
         observed_urls.add(normalize_url(url))
-    # Crawl4AI can expose links absent from the selected HTML representation.
+    # Browser capture can expose links absent from the selected HTML representation.
     # Preserve these too, but never invent their DOM position or nearby context.
     for link in supplemental_links or []:
         href = link.get("href")
@@ -235,7 +235,7 @@ def collect_external_links(
                 fetched_at=page.fetched_at,
                 html_file=html_file,
                 html_sha256=digest,
-                extraction_method="crawl4ai_links",
+                extraction_method="browser_links",
                 anchor_index=None,
                 anchor_text=link.get("text") or None,
                 title=link.get("title") or None,

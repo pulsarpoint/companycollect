@@ -78,7 +78,7 @@ QUALIFY row_number() OVER (
 -- Its URL is the bucket/prefix root. Credentials are never embedded in this definition.
 -- JSONAsString reads each pretty-printed JSON object as one row, including gzip bundles.
 -- Query settings follow migration 415's workaround for filtered S3 reads on CH 26.5.1.
-CREATE VIEW IF NOT EXISTS corpscout.website_crawl_results_s3 SQL SECURITY INVOKER AS
+CREATE VIEW IF NOT EXISTS corpscout.website_crawl_results_s3_archive SQL SECURITY INVOKER AS
 WITH
     JSONExtractString(result_json, 'schema_version') AS result_schema,
     coalesce(

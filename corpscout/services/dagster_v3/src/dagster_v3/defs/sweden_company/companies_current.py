@@ -248,10 +248,16 @@ PEOPLE_ESEF_SET = (
     f"SELECT company_id FROM {COMPANY_PERSON_TABLE} FINAL "
     "WHERE active = 1 AND has(sources, 'esef')"
 )
-DOMAINS_SET = (
-    f"SELECT company_id FROM {CLICKHOUSE_DATABASE}.company_domains "
-    "WHERE country_code = 'SE'"
-)
+# Source-reported domains count before verification. Read current entity rows and
+# the live review overlay so a rejection takes effect before the next domain fold.
+DOMAINS_SET = f"""SELECT domains.company_id
+      FROM {CLICKHOUSE_DATABASE}.company_domains_resolved AS domains
+      INNER JOIN {CLICKHOUSE_DATABASE}.se_company_domain AS entity FINAL
+        ON entity.company_id = domains.company_id
+        AND entity.root_domain = domains.root_domain
+      WHERE domains.country_code = 'SE'
+        AND domains.review_status != 'rejected'
+        AND (domains.is_active = 1 OR entity.inactive_reason = 'unverified')"""
 # The company has a resolved EODHD stock-market listing (company_traded_symbols, the
 # company_markets module's precomputed FIRDS+GLEIF+EODHD resolve, refreshed daily). Owner
 # 2026-08-28: this REPLACES the earlier ESEF-filing signal -- EODHD covers First North/NGM/

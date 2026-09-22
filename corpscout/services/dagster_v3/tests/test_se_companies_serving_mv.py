@@ -32,6 +32,7 @@ from dagster_v3.defs.sweden_company.companies_current import (
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations"
 MIGRATION = "000404_corpscout_se_financial_readers_entity"
+DOMAIN_MIGRATION = "000427_corpscout_se_companies_serving_current_domains"
 PREVIOUS_MIGRATION = "000403_corpscout_se_companies_serving_no_workplace"
 FILING_VIEW = "corpscout.se_annual_report_filing_status_current"
 FINANCIAL_ENTITY = "corpscout.se_company_financial"
@@ -96,8 +97,24 @@ def _modify_query_body(sql: str) -> str:
 
 
 def test_the_view_body_is_the_builder_render_and_has_not_drifted_from_it() -> None:
-    assert _normalized(_modify_query_body(_sql("up"))) == _normalized(
+    assert _normalized(_modify_query_body(_sql_of(DOMAIN_MIGRATION, "up"))) == _normalized(
         build_se_companies_serving_sql()
+    )
+
+
+def test_current_domains_migration_repoints_in_place_and_restores_previous_query() -> None:
+    for suffix in ("up", "down"):
+        sql = _sql_of(DOMAIN_MIGRATION, suffix)
+        statements = [_body(statement) for statement in _statements(sql)]
+        assert len(statements) == 4
+        assert statements[0] == "CREATE DATABASE IF NOT EXISTS corpscout"
+        assert statements[1] == f"SYSTEM STOP VIEW {VIEW}"
+        assert statements[2].startswith(f"ALTER TABLE {VIEW}\nMODIFY QUERY\n")
+        assert statements[3] == f"SYSTEM START VIEW {VIEW}"
+        assert "SYSTEM WAIT VIEW" not in _executable(sql)
+        assert "DROP" not in _executable(sql).upper()
+    assert _normalized(_modify_query_body(_sql_of(DOMAIN_MIGRATION, "down"))) == _normalized(
+        _modify_query_body(_sql("up"))
     )
 
 

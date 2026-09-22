@@ -1,6 +1,6 @@
 # Managed by Ansible.
 [Unit]
-Description=Corpscout independent browser pool and HTTP API
+Description=Corpscout persistent browser sessions and HTTP API
 Wants=network-online.target
 After=network-online.target
 StartLimitIntervalSec=0
@@ -14,7 +14,7 @@ EnvironmentFile={{ browser_service_env_file }}
 {% for name, value in browser_service_runtime_environment.items() %}
 Environment="{{ name }}={{ value }}"
 {% endfor %}
-ExecStart={{ browser_service_deploy_dir }}/current/.venv/bin/browser-service
+ExecStart={{ browser_service_deploy_dir }}/current/.venv/bin/browser-service --max-browsers {{ browser_service_max_browsers }} --session-retention-days {{ browser_service_session_retention_days }}
 
 Restart=on-failure
 RestartSec=10s

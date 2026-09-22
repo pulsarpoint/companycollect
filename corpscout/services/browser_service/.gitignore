@@ -4,3 +4,5 @@ __pycache__/
 dist/
 browser-state/
 ansible/secrets.yml
+.playwright-cli/
+output/playwright/

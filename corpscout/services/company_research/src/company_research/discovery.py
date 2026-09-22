@@ -232,6 +232,8 @@ class Candidate:
     assessed: bool = False
     assessment_attempts: int = 0
     assessment: CandidateAssessment | RequestedContentAssessment | None = None
+    navigation_root: str | None = None
+    navigation_depth: int = 0
 
     def prompt_data(self) -> dict:
         return {
@@ -244,6 +246,8 @@ class Candidate:
             "external": self.external,
             "job_record_ids": self.job_record_ids,
             "observed_relevance": self.observed_relevance,
+            "navigation_root": self.navigation_root,
+            "navigation_depth": self.navigation_depth,
         }
 
 
@@ -280,6 +284,9 @@ class CrawlQueue:
         self.coverage: dict = {}
         self.objective_order: list[Objective] = list(OBJECTIVES)
         self.document_candidates: dict[str, dict] = {}
+        self.navigation_sources: dict[str, dict] = {}
+        self.source_pages: Counter = Counter()
+        self.redirects: dict[str, str] = {}
 
     def domain(self, url: str) -> str:
         parsed = self.domains(url)
@@ -293,6 +300,7 @@ class CrawlQueue:
         title: str | None = None,
         label: str | None = None,
         context: dict | None = None,
+        from_search: bool = False,
     ) -> None:
         try:
             url = normalize_url(url, source)
@@ -316,6 +324,7 @@ class CrawlQueue:
                         "source_urls": [],
                         "labels": [],
                         "content_examined": False,
+                        "link_contexts": [],
                     },
                 )
                 if (
@@ -329,6 +338,12 @@ class CrawlQueue:
                     and len(document["labels"]) < 5
                 ):
                     document["labels"].append(label[:500])
+                if (
+                    context
+                    and context not in document["link_contexts"]
+                    and len(document["link_contexts"]) < 5
+                ):
+                    document["link_contexts"].append(context | {"source_url": source})
             else:
                 self.excluded["document_candidate_budget"] += 1
             return
@@ -340,10 +355,19 @@ class CrawlQueue:
             self.excluded["social_destination"] += 1
             return
         source_domain = self.domain(source)
+        parent = self.candidates.get(self.redirects.get(source, source))
+        if parent is not None and parent.navigation_root is not None and external:
+            if self.domain(url) != self.domain(parent.navigation_root):
+                self.excluded["outside_source_domain"] += 1
+                return
+            if parent.navigation_depth >= self.config.max_source_depth:
+                self.excluded["source_depth_budget"] += 1
+                return
         if (
             external
             and source_domain != self.site_domain
             and url not in self.candidates
+            and not from_search
             and not self.permits_external_navigation(source)
         ):
             self.excluded["outside_approved_scope"] += 1
@@ -356,16 +380,24 @@ class CrawlQueue:
                 f"c{len(self.candidates) + 1:05}", url, external
             )
         candidate = self.candidates[url]
+        if external and parent is not None and parent.navigation_root is not None:
+            depth = parent.navigation_depth + 1
+            if candidate.navigation_root is None or depth < candidate.navigation_depth:
+                candidate.navigation_root = parent.navigation_root
+                candidate.navigation_depth = depth
         if (
             context
             and context not in candidate.link_contexts
             and len(candidate.link_contexts) < 5
         ):
             candidate.link_contexts.append(context)
-            candidate.assessed = False
-            candidate.assessment = None
-            candidate.assessment_attempts = 0
-        if (label and not candidate.anchor_text) or (title and not candidate.title):
+            if candidate.url not in self.visited:
+                candidate.assessed = False
+                candidate.assessment = None
+                candidate.assessment_attempts = 0
+        if candidate.url not in self.visited and (
+            (label and not candidate.anchor_text) or (title and not candidate.title)
+        ):
             # A link label can clarify a URL previously assessed from a bare sitemap entry.
             candidate.assessed = False
             candidate.assessment_attempts = 0
@@ -381,7 +413,14 @@ class CrawlQueue:
             candidate.source.append(source)
 
     def permits_external_navigation(self, source: str) -> bool:
-        parent = self.candidates.get(source)
+        parent = self.candidates.get(self.redirects.get(source, source))
+        if (
+            parent is not None
+            and parent.navigation_root is not None
+            and isinstance(parent.assessment, RequestedContentAssessment)
+            and parent.assessment.follow_scope == "source_navigation"
+        ):
+            return parent.navigation_depth < self.config.max_source_depth
         return bool(
             parent is not None
             and parent.assessment is not None
@@ -399,6 +438,39 @@ class CrawlQueue:
                 )
             )
         )
+
+    def navigation_source_error(
+        self, candidate: Candidate, assessment: RequestedContentAssessment
+    ) -> str | None:
+        if assessment.follow_scope != "source_navigation":
+            return None
+        if not candidate.external or assessment.target_relevance == "unrelated":
+            return "Source navigation requires a relevant external source"
+        if candidate.navigation_root is not None:
+            return None
+        source = assessment.navigation_source
+        if source is None:
+            return "New source navigation requires explicit source evidence"
+        quote = normalize(source.evidence)
+        if not quote.strip():
+            return "Navigation evidence must contain source text"
+        for context in candidate.link_contexts:
+            if (
+                source.kind == "parent_company"
+                and self.domain(context.get("source_url", "")) != self.site_domain
+            ):
+                continue
+            if any(
+                quote in normalize(str(context.get(field) or ""))
+                for field in (
+                    "surrounding_text",
+                    "section_heading",
+                    "anchor_text",
+                    "title",
+                )
+            ):
+                return None
+        return "Navigation evidence must quote supplied context; parent evidence must come from the target website"
 
     def is_target(self, name: str | None) -> bool:
         names = self.target_names | {
@@ -475,7 +547,15 @@ class CrawlQueue:
         )
         # Let every objective nominate a candidate before filling with URL order.
         # Otherwise a long menu can starve Careers or Contact before a small crawl ends.
-        chosen = []
+        chosen = [
+            c
+            for c in candidates
+            if c.navigation_root is not None
+            or any(
+                context.get("extraction_method") == "web_search"
+                for context in c.link_contexts
+            )
+        ][: max(1, self.config.selection_batch_size // 2)]
         for objective in sorted(
             self.objective_order,
             key=lambda o: (
@@ -517,6 +597,12 @@ class CrawlQueue:
             for c in self.candidates.values()
             if c.url not in self.visited
             and (not c.external or self.external_pages < self.config.max_external_pages)
+            and (
+                not c.external
+                or self.domain(c.url) not in self.navigation_sources
+                or self.source_pages[self.domain(c.url)]
+                < self.config.max_source_pages_per_domain
+            )
         ]
 
     def page_kind(self, candidate: Candidate) -> str:
@@ -717,33 +803,89 @@ class CrawlQueue:
     def pick_for_instructions(self) -> tuple[Candidate, str] | None:
         """Use the requested content as the selection criterion; keep scope budgets."""
         useful = [
-            (candidate, candidate.assessment.requested_content)
+            (
+                candidate,
+                candidate.assessment.requested_content,
+                candidate.assessment.priority,
+            )
             for candidate in self.available()
             if isinstance(candidate.assessment, RequestedContentAssessment)
-            and candidate.assessment.target_relevance
-            not in {"related_company", "unrelated"}
+            and candidate.assessment.target_relevance != "unrelated"
+            and (
+                candidate.assessment.target_relevance != "related_company"
+                or candidate.assessment.follow_scope == "source_navigation"
+            )
             and (
                 not candidate.external
                 or candidate.assessment.target_relevance
                 in {"target", "target_evidence"}
+                or candidate.assessment.follow_scope == "source_navigation"
+            )
+            and (
+                candidate.assessment.follow_scope != "source_navigation"
+                or (
+                    self.navigation_source_error(candidate, candidate.assessment)
+                    is None
+                    and (
+                        self.domain(candidate.url) in self.navigation_sources
+                        or len(self.navigation_sources) < self.config.max_source_domains
+                    )
+                )
             )
             and candidate.assessment.requested_content.potential in {"high", "medium"}
             and candidate.assessment.requested_content.role in {"direct", "navigation"}
         ]
         if not useful:
             return None
-        candidate, _ = min(
+        candidate, _, _ = min(
             useful,
             key=lambda item: (
                 item[1].role != "direct",
                 item[1].potential != "high",
+                -item[2],
                 item[0].external,
                 item[0].url,
             ),
         )
         if candidate.external:
             self.external_pages += 1
+            self.source_pages[self.domain(candidate.url)] += 1
+            if (
+                isinstance(candidate.assessment, RequestedContentAssessment)
+                and candidate.assessment.follow_scope == "source_navigation"
+            ):
+                candidate.navigation_root = candidate.navigation_root or candidate.url
+                self.navigation_sources.setdefault(
+                    self.domain(candidate.url),
+                    {
+                        "url": candidate.navigation_root,
+                        "evidence": candidate.assessment.navigation_source.model_dump()
+                        if candidate.assessment.navigation_source is not None
+                        else None,
+                        "basis": "source_matched_navigation_hypothesis",
+                        "independently_verified": False,
+                    },
+                )
         return candidate, "requested_content"
+
+    def source_budget_reason(self) -> str | None:
+        """Distinguish useful source navigation blocked by limits from exhaustion."""
+        for candidate in self.candidates.values():
+            assessment = candidate.assessment
+            if (
+                candidate.url in self.visited
+                or not isinstance(assessment, RequestedContentAssessment)
+                or assessment.follow_scope != "source_navigation"
+                or self.navigation_source_error(candidate, assessment) is not None
+            ):
+                continue
+            domain = self.domain(candidate.url)
+            if domain in self.navigation_sources:
+                if self.source_pages[domain] >= self.config.max_source_pages_per_domain:
+                    return "source_page_budget"
+            elif len(self.navigation_sources) >= self.config.max_source_domains:
+                return "source_domain_budget"
+        return None
 
     def promising_remaining(self, objective: str) -> int:
         return sum(
@@ -786,6 +928,8 @@ class CrawlQueue:
             "candidate_count": len(self.candidates),
             "visited_count": len(self.visited),
             "document_candidates": list(self.document_candidates.values()),
+            "navigation_sources": self.navigation_sources,
+            "source_pages": dict(self.source_pages),
             "unassessed_count": sum(
                 c.assessment is None and c.url not in self.visited
                 for c in self.candidates.values()

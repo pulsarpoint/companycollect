@@ -22,6 +22,7 @@ from dagster_v3.defs.common.child_timeout import (
     ChildTimeoutError,
     run_in_child_with_timeout,
 )
+from dagster_v3.defs.esef_filings.domain_context import enrich_domain_context
 from dagster_v3.defs.esef_filings.report_package import (
     extract_report_package,
     report_paths_for,
@@ -34,7 +35,7 @@ from dagster_v3.defs.esef_filings.website_candidates import (
 
 # Bump to re-extract every document (the sensor drains the stale set). The
 # only version this extractor has; the artifact schema plays no part.
-ESEF_DOMAINS_EXTRACTOR_VERSION = "esef-domains-v1"
+ESEF_DOMAINS_EXTRACTOR_VERSION = "esef-domains-v2-context"
 
 STATUS_OK = "ok"
 STATUS_EMPTY = "empty"
@@ -79,8 +80,9 @@ def extract_package_domains(
     work_dir = Path(tempfile.mkdtemp(prefix="esef-domains-", dir=work_root))
     try:
         report_members, _repaired = extract_report_package(Path(package_path), work_dir)
+        report_paths = report_paths_for(work_dir, report_members)
         candidates, corroborated = extract_website_candidates_with_corroboration(
-            report_paths_for(work_dir, report_members),
+            report_paths,
             tagged_values=[
                 TaggedWebsiteValue(
                     report_member="", concept_local_name=concept, value=value
@@ -89,7 +91,7 @@ def extract_package_domains(
             ],
             known_email_domains=known_email_domains,
         )
-        return tuple(candidates), corroborated
+        return tuple(enrich_domain_context(candidates, report_paths)), corroborated
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
 

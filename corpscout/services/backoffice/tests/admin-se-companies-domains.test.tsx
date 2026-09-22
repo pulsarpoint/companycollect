@@ -7,10 +7,13 @@ import { SidebarProvider } from "~/components/ui/sidebar";
 const server = vi.hoisted(() => ({
   listSeDomainsPage: vi.fn(),
   loadSeDomainsCounts: vi.fn(),
+  saveSeDomainCrawlInputs: vi.fn(),
 }));
 vi.mock("~/lib/se-domains-list.server", () => server);
-import { loader } from "~/routes/admin-se-companies-domains";
+vi.mock("~/lib/se-domain-crawl.server", () => server);
+import { action, loader } from "~/routes/admin-se-companies-domains";
 import { SeDomainsTable } from "~/components/admin/se-domains-table";
+import { SeDomainsFilterFields } from "~/components/admin/se-domains-filter-sheet";
 import { EMPTY_SE_DOMAINS_FILTERS } from "~/lib/se-domains-filters";
 import {
   SE_COMPANIES_TABS,
@@ -96,15 +99,65 @@ describe("admin-se-companies-domains route", () => {
   beforeEach(() => {
     server.listSeDomainsPage.mockReset().mockResolvedValue({ rows: [ROW] });
     server.loadSeDomainsCounts.mockReset().mockResolvedValue(COUNTS);
+    server.saveSeDomainCrawlInputs.mockReset();
+  });
+
+  it("submits the selected domains through the route action and returns the Dagster input run", async () => {
+    const selection = { mode: "ids", domains: ["example.se"] };
+    const run = { ok: true, requestId: "save-request", runId: "input-run", runUrl: "http://dagster/runs/input-run", table: "corpscout.website_jobs_crawl_requests" };
+    server.saveSeDomainCrawlInputs.mockResolvedValue(run);
+    const response = await action({ request: new Request("http://x/admin/se/companies/domains", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "save_crawl_inputs", crawlType: "jobs", selection }),
+    }) } as never);
+    expect(response.data).toEqual(run);
+    expect(server.saveSeDomainCrawlInputs).toHaveBeenCalledWith(selection, "jobs");
+  });
+
+  it("returns a failed submission without reporting that inputs were queued", async () => {
+    server.saveSeDomainCrawlInputs.mockRejectedValue(new Error("Dagster is unavailable."));
+    const response = await action({ request: new Request("http://x/admin/se/companies/domains", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "save_crawl_inputs", crawlType: "full", selection: { mode: "ids", domains: ["example.se"] } }),
+    }) } as never);
+    expect(response.data).toEqual({ ok: false, error: "Dagster is unavailable." });
+    expect(response.init).toEqual({ status: 400 });
+  });
+
+  it("selects a shared domain on every company row while counting it once", () => {
+    const html = render(<SeDomainsTable
+      rows={[ROW, { ...ROW, company_id: "5560049529", legal_name: "Second AB" }]}
+      counts={COUNTS} page={1} pageSize={50} filters={EMPTY_SE_DOMAINS_FILTERS}
+      selection={{ value: { mode: "ids", domains: ["example.se"] }, onChange: vi.fn(), actions: <button>Add to crawl inputs</button> }}
+    />);
+    expect(html).toContain("1 domain selected");
+    const checkboxes = html.match(/<[^>]+role="checkbox"[^>]*>/g) ?? [];
+    expect(checkboxes).toHaveLength(3);
+    expect(checkboxes.every((checkbox) => checkbox.includes('aria-checked="true"'))).toBe(true);
+    expect(html).toContain("Add to crawl inputs");
+  });
+
+  it("shows the count across all pages after domain exclusions", () => {
+    const html = render(<SeDomainsTable rows={[ROW]}
+      counts={{ ...COUNTS, rows: 120, domains: 100 }} page={2} pageSize={50} filters={EMPTY_SE_DOMAINS_FILTERS}
+      selection={{ value: { mode: "query", query: EMPTY_SE_DOMAINS_FILTERS, excludedDomains: ["example.se"] }, onChange: vi.fn(), actions: null }}
+    />);
+    expect(html).toContain("Select all 100 matching domains");
+    expect(html).toContain("99 domains selected across all pages");
+    expect(html).toContain("Clear selection");
+    const checkboxes = html.match(/<[^>]+role="checkbox"[^>]*>/g) ?? [];
+    expect(checkboxes.every((checkbox) => checkbox.includes('aria-checked="false"'))).toBe(true);
   });
 
   it("pages and counts under the same filters", async () => {
     const data = await loader({
       request: new Request(
-        "http://x/admin/se/companies/domains?minConfidence=0.7&shared=1&page=3&pageSize=50",
+        "http://x/admin/se/companies/domains?source=brave&minConfidence=0.7&shared=1&page=3&pageSize=50",
       ),
     } as never);
-    const filters = { ...EMPTY_SE_DOMAINS_FILTERS, minConfidence: "0.7", shared: "1" };
+    const filters = { ...EMPTY_SE_DOMAINS_FILTERS, source: "brave", minConfidence: "0.7", shared: "1" };
     expect(data).toEqual({ rows: [ROW], counts: COUNTS, page: 3, pageSize: 50, filters });
     expect(server.listSeDomainsPage).toHaveBeenCalledWith({ ...filters, page: 3, pageSize: 50 });
     expect(server.loadSeDomainsCounts).toHaveBeenCalledWith(filters);
@@ -154,10 +207,10 @@ describe("admin-se-companies-domains route", () => {
         filters={{ ...EMPTY_SE_DOMAINS_FILTERS, minConfidence: "0.7", shared: "1" }}
       />,
     );
-    expect(html).toContain('name="minConfidence"');
-    expect(html).toContain('value="0.7"');
-    expect(html).toContain('name="maxConfidence"');
-    expect(html).toMatch(/name="shared"[^>]*checked/);
+    expect(html).toContain('data-slot="sheet-trigger"');
+    expect(html).toContain("Filters");
+    expect(html).toContain('aria-label="Remove filter Min confidence 0.7"');
+    expect(html).toContain('aria-label="Remove filter Shared only"');
     expect(html).toContain("Shared domains");
     // The Clear link drops every filter.
     expect(html).toContain('href="/admin/se/companies/domains"');
@@ -165,21 +218,33 @@ describe("admin-se-companies-domains route", () => {
 
   it("labels the select triggers with words, never the Any sentinel or a stored value", () => {
     const html = render(
-      <SeDomainsTable
-        rows={[]}
-        counts={COUNTS}
-        page={1}
+      <form><SeDomainsFilterFields
         pageSize={50}
-        filters={{ ...EMPTY_SE_DOMAINS_FILTERS, association: "not_connected" }}
-      />,
+        filters={{ ...EMPTY_SE_DOMAINS_FILTERS, source: "brave", association: "not_connected", minConfidence: "0.75", shared: "1" }}
+      /></form>,
     );
-    // The filter bar precedes the table; the pager's own page-size select follows it.
-    const filterBar = html.slice(0, html.indexOf("<table"));
-    const triggers = filterBar.match(/<button[^>]*role="combobox"[^>]*>.*?<\/button>/gs) ?? [];
-    expect(triggers).toHaveLength(2);
-    expect(triggers[0]).toContain("not connected");
-    expect(triggers[0]).not.toContain("not_connected");
-    expect(triggers[1]).toContain("Any");
+    const triggers = html.match(/<button[^>]*role="combobox"[^>]*>.*?<\/button>/gs) ?? [];
+    expect(triggers).toHaveLength(3);
+    expect(triggers[0]).toContain("Brave");
+    expect(triggers[1]).toContain("not connected");
+    expect(triggers[1]).not.toContain("not_connected");
+    expect(triggers[2]).toContain("Any");
     expect(html).not.toContain("__any__<");
+    expect(html).toContain('name="source"');
+    expect(html).toContain('name="minConfidence"');
+    expect(html).toContain('value="0.75"');
+    expect(html).toContain('name="maxConfidence"');
+    expect(html).toContain('name="pageSize"');
+    expect(html).not.toContain('name="page"');
+    expect(html).toMatch(/name="shared"[^>]*checked/);
+  });
+
+  it("removes the source chip without losing other filters or page size", () => {
+    const html = render(<SeDomainsTable rows={[]} counts={COUNTS} page={3} pageSize={100} filters={{ ...EMPTY_SE_DOMAINS_FILTERS, source: "brave", shared: "1" }} />);
+    expect(html).toContain('aria-label="Remove filter Source Brave"');
+    expect(html).toContain('href="/admin/se/companies/domains?shared=1&amp;pageSize=100"');
+    expect(html).toContain('href="/admin/se/companies/domains?pageSize=100"');
+    expect(html).toContain("Clear all");
+    expect(html).not.toContain('name="source"');
   });
 });

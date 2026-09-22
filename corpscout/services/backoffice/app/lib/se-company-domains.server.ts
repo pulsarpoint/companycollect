@@ -28,6 +28,7 @@ export interface SeCompanyDomainRow {
   verification_status?: string;
   verification_reason?: string;
   inactive_reason?: string;
+  association?: string;
 }
 
 /**
@@ -62,7 +63,8 @@ export const COMPANY_DOMAINS_SQL = `SELECT
   toString(d.resolved_at) AS resolved_at,
   toString(entity.verification_status) AS verification_status,
   entity.verification_reason AS verification_reason,
-  entity.inactive_reason AS inactive_reason
+  entity.inactive_reason AS inactive_reason,
+  multiIf(d.is_active = 1, 'connected', d.review_status = 'rejected', 'not_connected', entity.association) AS association
 FROM corpscout.company_domains_resolved AS d
 LEFT JOIN corpscout.se_company_domain AS entity FINAL
   ON entity.company_id = d.company_id AND entity.root_domain = d.root_domain
@@ -75,4 +77,73 @@ export async function loadSeCompanyDomains(
   companyId: string,
 ): Promise<SeCompanyDomainRow[]> {
   return chQuery<SeCompanyDomainRow>(COMPANY_DOMAINS_SQL, { companyId });
+}
+
+export interface DomainRelationshipQuote {
+  evidence_id: string;
+  quote: string;
+}
+
+export interface DomainRelationshipStatement {
+  related_entity_name: string;
+  description: string;
+  relationship_supported: boolean;
+  evidence: DomainRelationshipQuote[];
+}
+
+export interface DomainRelationshipEvidence {
+  id: string;
+  url: string;
+  report_member?: string;
+  source_url?: string;
+  page_title?: string;
+  fetched_at?: string;
+  locations: { xpath?: string; page_id: string; source_line?: number | null; link_id?: string; dom_path?: string[] }[];
+  source_context: {
+    text: string;
+    local_text: string;
+    headings: string[];
+    table_headers: string[];
+    attributes?: string[];
+    truncated: boolean;
+    reading_order: string;
+  };
+}
+
+export interface SeDomainRelationship {
+  source_kind: "esef" | "website";
+  source_document_id: string;
+  registrable_domain: string;
+  period_end: string;
+  captured_at: string;
+  source_url: string;
+  statements: DomainRelationshipStatement[];
+  evidence: DomainRelationshipEvidence[];
+}
+
+interface StoredDomainRelationship extends Omit<SeDomainRelationship, "statements" | "evidence"> {
+  statements_json: string;
+  input_json: string;
+}
+
+export async function loadSeCompanyDomainRelationships(companyId: string): Promise<SeDomainRelationship[]> {
+  const rows = await chQuery<StoredDomainRelationship>(`SELECT * FROM (SELECT
+    'esef' AS source_kind, source_document_id, registrable_domain, toString(period_end) AS period_end,
+    '' AS captured_at,
+    source_url, statements_json, input_json
+    FROM corpscout.se_company_domain_relationships
+    WHERE company_id = {companyId:String}
+    UNION ALL
+    SELECT 'website' AS source_kind, concat(result_id, ':', source_host) AS source_document_id,
+    registrable_domain, '' AS period_end, toString(captured_at) AS captured_at,
+    source_url, statements_json, input_json
+    FROM corpscout.website_domain_relationships_current
+    WHERE country_code = 'SE' AND company_id = {companyId:String})
+    ORDER BY source_kind DESC, captured_at DESC, period_end DESC, registrable_domain, source_document_id
+    LIMIT 500`, { companyId });
+  return rows.map(({ statements_json, input_json, ...row }) => ({
+    ...row,
+    statements: JSON.parse(statements_json) as DomainRelationshipStatement[],
+    evidence: (JSON.parse(input_json) as { evidence: DomainRelationshipEvidence[] }).evidence,
+  }));
 }

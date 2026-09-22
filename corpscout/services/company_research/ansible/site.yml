@@ -81,10 +81,13 @@
     - name: Validate optional S3 delivery settings
       ansible.builtin.assert:
         that:
-          - company_research_s3_bucket | length == 0 or company_research_transport in ['nats', 'both']
+          - not company_research_human_enabled or company_research_s3_bucket | length > 0
+          - not company_research_challenge_agent_enabled or company_research_human_enabled
+          - company_research_challenge_agent_max_runs | int >= 3
+          - company_research_challenge_agent_max_runs | int <= 1000
           - (company_research_s3_access_key | length == 0) == (company_research_s3_secret_key | length == 0)
           - (item | regex_search('[\x00-\x1f\x7f]')) is none
-        fail_msg: S3 requires a NATS input and either a complete credential pair or the AWS credential provider chain.
+        fail_msg: Human assistance requires S3 storage; configure a complete credential pair or the AWS credential provider chain.
       loop:
         - "{{ company_research_s3_bucket }}"
         - "{{ company_research_s3_endpoint_url }}"
@@ -99,6 +102,8 @@
       ansible.builtin.assert:
         that:
           - company_research_transport in ['rest', 'nats', 'both']
+          - company_research_browser_api_url | length > 0
+          - company_research_browser_api_token | length >= 32
           - company_research_deepseek | length > 0
           - company_research_transport == 'nats' or company_research_api_token | length >= 32
           - company_research_transport == 'rest' or company_research_nats_url | length > 0
@@ -129,9 +134,9 @@
     - name: Install and activate the service
       when: not ansible_check_mode
       block:
-        - name: Install Python bootstrap and browser prerequisites
+        - name: Install Python bootstrap prerequisites
           ansible.builtin.apt:
-            name: [python3-venv, python3-packaging, acl, ca-certificates, fonts-liberation, fonts-dejavu-core]
+            name: [python3-venv, python3-packaging, acl, ca-certificates]
             state: present
             update_cache: true
             cache_valid_time: 3600
@@ -235,27 +240,13 @@
                   - "{{ company_research_release_dir }}/{{ company_research_wheel_name }}"
               changed_when: true
 
-            - name: Install Chromium operating-system libraries
-              ansible.builtin.command:
-                argv: ["{{ company_research_release_dir }}/.venv/bin/playwright", install-deps, chromium]
-              changed_when: true
-
-            - name: Download and launch the browser as the service account
-              become: true
-              become_user: "{{ company_research_user }}"
-              environment: "{{ company_research_runtime_environment }}"
+            - name: Verify the HTTP-only crawler imports without browser dependencies
               ansible.builtin.command:
                 argv:
                   - "{{ company_research_release_dir }}/.venv/bin/python"
                   - -c
-                  - |
-                    import asyncio
-                    from company_research.fetch import open_browser
-                    async def check():
-                        async with open_browser():
-                            pass
-                    asyncio.run(check())
-              changed_when: true
+                  - "from company_research.service_api import create_app; from company_research.browser_client import BrowserLeaseClient"
+              changed_when: false
 
             - name: Mark the successfully prepared release
               ansible.builtin.copy:

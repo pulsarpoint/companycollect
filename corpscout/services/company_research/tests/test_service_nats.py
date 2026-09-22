@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 import httpx
 import nats
+from browser_http_fixture import install_browser_api
 from nats.aio.msg import Msg
 from nats.errors import Error as NatsError
 from test_crawl import browser_responses
@@ -25,18 +26,30 @@ from company_research.service_nats import JetStreamInput, JetStreamSettings
 
 
 class JetStreamServiceTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        install_browser_api(self)
+
     async def test_full_discovery_request_returns_capture_and_is_acknowledged(self):
         self.service.environment["DEEPSEEK"] = "test-key"
+        original_send = httpx.AsyncClient.send
 
         async def boundary(client, request, **kwargs):
+            if request.url.host == "browser-fixture":
+                return await original_send(client, request, **kwargs)
             if request.url.host == "api.deepseek.com":
-                return httpx.Response(200, json=response(COMPANY))
+                prompt = json.loads(request.content)["messages"][1]["content"]
+                return httpx.Response(
+                    200,
+                    json=response(
+                        {"queries": []} if "max_new_queries" in prompt else COMPANY
+                    ),
+                )
             return httpx.Response(404)
 
         with (
             patch(
                 "company_research.crawl.open_browser",
-                lambda: browser_responses(
+                lambda *_args, **_: browser_responses(
                     {SITE: (HTML, [], 200, None)}, self.requested
                 ),
             ),
@@ -62,7 +75,8 @@ class JetStreamServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["crawl"]["config"]["max_external_pages"], 30)
         self.assertEqual(result["crawl"]["status"], "finished")
         self.assertEqual(result["documents"][0]["html"], HTML)
-        self.assertEqual(result["crawl"]["usage"]["calls"], 1)
+        self.assertEqual(result["crawl"]["usage"]["calls"], 2)
+        self.assertTrue(result["crawl"]["config"]["web_search"])
 
     async def asyncSetUp(self):
         binary = os.environ.get("NATS_SERVER") or shutil.which("nats-server")
@@ -112,7 +126,7 @@ class JetStreamServiceTests(unittest.IsolatedAsyncioTestCase):
         self.url = "https://example.test/jobs"
 
         @asynccontextmanager
-        async def browser():
+        async def browser(*_args, **_):
             await self.hold.wait()
             async with browser_responses(
                 {self.url: ("<h1>Engineer</h1>", [], 200, None)}, self.requested
@@ -157,6 +171,105 @@ class JetStreamServiceTests(unittest.IsolatedAsyncioTestCase):
                 ):
                     return info
                 await asyncio.sleep(0.02)
+
+    async def restart_with_concurrency(self, concurrency):
+        results = self.input.results
+        await self.input.close()
+        await self.service.close()
+        self.service = CrawlService(
+            self.root / "results", {}, concurrency=concurrency, max_pending=5
+        )
+        await self.service.start()
+        self.addAsyncCleanup(self.service.close)
+        self.input = JetStreamInput(self.service, self.settings, results)
+        await self.input.start()
+        self.addAsyncCleanup(self.input.close)
+
+    async def test_two_workers_process_five_requests_with_bounded_delivery(self):
+        await self.restart_with_concurrency(2)
+        self.hold.clear()
+        for number in range(5):
+            await self.js.publish(
+                self.settings.subject,
+                json.dumps(
+                    {
+                        "request_id": f"batch-{number}",
+                        "url": self.url,
+                        "pages": [self.url],
+                    }
+                ).encode(),
+            )
+        async with asyncio.timeout(5):
+            while len(self.service.jobs) < 2:
+                await asyncio.sleep(0.02)
+        await asyncio.sleep(1.4)
+        info = await self.js.consumer_info(self.settings.stream, self.settings.durable)
+        self.assertEqual(info.config.max_ack_pending, 2)
+        self.assertEqual(info.num_ack_pending, 2)
+        self.assertEqual(info.num_pending, 3)
+        self.assertEqual(info.delivered.consumer_seq, 2)
+        self.assertEqual(len(self.service.jobs), 2)
+        self.hold.set()
+        jobs = await asyncio.gather(*(self.wait_job(f"batch-{n}") for n in range(5)))
+        info = await self.wait_acked(5)
+        self.assertEqual(info.num_pending, 0)
+        self.assertEqual(info.delivered.consumer_seq, 5)
+        self.assertEqual([job.state for job in jobs], ["completed"] * 5)
+        self.assertEqual([job.attempt for job in jobs], [1] * 5)
+        self.assertEqual(self.requested, [self.url] * 5)
+
+    async def test_parallel_shutdown_leaves_messages_retryable_without_recrawl(self):
+        await self.restart_with_concurrency(2)
+        self.hold.clear()
+        for number in range(2):
+            await self.js.publish(
+                self.settings.subject,
+                json.dumps(
+                    {
+                        "request_id": f"stop-{number}",
+                        "url": self.url,
+                        "pages": [self.url],
+                    }
+                ).encode(),
+            )
+        async with asyncio.timeout(5):
+            while len(self.service.jobs) < 2:
+                await asyncio.sleep(0.02)
+        await asyncio.wait_for(self.input.close(), 2)
+        info = await self.js.consumer_info(self.settings.stream, self.settings.durable)
+        self.assertEqual(info.num_ack_pending, 2)
+        self.hold.set()
+        await asyncio.gather(*(self.wait_job(f"stop-{n}") for n in range(2)))
+        await self.input.start()
+        await self.wait_acked(4)
+        self.assertEqual(self.requested, [self.url] * 2)
+        self.assertEqual([job.attempt for job in self.service.jobs.values()], [1, 1])
+
+    async def test_simultaneous_duplicate_messages_share_one_crawl_and_result(self):
+        await self.restart_with_concurrency(2)
+        self.hold.clear()
+        payload = json.dumps(
+            {"request_id": "same-job", "url": self.url, "pages": [self.url]}
+        ).encode()
+        await self.js.publish(self.settings.subject, payload)
+        await self.js.publish(self.settings.subject, payload)
+        async with asyncio.timeout(5):
+            while True:
+                info = await self.js.consumer_info(
+                    self.settings.stream, self.settings.durable
+                )
+                if info.delivered.consumer_seq == 2 and self.service.jobs:
+                    break
+                await asyncio.sleep(0.02)
+        self.hold.set()
+        await self.wait_job("same-job")
+        await self.wait_acked(2)
+        self.assertEqual(list(self.service.jobs), ["same-job"])
+        self.assertEqual(self.service.jobs["same-job"].attempt, 1)
+        self.assertEqual(self.requested, [self.url])
+        if self.input.results is not None:
+            info = await self.js.stream_info(self.settings.result_stream)
+            self.assertEqual(info.state.messages, 1)
 
     async def test_progress_ack_and_duplicate_request_do_not_repeat_crawl(self):
         self.hold.clear()

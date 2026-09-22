@@ -1,6 +1,6 @@
 /**
  * The URL-facing filter state of the `/admin/se/companies/domains` list: the
- * seven filters the filter bar edits and the two href builders the list rows
+ * filters the filter sheet edits and the two href builders the list rows
  * and the domain detail page link through. Client-safe (no ClickHouse import),
  * exactly like `se-people-filters.ts`, so the route, the table component and
  * the loader all share one definition.
@@ -24,11 +24,14 @@ export type DomainAssociation = (typeof DOMAIN_ASSOCIATIONS)[number];
 export const DOMAIN_STATUSES = ["active", "inactive"] as const;
 export type DomainStatus = (typeof DOMAIN_STATUSES)[number];
 
+export const DOMAIN_SOURCE_VALUES = ["brave", "wikidata", "esef_filing", "common_crawl_identity"] as const;
+
 export interface SeDomainsFilters {
   /** A root-domain fragment, lower-cased (domains are stored lower-case). */
   domain: string;
   /** A company id (digits only). */
   company: string;
+  source: string;
   association: string;
   status: string;
   /** Inclusive bounds on `confidence`, as the URL spells them ("0.7"). */
@@ -41,6 +44,7 @@ export interface SeDomainsFilters {
 export const EMPTY_SE_DOMAINS_FILTERS: SeDomainsFilters = {
   domain: "",
   company: "",
+  source: "",
   association: "",
   status: "",
   minConfidence: "",
@@ -62,7 +66,7 @@ function confidence(value: string | null): string {
 }
 
 /**
- * Reads the seven filters off the URL, dropping anything the catalogue does
+ * Reads the filters off the URL, dropping anything the catalogue does
  * not know: `association` and `status` only on their fixed values, `company`
  * only when all digits, `minConfidence`/`maxConfidence` only as a decimal in
  * 0..1, `shared` only as "1". `domain` is free text, trimmed, lower-cased and
@@ -72,9 +76,11 @@ export function parseSeDomainsFilters(params: URLSearchParams): SeDomainsFilters
   const association = (params.get("association") ?? "").trim();
   const status = (params.get("status") ?? "").trim();
   const company = (params.get("company") ?? "").trim();
+  const source = (params.get("source") ?? "").trim();
   return {
     domain: (params.get("domain") ?? "").trim().toLowerCase().slice(0, MAX_FIELD_LENGTH),
     company: ALL_DIGITS.test(company) ? company : "",
+    source: (DOMAIN_SOURCE_VALUES as readonly string[]).includes(source) ? source : "",
     association: isDomainAssociation(association) ? association : "",
     status: isDomainStatus(status) ? status : "",
     minConfidence: confidence(params.get("minConfidence")),

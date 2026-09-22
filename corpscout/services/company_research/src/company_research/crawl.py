@@ -1,5 +1,7 @@
 """Collect useful company pages as local HTML, independently of fact extraction."""
 
+from __future__ import annotations
+
 import argparse
 import asyncio
 import json
@@ -12,12 +14,15 @@ from contextlib import AsyncExitStack, nullcontext, redirect_stdout
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Literal
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import click
 import httpx
 from dotenv import dotenv_values
 
+from company_research.brave_browser import BraveSearch, BraveSearchBlocked
+from company_research.browser_client import BrowserLeaseClient
 from company_research.captures import capture_metadata, save_capture, save_crawl_result
 from company_research.content import HtmlWindow
 from company_research.discovery import (
@@ -28,6 +33,7 @@ from company_research.discovery import (
     sitemap_urls,
 )
 from company_research.fetch import BrowserUnavailable, fetch_page, open_browser
+from company_research.human_control import HumanAssistanceExpired, HumanSession
 from company_research.link_selection import assess_links
 from company_research.llm import ModelBudgetExceeded, ModelClient, ModelUnavailable
 from company_research.models import (
@@ -40,6 +46,7 @@ from company_research.profiles import (
     site_information,
 )
 from company_research.storage import utc_now, write_json
+from company_research.web_search import discover_search_sources
 
 LOGGER = logging.getLogger(__name__)
 
@@ -90,15 +97,24 @@ async def select_next_page(
                 )
                 for candidate in queue.candidates.values()
             )
-            else "no_matching_candidates"
-            if queue.instructions is not None
-            else "no_promising_candidates"
+            else queue.source_budget_reason()
+            or (
+                "no_matching_candidates"
+                if queue.instructions is not None
+                else "no_promising_candidates"
+            )
         )
     return selected
 
 
 async def collect_pages(
-    root: Path, manifest: dict, queue: CrawlQueue, llm: ModelClient | None
+    root: Path,
+    manifest: dict,
+    queue: CrawlQueue,
+    llm: ModelClient | None,
+    human: HumanSession | None = None,
+    search: BraveSearch | None = None,
+    browser_client: BrowserLeaseClient | None = None,
 ) -> None:
     """Own browser lifetime and bounded traversal; publish each capture before ranking."""
     settings = queue.config
@@ -119,7 +135,13 @@ async def collect_pages(
             else (requested[0], "supplied_page")
         )
     async with AsyncExitStack() as browser_stack:
-        crawler = await browser_stack.enter_async_context(open_browser())
+        crawler = await browser_stack.enter_async_context(
+            open_browser(human, browser_client=browser_client)
+            if browser_client is not None
+            else open_browser(human)
+            if human is not None
+            else open_browser()
+        )
         while len(manifest["pages"]) < settings.max_pages:
             page = Page(
                 page_id=f"p{len(manifest['pages']) + 1:04}",
@@ -145,8 +167,13 @@ async def collect_pages(
             write_json(root / "crawl-manifest.json", manifest)
             while True:
                 try:
-                    html, links = await fetch_page(crawler, page, settings, root)
+                    html, links = await fetch_page(
+                        crawler, page, settings, root, human=human
+                    )
                     break
+                except HumanAssistanceExpired:
+                    manifest["pages"][-1] = capture_metadata(page)
+                    raise
                 except BrowserUnavailable:
                     manifest["pages"][-1] = capture_metadata(page)
                     if (
@@ -164,7 +191,13 @@ async def collect_pages(
                         await browser_stack.aclose()
                     except Exception as error:
                         recovery["cleanup_error"] = type(error).__name__
-                    crawler = await browser_stack.enter_async_context(open_browser())
+                    crawler = await browser_stack.enter_async_context(
+                        open_browser(human, browser_client=browser_client)
+                        if browser_client is not None
+                        else open_browser(human)
+                        if human is not None
+                        else open_browser()
+                    )
             if page.fetch_status == "fetched":
                 final_url = normalize_url(page.source_url)
                 duplicate = any(
@@ -191,6 +224,9 @@ async def collect_pages(
             if page.fetch_status != "fetched":
                 manifest["pages"][-1] = capture_metadata(page)
             candidate = queue.candidates.get(page.requested_url)
+            if candidate is not None and page.source_url != page.requested_url:
+                if queue.domain(page.source_url) == queue.domain(page.requested_url):
+                    queue.redirects[page.source_url] = page.requested_url
             if candidate is not None and isinstance(
                 candidate.assessment, RequestedContentAssessment
             ):
@@ -198,6 +234,10 @@ async def collect_pages(
                     "requested_content": candidate.assessment.requested_content.model_dump(),
                     "reason": candidate.assessment.reason,
                     "basis": "link_metadata_hypothesis",
+                    "target_relevance": candidate.assessment.target_relevance,
+                    "follow_scope": candidate.assessment.follow_scope,
+                    "priority": candidate.assessment.priority,
+                    "navigation_root": candidate.navigation_root,
                 }
             write_json(root / "crawl-manifest.json", manifest)
             if classify_first_page and len(manifest["pages"]) == 1:
@@ -271,7 +311,51 @@ async def collect_pages(
             if len(manifest["pages"]) >= settings.max_pages:
                 manifest["stop_reason"] = "page_budget"
                 break
+            if classify_first_page and len(manifest["pages"]) == 1:
+                await discover_search_sources(
+                    crawler,
+                    queue,
+                    llm,
+                    root,
+                    manifest,
+                    phase="initial",
+                    search=search,
+                    human=human,
+                )
+            elif (
+                len(manifest["pages"]) >= min(5, settings.max_pages // 2)
+                and len(manifest["web_search"]["queries"])
+                < settings.max_search_queries - 1
+            ):
+                await discover_search_sources(
+                    crawler,
+                    queue,
+                    llm,
+                    root,
+                    manifest,
+                    phase="followup",
+                    search=search,
+                    human=human,
+                )
             selected = await select_next_page(queue, llm, root, manifest)
+            if selected is None and manifest["stop_reason"] in {
+                "no_matching_candidates",
+                "source_page_budget",
+                "source_domain_budget",
+            }:
+                await discover_search_sources(
+                    crawler,
+                    queue,
+                    llm,
+                    root,
+                    manifest,
+                    phase="exhausted",
+                    search=search,
+                    human=human,
+                )
+                if queue.assessment_batch():
+                    manifest["stop_reason"] = None
+                    selected = await select_next_page(queue, llm, root, manifest)
             if selected is None:
                 break
             candidate, focus = selected
@@ -290,6 +374,9 @@ async def crawl_company(
     config: ResearchConfig | None = None,
     api: Literal["deepseek", "openrouter"] = "deepseek",
     api_key: str | None = None,
+    human: HumanSession | None = None,
+    search: BraveSearch | None = None,
+    browser_client: BrowserLeaseClient | None = None,
 ) -> dict:
     """Save cleaned HTML and return its manifest; never extract company facts.
 
@@ -340,7 +427,11 @@ async def crawl_company(
             if api == "deepseek"
             else {}
         )
-        | ({"max_pages": 100, "max_external_pages": 30} if crawl == "full" else {})
+        | (
+            {"max_pages": 100, "max_external_pages": 30, "web_search": True}
+            if crawl == "full"
+            else {}
+        )
         | (config.model_dump(exclude_unset=True) if config is not None else {})
     )
     requested = (
@@ -441,6 +532,18 @@ async def crawl_company(
                 else "pending",
             },
             "sitemap": {"status": "not_requested"},
+            "web_search": {
+                "provider": "brave_browser",
+                "status": "pending"
+                if settings.web_search
+                and settings.max_search_queries > 0
+                and pages is None
+                and crawl_requested
+                else "not_requested",
+                "phases": [],
+                "queries": [],
+                "errors": [],
+            },
             "selection_feedback": "navigation_only; extraction coverage and record yields are unavailable",
             "site_coverage": "not_established",
             "errors": [],
@@ -461,7 +564,28 @@ async def crawl_company(
                     )
                     assert key is not None
                     llm = ModelClient(model_http, key, settings, root, api=api)
-                await collect_pages(root, manifest, queue, llm)
+                await collect_pages(
+                    root,
+                    manifest,
+                    queue,
+                    llm,
+                    human=human,
+                    search=search,
+                    browser_client=browser_client,
+                )
+        except BraveSearchBlocked as error:
+            manifest["status"] = "failed"
+            manifest["stop_reason"] = "brave_search_blocked"
+            manifest["errors"].append({"stage": "search", "error": str(error)})
+        except HumanAssistanceExpired as error:
+            manifest["status"] = (
+                "partial"
+                if any(page["fetch_status"] == "fetched" for page in manifest["pages"])
+                else "failed"
+            )
+            manifest["stop_reason"] = "human_assistance_timeout"
+            manifest["human_assistance"] = human.failure if human is not None else None
+            manifest["errors"].append({"stage": "crawl", "error": str(error)})
         except (BrowserUnavailable, ModelBudgetExceeded, ModelUnavailable) as error:
             manifest["stop_reason"] = (
                 "browser_unavailable"
@@ -481,14 +605,28 @@ async def crawl_company(
         finally:
             manifest["finished_at"] = utc_now()
             manifest["elapsed_seconds"] = round(time.monotonic() - started, 3)
+            if manifest["web_search"]["status"] == "pending":
+                manifest["web_search"].update(
+                    status="not_run",
+                    reason=manifest["stop_reason"] or "crawl_interrupted",
+                )
+            manifest["discovery"] = {
+                "navigation_sources": queue.navigation_sources,
+                "source_pages": dict(queue.source_pages),
+                "document_links": list(queue.document_candidates.values()),
+                "excluded": dict(queue.excluded),
+            }
             if llm is not None:
                 manifest["usage"] = llm.usage()
-            if (not requested or site_info) and manifest["site_gate"][
-                "decision"
-            ] not in {
-                "continue_crawling",
-                "skip_crawling",
-            }:
+            if (
+                manifest["stop_reason"] != "human_assistance_timeout"
+                and (not requested or site_info)
+                and manifest["site_gate"]["decision"]
+                not in {
+                    "continue_crawling",
+                    "skip_crawling",
+                }
+            ):
                 manifest["status"] = "needs_review"
                 manifest["site_gate"]["decision"] = "needs_review"
                 manifest["stop_reason"] = (
@@ -508,6 +646,7 @@ async def crawl_company(
                         "site_info_complete",
                     }
                     or bool(manifest["errors"])
+                    or bool(manifest["web_search"]["errors"])
                     or any(
                         page["fetch_status"] in {"pending", "failed"}
                         for page in manifest["pages"]
@@ -531,6 +670,15 @@ async def crawl_company(
                 manifest["site_info"] = site_information(None, manifest["site_url"])
             if manifest["site_info"] is not None:
                 write_json(root / "site-info.json", manifest["site_info"])
+            if human is not None:
+                manifest["challenge_agent_max_runs"] = human.challenge_agent_max_runs
+                manifest["challenge_agent_model"] = human.challenge_agent_model
+                manifest["challenge_agent_budget_exhausted"] = (
+                    human.challenge_agent_budget_exhausted
+                )
+                manifest["challenge_agent_results"] = human.challenge_agent_results
+                if human.challenge_agent_result is not None:
+                    manifest["challenge_agent"] = human.challenge_agent_result
             write_json(root / "crawl-manifest.json", manifest)
             save_crawl_result(root, manifest, destination=destination)
         return manifest
@@ -578,8 +726,28 @@ def main() -> None:
         help="UTF-8 file containing custom selection instructions",
     )
     parser.add_argument("--max-pages", type=int)
+    parser.add_argument(
+        "--challenge-agent-max-runs",
+        type=int,
+        help="Enable automatic CAPTCHA assistance with this per-crawl budget (3–1000).",
+    )
+    parser.add_argument(
+        "--challenge-agent-model",
+        choices=["deepseek-flash", "z-ai/glm-5.3-flash"],
+        default="deepseek-flash",
+    )
     parser.add_argument("--max-model-calls", type=int)
     parser.add_argument("--max-external-pages", type=int)
+    parser.add_argument(
+        "--web-search",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Discover additional sources through Brave search (enabled for --crawl full).",
+    )
+    parser.add_argument("--max-search-queries", type=int)
+    parser.add_argument("--max-source-domains", type=int)
+    parser.add_argument("--max-source-pages-per-domain", type=int)
+    parser.add_argument("--max-source-depth", type=int)
     parser.add_argument("--api", choices=["deepseek", "openrouter"], default="deepseek")
     parser.add_argument("--env-file", type=Path)
     args = parser.parse_args()
@@ -599,6 +767,11 @@ def main() -> None:
             "max_pages": args.max_pages,
             "max_model_calls": args.max_model_calls,
             "max_external_pages": args.max_external_pages,
+            "web_search": args.web_search,
+            "max_search_queries": args.max_search_queries,
+            "max_source_domains": args.max_source_domains,
+            "max_source_pages_per_domain": args.max_source_pages_per_domain,
+            "max_source_depth": args.max_source_depth,
         }.items()
         if value is not None
     }
@@ -611,23 +784,76 @@ def main() -> None:
             else args.instructions
         )
         config = ResearchConfig.model_validate(values)
-        with redirect_stdout(sys.stderr):
-            manifest = asyncio.run(
-                crawl_company(
-                    args.url,
-                    output_dir=args.output_dir,
-                    pages=args.pages,
-                    instructions=instructions,
-                    site_info=args.site_info,
-                    save_artifacts=args.save_artifacts,
-                    crawl=args.crawl,
-                    config=config,
-                    api=args.api,
-                    api_key=environment.get(
-                        "DEEPSEEK" if args.api == "deepseek" else "OPENROUTER_API_KEY"
-                    ),
+        agent_budget = args.challenge_agent_max_runs
+        if (
+            agent_budget is None
+            and environment.get("CRAWL_CHALLENGE_AGENT_ENABLED", "false").lower()
+            == "true"
+        ):
+            agent_budget = int(environment.get("CRAWL_CHALLENGE_AGENT_MAX_RUNS", "3"))
+        if agent_budget is not None and not 3 <= agent_budget <= 1000:
+            raise ValueError("--challenge-agent-max-runs must be between 3 and 1000")
+
+        async def run() -> dict:
+            browser_url = environment.get("BROWSER_API_URL")
+            if not browser_url:
+                raise ValueError(
+                    "Configure BROWSER_API_URL for the external browser service"
                 )
-            )
+            token = environment.get("BROWSER_API_TOKEN")
+            async with httpx.AsyncClient(
+                base_url=browser_url,
+                timeout=330,
+                headers={"Authorization": f"Bearer {token}"} if token else {},
+            ) as http:
+                identifier = uuid4().hex
+                async with BrowserLeaseClient(http).lease(
+                    identifier=identifier,
+                    request_id=identifier,
+                    domain=urlsplit(normalize_url(args.url)).hostname or args.url,
+                ) as browser_client:
+                    search = BraveSearch(
+                        args.output_dir / ".brave-search", browser_client=browser_client
+                    )
+                    try:
+                        human = (
+                            HumanSession(
+                                headed=True,
+                                interactive=False,
+                                timeout=10,
+                                challenge_agent_max_runs=agent_budget,
+                                challenge_agent_model=args.challenge_agent_model,
+                                notify=lambda state, values: LOGGER.info(
+                                    "%s: %s", state, values.get("reason", "")
+                                ),
+                            )
+                            if agent_budget is not None
+                            else None
+                        )
+                        return await crawl_company(
+                            args.url,
+                            browser_client=browser_client,
+                            human=human,
+                            search=search,
+                            output_dir=args.output_dir,
+                            pages=args.pages,
+                            instructions=instructions,
+                            site_info=args.site_info,
+                            save_artifacts=args.save_artifacts,
+                            crawl=args.crawl,
+                            config=config,
+                            api=args.api,
+                            api_key=environment.get(
+                                "DEEPSEEK"
+                                if args.api == "deepseek"
+                                else "OPENROUTER_API_KEY"
+                            ),
+                        )
+                    finally:
+                        await search.close()
+
+        with redirect_stdout(sys.stderr):
+            manifest = asyncio.run(run())
     except (ValueError, OSError) as error:
         parser.error(str(error))
     click.echo(json.dumps(manifest, ensure_ascii=False))

@@ -1,6 +1,7 @@
 """Exercise sticky HTTP routing and lifecycle at the browser-driver boundary."""
 
 import asyncio
+import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -11,8 +12,9 @@ from uuid import uuid4
 import httpx
 
 from browser_service.api import create_app
+from browser_service.browser_sessions import PersistentBrowserSession
 from browser_service.capture import PageCapture
-from browser_service.runtime import BrowserService
+from browser_service.runtime import BrowserRuntimeSettings, BrowserService
 
 
 async def until(predicate):
@@ -73,45 +75,48 @@ class BrowserAPITests(unittest.IsolatedAsyncioTestCase):
         self.temporary = TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.service = BrowserService(
-            Path(self.temporary.name), count=2, max_pending=5, idle_timeout=120
+            Path(self.temporary.name),
+            settings=BrowserRuntimeSettings(
+                max_browsers=2, idle_timeout_seconds=120, session_retention_days=7
+            ),
         )
-        self.pool, self.mux = (
-            self.service.pool,
-            self.service.multiplexer,
-        )
-        for profile in self.pool.sessions.values():
 
-            async def start(*, restore_tabs=True, profile=profile):
-                profile.wanted_running = True
-                profile.state = "running"
-                profile.context = SimpleNamespace(
-                    browser=None, pages=[], new_page=AsyncMock(side_effect=FixturePage)
-                )
-                profile.generation = uuid4().hex
+        async def start(profile, *, restore_tabs=False):
+            profile.state = "running"
+            profile.context = SimpleNamespace(
+                browser=None, pages=[], new_page=AsyncMock(side_effect=FixturePage)
+            )
+            profile.generation = uuid4().hex
 
-            profile.start = AsyncMock(side_effect=start)
-            profile.save = AsyncMock()
-        self.driver = patch(
-            "browser_service.browser_multiplexer.BrowserSession", FixtureTab
-        )
+        self.starts = patch.object(PersistentBrowserSession, "start", start)
+        self.starts.start()
+        self.addCleanup(self.starts.stop)
+        self.saves = patch.object(PersistentBrowserSession, "save", AsyncMock())
+        self.saves.start()
+        self.addCleanup(self.saves.stop)
+        self.driver = patch("browser_service.runtime.BrowserSession", FixtureTab)
         self.driver.start()
         self.addCleanup(self.driver.stop)
-        await self.pool.start()
-        await self.mux.start()
+        await self.service.start()
         self.http = httpx.AsyncClient(
             transport=httpx.ASGITransport(
-                create_app(self.service, api_token="fixture-token")
+                create_app(
+                    self.service,
+                    api_token="fixture-token",
+                    deepseek_api_key="fixture-key",
+                    openrouter_api_key="fixture-openrouter-key",
+                )
             ),
             base_url="http://test",
             headers={"Authorization": "Bearer fixture-token"},
         )
 
     async def asyncTearDown(self):
-        self.pool.closing = True
-        await self.mux.close()
-        await self.pool.close()
+        await self.service.close()
         await self.http.aclose()
-        self.service.store.close()
+
+    def execution_headers(self, identifier):
+        return {"X-Browser-Execution-Id": self.service.active[identifier].execution_id}
 
     async def reserve(self, name):
         import hashlib
@@ -127,287 +132,326 @@ class BrowserAPITests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 201)
         return response.json()["id"]
 
-    async def test_two_profiles_queue_third_session_and_keep_affinity_until_released(
-        self,
-    ):
-        first, second, third = [
-            await self.reserve(name) for name in ("one", "two", "three")
-        ]
-        await until(
-            lambda: (
-                self.mux.reservations[first].state
-                == self.mux.reservations[second].state
-                == "ready"
+    async def test_agent_requires_approval_and_matching_live_page(self):
+        identifier = await self.reserve("agent-guard")
+        session = self.service.get(identifier)
+        tab = await self.service.open_tab(session, "site")
+        tab.page.url = "https://example.test/"
+        path = f"/v1/browser/sessions/{identifier}/tabs/site/challenge-agent"
+        body = {
+            "confirm": True,
+            "expectedUrl": tab.page.url,
+            "expectedGeneration": session.profile.generation,
+        }
+        unauthorized = await self.http.post(
+            path, json=body, headers={"Authorization": "Bearer wrong"}
+        )
+        self.assertEqual(unauthorized.status_code, 401)
+        for changed in (
+            {"confirm": False},
+            {"confirm": "true"},
+            {"maxSteps": 21},
+            {"timeoutSeconds": 181},
+        ):
+            self.assertEqual(
+                (await self.http.post(path, json=body | changed)).status_code, 422
             )
-        )
-        self.assertEqual(self.mux.reservations[third].state, "queued")
-        self.assertNotEqual(
-            self.mux.reservations[first].profile.id,
-            self.mux.reservations[second].profile.id,
-        )
-        self.assertEqual(
-            await self.reserve("one"), first
-        )  # Retry cannot consume another profile.
-        assigned = self.mux.reservations[first].profile
-        generation = assigned.generation
-        self.assertEqual((await assigned.snapshot())["lease_id"], first)
-        for name in ("site", "search", "site"):
-            response = await self.http.post(
-                "/v1/browser/extract",
+        for changed in (
+            {"expectedGeneration": "stale"},
+            {"expectedUrl": "https://other.test/"},
+        ):
+            self.assertEqual(
+                (await self.http.post(path, json=body | changed)).status_code, 409
+            )
+        async with session.lock:
+            self.assertEqual((await self.http.post(path, json=body)).status_code, 409)
+        await self.service.release(identifier)
+        self.assertEqual((await self.http.post(path, json=body)).status_code, 410)
+        self.assertFalse((self.service.root / "challenge-runs").exists())
+
+    async def test_agent_uses_selected_cdp_tab_and_keeps_lease_after_finishing(self):
+        identifier = await self.reserve("agent")
+        session = self.service.get(identifier)
+        tab = await self.service.open_tab(session, "site")
+        tab.page.url = "https://example.test/"
+        tab.page.context = session.profile.context
+        cdp = SimpleNamespace(send=AsyncMock(), detach=AsyncMock())
+        tab.page.context.new_cdp_session = AsyncMock(return_value=cdp)
+        tab.page.evaluate = AsyncMock(return_value={"width": 800, "height": 600})
+        tab.page.screenshot = AsyncMock(return_value=b"fixture-image")
+        calls = []
+        original_send = httpx.AsyncClient.send
+
+        async def model(client, request, **kwargs):
+            if request.url.host != "api.deepseek.com":
+                return await original_send(client, request, **kwargs)
+            payload = json.loads(request.content)
+            calls.append(payload)
+            action = (
+                {
+                    "action": "click",
+                    "x": 100,
+                    "y": 120,
+                    "reason": "Select visible challenge",
+                }
+                if len(calls) == 1
+                else {
+                    "action": "finish",
+                    "outcome": "appears_clear",
+                    "reason": "Company content is visible",
+                }
+            )
+            return httpx.Response(
+                200,
+                request=request,
                 json={
-                    "session": {"id": first},
-                    "tab": name,
-                    "url": "https://example.test/",
+                    "choices": [
+                        {
+                            "finish_reason": "stop",
+                            "message": {"content": json.dumps(action)},
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 20, "completion_tokens": 10},
                 },
             )
-            self.assertEqual(response.status_code, 200)
-            document = response.json()
-            self.assertEqual(document["session"]["id"], first)
-            self.assertEqual(document["session"]["profileId"], assigned.id)
-            self.assertNotIn("set-cookie", document["headers"])
-        self.assertEqual(assigned.generation, generation)
-        tabs = self.mux.reservations[first].tabs
-        self.assertIs(tabs["site"].context, tabs["search"].context)
-        queued = await self.http.post(
-            "/v1/browser/extract",
-            json={"session": {"id": third}, "url": "https://three.test/"},
-        )
-        self.assertEqual(queued.status_code, 409)
-        released = await self.http.delete(f"/v1/browser/sessions/{first}")
-        self.assertEqual(released.status_code, 200)
-        await until(lambda: self.mux.reservations[third].state == "ready")
-        self.assertIs(self.mux.reservations[third].profile, assigned)
-        self.assertNotEqual(assigned.generation, generation)
-        self.assertEqual(
-            (await self.http.get(f"/v1/browser/sessions/{first}")).status_code, 410
-        )
-        self.assertEqual(
-            sum(p.start.await_count for p in self.pool.sessions.values()), 3
-        )
 
-    async def test_unknown_ids_missing_id_disabled_pool_and_auth_never_launch(self):
-        before = sum(p.start.await_count for p in self.pool.sessions.values())
-        for payload, status in [
-            ({"url": "https://example.test"}, 422),
-            ({"session": {"id": "0" * 32}}, 404),
-        ]:
-            response = await self.http.post("/v1/browser/extract", json=payload)
-            self.assertEqual(response.status_code, status)
-        denied = await self.http.post(
-            "/v1/browser/sessions",
-            headers={"Authorization": "Bearer wrong"},
-            json={"id": "1" * 32, "requestId": "one", "domain": "one.test"},
+        with patch("httpx.AsyncClient.send", model):
+            response = await self.http.post(
+                f"/v1/browser/sessions/{identifier}/tabs/site/challenge-agent",
+                json={
+                    "confirm": True,
+                    "expectedUrl": tab.page.url,
+                    "expectedGeneration": session.profile.generation,
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        result = response.json()
+        self.assertEqual(result["state"], "appears_clear")
+        self.assertEqual(
+            result["usage"], {"prompt_tokens": 40, "completion_tokens": 20}
         )
-        self.assertEqual(denied.status_code, 401)
-        self.mux.accepting = False
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0]["model"], "deepseek-flash")
+        self.assertEqual(calls[0]["messages"][1]["content"][1]["type"], "image_url")
+        cdp.send.assert_any_await(
+            "Input.dispatchMouseEvent",
+            {
+                "type": "mouseReleased",
+                "x": 100,
+                "y": 120,
+                "button": "left",
+                "clickCount": 1,
+            },
+        )
+        cdp.detach.assert_awaited_once()
+        self.assertEqual(self.service.snapshot(identifier)["state"], "ready")
+        self.assertFalse(session.lock.locked())
+        saved = self.service.root / "challenge-runs" / result["runId"]
+        self.assertEqual(
+            json.loads((saved / "result.json").read_text())["state"], "appears_clear"
+        )
+        self.assertTrue((saved / "02.png").exists())
+
+    async def test_glm_uses_openrouter_and_saves_actual_model(self):
+        identifier = await self.reserve("agent")
+        session = self.service.get(identifier)
+        tab = await self.service.open_tab(session, "site")
+        tab.page.url = "https://example.test/"
+        tab.page.context = session.profile.context
+        cdp = SimpleNamespace(send=AsyncMock(), detach=AsyncMock())
+        tab.page.context.new_cdp_session = AsyncMock(return_value=cdp)
+        tab.page.evaluate = AsyncMock(return_value={"width": 800, "height": 600})
+        tab.page.screenshot = AsyncMock(return_value=b"fixture-image")
+        calls = []
+        original_send = httpx.AsyncClient.send
+
+        async def model(client, request, **kwargs):
+            if request.url.host != "openrouter.ai":
+                return await original_send(client, request, **kwargs)
+            self.assertEqual(request.url.path, "/api/v1/chat/completions")
+            self.assertEqual(
+                request.headers["authorization"], "Bearer fixture-openrouter-key"
+            )
+            payload = json.loads(request.content)
+            self.assertEqual(payload["reasoning"], {"effort": "low"})
+            self.assertNotIn("thinking", payload)
+            calls.append(payload)
+            action = (
+                {
+                    "action": "click",
+                    "x": 100,
+                    "y": 120,
+                    "reason": "Select visible challenge",
+                }
+                if len(calls) == 1
+                else {
+                    "action": "finish",
+                    "outcome": "appears_clear",
+                    "reason": "Company content is visible",
+                }
+            )
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "choices": [
+                        {
+                            "finish_reason": "stop",
+                            "message": {"content": json.dumps(action)},
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 20, "completion_tokens": 10},
+                },
+            )
+
+        with patch("httpx.AsyncClient.send", model):
+            response = await self.http.post(
+                f"/v1/browser/sessions/{identifier}/tabs/site/challenge-agent",
+                json={
+                    "confirm": True,
+                    "model": "z-ai/glm-5.3-flash",
+                    "expectedUrl": tab.page.url,
+                    "expectedGeneration": session.profile.generation,
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        result = response.json()
+        self.assertEqual(result["state"], "appears_clear")
+        self.assertEqual(result["model"], "z-ai/glm-5.3-flash")
+        self.assertEqual(
+            result["usage"], {"prompt_tokens": 40, "completion_tokens": 20}
+        )
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0]["model"], "z-ai/glm-5.3-flash")
+        self.assertEqual(calls[0]["messages"][1]["content"][1]["type"], "image_url")
+        cdp.send.assert_any_await(
+            "Input.dispatchMouseEvent",
+            {
+                "type": "mouseReleased",
+                "x": 100,
+                "y": 120,
+                "button": "left",
+                "clickCount": 1,
+            },
+        )
+        cdp.detach.assert_awaited_once()
+        self.assertEqual(self.service.snapshot(identifier)["state"], "ready")
+        self.assertFalse(session.lock.locked())
+        saved = self.service.root / "challenge-runs" / result["runId"]
+        self.assertEqual(
+            json.loads((saved / "result.json").read_text())["state"], "appears_clear"
+        )
+        self.assertTrue((saved / "02.png").exists())
+
+    async def test_on_demand_capacity_reopen_and_mode_change(self):
+        self.assertFalse(self.service.active)
+        first = await self.reserve("one")
+        second = await self.reserve("two")
         response = await self.http.post(
             "/v1/browser/sessions",
-            json={"id": "1" * 32, "requestId": "one", "domain": "one.test"},
+            json={"requestId": "three", "domain": "three.test", "headless": False},
         )
         self.assertEqual(response.status_code, 503)
-        self.assertEqual(
-            sum(p.start.await_count for p in self.pool.sessions.values()), before
+        saved_id = response.json()["detail"]["sessionId"]
+        self.assertIsNotNone(self.service.store.session(saved_id))
+        before = self.service.snapshot(first)
+        await self.service.release(first, execution_id=before["executionId"])
+        self.assertEqual(self.service.snapshot(first)["state"], "closed")
+        self.assertEqual(len(self.service.active), 1)
+        reopened = await self.http.post(
+            "/v1/browser/sessions",
+            json={
+                "id": first,
+                "requestId": "new-request",
+                "domain": "one.test",
+                "headless": False,
+            },
         )
-        self.assertEqual(self.mux.reservations, {})
+        self.assertEqual(reopened.status_code, 201)
+        self.assertFalse(reopened.json()["headless"])
+        self.assertNotEqual(before["executionId"], reopened.json()["executionId"])
+        stale = await self.http.delete(
+            "/v1/browser/sessions/" + first,
+            headers={"X-Browser-Execution-Id": before["executionId"]},
+        )
+        self.assertEqual(stale.status_code, 409)
+        self.assertIn(first, self.service.active)
+        await self.service.release(second)
 
-    async def test_first_extract_allocates_once_and_serializes_concurrent_requests(
-        self,
-    ):
-        identifier = uuid4().hex
-        responses = await asyncio.gather(
-            *(
+    async def test_another_request_cannot_share_a_profile(self):
+        identifier = await self.reserve("owner")
+        response = await self.http.post(
+            "/v1/browser/sessions",
+            json={
+                "id": identifier,
+                "requestId": "someone-else",
+                "domain": "owner.test",
+            },
+        )
+        self.assertEqual(response.status_code, 409)
+        original = self.service.snapshot(identifier)
+        response = await self.http.post(
+            "/v1/browser/sessions",
+            json={"id": identifier, "requestId": "owner", "domain": "owner.test"},
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["executionId"], original["executionId"])
+
+    async def test_extract_allocates_and_preserves_session_identity(self):
+        response = await self.http.post(
+            "/v1/browser/extract", json={"url": "https://example.test/"}
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        session = response.json()["session"]
+        results = await asyncio.gather(
+            *[
                 self.http.post(
                     "/v1/browser/extract",
                     json={
-                        "session": {"id": identifier},
-                        "url": f"https://example.test/{index}",
+                        "session": {
+                            "id": session["id"],
+                            "executionId": session["executionId"],
+                        },
+                        "url": "https://example.test/" + str(n),
                     },
                 )
-                for index in range(3)
-            )
+                for n in range(3)
+            ]
         )
-        self.assertEqual([r.status_code for r in responses], [200, 200, 200])
-        assigned = {r.json()["session"]["profileId"] for r in responses}
-        self.assertEqual(len(assigned), 1)
-        self.assertEqual(len(self.service.store.recent()), 1)
-        self.assertEqual(
-            self.service.store.get(identifier)["profile_id"], assigned.pop()
-        )
-        self.assertEqual(self.mux.reservations[identifier].tabs["site"].max_inflight, 1)
-        self.assertEqual(
-            sum(p.start.await_count for p in self.pool.sessions.values()), 2
-        )
-        captured = await self.http.post(
-            "/v1/browser/extract", json={"session": {"id": identifier}}
-        )
-        self.assertEqual(captured.status_code, 200)
-        self.assertEqual(captured.json()["url"], "https://example.test/2")
+        self.assertTrue(all(r.status_code == 200 for r in results))
+        self.assertEqual(self.service.get(session["id"]).tabs["site"].max_inflight, 1)
+        self.assertEqual(len(self.service.active), 1)
 
-    async def test_optional_browser_is_sticky_and_cannot_be_changed(self):
+    async def test_closed_session_status_is_visible_without_restarting(self):
+        identifier = await self.reserve("closed")
+        await self.service.release(identifier)
+        response = await self.http.get("/v1/browser/sessions/" + identifier)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["state"], "closed")
+        self.assertFalse(self.service.active)
+
+    async def test_proxy_identity_cannot_change_when_reopened(self):
+        self.service.proxy_routes["proxy-a"] = "http://private:test@localhost:9000"
         identifier = uuid4().hex
-        payload = {
-            "session": {"id": identifier},
-            "browserId": "browser-2",
-            "url": "https://example.test/",
-        }
-        first = await self.http.post("/v1/browser/extract", json=payload)
-        self.assertEqual(first.status_code, 200)
-        self.assertEqual(first.json()["session"]["profileId"], "browser-2")
-        search = await self.http.post(
-            "/v1/browser/extract",
+        response = await self.http.post(
+            "/v1/browser/sessions",
             json={
-                "session": {"id": identifier},
-                "tab": "search",
-                "url": "https://search.test/",
+                "id": identifier,
+                "requestId": "proxy",
+                "domain": "example.test",
+                "route": "proxy-a",
             },
         )
-        self.assertEqual(search.status_code, 200)
-        self.assertEqual(search.json()["session"]["profileId"], "browser-2")
-        mismatch = await self.http.post(
-            "/v1/browser/extract", json=payload | {"browserId": "browser-1"}
-        )
-        self.assertEqual(mismatch.status_code, 409)
-        self.assertEqual(self.service.store.get(identifier)["profile_id"], "browser-2")
-        self.assertEqual(self.service.store.get(identifier)["domain"], "example.test")
-        self.assertEqual(len(self.service.store.recent()), 1)
-
-    async def test_busy_browser_does_not_fall_back_or_create_a_waiting_session(self):
-        first, second, third = [uuid4().hex for _ in range(3)]
-        payload = {
-            "session": {"id": first},
-            "browserId": "browser-2",
-            "url": "https://example.test/",
-        }
-        self.assertEqual(
-            (await self.http.post("/v1/browser/extract", json=payload)).status_code, 200
-        )
-        waiting_payload = payload | {"session": {"id": second}}
-        busy = await self.http.post("/v1/browser/extract", json=waiting_payload)
-        self.assertEqual(busy.status_code, 503)
-        self.assertIsNone(self.service.store.get(second))
-        automatic = await self.http.post(
-            "/v1/browser/extract",
+        self.assertEqual(response.status_code, 201)
+        await self.service.release(identifier)
+        response = await self.http.post(
+            "/v1/browser/sessions",
             json={
-                "session": {"id": third},
-                "url": "https://third.test/",
+                "id": identifier,
+                "requestId": "proxy-next",
+                "domain": "example.test",
+                "route": "direct",
             },
         )
-        self.assertEqual(automatic.status_code, 200)
-        self.assertEqual(automatic.json()["session"]["profileId"], "browser-1")
-        overflow = uuid4().hex
-        self.assertEqual(
-            (
-                await self.http.post(
-                    "/v1/browser/extract",
-                    json={
-                        "session": {"id": overflow},
-                        "url": "https://overflow.test/",
-                    },
-                )
-            ).status_code,
-            503,
-        )
-        self.assertIsNone(self.service.store.get(overflow))
-        await self.http.delete(f"/v1/browser/sessions/{first}")
-        retried = await self.http.post("/v1/browser/extract", json=waiting_payload)
-        self.assertEqual(retried.status_code, 200)
-        self.assertEqual(retried.json()["session"]["profileId"], "browser-2")
-
-    async def test_simultaneous_first_requests_use_distinct_existing_browsers(self):
-        identifiers = [uuid4().hex, uuid4().hex]
-        responses = await asyncio.gather(
-            *(
-                self.http.post(
-                    "/v1/browser/extract",
-                    json={
-                        "session": {"id": identifier},
-                        "url": "https://example.test/",
-                    },
-                )
-                for identifier in identifiers
-            )
-        )
-        self.assertEqual([r.status_code for r in responses], [200, 200])
-        self.assertEqual(
-            {r.json()["session"]["profileId"] for r in responses},
-            {"browser-1", "browser-2"},
-        )
-        self.assertEqual(
-            sum(p.start.await_count for p in self.pool.sessions.values()), 2
-        )
-
-    async def test_first_request_validation_and_terminal_ids_never_allocate(self):
-        for options in [
-            {"browserId": "browser-99"},
-            {"url": "https://name:password@example.test/"},
-            {"unknownOption": True},
-        ]:
-            identifier = uuid4().hex
-            result = await self.http.post(
-                "/v1/browser/extract",
-                json={
-                    "session": {"id": identifier},
-                    "url": "https://example.test/",
-                    **options,
-                },
-            )
-            self.assertEqual(result.status_code, 422)
-            self.assertIsNone(self.service.store.get(identifier))
-        identifier = uuid4().hex
-        payload = {"session": {"id": identifier}, "url": "https://example.test/"}
-        await self.http.post("/v1/browser/extract", json=payload)
-        self.mux.reservations[identifier].touched = 0
-        self.assertEqual(
-            (await self.http.post("/v1/browser/extract", json=payload)).status_code, 410
-        )
-        await self.http.delete(f"/v1/browser/sessions/{identifier}")
-        self.assertEqual(
-            (await self.http.post("/v1/browser/extract", json=payload)).status_code, 410
-        )
-
-    async def test_parallel_requests_on_one_session_are_serialized_and_capture_does_not_navigate(
-        self,
-    ):
-        identifier = await self.reserve("one")
-        await until(lambda: self.mux.reservations[identifier].state == "ready")
-        requests = [
-            {"session": {"id": identifier}, "url": f"https://example.test/{i}"}
-            for i in range(3)
-        ]
-        responses = await asyncio.gather(
-            *(
-                self.http.post("/v1/browser/extract", json=payload)
-                for payload in requests
-            )
-        )
-        self.assertEqual(
-            [r.json()["url"] for r in responses], [p["url"] for p in requests]
-        )
-        tab = self.mux.reservations[identifier].tabs["site"]
-        self.assertEqual(tab.max_inflight, 1)
-        result = await self.http.post(
-            "/v1/browser/extract",
-            json={"session": {"id": identifier}, "screenshot": True},
-        )
-        self.assertEqual(result.json()["url"], requests[-1]["url"])
-        self.assertEqual(result.json()["screenshot"], "Zml4dHVyZS1pbWFnZQ==")
-
-    async def test_idle_reservations_expire_while_heartbeats_keep_manual_waits_alive(
-        self,
-    ):
-        first, second, queued = [
-            await self.reserve(name) for name in ("one", "two", "three")
-        ]
-        await until(lambda: self.mux.reservations[first].state == "ready")
-        self.mux.reservations[first].touched = 0
-        await self.http.post(f"/v1/browser/sessions/{second}/heartbeat")
-        await until(
-            lambda: (
-                first not in self.mux.reservations
-                and self.mux.reservations[queued].state == "ready"
-            )
-        )
-        self.assertEqual(self.mux.reservations[second].state, "ready")
-        self.assertEqual(
-            (await self.http.get(f"/v1/browser/sessions/{first}")).status_code, 410
-        )
+        self.assertEqual(response.status_code, 409)
+        self.assertNotIn("private", (await self.http.get("/v1/server")).text)

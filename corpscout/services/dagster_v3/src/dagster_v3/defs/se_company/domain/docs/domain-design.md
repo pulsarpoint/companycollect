@@ -57,10 +57,24 @@ shown in company detail cards and the review queue; source support is separate f
 verification. A corroborated domain beats a domain proposed only by Brave. No uniqueness across companies:
 a legitimate group domain may be shared.
 
+Company domain presence does not require verification or a primary designation.
+Backoffice lists current source-reported domains, including Brave candidates, in the
+main company domains list with an **Unverified** label until their association is
+established. The company list's `has_domains` flag reads current domain entities with
+the live review overlay: confirmed associations and unverified candidates count;
+rejected and withdrawn domains remain in review history. Migration 000427 applies
+this rule to the refreshable company serving view. Its next successful refresh updates
+the company filter and bulk selection together. The domain entity's `active` field
+continues to describe an established association; primary only marks a preferred site.
+Dagster exposes the serving refresh as `sweden_companies_current_clickhouse`, downstream
+of `se_company_domain_publish`. Select it with publication to refresh the company list
+in the same run; publication on its own still relies on ClickHouse's hourly refresh.
+
 ## Brave extraction
 
 `se_company_domain_suggestions_brave` belongs to `se_company_domain` and depends on
-`se_company_brave_domains`. It reads successful Swedish `official_website` answers,
+`company_brave_search_results`. It reads `se_company_brave_search_results_latest_success`
+for successful Swedish `official_website` answers,
 extracts unique registrable domains in first-mention order (including bare and Unicode
 hosts), and stores a JSON list in `se_company_domain_brave_extraction`. The checkpoint
 records the response ID, SHA-256 answer hash and extractor version per company. It does

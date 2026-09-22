@@ -3,7 +3,128 @@
 Internal explorer for CompanyCollect data. React Router v8 (SSR) + shadcn/ui,
 reading source observations and resolved projections from ClickHouse.
 
+The **Sweden → Domains** page at `/admin/se/companies/domains` launches a Dagster
+input job for the selected crawl type. Individual domain IDs or all applied filters
+and exclusions are passed to the input asset. That asset selects from
+`corpscout.se_company_domain`, inserts missing domains into the corresponding
+`website_*_requests` table and records its materialization. Existing entries,
+including disabled rows and operator settings, are preserved. The UI returns the
+input run link. It does not write these tables directly or start crawling.
+
+The **Crawler** page at `/admin/crawls` separates saved inputs into **Jobs**,
+**Basic info**, and **Full crawl** tabs with inventory counts. Select individual
+domains or activate the enabled inputs on the current page. **Activate** opens a
+settings sheet; only its **Start** button launches
+`website_full_crawl_results_job`, `website_jobs_crawl_results_job` or
+`website_site_info_results_job` for a domain or up to 25 displayed inputs.
+CAPTCHA model/budget, model API/name, page limit, model-call limit and page-selection
+mode are required settings in both the form and the Dagster asset. Custom discovery
+also requires instructions. Basic info enforces one page. Valid matching successes
+from the last 30 days are skipped unless **Force a new crawl** is selected. The
+sheet also configures concurrent crawls and the freshness window.
+
+Each tab shows the latest 10 Dagster batches, refreshing every five seconds while
+the page is visible. Status includes queued/starting/running/finished/failed,
+persisted success and unsuccessful counts, and fresh-result skips from completed
+materializations. A finished batch does not imply every domain succeeded.
+Individual crawler attempts, S3 links and interactive retries remain below the
+tabs and include all crawl types and sources.
+
+Results assets wait for terminal crawler responses and persist result sections and
+S3 links in their own ClickHouse tables. Input jobs and results jobs select only their
+own asset. Migration `000430`, deployed definitions, `CRAWLER_API_URL/TOKEN` and the
+existing direct `PROCESSING_PG_URL` connection are required on Dagster. Existing test
+submissions still use JetStream. See the
+[crawl processing guide](../dagster_v3/src/dagster_v3/defs/website_crawl/docs/website-crawl-processing.md).
+
+The workspace displays live crawl attempts with
+domain, status and input filters. Failed attempts are read from the crawler's
+SQLite history and can be retried interactively with an embedded noVNC client.
+Set `CRAWLER_API_URL` and `CRAWLER_API_TOKEN` on the Backoffice server; optionally
+set `BROWSER_PUBLIC_URL` to a browser-reachable HTTPS/WSS proxy. The service
+credential stays server-side. See the crawler's
+[human-assistance contract](../company_research/HUMAN_ASSISTANCE.md).
+
+**S3 saved · View** opens an archived result at `/admin/crawls/results`. Backoffice
+reads the selected object through ClickHouse's `website_crawl_results_s3_archive` mapping,
+using the exact bucket/key from the attempt's delivery receipt. The result view
+includes crawl status and limits, model usage, extracted page observations, text,
+simplified and rendered HTML sources, discovered links, and the complete JSON.
+**Download JSON** returns the original JSON through the same mapping. HTML is
+displayed as inert source. No new crawl or explicit table import is required.
+Apply migration 426 for request/attempt identity in newer S3 paths; the existing
+`company_crawl_results` named collection supplies S3 access on the ClickHouse
+server. See the crawler's [ClickHouse mapping](../company_research/CLICKHOUSE.md).
+
+**New test crawl** submits an editable full-crawl JSON request directly from the
+Backoffice server to JetStream. Enable it for testing with
+`CRAWLER_TEST_SUBMIT_ENABLED=true` and `NATS_URL` (including URL credentials when
+required), or a server-side `NATS_CREDENTIALS` file. Stream `COMPANY_CRAWL` and
+subject `company.crawl.requests` can be overridden with `CRAWLER_NATS_STREAM` and
+`CRAWLER_NATS_SUBJECT`; these must match the worker. Backoffice never creates streams.
+The crawler's authenticated `/v1/crawls/validate` endpoint validates/normalizes the
+complete payload before publication without starting a crawl. Requires crawler
+0.37.1 or later. Its normal JetStream worker reserves a browser in the independent
+browser service via `BROWSER_API_URL`/`BROWSER_API_TOKEN` configured **on the worker**.
+
+The form starts with `crawl: "full"` and saved artifacts. Change `url`, add `config`
+overrides, or remove `crawl` to provide explicit `pages`/custom `instructions`.
+After a persistence receipt, Backoffice shows the stream/sequence/request ID and
+filters live history to the submitted domain and JetStream input. The receipt
+confirms queue storage; history appears when the worker consumes the request.
+An uncertain submission retains its JSON and request ID for retry. Identical
+normalized requests use the same message ID within the broker's duplicate window;
+the crawler also deduplicates request IDs durably. Use a new ID for a different
+request or a fresh run. Connection credentials never reach the browser.
+
+The **Browsers** workspace at `/admin/browsers` manages the independent browser
+service through `BROWSER_API_URL` and `BROWSER_API_TOKEN`; optionally set
+`BROWSER_PUBLIC_URL` for browser-reachable desktop WebSockets. The service owns
+on-demand browser processes under one global capacity limit (default six).
+**Saved sessions** retains profile identities after browsers close. **Open headed**
+reopens a profile for noVNC access; **Stop and save** releases capacity; **Keep session**
+pins it beyond normal retention.
+
+**Testing** at `/admin/browsers/testing` sends raw API requests. Choose headless or
+headed mode. The first navigation creates/reopens a session; subsequent requests
+use the returned execution ID. The tester preserves that ID for extraction, tab
+operations, heartbeat and close. A stale ID cannot terminate a reopened browser.
+Presets also cover current-page capture, screenshots, status, heartbeat, named-tab
+controls and release. The exact method, relative API path and body shown in the
+editor are sent on **Send request**. Changing the URL, session ID, browser or tab
+updates those fields in the JSON while retaining custom options. Choosing a preset
+or **Reset request** replaces the draft with its defaults. New options and malformed JSON reach the service's own
+validation unchanged. Raw non-2xx responses are preserved alongside successful
+responses, with API status, page status and duration shown separately.
+
+The last ten responses and their sent requests remain in page memory for inspection
+and manual replay. HTML is displayed as inert source; screenshots have their own
+viewer. **Connect browser** opens the current session's desktop. API credentials
+stay on the Backoffice server; forwarding accepts only browser data endpoints and
+does not follow redirects. Requests have a 330-second transport timeout so the
+service can report its own operation timeout. The tester sends no automatic
+heartbeats, polling or retries. Use **Heartbeat** explicitly to extend a session,
+or leave it idle to test expiry. Use **Release browser** when finished; simply
+leaving the page or disconnecting the viewer does not release a reservation.
+
 ## Setup
+
+Browser service 0.8 creates no idle browsers and does not automatically restart
+closed manual browsers. Scans keep one profile for site and Brave tabs, then close
+Chromium at completion/failure/cancellation. Profiles remain available for retries.
+Active requests reject disruptive manual controls; desktop interaction stays available.
+
+Inside **Browsers**, the **Servers & sessions** tab (`/admin/browsers`)
+shows the configured server, assignments and Xvfb desktops. Each desktop has
+**Connect** for the live browser. The server inventory and active session list
+refresh together. Old `/admin/crawls/servers` and `/admin/browser-sessions` links
+redirect to this workspace.
+
+Each active assignment has **Terminate**, including browsers being prepared. It releases
+that exact session ID through the browser API. New requests for the ID are rejected
+while any current operation and profile recycling finish; the UI shows
+**Terminating…** until completion and refreshes the assignment status. Saved login
+profiles are retained. Historical sessions have no termination control.
 
 ```bash
 pnpm install
@@ -404,3 +525,11 @@ in `countries.ts` and the division view activates without UI changes.
 - Read-only: `SELECT` only, no writes to ClickHouse.
 - User input goes through ClickHouse query params (`{name:String}`), never
   string interpolation. Identifiers may only come from `countries.ts`.
+
+## Browser runtime settings
+
+At `/admin/browsers/settings`, configure maximum simultaneous browsers, idle timeout
+and profile retention. All settings are stored in SQLite and override startup CLI/env
+values. **Use startup settings** removes the override. Defaults are six browsers,
+120 seconds idle and seven days retention. Reducing capacity lets active work finish.
+No headless/headed slots are preallocated; each request selects its mode.

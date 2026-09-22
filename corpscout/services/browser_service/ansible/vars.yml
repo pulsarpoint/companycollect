@@ -24,7 +24,14 @@ browser_service_runtime_environment:
 browser_service_activate: true
 browser_service_listen_host: "0.0.0.0"
 browser_service_port: 8081
-browser_service_count: 2
+browser_service_max_browsers: 6
+browser_service_session_retention_days: 7
+# Empty creates an empty template under the state directory.
+browser_service_base_profile: ""
 browser_service_idle_timeout_seconds: 120
-browser_service_max_pending: 100
 browser_service_api_token: "{{ lookup('ansible.builtin.env', 'BROWSER_API_TOKEN') }}"
+browser_service_deepseek_api_key: "{{ lookup('ansible.builtin.env', 'DEEPSEEK') }}"
+browser_service_openrouter_api_key: "{{ lookup('ansible.builtin.env', 'OPENROUTER_API_KEY') }}"
+browser_service_crawl_proxy1: "{{ lookup('ansible.builtin.env', 'BROWSER_CRAWL_PROXY1') }}"
+browser_service_crawl_proxy2: "{{ lookup('ansible.builtin.env', 'BROWSER_CRAWL_PROXY2') }}"
+browser_service_crawl_proxy3: "{{ lookup('ansible.builtin.env', 'BROWSER_CRAWL_PROXY3') }}"

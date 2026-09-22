@@ -9,6 +9,8 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 import httpx
+from browser_http_fixture import install_browser_api
+from browser_http_fixture import original_send as browser_fixture_send
 from pydantic import ValidationError
 from test_crawl import browser_responses
 from test_package import assessment, response
@@ -37,6 +39,9 @@ COMPANY = classification(
 
 
 class SiteInfoTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        install_browser_api(self)
+
     async def run_case(
         self, *, document=None, html=HTML, status=200, redirect=None, **options
     ):
@@ -52,6 +57,8 @@ class SiteInfoTests(unittest.IsolatedAsyncioTestCase):
         }
 
         async def boundary(client, request, **kwargs):
+            if request.url.host == "browser-fixture":
+                return await browser_fixture_send(client, request, **kwargs)
             if request.url.host != "api.deepseek.com":
                 web_requests.append(str(request.url))
                 return httpx.Response(404)
@@ -80,7 +87,7 @@ class SiteInfoTests(unittest.IsolatedAsyncioTestCase):
             with (
                 patch(
                     "company_research.crawl.open_browser",
-                    lambda: browser_responses(pages, requested),
+                    lambda *_args, **_: browser_responses(pages, requested),
                 ),
                 patch.object(httpx.AsyncClient, "send", boundary),
             ):
@@ -94,6 +101,7 @@ class SiteInfoTests(unittest.IsolatedAsyncioTestCase):
                         max_pages=4,
                         max_corrections=0,
                         page_attempts=1,
+                        web_search=False,
                     ),
                     **options,
                 )
@@ -177,11 +185,20 @@ class SiteInfoTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(web, [SITE + "robots.txt", SITE + "sitemap.xml"])
 
     async def test_redirected_info_uses_final_source_url(self):
-        final_url = "https://www.example.test/"
+        final_url = "https://different-company.test/company"
         result, requested, tasks, web = await self.run_case(
             site_info=True, redirect=final_url
         )
         self.assertEqual(result["site_url"], final_url)
+        self.assertEqual(result["input_url"], SITE)
+        self.assertEqual(result["pages"][0]["requested_url"], SITE)
+        self.assertEqual(result["pages"][0]["source_url"], final_url)
+        self.assertEqual(result["pages"][0]["redirects"], [
+            {"url": SITE, "location": final_url, "status_code": 301}
+        ])
+        self.assertEqual(result["pages"][0]["navigation_attempts"], [
+            {"url": SITE, "error": None}
+        ])
         self.assertEqual(result["site_info"]["source_url"], final_url)
         self.assertEqual(requested, [SITE])
         self.assertEqual(tasks, ["site_classification"])
@@ -229,11 +246,16 @@ class SiteInfoTests(unittest.IsolatedAsyncioTestCase):
 
 
 class SiteInfoCliTests(unittest.TestCase):
+    def setUp(self):
+        install_browser_api(self)
+
     def test_flag_alone_emits_one_json_and_does_not_discover(self):
         requested = []
         pages = {SITE: (HTML, [{"href": SITE + "jobs"}], 200, None)}
 
         async def boundary(client, request, **kwargs):
+            if request.url.host == "browser-fixture":
+                return await browser_fixture_send(client, request, **kwargs)
             self.assertEqual(request.url.host, "api.deepseek.com")
             prompt = json.loads(request.content)["messages"][1]["content"]
             self.assertIn('"task": "site_classification"', prompt)
@@ -254,7 +276,7 @@ class SiteInfoCliTests(unittest.TestCase):
                 ),
                 patch(
                     "company_research.crawl.open_browser",
-                    lambda: browser_responses(pages, requested),
+                    lambda *_args, **_: browser_responses(pages, requested),
                 ),
                 patch.object(httpx.AsyncClient, "send", boundary),
                 patch.dict("os.environ", {"DEEPSEEK": "test-key"}),

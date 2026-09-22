@@ -52,7 +52,7 @@ class LocalClient:
             f"SET join_use_nulls={join_use_nulls};",
             setup_sql(),
             """
-CREATE TABLE corpscout.se_company_brave_domains (
+CREATE TABLE corpscout.se_company_brave_search_results_latest_success (
  company_id String, result_id String, answer_text String, query String, source_url String,
  completed_at DateTime64(6,'UTC'), country_code String DEFAULT 'SE',
  query_type String DEFAULT 'official_website', status String DEFAULT 'success'
@@ -106,7 +106,7 @@ CREATE TABLE corpscout.se_company_brave_domains (
             **extra,
         )
         self.execute(
-            f"INSERT INTO corpscout.se_company_brave_domains ({','.join(values)}) VALUES",
+            f"INSERT INTO corpscout.se_company_brave_search_results_latest_success ({','.join(values)}) VALUES",
             [tuple(values.values())],
         )
 

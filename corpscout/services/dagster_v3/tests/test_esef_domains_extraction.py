@@ -127,7 +127,7 @@ def test_domain_rows_one_row_per_candidate_in_export_column_order(
         assert row["fiscal_year"] == 2024
         assert row["extraction_status"] == STATUS_OK
         assert row["error_message"] == ""
-        assert row["extractor_version"] == "esef-domains-v1"
+        assert row["extractor_version"] == "esef-domains-v2-context"
         assert row["source_run_id"] == "run-1"
         assert row["extracted_at"] == extracted_at
     first = rows[0]

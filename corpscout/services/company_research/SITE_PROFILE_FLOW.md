@@ -10,7 +10,7 @@ inspection remain planned. No crawler pipeline deployment is part of this step.
 
 ```mermaid
 flowchart TD
-    A[Input URL] --> B[Crawl4AI: fetch first page]
+    A[Input URL] --> B[CloakBrowser: fetch first page]
     B --> C[LLM: classify primary site purpose with exact evidence]
     C --> C1[Python: validate schema, quotes and 200-word description limit]
     C1 -->|Non-company content, search or advertising site| S[Return skip_crawling and site_description]
@@ -19,7 +19,7 @@ flowchart TD
     SI --> D[Python: select predefined research profiles]
     D --> E[LLM 2: assess candidate links against objectives]
     E --> F[Python queue: choose next page within budget]
-    F --> G[Crawl4AI: fetch native cleaned HTML and links]
+    F --> G[CloakBrowser: capture and simplify HTML with links]
     G --> H[LLM 3: extract facts for all active objectives]
     H --> V[Python: schema and source checks]
     V -->|Quotation issues| R[LLM: repair evidence for fixed facts]

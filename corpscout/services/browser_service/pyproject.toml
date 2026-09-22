@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "corpscout-browser-service"
-version = "0.2.2"
-description = "Persistent browser pool with durable HTTP session leases"
+version = "0.8.0"
+description = "On-demand browsers with persistent sessions and bounded capacity"
 requires-python = ">=3.12"
 dependencies = [
     "cloakbrowser>=0.5.10",

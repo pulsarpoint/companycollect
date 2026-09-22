@@ -1,9 +1,75 @@
 # Company research
 
+Version 0.37.0 moves all browser ownership into the independent
+[browser service](../browser_service/README.md). Configure `BROWSER_API_URL` and
+`BROWSER_API_TOKEN` for both the crawler and collection CLI. The crawler sends a
+persisted UUID for each attempt and uses HTTP for all navigation, captures, heartbeats
+and release. Backoffice management is now under **Browsers**.
+
+Version 0.36.0 adds the [sticky browser API](BROWSER_API.md). Each domain reserves
+one existing profile and receives a unique session ID for all site/search requests.
+Busy browsers queue reservations; expired IDs fail instead of launching a browser.
+The crawler now uses the same HTTP contract, with heartbeat and cancellation cleanup.
+
+Version 0.35.0 assigns scans to the saved browser profiles. Each domain owns one
+profile for site pages and Brave search, including human verification pauses.
+On completion, failure or cancellation, cookies and profile storage are saved and
+the browser restarts with a blank tab before another domain can use it. The admin
+view shows the assigned domain, and Brave retains its service-wide verification block.
+
+
+Version 0.34.2 adds a per-profile **Auto-restart** switch, enabled by default.
+Closing the last tab or browser window opens a blank tab with the same profile;
+the Backoffice viewer reconnects. **Stop and save** cancels pending recovery.
+
+Version 0.34.1 adds **Crawler → Servers & sessions** in Backoffice. The connected
+server reports every open Xvfb desktop it manages, including saved profiles,
+interactive crawl attempts and the shared headed Brave browser. Operators can
+connect to any listed desktop with a short-lived, single-use ticket.
+
 The service lives at `companycollect/corpscout/services/company_research`.
 Run setup and commands from this directory; see [the service guide](SERVICE.md).
 The Python package name and command names remain `company_research` and
 `company-research-*`. Saved captures and benchmark data moved with the package.
+
+Version 0.34.0 adds a configurable pool of [persistent browser sessions](HUMAN_ASSISTANCE.md#persistent-browser-sessions).
+The Linux deployment starts two headed browsers under Xvfb, available in Backoffice
+at `/admin/browser-sessions` for manual login and multiple tabs. Private profiles,
+session cookies and tabs survive browser restarts. Since 0.35.0, crawl jobs lease these profiles for both site and search tabs.
+
+Version 0.33.0 pauses all Brave searches in the service on a detected bot challenge.
+Backoffice **Start verification** opens the exact pending query under Xvfb with the
+same profile and cookies; **Resume crawl** validates the result and continues the
+same attempt. The search block survives cancellation and service restart. See
+[Brave verification](HUMAN_ASSISTANCE.md#brave-search-verification).
+
+Version 0.32.0 removes Crawl4AI and uses CloakBrowser through Playwright directly.
+The service retains native browser headers, checks robots.txt, captures rendered
+HTML and produces deterministic simplified HTML using BeautifulSoup. Discovery,
+static extraction, local/S3 results and interactive retries retain their existing flow.
+Trafilatura continues extracting readable main text. Historical capture files remain
+readable; newly collected simplified HTML can differ from old Crawl4AI captures.
+
+Version 0.31.1 keeps automatic scans headless. Only a manual interactive retry of a
+failed attempt starts Xvfb, a headed browser and noVNC access.
+
+Version 0.31.0 adds [failed-attempt history and human assistance](HUMAN_ASSISTANCE.md).
+Automatic blocks notify operators and fail after 10 seconds. SQLite and S3 preserve
+each attempt; Backoffice provides live filters and independent interactive retries
+with an embedded noVNC browser. S3 delivery now also covers REST and manual requests.
+
+Version 0.30.0 expands source discovery: bounded navigation through evidenced
+parent-company and filing sources, objective-driven Brave web search, and document
+links with surrounding labels/headings. Full mode enables web search by default;
+targeted requests can use `--web-search`. Search uses the existing browser without
+an extra API key and consumes at most three queries by default. Queries, ordinary
+results, source decisions and document references remain in `result.json`, including
+when diagnostic files are disabled. PDF download/OCR and financial interpretation
+remain separate from crawling. See [source discovery](CRAWL_AND_ANALYZE.md#source-discovery)
+and the [NOVELIC gap audit](NOVELIC_FINANCIAL_DISCOVERY_AUDIT_20260918.md).
+The [live discovery and focused verification](NOVELIC_SOURCE_DISCOVERY_20260918.md)
+document the parent-company route, four labelled NOVELIC PDF references, observed
+search rate limiting, and the final source-priority correction.
 
 Version 0.29.0 adds `--crawl full` (REST/JetStream: `"crawl": "full"`). It uses LLM
 navigation across contacts, jobs, company information and financial/report pages,
@@ -233,13 +299,13 @@ The [earlier autonomous NOVELIC report](NOVELIC_AUTONOMOUS_RESULTS.md) preserves
 0.7.0 homepage-only run, measured costs and the errors that motivated these changes. The earlier
 [recheck report](NOVELIC_RECHECK_RESULTS.md) preserves the guided and frozen-source comparisons.
 
-One website URL in; JSON findings for company profile, contacts, locations,
-products/services, people, company relationships, jobs, technology signals and
-certifications/compliance and company-document links out.
+One website URL in; collected source pages, contacts, jobs, company/about content
+and financial-information links out as JSON, with simplified HTML and raw evidence.
 
-The package uses Crawl4AI with the tested CloakBrowser rendering setup and native
-cleaned HTML. DeepSeek assesses candidates and extracts all objectives on every
-fetched page. A small Python queue balances objectives and enforces limits.
+The package uses CloakBrowser through Playwright directly. DeepSeek assesses site
+eligibility and navigation candidates; static code extracts page observations.
+A Python queue balances objectives and enforces limits. Fact interpretation and
+technology analysis remain separate from the collection flow.
 It has no dependency on the example applications, benchmark folders or Codex SDK.
 
 The optional [technology catalog MCP server](TECHNOLOGY_MCP.md) lets agents search

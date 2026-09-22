@@ -1,101 +1,133 @@
-"""Durable affinity and expiry behavior across process and request boundaries."""
+"""Saved identity outlives execution, while expiry removes only inactive profiles."""
 
 import asyncio
-import sqlite3
-from pathlib import Path
-from tempfile import TemporaryDirectory
-from time import monotonic
-from unittest import TestCase
-from uuid import uuid4
+from time import time
 
 from test_browser_api import BrowserAPITests, until
 
 from browser_service.session_store import SessionStore
 
 
-class StoreTests(TestCase):
-    def test_mapping_and_terminal_ids_survive_reopen(self):
-        with TemporaryDirectory() as directory:
-            path = Path(directory) / "sessions.sqlite3"
-            store = SessionStore(path)
-            identifier = uuid4().hex
-            store.create(identifier, "crawler", "crawl-1", "example.test", 120)
-            store.assign(identifier, "browser-1", "generation-1")
-            store.close()
-            store = SessionStore(path)
-            try:
-                self.assertEqual(store.get(identifier)["profile_id"], "browser-1")
-                store.interrupt_previous_process()
-                record = store.get(identifier)
-                self.assertEqual(record["state"], "interrupted")
-                self.assertIsNotNone(record["ended_at"])
-                with self.assertRaises(sqlite3.IntegrityError):
-                    store.create(identifier, "crawler", "new", "other.test", 120)
-            finally:
-                store.close()
-
-    def test_database_rejects_two_active_assignments_to_same_browser(self):
-        with TemporaryDirectory() as directory:
-            store = SessionStore(Path(directory) / "sessions.sqlite3")
-            try:
-                for identifier in ("one", "two"):
-                    store.create(identifier, "crawler", identifier, "example.test", 120)
-                store.assign("one", "browser-1", "generation-1")
-                with self.assertRaises(sqlite3.IntegrityError):
-                    store.assign("two", "browser-1", "generation-1")
-            finally:
-                store.close()
-
-
-class ExpiryTests(BrowserAPITests):
-    async def test_status_and_management_reads_do_not_extend_deadline(self):
+class PersistenceTests(BrowserAPITests):
+    async def test_reads_do_not_extend_deadline(self):
         identifier = await self.reserve("read-only")
-        await until(lambda: self.mux.reservations[identifier].state == "ready")
         before = self.service.store.get(identifier)
-        await self.http.get(f"/v1/browser/sessions/{identifier}")
-        await self.http.get("/v1/server")
-        await self.http.get("/v1/browser-sessions")
-        after = self.service.store.get(identifier)
-        self.assertEqual(after["last_request_at"], before["last_request_at"])
-        self.assertEqual(after["expires_at"], before["expires_at"])
-        await self.http.post(f"/v1/browser/sessions/{identifier}/heartbeat")
+        for path in (
+            f"/v1/browser/sessions/{identifier}",
+            "/v1/server",
+            "/v1/browser-sessions",
+        ):
+            self.assertEqual((await self.http.get(path)).status_code, 200)
+        self.assertEqual(
+            self.service.store.get(identifier)["expires_at"], before["expires_at"]
+        )
+        await self.http.post(
+            f"/v1/browser/sessions/{identifier}/heartbeat",
+            headers=self.execution_headers(identifier),
+        )
         self.assertGreater(
             self.service.store.get(identifier)["expires_at"], before["expires_at"]
         )
 
-    async def test_late_heartbeat_and_reserve_cannot_revive_expired_id(self):
-        identifier = await self.reserve("old")
-        await until(lambda: self.mux.reservations[identifier].state == "ready")
-        self.mux.reservations[identifier].touched = 0
-        response = await self.http.post(f"/v1/browser/sessions/{identifier}/heartbeat")
-        self.assertEqual(response.status_code, 410)
-        await until(lambda: identifier not in self.mux.reservations)
-        self.assertEqual(self.service.store.get(identifier)["state"], "expired")
+    async def test_idle_expiry_closes_browser_but_identity_can_reopen(self):
+        identifier = await self.reserve("idle")
+        headers = self.execution_headers(identifier)
+        with self.service.store.connection:
+            self.service.store.connection.execute(
+                "UPDATE executions SET expires_at=0 WHERE session_id=?", (identifier,)
+            )
+        self.assertEqual(
+            (
+                await self.http.post(
+                    f"/v1/browser/sessions/{identifier}/heartbeat", headers=headers
+                )
+            ).status_code,
+            410,
+        )
+        await until(lambda: identifier not in self.service.active)
+        self.assertEqual(self.service.store.get(identifier)["state"], "idle_timeout")
+        self.assertEqual(await self.reserve("idle"), identifier)
+        self.assertNotEqual(headers, self.execution_headers(identifier))
+
+    async def test_busy_operation_is_not_closed_at_idle_deadline(self):
+        identifier = await self.reserve("busy")
+        session = self.service.get(identifier)
+        async with session.lock:
+            with self.service.store.connection:
+                self.service.store.connection.execute(
+                    "UPDATE executions SET expires_at=0 WHERE session_id=?",
+                    (identifier,),
+                )
+            await asyncio.sleep(1.05)
+            self.assertEqual(self.service.store.get(identifier)["state"], "ready")
+            self.service.touch(identifier)
+        self.assertGreater(
+            self.service.store.get(identifier)["last_request_at"], time() - 1
+        )
+
+    async def test_restart_retains_profile_and_does_not_launch_browsers(self):
+        identifier = await self.reserve("restart")
+        profile = self.service.get(identifier).profile.root / "profile"
+        (profile / "retained").write_text("state")
+        previous = self.service.get(identifier).execution_id
+        await self.service.close()
+        self.service.store = SessionStore(self.service.root / "sessions.sqlite3")
+        await self.service.start()
+        self.assertEqual(self.service.active, {})
+        self.assertEqual(self.service.snapshot(identifier)["state"], "closed")
+        await self.reserve("restart")
+        self.assertNotEqual(previous, self.service.get(identifier).execution_id)
+        self.assertEqual((profile / "retained").read_text(), "state")
+
+    async def test_template_copied_once_and_retention_respects_pin_and_ownership(self):
+        (self.service.base_profile / "seed").write_text("template")
+        first = await self.reserve("copy")
+        profile = self.service.get(first).profile.root / "profile"
+        self.assertEqual((profile / "seed").read_text(), "template")
+        (profile / "seed").write_text("changed")
+        await self.service.release(first)
+        await self.reserve("copy")
+        self.assertEqual((profile / "seed").read_text(), "changed")
+        self.assertEqual((self.service.base_profile / "seed").read_text(), "template")
+        second = await self.reserve("pinned")
+        await self.service.release(second)
+        self.service.store.set_pinned(second, True, self.service.retention)
+        with self.service.store.connection:
+            self.service.store.connection.execute(
+                "UPDATE sessions SET retained_until=0"
+            )
+        await self.service.clean_expired_profiles()
+        self.assertTrue(profile.exists())
+        self.assertIsNone(self.service.store.session(second)["expired_at"])
+        await self.service.release(first)
+        with self.service.store.connection:
+            self.service.store.connection.execute(
+                "UPDATE sessions SET retained_until=0 WHERE id=?", (first,)
+            )
+        await self.service.clean_expired_profiles()
+        self.assertFalse(profile.exists())
         response = await self.http.post(
             "/v1/browser/sessions",
-            json={"id": identifier, "requestId": "old", "domain": "old.test"},
+            json={"id": first, "requestId": "expired", "domain": "site.test"},
         )
         self.assertEqual(response.status_code, 410)
 
-    async def test_inflight_operation_is_not_recycled_at_idle_deadline(self):
-        identifier = await self.reserve("busy")
-        await until(lambda: self.mux.reservations[identifier].state == "ready")
-        reservation = self.mux.reservations[identifier]
-        generation = reservation.profile.generation
-        async with reservation.lock:
-            reservation.touched = 0
-            await asyncio.sleep(1.05)
-            self.assertEqual(reservation.state, "ready")
-            self.assertEqual(reservation.profile.generation, generation)
-            self.mux.touch(identifier)
-        self.assertGreater(reservation.touched, monotonic() - 1)
-
-    async def test_restarted_service_rejects_old_id_without_reassignment(self):
-        identifier = await self.reserve("restart")
-        await until(lambda: self.mux.reservations[identifier].state == "ready")
-        await self.mux.close()
-        await self.mux.start()
-        response = await self.http.get(f"/v1/browser/sessions/{identifier}")
-        self.assertEqual(response.status_code, 410)
-        self.assertEqual(self.service.store.get(identifier)["state"], "interrupted")
-        self.assertEqual(self.mux.reservations, {})
+    async def test_legacy_profile_import_is_preserved_and_pinned(self):
+        await self.service.close()
+        self.service.store = SessionStore(self.service.root / "sessions.sqlite3")
+        self.service.store.delete_setting("legacy_profiles_imported")
+        legacy = self.service.root / "profiles" / "headless-1" / "routes" / "proxy1"
+        (legacy / "profile").mkdir(parents=True)
+        (legacy / "profile" / "Cookies").write_text("private")
+        (legacy / "session.json").write_text('{"cookies":[]}')
+        await self.service.start()
+        saved = self.service.store.saved()[0]
+        self.assertTrue(saved["pinned"])
+        self.assertEqual(saved["route"], "proxy1")
+        self.assertEqual(
+            (
+                self.service.root / "sessions" / saved["id"] / "profile" / "Cookies"
+            ).read_text(),
+            "private",
+        )
+        self.assertTrue((legacy / "profile" / "Cookies").exists())

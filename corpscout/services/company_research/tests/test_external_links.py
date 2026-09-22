@@ -110,7 +110,7 @@ class ExternalLinkCollectionTests(unittest.TestCase):
             ],
         )
         self.assertEqual(len(links), 1)
-        self.assertEqual(links[0].extraction_method, "crawl4ai_links")
+        self.assertEqual(links[0].extraction_method, "browser_links")
         self.assertIsNone(links[0].surrounding_text)
         self.assertEqual(links[0].page_region, "unknown")
 
@@ -121,7 +121,7 @@ class ExternalLinkCollectionTests(unittest.TestCase):
         )
         self.assertEqual([link.destination_domain for link in links], ["other.net"])
 
-    def test_crawl4ai_normalized_url_does_not_duplicate_dom_occurrences(self):
+    def test_browser_normalized_url_does_not_duplicate_dom_occurrences(self):
         links = collect_external_links(
             HTML,
             page(HTML, "https://source.example/about"),

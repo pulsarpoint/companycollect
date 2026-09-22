@@ -1,28 +1,22 @@
 """The browser/rendering setup used by the successful cleaned-HTML benchmarks."""
 
+from __future__ import annotations
+
 import asyncio
-import socket
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
-from cloakbrowser import launch_async
-from crawl4ai import (
-    AsyncWebCrawler,
-    BrowserConfig,
-    CacheMode,
-    CrawlerRunConfig,
-    CrawlResult,
-)
-
+from company_research.browser import BrowserUnavailable
+from company_research.browser_client import BrowserLeaseClient, BrowserPageClient
+from company_research.captures import page_inventory
 from company_research.external_links import collect_external_links, context_payload
+from company_research.human_control import HumanAssistanceExpired, HumanSession
 from company_research.models import Page, ResearchConfig
 from company_research.page_observations import public_response_headers
 from company_research.storage import content_hash, utc_now, write_json
-
-
-class BrowserUnavailable(RuntimeError):
-    """Fetching requires a new browser rather than another request on this session."""
 
 
 def browser_closed(message: str) -> bool:
@@ -38,71 +32,72 @@ def browser_closed(message: str) -> bool:
 
 
 @asynccontextmanager
-async def open_browser() -> AsyncIterator[AsyncWebCrawler]:
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
-        port = listener.getsockname()[1]
-    browser = await launch_async(
-        headless=True,
-        args=[
-            f"--remote-debugging-port={port}",
-            "--remote-debugging-address=127.0.0.1",
-        ],
-    )
+async def open_browser(
+    human: HumanSession | None = None,
+    *,
+    browser_client: BrowserLeaseClient | None = None,
+) -> AsyncIterator[BrowserPageClient]:
+    if browser_client is None:
+        raise ValueError("An external browser-service session is required")
+    tab = await browser_client.open_tab("site")
     try:
-        browser_config = BrowserConfig(
-            browser_mode="cdp",
-            cdp_url=f"http://127.0.0.1:{port}",
-            headers={"Accept-Language": "en-US,en;q=0.9"},
-            verbose=False,
-        )
-        async with AsyncWebCrawler(config=browser_config) as crawler:
-            yield crawler
+        await tab.focus()
+        yield tab
     finally:
-        await browser.close()
+        await tab.close()
 
 
 async def fetch_page(
-    crawler: AsyncWebCrawler, page: Page, config: ResearchConfig, output_dir: Path
+    crawler: BrowserPageClient,
+    page: Page,
+    config: ResearchConfig,
+    output_dir: Path,
+    human: HumanSession | None = None,
 ) -> tuple[str, list[dict]]:
-    run_config = CrawlerRunConfig(
-        cache_mode=CacheMode.BYPASS,
-        page_timeout=int(config.page_timeout_seconds * 1000),
-        delay_before_return_html=2.0,
-        check_robots_txt=config.check_robots_txt,
-        verbose=False,
-    )
     for attempt in range(1, config.page_attempts + 1):
         page.attempts += 1
         page.fetched_at = utc_now()
+        if human is not None:
+            human.notify(
+                "running",
+                {"current_url": page.requested_url, "reason": "Fetching page"},
+            )
         try:
             async with asyncio.timeout(config.page_timeout_seconds + 30):
-                results = await crawler.arun(url=page.requested_url, config=run_config)  # ty: ignore[missing-argument] -- Crawl4AI decorator typing.
-            # Crawl4AI returns a bare result on robots denial, a container normally.
-            result = (
-                results if isinstance(results, CrawlResult) else next(iter(results))
-            )
-            page.source_url = result.redirected_url or result.url
+                result = await crawler.navigate(
+                    page.requested_url,
+                    timeout_seconds=config.page_timeout_seconds,
+                    check_robots_txt=config.check_robots_txt,
+                )
+            page.source_url = result.url
             page.status_code = result.status_code
+            if human is not None:
+                result = await human.check_result(
+                    crawler, result, page.requested_url, output_dir, page.page_id
+                )
+                page.source_url = result.url
+                page.status_code = result.status_code
+            page.redirects = result.redirects
+            page.navigation_attempts = result.navigation_attempts
             write_json(
                 output_dir / "fetches" / f"{page.page_id}-{page.attempts}.json",
                 {
                     "url": page.requested_url,
                     "final_url": page.source_url,
-                    "success": result.success,
+                    "redirects": page.redirects,
+                    "navigation_attempts": page.navigation_attempts,
+                    "success": result.successful,
                     "status_code": result.status_code,
-                    "error": (result.error_message or "")[:1000],
+                    "error": (result.error or "")[:1000],
                     "metadata": result.metadata,
                     "html_representation": "rendered_html"
                     if result.html
                     else "cleaned_html",
-                    "response_headers": public_response_headers(result.response_headers)
-                    if result.response_headers is not None
-                    else None,
+                    "response_headers": public_response_headers(result.headers),
                 },
             )
             if (
-                result.success
+                result.successful
                 and result.status_code is not None
                 and 200 <= result.status_code < 400
                 and result.cleaned_html
@@ -117,10 +112,7 @@ async def fetch_page(
                     content_hash(html),
                     "fetched",
                 )
-                links = [
-                    *result.links.get("internal", []),
-                    *result.links.get("external", []),
-                ]
+                links = list(result.links)
                 write_json(output_dir / "fetches" / f"{page.page_id}-links.json", links)
                 link_html = result.html or html
                 link_html_file = f"link-html/{page.page_id}.html"
@@ -151,13 +143,36 @@ async def fetch_page(
                     }
                     for observation in observations
                 )
+                inventory, _ = page_inventory(
+                    link_html,
+                    page.source_url,
+                    html_kind="rendered_html" if result.html else "cleaned_html",
+                )
+                links.extend(
+                    {
+                        "href": link["url"],
+                        "text": link["anchor_text"],
+                        "context": link["context"]
+                        | {
+                            "source_url": page.source_url,
+                            "anchor_text": link["anchor_text"],
+                        },
+                    }
+                    for link in inventory
+                    if link["url"] is not None
+                    and re.search(
+                        r"\.(?:pdf|xlsx?|docx?)$",
+                        urlsplit(link["url"]).path.rstrip("/"),
+                        re.I,
+                    )
+                )
                 return html, links
             page.errors.append(
-                f"Fetch returned HTTP {result.status_code}; {result.error_message or 'no usable HTML'}"[
+                f"Fetch returned HTTP {result.status_code}; {result.error or 'no usable HTML'}"[
                     :1000
                 ]
             )
-            if browser_closed(result.error_message or ""):
+            if browser_closed(result.error or ""):
                 page.fetch_status = "failed"
                 raise BrowserUnavailable("Browser closed during page fetch")
             if (
@@ -166,6 +181,10 @@ async def fetch_page(
                 and result.status_code != 429
             ):
                 break
+        except HumanAssistanceExpired as error:
+            page.fetch_status = "failed"
+            page.errors.append(str(error))
+            raise
         except BrowserUnavailable:
             raise
         except Exception as error:  # Keep a failed page as a visible outcome and continue other candidates.

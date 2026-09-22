@@ -1,185 +1,106 @@
-"""Exclusive domain leases and cleanup, with the desktop boundary replaced."""
+"""Executions retain ownership until their browser cleanup finishes."""
 
 import asyncio
-import unittest
-from pathlib import Path
-from tempfile import TemporaryDirectory
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 
-import httpx
+from test_browser_api import BrowserAPITests, until
 
-from browser_service.api import create_app
-from browser_service.browser_sessions import BrowserSessions, PersistentBrowserSession
-from browser_service.runtime import BrowserService
+from browser_service.runtime import BrowserRuntimeSettings
 
 
-async def until(predicate):
-    async with asyncio.timeout(3):
-        while not predicate():
-            await asyncio.sleep(0.005)
-
-
-def ready_pool(pool):
-    """Replace process launch/persistence while exercising the real lease lifecycle."""
-    for session in pool.sessions.values():
-
-        async def start(*, restore_tabs=True, session=session):
-            session.state = "running"
-            session.wanted_running = True
-            session.context = SimpleNamespace(
-                pages=[], new_page=AsyncMock(), browser=None
+class BrowserLifecycleTests(BrowserAPITests):
+    async def test_cancelled_close_holds_capacity_until_cleanup_finishes(self):
+        self.service.configure_runtime(
+            BrowserRuntimeSettings(
+                max_browsers=1, idle_timeout_seconds=120, session_retention_days=7
             )
-
-        session.start = AsyncMock(side_effect=start)
-        session.save = AsyncMock()
-        # close_browser itself still clears the actual session state.
-
-
-class BrowserPoolTests(unittest.IsolatedAsyncioTestCase):
-    async def asyncSetUp(self):
-        self.temporary = TemporaryDirectory()
-        self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
-        self.pool = BrowserSessions(self.root / "profiles", 2)
-        ready_pool(self.pool)
-        await self.pool.start()
-        self.addAsyncCleanup(self.pool.close)
-
-    async def test_exclusive_lease_includes_pause_and_recycle(self):
-        release = asyncio.Event()
-        cleanup_entered, cleanup_release = asyncio.Event(), asyncio.Event()
-        acquired = {}
-
-        async def scan(request):
-            async with self.pool.lease(request, request + ".test") as session:
-                acquired[request] = session
-                await release.wait()
-
-        first = asyncio.create_task(scan("one"))
-        second = asyncio.create_task(scan("two"))
-        await until(lambda: len(acquired) == 2)
-        self.assertIsNot(acquired["one"], acquired["two"])
-        third = asyncio.create_task(scan("three"))
-        await asyncio.sleep(0.25)
-        self.assertNotIn("three", acquired)
-        for session in self.pool.sessions.values():
-            self.assertEqual(session.start.await_count, 1)  # No restart during pause.
+        )
+        identifier = await self.reserve("one")
+        profile = self.service.get(identifier).profile
+        entered, finish = asyncio.Event(), asyncio.Event()
 
         async def close_stack():
-            cleanup_entered.set()
-            await cleanup_release.wait()
+            entered.set()
+            await finish.wait()
 
-        for session in self.pool.sessions.values():
-            session.stack.aclose = close_stack
-        release.set()
-        await cleanup_entered.wait()
-        await asyncio.sleep(0.25)
-        self.assertNotIn("three", acquired)
-        self.assertTrue(
-            all(s.recycling and s.request_id for s in self.pool.sessions.values())
-        )
-        cleanup_release.set()
-        await asyncio.wait_for(asyncio.gather(first, second, third), 3)
-        self.assertTrue(all(s.request_id is None for s in self.pool.sessions.values()))
-        self.assertEqual(
-            sum(s.start.await_count for s in self.pool.sessions.values()), 5
-        )
-
-    async def test_waiter_cancellation_does_not_touch_profiles(self):
-        async with (
-            self.pool.lease("one", "one.test"),
-            self.pool.lease("two", "two.test"),
-        ):
-
-            async def wait_for_profile():
-                async with self.pool.lease("cancelled", "cancelled.test"):
-                    self.fail("Busy profile was reused")
-
-            waiter = asyncio.create_task(wait_for_profile())
-            await asyncio.sleep(0.02)
-            waiter.cancel()
-            with self.assertRaises(asyncio.CancelledError):
-                await waiter
-            self.assertEqual(
-                [s.request_id for s in self.pool.sessions.values()], ["one", "two"]
+        profile.stack.aclose = close_stack
+        closing = asyncio.create_task(
+            self.http.delete(
+                f"/v1/browser/sessions/{identifier}",
+                headers=self.execution_headers(identifier),
             )
-
-    async def test_failure_and_cancellation_recycle_before_release(self):
-        with self.assertRaisesRegex(RuntimeError, "scan failed"):
-            async with self.pool.lease("failed", "failed.test") as session:
-                raise RuntimeError("scan failed")
-        self.assertIsNone(session.request_id)
-        self.assertEqual(session.start.await_count, 2)
-        entered, cleanup_entered, cleanup_release = (asyncio.Event() for _ in range(3))
-
-        async def scan():
-            async with self.pool.lease("cancelled", "cancelled.test") as assigned:
-
-                async def close_stack():
-                    cleanup_entered.set()
-                    await cleanup_release.wait()
-
-                assigned.stack.aclose = close_stack
-                entered.set()
-                await asyncio.Event().wait()
-
-        task = asyncio.create_task(scan())
-        await entered.wait()
-        task.cancel()
-        await cleanup_entered.wait()
-        task.cancel()  # Service shutdown may arrive during operator cancellation.
-        await asyncio.sleep(0.02)
-        self.assertFalse(task.done())
-        self.assertTrue(
-            any(s.request_id == "cancelled" for s in self.pool.sessions.values())
         )
-        cleanup_release.set()
+        await asyncio.wait_for(entered.wait(), 2)
+        closing.cancel()
         with self.assertRaises(asyncio.CancelledError):
-            await task
-        self.assertTrue(all(s.request_id is None for s in self.pool.sessions.values()))
-
-    async def test_failed_save_quarantines_profile_and_shutdown_never_reopens(self):
-        with self.assertLogs("browser_service.browser_sessions", level="WARNING"):
-            async with self.pool.lease("one", "one.test") as first:
-                first.save.side_effect = RuntimeError("disk full")
-        self.assertEqual(first.state, "error")
-        self.assertIsNone(first.context)
-        self.assertEqual(first.start.await_count, 1)
-        first.save.side_effect = None
-        async with self.pool.lease("two", "two.test") as second:
-            self.assertIsNot(first, second)
-            self.pool.closing = True
-        self.assertEqual(second.state, "stopped")
-        self.assertEqual(second.start.await_count, 1)
-
-    async def test_leased_profile_rejects_disruptive_api_controls(self):
-        service = BrowserService(
-            self.root / "service", count=0, max_pending=5, idle_timeout=120
+            await closing
+        self.assertEqual(self.service.store.get(identifier)["state"], "stopping")
+        response = await self.http.post(
+            "/v1/browser/sessions", json={"requestId": "two", "domain": "two.test"}
         )
-        service.pool = self.pool
-        service.multiplexer.pool = self.pool
-        async with self.pool.lease("one", "one.test") as first:
-            first.schedule_restart()
-            self.assertIsNone(first.restart_task)
-            original_start = first.start
-            first.start = PersistentBrowserSession.start.__get__(first)
-            async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(create_app(service, api_token=None)),
-                base_url="http://test",
-            ) as client:
-                for suffix, payload in [
-                    ("start", None),
-                    ("stop", None),
-                    ("tabs", {"url": "https://example.test"}),
-                ]:
-                    response = await client.post(
-                        f"/v1/browser-sessions/{first.id}/{suffix}", json=payload
+        self.assertEqual(response.status_code, 503)
+        finish.set()
+        await until(lambda: identifier not in self.service.active)
+        self.assertEqual(self.service.store.get(identifier)["state"], "closed")
+        await self.reserve("two")
+
+    async def test_close_waits_for_operation_and_rejects_new_commands(self):
+        identifier = await self.reserve("busy")
+        session = self.service.get(identifier)
+        headers = self.execution_headers(identifier)
+        async with session.lock:
+            closing = asyncio.create_task(
+                self.http.delete(f"/v1/browser/sessions/{identifier}", headers=headers)
+            )
+            await until(
+                lambda: self.service.store.get(identifier)["state"] == "stopping"
+            )
+            self.assertFalse(closing.done())
+            self.assertEqual(
+                (
+                    await self.http.post(
+                        f"/v1/browser/sessions/{identifier}/heartbeat", headers=headers
                     )
-                    self.assertEqual(response.status_code, 409)
-                snapshot = (await client.get("/v1/browser-sessions")).json()[
-                    "sessions"
-                ][0]
-                self.assertEqual(snapshot["request_id"], "one")
-                self.assertEqual(snapshot["domain"], "one.test")
-            first.start = original_start
+                ).status_code,
+                409,
+            )
+        self.assertEqual((await closing).status_code, 200)
+
+    async def test_cleanup_failure_keeps_ownership_until_retry(self):
+        identifier = await self.reserve("cleanup")
+        profile = self.service.get(identifier).profile
+        profile.stack.aclose = AsyncMock(side_effect=RuntimeError("cleanup failed"))
+        with self.assertRaisesRegex(RuntimeError, "cleanup failed"):
+            await self.service.release(identifier)
+        self.assertEqual(self.service.store.get(identifier)["state"], "stopping")
+        self.assertIn(identifier, self.service.active)
+        profile.stack.aclose.side_effect = None
+        await self.service.release(identifier)
+        self.assertNotIn(identifier, self.service.active)
+
+    async def test_start_failure_closes_execution_and_preserves_identity(self):
+        identifier = uuid4().hex
+        with patch(
+            "browser_service.browser_sessions.PersistentBrowserSession.start",
+            AsyncMock(side_effect=RuntimeError("launch failed")),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "launch failed"):
+                await self.service.claim(
+                    identifier=identifier, request_id="one", domain="one.test"
+                )
+        self.assertEqual(self.service.store.get(identifier)["state"], "failed")
+        self.assertIsNotNone(self.service.store.session(identifier))
+        self.assertNotIn(identifier, self.service.active)
+
+    async def test_request_owned_browser_rejects_manual_disruptive_controls(self):
+        identifier = await self.reserve("crawler")
+        for suffix, payload in (
+            ("start", {}),
+            ("stop", {"executionId": self.service.get(identifier).execution_id}),
+            ("tabs", {"url": "https://example.test"}),
+        ):
+            response = await self.http.post(
+                f"/v1/browser-sessions/{identifier}/{suffix}", json=payload
+            )
+            self.assertEqual(response.status_code, 409, response.text)

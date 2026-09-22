@@ -19,15 +19,19 @@ company_research_install_environment:
 company_research_runtime_environment:
   HOME: "{{ company_research_state_dir }}"
   XDG_CACHE_HOME: "{{ company_research_cache_dir }}"
-  CLOAKBROWSER_CACHE_DIR: "{{ company_research_cache_dir }}/cloakbrowser"
-  CLOAKBROWSER_AUTO_UPDATE: "false"
   PYTHONUNBUFFERED: "1"
   PYTHONDONTWRITEBYTECODE: "1"
 
 company_research_transport: both
 company_research_listen_host: "0.0.0.0"
 company_research_port: 8080
-company_research_concurrency: 1
+company_research_concurrency: 2
+company_research_human_enabled: true
+company_research_challenge_agent_enabled: true
+company_research_challenge_agent_max_runs: 3
+company_research_manual_concurrency: 2
+company_research_browser_api_url: http://127.0.0.1:8081
+company_research_browser_api_token: "{{ lookup('ansible.builtin.env', 'BROWSER_API_TOKEN') }}"
 company_research_max_pending: 100
 company_research_nats_stream: COMPANY_CRAWL
 company_research_nats_subject: company.crawl.requests

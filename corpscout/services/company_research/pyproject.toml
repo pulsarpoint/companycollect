@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "company-research"
-version = "0.29.0"
+version = "0.40.0"
 description = "Company source-page collection with deferred offline analysis"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -13,8 +13,6 @@ dependencies = [
     "jsonschema>=4.23,<5",
     "click>=8.1,<9",
     "clickhouse-driver>=0.2.9,<0.3",
-    "cloakbrowser>=0.5.10,<0.6",
-    "crawl4ai>=0.9.3,<0.10",
     "defusedxml>=0.7,<1",
     "httpx>=0.28,<1",
     "pydantic>=2.12,<3",
@@ -29,6 +27,7 @@ mcp = ["mcp>=1.28,<2"]
 service = [
     "fastapi>=0.115,<1",
     "uvicorn>=0.42,<1",
+    "websockets>=15,<17",
     "nats-py>=2.10,<3",
     "boto3>=1.40,<2",
 ]
@@ -44,6 +43,12 @@ company-technology-mcp = "company_research.catalog_mcp:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/company_research"]
+
+[dependency-groups]
+test = ["corpscout-browser-service"]
+
+[tool.uv.sources]
+corpscout-browser-service = { path = "../browser_service" }
 
 [tool.ruff]
 target-version = "py312"

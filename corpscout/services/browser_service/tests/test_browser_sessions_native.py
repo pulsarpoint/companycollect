@@ -7,8 +7,9 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from uuid import uuid4
 
-from browser_service.browser_sessions import BrowserSessions
+from browser_service.runtime import BrowserRuntimeSettings, BrowserService
 from browser_service.virtual_desktop import ACTIVE_DESKTOPS
 
 
@@ -38,18 +39,32 @@ class SavedBrowserNativeTests(unittest.IsolatedAsyncioTestCase):
         thread.start()
         try:
             with TemporaryDirectory() as directory:
-                pool = BrowserSessions(Path(directory), 2)
+                service = BrowserService(
+                    Path(directory),
+                    settings=BrowserRuntimeSettings(
+                        max_browsers=2,
+                        idle_timeout_seconds=120,
+                        session_retention_days=7,
+                    ),
+                )
                 try:
-                    await pool.start()
-                    first, second = pool.sessions.values()
+                    await service.start()
+                    self.assertEqual(ACTIVE_DESKTOPS, {})
+                    first_id, second_id = uuid4().hex, uuid4().hex
+                    first_session = await service.claim(
+                        identifier=first_id,
+                        request_id="one",
+                        domain="fixture",
+                        headless=False,
+                    )
+                    second_session = await service.claim(
+                        identifier=second_id,
+                        request_id="two",
+                        domain="fixture",
+                        headless=False,
+                    )
+                    first, second = first_session.profile, second_session.profile
                     self.assertEqual(len(ACTIVE_DESKTOPS), 2)
-                    self.assertEqual(
-                        {item.owner for item in ACTIVE_DESKTOPS.values()},
-                        {"browser-1", "browser-2"},
-                    )
-                    self.assertEqual(
-                        [first.state, second.state], ["running", "running"]
-                    )
                     url = f"http://127.0.0.1:{server.server_port}"
                     tab_id = await first.open_tab(url + "/login")
                     page = first.tabs[tab_id].page
@@ -86,74 +101,47 @@ class SavedBrowserNativeTests(unittest.IsolatedAsyncioTestCase):
                     await writer.wait_closed()
                     previous_generation = first.generation
                     previous_desktop = first.desktop.id
-                    await first.stop()
+                    await service.release(first_id)
                     self.assertNotIn(previous_desktop, ACTIVE_DESKTOPS)
                     self.assertEqual(len(ACTIVE_DESKTOPS), 1)
-                    await first.start()
+                    # The same profile can move from headed to headless and back.
+                    first_session = await service.claim(
+                        identifier=first_id,
+                        request_id="reopened",
+                        domain="fixture",
+                        headless=True,
+                    )
+                    first = first_session.profile
                     self.assertNotEqual(first.generation, previous_generation)
-                    pages = [
-                        tab.page
-                        for tab in first.tabs.values()
-                        if tab.page.url.startswith(url)
-                    ]
-                    self.assertEqual(len(pages), 2)
-                    await pages[0].wait_for_load_state("domcontentloaded")
-                    self.assertEqual(
-                        await pages[0].evaluate("localStorage.getItem('fixture')"),
-                        "retained",
-                    )
-                    self.assertTrue(
-                        any(
-                            cookie["name"] == "fixture_session"
-                            for cookie in await first.context.cookies()
-                        )
-                    )
-                    # Closing the browser window must leave a restartable session.
-                    await first.set_auto_restart(False)
-                    await first.save()
-                    cdp = await first.context.browser.new_browser_cdp_session()
-                    await cdp.send("Browser.close")
-                    async with asyncio.timeout(5):
-                        while first.state != "error":
-                            await asyncio.sleep(0.02)
-                    self.assertIsNone(first.generation)
-                    await first.start()
-                    self.assertEqual(first.state, "running")
-                    await first.set_auto_restart(True)
-                    generation = first.generation
-                    self.assertEqual(len(first.context.pages), 2)
-                    await first.context.pages[0].close()
-                    await asyncio.sleep(1.2)
-                    self.assertEqual(first.state, "running")
-                    self.assertEqual(first.generation, generation)
-                    await first.context.pages[0].close()
-                    async with asyncio.timeout(30):
-                        while (
-                            first.state != "running" or first.generation == generation
-                        ):
-                            await asyncio.sleep(0.05)
-                    self.assertEqual(len(first.context.pages), 1)
-                    self.assertEqual(first.context.pages[0].url, "about:blank")
-                    self.assertTrue(
-                        any(
-                            cookie["name"] == "fixture_session"
-                            for cookie in await first.context.cookies()
-                        )
-                    )
-                    page = first.context.pages[0]
-                    await page.goto(url + "/second")
+                    self.assertIsNone(first.desktop.vnc_port)
+                    page = await first.context.new_page()
+                    await page.goto(url + "/check")
                     self.assertEqual(
                         await page.evaluate("localStorage.getItem('fixture')"),
                         "retained",
                     )
-                    await page.close()
-                    await first.stop()
-                    await asyncio.sleep(1.2)
-                    self.assertEqual(first.state, "stopped")
-                    self.assertIsNone(first.restart_task)
-                    self.assertIsNone(first.context)
+                    self.assertTrue(
+                        any(
+                            c["name"] == "fixture_session"
+                            for c in await first.context.cookies()
+                        )
+                    )
+                    await service.release(first_id)
+                    first_session = await service.claim(
+                        identifier=first_id,
+                        request_id="headed-again",
+                        domain="fixture",
+                        headless=False,
+                    )
+                    self.assertIsNotNone(first_session.profile.desktop.vnc_port)
+                    self.assertTrue(
+                        any(
+                            c["name"] == "fixture_session"
+                            for c in await first_session.profile.context.cookies()
+                        )
+                    )
                 finally:
-                    await pool.close()
+                    await service.close()
                 self.assertEqual(ACTIVE_DESKTOPS, {})
         finally:
             await asyncio.to_thread(server.shutdown)

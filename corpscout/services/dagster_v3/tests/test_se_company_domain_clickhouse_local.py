@@ -12,6 +12,7 @@ from dagster_v3.defs.se_company.domain.common_crawl import common_crawl_live_sql
 from dagster_v3.defs.se_company.domain.esef import esef_live_sql
 from dagster_v3.defs.se_company.domain.wikidata import wikidata_live_sql
 from dagster_v3.defs.se_company.domain.suggestions import TARGET, source_scan
+from dagster_v3.defs.sweden_company.companies_current import DOMAINS_SET
 from tests.clickhouse_local import clickhouse_local_command, render
 
 pytestmark = pytest.mark.integration
@@ -45,6 +46,26 @@ INSERT INTO corpscout.company_domains (country_code,company_id,root_domain,websi
 VALUES ('SE','5561552760','legacy.se','https://legacy.se','legacy.se','confirmed_related','operator','2026-09-13 00:00:00',1,'2026-09-13 00:00:00','2026-09-13 00:00:00','2026-09-13 00:00:00');
 """
     return existing + seed + "\n" + (MIGRATIONS / "000408_corpscout_se_company_domain_entity.up.sql").read_text().split("CREATE ROLE")[0] + (MIGRATIONS / "000417_corpscout_se_company_domain_brave.up.sql").read_text() + SCHEMA
+
+
+@pytest.mark.parametrize("join_use_nulls", [0, 1])
+def test_company_domain_presence_includes_unverified_sources_and_live_reviews(join_use_nulls):
+    statements = [f"SET join_use_nulls={join_use_nulls};", setup_sql(), """
+INSERT INTO corpscout.se_company_domain
+    (company_id, root_domain, sources, source_confidences, source_record_ids, source_urls, confidence_bases, association, active, inactive_reason, folded_at)
+VALUES
+    ('5561552761', 'brave.se', ['brave'], [0.5], ['answer'], [''], ['source'], 'uncertain', 0, 'unverified', '2026-09-20 00:00:00'),
+    ('5561552762', 'gone.se', [], [], [], [], [], 'uncertain', 0, 'withdrawn', '2026-09-20 00:00:00'),
+    ('5561552763', 'unrelated.se', ['brave'], [0.5], ['answer'], [''], ['source'], 'not_connected', 0, 'rejected', '2026-09-20 00:00:00'),
+    ('5561552764', 'rejected.se', ['brave'], [0.5], ['answer'], [''], ['source'], 'uncertain', 0, 'unverified', '2026-09-20 00:00:00');
+INSERT INTO corpscout.se_company_domain_rule VALUES
+    ('5561552764', 'rejected.se', 'rejected', 0, 'reviewer', '', '', '2026-09-20 00:01:00');
+""", f"SELECT DISTINCT company_id FROM ({DOMAINS_SET}) ORDER BY company_id FORMAT JSONCompactEachRow;"]
+    result = subprocess.run(clickhouse_local_command(), input="\n".join(statements), capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stderr
+    assert [json.loads(line) for line in result.stdout.splitlines() if line.strip()] == [
+        [COMPANY_ID], ["5561552761"],
+    ]
 
 
 @pytest.mark.parametrize("join_use_nulls", [0, 1])
