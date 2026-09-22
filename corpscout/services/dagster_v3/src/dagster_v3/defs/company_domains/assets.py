@@ -20,6 +20,7 @@ from dagster_v3.defs.common.clickhouse_queue import (
 )
 from dagster_v3.defs.common.processing import ProcessingResource, render_query
 from dagster_v3.defs.company_domains.browser import (
+    DEFAULT_BROWSER_API_URL,
     ROUTES,
     BraveBrowserResource,
     BraveSearchResult,
@@ -415,7 +416,7 @@ defs = dg.Definitions(
     jobs=[company_brave_search_job],
     resources={
         "company_brave_browser": BraveBrowserResource(
-            api_url=dg.EnvVar("BROWSER_API_URL"),
+            api_url=os.getenv("BROWSER_API_URL") or DEFAULT_BROWSER_API_URL,
             api_token=dg.EnvVar("BROWSER_API_TOKEN"),
         ),
         "processing": ProcessingResource(postgres_url=dg.EnvVar("PROCESSING_PG_URL")),

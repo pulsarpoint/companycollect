@@ -50,6 +50,10 @@ class BraveSearchResult:
     challenge_runs: list[dict] = field(default_factory=list)
 
 
+# browser-service on the crawler VM, reached by its Tailscale MagicDNS name.
+DEFAULT_BROWSER_API_URL = "http://crawler:8081"
+
+
 class BraveBrowserResource(dg.ConfigurableResource):
     """Bounded HTTP workers drawing from one lazy company iterator."""
 
