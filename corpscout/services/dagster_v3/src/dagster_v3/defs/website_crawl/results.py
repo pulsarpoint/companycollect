@@ -1,0 +1,414 @@
+"""Bounded crawl processing with recoverable submissions and per-type result storage."""
+
+import hashlib
+import json
+import os
+import re
+from datetime import UTC, datetime, timedelta
+from time import monotonic, sleep
+from typing import Literal
+from uuid import UUID
+
+import dagster as dg
+from dagster_clickhouse import ClickhouseResource
+from dlt.sources.helpers.requests import Session
+from pydantic import Field, field_validator, model_validator
+
+from dagster_v3.defs.common.processing import ProcessingResource
+from dagster_v3.defs.website_crawl.dispatch import (
+    INPUTS_BY_TYPE,
+    crawl_payload,
+    send_crawl,
+)
+
+RESULTS_BY_TYPE = {
+    "full": "corpscout.website_full_crawl_results",
+    "jobs": "corpscout.website_jobs_crawl_results",
+    "site_info": "corpscout.website_site_info_results",
+}
+SUBMISSIONS = "corpscout.website_crawl_submissions"
+
+
+class CrawlResultsConfig(dg.Config):
+    domains: list[str] = Field(default_factory=list, max_length=100)
+    batch_id: str | None = Field(
+        default=None, description="Reuse this UUID to recover a manual batch."
+    )
+    batch_size: int = Field(default=25, ge=1, le=100)
+    max_batches: int = Field(default=1, ge=1, le=100)
+    max_in_flight: int = Field(default=3, ge=1, le=20)
+    bucket: int | None = Field(default=None, ge=0, le=255)
+    refresh_interval_days: int = Field(default=30, ge=1, le=3650)
+    force_refresh: bool = False
+    challenge_agent_model: str = Field(
+        pattern=r"^(deepseek-flash|z-ai/glm-5[.]3-flash)$"
+    )
+    challenge_agent_max_runs: int = Field(ge=3, le=1000)
+    api: str = Field(pattern=r"^(deepseek|openrouter)$")
+    model: str = Field(min_length=1, max_length=200)
+    max_pages: int = Field(ge=1, le=500)
+    max_model_calls: int = Field(ge=1, le=1000)
+    page_selection: Literal["saved", "instructions", "basic_info"]
+    instructions: str | None = Field(default=None, max_length=20000)
+    crawler_config: dict = Field(
+        default_factory=dict,
+        description="Additional ResearchConfig settings. Required model/limits are separate fields. No credentials.",
+    )
+
+    @model_validator(mode="after")
+    def validate_options(self):
+        if not self.model.strip():
+            raise ValueError("model must not be blank")
+        if self.page_selection == "instructions":
+            if self.instructions is None or not self.instructions.strip():
+                raise ValueError("custom page selection requires instructions")
+        elif self.instructions is not None:
+            raise ValueError("instructions require page_selection=instructions")
+        if self.page_selection == "basic_info" and self.max_pages != 1:
+            raise ValueError("basic info uses max_pages=1")
+        if {"model", "max_pages", "max_model_calls"}.intersection(self.crawler_config):
+            raise ValueError(
+                "set required model and limits using their explicit config fields"
+            )
+        return self
+
+    wait_timeout_seconds: float = Field(default=1800, gt=0, le=86400)
+    poll_interval_seconds: float = Field(default=2, gt=0, le=30)
+
+    @field_validator("batch_id")
+    @classmethod
+    def valid_batch_id(cls, value: str | None) -> str | None:
+        return str(UUID(value)) if value is not None else None
+
+    @field_validator("domains")
+    @classmethod
+    def valid_domains(cls, values: list[str]) -> list[str]:
+        if any(
+            len(value) > 253 or not re.fullmatch(r"[a-z0-9][a-z0-9.-]*[a-z0-9]", value)
+            for value in values
+        ):
+            raise ValueError("domains must be saved lowercase hostnames")
+        return sorted(set(values))
+
+
+# company-research crawl API on the crawler VM, reached by its Tailscale MagicDNS name.
+DEFAULT_CRAWLER_API_URL = "http://crawler:8080"
+
+def effective_payload(
+    row: dict, crawl_type: str, batch_id: str, config: CrawlResultsConfig
+) -> tuple[dict, str]:
+    if (crawl_type == "site_info") != (config.page_selection == "basic_info"):
+        raise ValueError(
+            "basic_info page selection is required only for the basic-info results asset"
+        )
+    payload = crawl_payload(row, crawl_type, batch_id)
+    for name in ("challenge_agent_model", "challenge_agent_max_runs", "api"):
+        payload[name] = getattr(config, name)
+    payload["config"] = {
+        **payload.get("config", {}),
+        **config.crawler_config,
+        "model": config.model,
+        "max_pages": config.max_pages,
+        "max_model_calls": config.max_model_calls,
+    }
+    if config.page_selection == "instructions":
+        payload.pop("crawl", None)
+        payload["instructions"] = config.instructions
+    # Operational settings do not invalidate content. Every content/model setting does.
+    semantic = {
+        key: value
+        for key, value in payload.items()
+        if key
+        not in {
+            "request_id",
+            "interactive",
+            "challenge_agent_model",
+            "challenge_agent_max_runs",
+        }
+    }
+    work_key = hashlib.sha256(
+        json.dumps([crawl_type, semantic], sort_keys=True).encode()
+    ).hexdigest()
+    return payload, work_key
+
+
+def read_rows(client, sql: str, params: dict) -> list[dict]:
+    values, columns = client.execute(sql, params, with_column_types=True)
+    names = [column[0] for column in columns]
+    return [dict(zip(names, value, strict=True)) for value in values]
+
+
+def result_record(submission: dict, job: dict, result: dict) -> dict:
+    if job["request_id"] != submission["request_id"]:
+        raise ValueError("Crawler returned a different request identity")
+    crawl = result.get("crawl", result)
+    if not isinstance(crawl, dict):
+        raise ValueError("Crawler result has no crawl object")
+    receipt = (job.get("s3_event") or {}).get("result")
+    info = crawl.get("site_info")
+    state = job["state"]
+    status = crawl.get("status") or job.get("crawl_status") or ""
+    error = job.get("error") or ""
+    successful = (
+        state == "completed" and status in {"finished", "skip_crawling"} and not error
+    )
+    if submission["crawl_type"] == "site_info":
+        successful = successful and isinstance(info, dict) and bool(info)
+    observations = [
+        document["input"]["observations"]
+        for document in result.get("documents", [])
+        if "observations" in document.get("input", {})
+    ]
+    return {
+        "domain": submission["domain"],
+        "website_url": json.loads(submission["request_json"])["url"],
+        "request_id": submission["request_id"],
+        "attempt": job["attempt"],
+        "input_revision": submission["input_revision"],
+        "work_key": submission["work_key"],
+        "run_id": submission["run_id"],
+        "state": state,
+        "crawl_status": status,
+        "successful": successful,
+        "started_at": datetime.fromisoformat(job["started_at"])
+        if job.get("started_at")
+        else None,
+        "finished_at": datetime.fromisoformat(job["finished_at"]),
+        "site_info": json.dumps(info, ensure_ascii=False) if info is not None else None,
+        "page_observations": json.dumps(observations, ensure_ascii=False),
+        "pages": json.dumps(crawl.get("pages", []), ensure_ascii=False),
+        "model_usage": json.dumps(crawl.get("usage", {})),
+        "error": error,
+        "s3_path": f"{receipt['bucket']}/{receipt['key']}" if receipt else "",
+        "s3_state": job["s3_state"],
+    }
+
+
+def process_crawls(
+    context: dg.AssetExecutionContext,
+    config: CrawlResultsConfig,
+    clickhouse: ClickhouseResource,
+    processing: ProcessingResource,
+    crawl_type: Literal["full", "jobs", "site_info"],
+) -> dg.MaterializeResult:
+    if (crawl_type == "site_info") != (config.page_selection == "basic_info"):
+        raise ValueError(
+            "basic_info page selection is required only for the basic-info results asset"
+        )
+    table = RESULTS_BY_TYPE[crawl_type]
+    input_table = INPUTS_BY_TYPE[crawl_type] + "_current"
+    batch_id = config.batch_id or context.run.root_run_id or context.run.run_id
+    cutoff = datetime.now(UTC) - timedelta(days=config.refresh_interval_days)
+    metadata = {
+        "input_table": input_table,
+        "result_table": table,
+        "batch_id": batch_id,
+        "completed": 0,
+        "unsuccessful": 0,
+        "fresh_skipped": 0,
+        "recovered": 0,
+    }
+    url = os.environ.get("CRAWLER_API_URL", "").strip() or DEFAULT_CRAWLER_API_URL
+    token = os.environ.get("CRAWLER_API_TOKEN", "").strip()
+    if not token:
+        raise ValueError("Configure CRAWLER_API_TOKEN on the Dagster host")
+    with (
+        processing.get_store() as store,
+        clickhouse.get_connection() as client,
+        Session(raise_for_status=False) as http,
+    ):
+        # The direct PostgreSQL session fences all runs of this crawl type, including
+        # retries. CH stores immutable receipts/results, never mutable ownership.
+        lock_name = "website_crawl:" + crawl_type
+        with store.transaction() as cursor:
+            cursor.execute(
+                "SELECT pg_try_advisory_lock(hashtextextended(%s, 0)) AS acquired",
+                (lock_name,),
+            )
+            if not cursor.fetchone()["acquired"]:
+                raise ValueError(
+                    "A processor for this crawl type is already running; retry after it finishes"
+                )
+        try:
+            for relation in (table, table + "_latest_success", input_table, SUBMISSIONS):
+                if client.execute(f"EXISTS TABLE {relation}") != [(1,)]:
+                    raise ValueError(
+                        f"Apply ClickHouse migration 000430 before processing: {relation}"
+                    )
+            http.headers["Authorization"] = f"Bearer {token}"
+            params = {
+                "type": crawl_type,
+                "limit": config.batch_size * config.max_batches,
+            }
+            selected = ""
+            if config.domains:
+                params["domains"] = tuple(config.domains)
+                selected = " AND domain IN %(domains)s"
+                present = client.execute(
+                    f"SELECT domain FROM {input_table} WHERE domain IN %(domains)s",
+                    params,
+                )
+                if len(present) != len(config.domains):
+                    raise ValueError(
+                        "Some selected inputs no longer exist; refresh the list"
+                    )
+            if config.bucket is not None:
+                params["bucket"] = config.bucket
+                selected += " AND toUInt16(cityHash64(domain) % 256) = %(bucket)s"
+            pending_sql = f"""SELECT * FROM {SUBMISSIONS} FINAL
+                WHERE crawl_type=%(type)s AND request_id NOT IN (SELECT request_id FROM {table} FINAL)"""
+            pending = read_rows(
+                client,
+                pending_sql
+                + selected
+                + " ORDER BY submitted_at, domain LIMIT %(limit)s",
+                params,
+            )
+            metadata["recovered"] = len(pending)
+            # Pending receipts are resumed before admitting new work. Their payload is
+            # immutable even if the input row or this run's overrides have changed.
+            processed = 0
+
+            def collect(submissions: list[dict]) -> None:
+                nonlocal processed
+                for start in range(0, len(submissions), config.max_in_flight):
+                    group = submissions[start : start + config.max_in_flight]
+                    for item in group:
+                        send_crawl(
+                            http, url, json.loads(item["request_json"]), validate=False
+                        )
+                    waiting = {item["request_id"]: item for item in group}
+                    deadline = monotonic() + config.wait_timeout_seconds
+                    while waiting:
+                        for request_id, item in list(waiting.items()):
+                            response = http.get(
+                                f"{url.rstrip('/')}/v1/crawls/{request_id}",
+                                timeout=(10, 30),
+                                allow_redirects=False,
+                            )
+                            response.raise_for_status()
+                            job = response.json()
+                            if job.get("request_id") != request_id:
+                                raise ValueError(
+                                    "Crawler returned a different request identity"
+                                )
+                            if (
+                                job["state"] not in {"completed", "failed", "cancelled"}
+                                or job["s3_state"] == "pending"
+                            ):
+                                continue
+                            response = http.get(
+                                f"{url.rstrip('/')}/v1/crawls/{request_id}/result",
+                                timeout=(10, 60),
+                                allow_redirects=False,
+                            )
+                            response.raise_for_status()
+                            record = result_record(item, job, response.json())
+                            # Async inserts are acknowledged only after flush. An ambiguous
+                            # retry replaces the same request/attempt instead of double counting.
+                            client.execute(
+                                f"INSERT INTO {table} ({', '.join(record)}) VALUES",
+                                [record],
+                                settings={
+                                    "async_insert": 1,
+                                    "wait_for_async_insert": 1,
+                                },
+                            )
+                            metadata["completed"] += int(record["successful"])
+                            metadata["unsuccessful"] += int(not record["successful"])
+                            processed += 1
+                            context.log.info(
+                                "Stored crawl domain=%s type=%s request=%s state=%s successful=%s",
+                                item["domain"],
+                                crawl_type,
+                                request_id,
+                                job["state"],
+                                record["successful"],
+                            )
+                            del waiting[request_id]
+                        if waiting:
+                            if monotonic() >= deadline:
+                                raise TimeoutError(
+                                    "Crawls are still pending; materialize this results asset again to recover existing requests"
+                                )
+                            sleep(config.poll_interval_seconds)
+
+            recovered_domains = {item["domain"] for item in pending}
+            collect(pending)
+            remaining = params["limit"] - processed
+            cursor_filter = ""
+            while remaining > 0:
+                rows = read_rows(
+                    client,
+                    f"""SELECT * FROM {input_table}
+                    WHERE enabled {selected} {cursor_filter}
+                    AND domain NOT IN (SELECT domain FROM ({pending_sql}))
+                    ORDER BY priority DESC, domain ASC LIMIT 500""",
+                    params,
+                )
+                if not rows:
+                    break
+                domains = tuple(row["domain"] for row in rows)
+                successes = client.execute(
+                    f"SELECT domain, work_key FROM {table}_latest_success WHERE domain IN %(domains)s AND finished_at >= %(cutoff)s",
+                    {"domains": domains, "cutoff": cutoff},
+                )
+                fresh = set(successes)
+                # Do not repeat a domain in a retried/manual batch, including failed results.
+                existing = set(
+                    row[0]
+                    for row in client.execute(
+                        f"SELECT request_id FROM {SUBMISSIONS} FINAL WHERE crawl_type=%(type)s AND domain IN %(domains)s",
+                        {"type": crawl_type, "domains": domains},
+                    )
+                )
+                admitted = []
+                for row in rows:
+                    if row["domain"] in recovered_domains:
+                        continue
+                    payload, key = effective_payload(row, crawl_type, batch_id, config)
+                    if payload["request_id"] in existing:
+                        continue
+                    if not config.force_refresh and (row["domain"], key) in fresh:
+                        metadata["fresh_skipped"] += 1
+                        continue
+                    admitted.append(
+                        {
+                            "crawl_type": crawl_type,
+                            "domain": row["domain"],
+                            "request_id": payload["request_id"],
+                            "input_revision": row["revision"],
+                            "work_key": key,
+                            "run_id": context.run.run_id,
+                            "request_json": json.dumps(payload, sort_keys=True),
+                        }
+                    )
+                    if len(admitted) == min(config.batch_size, remaining):
+                        break
+                if admitted:
+                    for item in admitted:
+                        send_crawl(
+                            http, url, json.loads(item["request_json"]), validate=True
+                        )
+                    client.execute(
+                        f"INSERT INTO {SUBMISSIONS} ({', '.join(admitted[0])}) VALUES",
+                        admitted,
+                        settings={"async_insert": 0},
+                    )
+                    collect(admitted)
+                    remaining -= len(admitted)
+                    # Continue after the last admitted input, not the unconsumed page.
+                    last_domain = admitted[-1]["domain"]
+                    last = next(row for row in rows if row["domain"] == last_domain)
+                else:
+                    last = rows[-1]
+                params.update(
+                    after_priority=last["priority"], after_domain=last["domain"]
+                )
+                cursor_filter = " AND (priority < %(after_priority)s OR (priority = %(after_priority)s AND domain > %(after_domain)s))"
+        finally:
+            with store.transaction() as cursor:
+                cursor.execute(
+                    "SELECT pg_advisory_unlock(hashtextextended(%s, 0))", (lock_name,)
+                )
+    return dg.MaterializeResult(metadata=metadata)

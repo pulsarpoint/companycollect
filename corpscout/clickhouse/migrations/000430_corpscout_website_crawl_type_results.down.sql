@@ -1,0 +1,10 @@
+DROP VIEW IF EXISTS corpscout.website_site_info_results_latest_success;
+DROP VIEW IF EXISTS corpscout.website_site_info_results_latest;
+DROP TABLE IF EXISTS corpscout.website_site_info_results;
+DROP VIEW IF EXISTS corpscout.website_jobs_crawl_results_latest_success;
+DROP VIEW IF EXISTS corpscout.website_jobs_crawl_results_latest;
+DROP TABLE IF EXISTS corpscout.website_jobs_crawl_results;
+DROP VIEW IF EXISTS corpscout.website_full_crawl_results_latest_success;
+DROP VIEW IF EXISTS corpscout.website_full_crawl_results_latest;
+DROP TABLE IF EXISTS corpscout.website_full_crawl_results;
+DROP TABLE IF EXISTS corpscout.website_crawl_submissions;
