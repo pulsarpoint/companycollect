@@ -57,10 +57,10 @@ export function CrawlSubmit({enabled, onPublished}: {enabled: boolean; onPublish
           <FieldDescription>CAPTCHA agent budget: 3–1000 runs. To test GLM, set <code>challenge_agent_model</code> to <code>z-ai/glm-5.3-flash</code>. Retries double the budget after exhaustion unless you supply an override.</FieldDescription>
         </Field></FieldGroup>
         {fetcher.data?.error && <Alert variant="destructive"><AlertTitle>Request not confirmed</AlertTitle><AlertDescription>{fetcher.data.error}</AlertDescription></Alert>}
-        <p className="text-xs text-muted-foreground">Sent through JetStream for testing. Keep the same request ID when retrying an uncertain submission; use a new ID for a new crawl.</p>
+        <p className="text-xs text-muted-foreground">Sent to the crawler REST API for testing. Keep the same request ID when retrying an uncertain submission; use a new ID for a new crawl.</p>
         <DialogFooter>
           <Button type="button" variant="outline" disabled={busy} onClick={() => setOpen(false)}>Close</Button>
-          <Button type="submit" disabled={busy}><SendIcon data-icon="inline-start" />{busy ? "Submitting…" : "Send to JetStream"}</Button>
+          <Button type="submit" disabled={busy}><SendIcon data-icon="inline-start" />{busy ? "Submitting…" : "Send to crawler"}</Button>
         </DialogFooter>
       </fetcher.Form>
     </DialogContent>

@@ -145,8 +145,8 @@ describe("crawler backoffice", () => {
     expect(html).toContain("crawl stays paused");
   });
 
-  it("submits test requests through the JetStream publisher, not REST submission", async () => {
-    const receipt = {request_id: "test-one", url: "https://novelic.com/", stream: "COMPANY_CRAWL", subject: "company.crawl.requests", sequence: 7, duplicate: false};
+  it("submits test requests through the test-crawl submitter, not a crawler action", async () => {
+    const receipt = {request_id: "test-one", url: "https://novelic.com/", state: "queued"};
     publisher.publishTestCrawl.mockResolvedValue(receipt);
     const body = JSON.stringify({request_id: "test-one", url: "novelic.com", crawl: "full"});
     const request = new Request("http://backoffice/admin/crawls", {method: "POST", headers: {Origin: "http://backoffice"}, body: new URLSearchParams({intent: "submit", body})});

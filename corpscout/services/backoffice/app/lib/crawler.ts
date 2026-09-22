@@ -16,10 +16,7 @@ export interface ChallengeAgentResult {
 export interface CrawlPublishReceipt {
   request_id: string;
   url: string;
-  stream: string;
-  subject: string;
-  sequence: number;
-  duplicate: boolean;
+  state: string;
 }
 export interface CrawlAttempt {
   request_id: string;

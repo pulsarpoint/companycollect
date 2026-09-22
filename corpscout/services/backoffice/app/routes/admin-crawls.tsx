@@ -149,7 +149,7 @@ export default function AdminCrawls({loaderData}: Route.ComponentProps) {
       <div className="flex items-center gap-2"><Badge variant={live ? "secondary" : "outline"}>{live ? "Live" : "Reconnecting"}</Badge>
         <CrawlSubmit enabled={submissionEnabled} onPublished={receipt => {
           setSubmission(receipt);
-          setSearch({domain: new URL(receipt.url).hostname.replace(/^www\./, ""), source: "jetstream"});
+          setSearch({domain: new URL(receipt.url).hostname.replace(/^www\./, ""), source: "rest"});
           void revalidate();
         }} />
         <Button variant="outline" onClick={() => void revalidate()}><RefreshCwIcon data-icon="inline-start" />Refresh</Button></div>
@@ -157,9 +157,9 @@ export default function AdminCrawls({loaderData}: Route.ComponentProps) {
     {loaderData.inputsError && <Alert variant="destructive"><AlertTitle>Crawl inputs unavailable</AlertTitle><AlertDescription>{loaderData.inputsError}</AlertDescription></Alert>}
     {loaderData.inputs && <CrawlInputs key={`${loaderData.inputs.type}:${loaderData.inputs.domain}:${loaderData.inputs.offset}`} snapshot={loaderData.inputs}><CrawlProgress snapshot={loaderData.progress} error={loaderData.progressError} /></CrawlInputs>}
     <div className="border-t pt-6" id="crawl-attempts"><h2 className="text-lg font-semibold">Crawl attempts</h2><p className="text-sm text-muted-foreground">All crawl types and sources · Live requests, saved results, and failures available for retry.</p></div>
-    {submission && <Alert><AlertTitle>{submission.duplicate ? "Submission already received" : "JetStream received the request"}</AlertTitle>
-      <AlertDescription><p>{submission.request_id} · {submission.stream} · sequence {submission.sequence}</p>
-        <p>The request is stored in the queue. Its live status will appear below when the worker picks it up.</p></AlertDescription>
+    {submission && <Alert><AlertTitle>Crawler accepted the request</AlertTitle>
+      <AlertDescription><p>{submission.request_id} · {submission.state.replaceAll("_", " ")}</p>
+        <p>The request is stored in the crawler queue. Its live status appears below.</p></AlertDescription>
     </Alert>}
     {error && <Alert variant="destructive"><AlertTitle>Crawler unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
     <Form method="get" key={search.toString()}>
@@ -167,7 +167,7 @@ export default function AdminCrawls({loaderData}: Route.ComponentProps) {
       <FieldGroup className="flex-row flex-wrap items-end">
         <Field className="w-64"><FieldLabel htmlFor="crawl-domain">Domain</FieldLabel><Input id="crawl-domain" name="domain" defaultValue={search.get("domain") || ""} placeholder="e.g. melexis.com" /></Field>
         <Field className="w-44"><FieldLabel htmlFor="crawl-state">Status</FieldLabel><NativeSelect id="crawl-state" name="state" defaultValue={search.get("state") || ""}><NativeSelectOption value="">All statuses</NativeSelectOption>{CRAWL_STATES.map(state => <NativeSelectOption key={state} value={state}>{state.replaceAll("_", " ")}</NativeSelectOption>)}</NativeSelect></Field>
-        <Field className="w-40"><FieldLabel htmlFor="crawl-source">Input</FieldLabel><NativeSelect id="crawl-source" name="source" defaultValue={search.get("source") || ""}><NativeSelectOption value="">All inputs</NativeSelectOption><NativeSelectOption value="jetstream">JetStream</NativeSelectOption><NativeSelectOption value="rest">REST</NativeSelectOption><NativeSelectOption value="manual">Manual retry</NativeSelectOption></NativeSelect></Field>
+        <Field className="w-40"><FieldLabel htmlFor="crawl-source">Input</FieldLabel><NativeSelect id="crawl-source" name="source" defaultValue={search.get("source") || ""}><NativeSelectOption value="">All inputs</NativeSelectOption><NativeSelectOption value="jetstream">JetStream (history)</NativeSelectOption><NativeSelectOption value="rest">REST</NativeSelectOption><NativeSelectOption value="manual">Manual retry</NativeSelectOption></NativeSelect></Field>
         <Button type="submit" variant="outline">Apply filters</Button>
       </FieldGroup>
     </Form>
