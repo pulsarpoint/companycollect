@@ -14,14 +14,20 @@ from clickhouse_driver.errors import ServerException
 from dagster_clickhouse import ClickhouseResource
 from pydantic import ValidationError
 
+from dagster_v3.defs.common.processing import ProcessingResource
 from dagster_v3.defs.website_crawl.assets import (
     website_full_crawl_requests,
     website_jobs_crawl_requests,
     website_site_info_requests,
 )
-from dagster_v3.defs.website_crawl.input import CrawlInputConfig, INPUT_TABLES
+from dagster_v3.defs.website_crawl.input import (
+    INPUT_TABLES,
+    TASK_DOMAINS,
+    CrawlInputConfig,
+)
 from dagster_v3.defs.website_crawl.se_domains import SeDomainFilters
 from tests.clickhouse_local import CLICKHOUSE_IMAGE, clickhouse_local_command
+from tests.test_processing_store import processing_postgres_url, store  # noqa: F401
 
 ASSETS = (
     website_full_crawl_requests,
@@ -91,22 +97,28 @@ def server() -> Iterator[tuple[Client, ClickhouseResource]]:
             assert time.monotonic() < deadline, probe.stderr.decode()
             time.sleep(0.2)
         with resource.get_connection() as client:
-            migration = (
-                Path(__file__).resolve().parents[3]
-                / "clickhouse/migrations/000429_corpscout_website_crawl_requests.up.sql"
-            )
-            for statement in migration.read_text(encoding="utf-8").split(";"):
-                if statement.strip():
-                    client.execute(statement)
+            migrations = Path(__file__).resolve().parents[3] / "clickhouse/migrations"
+            for name in (
+                "000429_corpscout_website_crawl_requests.up.sql",
+                "000431_corpscout_website_crawl_task_domains.up.sql",
+            ):
+                for statement in (migrations / name).read_text(encoding="utf-8").split(";"):
+                    if statement.strip():
+                        client.execute(statement)
             yield client, resource
     finally:
         subprocess.run(["docker", "rm", "-f", name], check=False, capture_output=True)
 
 
+# Selections are frozen under processing.tasks records in a disposable PostgreSQL.
+PROCESSING: dict[str, ProcessingResource] = {}
+
+
 @pytest.fixture
-def database(server):
+def database(server, store):  # noqa: F811
     client, resource = server
-    for table in INPUT_TABLES:
+    PROCESSING["resource"] = ProcessingResource(postgres_url=store[1])
+    for table in (*INPUT_TABLES, TASK_DOMAINS):
         client.execute(f"TRUNCATE TABLE {table}")
     client.execute("DROP TABLE IF EXISTS corpscout.crawl_test_source")
     client.execute("""CREATE TABLE corpscout.crawl_test_source (
@@ -118,7 +130,7 @@ def database(server):
 def materialize(asset, resource, **selection):
     return dg.materialize(
         [asset],
-        resources={"clickhouse": resource},
+        resources={"clickhouse": resource, "processing": PROCESSING["resource"]},
         run_config={
             "ops": {
                 asset.key.to_user_string(): {

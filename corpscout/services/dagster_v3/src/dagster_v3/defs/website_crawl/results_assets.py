@@ -12,7 +12,7 @@ from dagster_v3.defs.website_crawl.results import CrawlResultsConfig, process_cr
     kinds={"clickhouse"},
     deps=["website_full_crawl_requests"],
     metadata={"dagster/table_name": "corpscout.website_full_crawl_results"},
-    description="Process enabled, due inputs in bounded batches and store completed crawler responses.",
+    description="Process a frozen crawl task (every enabled domain of task_id, resumable by execution_id) or a bounded batch of explicit or due inputs, and store completed crawler responses.",
     pool="website_crawl_results",
 )
 def website_full_crawl_results(
@@ -29,7 +29,7 @@ def website_full_crawl_results(
     kinds={"clickhouse"},
     deps=["website_jobs_crawl_requests"],
     metadata={"dagster/table_name": "corpscout.website_jobs_crawl_results"},
-    description="Process enabled, due inputs in bounded batches and store completed crawler responses.",
+    description="Process a frozen crawl task (every enabled domain of task_id, resumable by execution_id) or a bounded batch of explicit or due inputs, and store completed crawler responses.",
     pool="website_crawl_results",
 )
 def website_jobs_crawl_results(
@@ -46,7 +46,7 @@ def website_jobs_crawl_results(
     kinds={"clickhouse"},
     deps=["website_site_info_requests"],
     metadata={"dagster/table_name": "corpscout.website_site_info_results"},
-    description="Process enabled, due inputs in bounded batches and store completed crawler responses.",
+    description="Process a frozen crawl task (every enabled domain of task_id, resumable by execution_id) or a bounded batch of explicit or due inputs, and store completed crawler responses.",
     pool="website_crawl_results",
 )
 def website_site_info_results(
@@ -76,6 +76,21 @@ defs = dg.Definitions(
         dg.define_asset_job(
             "website_site_info_results_job",
             selection=dg.AssetSelection.assets(website_site_info_results),
+        ),
+        # Brave-style workflows: the input asset freezes a task selection and tags the
+        # run with processing/task_id, then the results asset processes that whole task.
+        *(
+            dg.define_asset_job(
+                f"{prefix}_workflow",
+                selection=dg.AssetSelection.assets(
+                    f"{prefix}_requests", f"{prefix}_results"
+                ),
+            )
+            for prefix in (
+                "website_full_crawl",
+                "website_jobs_crawl",
+                "website_site_info",
+            )
         ),
     ],
 )

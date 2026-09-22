@@ -1,13 +1,22 @@
-"""Select and seed recurring crawl inputs without replacing operator settings."""
+"""Select and seed recurring crawl inputs, freezing each selection under a task.
 
+Like the Brave input, a selection is fixed per task_id: the request tables keep the
+recurring per-domain configuration, and website_crawl_task_domains records exactly
+which domains a task will process.
+"""
+
+import hashlib
+import json
 import re
 from typing import Self
+from uuid import UUID
 
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
 from pydantic import Field, field_validator, model_validator
 
 from dagster_v3.defs.common.clickhouse_queue import validate_relation
+from dagster_v3.defs.common.processing import ProcessingResource
 from dagster_v3.defs.website_crawl.se_domains import SE_DOMAIN_TABLE, SeDomainFilters
 
 INPUT_TABLES = (
@@ -15,9 +24,21 @@ INPUT_TABLES = (
     "corpscout.website_jobs_crawl_requests",
     "corpscout.website_site_info_requests",
 )
+CRAWL_TYPES = dict(zip(INPUT_TABLES, ("full", "jobs", "site_info"), strict=True))
+TASK_DOMAINS = "corpscout.website_crawl_task_domains"
+TASK_TAG = "processing/task_id"
+
+
+def task_processor(crawl_type: str) -> str:
+    """processing.tasks processor name; the results asset checks it matches its type."""
+    return f"website-crawl-{crawl_type}-v1"
 
 
 class CrawlInputConfig(dg.Config):
+    task_id: str | None = Field(
+        default=None,
+        description="Selection task UUID. Defaults to the run's processing/task_id tag, then the run ID.",
+    )
     source_relation: str = Field(
         description="Source ClickHouse database.table or view."
     )
@@ -47,6 +68,11 @@ class CrawlInputConfig(dg.Config):
         le=100,
         description="Priority for newly added domains. Omit to use the table default.",
     )
+
+    @field_validator("task_id")
+    @classmethod
+    def stable_task_id(cls, value: str | None) -> str | None:
+        return str(UUID(value)) if value is not None else None
 
     @field_validator("source_relation")
     @classmethod
@@ -157,71 +183,170 @@ def selected_domains_sql(config: CrawlInputConfig) -> tuple[str, dict]:
     )
 
 
+def selection_fingerprint(config: CrawlInputConfig, target: str) -> str:
+    selection = config.model_dump(exclude={"task_id"}, mode="json")
+    for key in ("ids", "excluded_ids"):
+        selection[key] = sorted(set(selection[key]))
+    selection["filters"] = {
+        key: sorted(set(values)) for key, values in selection["filters"].items()
+    }
+    selection["target"] = target
+    return hashlib.sha256(json.dumps(selection, sort_keys=True).encode()).hexdigest()
+
+
 def seed_crawl_inputs(
     context: dg.AssetExecutionContext,
     config: CrawlInputConfig,
     clickhouse: ClickhouseResource,
+    processing: ProcessingResource,
     target: str,
 ) -> dg.MaterializeResult:
     if target not in INPUT_TABLES:
         raise ValueError("unknown crawl input table")
+    crawl_type = CRAWL_TYPES[target]
+    task_id = config.task_id or context.run.tags.get(TASK_TAG) or context.run.run_id
+    context.instance.add_run_tags(context.run.run_id, {TASK_TAG: task_id})
     selection, parameters = selected_domains_sql(config)
     parameters["source"] = config.source_relation
+    parameters["task_id"] = task_id
+    parameters["crawl_type"] = crawl_type
     priority_column = ", priority" if config.priority is not None else ""
     priority_value = ", %(priority)s" if config.priority is not None else ""
     if config.priority is not None:
         parameters["priority"] = config.priority
-    with clickhouse.get_connection() as client:
-        for relation in (target, target + "_current"):
-            if client.execute(f"EXISTS TABLE {relation}") != [(1,)]:
-                raise ValueError(
-                    f"apply ClickHouse migration 000429 before selecting inputs: {relation}"
-                )
-        columns = {
-            row[0] for row in client.execute(f"DESCRIBE TABLE {config.source_relation}")
-        }
-        required = {config.website_column, *config.filters}
-        if config.ids or config.excluded_ids:
-            required.add(config.id_column)
-        if config.se_domain_filters is not None:
-            required.update(
-                {
-                    "root_domain",
-                    "company_id",
-                    "sources",
-                    "association",
-                    "active",
-                    "confidence",
-                }
-            )
-        if required - columns:
-            raise ValueError(
-                "source is missing columns: " + ", ".join(sorted(required - columns))
-            )
-        client.execute(
-            f"""INSERT INTO {target}
-                (domain, website_url, source, created_at, updated_at, revision{priority_column})
-            SELECT selected.domain, selected.website_url, %(source)s, now64(6), now64(6), 1{priority_value}
-            FROM ({selection}) AS selected
-            LEFT ANTI JOIN {target}_current AS existing ON selected.domain = existing.domain""",
-            parameters,
-            # Reject an overlapping insert, including a server query left by a lost client.
-            query_id="website-crawl-input:" + target,
-            settings={
-                "async_insert": 0,
-                "replace_running_query": 0,
-                "use_query_cache": 0,
-            },
+    inserted = 0
+    with (
+        processing.get_store() as store,
+        store.selection_lock(task_id),
+        clickhouse.get_connection() as client,
+    ):
+        task, created = store.prepare_selection(
+            task_id,
+            processor=task_processor(crawl_type),
+            fingerprint=selection_fingerprint(config, target),
         )
-        inserted = client.last_query.progress.written_rows
+        if task["status"] == "preparing":
+            inserted = insert_selection(
+                client,
+                config,
+                target,
+                selection,
+                parameters,
+                priority_column,
+                priority_value,
+                recover=not created,
+            )
+            [(total,)] = client.execute(
+                f"SELECT count() FROM {TASK_DOMAINS} FINAL WHERE task_id=%(task_id)s",
+                {"task_id": task_id},
+            )
+            store.finish_selection(
+                task_id,
+                {
+                    "relation": TASK_DOMAINS,
+                    "crawl_type": crawl_type,
+                    "input_relation": target,
+                    "total": total,
+                },
+            )
+            task = store.task(task_id)
     context.log.info(
-        "Added %s crawl inputs from %s to %s", inserted, config.source_relation, target
+        "Prepared crawl task=%s type=%s selected=%s added=%s from %s",
+        task_id,
+        crawl_type,
+        task["total"],
+        inserted,
+        config.source_relation,
     )
     return dg.MaterializeResult(
         metadata={
+            "task_id": task_id,
             "source_relation": config.source_relation,
             "input_relation": target,
+            "task_relation": TASK_DOMAINS,
+            "selected_domains": task["total"],
             "inserted_domains": inserted,
             "existing_inputs": "preserved",
         }
     )
+
+
+def insert_selection(
+    client,
+    config: CrawlInputConfig,
+    target: str,
+    selection: str,
+    parameters: dict,
+    priority_column: str,
+    priority_value: str,
+    *,
+    recover: bool,
+) -> int:
+    """Add missing request rows, then freeze this task's membership."""
+    task_id = parameters["task_id"]
+    for relation in (target, target + "_current"):
+        if client.execute(f"EXISTS TABLE {relation}") != [(1,)]:
+            raise ValueError(
+                f"apply ClickHouse migration 000429 before selecting inputs: {relation}"
+            )
+    if client.execute(f"EXISTS TABLE {TASK_DOMAINS}") != [(1,)]:
+        raise ValueError(
+            f"apply ClickHouse migration 000431 before selecting inputs: {TASK_DOMAINS}"
+        )
+    columns = {
+        row[0] for row in client.execute(f"DESCRIBE TABLE {config.source_relation}")
+    }
+    required = {config.website_column, *config.filters}
+    if config.ids or config.excluded_ids:
+        required.add(config.id_column)
+    if config.se_domain_filters is not None:
+        required.update(
+            {
+                "root_domain",
+                "company_id",
+                "sources",
+                "association",
+                "active",
+                "confidence",
+            }
+        )
+    if required - columns:
+        raise ValueError(
+            "source is missing columns: " + ", ".join(sorted(required - columns))
+        )
+    client.execute(
+        f"""INSERT INTO {target}
+            (domain, website_url, source, created_at, updated_at, revision{priority_column})
+        SELECT selected.domain, selected.website_url, %(source)s, now64(6), now64(6), 1{priority_value}
+        FROM ({selection}) AS selected
+        LEFT ANTI JOIN {target}_current AS existing ON selected.domain = existing.domain""",
+        parameters,
+        # Reject an overlapping insert, including a server query left by a lost client.
+        query_id="website-crawl-input:" + target,
+        settings={
+            "async_insert": 0,
+            "replace_running_query": 0,
+            "use_query_cache": 0,
+        },
+    )
+    inserted = client.last_query.progress.written_rows
+    query_id = "website-crawl-task:" + task_id
+    if recover:
+        # A previous client may have died while its INSERT continued on the server.
+        # Stop only that task's insert before removing its unconfirmed partial rows.
+        client.execute(
+            "KILL QUERY WHERE query_id=%(query_id)s SYNC", {"query_id": query_id}
+        )
+        client.execute(
+            f"ALTER TABLE {TASK_DOMAINS} DELETE WHERE task_id=%(task_id)s",
+            {"task_id": task_id},
+            settings={"mutations_sync": 2},
+        )
+    client.execute(
+        f"""INSERT INTO {TASK_DOMAINS} (task_id, crawl_type, domain)
+        SELECT %(task_id)s, %(crawl_type)s, selected.domain FROM ({selection}) AS selected""",
+        parameters,
+        query_id=query_id,
+        settings={"async_insert": 0, "use_query_cache": 0},
+    )
+    return inserted

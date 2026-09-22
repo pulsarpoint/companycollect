@@ -444,6 +444,7 @@ EXPECTED_MIGRATIONS = (
     "000428_corpscout_brave_search_outcomes",
     "000429_corpscout_website_crawl_requests",
     "000430_corpscout_website_crawl_type_results",
+    "000431_corpscout_website_crawl_task_domains",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}

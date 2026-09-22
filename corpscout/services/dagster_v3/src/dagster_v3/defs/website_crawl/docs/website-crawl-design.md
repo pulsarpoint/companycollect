@@ -36,9 +36,9 @@ Selecting from any of the three destination tables or their current views is rej
 
 At `/admin/se/companies/domains`, filter the existing domain entity and select individual domains or **Select all matching domains**, then choose **Add to crawl inputs → Full crawl / Jobs / Basic info**. All current list filters can be combined. The all-matching selection spans every page; unchecking a domain excludes it from that selection. Explicit selections survive pagination, while changing filters clears an all-matching selection. Shared domains are counted and submitted once, regardless of how many companies claim them.
 
-Backoffice saves inputs directly with a synchronous ClickHouse `INSERT ... SELECT`, reusing the domain list's predicates and existing write credentials. No Dagster job, NATS message or browser session is started. Source rows stay inside ClickHouse; the web server receives only the insertion count. Criteria are evaluated against `se_company_domain FINAL` when saving, so source updates after the list loads can change the matches. A domain is considered shared if more than one company claims it in the complete current entity, even when another filter narrows the company rows.
+Backoffice launches the matching `*_input_job` with the domain list's predicates as `se_domain_filters`. The asset runs the `INSERT ... SELECT` inside ClickHouse and freezes the selection under a crawl task (see below). No browser session is started. Source rows stay inside ClickHouse; the web server receives only the Dagster run. Criteria are evaluated against `se_company_domain FINAL` when saving, so source updates after the list loads can change the matches. A domain is considered shared if more than one company claims it in the complete current entity, even when another filter narrows the company rows.
 
-Saving creates recurring input records and preserves existing requests, including disabled entries and operator settings. The response states how many new domains were added and that no crawl was started. This requires migration `000429`, but not a deployed Dagster input job. The UI and Dagster input assets share the same per-destination query ID to reject concurrent inserts. The generic assets remain available for programmatic imports; browser-processing assets remain separate work and must be started independently.
+Saving creates recurring input records and preserves existing requests, including disabled entries and operator settings. The run metadata states the task ID, how many domains the task selected and how many new request rows were added. No crawl is started by the input job alone. The UI and Dagster input assets share the same per-destination query ID to reject concurrent inserts. The generic assets remain available for programmatic imports; browser-processing assets remain separate work and must be started independently.
 
 ## Examples
 
@@ -102,6 +102,12 @@ ops:
 ```
 
 Use the corresponding job in the Dagster Launchpad. IDs must exist in the named source. These examples do not directly submit new domains absent from that source.
+
+## Crawl tasks
+
+Every input materialization also freezes its selection, the way `company_brave_search_input` does for Brave. `task_id` comes from the config, then the run's `processing/task_id` tag, then the run ID, and the asset tags the run with it. The selected domains, existing or newly added, are written to `corpscout.website_crawl_task_domains` (migration `000431`). A `processing.tasks` PostgreSQL record keeps the selection fingerprint, crawl type (processor `website-crawl-<type>-v1`) and total.
+
+Rerunning the same `task_id` with the same selection reuses the frozen membership, even if the source has changed since. A different selection under that `task_id` is rejected. An interrupted selection is recovered like Brave's: the task's still-running insert is killed and its unconfirmed rows are deleted before selecting again. Membership does not change request settings: a disabled request stays disabled and is skipped when the task is processed.
 
 ## Storage and identity
 

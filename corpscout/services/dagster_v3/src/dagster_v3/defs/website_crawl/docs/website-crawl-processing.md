@@ -9,9 +9,44 @@ The two stages have distinct assets and jobs:
 | `website_site_info_requests` | `website_site_info_results` |
 
 All tables live in `corpscout`. Backoffice domain selection launches the corresponding
-`*_input_job`; the asset runs `INSERT ... SELECT` and emits its normal materialization.
-It preserves existing input settings and starts no crawling. Backoffice's crawler
-page launches a `*_results_job`, selecting only the downstream result asset.
+`*_input_job`; the asset runs `INSERT ... SELECT`, freezes the selection under a crawl
+task and starts no crawling. Backoffice's crawler page launches a `*_results_job` for
+up to 100 explicit saved domains.
+
+## Crawl tasks (the Brave-style path)
+
+Each type has a workflow job that runs both assets in one run, like
+`company_brave_search_workflow`:
+
+| Workflow | Assets |
+| --- | --- |
+| `website_full_crawl_workflow` | `website_full_crawl_requests` → `website_full_crawl_results` |
+| `website_jobs_crawl_workflow` | `website_jobs_crawl_requests` → `website_jobs_crawl_results` |
+| `website_site_info_workflow` | `website_site_info_requests` → `website_site_info_results` |
+
+The input asset tags the run with `processing/task_id`, and the results asset then
+processes every enabled domain of that frozen task in batches of `batch_size`, until
+the task is done. `batch_size * max_batches` does not cap a task. `domains` cannot be
+combined with a task. A results run can also name an earlier task with `task_id`.
+
+An execution is identified by the original Dagster run ID. Its task, content settings
+(`api`, `model`, `max_pages`, `max_model_calls`, `page_selection`, `instructions`,
+`crawler_config`, `force_refresh`, `refresh_interval_days`) and freshness cutoff are
+saved in the run's `website_crawl/execution` tag. Dagster retries reuse it
+automatically. For manual recovery, pass `execution_id` with the same settings:
+
+```yaml
+ops:
+  website_site_info_results:
+    config:
+      execution_id: "the-original-Dagster-run-UUID"
+      # plus the same required settings as the original run
+```
+
+Changing a fixed setting on resume is rejected; start a new execution instead.
+Operational settings (`batch_size`, `max_in_flight`, CAPTCHA budget, timeouts) may
+change. The execution ID is the default `batch_id`, so request IDs stay stable and
+already submitted domains are recovered, never submitted twice.
 
 ## Required execution settings
 
