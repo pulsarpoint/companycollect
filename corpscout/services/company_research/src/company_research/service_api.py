@@ -30,7 +30,6 @@ from company_research.service import (
     RequestConflict,
     ServiceUnavailable,
 )
-from company_research.service_nats import JetStreamInput
 
 
 class RetryRequest(BaseModel):
@@ -45,18 +44,13 @@ def create_app(
     service: CrawlService,
     *,
     api_token: str | None,
-    jetstream: JetStreamInput | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await service.start()
         try:
-            if jetstream is not None:
-                await jetstream.start()
             yield
         finally:
-            if jetstream is not None:
-                await jetstream.close()
             await service.close()
 
     app = FastAPI(title="Company Crawl Service", version="1.0", lifespan=lifespan)
@@ -74,7 +68,7 @@ def create_app(
 
     @app.get("/healthz")
     async def health() -> dict:
-        if not service.healthy() or (jetstream is not None and not jetstream.healthy()):
+        if not service.healthy():
             raise HTTPException(503, "Crawl service is not ready")
         return {"status": "ok"}
 

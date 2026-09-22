@@ -98,20 +98,17 @@
         - "{{ company_research_s3_session_token }}"
       no_log: true
 
-    - name: Require credentials for the selected inputs and default model
+    - name: Require credentials for the REST API and default model
       ansible.builtin.assert:
         that:
-          - company_research_transport in ['rest', 'nats', 'both']
           - company_research_browser_api_url | length > 0
           - company_research_browser_api_token | length >= 32
           - company_research_deepseek | length > 0
-          - company_research_transport == 'nats' or company_research_api_token | length >= 32
-          - company_research_transport == 'rest' or company_research_nats_url | length > 0
+          - company_research_api_token | length >= 32
           - (company_research_deepseek | regex_search('[\x00-\x1f\x7f]')) is none
           - (company_research_openrouter | regex_search('[\x00-\x1f\x7f]')) is none
           - (company_research_api_token | regex_search('[\x00-\x1f\x7f]')) is none
-          - (company_research_nats_url | regex_search('[\x00-\x1f\x7f]')) is none
-        fail_msg: Set DEEPSEEK, a 32-character CRAWL_API_TOKEN, and NATS_URL in secrets.yml or the controller environment.
+        fail_msg: Set DEEPSEEK and a 32-character CRAWL_API_TOKEN in secrets.yml or the controller environment.
       no_log: true
 
     - name: Gather target platform information
@@ -300,7 +297,7 @@
             enabled: true
             state: started
 
-        - name: Wait for the REST worker and JetStream input to be ready
+        - name: Wait for the REST worker to be ready
           ansible.builtin.uri:
             url: "http://127.0.0.1:{{ company_research_port }}/healthz"
             status_code: 200
@@ -309,7 +306,6 @@
           until: company_research_health.status | default(0) == 200
           retries: 30
           delay: 2
-          when: company_research_transport != 'nats'
 
     - name: Remove the temporary controller artifacts
       ansible.builtin.file:

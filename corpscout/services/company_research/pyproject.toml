@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "company-research"
-version = "0.40.0"
+version = "0.41.0"
 description = "Company source-page collection with deferred offline analysis"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -28,7 +28,6 @@ service = [
     "fastapi>=0.115,<1",
     "uvicorn>=0.42,<1",
     "websockets>=15,<17",
-    "nats-py>=2.10,<3",
     "boto3>=1.40,<2",
 ]
 

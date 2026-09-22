@@ -1,12 +1,13 @@
 # Crawl service
 
-Version 0.39.0 accepts work through REST, the CLI, and NATS JetStream.
-All three call `company_research.crawl.crawl_company`. Results remain available
-locally; service requests can additionally deliver to S3, and JetStream requests
-publish durable completion events. This service collects pages and optionally describes the site; the
+The service accepts work through REST and the CLI, the same transport model as the
+[browser service](../browser_service/README.md). Both call
+`company_research.crawl.crawl_company`. Results remain available locally, and service
+requests can additionally deliver to S3. The NATS JetStream input and its
+completion-event stream were removed on 2026-09-22. This service collects pages and optionally describes the site; the
 later LLM fact-analysis module remains separate.
 
-With `CRAWL_CHALLENGE_AGENT_ENABLED=true`, REST and JetStream website CAPTCHA
+With `CRAWL_CHALLENGE_AGENT_ENABLED=true`, REST website CAPTCHA
 failures invoke the browser service's selected agent once per requested URL, with
 a default of three runs per crawl attempt (`CRAWL_CHALLENGE_AGENT_MAX_RUNS`),
 with request overrides and doubled budgets on retries after exhaustion.
@@ -71,7 +72,7 @@ curl -sS http://127.0.0.1:8080/v1/crawls/novelic-pages-001/result
 | `POST /v1/crawls` | Persists the request and returns `202` with job status and a `Location` header. |
 | `GET /v1/crawls/{request_id}` | Returns current job status. Unknown IDs return `404`. |
 | `GET /v1/crawls/{request_id}/result` | Streams saved JSON; returns `409` while pending. |
-| `GET /healthz` | Returns `200` when workers and any enabled NATS input are ready; otherwise `503`. |
+| `GET /healthz` | Returns `200` when the workers are ready; otherwise `503`. |
 
 Set `CRAWL_API_TOKEN` to require `Authorization: Bearer <token>` on submission,
 status and result endpoints. The launcher requires a token when `--host` binds
@@ -88,7 +89,7 @@ exception produces a failed job and a local error JSON file. See
 
 ## Request format
 
-REST and JetStream use the same JSON object:
+REST uses this JSON object:
 
 For automatic discovery across contacts, jobs, company information and financial
 links, submit `{"url": "https://www.novelic.com/", "crawl": "full"}`.
@@ -99,8 +100,8 @@ with `"config": {"web_search": true}`. Page lists and site-info-only requests ne
 search. Parent/filing navigation defaults to three source domains, four pages per
 source and depth three; override `max_source_domains`,
 `max_source_pages_per_domain`, `max_source_depth`, `max_search_queries` or
-`search_results_per_query` in `config`. These limits apply identically to CLI,
-REST and JetStream. See [source discovery](CRAWL_AND_ANALYZE.md#source-discovery)
+`search_results_per_query` in `config`. These limits apply identically to CLI
+and REST. See [source discovery](CRAWL_AND_ANALYZE.md#source-discovery)
 for evidence requirements, search failures and the retained JSON provenance.
 Do not combine `"crawl": "full"` with `pages` or `instructions`. The CLI equivalent
 is `company-research https://www.novelic.com/ --crawl full --output-dir runs/novelic`.
@@ -137,12 +138,10 @@ LLM navigation usage. See [full-crawl behavior and limits](CRAWL_AND_ANALYZE.md#
   For example, OpenRouter GLM selection uses `"api": "openrouter"` and
   `"config": {"model": "z-ai/glm-5.3", "provider": "parasail/fp8", "reasoning_effort": "high"}`.
 - `request_id` may contain letters, digits, `_` and `-` (maximum 128 characters).
-  REST generates one if omitted; JetStream derives one from the stream/message
-  sequence and publication timestamp so redelivery is stable, including across
-  stream recreation. Explicit IDs are recommended for publisher retries.
+  REST generates one if omitted. Explicit IDs are recommended for client retries.
 
 Reuse an ID with the same normalized request to retrieve/reuse its existing job.
-A different request under that ID is a REST `409` or a rejected JetStream message.
+A different request under that ID is a REST `409`.
 Use a new ID when intentionally requesting a new crawl, including after a completed
 partial/failed crawl. Examples for all modes are in `examples/`.
 
@@ -159,85 +158,21 @@ uv run company-research-crawl https://www.novelic.com/ \
   --site-info --output-dir ./data/cli-novelic-info --env-file .env
 ```
 
-The CLI writes directly to its specified empty output directory. REST/NATS use
+The CLI writes directly to its specified empty output directory. The service uses
 job subdirectories below the service's output directory. Each route now also
 writes `result.json`; CLI stdout keeps its existing crawl-manifest shape.
 
-## NATS JetStream
+## Submitting from Backoffice
 
-Backoffice's **Crawler → New test crawl** can publish full requests directly to
-the existing stream. Its server first calls authenticated `POST /v1/crawls/validate`,
-which uses the same `CrawlRequest` validation as REST and JetStream and returns a
-normalized payload without enqueueing work or allocating a browser. Omitted config
-defaults remain omitted so model-provider defaults are selected by the worker.
-All inputs use the independent browser service configured by `BROWSER_API_URL`
-and `BROWSER_API_TOKEN`; the request cannot select an old browser implementation.
-
-For a local test broker, run a `nats-server` with JetStream enabled:
-
-```bash
-nats-server -js -a 127.0.0.1 -sd ./data/nats
-```
-
-Run both network inputs in one service process:
-
-```bash
-uv run --extra service company-research-service \
-  --transport both --output-dir ./data/crawl-service --env-file .env \
-  --nats-url nats://127.0.0.1:4222 --create-stream
-```
-
-Use `--transport nats` for a worker without REST. Defaults are stream
-`COMPANY_CRAWL`, subject `company.crawl.requests`, durable consumer
-`company-crawl-local`, and a 60-second acknowledgement deadline. Override them
-with `--nats-stream`, `--nats-subject`, `--nats-durable`, and `--nats-ack-wait`.
-`--create-stream` creates a missing file-backed work-queue stream. Existing stream
-settings are not changed; an incompatible existing consumer is rejected at startup.
-Without that flag, provision the stream first. `--nats-credentials` accepts a NATS
-credentials file; `NATS_URL` supplies the server URL when `--nats-url` is absent.
-
-Publish with a JetStream client so the publisher receives a persistence ack:
-
-```python
-import asyncio
-from pathlib import Path
-import nats
-
-async def submit():
-    client = await nats.connect("nats://127.0.0.1:4222")
-    try:
-        receipt = await client.jetstream().publish(
-            "company.crawl.requests", Path("examples/pages-job.json").read_bytes()
-        )
-        print(receipt.stream, receipt.seq)
-    finally:
-        await client.close()
-
-asyncio.run(submit())
-```
-
-The durable pull consumer processes up to `--concurrency` messages at once and
-sends progress acks independently while each crawl or result delivery is running.
-Its maximum unacknowledged delivery count is aligned with this worker's concurrency
-at startup, including when updating an existing durable consumer. Excess requests
-remain in JetStream until a delivery slot is free. Shutdown cancels all delivery
-waiters; unacknowledged messages remain eligible for redelivery.
-In local-only mode it acknowledges
-completion after a terminal local JSON result exists and is readable.
-A lost ack/redelivery reuses that result.
-Queue pressure or a failed local write leaves the message retryable. Invalid or
-conflicting requests are terminated only after a rejection receipt is saved under
-`rejected/`; those receipts exclude raw input. Crawler outcomes such as `partial`
-or `needs_review` are saved results and are acknowledged, not retried indefinitely.
-Configure S3 delivery below to receive completion events on a separate subject.
-
-The implementation uses the documented [NATS Python pull/ack APIs](https://nats-io.github.io/nats.py/modules.html)
-and [FastAPI lifespan handling](https://fastapi.tiangolo.com/advanced/events/).
+Callers submit with authenticated `POST /v1/crawls`. `POST /v1/crawls/validate` uses
+the same `CrawlRequest` validation and returns a normalized payload without
+enqueueing work or allocating a browser. Excess requests beyond `--max-pending`
+are rejected rather than buffered by a broker.
 
 ## S3 results and completion events
 
 Set `CRAWL_S3_BUCKET` in the service environment, or pass `--s3-bucket`, to enable
-S3 delivery for REST, JetStream and manual service requests. The standalone crawl
+S3 delivery for REST and manual service requests. The standalone crawl
 CLI keeps local output. With no bucket configured, local-only service operation
 remains available when human assistance is disabled. Human assistance requires S3.
 Example for the existing RustFS installation:
@@ -253,8 +188,7 @@ AWS_SECRET_ACCESS_KEY=replace-me
 
 ```bash
 uv run --extra service company-research-service \
-  --transport both --output-dir ./data/crawl-service --env-file .env \
-  --create-stream
+  --output-dir ./data/crawl-service --env-file .env
 ```
 
 The bucket must already exist. Provision read/head and conditional put access to
@@ -273,18 +207,8 @@ The delivery order is:
    `<prefix>/<request_id>/attempts/0001/artifacts.tar.gz` with the attempt's diagnostics
    and separate captures. Failed and cancelled attempts retain available diagnostics
    regardless of `save_artifacts`. The attempt number changes on execution retries.
-4. Persist `jobs/<request_id>/delivery.json` containing the event to publish.
-5. Publish the event through JetStream and persist its server acknowledgement.
-6. Acknowledge the original request. Steps 4–6 apply to JetStream inputs; REST and
-   manual attempts expose upload state through the status API and SQLite history.
-
-The default result stream is `COMPANY_CRAWL_RESULTS`, subject
-`company.crawl.results`. `--create-stream` creates it with file storage, limits
-retention and a seven-day retention period, allowing multiple independent durable
-consumers. Override with `--nats-result-stream`, `--nats-result-subject` and
-`--nats-result-max-age` (seconds, applied when creating a stream). Existing streams
-must include the exact result subject and use file storage with limits retention;
-the service validates these properties and does not change their settings.
+4. Record the upload state and completion event on the job. REST and manual attempts
+   expose them through the status API and SQLite history.
 
 A completion event has this shape (hashes shortened here):
 
@@ -332,13 +256,10 @@ and content headers match. A different object is never overwritten. The selected
 S3-compatible server must support `If-None-Match: *`. Reported storage errors leave
 delivery pending; the service never retries with unconditional writes.
 
-Upload or publication failure leaves the request retryable. A restart resumes
-delivery from the local result/outbox without recrawling. A crash before the outbox
-is written may repeat a conditional upload; a lost publication acknowledgement
-may repeat the event. `Nats-Msg-Id` is the stable `event_id`, using
-[JetStream deduplication](https://docs.nats.io/using-nats/developer/develop_jetstream/model_deep_dive).
-Consumers must also deduplicate `event_id`, since the broker's deduplication window
-is finite. This is at-least-once delivery, not an end-to-end exactly-once guarantee.
+Upload failure leaves delivery pending. A restart resumes delivery from the local
+result without recrawling; a crash mid-delivery may repeat a conditional upload.
+Consumers should deduplicate on the stable `event_id`. This is at-least-once
+delivery, not an end-to-end exactly-once guarantee.
 
 Keep local state and use stable request IDs across publisher retries. Local results
 are retained even after upload during development. Do not change the destination
@@ -368,7 +289,6 @@ data/crawl-service/
       pages/p0001/page.html
       pages/p0001/input.json
       ...                       # existing crawl diagnostics and captures
-  rejected/                     # invalid JetStream request receipts
 ```
 
 `result.json` is a portable document with schema `company-crawl-result/1.2`:
@@ -400,12 +320,11 @@ adopted without recrawling. Interrupted work before result publication may repea
 HTTP/model requests; this is not exactly-once execution.
 
 The initial implementation runs **one process per local output directory**,
-enforced by a filesystem lock (Linux/macOS). Use `--transport both` to share that
-store between REST and NATS. `--concurrency` defaults to 1; `--max-pending` defaults
+enforced by a filesystem lock (Linux/macOS). `--concurrency` defaults to 1; `--max-pending` defaults
 to 100 and counts all nonterminal jobs in each queue. Interactive retries have a
 separate queue with `CRAWL_MANUAL_CONCURRENCY` workers (default 2), so a paused manual attempt does not leave other profiles idle.
 The browser API still limits all inputs to one global browser capacity; busy claims retry
-without creating a browser-side queue. Normal REST/JetStream execution remains bounded by
+without creating a browser-side queue. Normal REST execution remains bounded by
 `--concurrency`. Multiple independent hosts with
 separate local disks do not share deduplication state. Keep the output directory
 when restarting; copying only application code does not preserve completed jobs.
@@ -416,13 +335,15 @@ crawler queue.
 
 ## Validation
 
+The JetStream input was removed on 2026-09-22; the records below that mention it
+are historical.
+
 The [five-request parallel validation](JETSTREAM_PARALLEL_VALIDATION_20260919.md)
 records a live Backoffice → JetStream → browser → S3 → ClickHouse test with two
 workers, including browser release after CAPTCHA failures.
 
 ```bash
 uv run --extra service python -m unittest discover -s tests
-# Set NATS_SERVER=/path/to/nats-server to include real JetStream integration tests.
 ```
 
 Version 0.25 includes S3 HTTP boundary tests with the actual boto3 client and
@@ -490,7 +411,7 @@ The browser service alone controls capacity and expires idle leases after 120 se
 
 Since 0.38.0, JSON requests accept `challenge_agent_max_runs` (3–1000) and
 `challenge_agent_model` (`deepseek-flash` or `z-ai/glm-5.3-flash`). Request overrides
-apply identically to REST and JetStream. The service-wide enable switch still
+apply to REST requests. The service-wide enable switch still
 controls whether automatic assistance is available. See [human assistance](HUMAN_ASSISTANCE.md#request-budgets-and-retries-0380)
 for retry escalation and Backoffice controls. These are CAPTCHA model settings;
 `api` and `config.model` continue to control page discovery.

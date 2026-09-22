@@ -396,7 +396,7 @@ wheels = [
 
 [[package]]
 name = "company-research"
-version = "0.40.0"
+version = "0.41.0"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },
@@ -419,7 +419,6 @@ mcp = [
 service = [
     { name = "boto3" },
     { name = "fastapi" },
-    { name = "nats-py" },
     { name = "uvicorn" },
     { name = "websockets" },
 ]
@@ -440,7 +439,6 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "jsonschema", specifier = ">=4.23,<5" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.28,<2" },
-    { name = "nats-py", marker = "extra == 'service'", specifier = ">=2.10,<3" },
     { name = "phonenumbers", specifier = ">=9,<10" },
     { name = "pydantic", specifier = ">=2.12,<3" },
     { name = "python-dotenv", specifier = ">=1,<2" },
@@ -930,15 +928,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/ba/93/0142dc84a666daf8ad51a34268f34c12fd6fda4f3810c4be2504eecc8212/mcp-1.30.0.tar.gz", hash = "sha256:445414625fce5c295faa505bb11bacece661ab6f4028d57c935db57820b7a3e4", size = 680511, upload-time = "2026-09-07T14:34:15.845Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f5/f4/e58bc33317c92a0203664daaf00bf6f41166cc0149e5d6870a03f7cd004a/mcp-1.30.0-py3-none-any.whl", hash = "sha256:666edb5009503e1047c9d60346a756f94b261f05cc2625f23d41c728ffc484d0", size = 234581, upload-time = "2026-09-07T14:34:14.266Z" },
-]
-
-[[package]]
-name = "nats-py"
-version = "2.16.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/2c/c8/739b72c9201081e48000884d476231873ac82f7247c43b33823eaf3c0bfb/nats_py-2.16.0.tar.gz", hash = "sha256:1d137ed7afc9b59033b3199324c6237df2016a5091935871344a787eba6b72fc", size = 79731, upload-time = "2026-09-16T07:47:21.843Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/48/a3/16cec37172144d3362d7551bb823a098b2b2903281fc095dfe4480b8c2fd/nats_py-2.16.0-py3-none-any.whl", hash = "sha256:aeb1ff123966c05833d26c7df7e1d54c1c6d32b612428b21677a2e921f1fecae", size = 93578, upload-time = "2026-09-16T07:47:20.799Z" },
 ]
 
 [[package]]

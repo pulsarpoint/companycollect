@@ -1,9 +1,8 @@
 # Company crawler systemd deployment
 
-Deploys the service to `192.168.88.132` as the system unit
-`company-research.service`. The default configuration enables REST on port 8080
-and a durable JetStream consumer against the NATS URL supplied in secrets.
-The existing Corpscout broker is `192.168.88.129:4222`.
+Deploys the service to the `crawler` VM (Tailscale MagicDNS name; its LAN
+address is DHCP-assigned) as the system unit `company-research.service`. The
+service exposes only its REST API on port 8080, like the browser service.
 
 The crawler uses the independent [browser service](../../browser_service/README.md).
 Deploy that service first, then configure `company_research_browser_api_url` and
@@ -11,9 +10,10 @@ Deploy that service first, then configure `company_research_browser_api_url` and
 Playwright, Xvfb or desktop tools. It preserves crawl results and queues.
 
 Human assistance remains enabled by default and requires S3 settings. All scans use
-an externally reserved profile. Normal REST/JetStream requests have two worker
+an externally reserved profile. Normal REST requests have two worker
 slots, configured with `company_research_concurrency`, matching the two browsers
-on this deployment. The durable consumer keeps excess requests pending in JetStream.
+on this deployment. Up to `company_research_max_pending` further requests wait in
+the service's local queue; beyond that REST submissions are rejected.
 Manual retries have two worker slots by default,
 configured with `company_research_manual_concurrency`; browser capacity is external.
 
@@ -28,12 +28,12 @@ From this directory:
 ```sh
 cp secrets.yml.example secrets.yml  # only if secrets.yml does not already exist
 chmod 600 secrets.yml
-# Fill in the model keys, API token and authenticated NATS URL.
+# Fill in the model keys and API token.
 ansible-playbook site.yml
 ```
 
 `secrets.yml` is ignored by Git. Alternatively export `DEEPSEEK`,
-`OPENROUTER_API_KEY`, `CRAWL_API_TOKEN` and `NATS_URL` on the controller.
+`OPENROUTER_API_KEY` and `CRAWL_API_TOKEN` on the controller.
 The default DeepSeek key is required; OpenRouter is optional. Use a random API
 token of at least 32 characters. The secrets file takes precedence over environment
 variables. Credentials are copied with mode `0640`, readable by root and the
@@ -43,11 +43,7 @@ Use `--ask-become-pass` if sudo needs a password; use `--ask-pass` if the target
 requires SSH password authentication. On macOS, if Ansible reports an unsupported
 locale, prefix the command with `LC_ALL=en_US.UTF-8`.
 
-All non-secret deployment settings are in [vars.yml](vars.yml). The default
-JetStream stream is `COMPANY_CRAWL`, subject `company.crawl.requests`, and durable
-consumer `company-crawl-132`. The playbook allows the service to create a missing
-stream; it does not change an existing stream's configuration or install another
-NATS server. Set `company_research_transport: rest` for REST only.
+All non-secret deployment settings are in [vars.yml](vars.yml).
 
 To store failed attempts and results in S3, add these
 settings to the ignored `secrets.yml` (the bucket must already exist):
@@ -67,11 +63,7 @@ chain can supply credentials instead. Controller environment equivalents are
 `CRAWL_S3_BUCKET`, `CRAWL_S3_ENDPOINT_URL`, `AWS_ACCESS_KEY_ID`,
 `AWS_SECRET_ACCESS_KEY` and optional `AWS_SESSION_TOKEN`.
 
-The service creates `COMPANY_CRAWL_RESULTS` for `company.crawl.results` with file
-storage and seven-day limits retention when S3 and stream creation are enabled.
-The `company_research_nats_result_*` variables control those defaults. Ensure the
-NATS account can publish results and create/read both configured streams. Local
-job state, results and delivery receipts stay under the persistent output folder.
+Local job state, results and delivery receipts stay under the persistent output folder.
 See [delivery and retry behavior](../SERVICE.md#s3-results-and-completion-events).
 
 ## Installed layout
@@ -80,7 +72,7 @@ See [delivery and retry behavior](../SERVICE.md#s3-results-and-completion-events
 | --- | --- |
 | `/opt/companycollect/corpscout/company_research/releases/<hash>` | Application wheel and dedicated Python environment |
 | `/opt/companycollect/corpscout/company_research/current` | Symlink to the prepared release |
-| `/etc/company-research/company-research.env` | Model keys, REST token and NATS connection URL |
+| `/etc/company-research/company-research.env` | Model keys and REST token |
 | `/var/lib/company-research/results` | Persistent request, job and result JSON, plus HTML captures |
 | `/var/lib/company-research/results/crawl-history.sqlite3` | Searchable attempt history and durable status events |
 | `/var/cache/company-research` | Browser downloads and runtime caches |
@@ -103,8 +95,8 @@ deadline still bounds cleanup.
 
 ## Verify and operate
 
-The playbook checks the systemd unit and waits for `/healthz`; with both inputs
-enabled, health requires REST workers and the JetStream consumer to be ready.
+The playbook checks the systemd unit and waits for `/healthz`, which requires the
+REST workers to be ready.
 
 ```sh
 ssh graovic@192.168.88.132 'sudo systemctl status company-research --no-pager'
@@ -127,7 +119,7 @@ curl --fail http://192.168.88.132:8080/v1/crawls/novelic-deploy-check-001/result
 
 Use a new request ID for a new crawl. This explicit-page example makes no model
 calls. See [the service contract](../SERVICE.md) for site-info, custom instructions,
-JetStream publishing and result fields.
+S3 delivery and result fields.
 
 The standalone CLI is also installed. On the server, use a separate output
 folder and the same service identity:
@@ -145,7 +137,7 @@ sudo -u company-research env \
 
 Detailed crawl artifacts are enabled by default while developing. Add
 `--no-save-artifacts` to a crawl command, or `"save_artifacts": false` to a REST
-or JetStream request, to retain just the bundled result in that crawl directory.
+request, to retain just the bundled result in that crawl directory.
 The service's request/job files still persist for recovery.
 
 To inspect the build without connecting to the server:

@@ -125,6 +125,9 @@ acknowledged after a local result is saved. Install with `uv sync --extra servic
 inside this package; its own lockfile and `.env.example` make setup independent
 of the sibling labs. LLM fact analysis remains a separate stage.
 
+Version 0.41.0 removes the NATS JetStream input and its result stream. The service
+is REST-only, the same transport model as the browser service.
+
 The [selector model comparison](SELECTOR_MODEL_COMPARISON_20260917.md) replays
 identical NOVELIC inputs through DeepSeek Flash, GLM‑5.3 and Qwen3.8 Flash. All
 agree on 187/187 eligibility decisions; measured times are 95s, 59s and 356s.

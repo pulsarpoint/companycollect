@@ -1,4 +1,4 @@
-"""Local durable crawl jobs shared by REST and JetStream inputs."""
+"""Local durable crawl jobs submitted through REST or the manual console."""
 
 import asyncio
 import fcntl
@@ -118,6 +118,7 @@ class CrawlJob(StrictModel):
         "failed",
         "cancelled",
     ]
+    # "jetstream" stays valid only so history from the retired NATS input still loads.
     source: Literal["rest", "jetstream", "manual"]
     submitted_at: str
     url: str = ""
@@ -335,7 +336,7 @@ class CrawlService:
         self,
         request: CrawlRequest,
         *,
-        source: Literal["rest", "jetstream", "manual"],
+        source: Literal["rest", "manual"],
         retry_of: str | None = None,
         retry_of_attempt: int | None = None,
     ) -> CrawlJob:

@@ -1,10 +1,8 @@
-"""Run crawl inputs with local recovery state and optional S3 delivery for NATS."""
+"""Run the REST crawl service with local recovery state and optional S3 delivery."""
 
 import argparse
-import asyncio
 import logging
 import os
-import signal
 from pathlib import Path
 
 import uvicorn
@@ -14,66 +12,23 @@ from pydantic import ValidationError
 
 from company_research.service import CrawlService
 from company_research.service_api import create_app
-from company_research.service_nats import JetStreamInput, JetStreamSettings
 from company_research.service_results import S3Results, S3Settings
-
-
-async def run_nats(service: CrawlService, jetstream: JetStreamInput) -> None:
-    stop = asyncio.Event()
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, stop.set)
-    await service.start()
-    try:
-        await jetstream.start()
-        stop_task = asyncio.create_task(stop.wait())
-        try:
-            assert jetstream.task is not None
-            done, _ = await asyncio.wait(
-                [stop_task, jetstream.task, *service.workers],
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            for task in done:
-                await task
-        finally:
-            stop_task.cancel()
-            await asyncio.gather(stop_task, return_exceptions=True)
-    finally:
-        await jetstream.close()
-        await service.close()
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.remove_signal_handler(sig)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--transport", choices=["rest", "nats", "both"], default="rest")
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--env-file", type=Path)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--concurrency", type=int, default=1)
     parser.add_argument("--max-pending", type=int, default=100)
-    parser.add_argument("--nats-url", action="append")
-    parser.add_argument("--nats-stream")
-    parser.add_argument("--nats-subject")
-    parser.add_argument("--nats-durable")
-    parser.add_argument("--nats-ack-wait", type=float)
-    parser.add_argument("--nats-credentials", type=Path)
-    parser.add_argument("--nats-result-stream")
-    parser.add_argument("--nats-result-subject")
     parser.add_argument(
-        "--nats-result-max-age",
-        type=float,
-        help="New result stream retention in seconds (default: 604800)",
-    )
-    parser.add_argument(
-        "--s3-bucket", help="Enable S3 delivery and completion events for NATS requests"
+        "--s3-bucket", help="Enable S3 delivery of results and failed attempts"
     )
     parser.add_argument("--s3-prefix")
     parser.add_argument("--s3-endpoint-url")
     parser.add_argument("--s3-region")
-    parser.add_argument("--create-stream", action="store_true")
     args = parser.parse_args()
     logging.basicConfig(
         level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
@@ -84,11 +39,7 @@ def main() -> None:
         else {}
     ) | dict(os.environ)
     api_token = environment.get("CRAWL_API_TOKEN") or None
-    if (
-        args.transport != "nats"
-        and args.host not in {"127.0.0.1", "localhost", "::1"}
-        and api_token is None
-    ):
+    if args.host not in {"127.0.0.1", "localhost", "::1"} and api_token is None:
         parser.error("Set CRAWL_API_TOKEN before binding REST beyond localhost")
     try:
         service = CrawlService(
@@ -117,25 +68,6 @@ def main() -> None:
         service.results = results
         if service.human_enabled and results is None:
             parser.error("Human assistance requires S3 storage for failed attempts")
-        jetstream = None
-        if args.transport in {"nats", "both"}:
-            values = {
-                "servers": args.nats_url
-                or ([environment["NATS_URL"]] if environment.get("NATS_URL") else None),
-                "stream": args.nats_stream,
-                "subject": args.nats_subject,
-                "durable": args.nats_durable,
-                "ack_wait": args.nats_ack_wait,
-                "credentials": args.nats_credentials,
-                "create_stream": args.create_stream,
-                "result_stream": args.nats_result_stream,
-                "result_subject": args.nats_result_subject,
-                "result_max_age": args.nats_result_max_age,
-            }
-            settings = JetStreamSettings.model_validate(
-                {k: v for k, v in values.items() if v is not None}
-            )
-            jetstream = JetStreamInput(service, settings, results)
     except ValidationError as error:
         parser.error(
             str(
@@ -148,18 +80,14 @@ def main() -> None:
         parser.error(f"Cannot configure S3 ({type(error).__name__})")
     except ValueError as error:
         parser.error(str(error))
-    if args.transport == "nats":
-        assert jetstream is not None
-        asyncio.run(run_nats(service, jetstream))
-    else:
-        uvicorn.run(
-            create_app(service, api_token=api_token, jetstream=jetstream),
-            host=args.host,
-            port=args.port,
-            access_log=False,
-            # Long-lived SSE/VNC connections must not prevent profile shutdown.
-            timeout_graceful_shutdown=10,
-        )
+    uvicorn.run(
+        create_app(service, api_token=api_token),
+        host=args.host,
+        port=args.port,
+        access_log=False,
+        # Long-lived SSE/VNC connections must not prevent profile shutdown.
+        timeout_graceful_shutdown=10,
+    )
 
 
 if __name__ == "__main__":
