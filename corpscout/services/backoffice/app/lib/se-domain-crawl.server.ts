@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { dagsterRunUrl, launchRun } from "~/lib/dagster.server";
 import { EMPTY_SE_DOMAINS_FILTERS, parseSeDomainsFilters, type SeDomainsFilters } from "~/lib/se-domains-filters";
-import { DOMAIN_CRAWL_TYPES, type SeDomainSelection } from "~/lib/se-domain-selection";
+import { DOMAIN_CRAWL_TYPES, type DomainCrawlType, type SeDomainSelection } from "~/lib/se-domain-selection";
+import { objectSettings, parseCrawlSettings } from "~/lib/crawl-settings.server";
 
 function domains(value: unknown): string[] {
   if (!Array.isArray(value) || value.some((domain) => typeof domain !== "string" || domain.length > 253 || !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(domain))) {
@@ -35,11 +36,13 @@ export function parseSeDomainSelection(value: unknown): SeDomainSelection {
   return { mode: "query", query: parsed, excludedDomains: domains(value.excludedDomains) };
 }
 
-export async function saveSeDomainCrawlInputs(value: unknown, crawlType: unknown) {
+function crawlPrefix(crawlType: unknown): string {
   if (!DOMAIN_CRAWL_TYPES.some((type) => type.value === crawlType)) throw new Error("Choose full crawl, jobs, or basic info.");
-  const selection = parseSeDomainSelection(value);
-  const prefix = crawlType === "site_info" ? "website_site_info" : `website_${crawlType}_crawl`;
-  const asset = `${prefix}_requests`;
+  return crawlType === "site_info" ? "website_site_info" : `website_${crawlType}_crawl`;
+}
+
+/** Input asset config: Dagster evaluates the selection inside ClickHouse. */
+function inputConfig(selection: SeDomainSelection): Record<string, unknown> {
   const config: Record<string, unknown> = {
     source_relation: "corpscout.se_company_domain", source_final: true,
     id_column: "root_domain", website_column: "root_domain",
@@ -57,11 +60,48 @@ export async function saveSeDomainCrawlInputs(value: unknown, crawlType: unknown
       ...(q.maxConfidence === "" ? {} : {max_confidence: Number(q.maxConfidence)}),
     };
   }
+  return config;
+}
+
+export async function saveSeDomainCrawlInputs(value: unknown, crawlType: unknown) {
+  const prefix = crawlPrefix(crawlType);
+  const selection = parseSeDomainSelection(value);
+  const asset = `${prefix}_requests`;
   const requestId = randomUUID();
   const run = await launchRun({
     job: `${prefix}_input_job`,
-    runConfig: {ops: {[asset]: {config}}},
+    runConfig: {ops: {[asset]: {config: inputConfig(selection)}}},
     tags: {"backoffice/action": "select-crawl-inputs", "crawl/type": String(crawlType), "backoffice/request_id": requestId},
   }, {timeoutMs: 15_000});
   return { ok: true as const, ...run, runUrl: dagsterRunUrl(run.runId), table: `corpscout.${asset}`, requestId };
+}
+
+/**
+ * Send a domain selection for crawling, the same way Brave analysis is launched:
+ * one workflow run whose input asset freezes the selection under task_id and whose
+ * results asset then crawls that whole task through the crawler API.
+ */
+export async function launchSeDomainCrawlWorkflow(value: unknown, crawlType: unknown, settings: unknown, requestedBy: string) {
+  const prefix = crawlPrefix(crawlType);
+  const selection = parseSeDomainSelection(value);
+  const results = parseCrawlSettings(objectSettings(settings), crawlType as DomainCrawlType);
+  const taskId = randomUUID();
+  const run = await launchRun({
+    job: `${prefix}_workflow`,
+    runConfig: {ops: {
+      [`${prefix}_requests`]: {config: {...inputConfig(selection), task_id: taskId}},
+      [`${prefix}_results`]: {config: results},
+    }},
+    tags: {
+      "processing/task_id": taskId,
+      "corpscout/trigger_source": "backoffice",
+      "corpscout/request_id": taskId,
+      "corpscout/requested_by": requestedBy,
+      "corpscout/country_iso2": "SE",
+      "corpscout/company_area": "website_crawl",
+      "corpscout/company_operation": "process",
+      "crawl/type": String(crawlType),
+    },
+  }, {timeoutMs: 15_000});
+  return { ok: true as const, ...run, runUrl: dagsterRunUrl(run.runId), taskId, requestId: taskId };
 }

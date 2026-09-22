@@ -2,6 +2,7 @@ import { chQuery } from "~/lib/clickhouse.server";
 import type { CrawlInputsSnapshot, CrawlInputRow, CrawlInputStats } from "~/lib/crawl-inputs";
 import { DOMAIN_CRAWL_TYPES, type DomainCrawlType } from "~/lib/se-domain-selection";
 import { dagsterRunUrl, launchRun } from "~/lib/dagster.server";
+import { formSettings, parseCrawlSettings } from "~/lib/crawl-settings.server";
 
 const INPUT_TABLES = {
   full: "corpscout.website_full_crawl_requests_current",
@@ -53,38 +54,11 @@ export async function startSavedCrawls(form: FormData) {
   if (rows.length !== selected.length) throw new Error("Some selected inputs no longer exist. Refresh the list.");
   if (rows.some((row) => !row.enabled)) throw new Error("Some selected inputs are disabled. Refresh the list.");
   const asset = type === "site_info" ? "website_site_info_results" : `website_${type}_crawl_results`;
-  const agentModel = String(form.get("challenge_agent_model") ?? "");
-  if (!["deepseek-flash", "z-ai/glm-5.3-flash"].includes(agentModel)) throw new Error("Choose a CAPTCHA model.");
-  const agentRuns = requiredInteger(form, "challenge_agent_max_runs", 3, 1000);
-  const api = String(form.get("api") ?? "");
-  if (!["deepseek", "openrouter"].includes(api)) throw new Error("Choose the crawl model API.");
-  const model = String(form.get("model") ?? "").trim();
-  if (!model || model.length > 200) throw new Error("Enter the crawl model.");
-  const maxPages = requiredInteger(form, "max_pages", 1, 500);
-  const maxModelCalls = requiredInteger(form, "max_model_calls", 1, 1000);
-  const pageSelection = String(form.get("page_selection") ?? "");
-  if (!["saved", "instructions", "basic_info"].includes(pageSelection) || (type === "site_info") !== (pageSelection === "basic_info")) throw new Error("Choose the page selection mode for this crawl type.");
-  if (type === "site_info" && maxPages !== 1) throw new Error("Basic info uses one page.");
-  const instructions = String(form.get("instructions") ?? "").trim();
-  if (pageSelection === "instructions" ? !instructions || instructions.length > 20000 : Boolean(instructions)) throw new Error("Provide instructions only for custom page selection.");
-  const forceRefresh = String(form.get("force_refresh") ?? "false");
-  if (!["true", "false"].includes(forceRefresh)) throw new Error("Invalid refresh option.");
-  const maxInFlight = form.has("max_in_flight") ? requiredInteger(form, "max_in_flight", 1, 20) : 3;
-  const refreshDays = form.has("refresh_interval_days") ? requiredInteger(form, "refresh_interval_days", 1, 3650) : 30;
+  const settings = parseCrawlSettings(formSettings(form), type as DomainCrawlType);
   const run = await launchRun({
     job: `${asset}_job`,
-    runConfig: {ops: {[asset]: {config: {batch_id: batchId, domains: selected, batch_size: selected.length, force_refresh: forceRefresh === "true",
-      challenge_agent_model: agentModel, challenge_agent_max_runs: agentRuns, api, model,
-      max_pages: maxPages, max_model_calls: maxModelCalls, page_selection: pageSelection,
-      max_in_flight: maxInFlight, refresh_interval_days: refreshDays,
-      ...(pageSelection === "instructions" ? {instructions} : {})}}}},
+    runConfig: {ops: {[asset]: {config: {batch_id: batchId, domains: selected, batch_size: selected.length, ...settings}}}},
     tags: {"backoffice/action": "crawl-saved-inputs", "crawl/type": type, "crawl/batch_id": batchId},
   }, {timeoutMs: 15_000});
   return {...run, runUrl: dagsterRunUrl(run.runId), batchId, count: selected.length, domains: selected};
-}
-
-function requiredInteger(form: FormData, name: string, min: number, max: number): number {
-  const value = String(form.get(name) ?? "");
-  if (!/^\d+$/.test(value) || Number(value) < min || Number(value) > max) throw new Error(`${name} must be an integer between ${min} and ${max}.`);
-  return Number(value);
 }

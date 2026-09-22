@@ -4,14 +4,13 @@ import { PlayIcon } from "lucide-react";
 import type { action } from "~/routes/admin-crawls";
 import type { CrawlInputsSnapshot } from "~/lib/crawl-inputs";
 import { DOMAIN_CRAWL_TYPES, type DomainCrawlType } from "~/lib/se-domain-selection";
+import { CrawlSettingsFields } from "~/components/admin/crawl-settings-fields";
 import { Badge } from "~/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Button } from "~/components/ui/button";
 import { Checkbox } from "~/components/ui/checkbox";
 import { Field, FieldGroup, FieldLabel } from "~/components/ui/field";
 import { Input } from "~/components/ui/input";
-import { Textarea } from "~/components/ui/textarea";
-import { NativeSelect, NativeSelectOption } from "~/components/ui/native-select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter } from "~/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "~/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/ui/table";
@@ -85,7 +84,6 @@ function CrawlActivationSheet({type, domains, onClose}: {type: DomainCrawlType; 
   const fetcher = useFetcher<typeof action>();
   const batch = useRef<{key: string; id: string} | null>(null);
   const handled = useRef<unknown>(null);
-  const [pageSelection, setPageSelection] = useState("saved");
   const busy = fetcher.state !== "idle";
   const receipt = fetcher.data && "batch" in fetcher.data ? fetcher.data.batch : null;
   const label = DOMAIN_CRAWL_TYPES.find(item => item.value === type)!.label;
@@ -118,19 +116,7 @@ function CrawlActivationSheet({type, domains, onClose}: {type: DomainCrawlType; 
         }}>
           <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 pb-4">
             <details className="text-sm"><summary className="cursor-pointer">Selected domains ({domains?.length ?? 0})</summary><p className="mt-2 break-words text-muted-foreground">{domains?.join(", ")}</p></details>
-            <FieldGroup className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Field><FieldLabel htmlFor="input-captcha-model">CAPTCHA model</FieldLabel><NativeSelect id="input-captcha-model" name="challenge_agent_model" defaultValue="deepseek-flash" required><NativeSelectOption value="deepseek-flash">DeepSeek Flash</NativeSelectOption><NativeSelectOption value="z-ai/glm-5.3-flash">GLM 5.3 Flash</NativeSelectOption></NativeSelect></Field>
-        <Field><FieldLabel htmlFor="input-captcha-runs">CAPTCHA run budget</FieldLabel><Input id="input-captcha-runs" name="challenge_agent_max_runs" type="number" min={3} max={1000} defaultValue={3} required /></Field>
-        <Field><FieldLabel htmlFor="input-api">Crawl model API</FieldLabel><NativeSelect id="input-api" name="api" defaultValue="deepseek" required><NativeSelectOption value="deepseek">DeepSeek</NativeSelectOption><NativeSelectOption value="openrouter">OpenRouter</NativeSelectOption></NativeSelect></Field>
-        <Field><FieldLabel htmlFor="input-model">Crawl model</FieldLabel><Input id="input-model" name="model" defaultValue="deepseek-flash" maxLength={200} required /></Field>
-        <Field><FieldLabel htmlFor="input-max-pages">Page limit</FieldLabel><Input id="input-max-pages" name="max_pages" type="number" min={1} max={500} defaultValue={type === "site_info" ? 1 : 20} readOnly={type === "site_info"} required /></Field>
-        <Field><FieldLabel htmlFor="input-max-calls">Model call limit</FieldLabel><Input id="input-max-calls" name="max_model_calls" type="number" min={1} max={1000} defaultValue={20} required /></Field>
-        <Field><FieldLabel htmlFor="input-page-selection">Page selection</FieldLabel><NativeSelect id="input-page-selection" name="page_selection" value={type === "site_info" ? "basic_info" : pageSelection} onChange={(event) => setPageSelection(event.target.value)} required>{type === "site_info" ? <NativeSelectOption value="basic_info">Basic info · single page</NativeSelectOption> : <><NativeSelectOption value="saved">Saved pages / discovery preset</NativeSelectOption><NativeSelectOption value="instructions">Custom discovery instructions</NativeSelectOption></>}</NativeSelect></Field>
-        <Field><FieldLabel htmlFor="input-refresh">Fresh results</FieldLabel><NativeSelect id="input-refresh" name="force_refresh" defaultValue="false"><NativeSelectOption value="false">Skip valid recent results</NativeSelectOption><NativeSelectOption value="true">Force a new crawl</NativeSelectOption></NativeSelect></Field>
-        {type !== "site_info" && pageSelection === "instructions" && <Field className="sm:col-span-2"><FieldLabel htmlFor="input-instructions">Page-selection instructions</FieldLabel><Textarea id="input-instructions" name="instructions" placeholder="Find current vacancies and collect the full job descriptions" maxLength={20000} required /></Field>}
-        <Field><FieldLabel htmlFor="input-parallel">Concurrent crawls</FieldLabel><Input id="input-parallel" name="max_in_flight" type="number" min={1} max={20} defaultValue={3} required /></Field>
-        <Field><FieldLabel htmlFor="input-fresh-days">Freshness window (days)</FieldLabel><Input id="input-fresh-days" name="refresh_interval_days" type="number" min={1} max={3650} defaultValue={30} required /></Field>
-            </FieldGroup>
+            <CrawlSettingsFields type={type} idPrefix="input" />
             <p className="text-xs text-muted-foreground">Browser mode, proxy route, and artifact storage use each input’s saved settings. Model identifiers must be supported by the selected API.</p>
             {fetcher.data?.error && <Alert variant="destructive"><AlertTitle>Could not start the batch</AlertTitle><AlertDescription>{fetcher.data.error}</AlertDescription></Alert>}
           </div>

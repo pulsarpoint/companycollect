@@ -8,6 +8,7 @@ const server = vi.hoisted(() => ({
   listSeDomainsPage: vi.fn(),
   loadSeDomainsCounts: vi.fn(),
   saveSeDomainCrawlInputs: vi.fn(),
+  launchSeDomainCrawlWorkflow: vi.fn(),
 }));
 vi.mock("~/lib/se-domains-list.server", () => server);
 vi.mock("~/lib/se-domain-crawl.server", () => server);
@@ -100,6 +101,7 @@ describe("admin-se-companies-domains route", () => {
     server.listSeDomainsPage.mockReset().mockResolvedValue({ rows: [ROW] });
     server.loadSeDomainsCounts.mockReset().mockResolvedValue(COUNTS);
     server.saveSeDomainCrawlInputs.mockReset();
+    server.launchSeDomainCrawlWorkflow.mockReset();
   });
 
   it("submits the selected domains through the route action and returns the Dagster input run", async () => {
@@ -111,8 +113,25 @@ describe("admin-se-companies-domains route", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "save_crawl_inputs", crawlType: "jobs", selection }),
     }) } as never);
-    expect(response.data).toEqual(run);
+    expect(response.data).toEqual({ ...run, workflow: false });
     expect(server.saveSeDomainCrawlInputs).toHaveBeenCalledWith(selection, "jobs");
+  });
+
+  it("sends a selection for crawling through the Dagster workflow with the operator", async () => {
+    vi.stubEnv("BACKOFFICE_OPERATOR", "operator@example.se");
+    const selection = { mode: "ids", domains: ["example.se"] };
+    const settings = { api: "deepseek", model: "deepseek-flash" };
+    const run = { ok: true, requestId: "task", taskId: "task", runId: "workflow-run", runUrl: "http://dagster/runs/workflow-run" };
+    server.launchSeDomainCrawlWorkflow.mockResolvedValue(run);
+    const response = await action({ request: new Request("http://x/admin/se/companies/domains", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "send_for_crawl", crawlType: "site_info", selection, settings }),
+    }) } as never);
+    expect(response.data).toEqual({ ...run, workflow: true });
+    expect(server.launchSeDomainCrawlWorkflow).toHaveBeenCalledWith(selection, "site_info", settings, "operator@example.se");
+    expect(server.saveSeDomainCrawlInputs).not.toHaveBeenCalled();
+    vi.unstubAllEnvs();
   });
 
   it("returns a failed submission without reporting that inputs were queued", async () => {
