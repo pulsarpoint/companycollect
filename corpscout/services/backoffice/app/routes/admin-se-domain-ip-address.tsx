@@ -7,7 +7,6 @@ import {
   EmptyTitle,
 } from "~/components/ui/empty";
 import { getDomainTechnologyIpDetail } from "~/lib/queries.server";
-import { seDomainHref } from "~/lib/se-domains-filters";
 
 export async function loader({ params, request }: Route.LoaderArgs) {
   const search = new URL(request.url).searchParams;
@@ -43,7 +42,7 @@ export default function DomainIpAddress({
       detail={loaderData}
       backLink={{
         label: "All IP addresses",
-        to: `${seDomainHref(loaderData.companyDomain)}/ip-addresses`,
+        to: "../ip-addresses",
       }}
     />
   );

@@ -2,6 +2,7 @@
 """Index existing RustFS Webtech detections after ClickHouse migration 432."""
 
 import json
+import logging
 import os
 
 import click
@@ -27,6 +28,7 @@ from dagster_v3.defs.webtech.backfill import backfill_technology_results
 @click.option("--workers", type=click.IntRange(1, 32), default=8)
 @click.option("--batch-size", type=click.IntRange(1, 1000), default=250)
 def main(execute: bool, limit: int, workers: int, batch_size: int) -> None:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     load_dotenv()
     client = Client(
         host=os.environ["CLICKHOUSE_HOST"],

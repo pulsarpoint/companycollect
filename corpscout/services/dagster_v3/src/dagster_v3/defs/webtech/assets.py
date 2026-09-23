@@ -318,7 +318,6 @@ def build_webtech_assets(
                 "crawl_id": reference.crawl_id,
                 "partition_key": reference.partition_key,
                 "indexed_count": indexed_count,
-                "technology_count": reference.technology_count,
                 "result_table": "corpscout.webtech_domain_scan_results",
                 "technology_table": "corpscout.webtech_domain_technologies",
                 "outcome_counts": reference.outcome_counts,

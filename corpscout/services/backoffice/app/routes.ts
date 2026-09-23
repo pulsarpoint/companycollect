@@ -103,6 +103,8 @@ export default [
     route("esef", "routes/admin-esef.tsx"),
     route("graph", "routes/admin-graph.tsx"),
     route("domains", "routes/admin-domains.tsx"),
+    route("ip-addresses", "routes/admin-ip-addresses.tsx"),
+    route("ip-addresses/statistics", "routes/admin-ip-address-statistics.ts"),
     route("domains/:domain/sites", "routes/admin-domain-sites.ts"),
     route("domains/:domain", "routes/admin-domain.tsx", [
       // The same domain-scoped loaders and views serve both domain entry points.

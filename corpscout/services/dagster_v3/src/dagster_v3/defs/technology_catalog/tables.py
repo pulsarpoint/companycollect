@@ -54,7 +54,8 @@ TECHNOLOGY_CATALOG_PUBLISH_LOG_COLUMNS = (
     "override_fingerprints",
 )
 
-# Column order is the contract with migration 000350.
+# Column order is the contract with migration 000350. Migration 000432 adds
+# technology_id as MATERIALIZED cityHash64(technology), so inserts omit it.
 TECHNOLOGY_CATALOG_COLUMNS = (
     "technology",
     "slug",

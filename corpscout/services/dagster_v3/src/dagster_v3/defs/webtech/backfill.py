@@ -1,6 +1,8 @@
 """Replay the durable result index into per-technology observations, without scanning."""
 
 import hashlib
+import json
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import Any
@@ -61,7 +63,15 @@ def read_indexed_technologies(
         raise ValueError(
             f"Stored Webtech report checksum/size mismatch: {reference.object_key}"
         )
-    document = StoredDomainResultDocument.model_validate_json(body)
+    payload = json.loads(body)
+    if index["detector_version"] == "mywappalyzer-1.3.0" and index["scan_id"] == "":
+        # The pilot predates scan IDs and timeout stages. Preserve its empty ID
+        # from migration 355, and leave the unrecorded analysis status empty.
+        payload.setdefault("scan_id", "")
+        payload.setdefault("timeout_stage", None)
+        if payload.get("report") is not None:
+            payload["report"].setdefault("analysis_status", "")
+    document = StoredDomainResultDocument.model_validate(payload)
     if (
         document.candidate.root_domain != index["root_domain"]
         or document.candidate.harmonic_rank != index["harmonic_rank"]
@@ -155,6 +165,12 @@ def backfill_technology_results(
             processed += len(pending)
             detections += len(rows)
             cursor = tuple(indexes[-1][name] for name in INDEX_COLUMNS[:4])
+            logging.getLogger(__name__).info(
+                "Webtech backfill: %s reports indexed, %s skipped, %s detections written",
+                processed,
+                skipped,
+                detections,
+            )
     return {
         "reports_indexed": processed,
         "reports_skipped": skipped,

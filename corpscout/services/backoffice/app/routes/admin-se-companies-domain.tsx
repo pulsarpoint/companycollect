@@ -137,6 +137,7 @@ export default function AdminSeCompaniesDomain({
       .slice(basePath.length)
       .split("/")[1] ?? "";
   const section: TechnologySection =
+    suffix === "web-technologies" ||
     suffix === "infrastructure" ||
     suffix === "web-intelligence" ||
     suffix === "ip-addresses" ||

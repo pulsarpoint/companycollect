@@ -60,6 +60,12 @@ class FakeClickhouseClient:
 
     def execute(self, sql: str, parameters: Any = None) -> list[tuple[Any, ...]]:
         self.calls.append((sql, parameters))
+        if "FROM system.tables" in sql:
+            return [(name,) for name in parameters["tables"]]
+        if "FROM corpscout.technology_catalog" in sql:
+            return [("React", 123), ("Next.js", 456)]
+        if "FROM corpscout.technology_aliases" in sql:
+            return [("reactjs", "React")]
         return self.rows
 
 
@@ -654,7 +660,8 @@ def test_candidate_manifest_reuses_identical_durable_input() -> None:
     assert object_store.write_count == 1
 
 
-def test_final_manifest_is_validated_before_clickhouse_index() -> None:
+def stored_scan(report: dict[str, object] | None = None):
+    technology_count = len(report["technologies"]) if report is not None else 0
     object_store = FakeObjectStore()
     destination = WebtechS3Destination(bucket="webtech", prefix="webtech")
     scan_id = "ab" * 16
@@ -679,7 +686,7 @@ def test_final_manifest_is_validated_before_clickhouse_index() -> None:
         "duration_ms": 500,
         "error_message": "domain exceeded 60 second deadline",
         "timeout_stage": "wappalyzer_report",
-        "report": None,
+        "report": report,
     }
     result_body = _json_bytes(result_document)
     object_store.objects[("webtech", result_key)] = result_body
@@ -697,7 +704,7 @@ def test_final_manifest_is_validated_before_clickhouse_index() -> None:
         "finished_at": SCANNED_AT.isoformat(),
         "elapsed_seconds": 0,
         "outcome_counts": {"hard_timeout": 1},
-        "technology_count": 0,
+        "technology_count": technology_count,
         "scanner_settings": {"browser_count": 20},
         "results": [
             {
@@ -705,7 +712,7 @@ def test_final_manifest_is_validated_before_clickhouse_index() -> None:
                 "harmonic_rank": 1,
                 "outcome": "hard_timeout",
                 "timeout_stage": "wappalyzer_report",
-                "technology_count": 0,
+                "technology_count": technology_count,
                 "duration_ms": 500,
                 "object_key": result_key,
                 "sha256": result_sha,
@@ -722,10 +729,16 @@ def test_final_manifest_is_validated_before_clickhouse_index() -> None:
         uri=f"s3://webtech/{final_key}",
         total_count=1,
         outcome_counts={"hard_timeout": 1},
-        technology_count=0,
+        technology_count=technology_count,
         elapsed_seconds=0,
         domains_per_minute=0,
     )
+    return object_store, destination, reference
+
+
+def test_final_manifest_is_validated_before_clickhouse_index() -> None:
+    object_store, destination, reference = stored_scan()
+    scan_id = reference.scan_id
     clickhouse_client = FakeClickhouseClient()
 
     indexed = index_final_results(
@@ -742,10 +755,7 @@ def test_final_manifest_is_validated_before_clickhouse_index() -> None:
     assert rows[0][WEBTECH_RESULT_COLUMNS.index("scan_id")] == scan_id
     assert rows[0][WEBTECH_RESULT_COLUMNS.index("run_id")] == "dagster-run-1"
     assert rows[0][WEBTECH_RESULT_COLUMNS.index("outcome")] == "hard_timeout"
-    assert (
-        rows[0][WEBTECH_RESULT_COLUMNS.index("timeout_stage")]
-        == "wappalyzer_report"
-    )
+    assert rows[0][WEBTECH_RESULT_COLUMNS.index("timeout_stage")] == "wappalyzer_report"
     assert rows[0][WEBTECH_RESULT_COLUMNS.index("extension_failure_stage")] == ""
 
 
@@ -772,3 +782,148 @@ def _json_bytes(document: dict[str, object]) -> bytes:
         separators=(",", ":"),
         sort_keys=True,
     ).encode()
+
+
+def technology_report():
+    return {
+        "analysis_complete": True,
+        "analysis_status": "completed",
+        "technologies": [
+            {
+                "name": "React",
+                "slug": "react",
+                "version": "19.1",
+                "confidence": 100,
+                "categories": [
+                    {
+                        "id": 12,
+                        "name": "JavaScript frameworks",
+                        "slug": "javascript-frameworks",
+                    }
+                ],
+            },
+            {
+                "name": "Unknown technology",
+                "slug": "unknown",
+                "version": "",
+                "confidence": 75,
+                "categories": [],
+            },
+        ],
+    }
+
+
+def test_webtech_indexes_catalog_linked_detections_before_scan_metadata() -> None:
+    from dagster_v3.defs.webtech.technologies import WEBTECH_TECHNOLOGY_COLUMNS
+
+    store, destination, reference = stored_scan(technology_report())
+    client = FakeClickhouseClient()
+    assert (
+        index_final_results(
+            clickhouse=FakeClickhouse(client),
+            object_store=store,
+            destination=destination,
+            reference=reference,
+            dagster_run_id="index-run",
+        )
+        == 1
+    )
+    inserts = [(sql, rows) for sql, rows in client.calls if "INSERT INTO" in sql]
+    assert len(inserts) == 2
+    assert "webtech_domain_technologies" in inserts[0][0]
+    assert "webtech_domain_scan_results" in inserts[1][0]
+    detections = [
+        dict(zip(WEBTECH_TECHNOLOGY_COLUMNS, row, strict=True)) for row in inserts[0][1]
+    ]
+    assert len(detections) == 2
+    assert detections[0]["technology_id"] == 123
+    assert detections[0]["technology"] == "React"
+    assert detections[0]["version"] == "19.1"
+    assert detections[0]["category_ids"] == [12]
+    assert detections[0]["confidence"] == 100
+    assert detections[0]["root_domain"] == "example.com"
+    assert detections[1]["technology_id"] is None
+    assert detections[1]["detected_name"] == "Unknown technology"
+    assert detections[1]["catalog_match"] == "unmapped"
+
+
+def test_webtech_resolves_only_exact_normalized_and_reviewed_catalog_matches() -> None:
+    from dagster_v3.defs.webtech.technologies import load_technology_catalog
+
+    catalog = load_technology_catalog(FakeClickhouseClient())
+    assert catalog.resolve("React") == (123, "React", "exact")
+    assert catalog.resolve(" REACT ") == (123, "React", "normalized")
+    assert catalog.resolve("ReactJS") == (123, "React", "alias")
+    assert catalog.resolve("React-like") == (None, "", "unmapped")
+    catalog.normalized["ambiguous"] = ["React", "Next.js"]
+    assert catalog.resolve("ambiguous") == (None, "", "ambiguous")
+
+
+@pytest.mark.parametrize("failure", ["checksum", "duplicate", "confidence"])
+def test_webtech_rejects_invalid_detections_before_any_insert(failure: str) -> None:
+    report = technology_report()
+    if failure == "duplicate":
+        report["technologies"].append(report["technologies"][0])
+    elif failure == "confidence":
+        report["technologies"][0]["confidence"] = 101
+    store, destination, reference = stored_scan(report)
+    if failure == "checksum":
+        key = next(key for key in store.objects if key[1].endswith("report.json"))
+        store.objects[key] += b" "
+    client = FakeClickhouseClient()
+    with pytest.raises(ValueError):
+        index_final_results(
+            clickhouse=FakeClickhouse(client),
+            object_store=store,
+            destination=destination,
+            reference=reference,
+            dagster_run_id="index-run",
+        )
+    assert not any("INSERT INTO" in sql for sql, _ in client.calls)
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_webtech_backfill_checks_identity_and_preserves_report_details(
+    legacy: bool,
+) -> None:
+    from dagster_v3.defs.webtech.backfill import read_indexed_technologies
+    from dagster_v3.defs.webtech.technologies import (
+        load_technology_catalog,
+        WEBTECH_TECHNOLOGY_COLUMNS,
+    )
+
+    store, destination, reference = stored_scan(technology_report())
+    client = FakeClickhouseClient()
+    index_final_results(
+        clickhouse=FakeClickhouse(client),
+        object_store=store,
+        destination=destination,
+        reference=reference,
+        dagster_run_id="index-run",
+    )
+    index = dict(zip(WEBTECH_RESULT_COLUMNS, client.calls[-1][1][0], strict=True))
+    if legacy:
+        object_key = (index["result_bucket"], index["result_object_key"])
+        payload = json.loads(store.objects[object_key])
+        del payload["scan_id"]
+        del payload["timeout_stage"]
+        del payload["report"]["analysis_status"]
+        payload["detector_version"] = "mywappalyzer-1.3.0"
+        body = _json_bytes(payload)
+        store.objects[object_key] = body
+        index.update(
+            scan_id="",
+            detector_version="mywappalyzer-1.3.0",
+            report_sha256=hashlib.sha256(body).hexdigest(),
+            report_size_bytes=len(body),
+        )
+    catalog = load_technology_catalog(client)
+    rows = read_indexed_technologies(index, store, catalog)
+    assert len(rows) == 2
+    assert rows[0][WEBTECH_TECHNOLOGY_COLUMNS.index("version")] == "19.1"
+    assert rows[0][WEBTECH_TECHNOLOGY_COLUMNS.index("scan_id")] == index["scan_id"]
+    if legacy:
+        assert rows[0][WEBTECH_TECHNOLOGY_COLUMNS.index("analysis_status")] == ""
+    index["root_domain"] = "wrong.example"
+    with pytest.raises(ValueError, match="identity mismatch"):
+        read_indexed_technologies(index, store, catalog)

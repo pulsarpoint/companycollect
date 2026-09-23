@@ -37,7 +37,7 @@ External services a host must reach (credentials via `.env`, see §2):
 | Temporal | `TEMPORAL_ADDRESS` | translator workflow |
 | Translator service | `TRANSLATOR_API_URL` (default `http://localhost:8080`) | translation queue |
 | vLLM endpoints | `TRANSLATION_PROVIDER_LOCAL_*`, `COMMONCRAWL_EMBED_*` | translation + NACE classification |
-| MaxMind dir | `MAXMIND_DATABASE_DIRECTORY` | commoncrawl_geoip |
+| MaxMind dir | `MAXMIND_DATABASE_DIRECTORY` | ip_enrichment |
 | Companies House API | `COMPANY_HOUSE` key | UK financials |
 | Alert webhook | `ALERT_WEBHOOK_URL` | run-failure and event-inactivity alerts (Slack incoming-webhook payload) |
 

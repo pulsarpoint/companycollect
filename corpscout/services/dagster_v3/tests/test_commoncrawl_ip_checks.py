@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 import dagster as dg
 import pytest
 
-from dagster_v3.defs.commoncrawl_geoip.assets import GEOIP_MISSING_BY_BUCKET_SQL
+from dagster_v3.defs.commoncrawl_ip_checks import GEOIP_MISSING_BY_BUCKET_SQL
 from dagster_v3.defs.commoncrawl_ip import (
     commoncrawl_ip_partition_key,
 )
@@ -83,7 +83,7 @@ def test_geoip_backlog_query_is_missing_only_across_all_buckets() -> None:
     assert (
         "FROM corpscout.commoncrawl_ip_addresses FINAL" in GEOIP_MISSING_BY_BUCKET_SQL
     )
-    assert "FROM corpscout.commoncrawl_ip_geoip FINAL" in GEOIP_MISSING_BY_BUCKET_SQL
+    assert "FROM corpscout.ip_enrichment_current" in GEOIP_MISSING_BY_BUCKET_SQL
     assert "toUInt8(1) AS matched" in GEOIP_MISSING_BY_BUCKET_SQL
     assert "USING (bucket, ip)" in GEOIP_MISSING_BY_BUCKET_SQL
     assert "ifNull(current.matched, 0) = 0" in GEOIP_MISSING_BY_BUCKET_SQL

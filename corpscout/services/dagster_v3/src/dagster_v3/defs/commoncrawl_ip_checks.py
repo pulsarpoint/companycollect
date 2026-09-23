@@ -4,12 +4,40 @@ from datetime import UTC, datetime
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
 
-from dagster_v3.defs.commoncrawl_geoip.assets import GEOIP_MISSING_BY_BUCKET_SQL
 from dagster_v3.defs.commoncrawl_ip import (
     COMMONCRAWL_IP_ADDRESSES_KEY,
     commoncrawl_ip_partition_key,
 )
 from dagster_v3.defs.commoncrawl_rdap.assets import RDAP_ACTIONABLE_BY_BUCKET_SQL
+
+
+GEOIP_MISSING_BY_BUCKET_SQL = """
+SELECT
+    addresses.bucket AS bucket,
+    count() AS actionable_ip_count,
+    min(addresses.first_seen) AS oldest_uncovered_first_seen
+FROM
+(
+    SELECT
+        bucket,
+        ip,
+        first_seen
+    FROM corpscout.commoncrawl_ip_addresses FINAL
+) AS addresses
+LEFT JOIN
+(
+    SELECT
+        bucket,
+        ip,
+        toUInt8(1) AS matched
+    FROM corpscout.ip_enrichment_current
+    WHERE city_data_status IN ('found', 'not_found', 'not_global')
+      AND asn_data_status IN ('found', 'not_found', 'not_global')
+) AS current USING (bucket, ip)
+WHERE ifNull(current.matched, 0) = 0
+GROUP BY addresses.bucket
+ORDER BY addresses.bucket
+"""
 
 
 type GeoIPBacklogRow = tuple[int, int, datetime]

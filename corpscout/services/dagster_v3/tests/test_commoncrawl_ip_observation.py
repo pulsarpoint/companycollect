@@ -6,7 +6,6 @@ import pytest
 from dagster._core.definitions.data_version import StaleStatus
 from dagster._utils.test.data_versions import get_stale_status_resolver
 
-from dagster_v3.defs.commoncrawl_geoip.assets import commoncrawl_ip_geoip
 from dagster_v3.defs.commoncrawl_ip import (
     COMMONCRAWL_IP_ADDRESSES_KEY,
     COMMONCRAWL_IP_PARTITIONS,
@@ -109,9 +108,7 @@ def test_manual_observation_job_records_one_bucket_without_materialization() -> 
     selection = commoncrawl_ip_addresses_observation_job.selection
 
     assert job.partitions_def is COMMONCRAWL_IP_PARTITIONS
-    assert selection.resolve(repository.asset_graph) == {
-        COMMONCRAWL_IP_ADDRESSES_KEY
-    }
+    assert selection.resolve(repository.asset_graph) == {COMMONCRAWL_IP_ADDRESSES_KEY}
     assert selection.resolve_checks(repository.asset_graph) == set()
 
     result = job.execute_in_process(partition_key="bucket_007")
@@ -159,7 +156,7 @@ def test_project_registers_one_manual_observable_source() -> None:
     assert observation_defs.sensors is None
     assert observation_defs.schedules is None
 
-    for child in (commoncrawl_ip_geoip, commoncrawl_ip_rdap_networks):
+    for child in (commoncrawl_ip_rdap_networks,):
         child_node = asset_graph.get(child.key)
         assert child_node.partitions_def is COMMONCRAWL_IP_PARTITIONS
         assert COMMONCRAWL_IP_ADDRESSES_KEY in child_node.parent_keys

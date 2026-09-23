@@ -1,9 +1,11 @@
+CREATE DATABASE IF NOT EXISTS corpscout;
+
 -- Catalog names are the existing canonical identity. Derive the same ID on every
--- stage/exchange refresh; slugs cannot serve as IDs because they are not unique.
+-- stage/exchange refresh. Slugs cannot serve as IDs because they are not unique.
 ALTER TABLE corpscout.technology_catalog
     ADD COLUMN IF NOT EXISTS technology_id UInt64 MATERIALIZED cityHash64(technology);
 
--- Immutable scan observations. Re-indexing a report replaces the same keys;
+-- Immutable scan observations. Re-indexing a report replaces the same keys.
 -- a later scan keeps its own history, including technologies it stopped detecting.
 CREATE TABLE IF NOT EXISTS corpscout.webtech_domain_technologies
 (

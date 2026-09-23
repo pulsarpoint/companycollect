@@ -1,7 +1,6 @@
 import type { Route } from "./+types/admin-se-domain-infrastructure";
 import { TechnologyInfrastructureSection } from "~/components/detail/technology-infrastructure-section";
 import { getDomainTechnologyInfrastructure } from "~/lib/queries.server";
-import { seDomainHref } from "~/lib/se-domains-filters";
 
 export async function loader({ params, request }: Route.LoaderArgs) {
   const search = new URL(request.url).searchParams;
@@ -17,7 +16,7 @@ export default function DomainInfrastructure({
   return (
     <TechnologyInfrastructureSection
       infrastructure={loaderData}
-      ipAddressesPath={`${seDomainHref(loaderData.domain)}/ip-addresses`}
+      ipAddressesPath="../ip-addresses"
     />
   );
 }

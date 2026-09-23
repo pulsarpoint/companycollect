@@ -25,6 +25,7 @@ from dagster_v3.defs.sweden_company import tables as sweden_company_tables
 from dagster_v3.defs.sweden_uhm_procurement import tables as sweden_uhm_tables
 from dagster_v3.defs.wikidata import tables as wikidata_tables
 from dagster_v3.defs.world_bank_macro import tables as world_bank_macro_tables
+from dagster_v3.defs.webtech.technologies import WEBTECH_TECHNOLOGY_COLUMNS
 from dagster_v3.defs.xbrl_common.tables import (
     TAXONOMY_CONCEPT_COLUMNS,
     TAXONOMY_LABEL_COLUMNS,
@@ -446,6 +447,9 @@ EXPECTED_MIGRATIONS = (
     "000430_corpscout_website_crawl_type_results",
     "000431_corpscout_website_crawl_task_domains",
     "000432_corpscout_webtech_domain_technologies",
+    "000433_corpscout_ip_enrichment",
+    "000434_corpscout_import_legacy_geoip",
+    "000435_corpscout_retire_legacy_geoip",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -814,6 +818,25 @@ def test_clickhouse_migration_files_are_explicit() -> None:
     )
 
     assert migration_files == expected_files
+
+
+def test_webtech_technology_migration_matches_export_and_current_scan_identity() -> None:
+    sql = _migration_sql("000432_corpscout_webtech_domain_technologies.up.sql")
+    down_sql = _migration_sql("000432_corpscout_webtech_domain_technologies.down.sql")
+    last_index = -1
+    for column_name in WEBTECH_TECHNOLOGY_COLUMNS:
+        index = sql.index(f"    {column_name} ")
+        assert index > last_index
+        last_index = index
+    assert "technology_id UInt64 MATERIALIZED cityHash64(technology)" in sql
+    assert "technology_id Nullable(UInt64)" in sql
+    assert "ENGINE = ReplacingMergeTree(recorded_at)" in sql
+    assert "ORDER BY (root_domain, crawl_id, detector_version, scan_id, detected_name)" in sql
+    for column in ("root_domain", "crawl_id", "detector_version", "scan_id", "report_sha256"):
+        assert f"d.{column} = s.{column}" in sql
+    assert "DROP VIEW IF EXISTS corpscout.webtech_domain_technologies_current" in down_sql
+    assert "DROP TABLE IF EXISTS corpscout.webtech_domain_technologies" in down_sql
+    assert "DROP COLUMN IF EXISTS technology_id" in down_sql
 
 
 def test_webtech_error_stage_migration_is_queryable_and_reversible() -> None:

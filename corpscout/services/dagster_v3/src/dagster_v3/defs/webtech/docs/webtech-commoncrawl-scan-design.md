@@ -209,6 +209,51 @@ materialization must confirm:
 - workstation CPU and memory remain bounded;
 - observed throughput supports the projected production duration.
 
+## Queryable technology detections
+
+Migration 432 adds `technology_catalog.technology_id`, a materialized UInt64
+`cityHash64(technology)` derived from the catalog's canonical name. Catalog refreshes
+retain IDs for unchanged names because staging tables inherit the schema. Slugs
+are not unique and must not be used as catalog identifiers. Renaming a canonical
+technology changes its ID. The indexer rejects hash collisions.
+
+`commoncrawl_webtech_results_clickhouse` now writes two tables:
+
+- `webtech_domain_scan_results` keeps scan outcomes, counts, and object references.
+- `webtech_domain_technologies` stores one observation for each detected name per
+  domain and scan, including catalog ID/name, detected name/slug, version,
+  confidence, category IDs/names/slugs, URLs, analysis status, and report provenance.
+
+Matching uses exact canonical names, uniquely normalized names, and accepted
+catalog aliases. Unmapped or ambiguous detections remain queryable with a NULL
+`technology_id` and an explicit `catalog_match`. They are never discarded.
+
+Detections are written before the result index. The
+`webtech_domain_technologies_current` view joins detections to the current result
+index by domain, crawl, detector, scan ID, and report hash. It hides superseded
+scans, including when a replacement scan finds zero technologies. "Current" is
+per domain/crawl/detector, not one global latest scan across all crawl versions.
+The history table uses `ReplacingMergeTree(recorded_at)` so queries that need
+deduplicated observations must use `FINAL` (the view already does).
+
+Apply migration 432 before running the updated materializer. Existing reports
+can be indexed directly from RustFS without rescanning domains:
+
+```bash
+cd corpscout/services/dagster_v3
+uv run python scripts/backfill-webtech-technologies.py
+uv run python scripts/backfill-webtech-technologies.py --execute --limit 10
+uv run python scripts/backfill-webtech-technologies.py --execute
+```
+
+The backfill verifies report checksums, identities, and detection counts. It
+validates bounded batches before insertion and skips already indexed report
+hashes with matching row counts, allowing safe resume. Rematerializing the
+results asset also indexes detections from its existing final manifest.
+The backfill supports the `mywappalyzer-1.3.0` pilot format, whose index has an
+empty scan ID and whose report lacks an analysis-status field. It preserves
+those empty values instead of inventing a status.
+
 ## Real-host smoke results
 
 Dagster run `21417131-86ce-44a6-8c54-9e4e13235878` first validated the complete

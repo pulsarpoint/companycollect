@@ -97,7 +97,7 @@ function AdminBreadcrumbs() {
     </BreadcrumbList></Breadcrumb>;
   }
 
-  if (onEsefPage || pathname === "/admin/graph" || pathname.startsWith("/admin/crawls") || pathname.startsWith("/admin/browsers")) {
+  if (onEsefPage || pathname === "/admin/ip-addresses" || pathname === "/admin/graph" || pathname.startsWith("/admin/crawls") || pathname.startsWith("/admin/browsers")) {
     return (
       <Breadcrumb>
         <BreadcrumbList>
@@ -106,7 +106,7 @@ function AdminBreadcrumbs() {
           </BreadcrumbItem>
           <BreadcrumbSeparator className="hidden sm:block" />
           <BreadcrumbItem>
-            <BreadcrumbPage>{onEsefPage ? "ESEF" : pathname.startsWith("/admin/crawls") ? "Crawler" : pathname.startsWith("/admin/browsers") ? "Browsers" : "Graph"}</BreadcrumbPage>
+            <BreadcrumbPage>{onEsefPage ? "ESEF" : pathname === "/admin/ip-addresses" ? "IP addresses" : pathname.startsWith("/admin/crawls") ? "Crawler" : pathname.startsWith("/admin/browsers") ? "Browsers" : "Graph"}</BreadcrumbPage>
           </BreadcrumbItem>
         </BreadcrumbList>
       </Breadcrumb>

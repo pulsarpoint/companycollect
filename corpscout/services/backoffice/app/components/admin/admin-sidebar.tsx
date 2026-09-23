@@ -10,6 +10,7 @@ import {
   FlagIcon,
   GlobeIcon,
   NetworkIcon,
+  ServerIcon,
   SearchIcon,
   Settings2Icon,
   SlidersHorizontalIcon,
@@ -159,6 +160,15 @@ export function AdminSidebar() {
             <SidebarMenuItem>
               <SidebarMenuButton isActive={pathname === "/admin/domains" || pathname.startsWith("/admin/domains/")} tooltip="Domains" render={<Link to="/admin/domains" />}>
                 <GlobeIcon /><span>Domains</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                isActive={pathname === "/admin/ip-addresses"}
+                tooltip="IP addresses"
+                render={<Link to="/admin/ip-addresses" />}
+              >
+                <ServerIcon /><span>IP addresses</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
             <SidebarMenuItem>

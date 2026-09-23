@@ -7,11 +7,13 @@ export function TechnologySectionTabs({
   section,
   search = "",
   mailSecurity = false,
+  websiteEvidenceOverview = false,
 }: {
   basePath: string;
-  section: TechnologySection;
+  section: TechnologySection | "technologies";
   search?: string;
   mailSecurity?: boolean;
+  websiteEvidenceOverview?: boolean;
 }) {
   return (
     <div className="max-w-full overflow-x-auto">
@@ -22,15 +24,33 @@ export function TechnologySectionTabs({
             render={<NavLink to={`${basePath}${search}`} end />}
             nativeButton={false}
           >
-            Overview
+            {websiteEvidenceOverview ? "Website evidence" : "Overview"}
           </TabsTrigger>
+          {websiteEvidenceOverview ? (
+            <TabsTrigger
+              value="technologies"
+              render={<NavLink to={`${basePath}/technologies${search}`} />}
+              nativeButton={false}
+            >
+              Archived technologies
+            </TabsTrigger>
+          ) : null}
           <TabsTrigger
-            value="web-intelligence"
-            render={<NavLink to={`${basePath}/web-intelligence${search}`} />}
+            value="web-technologies"
+            render={<NavLink to={`${basePath}/web-technologies${search}`} />}
             nativeButton={false}
           >
-            Web intelligence
+            Web technologies
           </TabsTrigger>
+          {!websiteEvidenceOverview ? (
+            <TabsTrigger
+              value="web-intelligence"
+              render={<NavLink to={`${basePath}/web-intelligence${search}`} />}
+              nativeButton={false}
+            >
+              Web intelligence
+            </TabsTrigger>
+          ) : null}
           <TabsTrigger
             value="infrastructure"
             render={<NavLink to={`${basePath}/infrastructure${search}`} />}
