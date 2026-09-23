@@ -12,7 +12,7 @@ const agent = vi.hoisted(() => ({runChallengeAgent: vi.fn()}));
 vi.mock("~/lib/challenge-agent.server", () => agent);
 const inputs = vi.hoisted(() => ({loadCrawlInputs: vi.fn(), startSavedCrawls: vi.fn()}));
 vi.mock("~/lib/crawl-inputs.server", () => inputs);
-const progress = vi.hoisted(() => ({loadCrawlProgress: vi.fn()}));
+const progress = vi.hoisted(() => ({loadCrawlProgress: vi.fn(), resumeCrawlTask: vi.fn()}));
 vi.mock("~/lib/crawl-progress.server", () => progress);
 import AdminCrawls, {action, loader} from "~/routes/admin-crawls";
 import { CrawlBrowser } from "~/components/admin/crawl-browser";
@@ -153,6 +153,19 @@ describe("crawler backoffice", () => {
     expect(await action({request} as Parameters<typeof action>[0])).toEqual({error: null, intent: "submit", receipt});
     expect(publisher.publishTestCrawl).toHaveBeenCalledWith(body);
     expect(server.crawlAction).not.toHaveBeenCalled();
+  });
+
+  it("resumes a crawl task through the route action", async () => {
+    const resumed = {runId: "new-run", status: "QUEUED", runUrl: "http://dagster/runs/new-run", taskId: "task", executionId: "1562550f-3625-44ab-b03e-779df9a1adc8"};
+    progress.resumeCrawlTask.mockResolvedValue(resumed);
+    const request = new Request("http://backoffice/admin/crawls", {method: "POST", headers: {Origin: "http://backoffice"},
+      body: new URLSearchParams({intent: "resume-task", crawl_type: "site_info", execution_id: resumed.executionId})});
+    expect(await action({request} as Parameters<typeof action>[0])).toEqual({error: null, intent: "resume-task", resumed});
+    expect(progress.resumeCrawlTask).toHaveBeenCalledWith("site_info", resumed.executionId);
+    progress.resumeCrawlTask.mockRejectedValue(new Error("This crawl task is still running."));
+    const again = new Request("http://backoffice/admin/crawls", {method: "POST", headers: {Origin: "http://backoffice"},
+      body: new URLSearchParams({intent: "resume-task", crawl_type: "site_info", execution_id: resumed.executionId})});
+    expect(await action({request: again} as Parameters<typeof action>[0])).toEqual({error: "This crawl task is still running."});
   });
 
   it("rejects cross-origin test submissions before publishing", async () => {

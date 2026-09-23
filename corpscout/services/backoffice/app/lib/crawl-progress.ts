@@ -10,8 +10,25 @@ export interface CrawlRunProgress {
   skipped: number | null;
 }
 
+/** One Brave-style crawl task: a frozen selection and every run of its execution. */
+export interface CrawlTaskProgress {
+  taskId: string;
+  executionId: string;
+  latestRunId: string;
+  runUrl: string | null;
+  status: string;
+  runs: number;
+  startTime: number | null;
+  selected: number | null;
+  successful: number | null;
+  unsuccessful: number | null;
+  skipped: number | null;
+  resumable: boolean;
+}
+
 export interface CrawlProgressSnapshot {
   runs: CrawlRunProgress[];
+  tasks: CrawlTaskProgress[];
   warning: string | null;
 }
 
