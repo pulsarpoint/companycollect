@@ -158,6 +158,11 @@ export function AdminSidebar() {
           <SidebarGroupLabel>Workspace</SidebarGroupLabel>
           <SidebarMenu>
             <SidebarMenuItem>
+              <SidebarMenuButton isActive={pathname === "/admin/domains" || pathname.startsWith("/admin/domains/")} tooltip="Domains" render={<Link to="/admin/domains" />}>
+                <GlobeIcon /><span>Domains</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
               <SidebarMenuButton
                 isActive={pathname === "/admin/graph"}
                 tooltip="Domain graph"

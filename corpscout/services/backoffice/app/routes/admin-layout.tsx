@@ -89,6 +89,16 @@ function AdminBreadcrumbs() {
 
   const onNatsPage = pathname === "/admin/nats";
 
+  if (pathname === "/admin/domains" || pathname.startsWith("/admin/domains/")) {
+    const domain = pathname.split("/")[3];
+    return <Breadcrumb><BreadcrumbList>
+      <BreadcrumbItem><BreadcrumbLink render={<Link to="/admin" />}>Admin</BreadcrumbLink></BreadcrumbItem>
+      <BreadcrumbSeparator />
+      <BreadcrumbItem>{domain ? <BreadcrumbLink render={<Link to="/admin/domains" />}>Domains</BreadcrumbLink> : <BreadcrumbPage>Domains</BreadcrumbPage>}</BreadcrumbItem>
+      {domain ? <><BreadcrumbSeparator /><BreadcrumbItem><BreadcrumbPage>{decodeURIComponent(domain)}</BreadcrumbPage></BreadcrumbItem></> : null}
+    </BreadcrumbList></Breadcrumb>;
+  }
+
   if (onEsefPage || onNatsPage || pathname === "/admin/graph" || pathname.startsWith("/admin/crawls") || pathname.startsWith("/admin/browsers")) {
     return (
       <Breadcrumb>

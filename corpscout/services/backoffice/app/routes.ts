@@ -48,6 +48,7 @@ export default [
       route("financials", "routes/company-financials.tsx"),
       route("technology", "routes/company-technology-layout.tsx", [
         index("routes/company-technology.tsx"),
+        route("web-technologies", "routes/company-technology-web-technologies.tsx"),
         route(
           "web-intelligence",
           "routes/company-technology-web-intelligence.tsx",
@@ -101,10 +102,57 @@ export default [
     index("routes/admin-index.tsx"),
     route("esef", "routes/admin-esef.tsx"),
     route("graph", "routes/admin-graph.tsx"),
+    route("domains", "routes/admin-domains.tsx"),
+    route("domains/:domain/sites", "routes/admin-domain-sites.ts"),
+    route("domains/:domain", "routes/admin-domain.tsx", [
+      // The same domain-scoped loaders and views serve both domain entry points.
+      index("routes/admin-se-domain-technology.tsx", {
+        id: "workspace-domain-overview",
+      }),
+      route("web-technologies", "routes/admin-domain-web-technologies.tsx"),
+      route("web-intelligence", "routes/admin-se-domain-web-intelligence.tsx", {
+        id: "workspace-domain-web-intelligence",
+      }),
+      route("infrastructure", "routes/admin-se-domain-infrastructure.tsx", {
+        id: "workspace-domain-infrastructure",
+      }),
+      route("ip-addresses", "routes/admin-se-domain-ip-addresses.tsx", {
+        id: "workspace-domain-ip-addresses",
+      }),
+      route("ip-addresses/:address", "routes/admin-se-domain-ip-address.tsx", {
+        id: "workspace-domain-ip-address",
+      }),
+      route("mail-security", "routes/admin-se-domain-mail-security.tsx", {
+        id: "workspace-domain-mail-security",
+      }),
+    ]),
     route("common-crawl", "routes/admin-common-crawl.tsx"),
     route(
       "common-crawl/:domain",
       "routes/admin-common-crawl-domain.tsx",
+      [
+        index("routes/admin-se-domain-web-intelligence.tsx", {
+          id: "common-crawl-domain-evidence",
+        }),
+        route("technologies", "routes/admin-se-domain-technology.tsx", {
+          id: "common-crawl-domain-technologies",
+        }),
+        route("web-technologies", "routes/admin-domain-web-technologies.tsx", {
+          id: "common-crawl-domain-web-technologies",
+        }),
+        route("infrastructure", "routes/admin-se-domain-infrastructure.tsx", {
+          id: "common-crawl-domain-infrastructure",
+        }),
+        route("ip-addresses", "routes/admin-se-domain-ip-addresses.tsx", {
+          id: "common-crawl-domain-ip-addresses",
+        }),
+        route("ip-addresses/:address", "routes/admin-se-domain-ip-address.tsx", {
+          id: "common-crawl-domain-ip-address",
+        }),
+        route("mail-security", "routes/admin-se-domain-mail-security.tsx", {
+          id: "common-crawl-domain-mail-security",
+        }),
+      ],
     ),
     // The technology catalog browser and its per-technology detail page.
     // Country-agnostic (the catalog is global), so they sit beside the other
@@ -158,6 +206,7 @@ export default [
       // on the admin base path and without the public 404-on-empty.
       route("technology", "routes/admin-se-company-technology-layout.tsx", [
         index("routes/admin-se-company-technology.tsx"),
+        route("web-technologies", "routes/admin-se-company-technology-web-technologies.tsx"),
         route(
           "web-intelligence",
           "routes/admin-se-company-technology-web-intelligence.tsx",
@@ -195,6 +244,7 @@ export default [
       route("domains", "routes/admin-se-companies-domains.tsx"),
       route("domains/:domain", "routes/admin-se-companies-domain.tsx", [
         index("routes/admin-se-domain-technology.tsx"),
+        route("web-technologies", "routes/admin-se-domain-web-technologies.tsx"),
         route("web-intelligence", "routes/admin-se-domain-web-intelligence.tsx"),
         route("infrastructure", "routes/admin-se-domain-infrastructure.tsx"),
         route("ip-addresses", "routes/admin-se-domain-ip-addresses.tsx"),
