@@ -161,9 +161,6 @@ export default [
     route("technology-proposals", "routes/admin-technology-proposals.tsx"),
     route("technology-proposals/:proposalId", "routes/admin-technology-proposal.tsx"),
     route("technologies/:slug", "routes/admin-technology-detail.tsx"),
-    // Read-only status of the NATS JetStream server, from its HTTP monitoring
-    // endpoint: server, streams, and how far each consumer has processed.
-    route("nats", "routes/admin-nats.tsx"),
     route("crawls", "routes/admin-crawls.tsx"),
     route("crawls/results", "routes/admin-crawl-result.tsx"),
     route("crawls/result.json", "routes/admin-crawl-result-json.ts"),

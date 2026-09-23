@@ -15,8 +15,6 @@
     "@base-ui/react": "^1.6.0",
     "@clickhouse/client": "^1.23.1",
     "@fontsource-variable/geist": "^5.2.9",
-    "@nats-io/jetstream": "^3.4.0",
-    "@nats-io/transport-node": "^3.4.0",
     "@novnc/novnc": "^1.7.0",
     "@openai/codex-sdk": "^0.152.0",
     "@react-router/node": "8.0.0",

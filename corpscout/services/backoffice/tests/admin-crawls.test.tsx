@@ -19,7 +19,7 @@ import { CrawlBrowser } from "~/components/admin/crawl-browser";
 
 const failure: CrawlAttempt = {
   request_id: "failed-one", attempt: 1, url: "https://melexis.com/", domain: "melexis.com",
-  state: "failed", source: "jetstream", submitted_at: "2026-09-18T12:00:00Z", updated_at: "2026-09-18T12:00:10Z",
+  state: "failed", source: "rest", submitted_at: "2026-09-18T12:00:00Z", updated_at: "2026-09-18T12:00:10Z",
   current_url: "https://melexis.com/", reason: "Assistance timed out", blocked_reason: "captcha", error: "human_assistance_timeout",
   assistance_deadline: null, browser_available: false, verification_available: false, browser_session_id: null, retry_of: null, retry_of_attempt: null,
   s3_state: "uploaded", s3_error: null, s3_event: {result: {bucket: "crawls", key: "failed-one/attempts/0001/result.json.gz"}},
@@ -188,7 +188,7 @@ describe("crawler backoffice", () => {
     const element = <AdminCrawls {...({loaderData: {snapshot, error: null}} as Parameters<typeof AdminCrawls>[0])} />;
     const router = createMemoryRouter([{path: "/admin/crawls", element}], {initialEntries: ["/admin/crawls"]});
     const html = renderToStaticMarkup(<RouterProvider router={router} />);
-    for (const label of ["melexis.com", "captcha", "S3 saved", "Retry interactively", "All statuses", "JetStream", "SQLite history"]) expect(html).toContain(label);
+    for (const label of ["melexis.com", "captcha", "S3 saved", "Retry interactively", "All statuses", "REST", "SQLite history"]) expect(html).toContain(label);
     expect(html).toContain("/admin/crawls/results?path=crawls%2Ffailed-one%2Fattempts%2F0001%2Fresult.json.gz");
   });
 

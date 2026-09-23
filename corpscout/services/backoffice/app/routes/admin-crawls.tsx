@@ -167,7 +167,7 @@ export default function AdminCrawls({loaderData}: Route.ComponentProps) {
       <FieldGroup className="flex-row flex-wrap items-end">
         <Field className="w-64"><FieldLabel htmlFor="crawl-domain">Domain</FieldLabel><Input id="crawl-domain" name="domain" defaultValue={search.get("domain") || ""} placeholder="e.g. melexis.com" /></Field>
         <Field className="w-44"><FieldLabel htmlFor="crawl-state">Status</FieldLabel><NativeSelect id="crawl-state" name="state" defaultValue={search.get("state") || ""}><NativeSelectOption value="">All statuses</NativeSelectOption>{CRAWL_STATES.map(state => <NativeSelectOption key={state} value={state}>{state.replaceAll("_", " ")}</NativeSelectOption>)}</NativeSelect></Field>
-        <Field className="w-40"><FieldLabel htmlFor="crawl-source">Input</FieldLabel><NativeSelect id="crawl-source" name="source" defaultValue={search.get("source") || ""}><NativeSelectOption value="">All inputs</NativeSelectOption><NativeSelectOption value="jetstream">JetStream (history)</NativeSelectOption><NativeSelectOption value="rest">REST</NativeSelectOption><NativeSelectOption value="manual">Manual retry</NativeSelectOption></NativeSelect></Field>
+        <Field className="w-40"><FieldLabel htmlFor="crawl-source">Input</FieldLabel><NativeSelect id="crawl-source" name="source" defaultValue={search.get("source") || ""}><NativeSelectOption value="">All inputs</NativeSelectOption><NativeSelectOption value="rest">REST</NativeSelectOption><NativeSelectOption value="manual">Manual retry</NativeSelectOption></NativeSelect></Field>
         <Button type="submit" variant="outline">Apply filters</Button>
       </FieldGroup>
     </Form>

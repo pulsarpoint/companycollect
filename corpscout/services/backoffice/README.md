@@ -33,8 +33,7 @@ tabs and include all crawl types and sources.
 Results assets wait for terminal crawler responses and persist result sections and
 S3 links in their own ClickHouse tables. Input jobs and results jobs select only their
 own asset. Migration `000430`, deployed definitions, `CRAWLER_API_URL/TOKEN` and the
-existing direct `PROCESSING_PG_URL` connection are required on Dagster. Existing test
-submissions still use JetStream. See the
+existing direct `PROCESSING_PG_URL` connection are required on Dagster. See the
 [crawl processing guide](../dagster_v3/src/dagster_v3/defs/website_crawl/docs/website-crawl-processing.md).
 
 The workspace displays live crawl attempts with
@@ -56,26 +55,19 @@ Apply migration 426 for request/attempt identity in newer S3 paths; the existing
 `company_crawl_results` named collection supplies S3 access on the ClickHouse
 server. See the crawler's [ClickHouse mapping](../company_research/CLICKHOUSE.md).
 
-**New test crawl** submits an editable full-crawl JSON request directly from the
-Backoffice server to JetStream. Enable it for testing with
-`CRAWLER_TEST_SUBMIT_ENABLED=true` and `NATS_URL` (including URL credentials when
-required), or a server-side `NATS_CREDENTIALS` file. Stream `COMPANY_CRAWL` and
-subject `company.crawl.requests` can be overridden with `CRAWLER_NATS_STREAM` and
-`CRAWLER_NATS_SUBJECT`; these must match the worker. Backoffice never creates streams.
-The crawler's authenticated `/v1/crawls/validate` endpoint validates/normalizes the
-complete payload before publication without starting a crawl. Requires crawler
-0.37.1 or later. Its normal JetStream worker reserves a browser in the independent
-browser service via `BROWSER_API_URL`/`BROWSER_API_TOKEN` configured **on the worker**.
+**New test crawl** submits an editable full-crawl JSON request from the Backoffice
+server to the crawler's authenticated `POST /v1/crawls`. Enable it for testing with
+`CRAWLER_TEST_SUBMIT_ENABLED=true`. The crawler validates the payload and queues it;
+its worker reserves a browser in the independent browser service via
+`BROWSER_API_URL`/`BROWSER_API_TOKEN` configured **on the crawler**.
 
 The form starts with `crawl: "full"` and saved artifacts. Change `url`, add `config`
 overrides, or remove `crawl` to provide explicit `pages`/custom `instructions`.
-After a persistence receipt, Backoffice shows the stream/sequence/request ID and
-filters live history to the submitted domain and JetStream input. The receipt
-confirms queue storage; history appears when the worker consumes the request.
-An uncertain submission retains its JSON and request ID for retry. Identical
-normalized requests use the same message ID within the broker's duplicate window;
-the crawler also deduplicates request IDs durably. Use a new ID for a different
-request or a fresh run. Connection credentials never reach the browser.
+After submission, Backoffice shows the request ID and job state and filters live
+history to the submitted domain. Resubmitting the same request ID with the same
+request returns the existing job; a different request under that ID is rejected.
+Use a new ID for a different request or a fresh run. The crawler token never
+reaches the browser.
 
 The **Browsers** workspace at `/admin/browsers` manages the independent browser
 service through `BROWSER_API_URL` and `BROWSER_API_TOKEN`; optionally set

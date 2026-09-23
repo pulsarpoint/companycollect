@@ -24,6 +24,7 @@ export interface CrawlAttempt {
   url: string;
   domain: string;
   state: CrawlState;
+  // "jetstream" appears only on history from the retired NATS input.
   source: "rest" | "jetstream" | "manual";
   submitted_at: string;
   updated_at: string;
