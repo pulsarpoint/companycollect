@@ -1,7 +1,0 @@
----
-- name: Deploy the isolated Corpscout backoffice PostgreSQL instance
-  hosts: backoffice_postgres_hosts
-  become: true
-  roles:
-    - docker_engine
-    - backoffice_postgres
