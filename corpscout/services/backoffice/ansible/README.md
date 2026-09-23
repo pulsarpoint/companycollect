@@ -5,11 +5,11 @@ workflow state. It deliberately does not reuse or modify Dagster's primary
 PostgreSQL instance.
 
 The current inventory deploys PostgreSQL 17.10 to `postgresqueue`
-(`192.168.88.147`, Ubuntu 26.04) with:
+(`192.168.88.125`, Ubuntu 26.04) with:
 
 - service and container `corpscout-backoffice-postgres`;
 - durable data under `/opt/corpscout-backoffice-postgres/data`;
-- database `corpscout_backoffice` on `192.168.88.147:5432`;
+- database `corpscout_backoffice` on `192.168.88.125:5432`;
 - a limited migration owner, application writer, and Dagster read-only role;
 - SCRAM authentication and an allowlist limited to `192.168.88.0/24`;
 - server-generated credentials retained only in the root-readable
@@ -54,7 +54,7 @@ inspect the root-only environment file directly on the server when configuring
 the backoffice and Dagster secrets:
 
 ```bash
-ssh graovic@192.168.88.147 \
+ssh graovic@192.168.88.125 \
   'sudo ls -l /opt/corpscout-backoffice-postgres/.env'
 ```
 
@@ -65,10 +65,10 @@ workflow reads. Use the owner role only for versioned schema migrations. The
 ## Operations
 
 ```bash
-ssh graovic@192.168.88.147 \
+ssh graovic@192.168.88.125 \
   'sudo systemctl status corpscout-backoffice-postgres --no-pager'
 
-ssh graovic@192.168.88.147 \
+ssh graovic@192.168.88.125 \
   'cd /opt/corpscout-backoffice-postgres && sudo docker compose logs -f postgres'
 ```
 

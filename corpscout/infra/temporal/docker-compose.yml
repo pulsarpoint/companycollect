@@ -1,6 +1,8 @@
 services:
   temporal:
     image: temporalio/auto-setup:1.24.2
+    # Come back after a host reboot like the Postgres and ClickHouse stacks.
+    restart: unless-stopped
     extra_hosts:
       - "companycollect:${POSTGRES_HOST_IP:-100.85.212.113}"
     environment:
@@ -19,6 +21,7 @@ services:
 
   temporal-ui:
     image: temporalio/ui:2.28.0
+    restart: unless-stopped
     environment:
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_CORS_ORIGINS: "http://localhost:3000"

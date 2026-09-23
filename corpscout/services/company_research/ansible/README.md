@@ -99,21 +99,21 @@ The playbook checks the systemd unit and waits for `/healthz`, which requires th
 REST workers to be ready.
 
 ```sh
-ssh graovic@192.168.88.132 'sudo systemctl status company-research --no-pager'
-ssh graovic@192.168.88.132 'sudo journalctl -u company-research -n 50 --no-pager'
-curl --fail http://192.168.88.132:8080/healthz
+ssh graovic@crawler 'sudo systemctl status company-research --no-pager'
+ssh graovic@crawler 'sudo journalctl -u company-research -n 50 --no-pager'
+curl --fail http://crawler:8080/healthz
 ```
 
 With `CRAWL_API_TOKEN` set in your local shell, submit a real one-page crawl:
 
 ```sh
-curl --fail http://192.168.88.132:8080/v1/crawls \
+curl --fail http://crawler:8080/v1/crawls \
   -H "Authorization: Bearer $CRAWL_API_TOKEN" \
   -H 'Content-Type: application/json' \
   --data '{"request_id":"novelic-deploy-check-001","url":"https://www.novelic.com/","pages":["https://www.novelic.com/careers/"],"config":{"max_pages":1}}'
-curl --fail http://192.168.88.132:8080/v1/crawls/novelic-deploy-check-001 \
+curl --fail http://crawler:8080/v1/crawls/novelic-deploy-check-001 \
   -H "Authorization: Bearer $CRAWL_API_TOKEN"
-curl --fail http://192.168.88.132:8080/v1/crawls/novelic-deploy-check-001/result \
+curl --fail http://crawler:8080/v1/crawls/novelic-deploy-check-001/result \
   -H "Authorization: Bearer $CRAWL_API_TOKEN"
 ```
 
