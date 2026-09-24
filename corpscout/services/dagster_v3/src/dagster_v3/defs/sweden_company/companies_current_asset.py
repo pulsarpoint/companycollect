@@ -25,13 +25,14 @@ fails before the request, because REFRESH VIEW is a no-op on it. MAX_REFRESH_WAI
 whole wait so a refresh that never starts cannot hang the run forever.
 
 Both statements run against a name ClickHouse owns -- there is no DuckDB work and no pool to
-take. `deps` include the centroids, the address entity's geocode-cache warm, and domain
-publication, which updates the current domains counted by `has_domains`.
-Selecting this asset downstream of domain publication refreshes the company list in the same run.
-The store-append asset it used to name retired with the old address
-chain in slice 4b; the warm step is what now puts the week's new OSM extract into
-`se_address_geocodes`, so it is what this must follow. Ordered LAST in the weekly, after
-everything the view reads is current.
+take. `deps` are the centroids, the address entity's geocode-cache warm, the address fold
+(`se_company_address_publish`, which rewrites `corpscout.se_company_address` -- the table the
+serving view actually reads for addresses and coordinates) and domain publication, which
+updates the current domains counted by `has_domains`. The fold dependency is what makes this
+asset run LAST in the weekly chain (spec
+docs/superpowers/specs/2026-09-24-address-weekly-chain-design.md): without it the view could
+refresh before the fold landed and serve last week's coordinates for another week. Selecting
+this asset downstream of domain publication refreshes the company list in the same run.
 
 The refresh-health check hangs off THIS asset: the view is never materialized, so its only
 observable health is its refresh state in `system.view_refreshes`, and a
@@ -58,6 +59,7 @@ GROUP_NAME = "sweden_company"
 
 COMPANIES_CURRENT_ASSET_KEY = "sweden_companies_current_clickhouse"
 WARM_ASSET_KEY = "se_address_geocodes_warm"
+ADDRESS_PUBLISH_ASSET_KEY = "se_company_address_publish"
 
 QUALIFIED_SE_COMPANIES_SERVING_VIEW = f"{companies_current.CLICKHOUSE_DATABASE}.{companies_current.SE_COMPANIES_SERVING_VIEW}"
 
@@ -206,7 +208,12 @@ def _iso(epoch_seconds: int | None) -> str:
 
 @dg.asset(
     name=COMPANIES_CURRENT_ASSET_KEY,
-    deps=[dg.AssetKey(CENTROIDS_ASSET_KEY), dg.AssetKey(WARM_ASSET_KEY), dg.AssetKey("se_company_domain_publish")],
+    deps=[
+        dg.AssetKey(CENTROIDS_ASSET_KEY),
+        dg.AssetKey(WARM_ASSET_KEY),
+        dg.AssetKey(ADDRESS_PUBLISH_ASSET_KEY),
+        dg.AssetKey("se_company_domain_publish"),
+    ],
     group_name=GROUP_NAME,
     kinds={"python", "clickhouse"},
     metadata={"view": QUALIFIED_SE_COMPANIES_SERVING_VIEW},
