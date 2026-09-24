@@ -174,6 +174,7 @@ def finish_execution(
                 SELECT input_id, argMax(outcome, tuple(scanned_at, scan_id)) AS outcome
                 FROM {RESULT_RELATION} FINAL
                 WHERE task_id = %(task)s AND crawl_id = %(crawl)s
+                  AND root_domain IN (SELECT root_domain FROM {INPUT_RELATION} WHERE task_id = %(task)s)
                 GROUP BY input_id)""",
             parameters,
         )
