@@ -50,10 +50,15 @@ The API contract is intentionally small:
 - `POST /v1/scans/{scan_id}/cancel`
 
 All `/v1` routes require `Authorization: Bearer $WEBTECH_API_TOKEN`. Dagster
-writes the candidate manifest to RustFS and submits its URI plus SHA-256. The
-service derives an idempotent scan ID from that content and its scanner settings,
-stores each terminal domain result before reusing its worker slot, emits one
-progress event per 20 stored results, and writes `final-manifest.json` last.
+writes the candidate manifest to RustFS and submits its URI plus SHA-256.
+The service derives an idempotent scan ID from that content and its scanner settings.
+Queue pages (candidates with an `input_id`) are stored once per execution at
+`scans/detector_version=…/crawl_id=…/pages/input_id=…/report.json`, so a later
+envelope of the same execution reuses every page already done. Common Crawl
+candidates keep per-scan result objects. Each progress event (one per 20 stored
+results) carries the stored result references of its window; the first event of a
+scan that reused stored pages carries those references. `final-manifest.json` is
+still written last and lists every result of the scan.
 
 The service writes lifecycle logs for scan acceptance, start, every 20-result
 progress window, periodic heartbeat, stalled progress, completion, failure, and

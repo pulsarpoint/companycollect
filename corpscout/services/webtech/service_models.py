@@ -187,6 +187,7 @@ class ScanProgressEvent(BaseModel):
     window_technology_count: int = Field(ge=0)
     elapsed_seconds: float = Field(ge=0)
     domains_per_minute: float = Field(ge=0)
+    results: list[StoredResultReference] = Field(default_factory=list)
 
 
 class ScanSnapshot(BaseModel):

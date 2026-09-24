@@ -520,3 +520,80 @@ def test_execution_manifest_rejects_invalid_identities(invalid):
         document["crawl_id"] = f"webtech-{uuid4()}"
     with pytest.raises(ValidationError):
         CandidateManifest.model_validate(document)
+
+
+def _execution_manifest(execution_id, task_id, pages):
+    document = json.loads(candidate_manifest())
+    document.update(schema_version=3, crawl_id=f"webtech-{execution_id}", dagster_run_id=execution_id)
+    document["candidates"] = [
+        {"root_domain": "novelic.com", "harmonic_rank": 0, "task_id": task_id,
+         "input_id": str(index) * 64, "page_url": f"https://novelic.com/{page}"}
+        for index, page in pages
+    ]
+    return document
+
+
+def _run_scan(store, document, uri, scanned):
+    async def fake_scan(candidates, *, settings, progress_callback):
+        scanned.extend(candidate.page_url for candidate in candidates)
+        for candidate in candidates:
+            await progress_callback(completed_result(candidate))
+        return ()
+
+    body = json.dumps(document).encode()
+    store.objects[parse_s3_uri(uri).key] = body
+    request = {**scan_request(body), "crawl_id": document["crawl_id"],
+               "partition_key": document["partition_key"], "candidate_manifest_uri": uri}
+    headers = {"Authorization": f"Bearer {API_TOKEN}"}
+    app = create_app(settings=service_settings(), store=store, scan_function=fake_scan)
+    with TestClient(app) as client:
+        response = client.post("/v1/scans", json=request, headers=headers)
+        assert response.status_code == 202, response.text
+        scan_id = response.json()["scan_id"]
+        events, cursor = [], 0
+        while True:
+            payload = client.get(f"/v1/scans/{scan_id}", params={"after_event": cursor, "wait_seconds": 1},
+                                 headers=headers).json()
+            events.extend(payload["events"])
+            if payload["events"]:
+                cursor = payload["events"][-1]["sequence"]
+            if payload["scan"]["status"] not in {"pending", "running"}:
+                assert payload["scan"]["status"] == "completed", payload["scan"]
+                return events
+
+
+def test_events_carry_every_stored_result_reference():
+    store = InMemoryRustfsStore()
+    execution_id, task_id = str(uuid4()), str(uuid4())
+    document = _execution_manifest(execution_id, task_id, [(1, ""), (2, "a"), (3, "b")])
+    events = _run_scan(store, document, f"{BASE_URI}/candidates/one.json", [])
+    references = [item for event in events for item in event["results"]]
+    assert sorted(item["input_id"] for item in references) == ["1" * 64, "2" * 64, "3" * 64]
+    for item in references:
+        assert f"/crawl_id=webtech-{execution_id}/pages/input_id={item['input_id']}/report.json" in item["object_key"]
+        assert item["object_key"] in store.objects
+
+
+def test_pages_done_in_one_envelope_are_reused_by_another():
+    store = InMemoryRustfsStore()
+    execution_id, task_id = str(uuid4()), str(uuid4())
+    first = _execution_manifest(execution_id, task_id, [(1, ""), (2, "a")])
+    first["partition_key"] = "envelope-first"
+    _run_scan(store, first, f"{BASE_URI}/candidates/first.json", [])
+    # A different envelope of the same execution: page 2 is done, page 3 is new.
+    second = _execution_manifest(execution_id, task_id, [(2, "a"), (3, "b")])
+    second["partition_key"] = "envelope-second"
+    scanned = []
+    events = _run_scan(store, second, f"{BASE_URI}/candidates/second.json", scanned)
+    assert scanned == ["https://novelic.com/b"]
+    assert [item["input_id"] for item in events[0]["results"]] == ["2" * 64]
+    assert sorted(item["input_id"] for event in events for item in event["results"]) == ["2" * 64, "3" * 64]
+
+
+def test_another_execution_does_not_reuse_pages():
+    store = InMemoryRustfsStore()
+    task_id = str(uuid4())
+    _run_scan(store, _execution_manifest(str(uuid4()), task_id, [(1, "")]), f"{BASE_URI}/candidates/a.json", [])
+    scanned = []
+    _run_scan(store, _execution_manifest(str(uuid4()), task_id, [(1, "")]), f"{BASE_URI}/candidates/b.json", scanned)
+    assert scanned == ["https://novelic.com/"]

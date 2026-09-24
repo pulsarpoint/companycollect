@@ -129,6 +129,14 @@ class ScanJob:
                 self._publish_progress_event()
             self._condition.notify_all()
 
+    async def publish_recovered(self) -> None:
+        """Report results reused from storage, so a new envelope still publishes them."""
+        async with self._condition:
+            if self.results and not self.events:
+                self._pending_event_results.extend(self.results.values())
+                self._publish_progress_event()
+                self._condition.notify_all()
+
     async def mark_completed(self, finished_at: datetime) -> None:
         async with self._condition:
             self.status = "completed"
@@ -236,6 +244,7 @@ class ScanJob:
                 else 0.0,
                 2,
             ),
+            results=list(window),
         )
         self.events.append(event)
         LOGGER.info(
@@ -373,6 +382,7 @@ class ScanCoordinator:
                 result_prefix,
                 scan_id,
                 manifest,
+                request,
             )
             job = ScanJob(
                 scan_id=scan_id,
@@ -438,6 +448,7 @@ class ScanCoordinator:
 
     async def _run(self, job: ScanJob) -> None:
         await job.mark_running()
+        await job.publish_recovered()
         remaining_candidates = tuple(
             WebtechCandidate(
                 root_domain=candidate.root_domain,
@@ -468,13 +479,13 @@ class ScanCoordinator:
 
         async def persist_result(result: WebtechDomainResult) -> None:
             document = _domain_result_document(job, result)
-            location = S3Location(
-                bucket=job.result_prefix.bucket,
-                key=(
-                    f"{job.result_prefix.key}/"
-                    + (f"input_id={result.candidate.input_id}/report.json" if result.candidate.input_id else f"root_domain={result.candidate.root_domain}/report.json")
-                ),
-            )
+            if result.candidate.input_id:
+                location = self._execution_page_location(job.request, result.candidate.input_id)
+            else:
+                location = S3Location(
+                    bucket=job.result_prefix.bucket,
+                    key=f"{job.result_prefix.key}/root_domain={result.candidate.root_domain}/report.json",
+                )
             stored = await asyncio.to_thread(
                 self.store.write_json,
                 location,
@@ -669,44 +680,40 @@ class ScanCoordinator:
         result_prefix: S3Location,
         scan_id: str,
         manifest: CandidateManifest,
+        request: ScanRequest,
     ) -> dict[str, StoredResultReference]:
-        candidates_by_domain = {
-            (candidate.input_id or candidate.root_domain): candidate for candidate in manifest.candidates
+        candidates = {
+            (candidate.input_id or candidate.root_domain): candidate
+            for candidate in manifest.candidates
         }
         recovered: dict[str, StoredResultReference] = {}
-        listing_prefix = S3Location(
-            bucket=result_prefix.bucket,
-            key=f"{result_prefix.key}/",
-        )
+        # Common Crawl scans keep their per-scan result objects.
+        listing_prefix = S3Location(bucket=result_prefix.bucket, key=f"{result_prefix.key}/")
         for key in self.store.list_keys(listing_prefix):
             if not key.endswith("/report.json"):
                 continue
-            location = S3Location(bucket=result_prefix.bucket, key=key)
+            body = self.store.read_bytes(S3Location(bucket=result_prefix.bucket, key=key))
+            document = StoredDomainResultDocument.model_validate_json(body)
+            identity = document.candidate.input_id or document.candidate.root_domain
+            if document.scan_id != scan_id or candidates.get(identity) != document.candidate:
+                raise ValueError(f"stored result identity mismatch: {key}")
+            recovered[identity] = _stored_reference(document, key, body)
+        # Queue pages belong to the execution, whichever envelope scanned them.
+        for identity, candidate in candidates.items():
+            if not candidate.input_id or identity in recovered:
+                continue
+            location = self._execution_page_location(request, candidate.input_id)
+            if not self.store.exists(location):
+                continue
             body = self.store.read_bytes(location)
             document = StoredDomainResultDocument.model_validate_json(body)
-            candidate = candidates_by_domain.get(document.candidate.input_id or document.candidate.root_domain)
             if (
-                document.scan_id != scan_id
-                or candidate is None
-                or candidate != document.candidate
+                document.crawl_id != request.crawl_id
+                or document.detector_version != request.detector_version
+                or document.candidate != candidate
             ):
-                raise ValueError(f"stored result identity mismatch: {key}")
-            recovered[document.candidate.input_id or document.candidate.root_domain] = StoredResultReference(
-                root_domain=document.candidate.root_domain,
-                harmonic_rank=document.candidate.harmonic_rank,
-                input_id=document.candidate.input_id,
-                outcome=document.outcome,
-                timeout_stage=document.timeout_stage,
-                technology_count=(
-                    len(document.report.technologies)
-                    if document.report is not None
-                    else 0
-                ),
-                duration_ms=document.duration_ms,
-                object_key=key,
-                sha256=hashlib.sha256(body).hexdigest(),
-                size_bytes=len(body),
-            )
+                raise ValueError(f"stored page identity mismatch: {location.key}")
+            recovered[identity] = _stored_reference(document, location.key, body)
         return recovered
 
     def _scan_id(self, request: ScanRequest) -> str:
@@ -743,6 +750,17 @@ class ScanCoordinator:
         )
         return result_prefix, final_location
 
+    def _execution_page_location(self, request: ScanRequest, input_id: str) -> S3Location:
+        # One result per page per execution, shared by every envelope of that execution.
+        return self.store.child(
+            "scans",
+            f"detector_version={request.detector_version}",
+            f"crawl_id={request.crawl_id}",
+            "pages",
+            f"input_id={input_id}",
+            "report.json",
+        )
+
 
 def _domain_result_document(
     job: ScanJob,
@@ -771,6 +789,23 @@ def _domain_result_document(
         error_message=result.error_message,
         timeout_stage=result.timeout_stage,
         report=result.report,
+    )
+
+
+def _stored_reference(
+    document: StoredDomainResultDocument, key: str, body: bytes
+) -> StoredResultReference:
+    return StoredResultReference(
+        root_domain=document.candidate.root_domain,
+        harmonic_rank=document.candidate.harmonic_rank,
+        input_id=document.candidate.input_id,
+        outcome=document.outcome,
+        timeout_stage=document.timeout_stage,
+        technology_count=len(document.report.technologies) if document.report is not None else 0,
+        duration_ms=document.duration_ms,
+        object_key=key,
+        sha256=hashlib.sha256(body).hexdigest(),
+        size_bytes=len(body),
     )
 
 
