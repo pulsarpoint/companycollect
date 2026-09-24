@@ -242,7 +242,13 @@ def se_company_address_fold(
 
 @dg.asset(
     name="se_company_address_publish",
-    deps=[dg.AssetKey("se_company_address_normalize"), dg.AssetKey("se_address_geocodes_warm")],
+    deps=[
+        dg.AssetKey("se_company_address_normalize"),
+        dg.AssetKey("se_address_geocodes_warm"),
+        # The fold overlays postcode/city centroids on every page it geocodes; the week's centroids
+        # must be published before it starts (string key: importing sweden_company here would cycle).
+        dg.AssetKey("sweden_geocode_centroids_clickhouse"),
+    ],
     pool=osm_tables.DUCKDB_POOL,
     group_name=GROUP_NAME,
     kinds={"clickhouse", "duckdb", "python"},

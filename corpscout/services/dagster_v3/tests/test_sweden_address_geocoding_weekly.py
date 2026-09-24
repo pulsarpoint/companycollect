@@ -58,6 +58,7 @@ def _weekly_defs() -> dg.Definitions:
             osm_assets,
             centroid_assets,
             companies_current_asset,
+            weekly,
         ]
     )
     return dg.Definitions(
@@ -106,12 +107,35 @@ def test_every_duckdb_touching_step_is_in_the_single_slot_pool() -> None:
     }
 
 
+def test_the_extractors_run_for_real_not_in_preview() -> None:
+    """ExtractConfig.execute defaults to False (preview: count, write nothing). The weekly must
+    carry execute=True for all four extractor ops or the chain publishes stale sources forever."""
+    job = _weekly_defs().resolve_job_def(WEEKLY_JOB)
+    ops = job.run_config["ops"]
+    for name in address_assets.EXTRACTOR_ASSET_NAMES:
+        assert ops[name]["config"]["execute"] is True, name
+        assert ops[name]["config"]["page_size"] == weekly.EXTRACTOR_PAGE_SIZE, name
+    assert set(ops) == set(address_assets.EXTRACTOR_ASSET_NAMES)
+
+
+def test_the_fold_waits_for_normalize_warm_and_centroids() -> None:
+    assert {key.path[-1] for key in address_assets.se_company_address_publish.dependency_keys} == {
+        "se_company_address_normalize",
+        "se_address_geocodes_warm",
+        "sweden_geocode_centroids_clickhouse",
+    }
+
+
 def test_the_retired_geocoding_chain_stays_retired() -> None:
     """Slice 4b deleted the canonical/shared/demand/resolution/store chain. None of it may
-    come back into the sweden_company modules under its old names."""
+    come back into the sweden_company modules under its old names. The weekly module itself is
+    loaded here (via _weekly_defs) and pinned to exactly one job and one schedule."""
     defs = _weekly_defs()
     asset_names = {key.path[-1] for key in defs.resolve_asset_graph().get_all_asset_keys()}
     job_names = {job.name for job in defs.resolve_all_job_defs()}
+    weekly_job_names = {job.name for job in weekly.defs.jobs}
+    assert {job.name for job in weekly.defs.jobs} == {WEEKLY_JOB}
+    assert {schedule.name for schedule in weekly.defs.schedules} == {WEEKLY_SCHEDULE}
     for retired in (
         "sweden_company_addresses_clickhouse",
         "sweden_company_canonical_addresses_duckdb",
@@ -139,3 +163,4 @@ def test_the_retired_geocoding_chain_stays_retired() -> None:
         "sweden_address_resolution_diagnostics_job",
     ):
         assert retired_job not in job_names, retired_job
+        assert retired_job not in weekly_job_names, retired_job

@@ -17,8 +17,10 @@ reading the geocode cache, so a fold before warming would match page by page (4 
 2026-09-07) and a warm after the fold would reach users only a week later. The fold runs with
 `AddressFoldConfig` defaults (`changed_only=True`); until the cache-invalidation redesign
 lands, the weekly OSM extract still marks every company stale, so the fold rewrites all 64
-buckets (~3 h). The run starts Tuesday 01:05 Europe/Stockholm so it holds the single-slot
-DuckDB pool (shared with the backoffice's Fold now) well before reviewers start.
+buckets (~75 min with the warm cache; measured 2026-09-24). The run starts Tuesday 01:05
+Europe/Stockholm so it holds the single-slot DuckDB pool (shared with the backoffice's Fold
+now) well before reviewers start. The job's default run config sets execute=True and
+page_size=10,000 on the four extractor ops; without it they run in preview and write nothing.
 Spec: docs/superpowers/specs/2026-09-24-address-weekly-chain-design.md.
 """
 
@@ -38,6 +40,9 @@ from dagster_v3.defs.sweden_company.companies_current_asset import (
 
 WEEKLY_CRON_SCHEDULE = "5 1 * * 2"
 WEEKLY_EXECUTION_TIMEZONE = "Europe/Stockholm"
+# The extractors default to preview (ExtractConfig.execute=False writes nothing). The weekly must
+# write, with the same page size the backoffice's Processing page sends them.
+EXTRACTOR_PAGE_SIZE = 10_000
 
 
 sweden_company_address_geocoding_weekly_job = dg.define_asset_job(
@@ -59,6 +64,12 @@ sweden_company_address_geocoding_weekly_job = dg.define_asset_job(
         "the address entity's geocode cache against the new extract, fold and publish every "
         "company's addresses, then force the companies serving view to refresh."
     ),
+    config={
+        "ops": {
+            name: {"config": {"execute": True, "page_size": EXTRACTOR_PAGE_SIZE}}
+            for name in EXTRACTOR_ASSET_NAMES
+        }
+    },
 )
 
 sweden_company_address_geocoding_weekly = dg.ScheduleDefinition(
@@ -69,8 +80,8 @@ sweden_company_address_geocoding_weekly = dg.ScheduleDefinition(
     default_status=dg.DefaultScheduleStatus.RUNNING,
     description=(
         "Tuesday 01:05 Stockholm: extract, normalize, OSM refresh, centroids, geocode warm, "
-        "fold of all company addresses, then the companies serving view refresh. About 4.5 h "
-        "while the fold rewrites every bucket; holds the sweden_address_osm_duckdb pool."
+        "fold of all company addresses, then the companies serving view refresh. About 2.5 h "
+        "end to end while the fold rewrites every bucket; holds the sweden_address_osm_duckdb pool."
     ),
 )
 
