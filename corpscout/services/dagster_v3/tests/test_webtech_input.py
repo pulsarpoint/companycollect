@@ -106,7 +106,6 @@ def add(resource, processing, objects, *, submission_id=None, **config):
         run_id=str(uuid4()),
         clickhouse=resource,
         store=processing,
-        object_store=objects,
     )
 
 
@@ -205,7 +204,7 @@ def test_asset_appends_sources_and_keeps_recent_pages(database, store, objects):
         )
 
 
-def test_retry_after_committed_write_uses_manifest_not_changed_source(
+def test_retry_replaces_only_its_own_rows_from_the_current_source(
     database, store, objects, monkeypatch
 ):
     from dagster_v3.defs.webtech import input as module
@@ -219,6 +218,7 @@ def test_retry_after_committed_write_uses_manifest_not_changed_source(
     client.execute(
         "INSERT INTO corpscout.webtech_test_source VALUES ('1','novelic.com','SE'),('2','example.org','DE')"
     )
+    other = add(resource, processing, objects, targets=["other.se"], source_name="manual")
     submission_id = str(uuid4())
     config = dict(
         submission_id=submission_id,
@@ -237,17 +237,15 @@ def test_retry_after_committed_write_uses_manifest_not_changed_source(
         patch.setattr(module, "insert_input_batch", crash_after_insert)
         with pytest.raises(RuntimeError, match="acknowledgement"):
             add(resource, processing, objects, **config)
-    client.execute(
-        "INSERT INTO corpscout.webtech_test_source VALUES ('3','example.com','SE')"
-    )
+    client.execute("INSERT INTO corpscout.webtech_test_source VALUES ('3','example.com','SE')")
     result = add(resource, processing, objects, **config)
-    assert result["total"] == 1
-    assert client.execute(
-        "SELECT root_domain,source_record_id FROM corpscout.webtech_scan_input"
-    ) == [("novelic.com", "1")]
-    # A new import ID intentionally sees the newer source selection.
-    config.pop("submission_id")
-    assert add(resource, processing, objects, **config)["total"] == 2
+    # The retry reselects the source: its own rows are replaced, other submissions kept.
+    assert result["input_count"] == 2
+    assert sorted(client.execute(
+        "SELECT root_domain, submission_id != '' FROM corpscout.webtech_scan_input"
+    )) == [("example.com", True), ("novelic.com", True), ("other.se", True)]
+    assert result["task_id"] == other["task_id"]
+    assert not [key for (_, key) in objects.client().objects if key.startswith("queue-inputs/")]
 
 
 def test_se_selection_filters_latest_rows_and_deduplicates_roots(

@@ -5,12 +5,8 @@ import json
 import re
 from typing import Self
 from uuid import UUID
-from pathlib import Path
-from tempfile import TemporaryDirectory
-from urllib.parse import urlsplit
 
 from dagster_v3.defs.common import draft_queue
-from dagster_v3.defs.common.resources import ObjectStoreResource
 
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
@@ -37,6 +33,7 @@ INPUT_COLUMNS = (
     "source_name",
     "source_record_id",
     "source_run_id",
+    "submission_id",
 )
 
 
@@ -210,7 +207,6 @@ def load_draft(
     run_id: str,
     clickhouse: ClickhouseResource,
     store: ProcessingStore,
-    object_store: ObjectStoreResource,
 ) -> dict:
     selection = config.model_dump(
         exclude={
@@ -297,140 +293,88 @@ def load_draft(
                 fingerprint=fingerprint,
             )
             try:
-                with (
-                    TemporaryDirectory(prefix="webtech-input-") as temporary,
-                    clickhouse.get_connection() as client,
-                ):
-                    path = Path(temporary) / "inputs.jsonl"
+                with clickhouse.get_connection() as client:
                     query_id = "webtech-submission:" + submission_id
                     client.execute(
                         "KILL QUERY WHERE query_id=%(id)s SYNC", {"id": query_id}
                     )
-                    if receipt["manifest_uri"] is None:
-                        seen = set()
-                        source = (
-                            client.execute_iter(
-                                *source_query(config), settings={"max_block_size": 5000}
-                            )
-                            if config.source_relation
-                            else (
-                                (value, value)
-                                for value in sorted(set(config.targets))[
-                                    : config.max_rows
-                                ]
-                            )
+                    # A retry replaces this submission's rows from the current source.
+                    client.execute(
+                        f"DELETE FROM {INPUT_RELATION} WHERE task_id=%(task)s AND submission_id=%(submission)s",
+                        {"task": task_id, "submission": submission_id},
+                        settings={"lightweight_deletes_sync": 2},
+                    )
+                    source = (
+                        client.execute_iter(
+                            *source_query(config), settings={"max_block_size": 5000}
                         )
-                        with path.open("w", encoding="utf-8") as output:
-                            for value, record_id in source:
-                                identity, domain, origin, page = normalized_target(
-                                    value
-                                )
-                                seen.add(identity)
-                                if len(seen) > 1_000_000:
-                                    raise ValueError(
-                                        "A submission supports at most one million distinct pages"
-                                    )
-                                row = (
-                                    task_id,
-                                    identity,
-                                    domain,
-                                    origin,
-                                    page,
-                                    config.source_name
-                                    or config.source_relation
-                                    or "manual",
-                                    record_id,
-                                    run_id,
-                                )
-                                output.write(json.dumps(row) + "\n")
-                        with path.open("rb") as source_file:
-                            digest = hashlib.file_digest(
-                                source_file, "sha256"
-                            ).hexdigest()
-                        key = f"queue-inputs/webtech/{task_id}/{submission_id}/{digest}.jsonl"
-                        object_store.ensure_bucket()
-                        object_store.upload_file(key, path)
-                        uri = f"s3://{object_store.bucket}/{key}"
-                        draft_queue.save_manifest(store, submission_id, uri)
-                    else:
-                        uri = receipt["manifest_uri"]
-                        parsed = urlsplit(uri)
-                        key = parsed.path.lstrip("/")
-                        if (
-                            parsed.scheme != "s3"
-                            or parsed.netloc != object_store.bucket
-                            or not key.startswith(
-                                f"queue-inputs/webtech/{task_id}/{submission_id}/"
-                            )
-                        ):
-                            raise ValueError("Unexpected input manifest location")
-                        object_store.download_file(key, path)
-                        with path.open("rb") as source_file:
-                            if (
-                                hashlib.file_digest(source_file, "sha256").hexdigest()
-                                != Path(key).stem
-                            ):
-                                raise ValueError("Input manifest checksum mismatch")
-                    with path.open(encoding="utf-8") as source_file:
-                        identities = {json.loads(line)[1] for line in source_file}
-                    existing_ids = {
-                        row[0]
-                        for row in client.execute(
-                            f"SELECT input_id FROM {INPUT_RELATION} WHERE task_id=%(task)s",
-                            {"task": task_id},
+                        if config.source_relation
+                        else (
+                            (value, value)
+                            for value in sorted(set(config.targets))[: config.max_rows]
                         )
-                    }
-                    if len(identities | existing_ids) > 1_000_000:
-                        raise ValueError(
-                            "A Webtech draft supports at most one million distinct pages"
-                        )
-                    seen = set()
+                    )
+                    source_name = (
+                        config.source_name or config.source_relation or "manual"
+                    )
+                    seen: set[str] = set()
                     batch = []
-                    with path.open(encoding="utf-8") as source_file:
-                        for line in source_file:
-                            row = tuple(json.loads(line))
-                            if row[0] != task_id or row[1:5] != normalized_target(
-                                row[4]
-                            ):
-                                raise ValueError("Input manifest identity mismatch")
-                            if row[1] in seen:
-                                continue
-                            seen.add(row[1])
-                            batch.append(row)
-                            if len(batch) == 5000:
-                                insert_input_batch(
-                                    client, batch, task_id=task_id, query_id=query_id
-                                )
-                                batch = []
-                        if batch:
+                    for value, record_id in source:
+                        identity, domain, origin, page = normalized_target(value)
+                        if identity in seen:
+                            continue
+                        seen.add(identity)
+                        if len(seen) > 1_000_000:
+                            raise ValueError(
+                                "A submission supports at most one million distinct pages"
+                            )
+                        batch.append(
+                            (
+                                task_id,
+                                identity,
+                                domain,
+                                origin,
+                                page,
+                                source_name,
+                                record_id,
+                                run_id,
+                                submission_id,
+                            )
+                        )
+                        if len(batch) == 5000:
                             insert_input_batch(
                                 client, batch, task_id=task_id, query_id=query_id
                             )
-                    total = ClickHouseInputQueue(
-                        clickhouse, INPUT_RELATION, selection_task_id=task_id
-                    ).inspect()["total"]
-                    draft_queue.finish_submission(
-                        store,
-                        submission_id=submission_id,
-                        task_id=task_id,
-                        count=len(seen),
-                        total=total,
-                    )
-                    return {
-                        "task_id": task_id,
-                        "submission_id": submission_id,
-                        "input_count": len(seen),
-                        "total": total,
-                    }
+                            batch = []
+                    if batch:
+                        insert_input_batch(
+                            client, batch, task_id=task_id, query_id=query_id
+                        )
+                total = ClickHouseInputQueue(
+                    clickhouse, INPUT_RELATION, selection_task_id=task_id
+                ).inspect()["total"]
+                draft_queue.finish_submission(
+                    store,
+                    submission_id=submission_id,
+                    task_id=task_id,
+                    count=len(seen),
+                    total=total,
+                )
+                return {
+                    "task_id": task_id,
+                    "submission_id": submission_id,
+                    "input_count": len(seen),
+                    "total": total,
+                }
             except BaseException:
-                # The retry fences its stable ClickHouse query before reconciliation.
+                # The retry fences its stable ClickHouse query before replacing rows.
                 draft_queue.fail_submission(store, submission_id)
                 raise
 
 
 @dg.asset(
     group_name="webtech",
-    kinds={"clickhouse", "postgres", "s3"},
+    kinds={"clickhouse", "postgres"},
     pool="webtech_scan_input",
     metadata={"dagster/table_name": INPUT_RELATION},
     description="Append normalized pages to the open scoped draft. Does not freeze, skip recent pages or start scans.",
@@ -440,7 +384,6 @@ def webtech_scan_input(
     config: WebtechInputConfig,
     clickhouse: ClickhouseResource,
     processing: ProcessingResource,
-    webtech_object_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
     submission_id = str(
         UUID(
@@ -460,7 +403,6 @@ def webtech_scan_input(
             run_id=context.run.run_id,
             clickhouse=clickhouse,
             store=store,
-            object_store=webtech_object_store,
         )
     context.instance.add_run_tags(
         context.run.run_id, {"processing/task_id": metadata["task_id"]}
