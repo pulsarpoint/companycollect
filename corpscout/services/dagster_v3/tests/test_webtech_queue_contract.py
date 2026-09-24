@@ -11,7 +11,11 @@ from dagster_v3.defs.webtech.models import (
     StoredResultReference,
     WEBTECH_DETECTOR_VERSION,
 )
-from dagster_v3.defs.webtech.storage import _unique_references, _validate_execution_result_identity
+from dagster_v3.defs.webtech.storage import (
+    _unique_references,
+    _validate_execution_result_identity,
+)
+from dagster_v3.defs.webtech.task_assets import envelope_partition_key
 
 EVENT = {
     "sequence": 1,
@@ -48,13 +52,28 @@ def test_progress_event_without_results_still_parses():
 
 def document(scan_id="first-scan", crawl_id="webtech-exec"):
     return StoredDomainResultDocument(
-        schema_version=1, scan_id=scan_id, crawl_id=crawl_id, partition_key="envelope-a",
+        schema_version=1,
+        scan_id=scan_id,
+        crawl_id=crawl_id,
+        partition_key="envelope-a",
         detector_version=WEBTECH_DETECTOR_VERSION,
-        candidate={"root_domain": "novelic.com", "harmonic_rank": 0, "task_id": "t",
-                   "input_id": "a" * 64, "page_url": "https://novelic.com/"},
-        outcome="success", requested_url="https://novelic.com", final_url="https://novelic.com/",
-        final_hostname="novelic.com", http_fallback_used=False, scanned_at=datetime.now(UTC),
-        duration_ms=10, error_message="", timeout_stage=None, report=None,
+        candidate={
+            "root_domain": "novelic.com",
+            "harmonic_rank": 0,
+            "task_id": "t",
+            "input_id": "a" * 64,
+            "page_url": "https://novelic.com/",
+        },
+        outcome="success",
+        requested_url="https://novelic.com",
+        final_url="https://novelic.com/",
+        final_hostname="novelic.com",
+        http_fallback_used=False,
+        scanned_at=datetime.now(UTC),
+        duration_ms=10,
+        error_message="",
+        timeout_stage=None,
+        report=None,
     )
 
 
@@ -62,17 +81,27 @@ def test_page_from_an_earlier_envelope_of_the_execution_is_accepted():
     _validate_execution_result_identity(
         document(scan_id="an-earlier-scan"),
         reference=StoredResultReference.model_validate(REFERENCE),
-        crawl_id="webtech-exec", detector_version=WEBTECH_DETECTOR_VERSION,
+        crawl_id="webtech-exec",
+        detector_version=WEBTECH_DETECTOR_VERSION,
     )
 
 
-@pytest.mark.parametrize("changed", [{"crawl_id": "webtech-other"}, {"input_id": "b" * 64}])
+@pytest.mark.parametrize(
+    "changed", [{"crawl_id": "webtech-other"}, {"input_id": "b" * 64}]
+)
 def test_page_from_another_execution_or_input_is_rejected(changed):
-    reference = StoredResultReference.model_validate({**REFERENCE, **({"input_id": changed["input_id"]} if "input_id" in changed else {})})
+    reference = StoredResultReference.model_validate(
+        {
+            **REFERENCE,
+            **({"input_id": changed["input_id"]} if "input_id" in changed else {}),
+        }
+    )
     with pytest.raises(ValueError, match="identity mismatch"):
         _validate_execution_result_identity(
             document(crawl_id=changed.get("crawl_id", "webtech-exec")),
-            reference=reference, crawl_id="webtech-exec", detector_version=WEBTECH_DETECTOR_VERSION,
+            reference=reference,
+            crawl_id="webtech-exec",
+            detector_version=WEBTECH_DETECTOR_VERSION,
         )
 
 
@@ -86,7 +115,9 @@ def test_identical_duplicates_collapse():
 
 def test_conflicting_duplicates_raise():
     ref1 = StoredResultReference.model_validate(REFERENCE)
-    ref2 = StoredResultReference.model_validate({**REFERENCE, "object_key": "different/key.json"})
+    ref2 = StoredResultReference.model_validate(
+        {**REFERENCE, "object_key": "different/key.json"}
+    )
     with pytest.raises(ValueError, match="conflicting result references"):
         _unique_references([ref1, ref2])
 
@@ -94,7 +125,9 @@ def test_conflicting_duplicates_raise():
 def test_buffer_flushes_by_size_and_by_age():
     now = [0.0]
     written = []
-    buffer = ResultBuffer(written.append, max_items=3, max_seconds=5, clock=lambda: now[0])
+    buffer = ResultBuffer(
+        written.append, max_items=3, max_seconds=5, clock=lambda: now[0]
+    )
     buffer.add([1, 2])
     assert written == []
     buffer.add([3])
@@ -124,3 +157,11 @@ def test_failed_flush_keeps_items_for_the_next_attempt():
     assert len(buffer) == 2
     assert buffer.flush() == 2
     assert calls == [["a", "b"], ["a", "b"]]
+
+
+def test_envelope_key_depends_only_on_its_entries():
+    assert envelope_partition_key(["b" * 64, "a" * 64]) == envelope_partition_key(
+        ["a" * 64, "b" * 64]
+    )
+    assert envelope_partition_key(["a" * 64]) != envelope_partition_key(["b" * 64])
+    assert envelope_partition_key(["a" * 64]).startswith("envelope-")

@@ -20,6 +20,7 @@ from dagster_v3.defs.webtech.models import (
     FinalScanManifest,
     FinalScanReference,
     RemoteScanSnapshot,
+    StoredResultReference,
     SubmittedScanReference,
     WebtechCandidate,
 )
@@ -370,6 +371,8 @@ def monitor_webtech_scan(
     poll_interval_seconds: int = WEBTECH_MONITOR_INTERVAL_SECONDS,
     sleep: Callable[[float], None] = time.sleep,
     stall_timeout_seconds: float = WEBTECH_STALL_TIMEOUT_SECONDS,
+    on_results: Callable[[list[StoredResultReference]], None] | None = None,
+    on_poll: Callable[[], None] | None = None,
 ) -> RemoteScanSnapshot:
     """Poll with short requests until one submitted remote scan is terminal.
 
@@ -382,13 +385,19 @@ def monitor_webtech_scan(
     polls_since_log = 0
     while True:
         try:
-            snapshot = webtech_api.poll(
+            response = webtech_api.poll(
                 submission.scan_id,
                 after_event=latest_event_sequence,
                 wait_seconds=0,
-            ).scan
+            )
+            for event in response.events:
+                if on_results is not None and event.results:
+                    on_results(event.results)
+                latest_event_sequence = max(latest_event_sequence, event.sequence)
+            snapshot = response.scan
         except UnknownRemoteScanError:
             snapshot = webtech_api.submit(submission.manifest)
+            latest_event_sequence = 0  # a restarted scanner numbers events from 1 again
             context.log.warning(
                 "Webtech scanner lost in-memory state; resubmitted scan_id=%s "
                 "partition=%s status=%s completed=%s/%s",
@@ -407,6 +416,8 @@ def monitor_webtech_scan(
                 submission.manifest.partition_key,
                 error,
             )
+            if on_poll is not None:
+                on_poll()
             sleep(poll_interval_seconds)
             continue
 
@@ -439,7 +450,6 @@ def monitor_webtech_scan(
             )
             last_logged_state = state
             polls_since_log = 0
-        latest_event_sequence = snapshot.latest_event_sequence
         if (
             snapshot.status == "running"
             and snapshot.progress_age_seconds >= stall_timeout_seconds
@@ -471,6 +481,8 @@ def monitor_webtech_scan(
                 f"Remote Webtech scan {snapshot.scan_id} ended with "
                 f"status={snapshot.status}: {snapshot.error_message}"
             )
+        if on_poll is not None:
+            on_poll()
         sleep(poll_interval_seconds)
 
 

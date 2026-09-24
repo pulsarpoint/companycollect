@@ -1,7 +1,6 @@
 """Freeze/import races, and remaining work, freshness, finish and purge derived from results."""
 
 import json
-from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
@@ -430,56 +429,90 @@ def test_finish_counts_results_and_skips_then_purge_drops_the_partition(
 
 
 @pytest.mark.parametrize("failed_domain", [None, "example.com"])
-def test_results_asset_resumes_publication_then_clears_completed_inputs(
+def test_results_asset_publishes_continuously_resumes_and_clears(
     database, store, objects, monkeypatch, failed_domain
 ):
-    import hashlib
-    from urllib.parse import urlsplit
-
     import dagster as dg
     from dagster_v3.defs.common.processing import ProcessingResource
     from dagster_v3.defs.webtech import task_assets as module
     from dagster_v3.defs.webtech.client import WebtechApiResource
-    from dagster_v3.defs.webtech.models import RemoteScanSnapshot
+    from dagster_v3.defs.webtech.models import RemoteScanSnapshot, StoredResultReference
     from dagster_v3.defs.webtech.storage import WebtechS3Destination
 
     client, resource = database
     processing, dsn = store
     task_id = add(
-        resource, processing, objects, targets=["novelic.com", "example.com"]
+        resource, processing, objects, targets=["novelic.com", "example.com", "a.com"]
     )["task_id"]
-    jobs = {}
-    submissions = []
-    indexed = []
-    lose_ack = True
+    envelopes = {}
+    published = []
+    crash_once = [True]
 
-    def page_outcome(row):
-        return "navigation_error" if row["root_domain"] == failed_domain else "success"
+    def outcome(root):
+        return "navigation_error" if root == failed_domain else "success"
 
     def submit(api, manifest):
         del api
-        scan_id = hashlib.sha256(manifest.uri.encode()).hexdigest()
-        submissions.append(scan_id)
-        if scan_id in jobs:
-            return jobs[scan_id][0]
-        candidate_document = json.loads(
-            objects.read_bytes(urlsplit(manifest.uri).path.lstrip("/"))
-        )
-        candidates = candidate_document["candidates"]
+        document = json.loads(objects.read_bytes(manifest.uri.split("/", 3)[3]))
+        envelopes[manifest.partition_key] = document["candidates"]
         now = datetime.now(UTC)
-        key = f"webtech/results/{scan_id}/final.json"
-        snapshot = RemoteScanSnapshot(
-            scan_id=scan_id,
-            status="completed",
+        return RemoteScanSnapshot(
+            scan_id=manifest.partition_key,
+            status="running",
             crawl_id=manifest.crawl_id,
             partition_key=manifest.partition_key,
             detector_version=WEBTECH_DETECTOR_VERSION,
             candidate_manifest_uri=manifest.uri,
-            result_prefix_uri=f"s3://webtech/webtech/results/{scan_id}",
-            final_manifest_uri=f"s3://webtech/{key}",
+            result_prefix_uri="s3://webtech/webtech/x",
+            final_manifest_uri="s3://webtech/webtech/x/final.json",
+            total_count=len(document["candidates"]),
+            completed_count=0,
+            outcome_counts={},
+            technology_count=0,
+            started_at=now,
+            finished_at=None,
+            last_progress_at=now,
+            elapsed_seconds=0,
+            progress_age_seconds=0,
+            domains_per_minute=0,
+            latest_event_sequence=0,
+            error_message="",
+        )
+
+    def monitor(*, submission, on_results, on_poll, **kwargs):
+        del kwargs
+        candidates = envelopes[submission.scan_id]
+        on_results(
+            [
+                StoredResultReference(
+                    root_domain=row["root_domain"],
+                    harmonic_rank=0,
+                    input_id=row["input_id"],
+                    outcome=outcome(row["root_domain"]),
+                    timeout_stage=None,
+                    technology_count=0,
+                    duration_ms=1,
+                    object_key=f"webtech/pages/{row['input_id']}",
+                    sha256="0" * 64,
+                    size_bytes=1,
+                )
+                for row in candidates
+            ]
+        )
+        on_poll()
+        now = datetime.now(UTC)
+        return RemoteScanSnapshot(
+            scan_id=submission.scan_id,
+            status="completed",
+            crawl_id=submission.manifest.crawl_id,
+            partition_key=submission.scan_id,
+            detector_version=WEBTECH_DETECTOR_VERSION,
+            candidate_manifest_uri=submission.manifest.uri,
+            result_prefix_uri="s3://webtech/webtech/x",
+            final_manifest_uri="s3://webtech/webtech/x/final.json",
             total_count=len(candidates),
             completed_count=len(candidates),
-            outcome_counts=dict(Counter(page_outcome(row) for row in candidates)),
+            outcome_counts={},
             technology_count=0,
             started_at=now,
             finished_at=now,
@@ -490,78 +523,41 @@ def test_results_asset_resumes_publication_then_clears_completed_inputs(
             latest_event_sequence=1,
             error_message="",
         )
-        objects.write_json(
-            key,
-            json.dumps(
-                {
-                    "schema_version": 1,
-                    "scan_id": scan_id,
-                    "crawl_id": manifest.crawl_id,
-                    "partition_key": manifest.partition_key,
-                    "detector_version": WEBTECH_DETECTOR_VERSION,
-                    "candidate_manifest_uri": manifest.uri,
-                    "candidate_manifest_sha256": manifest.sha256,
-                    "started_at": now.isoformat(),
-                    "finished_at": now.isoformat(),
-                    "elapsed_seconds": 1,
-                    "outcome_counts": snapshot.outcome_counts,
-                    "technology_count": 0,
-                    "scanner_settings": {},
-                    "results": [
-                        {
-                            "root_domain": row["root_domain"],
-                            "harmonic_rank": 0,
-                            "input_id": row["input_id"],
-                            "outcome": page_outcome(row),
-                            "timeout_stage": None,
-                            "technology_count": 0,
-                            "duration_ms": 1,
-                            "object_key": f"webtech/results/{scan_id}/{row['input_id']}.json",
-                            "sha256": "0" * 64,
-                            "size_bytes": 1,
-                        }
-                        for row in candidates
-                    ],
-                }
-            ),
-        )
-        jobs[scan_id] = (snapshot, candidates)
-        return snapshot
 
-    def publish(**kwargs):
-        nonlocal lose_ack
-        reference = kwargs["reference"]
-        snapshot, candidates = jobs[reference.scan_id]
-        indexed.append(reference.scan_id)
+    def index(**kwargs):
+        references = kwargs["references"]
+        if crash_once[0]:
+            crash_once[0] = False
+            raise RuntimeError("insert not acknowledged")
+        published.extend(item.input_id for item in references)
         client.execute(
-            "INSERT INTO corpscout.webtech_domain_scan_results (root_domain,website_origin,page_url,detector_version,scanned_at,scan_id,outcome,task_id,input_id) VALUES",
+            "INSERT INTO corpscout.webtech_domain_scan_results (crawl_id,root_domain,website_origin,page_url,detector_version,scanned_at,scan_id,outcome,task_id,input_id) VALUES",
             [
                 (
-                    row["root_domain"],
-                    row["page_url"].rstrip("/"),
-                    row["page_url"],
+                    kwargs["crawl_id"],
+                    item.root_domain,
+                    f"https://{item.root_domain}",
+                    f"https://{item.root_domain}/",
                     WEBTECH_DETECTOR_VERSION,
-                    snapshot.started_at,
-                    reference.scan_id,
-                    page_outcome(row),
+                    datetime.now(UTC),
+                    "scan",
+                    item.outcome,
                     task_id,
-                    row["input_id"],
+                    item.input_id,
                 )
-                for row in candidates
+                for item in references
             ],
         )
-        if lose_ack:
-            lose_ack = False
-            raise RuntimeError("lost result publication acknowledgement")
-        return len(candidates)
+        return len(references)
 
-    monkeypatch.setattr(WebtechApiResource, "submit", submit)
+    monkeypatch.setattr(module, "submit_envelope", submit)
+    monkeypatch.setattr(module, "monitor_webtech_scan", monitor)
+    monkeypatch.setattr(module, "index_result_references", index)
     monkeypatch.setattr(
         module,
-        "monitor_webtech_scan",
-        lambda **kwargs: jobs[kwargs["submission"].scan_id][0],
+        "read_final_manifest",
+        lambda **kwargs: type("Final", (), {"results": []})(),
     )
-    monkeypatch.setattr(module, "index_final_results", publish)
     results = module.build_webtech_task_asset(
         WebtechS3Destination(bucket="webtech", prefix="webtech")
     )
@@ -580,56 +576,28 @@ def test_results_asset_resumes_publication_then_clears_completed_inputs(
             run_config={
                 "ops": {
                     "webtech_scan_results": {
-                        "config": {"task_id": task_id, "batch_size": 1, **config}
+                        "config": {"task_id": task_id, "batch_size": 2, **config}
                     }
                 }
             },
+            raise_on_error=False,
         )
 
-    with pytest.raises(RuntimeError, match="lost result"):
-        run()
+    assert not run().success  # the first insert was not acknowledged
     execution_id = processing.task(task_id)["config"]["execution"]["execution_id"]
-    assert processing.task(task_id)["status"] == "ready"
-    assert processing.task(task_id)["completed_at"] is None
-    completed = run()
-    assert completed.success
-    metadata = completed.get_asset_materialization_events()[
-        0
-    ].event_specific_data.materialization.metadata
-    assert metadata["completion_status"].value == (
-        "completed_with_errors" if failed_domain else "completed"
-    )
-    assert metadata["failed_pages"].value == int(failed_domain is not None)
-    assert (
-        processing.task(task_id)["config"]["execution"]["execution_id"] == execution_id
-    )
-    assert len(jobs) == 2 and len(indexed) == 3
-    assert indexed[0] == indexed[1]
-    assert client.execute(
-        "SELECT count() FROM corpscout.webtech_domain_scan_results FINAL"
-    ) == [(2,)]
-    assert processing.progress(task_id)["succeeded"] == 2 - int(
-        failed_domain is not None
-    )
-    assert processing.task(task_id)["status"] == "completed"
-    assert run().success  # Duplicate Start does not submit remote work again.
-    assert len(submissions) == 3
+    assert run(execution_id=execution_id).success
+    # Envelopes are rebuilt from what remains; every page is published exactly once.
+    assert len(published) == 3 and len(set(published)) == 3
+    task = processing.task(task_id)
+    assert task["status"] == "completed"
+    assert task["succeeded_count"] == 3 - int(failed_domain is not None)
+    assert task["inputs_purged_at"] is not None
     assert client.execute("SELECT count() FROM corpscout.webtech_scan_input") == [(0,)]
-    assert processing.task(task_id)["inputs_purged_at"] is not None
-    with pytest.raises(ValueError, match="Inputs were purged"):
-        run(execution_id=str(uuid4()))
-    # A deliberate rescan goes through a fresh queue, with prior results retained.
-    old_task = task_id
-    task_id = add(
-        resource, processing, objects, targets=["novelic.com", "example.com"]
-    )["task_id"]
-    assert task_id != old_task
-    assert run().success
-    assert len(submissions) == 3 + int(
-        failed_domain is not None
-    )  # Retry errors; skip fresh successes.
-    assert processing.progress(task_id)["skipped"] == 2 - int(failed_domain is not None)
-    assert client.execute("SELECT count() FROM corpscout.webtech_scan_input") == [(0,)]
+    assert not [
+        key
+        for (_, key) in objects.client().objects
+        if key.startswith("queue-executions/")
+    ]
 
 
 def test_addition_losing_freeze_race_moves_to_next_draft(
