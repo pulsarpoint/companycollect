@@ -1,4 +1,4 @@
-"""Freeze/import races, saved freshness decisions and recoverable scan execution."""
+"""Freeze/import races, and remaining work, freshness, finish and purge derived from results."""
 
 import json
 from collections import Counter
@@ -146,13 +146,33 @@ def test_import_and_start_use_the_same_lock(database, store, objects):
         assert processing.task(task_id)["status"] == "draft"
 
 
-def publish(client, task, rows, *, outcome="success", scanned_at=None):
+def publish(
+    client,
+    task,
+    rows,
+    *,
+    outcome="success",
+    scanned_at=None,
+    crawl_id=None,
+    detector_version=WEBTECH_DETECTOR_VERSION,
+    scan_id="scan-1",
+):
     execution = task["config"]["execution"]
     client.execute(
         "INSERT INTO corpscout.webtech_domain_scan_results (crawl_id,root_domain,website_origin,page_url,detector_version,scanned_at,scan_id,outcome,task_id,input_id) VALUES",
         [
-            (execution_crawl_id(execution), root, origin, page, WEBTECH_DETECTOR_VERSION,
-             scanned_at or datetime.now(UTC), "scan-1", outcome, str(task["task_id"]), identity)
+            (
+                crawl_id or execution_crawl_id(execution),
+                root,
+                origin,
+                page,
+                detector_version,
+                scanned_at or datetime.now(UTC),
+                scan_id,
+                outcome,
+                str(task["task_id"]),
+                identity,
+            )
             for identity, root, origin, page in rows
         ],
     )
@@ -164,11 +184,32 @@ def test_remaining_excludes_published_and_fresh_pages(database, store, objects):
     client.execute(
         "INSERT INTO corpscout.webtech_domain_scan_results (root_domain,website_origin,page_url,detector_version,scanned_at,scan_id,outcome) VALUES",
         [
-            ("fresh.com", "https://fresh.com", "https://fresh.com/", WEBTECH_DETECTOR_VERSION, datetime.now(UTC) - timedelta(days=1), "old", "success"),
-            ("failed.com", "https://failed.com", "https://failed.com/", WEBTECH_DETECTOR_VERSION, datetime.now(UTC) - timedelta(days=1), "old", "navigation_error"),
+            (
+                "fresh.com",
+                "https://fresh.com",
+                "https://fresh.com/",
+                WEBTECH_DETECTOR_VERSION,
+                datetime.now(UTC) - timedelta(days=1),
+                "old",
+                "success",
+            ),
+            (
+                "failed.com",
+                "https://failed.com",
+                "https://failed.com/",
+                WEBTECH_DETECTOR_VERSION,
+                datetime.now(UTC) - timedelta(days=1),
+                "old",
+                "navigation_error",
+            ),
         ],
     )
-    task_id = add(resource, processing, objects, targets=["fresh.com", "failed.com", "a.com", "b.com"])["task_id"]
+    task_id = add(
+        resource,
+        processing,
+        objects,
+        targets=["fresh.com", "failed.com", "a.com", "b.com"],
+    )["task_id"]
     task = start(processing, resource, task_id)
     with resource.get_connection() as connection:
         first = remaining_inputs(connection, task, limit=10)
@@ -180,7 +221,12 @@ def test_remaining_excludes_published_and_fresh_pages(database, store, objects):
         # The same answer on resume: results of this execution are after its start.
         assert remaining_inputs(connection, task, limit=1) == first[1:2]
         # Restricted to chosen entries, e.g. one envelope.
-        assert remaining_inputs(connection, task, limit=10, input_ids=[first[2][0]]) == first[2:3]
+        assert (
+            remaining_inputs(connection, task, limit=10, input_ids=[first[2][0]])
+            == first[2:3]
+        )
+        # An empty selection means no entries, not "no filter".
+        assert remaining_inputs(connection, task, limit=10, input_ids=[]) == []
 
 
 def test_force_rescan_includes_fresh_pages(database, store, objects):
@@ -188,36 +234,198 @@ def test_force_rescan_includes_fresh_pages(database, store, objects):
     processing, _ = store
     client.execute(
         "INSERT INTO corpscout.webtech_domain_scan_results (root_domain,website_origin,page_url,detector_version,scanned_at,scan_id,outcome) VALUES",
-        [("fresh.com", "https://fresh.com", "https://fresh.com/", WEBTECH_DETECTOR_VERSION, datetime.now(UTC) - timedelta(days=1), "old", "success")],
+        [
+            (
+                "fresh.com",
+                "https://fresh.com",
+                "https://fresh.com/",
+                WEBTECH_DETECTOR_VERSION,
+                datetime.now(UTC) - timedelta(days=1),
+                "old",
+                "success",
+            )
+        ],
     )
     task_id = add(resource, processing, objects, targets=["fresh.com"])["task_id"]
     task = start(processing, resource, task_id, force_rescan=True)
     with resource.get_connection() as connection:
-        assert [row[1] for row in remaining_inputs(connection, task, limit=10)] == ["fresh.com"]
+        assert [row[1] for row in remaining_inputs(connection, task, limit=10)] == [
+            "fresh.com"
+        ]
 
 
-def test_finish_counts_results_and_skips_then_purge_drops_the_partition(database, store, objects):
+def test_remaining_freshness_semantics_across_crawls_and_detectors(
+    database, store, objects
+):
+    """Freshness only skips a page when its latest result — from any crawl, under
+    the current detector, inside [cutoff, started_at] — is a success. A later
+    failure, a result outside the window, a stale detector, or a result after
+    started_at all leave the page remaining, and finish refuses until every
+    remaining page has a result of this execution's own crawl."""
+    client, resource = database
+    processing, _ = store
+    task_id = add(
+        resource,
+        processing,
+        objects,
+        targets=["a.com", "b.com", "c.com", "d.com", "e.com"],
+    )["task_id"]
+    task = start(processing, resource, task_id)
+    started_at = datetime.fromisoformat(task["config"]["execution"]["started_at"])
+    with resource.get_connection() as connection:
+        by_domain = {
+            row[1]: row for row in remaining_inputs(connection, task, limit=10)
+        }
+    assert sorted(by_domain) == ["a.com", "b.com", "c.com", "d.com", "e.com"]
+
+    # a: a later failure beats an earlier success (latest outcome wins) -> REMAINS.
+    publish(
+        client,
+        task,
+        [by_domain["a.com"]],
+        crawl_id="other-crawl",
+        outcome="success",
+        scanned_at=started_at - timedelta(hours=2),
+        scan_id="a-old",
+    )
+    publish(
+        client,
+        task,
+        [by_domain["a.com"]],
+        crawl_id="other-crawl",
+        outcome="navigation_error",
+        scanned_at=started_at - timedelta(hours=1),
+        scan_id="a-new",
+    )
+    # b: a success from another crawl scanned AFTER this execution started -> REMAINS.
+    publish(
+        client,
+        task,
+        [by_domain["b.com"]],
+        crawl_id="other-crawl",
+        outcome="success",
+        scanned_at=started_at + timedelta(hours=1),
+        scan_id="b-1",
+    )
+    # c: a success inside the window from another crawl, but a stale detector -> REMAINS.
+    publish(
+        client,
+        task,
+        [by_domain["c.com"]],
+        crawl_id="other-crawl",
+        outcome="success",
+        scanned_at=started_at - timedelta(hours=1),
+        scan_id="c-1",
+        detector_version="stale-detector",
+    )
+    # d: a success from another crawl, older than the freshness cutoff -> REMAINS.
+    publish(
+        client,
+        task,
+        [by_domain["d.com"]],
+        crawl_id="other-crawl",
+        outcome="success",
+        scanned_at=started_at - timedelta(days=35),
+        scan_id="d-1",
+    )
+    # e: a fresh success inside the window, from another crawl, current detector -> NOT remaining.
+    publish(
+        client,
+        task,
+        [by_domain["e.com"]],
+        crawl_id="other-crawl",
+        outcome="success",
+        scanned_at=started_at - timedelta(hours=1),
+        scan_id="e-1",
+    )
+    with resource.get_connection() as connection:
+        remaining = remaining_inputs(connection, task, limit=10)
+    assert sorted(row[1] for row in remaining) == ["a.com", "b.com", "c.com", "d.com"]
+
+    # finish refuses while b has no result of this execution's own crawl, even
+    # though a, c and d now do and e is a fresh skip.
+    publish(client, task, [by_domain["a.com"]])
+    publish(client, task, [by_domain["c.com"]])
+    publish(client, task, [by_domain["d.com"]])
+    with (
+        processing.selection_lock(task_id),
+        pytest.raises(ValueError, match="published outcome"),
+    ):
+        finish_execution(processing, resource, task_id)
+    publish(client, task, [by_domain["b.com"]])
+    with processing.selection_lock(task_id):
+        finished = finish_execution(processing, resource, task_id)
+    assert (
+        finished["succeeded_count"],
+        finished["terminal_failed_count"],
+        finished["skipped_count"],
+    ) == (4, 0, 1)
+
+    # f: force_rescan disables the freshness skip (e's fresh success no longer
+    # counts), but a page with THIS crawl's own result is still excluded.
+    next_task = add(resource, processing, objects, targets=["e.com", "f.com"])[
+        "task_id"
+    ]
+    forced = start(processing, resource, next_task, force_rescan=True)
+    with resource.get_connection() as connection:
+        forced_remaining = {
+            row[1]: row for row in remaining_inputs(connection, forced, limit=10)
+        }
+    assert sorted(forced_remaining) == ["e.com", "f.com"]
+    publish(client, forced, [forced_remaining["f.com"]])
+    with resource.get_connection() as connection:
+        assert [row[1] for row in remaining_inputs(connection, forced, limit=10)] == [
+            "e.com"
+        ]
+
+
+def test_finish_counts_results_and_skips_then_purge_drops_the_partition(
+    database, store, objects
+):
     client, resource = database
     processing, _ = store
     client.execute(
         "INSERT INTO corpscout.webtech_domain_scan_results (root_domain,website_origin,page_url,detector_version,scanned_at,scan_id,outcome) VALUES",
-        [("fresh.com", "https://fresh.com", "https://fresh.com/", WEBTECH_DETECTOR_VERSION, datetime.now(UTC) - timedelta(days=1), "old", "success")],
+        [
+            (
+                "fresh.com",
+                "https://fresh.com",
+                "https://fresh.com/",
+                WEBTECH_DETECTOR_VERSION,
+                datetime.now(UTC) - timedelta(days=1),
+                "old",
+                "success",
+            )
+        ],
     )
-    other = add(resource, processing, objects, queue_scope="other", targets=["kept.com"])["task_id"]
-    task_id = add(resource, processing, objects, targets=["fresh.com", "a.com", "b.com"])["task_id"]
+    other = add(
+        resource, processing, objects, queue_scope="other", targets=["kept.com"]
+    )["task_id"]
+    task_id = add(
+        resource, processing, objects, targets=["fresh.com", "a.com", "b.com"]
+    )["task_id"]
     task = start(processing, resource, task_id)
     with resource.get_connection() as connection:
         rows = remaining_inputs(connection, task, limit=10)
-    with processing.selection_lock(task_id), pytest.raises(ValueError, match="published outcome"):
+    with (
+        processing.selection_lock(task_id),
+        pytest.raises(ValueError, match="published outcome"),
+    ):
         finish_execution(processing, resource, task_id)
     publish(client, task, rows[:1])
     publish(client, task, rows[1:], outcome="navigation_error")
     with processing.selection_lock(task_id):
         finished = finish_execution(processing, resource, task_id)
-        assert (finished["succeeded_count"], finished["terminal_failed_count"], finished["skipped_count"]) == (1, 1, 1)
+        assert (
+            finished["succeeded_count"],
+            finished["terminal_failed_count"],
+            finished["skipped_count"],
+        ) == (1, 1, 1)
         purge_completed_inputs(processing, resource, task_id)
         purge_completed_inputs(processing, resource, task_id)  # idempotent
-    assert client.execute("SELECT DISTINCT task_id FROM corpscout.webtech_scan_input") == [(other,)]
+    assert client.execute(
+        "SELECT DISTINCT task_id FROM corpscout.webtech_scan_input"
+    ) == [(other,)]
     assert processing.task(task_id)["inputs_purged_at"] is not None
 
 

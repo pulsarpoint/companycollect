@@ -123,7 +123,8 @@ FROM {INPUT_RELATION}
 WHERE task_id = %(task)s
   AND input_id NOT IN (
       SELECT input_id FROM {RESULT_RELATION}
-      WHERE task_id = %(task)s AND crawl_id = %(crawl)s)
+      WHERE task_id = %(task)s AND crawl_id = %(crawl)s
+        AND root_domain IN (SELECT root_domain FROM {INPUT_RELATION} WHERE task_id = %(task)s))
   AND (%(force)s = 1 OR (root_domain, website_origin, page_url) NOT IN (
       SELECT root_domain, website_origin, page_url
       FROM {RESULT_RELATION} FINAL
@@ -139,7 +140,9 @@ WHERE task_id = %(task)s
 def remaining_inputs(
     client, task: dict, *, limit: int, input_ids: Sequence[str] | None = None
 ) -> list[tuple[str, str, str, str]]:
-    only = " AND input_id IN %(ids)s " if input_ids else " "
+    if input_ids is not None and not input_ids:
+        return []
+    only = " AND input_id IN %(ids)s " if input_ids is not None else " "
     return [
         tuple(row)
         for row in client.execute(
@@ -152,18 +155,24 @@ def remaining_inputs(
     ]
 
 
-def finish_execution(store: ProcessingStore, clickhouse: ClickhouseResource, task_id: str) -> dict:
+def finish_execution(
+    store: ProcessingStore, clickhouse: ClickhouseResource, task_id: str
+) -> dict:
     """Completion is derived from results; skipped pages are the fresh ones."""
     task = store.task(task_id)
+    if task is None:
+        raise ValueError("Unknown Webtech task")
     parameters = _parameters(task)
     with clickhouse.get_connection() as client:
         [(remaining,)] = client.execute("SELECT count()" + _REMAINING, parameters)
         if remaining:
-            raise ValueError(f"Not every input has a published outcome ({remaining} remaining)")
+            raise ValueError(
+                f"Not every input has a published outcome ({remaining} remaining)"
+            )
         [(succeeded, failed)] = client.execute(
             f"""SELECT countIf(outcome = 'success'), countIf(outcome != 'success') FROM (
                 SELECT input_id, argMax(outcome, tuple(scanned_at, scan_id)) AS outcome
-                FROM {RESULT_RELATION}
+                FROM {RESULT_RELATION} FINAL
                 WHERE task_id = %(task)s AND crawl_id = %(crawl)s
                 GROUP BY input_id)""",
             parameters,
@@ -181,7 +190,9 @@ def finish_execution(store: ProcessingStore, clickhouse: ClickhouseResource, tas
         return dict(cursor.fetchone())
 
 
-def purge_completed_inputs(store: ProcessingStore, clickhouse: ClickhouseResource, task_id: str) -> None:
+def purge_completed_inputs(
+    store: ProcessingStore, clickhouse: ClickhouseResource, task_id: str
+) -> None:
     """Drop the completed task's partition. Results and task history remain."""
     task = store.task(task_id)
     if (
@@ -195,9 +206,12 @@ def purge_completed_inputs(store: ProcessingStore, clickhouse: ClickhouseResourc
     if task["inputs_purged_at"] is not None:
         return
     with clickhouse.get_connection() as client:
-        client.execute(f"ALTER TABLE {INPUT_RELATION} DROP PARTITION %(task)s", {"task": task_id})
+        client.execute(
+            f"ALTER TABLE {INPUT_RELATION} DROP PARTITION %(task)s", {"task": task_id}
+        )
         [(left,)] = client.execute(
-            f"SELECT count() FROM {INPUT_RELATION} WHERE task_id=%(task)s", {"task": task_id}
+            f"SELECT count() FROM {INPUT_RELATION} WHERE task_id=%(task)s",
+            {"task": task_id},
         )
         if left:
             raise RuntimeError("Completed Webtech input cleanup is not yet visible")
