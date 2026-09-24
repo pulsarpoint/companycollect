@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from dagster_v3.defs.common.result_buffer import ResultBuffer
 from dagster_v3.defs.webtech.models import (
     RemoteScanProgressEvent,
     StoredDomainResultDocument,
@@ -88,3 +89,38 @@ def test_conflicting_duplicates_raise():
     ref2 = StoredResultReference.model_validate({**REFERENCE, "object_key": "different/key.json"})
     with pytest.raises(ValueError, match="conflicting result references"):
         _unique_references([ref1, ref2])
+
+
+def test_buffer_flushes_by_size_and_by_age():
+    now = [0.0]
+    written = []
+    buffer = ResultBuffer(written.append, max_items=3, max_seconds=5, clock=lambda: now[0])
+    buffer.add([1, 2])
+    assert written == []
+    buffer.add([3])
+    assert written == [[1, 2, 3]]
+    buffer.add([4])
+    now[0] = 4.9
+    buffer.flush_if_due()
+    assert written == [[1, 2, 3]]
+    now[0] = 5.0
+    buffer.flush_if_due()
+    assert written == [[1, 2, 3], [4]]
+    assert buffer.flush() == 0
+
+
+def test_failed_flush_keeps_items_for_the_next_attempt():
+    calls = []
+
+    def flaky(batch):
+        calls.append(list(batch))
+        if len(calls) == 1:
+            raise RuntimeError("insert not acknowledged")
+
+    buffer = ResultBuffer(flaky, max_items=10)
+    buffer.add(["a", "b"])
+    with pytest.raises(RuntimeError, match="acknowledged"):
+        buffer.flush()
+    assert len(buffer) == 2
+    assert buffer.flush() == 2
+    assert calls == [["a", "b"], ["a", "b"]]
