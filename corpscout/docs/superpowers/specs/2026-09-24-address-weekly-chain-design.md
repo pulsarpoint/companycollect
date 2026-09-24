@@ -41,22 +41,24 @@ must therefore precede the fold: the one fold that ran without a warm cache (202
 
 `sweden_company_address_geocoding_weekly_job` keeps its name and selects, in dependency order:
 
-1. `se_company_address_suggestions_scb`, `..._bolagsverket`, `..._ratsit`, `..._esef` (via `EXTRACTOR_ASSET_NAMES`)
+1. `se_company_address_suggestions_scb`, `..._bolagsverket`, `..._ratsit`, `..._esef` (via `EXTRACTOR_ASSET_NAMES`), run with `execute=True, page_size=10_000` from the job's default run config -- the extractors default to preview and write nothing otherwise
 2. `se_company_address_normalize`
 3. `sweden_osm_pbf_s3`
 4. `sweden_osm_addresses_duckdb`
-5. `sweden_geocode_centroids_clickhouse` (the geocoder's fallback overlay reads the centroids, so they refresh before warming)
+5. `sweden_geocode_centroids_clickhouse` (the fold overlays the centroids on every page it geocodes, so the fold depends on them)
 6. `se_address_geocodes_warm`
-7. `se_company_address_publish` (default config: `changed_only=True`, default page size)
+7. `se_company_address_publish` (default config: `changed_only=True`, default page size; deps: normalize, warm, centroids)
 8. `sweden_companies_current_clickhouse`
 
-Ordering is enforced by asset dependencies. One dependency is added: `sweden_companies_current_clickhouse`
-gains `dg.AssetKey("se_company_address_publish")` so the serving refresh cannot start before the
-fold has landed. All other dependencies already exist. Steps 4-7 share the single-slot DuckDB pool
-and run one at a time; steps 1 and 3 may run in parallel with each other.
+Ordering is enforced by asset dependencies. Two dependencies are added: `sweden_companies_current_clickhouse`
+gains `se_company_address_publish` so the serving refresh cannot start before the fold has landed, and
+`se_company_address_publish` gains `sweden_geocode_centroids_clickhouse` so the fold never overlays last
+week's centroids. All other dependencies already exist. Steps 4-7 share the single-slot DuckDB pool and
+run one at a time; steps 1 and 3 may run in parallel with each other.
 
-Expected wall time about 4 to 4.5 hours until the invalidation redesign (section 8): extract +
-normalize ~30 min, OSM 4 min, warm 45 min, fold ~3 h, serving refresh wait 15-20 min.
+Measured 2026-09-24 (run 1f1746dc): 2 h 33 m end to end -- extract + normalize 4 min, OSM 4 min,
+warm 45 min, fold 75 min (100% geocode-cache hits), serving refresh wait 28 min (overlap with the
+hourly rebuild). Until the invalidation redesign (section 8) the fold still rewrites every bucket.
 
 ## 4. Schedule
 
@@ -102,7 +104,9 @@ outside a pool). `sweden_osm_pbf_s3` does not open DuckDB and stays unpooled.
   repository `__repository__`, location `dagster_v3`) to prove the whole chain before Tuesday
   2026-09-29 01:05 Stockholm; success criteria: run SUCCESS, `max(folded_at)` on
   `corpscout.se_company_address` advances, the serving view's `last_success_time` is after the fold,
-  `se_address_geocodes` gains exactly one new `reference_md5`.
+  `se_address_geocodes` gains exactly one new `reference_md5`, each extractor step's materialization
+  metadata shows `execute: true` and a `candidates`/`inserted` count, and the normalize step reports
+  a written-row count greater than zero.
 
 ## 8. Not in this change
 

@@ -87,9 +87,9 @@ The first live run (`7990c5d9-5d66-4297-91a2-1378469b9477`) completed on the
 Dagster host on 2026-08-12. It produced 988,459 address rows (363,038 nodes and
 625,421 ways), with no missing coordinates or incomplete ways; 1,139
 address-tagged relations were explicitly counted and omitted. The resulting
-DuckDB file was 110,374,912 bytes. `sweden_address_osm_weekly` is registered for
-Tuesdays at 04:05 Europe/Stockholm and is default-stopped so enabling source
-traffic remains an explicit operator decision.
+DuckDB file was 110,374,912 bytes. The OSM refresh runs inside the Sweden weekly address chain
+(`sweden_company_address_geocoding_weekly`, Tuesdays 01:05 Europe/Stockholm); the former
+standalone `sweden_address_osm_weekly` schedule no longer exists.
 
 Verification is covered by `tests/test_sweden_address_osm.py`: checksum and S3
 reuse and transient-upload retry behavior, address-node/way geometry

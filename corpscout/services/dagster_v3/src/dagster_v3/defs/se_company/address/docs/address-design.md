@@ -164,9 +164,10 @@ The backoffice sends `execute: true`, `page_size: 10000` to each extractor, and
 filters or LLM settings are sent. Since 2026-09-24 the fold also runs on a schedule again: the
 weekly chain in `sweden_company/address_geocoding_assets.py` extracts, normalizes, refreshes
 OSM and the centroids, warms, folds all 64 buckets with `changed_only=True`, then refreshes the
-companies serving view (Tuesday 01:05 Stockholm; about 4.5 h until the cache-invalidation
-redesign). The 2026-09-15 decision to keep the fold manual was reversed because nothing had
-published addresses since 2026-09-13. Internal bucket and targeted correction folds remain
+companies serving view (Tuesday 01:05 Stockholm; about 2.5 h, of which the fold is 75 min,
+until the cache-invalidation redesign). The 2026-09-15 decision to keep the fold manual was
+reversed because nothing had published addresses since 2026-09-13. Internal bucket and
+targeted correction folds remain
 available; they share the DuckDB pool with the weekly and wait while it runs.
 
 ## Geocoding (slice 2a)
