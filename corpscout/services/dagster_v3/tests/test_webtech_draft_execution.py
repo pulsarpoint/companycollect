@@ -14,9 +14,8 @@ from dagster_v3.defs.common.processing import ProcessingStore
 from dagster_v3.defs.webtech.input import PROCESSOR_VERSION
 from dagster_v3.defs.webtech.execution import (
     start_execution,
-    prepare_execution,
-    read_plan_object,
-    record_bucket,
+    execution_crawl_id,
+    remaining_inputs,
     finish_execution,
     purge_completed_inputs,
 )
@@ -41,14 +40,6 @@ def start(processing, resource, task_id, **changes):
     settings.update(changes)
     with processing.selection_lock(task_id):
         return start_execution(store=processing, clickhouse=resource, **settings)
-
-
-def decisions(objects, plan):
-    return [
-        item
-        for batch in plan["buckets"]
-        for item in read_plan_object(objects, batch["key"], batch["sha256"])["items"]
-    ]
 
 
 def test_freeze_releases_default_draft_and_reuses_execution(database, store, objects):
@@ -155,199 +146,79 @@ def test_import_and_start_use_the_same_lock(database, store, objects):
         assert processing.task(task_id)["status"] == "draft"
 
 
-def test_freshness_is_prepared_per_page_and_reused_on_retry(database, store, objects):
+def publish(client, task, rows, *, outcome="success", scanned_at=None):
+    execution = task["config"]["execution"]
+    client.execute(
+        "INSERT INTO corpscout.webtech_domain_scan_results (crawl_id,root_domain,website_origin,page_url,detector_version,scanned_at,scan_id,outcome,task_id,input_id) VALUES",
+        [
+            (execution_crawl_id(execution), root, origin, page, WEBTECH_DETECTOR_VERSION,
+             scanned_at or datetime.now(UTC), "scan-1", outcome, str(task["task_id"]), identity)
+            for identity, root, origin, page in rows
+        ],
+    )
+
+
+def test_remaining_excludes_published_and_fresh_pages(database, store, objects):
     client, resource = database
     processing, _ = store
-    task_id = add(
-        resource,
-        processing,
-        objects,
-        targets=[
-            "novelic.com",
-            "novelic.com/about",
-            "novelic.com/contact",
-            "other.com",
-        ],
-    )["task_id"]
-    now = datetime.now(UTC) - timedelta(minutes=5)
     client.execute(
         "INSERT INTO corpscout.webtech_domain_scan_results (root_domain,website_origin,page_url,detector_version,scanned_at,scan_id,outcome) VALUES",
         [
-            (
-                "novelic.com",
-                "https://novelic.com",
-                "https://novelic.com/",
-                WEBTECH_DETECTOR_VERSION,
-                now,
-                "recent",
-                "success",
-            ),
-            (
-                "novelic.com",
-                "https://novelic.com",
-                "https://novelic.com/about",
-                WEBTECH_DETECTOR_VERSION,
-                now - timedelta(days=60),
-                "old",
-                "success",
-            ),
-            (
-                "novelic.com",
-                "https://novelic.com",
-                "https://novelic.com/contact",
-                WEBTECH_DETECTOR_VERSION,
-                now - timedelta(hours=1),
-                "prior-success",
-                "success",
-            ),
-            (
-                "novelic.com",
-                "https://novelic.com",
-                "https://novelic.com/contact",
-                WEBTECH_DETECTOR_VERSION,
-                now,
-                "latest-failure",
-                "hard_timeout",
-            ),
-            (
-                "other.com",
-                "https://other.com",
-                "https://other.com/",
-                "different-detector",
-                now,
-                "different",
-                "success",
-            ),
+            ("fresh.com", "https://fresh.com", "https://fresh.com/", WEBTECH_DETECTOR_VERSION, datetime.now(UTC) - timedelta(days=1), "old", "success"),
+            ("failed.com", "https://failed.com", "https://failed.com/", WEBTECH_DETECTOR_VERSION, datetime.now(UTC) - timedelta(days=1), "old", "navigation_error"),
         ],
     )
+    task_id = add(resource, processing, objects, targets=["fresh.com", "failed.com", "a.com", "b.com"])["task_id"]
     task = start(processing, resource, task_id)
-    plan = prepare_execution(
-        store=processing, clickhouse=resource, object_store=objects, task=task
-    )
-    assert plan["skipped"] == 1
-    items = {row["page_url"]: row for row in decisions(objects, plan)}
-    assert items["https://novelic.com/"]["previous_result"]["scan_id"] == "recent"
-    assert items["https://novelic.com/contact"]["decision"] == "scan"
-    assert (
-        len(plan["buckets"]) == 2
-    )  # Bounded batches, even for many pages on one root.
-    assert processing.progress(task_id)["skipped"] == 1
-    assert processing.progress(task_id)["queued"] == 3
-    client.execute("TRUNCATE TABLE corpscout.webtech_domain_scan_results")
-    assert (
-        prepare_execution(
-            store=processing,
-            clickhouse=resource,
-            object_store=objects,
-            task=processing.task(task_id),
-        )
-        == plan
-    )
-    for batch in plan["buckets"]:
-        count = batch["total"] - batch["skipped"]
-        if count:
-            record_bucket(
-                processing,
-                task_id,
-                batch["bucket"],
-                {"scan_id": "test", "indexed": count, "succeeded": count, "failed": 0},
-            )
-    assert finish_execution(processing, task_id)["status"] == "completed"
-    assert processing.progress(task_id)["queued"] == 0
-    assert processing.progress(task_id)["remaining"] == 0
-    # Force can be chosen for a new execution of the same retained queue.
-    forced = start(
-        processing, resource, task_id, execution_id=str(uuid4()), force_rescan=True
-    )
-    assert forced["completed_at"] is None
-    forced_plan = prepare_execution(
-        store=processing, clickhouse=resource, object_store=objects, task=forced
-    )
-    assert forced_plan["skipped"] == 0
-    assert len(decisions(objects, forced_plan)) == 4
+    with resource.get_connection() as connection:
+        first = remaining_inputs(connection, task, limit=10)
+    # Fresh successes are skipped; an earlier failure is retried.
+    assert sorted(row[1] for row in first) == ["a.com", "b.com", "failed.com"]
+    publish(client, task, first[:1])
+    with resource.get_connection() as connection:
+        assert remaining_inputs(connection, task, limit=10) == first[1:]
+        # The same answer on resume: results of this execution are after its start.
+        assert remaining_inputs(connection, task, limit=1) == first[1:2]
+        # Restricted to chosen entries, e.g. one envelope.
+        assert remaining_inputs(connection, task, limit=10, input_ids=[first[2][0]]) == first[2:3]
 
 
-def test_incomplete_results_retain_inputs_but_published_errors_complete(
-    database, store, objects
-):
+def test_force_rescan_includes_fresh_pages(database, store, objects):
     client, resource = database
     processing, _ = store
-    task_id = add(resource, processing, objects, targets=["novelic.com"])["task_id"]
+    client.execute(
+        "INSERT INTO corpscout.webtech_domain_scan_results (root_domain,website_origin,page_url,detector_version,scanned_at,scan_id,outcome) VALUES",
+        [("fresh.com", "https://fresh.com", "https://fresh.com/", WEBTECH_DETECTOR_VERSION, datetime.now(UTC) - timedelta(days=1), "old", "success")],
+    )
+    task_id = add(resource, processing, objects, targets=["fresh.com"])["task_id"]
+    task = start(processing, resource, task_id, force_rescan=True)
+    with resource.get_connection() as connection:
+        assert [row[1] for row in remaining_inputs(connection, task, limit=10)] == ["fresh.com"]
+
+
+def test_finish_counts_results_and_skips_then_purge_drops_the_partition(database, store, objects):
+    client, resource = database
+    processing, _ = store
+    client.execute(
+        "INSERT INTO corpscout.webtech_domain_scan_results (root_domain,website_origin,page_url,detector_version,scanned_at,scan_id,outcome) VALUES",
+        [("fresh.com", "https://fresh.com", "https://fresh.com/", WEBTECH_DETECTOR_VERSION, datetime.now(UTC) - timedelta(days=1), "old", "success")],
+    )
+    other = add(resource, processing, objects, queue_scope="other", targets=["kept.com"])["task_id"]
+    task_id = add(resource, processing, objects, targets=["fresh.com", "a.com", "b.com"])["task_id"]
     task = start(processing, resource, task_id)
-    prepare_execution(
-        store=processing, clickhouse=resource, object_store=objects, task=task
-    )
-    with pytest.raises(ValueError, match="Not every input"):
-        finish_execution(processing, task_id)
-    with (
-        processing.selection_lock(task_id),
-        pytest.raises(ValueError, match="Only fully completed"),
-    ):
-        purge_completed_inputs(processing, resource, task_id)
-    assert client.execute("SELECT count() FROM corpscout.webtech_scan_input") == [(1,)]
-    record_bucket(
-        processing,
-        task_id,
-        0,
-        {"scan_id": "failed", "indexed": 1, "succeeded": 0, "failed": 1},
-    )
-    assert finish_execution(processing, task_id)["status"] == "completed"
-    assert processing.task(task_id)["completed_at"] is not None
-    assert processing.task(task_id)["terminal_failed_count"] == 1
+    with resource.get_connection() as connection:
+        rows = remaining_inputs(connection, task, limit=10)
+    with processing.selection_lock(task_id), pytest.raises(ValueError, match="published outcome"):
+        finish_execution(processing, resource, task_id)
+    publish(client, task, rows[:1])
+    publish(client, task, rows[1:], outcome="navigation_error")
     with processing.selection_lock(task_id):
+        finished = finish_execution(processing, resource, task_id)
+        assert (finished["succeeded_count"], finished["terminal_failed_count"], finished["skipped_count"]) == (1, 1, 1)
         purge_completed_inputs(processing, resource, task_id)
+        purge_completed_inputs(processing, resource, task_id)  # idempotent
+    assert client.execute("SELECT DISTINCT task_id FROM corpscout.webtech_scan_input") == [(other,)]
     assert processing.task(task_id)["inputs_purged_at"] is not None
-    assert client.execute("SELECT count() FROM corpscout.webtech_scan_input") == [(0,)]
-
-
-def test_preparation_retry_keeps_already_saved_decisions(
-    database, store, objects, monkeypatch
-):
-    from dagster_v3.defs.webtech import execution as module
-
-    client, resource = database
-    processing, _ = store
-    task_id = add(
-        resource, processing, objects, targets=["novelic.com", "example.com"]
-    )["task_id"]
-    task = start(processing, resource, task_id, batch_size=1)
-    original = module.write_plan_object
-
-    def interrupt(store, key, document):
-        if key.endswith("bucket-001.json"):
-            raise RuntimeError("crashed preparing second batch")
-        return original(store, key, document)
-
-    with monkeypatch.context() as patch:
-        patch.setattr(module, "write_plan_object", interrupt)
-        with pytest.raises(RuntimeError):
-            prepare_execution(
-                store=processing, clickhouse=resource, object_store=objects, task=task
-            )
-    saved = [
-        json.loads(value)
-        for (_, key), value in objects.client().objects.items()
-        if key.endswith("bucket-000.json")
-    ][0]
-    first = saved["items"][0]
-    client.execute(
-        "INSERT INTO corpscout.webtech_domain_scan_results (root_domain,website_origin,page_url,detector_version,scanned_at,scan_id,outcome) VALUES",
-        [
-            (
-                first["root_domain"],
-                first["page_url"].rstrip("/"),
-                first["page_url"],
-                WEBTECH_DETECTOR_VERSION,
-                datetime.now(UTC) - timedelta(minutes=1),
-                "late-indexed",
-                "success",
-            )
-        ],
-    )
-    plan = prepare_execution(
-        store=processing, clickhouse=resource, object_store=objects, task=task
-    )
-    assert decisions(objects, plan)[0]["decision"] == "scan"
 
 
 @pytest.mark.parametrize("failed_domain", [None, "example.com"])
@@ -666,73 +537,3 @@ def test_import_retry_fences_orphaned_clickhouse_insert(
             "SELECT root_domain, submission_id FROM corpscout.webtech_scan_input"
         )
     ) == sorted([("novelic.com", receipt_id), ("other.se", other["submission_id"])])
-
-
-def test_cleanup_is_scoped_and_retries_lost_delete_ack(
-    database, store, objects, monkeypatch
-):
-    from contextlib import contextmanager
-    from dagster_clickhouse import ClickhouseResource
-
-    client, resource = database
-    processing, _ = store
-    receipt = add(resource, processing, objects, targets=["example.com"])
-    task_id = receipt["task_id"]
-    task = start(processing, resource, task_id)
-    prepare_execution(
-        store=processing, clickhouse=resource, object_store=objects, task=task
-    )
-    record_bucket(
-        processing,
-        task_id,
-        0,
-        {"scan_id": "saved", "indexed": 1, "succeeded": 1, "failed": 0},
-    )
-    finish_execution(processing, task_id)
-    next_task = add(resource, processing, objects, targets=["other.com"])["task_id"]
-    original = ClickhouseResource.get_connection
-
-    class LoseDeleteAck:
-        def __init__(self, connection):
-            self.connection = connection
-
-        def execute(self, query, *args, **kwargs):
-            result = self.connection.execute(query, *args, **kwargs)
-            if query.startswith("DELETE FROM"):
-                raise RuntimeError("lost delete acknowledgement")
-            return result
-
-    @contextmanager
-    def connection(self):
-        with original(self) as conn:
-            yield LoseDeleteAck(conn)
-
-    with processing.selection_lock(task_id):
-        with monkeypatch.context() as patch:
-            patch.setattr(ClickhouseResource, "get_connection", connection)
-            with pytest.raises(RuntimeError, match="lost delete"):
-                purge_completed_inputs(processing, resource, task_id)
-        assert processing.task(task_id)["inputs_purged_at"] is None
-        purge_completed_inputs(processing, resource, task_id)
-        purge_completed_inputs(processing, resource, task_id)
-    assert processing.task(task_id)["inputs_purged_at"] is not None
-    assert processing.task(task_id)["total"] == 1
-    assert client.execute(
-        "SELECT task_id,root_domain FROM corpscout.webtech_scan_input"
-    ) == [(next_task, "other.com")]
-    assert (
-        add(
-            resource,
-            processing,
-            objects,
-            submission_id=receipt["submission_id"],
-            targets=["example.com"],
-        )["task_id"]
-        == task_id
-    )
-    assert client.execute("SELECT count() FROM corpscout.webtech_scan_input") == [(1,)]
-    with (
-        processing.selection_lock(next_task),
-        pytest.raises(ValueError, match="Only fully completed"),
-    ):
-        purge_completed_inputs(processing, resource, next_task)
