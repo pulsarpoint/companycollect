@@ -105,8 +105,10 @@ outside a pool). `sweden_osm_pbf_s3` does not open DuckDB and stays unpooled.
   2026-09-29 01:05 Stockholm; success criteria: run SUCCESS, `max(folded_at)` on
   `corpscout.se_company_address` advances, the serving view's `last_success_time` is after the fold,
   `se_address_geocodes` gains exactly one new `reference_md5`, each extractor step's materialization
-  metadata shows `execute: true` and a `candidates`/`inserted` count, and the normalize step reports
-  a written-row count greater than zero.
+  metadata shows `execute: true` and `inserted` equal to `candidates`, and the normalize step's row
+  count equals the number of new suggestion rows (both are legitimately 0 when no source register
+  has newer records than the existing suggestions, as on 2026-09-24: newest Bolagsverket record
+  2026-09-03, suggestions from 09-06/09-12/09-13).
 
 ## 8. Not in this change
 
