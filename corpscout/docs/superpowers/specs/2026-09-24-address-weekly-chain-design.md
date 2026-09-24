@@ -1,7 +1,9 @@
 # Weekly Sweden address chain: extract → normalize → OSM → warm → fold → serving refresh
 
 **Date:** 2026-09-24
-**Status:** approved in chat, awaiting spec review
+**Status:** implemented 2026-09-24 (commits ebed7e595, 68b3763b8, 5b5f3d575); proof run `1f1746dc` SUCCESS
+the same evening: 2 h 33 m end to end (warm 45 min, fold 75 min with 100% geocode-cache hits, serving
+refresh wait 28 min), all section 7 criteria met. First scheduled run: Tuesday 2026-09-29 01:05 Stockholm.
 **Owner decisions:** the address fold runs automatically every week (reversing the 2026-09-15
 "fold stays manual" decision); geocoding happens before the fold, never after; run window
 Tuesday 01:05 Europe/Stockholm; one job, not two.
