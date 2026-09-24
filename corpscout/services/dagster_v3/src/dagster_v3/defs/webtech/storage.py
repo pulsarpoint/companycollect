@@ -266,6 +266,7 @@ def index_result_references(
     """Publish stored page results of one execution, from any of its envelopes."""
     if not references:
         return 0
+    unique_refs = _unique_references(references)
     assert_clickhouse_tables_exist(
         clickhouse,
         database=WEBTECH_CLICKHOUSE_DATABASE,
@@ -274,11 +275,8 @@ def index_result_references(
     with clickhouse.get_connection() as client:
         catalog = load_technology_catalog(client)
     recorded_at = datetime.now(UTC)
-    rows, detections, seen = [], [], set()
-    for reference in references:
-        if reference.input_id in seen:
-            continue
-        seen.add(reference.input_id)
+    rows, detections = [], []
+    for reference in unique_refs:
         body = object_store.read_bytes(reference.object_key, bucket=destination.bucket)
         _validate_result_body(reference, body)
         stored = StoredDomainResultDocument.model_validate_json(body)
@@ -300,6 +298,31 @@ def index_result_references(
     return len(rows)
 
 
+def _unique_references(references: Sequence[StoredResultReference]) -> list[StoredResultReference]:
+    """Deduplicate references by input_id; identical duplicates collapse, differing ones raise."""
+    seen: dict[str, StoredResultReference] = {}
+    for reference in references:
+        if reference.input_id in seen:
+            if seen[reference.input_id] != reference:
+                raise ValueError(f"conflicting result references for input {reference.input_id}")
+        else:
+            seen[reference.input_id] = reference
+    return list(seen.values())
+
+
+def _matches_reference(
+    document: StoredDomainResultDocument,
+    reference: StoredResultReference,
+) -> bool:
+    """Check if document matches the reference on shared per-page fields."""
+    return (
+        document.candidate.input_id == reference.input_id
+        and document.candidate.root_domain == reference.root_domain
+        and document.outcome == reference.outcome
+        and _technology_count(document.report) == reference.technology_count
+    )
+
+
 def _validate_execution_result_identity(
     document: StoredDomainResultDocument,
     *,
@@ -312,10 +335,7 @@ def _validate_execution_result_identity(
         document.crawl_id != crawl_id
         or document.detector_version != detector_version
         or not reference.input_id
-        or document.candidate.input_id != reference.input_id
-        or document.candidate.root_domain != reference.root_domain
-        or document.outcome != reference.outcome
-        or _technology_count(document.report) != reference.technology_count
+        or not _matches_reference(document, reference)
     ):
         raise ValueError(f"result identity mismatch: {reference.object_key}")
 
@@ -341,11 +361,8 @@ def _validate_result_identity(
         or document.crawl_id != manifest.crawl_id
         or document.partition_key != manifest.partition_key
         or document.detector_version != manifest.detector_version
-        or document.candidate.input_id != result_reference.input_id
-        or document.candidate.root_domain != result_reference.root_domain
         or document.candidate.harmonic_rank != result_reference.harmonic_rank
-        or document.outcome != result_reference.outcome
-        or _technology_count(document.report) != result_reference.technology_count
+        or not _matches_reference(document, result_reference)
     ):
         raise ValueError(f"result identity mismatch: {result_reference.object_key}")
 

@@ -10,7 +10,7 @@ from dagster_v3.defs.webtech.models import (
     StoredResultReference,
     WEBTECH_DETECTOR_VERSION,
 )
-from dagster_v3.defs.webtech.storage import _validate_execution_result_identity
+from dagster_v3.defs.webtech.storage import _unique_references, _validate_execution_result_identity
 
 EVENT = {
     "sequence": 1,
@@ -73,3 +73,18 @@ def test_page_from_another_execution_or_input_is_rejected(changed):
             document(crawl_id=changed.get("crawl_id", "webtech-exec")),
             reference=reference, crawl_id="webtech-exec", detector_version=WEBTECH_DETECTOR_VERSION,
         )
+
+
+def test_identical_duplicates_collapse():
+    ref = StoredResultReference.model_validate(REFERENCE)
+    refs = [ref, ref, ref]
+    unique = _unique_references(refs)
+    assert len(unique) == 1
+    assert unique[0] == ref
+
+
+def test_conflicting_duplicates_raise():
+    ref1 = StoredResultReference.model_validate(REFERENCE)
+    ref2 = StoredResultReference.model_validate({**REFERENCE, "object_key": "different/key.json"})
+    with pytest.raises(ValueError, match="conflicting result references"):
+        _unique_references([ref1, ref2])
