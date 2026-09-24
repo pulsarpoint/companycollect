@@ -16,7 +16,7 @@
     msg: >-
       A legacy combined cc-dns-worker process is still active:
       {{ cc_dns_axfr_legacy_process.stdout }}.
-      Deploy corpscout/commoncrawl/deploy/cc_dns_scan first, then rerun this package.
+      Deploy corpscout/services/cc-dns-scan/ansible first, then rerun this package.
   when: cc_dns_axfr_legacy_process.rc == 0
 
 - name: Gather service state

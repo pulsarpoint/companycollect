@@ -249,7 +249,7 @@ Common Crawl range retrieval and WARC/embedded-HTTP record parsing. Its other pa
 
 ## Build and run
 
-From `commoncrawl/cc-processor/`:
+From `services/cc-processor/`:
 
 ```bash
 make -C cc-enrich-worker

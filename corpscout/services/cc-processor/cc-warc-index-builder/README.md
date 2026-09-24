@@ -35,7 +35,7 @@ prioritizes home, company, legal, contact, privacy, and terms pages.
 - [`uv`](https://docs.astral.sh/uv/)
 
 ```bash
-cd corpscout/commoncrawl/cc-processor/cc-warc-index-builder
+cd corpscout/services/cc-processor/cc-warc-index-builder
 uv sync --frozen
 uv run pytest -q
 make build
@@ -49,7 +49,7 @@ RustFS publication is part of a successful build, including a run that reuses an
 The canonical entry point is the processor Makefile, which loads the one shared `cc-processor/.env`:
 
 ```bash
-cd corpscout/commoncrawl/cc-processor
+cd corpscout/services/cc-processor
 make catalog CRAWL=CC-MAIN-2026-25 PAGES_PER_DOMAIN=25
 ```
 
