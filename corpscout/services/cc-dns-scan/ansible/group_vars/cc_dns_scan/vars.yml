@@ -1,6 +1,6 @@
 # --- source and deploy layout ---
 deploy_root: /opt/companycollect
-cc_dns_scan_source_dir: "{{ playbook_dir }}/../../cc-dns-scan"
+cc_dns_scan_source_dir: "{{ playbook_dir }}/.."
 cc_dns_scan_deploy_dir: "{{ deploy_root }}/corpscout/commoncrawl/cc-dns-scan"
 # Keep the former combined-project directory as state-only storage so the DNS
 # scanner resumes the existing cycle ID and SQLite database in place.

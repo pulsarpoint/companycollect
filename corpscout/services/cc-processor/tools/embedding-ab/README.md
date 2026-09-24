@@ -26,7 +26,7 @@ scripts measure the difference so we don't re-embed ~19M pages twice.
 
 ## Setup — this is a `uv` project
 ```bash
-cd corpscout/commoncrawl/embedding-ab
+cd corpscout/services/cc-processor/tools/embedding-ab
 uv sync                 # creates .venv and installs pyarrow / numpy / scikit-learn / requests / boto3 / warcio / bs4
 uv add <pkg>            # to add another dependency later
 ```

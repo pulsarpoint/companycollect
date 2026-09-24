@@ -8,6 +8,9 @@ AXFR probing is owned by the separate [`cc-dns-axfr`](../cc-dns-axfr/) project. 
 not share Go packages, queues, SQLite databases, or completion conditions. Their only data-flow
 boundary is ClickHouse: AXFR reads the latest DNS delegation summaries written by this scanner.
 
+Design notes live in [`docs/hostname-discovery-spec.md`](docs/hostname-discovery-spec.md); dated
+implementation plans are under `docs/superpowers/plans/`. Deployment is in [`ansible/`](ansible/).
+
 ## Data flow
 
 The scanner reads:
@@ -105,17 +108,17 @@ staticcheck ./...
 
 ## Deploy
 
-Deployment is owned by [`../deploy/cc_dns_scan`](../deploy/cc_dns_scan/), including the DNS host's
-Unbound and OS tuning. Deploy this package before [`cc_dns_axfr`](../deploy/cc_dns_axfr/). The
-playbook installs `cc-dns-scan.service` but deliberately leaves it stopped and disabled:
+Deployment is owned by [`ansible/`](ansible/), including the DNS host's Unbound and OS tuning.
+Deploy this package before [`../cc-dns-axfr/ansible`](../cc-dns-axfr/ansible/). The playbook
+installs `cc-dns-scan.service` but deliberately leaves it stopped and disabled:
 
 ```bash
-cd ../deploy/cc_dns_scan
+cd ansible
 ansible-playbook site.yml
 ssh root@hetzner01 'systemctl enable --now cc-dns-scan'
 ssh root@hetzner01 'journalctl -u cc-dns-scan -n 100 -f'
 
-cd ../cc_dns_axfr
+cd ../../cc-dns-axfr/ansible
 ansible-playbook site.yml
 ssh root@hetzner01 'systemctl enable --now cc-dns-axfr'
 ssh root@hetzner01 'journalctl -u cc-dns-axfr -n 100 -f'

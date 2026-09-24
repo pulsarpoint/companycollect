@@ -55,9 +55,8 @@ coverage.out
 *.swo
 *~
 
-# uv lockfiles in the commoncrawl helper projects (dagster_v3 tracks its own).
-corpscout/commoncrawl/**/uv.lock
-!corpscout/commoncrawl/cc-processor/cc-warc-index-builder/uv.lock
+# uv lockfiles in the cc-processor helper tools (dagster_v3 and cc-warc-index-builder track their own).
+corpscout/services/cc-processor/tools/**/uv.lock
 
 
 corpscout/dagster_v3/storage/

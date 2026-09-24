@@ -1,7 +1,7 @@
 # Durable Hostname Discovery, Provenance & CT Enrichment — Design Spec
 
 > Historical design record. DNS resolution and AXFR now run as the separate
-> [`cc-dns-scan`](../cc-dns-scan/) and [`cc-dns-axfr`](../cc-dns-axfr/) projects. References below to
+> [`cc-dns-scan`](../) and [`cc-dns-axfr`](../../cc-dns-axfr/) projects. References below to
 > a combined `cc-dns-worker` describe the architecture when this proposal was written.
 > The physical `commoncrawl_domain_hostnames` registry described below was later superseded by
 > `corpscout.domain_hostnames`, a read-only ClickHouse view backed by incrementally aggregated

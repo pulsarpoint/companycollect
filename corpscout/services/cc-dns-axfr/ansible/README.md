@@ -1,7 +1,7 @@
 # cc-dns-axfr Ansible deployment
 
 This package deploys only the Common Crawl AXFR scanner to the `cc_dns_axfr` inventory group. It
-builds `../../cc-dns-axfr/cmd/cc-dns-axfr` on the control machine and installs:
+builds this service's `cmd/cc-dns-axfr` (one directory up from this playbook) on the control machine and installs:
 
 - the binary under `/opt/companycollect/corpscout/commoncrawl/cc-dns-axfr/bin`;
 - the ClickHouse environment file at
@@ -21,7 +21,7 @@ Ansible built-in modules and has no collection dependencies.
 - The control machine has Ansible and Go installed and this repository checked out.
 - `hetzner01` is reachable over Tailscale/SSH and can reach the ClickHouse host `companycollect`.
 - The required ClickHouse migrations have been applied.
-- The independent DNS package at `../cc_dns_scan` has completed the initial cutover.
+- The independent DNS package at `../../cc-dns-scan/ansible` has completed the initial cutover.
 - No legacy combined `cc-dns-worker` process is running.
 
 The final two conditions are important: the legacy worker and `cc-dns-axfr` would otherwise operate
@@ -42,7 +42,7 @@ Do not create a second password file or re-encrypt the copied vault for this pac
 before deploying:
 
 ```bash
-cd corpscout/commoncrawl/deploy/cc_dns_axfr
+cd corpscout/services/cc-dns-axfr/ansible
 ansible-vault view group_vars/cc_dns_axfr/vault.yml
 ```
 
@@ -54,7 +54,7 @@ encrypted vault files.
 Deploy the DNS package first. Then enter this package and perform a dry run:
 
 ```bash
-cd corpscout/commoncrawl/deploy/cc_dns_axfr
+cd corpscout/services/cc-dns-axfr/ansible
 ansible-playbook site.yml --check --diff
 ```
 
@@ -107,7 +107,7 @@ state directory does not need to be copied or renamed for either rollback path.
 ## Layout
 
 ```text
-deploy/cc_dns_axfr/
+services/cc-dns-axfr/ansible/
 ├── ansible.cfg
 ├── inventory.ini
 ├── site.yml

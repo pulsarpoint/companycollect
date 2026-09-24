@@ -23,7 +23,7 @@ box use `WORKERS=2`** (≈18 GB peak); the default 8 only fits a big-RAM host.
 
 ## Setup + run
 ```bash
-cd corpscout/commoncrawl/embedding-tools
+cd corpscout/services/cc-processor/tools/embedding-tools
 uv sync                       # pyarrow
 
 # one file:

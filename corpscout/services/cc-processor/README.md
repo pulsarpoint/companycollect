@@ -60,7 +60,7 @@ instead of copying a binary built directly on macOS.
 Create exactly one environment file at the processor root:
 
 ```bash
-cd corpscout/commoncrawl/cc-processor
+cd corpscout/services/cc-processor
 cp .env.example .env
 chmod 0600 .env
 ```
@@ -349,7 +349,7 @@ The Ansible package builds on the control machine and deploys `cc-enrich-worker`
 checksum-addressed release:
 
 ```bash
-cd corpscout/commoncrawl/cc-processor/deploy
+cd corpscout/services/cc-processor/deploy
 
 # Full build and remote preflight without changing the server.
 ansible-playbook site.yml --limit commoncrawl2 --ask-become-pass --check --diff

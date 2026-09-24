@@ -2,7 +2,7 @@
 
 This package deploys only the `cc-dns-scan` project to the `cc_dns_scan` Ansible host group. It:
 
-- builds `../../cc-dns-scan/cmd/cc-dns-scan` for Linux/AMD64 on the control machine;
+- builds this service's `cmd/cc-dns-scan` (one directory up from this playbook) for Linux/AMD64 on the control machine;
 - installs the binary and `cc-dns-scan.service` under
   `/opt/companycollect/corpscout/commoncrawl/cc-dns-scan`;
 - applies DNS host tuning and configures the local Unbound resolver; and
@@ -17,8 +17,8 @@ resume the existing scan without copying or renaming state.
 - The target host is reachable over SSH from the control machine.
 - The target can reach the ClickHouse host over the configured private network.
 - The Corpscout ClickHouse migrations have already been applied.
-- Ansible and Go are installed on the control machine, with `cc-dns-scan` checked out beside the
-  `deploy` directory.
+- Ansible and Go are installed on the control machine. This playbook lives inside the
+  `services/cc-dns-scan` directory and builds the Go module one level up from `ansible/`.
 
 All roles use modules included with Ansible. No Ansible Galaxy collection is required.
 
@@ -38,7 +38,7 @@ chmod 600 ~/.config/ansible/cc-dns-scan
 To create or replace the encrypted ClickHouse value:
 
 ```bash
-cd corpscout/commoncrawl/deploy/cc_dns_scan
+cd corpscout/services/cc-dns-scan/ansible
 printf 'vault_clickhouse_password: "<real password>"\n' > group_vars/cc_dns_scan/vault.yml
 ansible-vault encrypt group_vars/cc_dns_scan/vault.yml
 ```
@@ -61,7 +61,7 @@ deployed safely.
 Review a dry run, then deploy:
 
 ```bash
-cd corpscout/commoncrawl/deploy/cc_dns_scan
+cd corpscout/services/cc-dns-scan/ansible
 ansible-playbook site.yml --check --diff
 ansible-playbook site.yml
 ```
@@ -100,7 +100,7 @@ ssh root@hetzner01 'journalctl -u cc-dns-axfr -n 100 -f'
 Run this package directly; its playbook contains no AXFR role or configuration:
 
 ```bash
-cd corpscout/commoncrawl/deploy/cc_dns_scan
+cd corpscout/services/cc-dns-scan/ansible
 ansible-playbook site.yml
 ```
 
@@ -126,7 +126,7 @@ The compatibility state directory remains unchanged during rollback.
 ## Layout
 
 ```text
-deploy/cc_dns_scan/
+services/cc-dns-scan/ansible/
 ├── ansible.cfg
 ├── inventory.ini
 ├── site.yml

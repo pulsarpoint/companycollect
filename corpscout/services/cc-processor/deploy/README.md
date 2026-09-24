@@ -28,7 +28,7 @@ server (the playbook refuses to deploy without it) and required ClickHouse migra
 ## Deploy
 
 ```bash
-cd corpscout/commoncrawl/cc-processor/deploy
+cd corpscout/services/cc-processor/deploy
 ansible-playbook site.yml
 ```
 
@@ -71,7 +71,7 @@ There is no on-server history: redeploy the desired source revision instead —
 
 ```bash
 git checkout <known-good-revision>
-cd corpscout/commoncrawl/cc-processor/deploy && ansible-playbook site.yml
+cd corpscout/services/cc-processor/deploy && ansible-playbook site.yml
 ```
 
 Catalogs, output, and markers are never rolled back.

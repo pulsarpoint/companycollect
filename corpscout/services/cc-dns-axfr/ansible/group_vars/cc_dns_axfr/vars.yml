@@ -1,6 +1,6 @@
 # --- source and deploy layout ---
 deploy_root: /opt/companycollect
-cc_dns_axfr_source_dir: "{{ playbook_dir }}/../../cc-dns-axfr"
+cc_dns_axfr_source_dir: "{{ playbook_dir }}/.."
 cc_dns_axfr_deploy_dir: "{{ deploy_root }}/corpscout/commoncrawl/cc-dns-axfr"
 # Keep the former combined-project directory as state-only storage so AXFR
 # resumes the existing cycle ID and SQLite database in place.

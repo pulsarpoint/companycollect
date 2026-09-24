@@ -1,8 +1,8 @@
 # AXFR (DNS Zone Transfer) Probe — Design Spec
 
 > Historical design record. The implemented scanner now lives in the standalone
-> [`cc-dns-axfr`](../cc-dns-axfr/) project and consumes delegation summaries produced by
-> [`cc-dns-scan`](../cc-dns-scan/); the combined-worker paths and flags below describe the original
+> [`cc-dns-axfr`](../) project and consumes delegation summaries produced by
+> [`cc-dns-scan`](../../cc-dns-scan/); the combined-worker paths and flags below describe the original
 > proposal rather than current runtime behavior.
 
 Status: **historical proposal, superseded by the standalone scanner.** Original decisions

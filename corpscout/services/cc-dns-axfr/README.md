@@ -7,6 +7,9 @@ records to ClickHouse. The two scanners are separate Go modules and have no sour
 
 The scanner deliberately permits only one active probe per nameserver IP. The worker count controls concurrency across different IPs; it does not allow concurrent transfers to the same server.
 
+Design notes live in [`docs/axfr-zone-transfer-spec.md`](docs/axfr-zone-transfer-spec.md).
+Deployment is in [`ansible/`](ansible/).
+
 ## Build and test
 
 ```sh
@@ -57,17 +60,17 @@ separate hostname registry.
 
 ## Deploy
 
-Production deployment is owned by [`../deploy/cc_dns_axfr`](../deploy/cc_dns_axfr/). Deploy and verify
-[`cc_dns_scan`](../deploy/cc_dns_scan/) first. Both playbooks install their units but deliberately
-leave them stopped and disabled:
+Production deployment is owned by [`ansible/`](ansible/). Deploy and verify
+[`../cc-dns-scan/ansible`](../cc-dns-scan/ansible/) first. Both playbooks install their units but
+deliberately leave them stopped and disabled:
 
 ```bash
-cd ../deploy/cc_dns_scan
+cd ../cc-dns-scan/ansible
 ansible-playbook site.yml
 ssh root@hetzner01 'systemctl enable --now cc-dns-scan'
 ssh root@hetzner01 'journalctl -u cc-dns-scan -n 100 -f'
 
-cd ../cc_dns_axfr
+cd ../../cc-dns-axfr/ansible
 ansible-playbook site.yml
 ssh root@hetzner01 'systemctl enable --now cc-dns-axfr'
 ssh root@hetzner01 'journalctl -u cc-dns-axfr -n 100 -f'
