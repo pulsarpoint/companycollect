@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Working directory for every command unless stated: `/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout` (called `corpscout/` below). The git repository root is two levels up: `/Users/graovic/pulsarpoint/ppoint`. The root `.gitignore` is therefore `../.gitignore` from `corpscout/`.
+- Working directory for every command unless stated: `/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout` (called `corpscout/` below). The git repository root is ONE level up: `/Users/graovic/pulsarpoint/ppoint/companycollect`. The root `.gitignore` is therefore `../.gitignore` from `corpscout/`, i.e. `/Users/graovic/pulsarpoint/ppoint/companycollect/.gitignore`.
 - **Never run either Ansible playbook against a host.** Both scanners are mid-cycle on `hetzner01` and the playbooks stop the service. Only `ansible-playbook --syntax-check` is allowed.
 - **Server-side paths stay exactly as they are** (`/opt/companycollect/corpscout/commoncrawl/...`). Any string starting with `/opt/companycollect/` is a host path and must NOT be edited.
 - Go module names stay `cc-dns-scan` and `cc-dns-axfr`. No `go.mod` edits.
@@ -145,9 +145,9 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 MSG
 )"
 git show --stat --format='%h %s' HEAD | tail -1
-git log --oneline --follow -1 -- services/cc-dns-scan/go.mod
+git log --oneline --follow -2 -- services/cc-dns-scan/go.mod
 ```
-Expected: the stat line says `148 files changed` with `0 insertions(+)` for the renamed files (only the four deletions remove lines); the `--follow` log shows the pre-move commit for `go.mod` (history preserved).
+Expected: the stat line says `148 files changed` and reports only `deletions(-)`, no insertions (renames add nothing; the four deletions remove lines); the `--follow -2` log shows this commit AND the pre-move commit that last touched `go.mod` (history preserved).
 
 ---
 
@@ -169,7 +169,7 @@ Run:
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout
 rg -n 'source_dir: "\{\{ playbook_dir \}\}/\.\./\.\./cc-dns-' services/cc-dns-scan/ansible services/cc-dns-axfr/ansible
-rg -n 'commoncrawl/deploy|\.\./\.\./cc-dns-|checked out beside|\.\./cc_dns_scan`|^deploy/cc_dns_' services/cc-dns-scan/ansible/README.md services/cc-dns-axfr/ansible/README.md | wc -l
+rg -n 'commoncrawl/deploy|\.\./\.\./cc-dns-(scan|axfr)/cmd|checked out beside|\.\./cc_dns_scan`|^deploy/cc_dns_' services/cc-dns-scan/ansible/README.md services/cc-dns-axfr/ansible/README.md | wc -l
 ```
 Expected: two `source_dir` hits (one per playbook) and a README hit count of `11`. These are the lines this task removes.
 
@@ -283,7 +283,7 @@ Run:
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout
 rg -n 'source_dir:' services/cc-dns-scan/ansible/group_vars/cc_dns_scan/vars.yml services/cc-dns-axfr/ansible/group_vars/cc_dns_axfr/vars.yml
-rg -n 'commoncrawl/deploy|\.\./\.\./cc-dns-|checked out beside|\.\./cc_dns_scan`|^deploy/cc_dns_' services/cc-dns-scan/ansible/README.md services/cc-dns-axfr/ansible/README.md | wc -l
+rg -n 'commoncrawl/deploy|\.\./\.\./cc-dns-(scan|axfr)/cmd|checked out beside|\.\./cc_dns_scan`|^deploy/cc_dns_' services/cc-dns-scan/ansible/README.md services/cc-dns-axfr/ansible/README.md | wc -l
 for s in cc-dns-scan cc-dns-axfr; do
   ( cd services/$s/ansible && ansible-playbook --syntax-check site.yml < /dev/null > /tmp/ansible-out-$s.txt 2>&1; echo "$s rc=$?"; cat /tmp/ansible-out-$s.txt )
 done
@@ -455,9 +455,9 @@ Expected: `8 files changed` (Task 2's four plus these four).
 Run:
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout
-rg -n 'corpscout/commoncrawl/(cc-processor|embedding)|commoncrawl/cc-processor/\.env|dirname "\$0"\)/cc-processor|cd \.\. && make' services/cc-processor --glob '!**/.venv/**' --glob '!**/superpowers/**'
+rg -n 'corpscout/commoncrawl/(cc-processor|embedding)|commoncrawl/cc-processor/\.env|dirname "\$0"\)/cc-processor|cd \.\. && make' services/cc-processor --glob '!**/.venv/**' --glob '!**/superpowers/**' | rg -v '/opt/companycollect/'
 ```
-Expected: exactly nine hits: embedding-ab README line 29, embedding-tools README line 26, `load-domain-ranks.sh` lines 22, 23 and 35, `services/cc-processor/README.md` lines 63 and 352, `services/cc-processor/deploy/README.md` lines 31 and 74. Lines that begin with `/opt/companycollect/` are host paths and are correctly NOT matched.
+Expected: exactly nine hits: embedding-ab README line 29, embedding-tools README line 26, `load-domain-ranks.sh` lines 22, 23 and 35, `services/cc-processor/README.md` lines 63 and 352, `services/cc-processor/deploy/README.md` lines 31 and 74. Lines containing `/opt/companycollect/` are host paths; the trailing `rg -v` drops them on purpose.
 
 - [ ] **Step 2: Fix the two embedding READMEs**
 
@@ -536,7 +536,7 @@ Lines 25, 39 and 61 mention `/opt/companycollect/corpscout/commoncrawl/cc-proces
 Run:
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout
-rg -n 'corpscout/commoncrawl/(cc-processor|embedding)|commoncrawl/cc-processor/\.env|dirname "\$0"\)/cc-processor|cd \.\. && make' services/cc-processor --glob '!**/.venv/**' --glob '!**/superpowers/**' | wc -l
+rg -n 'corpscout/commoncrawl/(cc-processor|embedding)|commoncrawl/cc-processor/\.env|dirname "\$0"\)/cc-processor|cd \.\. && make' services/cc-processor --glob '!**/.venv/**' --glob '!**/superpowers/**' | rg -v '/opt/companycollect/' | wc -l
 bash -n services/cc-processor/tools/load-domain-ranks.sh && echo "syntax ok"
 d=services/cc-processor/tools; echo "script will source: $d/../.env -> $(cd $d/.. && pwd)/.env"; ls services/cc-processor/.env.example
 rg -n '^clickhouse-migrate-up:' Makefile
@@ -558,7 +558,7 @@ Expected: `13 files changed`.
 ### Task 5: Replace the root `.gitignore` rule (stage only)
 
 **Files:**
-- Modify: `/Users/graovic/pulsarpoint/ppoint/.gitignore:58-60`
+- Modify: `/Users/graovic/pulsarpoint/ppoint/companycollect/.gitignore:58-60`
 
 **Interfaces:**
 - Consumes: `services/cc-processor/tools/embedding-ab/uv.lock` exists on disk, untracked, from Task 1.
@@ -576,7 +576,7 @@ Expected: the lock shows as `??` (untracked) and `not ignored` because the old r
 
 - [ ] **Step 2: Replace the rule**
 
-In `/Users/graovic/pulsarpoint/ppoint/.gitignore` replace the three lines
+In `/Users/graovic/pulsarpoint/ppoint/companycollect/.gitignore` replace the three lines
 ```gitignore
 # uv lockfiles in the commoncrawl helper projects (dagster_v3 tracks its own).
 corpscout/commoncrawl/**/uv.lock
