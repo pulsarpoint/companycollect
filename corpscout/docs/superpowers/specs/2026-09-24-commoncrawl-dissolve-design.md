@@ -109,6 +109,9 @@ the playbooks stop the service.
    100% renames and `git log --follow` keeps history.
 2. `chore(services): fix paths after the commoncrawl move` -- the edits in sections 4 and 5.
 
+3. A third, small commit is permitted for pointers that the review sweep finds after commit 2
+   (history stays append-only; commit 2 is not amended on the shared `main`).
+
 Only these paths are staged; the unrelated uncommitted work elsewhere in the tree is not touched.
 
 ## 7. Verification (before commit 2 is finalized)

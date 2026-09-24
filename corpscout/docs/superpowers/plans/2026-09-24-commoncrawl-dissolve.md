@@ -638,10 +638,10 @@ cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout
 rg -n 'commoncrawl' services/cc-dns-scan services/cc-dns-axfr services/cc-processor ../.gitignore \
   --glob '!**/.venv/**' --glob '!**/bin/**' --glob '!**/superpowers/**' --glob '!**/go.sum' \
   --glob '!services/cc-processor/docs/**' \
-  | rg -v '/opt/companycollect/corpscout/commoncrawl|commoncrawl_|corpscout\.commoncrawl|Common Crawl|commoncrawl\.org|s3://crawls/commoncrawl|commoncrawl2|CC-MAIN' \
+  | rg -v '/opt/companycollect/corpscout/commoncrawl|\{\{ deploy_root \}\}/corpscout/commoncrawl|commoncrawl_|corpscout\.commoncrawl|Common Crawl|commoncrawl\.org|s3://crawls/commoncrawl|"commoncrawl"|commoncrawl/catalogs|commoncrawl2|CC-MAIN' \
   || echo "no stale repository paths"
 ```
-Expected: `no stale repository paths`. Allowed survivors are excluded by the second filter: host paths under `/opt/...`, ClickHouse table names (`commoncrawl_*`, `corpscout.commoncrawl…`), the words "Common Crawl", the `commoncrawl.org` site, the S3 prefix, the `commoncrawl2` hostname and `CC-MAIN` crawl ids. If anything else prints, it is a missed pointer: fix it, `git add` it, and rerun. The eight moved
+Expected: `no stale repository paths`. Allowed survivors are excluded by the second filter: host paths under `/opt/...` or built from `{{ deploy_root }}`, the `"commoncrawl"` S3 bucket and `commoncrawl/catalogs` prefix literals in Go/Python, ClickHouse table names (`commoncrawl_*`, `corpscout.commoncrawl…`), the words "Common Crawl", the `commoncrawl.org` site, the S3 prefix, the `commoncrawl2` hostname and `CC-MAIN` crawl ids. If anything else prints, it is a missed pointer: fix it, `git add` it, and rerun. The eight moved
 processor design docs under `services/cc-processor/docs/` are excluded on purpose: they are
 historical designs and keep their original text (spec section 5).
 
@@ -697,3 +697,15 @@ Expected: the top two commits are this one and Task 1's `refactor(commoncrawl): 
 - [ ] **Step 6: Report**
 
 Report to the owner: both commit hashes, the output of Step 2 (no stale repository paths), confirmation that no playbook was run against a host, and the two follow-ups from the spec's section 9 (host path rename between cycles; the cc-processor deploy README `deploy_root` wording).
+
+---
+
+### Fix round 1 (recorded after execution)
+
+The first sweep run surfaced four in-scope pointers no brief named; they were fixed in a third
+commit after review (spec section 5 covers them: playbook text and "the cc-processor READMEs"):
+- `services/cc-dns-axfr/ansible/roles/cc_dns_axfr/tasks/main.yml:19` message
+  `Deploy corpscout/commoncrawl/deploy/cc_dns_scan first` → `Deploy corpscout/services/cc-dns-scan/ansible first`.
+- `services/cc-processor/cc-enrich-worker/README.md:252` `From \`commoncrawl/cc-processor/\`:` → `From \`services/cc-processor/\`:`.
+- `services/cc-processor/cc-warc-index-builder/README.md:38` and `:52` `cd corpscout/commoncrawl/cc-processor…` → `cd corpscout/services/cc-processor…`.
+The sweep filter above was widened at the same time (deploy_root-built host paths, S3 bucket literals).
