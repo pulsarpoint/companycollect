@@ -63,10 +63,26 @@ purge is a mutation that needed a special table setting (migration 444).
    - Freshness skips are decided by a query bounded by the execution's frozen start
      time, so re-evaluating on resume gives the same answer.
    - Send the next remaining entries in envelopes sized for the service.
-   - Write each result as soon as it exists, tagged with `task_id`, `execution_id`
-     and `input_id`.
+   - Write results as they arrive, tagged with `task_id`, `execution_id` and
+     `input_id`, in acknowledged micro-batches (see Result writes).
 5. **Complete.** When `remaining` is empty, mark the task completed.
 6. **Clean up.** `ALTER TABLE ... DROP PARTITION` for the task. No mutation.
+
+### Result writes
+
+Never one insert per result. ClickHouse creates a data part per insert, and
+`async_insert` with `wait_for_async_insert=1` does not coalesce a single writer that
+waits for each flush: on 2026-09-24 the Brave writer produced 592 parts for 592
+results in one hour, one row each, cleaned up by 440 merges. That is harmless at
+Brave's ~10 results a minute, but per-entry webtech results (hundreds to thousands a
+minute) would mean 10-30 new parts a second. ClickHouse delays inserts at 1,000 active
+parts in a partition and rejects them at 3,000.
+
+- Buffer results in the writer and insert every few seconds or every few hundred
+  rows, whichever comes first. Concurrent workers of one execution share the buffer.
+- Wait for the insert's acknowledgement before counting those entries as done.
+- A crash loses only the unflushed buffer. Those entries are still `remaining`, and
+  their stable request IDs make the service return the stored outcome on resubmit.
 
 ### Recovery
 
