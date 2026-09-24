@@ -1,123 +1,35 @@
 import { beforeEach, expect, it, vi } from "vitest";
+import { parseWorkspaceDomainFilters } from "~/lib/workspace-domains";
 const db = vi.hoisted(() => ({ chQuery: vi.fn() }));
 vi.mock("~/lib/clickhouse.server", () => db);
-const { listWorkspaceDomains, listDomainSites } =
-  await import("~/lib/workspace-domains.server");
+const { listWorkspaceDomains, listDomainSites } = await import("~/lib/workspace-domains.server");
 beforeEach(() => vi.resetAllMocks());
-
-it("unifies source inventories, deduplicates roots, and enriches only the current page", async () => {
-  const roots = Array.from({ length: 26 }, (_, i) => ({
-    root_domain: `${String(i).padStart(2, "0")}.example`,
-  }));
-  db.chQuery.mockImplementation(async (sql: string) => {
-    if (sql.includes("SELECT graph_release"))
-      return [{ graph_release: "release" }];
-    if (sql.startsWith("SELECT DISTINCT root_domain")) return roots;
-    return [];
-  });
-  const result = await listWorkspaceDomains(
-    { prefix: "", companies: "any", webtech: "any" },
-    "",
-  );
+it("reads only the serving snapshot and paginates without expensive counts or joins", async () => {
+  db.chQuery.mockResolvedValueOnce(Array.from({ length: 26 }, (_, i) => ({ root_domain: `${String(i).padStart(2, "0")}.example` })))
+    .mockResolvedValueOnce([{ name: "domains_search", total: "123142485" }, { name: "websites", total: "0" }]).mockResolvedValueOnce([{ refreshed_at: "2026-09-24" }]);
+  const result = await listWorkspaceDomains(parseWorkspaceDomainFilters(new URLSearchParams()), "");
+  expect(result).toMatchObject({ hasMore: true, next: "24.example", total: "123142485", refreshedAt: "2026-09-24" });
   expect(result.rows).toHaveLength(25);
-  expect(result.hasMore).toBe(true);
-  expect(result.next).toBe("24.example");
-  expect(result.rows[0]).toMatchObject({
-    companies: 0,
-    archived: 0,
-    webtech: 0,
-    dns: 0,
-  });
-  const enrichment = db.chQuery.mock.calls.filter(([, params]) => params?.domains);
-  expect(enrichment).toHaveLength(4);
-  for (const [, params] of enrichment)
-    expect(params.domains).not.toContain("25.example");
-  const graph = db.chQuery.mock.calls.find(([sql]) =>
-    sql.includes("FROM corpscout.commoncrawl_domain_graph_nodes"),
-  );
-  expect(graph?.[1].release).toBe("release");
+  expect(db.chQuery).toHaveBeenCalledTimes(3);
+  const sql = db.chQuery.mock.calls.map(([sql]) => sql).join("\n");
+  expect(sql).not.toMatch(/JOIN|UNION|FINAL|count\(/);
+  expect(sql).toContain("FROM corpscout.domains_search");
 });
-
-it("filters on stored detections and preserves country-qualified company identity", async () => {
-  db.chQuery.mockImplementation(async (sql: string) => {
-    if (sql.startsWith("SELECT DISTINCT root_domain"))
-      return [{ root_domain: "example.se" }];
-    if (sql.includes("uniqExact((country_code, company_id))"))
-      return [
-        {
-          root_domain: "example.se",
-          count: 2,
-          records: [
-            ["SE", "123", "registry"],
-            ["CZ", "123", "registry"],
-          ],
-        },
-      ];
-    return [];
-  });
-  const result = await listWorkspaceDomains(
-    { prefix: "example'", companies: "with", webtech: "with" },
-    "before.se",
-  );
-  const [sql, params] = db.chQuery.mock.calls[0];
-  expect(sql).toContain("webtech_domain_technologies_current");
-  expect(sql).not.toContain("technology_count > 0");
-  expect(sql).not.toContain("example'");
-  expect(params).toMatchObject({ prefix: "example'", after: "before.se" });
-  expect(result.rows[0].companies).toBe(2);
-});
-
-it("keeps site technology counts isolated and includes unscanned hostnames", async () => {
-  db.chQuery
-    .mockResolvedValueOnce([
-      { hostname: "shop.example.se" },
-      { hostname: "www.example.se" },
-    ])
-    .mockResolvedValueOnce([
-      { hostname: "www.example.se", count: 1, technologies: ["WordPress"] },
-    ])
-    .mockResolvedValueOnce([
-      {
-        hostname: "shop.example.se",
-        count: 2,
-        technologies: ["React", "Shopify"],
-      },
-    ]);
-  const result = await listDomainSites("example.se", "");
-  expect(result.sites).toEqual([
-    {
-      hostname: "shop.example.se",
-      archived: 0,
-      webtech: 2,
-      technologies: ["React", "Shopify"],
-    },
-    {
-      hostname: "www.example.se",
-      archived: 1,
-      webtech: 0,
-      technologies: ["WordPress"],
-    },
-  ]);
-  expect(db.chQuery.mock.calls[1][0]).toContain(
-    "domain(page_url) IN {names:Array(String)}",
-  );
-  expect(db.chQuery.mock.calls[2][0]).toContain(
-    "final_hostname IN {names:Array(String)}",
-  );
-});
-
-it("applies negative filters before pagination rather than filtering just the returned page", async () => {
+it("applies combined and negative filters before pagination using bound values", async () => {
   db.chQuery.mockResolvedValue([]);
-  await listWorkspaceDomains(
-    { prefix: "example", companies: "without", webtech: "without" },
-    "",
-  );
-  for (const [sql] of db.chQuery.mock.calls.filter(([sql]) =>
-    sql.startsWith("SELECT DISTINCT"),
-  )) {
-    expect(sql).toContain("NOT IN (SELECT root_domain");
-    expect(sql).toContain(
-      "NOT IN (SELECT DISTINCT root_domain FROM corpscout.webtech_domain_technologies_current)",
-    );
-  }
+  await listWorkspaceDomains(parseWorkspaceDomainFilters(new URLSearchParams("prefix=example'&source=commoncrawl&source=se_company_domain&sourceMatch=all&dns=without&websites=observed&companies=with")), "before.se");
+  const [sql, params] = db.chQuery.mock.calls[0];
+  expect(sql).toContain("hasAll(sources, {sources:Array(String)})");
+  expect(sql).toContain("has_dns_records = 0");
+  expect(sql).toContain("has_website = 1 AND observed_website_count > 0");
+  expect(sql).toContain("has_company = 1");
+  expect(sql).not.toContain("example'");
+  expect(params).toMatchObject({ prefix: "example'", after: "before.se", sources: ["commoncrawl", "se_company_domain"] });
+});
+it("expands websites directly from the website inventory", async () => {
+  const site = { website_origin: "https://www.example.se", evidence_status: "observed", sources: ["webtech"], last_observed_at: "2026-09-24" };
+  db.chQuery.mockResolvedValueOnce([site]);
+  expect(await listDomainSites("example.se", "")).toEqual({ sites: [site], next: site.website_origin, hasMore: false });
+  expect(db.chQuery).toHaveBeenCalledTimes(1);
+  expect(db.chQuery.mock.calls[0][0]).toContain("FROM corpscout.websites WHERE root_domain={domain:String}");
 });

@@ -27,14 +27,14 @@ export default function WorkspaceDomain({ loaderData }: Route.ComponentProps) {
   const navigation = useNavigation();
   const basePath = workspaceDomainHref(domain);
   const suffix = location.pathname.split("/")[4] ?? "";
-  const section: TechnologySection =
-    suffix === "web-technologies" ||
+  const section: TechnologySection | "dns" =
+    suffix === "dns" || suffix === "web-technologies" ||
     suffix === "web-intelligence" ||
     suffix === "infrastructure" ||
     suffix === "ip-addresses" ||
     suffix === "mail-security"
       ? suffix
-      : "overview";
+      : suffix === "overview" ? "overview" : "dns";
 
   return (
     <div
@@ -69,7 +69,7 @@ export default function WorkspaceDomain({ loaderData }: Route.ComponentProps) {
           </Link>
         </div>
       </header>
-      <TechnologySectionTabs basePath={basePath} section={section} mailSecurity />
+      <TechnologySectionTabs basePath={basePath} section={section} mailSecurity dnsRecords />
       <Outlet />
     </div>
   );

@@ -17,7 +17,7 @@ CDP ports stay private. There is no new browser pool or agent framework.
 
 Crawler 0.37.4 can also invoke this endpoint automatically for website CAPTCHAs
 on REST and JetStream attempts. See the crawler's
-[configuration and automatic continuation checks](../company_research/HUMAN_ASSISTANCE.md#automatic-captcha-assistance).
+[configuration and automatic continuation checks](../crawler_service/HUMAN_ASSISTANCE.md#automatic-captcha-assistance).
 The browser endpoint still only returns its observation; the crawler decides
 whether the page is accessible. The manual Backoffice flow below remains available.
 

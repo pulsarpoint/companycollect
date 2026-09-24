@@ -1315,19 +1315,21 @@ WHERE root_domain = {domain:String}
 GROUP BY name, record_type, value, priority
 ORDER BY hostname, type, priority, value`;
 
+// The filter uses sorting-key columns, so it is safe before FINAL and avoids
+// reading wide enrichment payloads for unrelated IPs in the same granule.
 const technologyIpEnrichmentSql = `SELECT
   ip,
-  argMax(country_iso_code, enriched_at) AS country_code,
-  argMax(country_name, enriched_at) AS country_name,
-  argMax(city_name, enriched_at) AS city_name,
-  argMax(asn, enriched_at) AS asn,
-  argMax(asn_organization, enriched_at) AS asn_organization
-FROM commoncrawl_ip_geoip
-PREWHERE (bucket, ip) IN arrayZip(
+  country_iso_code AS country_code,
+  country_name,
+  city_name,
+  asn,
+  asn_organization
+FROM ip_enrichment_current
+WHERE (bucket, ip) IN arrayZip(
   {buckets:Array(UInt16)},
   {ips:Array(String)}
 )
-GROUP BY ip`;
+SETTINGS optimize_move_to_prewhere_if_final=1`;
 
 const technologyIpRdapSql = `WITH matched AS (
   SELECT

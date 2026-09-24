@@ -1,0 +1,38 @@
+# Managed by Ansible.
+[Unit]
+Description=Corpscout company crawl REST API
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+User={{ crawler_service_user }}
+Group={{ crawler_service_user }}
+WorkingDirectory={{ crawler_service_deploy_dir }}/current
+EnvironmentFile={{ crawler_service_env_file }}
+{% for name, value in crawler_service_runtime_environment.items() %}
+Environment="{{ name }}={{ value }}"
+{% endfor %}
+ExecStart={{ crawler_service_deploy_dir }}/current/.venv/bin/crawler-service \
+    --output-dir {{ crawler_service_output_dir }} \
+    --host {{ crawler_service_listen_host }} --port {{ crawler_service_port }} \
+    --concurrency {{ crawler_service_concurrency }} --max-pending {{ crawler_service_max_pending }}
+
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=90s
+# Allow crawl cancellation to release external browser leases.
+KillMode=mixed
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths={{ crawler_service_state_dir }} {{ crawler_service_cache_dir }}
+
+[Install]
+WantedBy=multi-user.target

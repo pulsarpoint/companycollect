@@ -1,7 +1,7 @@
 """Compatibility exports for the frozen page-agent benchmark."""
 
-from company_research.captures import page_inventory
-from company_research.page_agent import (
+from crawler_service.captures import page_inventory
+from crawler_service.page_agent import (
     LinkAssessment,
     PageAgent,
     PageInput,

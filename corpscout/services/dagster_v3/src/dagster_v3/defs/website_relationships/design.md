@@ -10,7 +10,7 @@ verified legal entity.
 The existing crawler persists immutable `company-crawl-result/1.2` bundles in
 RustFS, including original/cleaned HTML and `documents[].input.links` with local
 text, headings, source URL, link IDs, DOM paths and capture metadata. The explicit
-`company-research-clickhouse import-s3`/`import-file` importer now projects these
+`crawler-service-clickhouse import-s3`/`import-file` importer now projects these
 occurrences into the existing `website_crawl_results.external_links` JSON column.
 Older research results' `external_links` are also accepted. Original page bundles
 remain intact in `documents` and S3. No recrawl or LLM is needed to reimport them.
@@ -53,7 +53,7 @@ There are no new monetary fields or currency conversions.
 Apply migrations before deploying. Import a saved result with the crawler CLI:
 
 ```sh
-uv run --frozen --no-sync company-research-clickhouse --env-file ../../.env \
+uv run --frozen --no-sync crawler-service-clickhouse --env-file ../../.env \
   import-s3 --path crawls/company-crawls/REQUEST/attempts/0001/result.json.gz
 ```
 

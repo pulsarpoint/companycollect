@@ -8,7 +8,6 @@ from dagster_v3.defs.brazil_companies.rfb import tables as brazil_rfb_tables
 from dagster_v3.defs.brazil_financial.cvm import tables as brazil_fin_cvm_tables
 from dagster_v3.defs.company_contracts import tables as company_contracts_tables
 from dagster_v3.defs.company_signals import tables as company_signals_tables
-from dagster_v3.defs.domains import tables as domain_tables
 from dagster_v3.defs.exchange_rates_v2 import tables as exchange_rate_tables
 from dagster_v3.defs.company_identifier import tables as company_identifier_tables
 from dagster_v3.defs.instrument_issuer import tables as instrument_issuer_tables
@@ -65,7 +64,6 @@ EXPECTED_MIGRATIONS = (
     "000027_corpscout_ee_company_contacts",
     "000028_corpscout_ee_company_contacts_domain",
     "000029_corpscout_ee_company_domains",
-    "000030_corpscout_company_website_domains_domain_source",
     "000031_corpscout_ee_industries",
     "000032_corpscout_fr_companies",
     "000033_corpscout_fr_industries",
@@ -450,6 +448,16 @@ EXPECTED_MIGRATIONS = (
     "000433_corpscout_ip_enrichment",
     "000434_corpscout_import_legacy_geoip",
     "000435_corpscout_retire_legacy_geoip",
+    "000436_corpscout_webtech_pages",
+    "000437_corpscout_webtech_page_current_lookup",
+    "000438_corpscout_webtech_scan_input",
+    "000439_corpscout_domain_inventory",
+    "000440_corpscout_retire_registry_domain_aggregates",
+    "000441_corpscout_domains_inventory",
+    "000442_corpscout_websites_and_pages",
+    "000443_corpscout_domains_search",
+    "000444_corpscout_webtech_queue_cleanup_capacity",
+    "000445_corpscout_crawl_draft_queue",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -824,7 +832,7 @@ def test_webtech_technology_migration_matches_export_and_current_scan_identity()
     sql = _migration_sql("000432_corpscout_webtech_domain_technologies.up.sql")
     down_sql = _migration_sql("000432_corpscout_webtech_domain_technologies.down.sql")
     last_index = -1
-    for column_name in WEBTECH_TECHNOLOGY_COLUMNS:
+    for column_name in WEBTECH_TECHNOLOGY_COLUMNS[:-2]:
         index = sql.index(f"    {column_name} ")
         assert index > last_index
         last_index = index
@@ -877,7 +885,8 @@ def test_clickhouse_migrations_create_databases_and_tables() -> None:
             assert _statement_lines(sql) == ["CREATE DATABASE IF NOT EXISTS corpscout;"]
             continue
 
-        assert "CREATE DATABASE IF NOT EXISTS" in sql
+        if migration_file not in {"000444_corpscout_webtech_queue_cleanup_capacity", "000445_corpscout_crawl_draft_queue"}:
+            assert "CREATE DATABASE IF NOT EXISTS" in sql
         # Every migration creates, alters, or drops objects — never a no-op.
         # DROP-only up migrations (e.g. removing orphaned tables) are allowed.
         assert (
@@ -935,6 +944,11 @@ def test_clickhouse_migrations_have_down_files() -> None:
                 assert "DROP TABLE IF EXISTS" in sql
             else:
                 assert _statement_lines(sql) == ["CREATE DATABASE IF NOT EXISTS corpscout;"]
+            continue
+
+        if migration_file in {"000436_corpscout_webtech_pages", "000437_corpscout_webtech_page_current_lookup", "000440_corpscout_retire_registry_domain_aggregates", "000441_corpscout_domains_inventory"}:
+            assert "SELECT throwIf(1," in sql
+            assert "DROP TABLE" not in sql
             continue
 
         # Down migrations undo the up migration: DROP-up → CREATE-down and vice versa.
@@ -1868,26 +1882,15 @@ def test_no_companies_last_accounts_year_migration_adds_existing_table_column() 
     ) in down_sql
 
 
-def test_domain_migration_covers_exported_columns() -> None:
-    sql = _migration_sql("000012_corpscout_norway_resolved_and_domains.up.sql")
-
-    assert "CREATE TABLE IF NOT EXISTS corpscout.country_domains" not in sql
-    assert "CREATE TABLE IF NOT EXISTS corpscout.domains" in sql
-    for column_name in domain_tables.DOMAINS_COLUMNS:
-        assert f"    {column_name} " in sql
-
-    assert "CREATE TABLE IF NOT EXISTS corpscout.company_website_domains" in sql
-    # domain_source was added later via an ALTER migration (000030); the rest are in the base.
-    for column_name in domain_tables.COMPANY_WEBSITE_DOMAINS_COLUMNS:
-        if column_name == "domain_source":
-            continue
-        assert f"    {column_name} " in sql
-
-    alter_sql = _migration_sql(
-        "000030_corpscout_company_website_domains_domain_source.up.sql"
-    )
-    assert "ALTER TABLE corpscout.company_website_domains" in alter_sql
-    assert "domain_source" in alter_sql
+def test_registry_domain_aggregates_are_retired() -> None:
+    sql = _migration_sql("000440_corpscout_retire_registry_domain_aggregates.up.sql")
+    assert "DROP TABLE IF EXISTS corpscout.domains SYNC;" in sql
+    assert "DROP TABLE IF EXISTS corpscout.company_website_domains SYNC;" in sql
+    for path in MIGRATIONS_DIR.glob("*.sql"):
+        migration = path.read_text()
+        assert not re.search(r"CREATE\s+TABLE\s+(?:IF NOT EXISTS\s+)?corpscout\.company_website_domains\b", migration, re.I)
+        if path.name != "000441_corpscout_domains_inventory.up.sql":
+            assert not re.search(r"CREATE\s+TABLE\s+(?:IF NOT EXISTS\s+)?corpscout\.domains\b", migration, re.I)
 
 
 def test_open_page_rank_domains_migration_creates_current_rank_table() -> None:

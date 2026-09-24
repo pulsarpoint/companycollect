@@ -16,7 +16,7 @@ const {
   resolveCatalogName,
 } = await import("~/lib/technology-proposals.server");
 
-const fixtureDir = resolve("../company_research/tests/fixtures");
+const fixtureDir = resolve("../crawler_service/tests/fixtures");
 const fixture = JSON.parse(
   readFileSync(resolve(fixtureDir, "technology_submission.json"), "utf8"),
 );

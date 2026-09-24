@@ -4,9 +4,9 @@ import json
 import shutil
 from pathlib import Path
 
-from company_research.storage import content_hash, utc_now, write_json
+from crawler_service.storage import content_hash, utc_now, write_json
 
-import company_research
+import crawler_service
 from page_agent_lab.agent import page_inventory
 
 
@@ -137,7 +137,7 @@ def prepare(root: Path, corpus: Path, dataset: Path | None = None) -> dict:
         shutil.copy2(source, frozen_code / source.name)
     shared = root / "shared_implementation"
     shared.mkdir()
-    for source in Path(company_research.__file__).parent.glob("*.py"):
+    for source in Path(crawler_service.__file__).parent.glob("*.py"):
         shutil.copy2(source, shared / source.name)
     return {
         "prepared_at": utc_now(),

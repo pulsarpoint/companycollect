@@ -108,7 +108,7 @@ The administrator's `users.d/named-collections.xml` enables named-collection
 administration for server-side S3 credentials. Ansible renders it for
 `clickhouse_user`; the checked-in local Compose file targets `default`.
 Application users receive no new grants. See the
-[crawler's ClickHouse guide](../../services/company_research/CLICKHOUSE.md)
+[crawler's ClickHouse guide](../../services/crawler_service/CLICKHOUSE.md)
 for collection provisioning and direct S3 queries.
 
 If migration 126 previously failed at `CREATE USER`, golang-migrate left version

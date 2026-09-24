@@ -1,225 +1,147 @@
-import uuid
-from typing import Any
+"""Publish a root-domain inventory from existing ClickHouse source datasets."""
+
+from datetime import UTC, datetime
+from uuid import uuid4
 
 import dagster as dg
-from dagster import AssetExecutionContext
 from dagster_clickhouse import ClickhouseResource
+from pydantic import Field
 
-from dagster_v3.defs.clickhouse.resolved import (
-    RESOLVED_DATABASE,
-    assert_clickhouse_tables_exist,
+from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
+
+TABLE = "corpscout.domains"
+COLUMNS = ("root_domain", "sources", "first_seen_at", "last_seen_at", "source_run_id")
+
+# Inventory membership is limited to these three explicitly selected source tables.
+SOURCES = (
+    ("se_company_domain", "SELECT root_domain FROM corpscout.se_company_domain GROUP BY root_domain"),
+    ("commoncrawl", "SELECT root_domain FROM corpscout.commoncrawl_domains GROUP BY root_domain"),
+    ("commoncrawl_graph", "SELECT root_domain FROM corpscout.commoncrawl_domain_graph_nodes WHERE graph_release IN (SELECT graph_release FROM corpscout.commoncrawl_domain_graph_snapshots FINAL)"),
 )
-from dagster_v3.defs.domains import tables
 
-GROUP_NAME = "domains"
+VALID_DOMAIN = """length(root_domain) <= 253
+    AND match(root_domain, '^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:[.][a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$')
+    AND NOT match(root_domain, '^[0-9]+(?:[.][0-9]+){3}$')"""
+
+
+class DomainsConfig(dg.Config):
+    max_threads: int = Field(default=4, ge=1, le=16)
+    max_execution_time: int = Field(default=3600, ge=1, le=14400)
+    merge_batch_rows: int = Field(default=1_000_000, ge=1, le=1_000_000)
+
+
+def publish_inventory(clickhouse: ClickhouseResource, *, run_id: str,
+                      config: DomainsConfig, log) -> dict:
+    assert_clickhouse_tables_exist(clickhouse, database="corpscout", tables=("domains",))
+    suffix = uuid4().hex
+    contributions = f"{TABLE}_sources_{suffix}"
+    stage = f"{TABLE}_stage_{suffix}"
+    query_prefix = f"domains:{suffix}:"
+    stamp = datetime.now(UTC)
+    params = {"stamp": stamp, "run": run_id}
+    settings = {
+        "max_threads": config.max_threads,
+        "max_execution_time": config.max_execution_time,
+        "max_memory_usage": 4 * 1024**3,
+        "max_bytes_before_external_group_by": 512 * 1024**2,
+        "max_bytes_before_external_sort": 512 * 1024**2,
+        "optimize_aggregation_in_order": 1,
+        "async_insert": 0,
+    }
+    created = []
+    source_counts = []
+    with clickhouse.get_connection() as client:
+        try:
+            for table in (contributions, stage):
+                client.execute(f"CREATE TABLE {table} AS {TABLE}")
+                created.append(table)
+            previous = 0
+            for index, (source, query) in enumerate(SOURCES):
+                log.info("Reading domain inventory source %s: %s", source, query)
+                client.execute(
+                    f"""INSERT INTO {contributions} ({','.join(COLUMNS)})
+                    SELECT canonical_domain AS root_domain,[%(source)s],%(stamp)s,%(stamp)s,%(run)s FROM (
+                        SELECT lowerUTF8(trimRight(trimBoth(root_domain), '.')) AS canonical_domain
+                        FROM ({query})
+                    )""",
+                    {**params, "source": source}, settings=settings,
+                    query_id=f"{query_prefix}source-{index}",
+                )
+                [(count,)] = client.execute(f"SELECT count() FROM {contributions}")
+                source_counts.append({"source": source, "relation": query, "rows": count - previous})
+                log.info("Inventory source %s contributed %s candidate roots", source, count - previous)
+                previous = count
+            if previous == 0:
+                raise ValueError("All domain inventory sources are empty; refusing to replace the published inventory")
+            after = ""
+            merge_batches = 0
+            while True:
+                boundary = client.execute(
+                    f"""SELECT root_domain FROM {contributions}
+                    WHERE root_domain > %(after)s ORDER BY root_domain
+                    LIMIT 1 OFFSET %(batch)s""",
+                    {"after": after, "batch": config.merge_batch_rows},
+                    settings={**settings, "optimize_read_in_order": 1},
+                    query_id=f"{query_prefix}boundary-{merge_batches}",
+                )
+                through = boundary[0][0] if boundary else None
+                domain_range = "root_domain > %(after)s"
+                if through is not None:
+                    domain_range += " AND root_domain <= %(through)s"
+                client.execute(
+                    f"""INSERT INTO {stage} ({','.join(COLUMNS)})
+                    SELECT roots.root_domain,roots.sources,coalesce(old.first_seen_at,%(stamp)s),%(stamp)s,%(run)s
+                    FROM (
+                        SELECT root_domain,arraySort(groupUniqArrayArray(sources)) AS sources
+                        FROM {contributions} WHERE {domain_range} AND {VALID_DOMAIN}
+                        GROUP BY root_domain ORDER BY root_domain
+                    ) AS roots
+                    LEFT ANY JOIN (
+                        SELECT root_domain,first_seen_at FROM {TABLE} WHERE {domain_range}
+                    ) AS old ON roots.root_domain=old.root_domain""",
+                    {**params, "after": after, "through": through}, settings={
+                        **settings,
+                        # Bound each merge as well as spilling: a whole-inventory
+                        # merge of spilled files can itself exceed the memory cap.
+                        "optimize_aggregation_in_order": 0,
+                        "join_algorithm": "full_sorting_merge",
+                        "join_use_nulls": 1,
+                    },
+                    query_id=f"{query_prefix}fold-{merge_batches}",
+                )
+                merge_batches += 1
+                [(staged,)] = client.execute(f"SELECT count() FROM {stage}")
+                log.info("Merged domain range %s through %s: %s staged domains", merge_batches, through or "end", staged)
+                if through is None:
+                    break
+                after = through
+            [(count,)] = client.execute(f"SELECT count() FROM {stage}")
+            if count == 0:
+                raise ValueError("Domain inventory build is empty; refusing publication")
+            client.execute(f"EXCHANGE TABLES {stage} AND {TABLE}", query_id=f"{query_prefix}publish")
+            return {"domains": count, "source_contributions": source_counts, "source_run_id": run_id, "merge_batches": merge_batches}
+        except BaseException:
+            # A disconnected caller does not prove a server-side INSERT stopped.
+            # Fence this build before dropping only its own staging tables.
+            client.disconnect()
+            client.execute("KILL QUERY WHERE startsWith(query_id,%(prefix)s) SYNC", {"prefix": query_prefix})
+            raise
+        finally:
+            for table in reversed(created):
+                client.execute(f"DROP TABLE IF EXISTS {table}")
 
 
 @dg.asset(
-    deps=[
-        dg.AssetKey("czech_ares_clickhouse_company_contacts"),
-        dg.AssetKey("latvia_ur_clickhouse_company_contacts"),
-        dg.AssetKey("estonia_ar_clickhouse_company_domains"),
-        dg.AssetKey("brazil_comp_rfb_clickhouse_company_domains"),
-        dg.AssetKey("norway_brreg_clickhouse_canonical_contacts"),
-        dg.AssetKey("finland_ytj_clickhouse_canonical_contacts"),
-        dg.AssetKey("wikidata_clickhouse_canonical_contacts"),
-    ],
-    group_name=GROUP_NAME,
-    kinds={"clickhouse"},
-    description=(
-        "Builds the website domain dimension and company-to-domain links from "
-        "the seven canonical <src>_company_domains tables."
-    ),
+    group_name="domains", kinds={"clickhouse"}, pool="domains_publish",
+    deps=["se_company_domain_publish", "commoncrawl_domain_graph_snapshots"],
+    metadata={"dagster/table_name": TABLE},
+    description="Publish root domains from commoncrawl_domains, published Common Crawl graph nodes and se_company_domain, combining their source labels.",
 )
-def domains_clickhouse(
-    context: AssetExecutionContext,
-    clickhouse: ClickhouseResource,
-) -> dg.MaterializeResult:
-    assert_clickhouse_tables_exist(
-        clickhouse,
-        database=RESOLVED_DATABASE,
-        tables=tables.DOMAIN_TABLES,
-    )
-    with clickhouse.get_connection() as client:
-        row_counts = replace_domain_clickhouse_tables(client)
-
-    context.log.info("Completed domain ClickHouse rebuild: row_counts=%s", row_counts)
-    return dg.MaterializeResult(metadata=row_counts)
+def domains(context: dg.AssetExecutionContext, config: DomainsConfig,
+                     clickhouse: ClickhouseResource) -> dg.MaterializeResult:
+    result = publish_inventory(clickhouse, run_id=context.run_id, config=config, log=context.log)
+    return dg.MaterializeResult(metadata=result)
 
 
-def replace_domain_clickhouse_tables(clickhouse_client: Any) -> dict[str, int]:
-    domains_stage = _stage_table_name(tables.DOMAINS_TABLE)
-    company_links_stage = _stage_table_name(tables.COMPANY_WEBSITE_DOMAINS_TABLE)
-    created_stage_tables = [
-        _qualified_table(company_links_stage),
-        _qualified_table(domains_stage),
-    ]
-    primary_error: Exception | None = None
-
-    try:
-        clickhouse_client.execute(
-            f"CREATE TABLE {_qualified_table(domains_stage)} AS "
-            f"{_qualified_table(tables.DOMAINS_TABLE)}"
-        )
-        clickhouse_client.execute(
-            f"CREATE TABLE {_qualified_table(company_links_stage)} AS "
-            f"{_qualified_table(tables.COMPANY_WEBSITE_DOMAINS_TABLE)}"
-        )
-
-        clickhouse_client.execute(
-            _company_website_domains_insert_sql(company_links_stage)
-        )
-        clickhouse_client.execute(
-            _domains_insert_sql(domains_stage, company_links_stage)
-        )
-
-        # links swap first: the aggregate is computed FROM the links and must
-        # never be newer than what links readers see
-        clickhouse_client.execute(
-            f"EXCHANGE TABLES {_qualified_table(company_links_stage)} "
-            f"AND {_qualified_table(tables.COMPANY_WEBSITE_DOMAINS_TABLE)}"
-        )
-        clickhouse_client.execute(
-            f"EXCHANGE TABLES {_qualified_table(domains_stage)} "
-            f"AND {_qualified_table(tables.DOMAINS_TABLE)}"
-        )
-
-        return {
-            tables.DOMAINS_TABLE: _table_count(
-                clickhouse_client,
-                tables.DOMAINS_TABLE,
-            ),
-            tables.COMPANY_WEBSITE_DOMAINS_TABLE: _table_count(
-                clickhouse_client,
-                tables.COMPANY_WEBSITE_DOMAINS_TABLE,
-            ),
-        }
-    except Exception as exc:
-        primary_error = exc
-        raise
-    finally:
-        _drop_stage_tables(
-            clickhouse_client,
-            created_stage_tables,
-            suppress_errors=primary_error is not None,
-        )
-
-
-def _canonical_domain_arm(source: dict[str, str]) -> str:
-    table = source["table"]
-    return f"""
-        SELECT
-            '{table}' AS source_website_table,
-            ifNull(
-                nullIf(trim(websites.source_record_id), ''),
-                concat('{table}:', websites.registry_id, ':', websites.domain)
-            ) AS source_website_id,
-            nullIf(trim(websites.country_iso2), '') AS country_iso2,
-            '{source["source_slug"]}' AS source_slug,
-            '{source["registry_id_type"]}' AS company_id_type,
-            websites.registry_id AS company_id,
-            websites.website_url AS website_url,
-            websites.website_normalized_url AS website_normalized_url,
-            websites.website_host AS website_host,
-            websites.domain AS root_domain,
-            websites.domain_source AS domain_source,
-            websites.is_current AS is_current,
-            websites.is_primary AS is_primary
-        FROM {_qualified_table(table)} AS websites
-        WHERE nullIf(trim(websites.domain), '') IS NOT NULL"""
-
-
-def _company_website_domains_insert_sql(stage_table: str) -> str:
-    columns = _column_list(tables.COMPANY_WEBSITE_DOMAINS_COLUMNS)
-    arms = "\n\n        UNION ALL\n".join(
-        _canonical_domain_arm(source) for source in tables.CANONICAL_DOMAIN_SOURCES
-    )
-    return f"""
-    INSERT INTO {_qualified_table(stage_table)} ({columns})
-    SELECT
-        source_website_table,
-        source_website_id,
-        country_iso2,
-        source_slug,
-        company_id_type,
-        company_id,
-        website_url,
-        website_normalized_url,
-        website_host,
-        root_domain,
-        domain_source,
-        is_current,
-        is_primary,
-        now64(3) AS resolved_at
-    FROM
-    (
-{arms}
-    )
-    """
-
-
-def _domains_insert_sql(stage_table: str, company_links_stage: str) -> str:
-    columns = _column_list(tables.DOMAINS_COLUMNS)
-    return f"""
-    INSERT INTO {_qualified_table(stage_table)} ({columns})
-    SELECT
-        root_domain,
-        countDistinct(company_id) AS company_count,
-        countDistinct(website_normalized_url) AS website_count,
-        countDistinct(source_slug) AS source_slug_count,
-        countDistinctIf(country_iso2, country_iso2 IS NOT NULL) AS country_count,
-        now64(3) AS resolved_at
-    FROM {_qualified_table(company_links_stage)}
-    GROUP BY root_domain
-    """
-
-
-def _table_count(clickhouse_client: Any, table: str) -> int:
-    rows = clickhouse_client.execute(f"SELECT count() FROM {_qualified_table(table)}")
-    return int(rows[0][0]) if rows else 0
-
-
-def _drop_stage_tables(
-    clickhouse_client: Any,
-    stage_tables: list[str],
-    *,
-    suppress_errors: bool,
-) -> None:
-    first_error: Exception | None = None
-    failed_tables: list[str] = []
-    for table in stage_tables:
-        try:
-            clickhouse_client.execute(f"DROP TABLE IF EXISTS {table}")
-        except Exception as exc:
-            if suppress_errors:
-                continue
-            if first_error is None:
-                first_error = exc
-            failed_tables.append(table)
-
-    if first_error is not None:
-        raise RuntimeError(
-            "Failed to drop domain stage table(s): " + ", ".join(failed_tables)
-        ) from first_error
-
-
-def _stage_table_name(table: str) -> str:
-    return f"_tmp_{table}_{uuid.uuid4().hex}"
-
-
-def _column_list(columns: tuple[str, ...]) -> str:
-    return ", ".join(_quote_identifier(column) for column in columns)
-
-
-def _qualified_table(table: str) -> str:
-    return f"{_quote_identifier(RESOLVED_DATABASE)}.{_quote_identifier(table)}"
-
-
-def _quote_identifier(identifier: str) -> str:
-    escaped = identifier.replace("`", "``")
-    return f"`{escaped}`"
-
-
-@dg.definitions
-def defs() -> dg.Definitions:
-    return dg.Definitions(assets=[domains_clickhouse])
+domains_job = dg.define_asset_job("domains_job", selection=dg.AssetSelection.assets(domains))
+defs = dg.Definitions(assets=[domains], jobs=[domains_job])

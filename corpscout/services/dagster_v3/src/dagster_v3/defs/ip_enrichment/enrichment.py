@@ -38,10 +38,10 @@ class IpEnrichmentResultsConfig(dg.Config):
         description="Original results run UUID to resume without repeating saved outcomes.",
     )
     batch_size: int = Field(default=250, ge=1, le=10_000)
-    max_requests: int = Field(
+    max_requests: int | None = Field(
         default=250,
         ge=1,
-        description="RDAP HTTP request budget per run, including parents.",
+        description="RDAP HTTP request budget, including parents. Null processes the whole task.",
     )
     request_delay_seconds: float = Field(default=1.0, ge=0, le=60)
     parent_depth: int = Field(default=1, ge=0, le=5)
@@ -176,7 +176,10 @@ class RdapEnricher:
         self.recent: OrderedDict[str, NormalizedRdapNetwork] = OrderedDict()
 
     def _request(self, address_or_url, *, rir=None):
-        if self.requests >= self.config.max_requests:
+        if (
+            self.config.max_requests is not None
+            and self.requests >= self.config.max_requests
+        ):
             raise RequestBudgetReached
         if self.requests and self.config.request_delay_seconds:
             time.sleep(self.config.request_delay_seconds)
@@ -189,12 +192,12 @@ class RdapEnricher:
         self.client.execute(
             RDAP_NETWORK_INSERT_SQL,
             [normalized.network.clickhouse_values()],
-            settings={"async_insert": 0},
+            settings={"async_insert": 1, "wait_for_async_insert": 1},
         )
         self.client.execute(
             RDAP_SEGMENT_INSERT_SQL,
             [segment.clickhouse_values() for segment in normalized.segments],
-            settings={"async_insert": 0},
+            settings={"async_insert": 1, "wait_for_async_insert": 1},
         )
         self.networks_written += 1
 
@@ -292,7 +295,7 @@ class RdapEnricher:
                     result["rdap_checked_at"],
                 )
             ],
-            settings={"async_insert": 0},
+            settings={"async_insert": 1, "wait_for_async_insert": 1},
         )
         return result
 
@@ -361,9 +364,9 @@ class RdapEnricher:
         current = direct
         visited = {direct.network.network_key}
         for _ in range(self.config.parent_depth):
-            if (
-                current.network.up_url is None
-                or self.requests >= self.config.max_requests
+            if current.network.up_url is None or (
+                self.config.max_requests is not None
+                and self.requests >= self.config.max_requests
             ):
                 break
             try:

@@ -1,0 +1,14 @@
+{
+  "webtech_domain_technologies": {
+    "missing_source_rows": 0,
+    "conflicting_reports": 0,
+    "logical_rows": 8050732
+  },
+  "webtech_domain_scan_results": {
+    "missing_source_rows": 0,
+    "conflicting_reports": 0,
+    "logical_rows": 977577
+  },
+  "incomplete_summaries": 0,
+  "orphan_reports": 0
+}

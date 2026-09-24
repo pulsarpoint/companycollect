@@ -9,7 +9,7 @@ from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 
-from company_research.storage import content_hash, write_json
+from crawler_service.storage import content_hash, write_json
 
 from page_agent_lab.fixtures import read
 

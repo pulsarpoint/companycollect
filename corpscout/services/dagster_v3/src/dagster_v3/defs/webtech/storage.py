@@ -6,6 +6,8 @@ from urllib.parse import urlsplit
 
 from dagster_clickhouse import ClickhouseResource
 
+from dagster_v3.defs.webtech.pages import page_identity
+
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.webtech.models import (
     WEBTECH_DETECTOR_VERSION,
@@ -21,7 +23,6 @@ from dagster_v3.defs.webtech.models import (
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.webtech.technologies import (
     WEBTECH_TECHNOLOGY_TABLE,
-    insert_technology_rows,
     load_technology_catalog,
     technology_rows,
 )
@@ -53,6 +54,10 @@ WEBTECH_RESULT_COLUMNS = (
     "duration_ms",
     "error_message",
     "recorded_at",
+    "task_id",
+    "input_id",
+    "website_origin",
+    "page_url",
 )
 
 
@@ -85,6 +90,7 @@ def write_candidate_manifest(
     partition_key: str,
     dagster_run_id: str,
     candidates: tuple[WebtechCandidate, ...],
+    schema_version: int = 2,
 ) -> CandidateManifestReference:
     """Write or reuse the immutable handoff for one partition selection."""
     object_store.ensure_bucket(destination.bucket)
@@ -112,11 +118,13 @@ def write_candidate_manifest(
             or existing.dagster_run_id != dagster_run_id
             or tuple(existing.candidates) != candidates
         ):
+            if schema_version == 3:
+                raise ValueError("Frozen Webtech task manifest changed; use a new task_id")
             existing_body = None
 
     if existing_body is None:
         document = CandidateManifestDocument(
-            schema_version=2,
+            schema_version=schema_version,
             crawl_id=crawl_id,
             partition_key=partition_key,
             detector_version=WEBTECH_DETECTOR_VERSION,
@@ -200,11 +208,11 @@ def index_final_results(
     detections = []
     seen_domains: set[str] = set()
     for result_reference in manifest.results:
-        if result_reference.root_domain in seen_domains:
+        if (result_reference.input_id or result_reference.root_domain) in seen_domains:
             raise ValueError(
                 f"duplicate result in final manifest: {result_reference.root_domain}"
             )
-        seen_domains.add(result_reference.root_domain)
+        seen_domains.add(result_reference.input_id or result_reference.root_domain)
         body = object_store.read_bytes(
             result_reference.object_key,
             bucket=destination.bucket,
@@ -238,15 +246,9 @@ def index_final_results(
 
     if rows:
         with clickhouse.get_connection() as client:
-            # Publish the result index only after its complete detection set.
-            insert_technology_rows(client, detections)
-            client.execute(
-                f"""
-                INSERT INTO {WEBTECH_CLICKHOUSE_DATABASE}.{WEBTECH_RESULT_TABLE}
-                ({", ".join(WEBTECH_RESULT_COLUMNS)}) VALUES
-                """,
-                rows,
-            )
+            from dagster_v3.defs.webtech.writes import publish_scan_rows
+
+            publish_scan_rows(client, rows, detections)
     return len(rows)
 
 
@@ -271,6 +273,7 @@ def _validate_result_identity(
         or document.crawl_id != manifest.crawl_id
         or document.partition_key != manifest.partition_key
         or document.detector_version != manifest.detector_version
+        or document.candidate.input_id != result_reference.input_id
         or document.candidate.root_domain != result_reference.root_domain
         or document.candidate.harmonic_rank != result_reference.harmonic_rank
         or document.outcome != result_reference.outcome
@@ -311,6 +314,9 @@ def _clickhouse_row(
         document.duration_ms,
         document.error_message[:2_000],
         recorded_at,
+        document.candidate.task_id,
+        document.candidate.input_id,
+        *page_identity(document.candidate.page_url or document.requested_url),
     )
 
 

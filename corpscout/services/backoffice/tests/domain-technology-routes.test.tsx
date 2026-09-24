@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { TechnologySectionTabs } from "~/components/detail/technology-section-tabs";
+import { CommonCrawlSectionTabs, TechnologySectionTabs } from "~/components/detail/technology-section-tabs";
 
 const queries = vi.hoisted(() => ({
   getDomainTechnologyDetail: vi.fn(),
@@ -24,6 +24,7 @@ const ip = await import("~/routes/admin-se-domain-ip-address");
 const intelligence = await import("~/routes/admin-se-domain-web-intelligence");
 const security = await import("~/routes/admin-se-domain-mail-security");
 const technologies = await import("~/routes/admin-se-domain-web-technologies");
+const commonCrawlTechnologies = await import("~/routes/admin-common-crawl-technologies");
 const commonCrawl = await import("~/routes/admin-common-crawl-domain");
 
 beforeEach(() => vi.clearAllMocks());
@@ -41,21 +42,36 @@ describe("domain technology routes", () => {
   it("keeps Common Crawl evidence at the root and technology navigation in the same domain", () => {
     const html = renderToStaticMarkup(
       <MemoryRouter initialEntries={["/admin/common-crawl/novelic.com"]}>
-        <TechnologySectionTabs
+        <CommonCrawlSectionTabs
           basePath="/admin/common-crawl/novelic.com"
           section="overview"
-          websiteEvidenceOverview
-          mailSecurity
         />
       </MemoryRouter>,
     );
     expect(html).toContain("Website evidence");
-    expect(html).toContain("Archived technologies");
-    for (const section of ["technologies", "web-technologies", "infrastructure", "ip-addresses", "mail-security"]) {
-      expect(html).toContain(`href="/admin/common-crawl/novelic.com/${section}"`);
+    expect(html).toContain("Web technologies");
+    expect(html).toContain('href="/admin/common-crawl/novelic.com/web-technologies"');
+    for (const section of ["technologies", "infrastructure", "ip-addresses", "mail-security"]) {
+      expect(html).not.toContain(`href="/admin/common-crawl/novelic.com/${section}"`);
     }
     expect(html).not.toContain("/web-intelligence");
     expect(html).not.toContain("/admin/se/");
+  });
+
+  it("loads Common Crawl technology history without calling the live Webtech scanner query", async () => {
+    queries.getDomainTechnologyDetail.mockResolvedValue({
+      webTechnologyHistory: null,
+      technologyCatalog: {},
+    });
+    const result = await commonCrawlTechnologies.loader(args());
+    expect(queries.getDomainTechnologyDetail).toHaveBeenCalledWith("example.se");
+    expect(webtech.getDomainWebtech).not.toHaveBeenCalled();
+    const Component = commonCrawlTechnologies.default;
+    const html = renderToStaticMarkup(
+      <Component {...({ loaderData: result, params: { domain: "example.se" } } as Parameters<typeof Component>[0])} />,
+    );
+    expect(html).toContain("No Common Crawl technologies discovered yet");
+    expect(html).not.toContain("adjacent tabs");
   });
 
   it("normalizes the Common Crawl domain for every child view while retaining its path and query", () => {
@@ -63,12 +79,12 @@ describe("domain technology routes", () => {
     try {
       commonCrawl.loader({
         params: { domain: "WWW.NOVELIC.COM" },
-        request: new Request("http://localhost/admin/common-crawl/WWW.NOVELIC.COM/ip-addresses/192.0.2.1?exactPage=2"),
+        request: new Request("http://localhost/admin/common-crawl/WWW.NOVELIC.COM/web-technologies?crawl=2026"),
       } as never);
     } catch (response) {
       expect((response as Response).status).toBe(302);
       expect((response as Response).headers.get("Location")).toBe(
-        "/admin/common-crawl/novelic.com/ip-addresses/192.0.2.1?exactPage=2",
+        "/admin/common-crawl/novelic.com/web-technologies?crawl=2026",
       );
     }
   });

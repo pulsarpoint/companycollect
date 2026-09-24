@@ -8,7 +8,7 @@ JetStream `"crawl": "full"` selects all four areas with default limits of 100 pa
 separate modes. Deterministic extraction returns links, cleaned HTML and source
 observations; `elapsed_seconds` and usage expose run cost/speed. PDF/document URLs
 ending in `/` are now retained as references rather than selected as HTML pages.
-The [live NOVELIC benchmark](../corpscout/services/company_research/NOVELIC_FULL_CRAWL_20260918.md)
+The [live NOVELIC benchmark](../corpscout/services/crawler_service/NOVELIC_FULL_CRAWL_20260918.md)
 attempted 76 URLs, kept 68 unique captures, deduplicated five redirects, and recorded
 two 404s plus one 403 (`partial`). All 16 discovered job details were captured with
 full JobPosting descriptions. Wall time 510.199s; LLM 263.837s; fetch/render/link
@@ -20,10 +20,10 @@ job/technology analysis, S3 upload, database write or deployment ran. An earlier
 diagnostic was stopped to fix `.pdf/` filtering and is recorded separately.
 255 tests passed with 14 optional/live skips, including CLI/REST/real JetStream;
 portable hash replay, ClickHouse mapping, Ruff, type checks and lock checks passed.
-Artifacts: `../corpscout/services/company_research/data/novelic-full-crawl-20260918-verified/`.
+Artifacts: `../corpscout/services/crawler_service/data/novelic-full-crawl-20260918-verified/`.
 
 **Collection scope narrowed (v0.28.0).** CLI (`company-research` and
-`company-research-crawl`), REST and JetStream now share the collection-only path.
+`crawler-service-crawl`), REST and JetStream now share the collection-only path.
 Default compact selection requests contacts, job listings/descriptions, company
 information and financial/report links, with no technology objective or engineering
 reserve. Custom instructions, explicit lists and site-info retain their behavior.
@@ -38,7 +38,7 @@ NOVELIC pages retained all HTML/structured data, all 16 full JobPosting descript
 three emails and three phones, with zero LLM/network calls. No financial-link
 candidates appeared in those pages. Portable replay and ClickHouse row mapping
 passed; no new S3 upload, database write or service deployment was performed.
-Receipt: `../corpscout/services/company_research/data/novelic-collection-only-replay-20260918/summary.json`.
+Receipt: `../corpscout/services/crawler_service/data/novelic-collection-only-replay-20260918/summary.json`.
 
 **Page observations implemented (v0.27.0).** Every successfully captured page now
 collects metadata, JSON-LD/microdata, readable text, contacts/profile links,
@@ -50,26 +50,26 @@ remains supported. Analysis preserves them without expanding model prompts.
 Migration 422 adds `page_observations` to ClickHouse storage/latest/S3 projections.
 It is applied live (clean ledger 422); the S3 and stored projections were compared
 with the new NOVELIC result and match exactly. The receipt is in
-`../corpscout/services/company_research/data/page-observations-20260918/summary.json`.
+`../corpscout/services/crawler_service/data/page-observations-20260918/summary.json`.
 The fresh NOVELIC homepage/Careers run captured 39 JSON-LD nodes with zero model
 calls, passed replay checks and retained only its `result.json` locally. This is
 HTML collection parity work; Wappalyzer, embedding and NACE processing are not run.
-See [the observation contract](../corpscout/services/company_research/PAGE_OBSERVATIONS.md)
-and [local capture](../corpscout/services/company_research/data/novelic-observations-20260918/result.json).
+See [the observation contract](../corpscout/services/crawler_service/PAGE_OBSERVATIONS.md)
+and [local capture](../corpscout/services/crawler_service/data/novelic-observations-20260918/result.json).
 
 **ClickHouse website results implemented (v0.26.0).** Migrations 420/421 add
 `corpscout.website_crawl_results`, its latest-per-domain/stage view, and
 `corpscout.website_crawl_results_s3` for direct RustFS JSON queries. Sections such
 as jobs/services/contacts are separate validated JSON-text columns. Unprocessed
 sections remain NULL. Raw crawl and LLM-analysis stages remain separate, and
-reimported results deduplicate by canonical content ID. `company-research-clickhouse`
+reimported results deduplicate by canonical content ID. `crawler-service-clickhouse`
 imports exact S3 paths or local result JSON. Import is explicit; no background
 consumer or new crawler acknowledgement dependency was added. Existing NOVELIC
 S3 bundles and a saved partial GLM analysis populate the live table. Named-collection
 administration was enabled for the ClickHouse administrator without restarting the
 database, and infrastructure configuration preserves it on future deployments.
-See [the query/import guide](../corpscout/services/company_research/CLICKHOUSE.md)
-and [live receipt](../corpscout/services/company_research/data/clickhouse-results-20260917/summary.json).
+See [the query/import guide](../corpscout/services/crawler_service/CLICKHOUSE.md)
+and [live receipt](../corpscout/services/crawler_service/data/clickhouse-results-20260917/summary.json).
 
 **S3/JetStream results implemented (v0.25.0).** Set `CRAWL_S3_BUCKET` or
 `--s3-bucket` to enable uploads for NATS requests. The worker writes deterministic
@@ -84,31 +84,31 @@ RustFS tests do not imply that the remote systemd service was deployed.
 The complete Python 3.14 suite passed (226 tests, seven skips), along with Ruff,
 changed-module type checks, Ansible syntax/lint and its locked deployment build.
 All 33 service tests also passed on Python 3.12.12.
-See [the delivery contract](../corpscout/services/company_research/SERVICE.md#s3-results-and-completion-events)
-and [live RustFS/NOVELIC receipt](../corpscout/services/company_research/data/s3-delivery-20260917/summary.json).
+See [the delivery contract](../corpscout/services/crawler_service/SERVICE.md#s3-results-and-completion-events)
+and [live RustFS/NOVELIC receipt](../corpscout/services/crawler_service/data/s3-delivery-20260917/summary.json).
 
 **Optional artifacts implemented (v0.24.0).** Detailed crawl files remain enabled
 by default during development. `--no-save-artifacts` or REST/JetStream
 `"save_artifacts": false` retains just `result.json` in each crawl attempt;
 durable service request/job files remain. Schema `company-crawl-result/1.1`
 bundles cleaned/rendered HTML and the complete page input, allowing later analysis
-with `company-research-pages --crawl result.json` without recrawling. Temporary
+with `crawler-service-pages --crawl result.json` without recrawling. Temporary
 working/replay files are cleaned on exit; retained historical captures still work.
 205 Python tests passed (seven existing/optional skips), including real JetStream
 tests. Fresh NOVELIC CLI/REST/JetStream runs all saved only their bundled result,
 and all three results passed replay validation. See the
-[retention guide](../corpscout/services/company_research/CRAWL_AND_ANALYZE.md#artifact-retention)
-and [live receipt](../corpscout/services/company_research/data/artifact-retention-20260917/summary.json).
+[retention guide](../corpscout/services/crawler_service/CRAWL_AND_ANALYZE.md#artifact-retention)
+and [live receipt](../corpscout/services/crawler_service/data/artifact-retention-20260917/summary.json).
 
 **Service relocated.** The complete package, local crawl data, tests, benchmarks,
-lockfile and documentation now live in `companycollect/corpscout/services/company_research`.
+lockfile and documentation now live in `companycollect/corpscout/services/crawler_service`.
 Run service commands from that directory. Python imports and command names are
-unchanged; [the service guide](../corpscout/services/company_research/SERVICE.md)
+unchanged; [the service guide](../corpscout/services/crawler_service/SERVICE.md)
 is the current entry point. Frozen run artifacts retain their original recorded
 paths as provenance; active code, reproduction commands and document links use the
 new location.
 
-**Local crawl service implemented (v0.23.0).** `company-research-service` starts
+**Local crawl service implemented (v0.23.0).** `crawler-service-service` starts
 REST, NATS JetStream, or both, calling the existing crawler. REST submits durable
 local jobs and offers status/result polling. JetStream uses a durable pull consumer,
 progress acks, and completion acks after readable local JSON publication. Stable
@@ -120,19 +120,19 @@ The existing crawl CLI retains its flags/stdout and now additionally writes
 available for later analysis. Remote output/event publishing was added in v0.25.
 Partial configuration overrides retain the chosen API's model defaults.
 
-Read [service startup, API, message and output contracts](../corpscout/services/company_research/SERVICE.md).
+Read [service startup, API, message and output contracts](../corpscout/services/crawler_service/SERVICE.md).
 The package has its own `uv.lock`, optional `service` dependencies, `.env.example`
 and request examples. An actual-process NOVELIC Careers smoke test passed via CLI,
 REST and JetStream: one page each, 79,294 HTML characters, zero model calls, no
 pending JetStream ack; artifacts are in
-`../corpscout/services/company_research/data/service-smoke-20260917/`. Test broker/service processes were
+`../corpscout/services/crawler_service/data/service-smoke-20260917/`. Test broker/service processes were
 stopped afterward. Integration tests use isolated NATS 2.15.0 brokers and a browser
 boundary fixture; `NATS_SERVER` selects the test executable.
 Final validation: 206 package tests on Python 3.12 (six skips), 202 in a fresh
 package-local Python 3.14 service installation (seven skips including optional MCP),
 three selector-benchmark tests, and all five real JetStream tests. Type, Ruff and
 lockfile checks pass. The final live-run and source receipts are in
-`../corpscout/services/company_research/data/service-smoke-20260917/final/`.
+`../corpscout/services/crawler_service/data/service-smoke-20260917/final/`.
 
 **Compact selector model comparison completed.** Replayed the same ten frozen
 NOVELIC batches (187 candidate occurrences, 167 unique URLs) with identical
@@ -145,9 +145,9 @@ GLM is 37.77% faster than fresh DeepSeek; Qwen is cheaper than GLM but much slow
 This is selector replay, not site-info classification or fact extraction; equal
 requested effort does not imply equal reasoning budgets, and caches/providers
 differ. Runtime defaults are unchanged. Read
-[the report](../corpscout/services/company_research/SELECTOR_MODEL_COMPARISON_20260917.md); saved metadata,
+[the report](../corpscout/services/crawler_service/SELECTOR_MODEL_COMPARISON_20260917.md); saved metadata,
 source snapshots, requests, responses and parity audit are under
-`../corpscout/services/company_research/data/selector-model-comparison-20260917/`.
+`../corpscout/services/crawler_service/data/selector-model-comparison-20260917/`.
 The benchmark now accepts API/model/provider/effort/deadline overrides and saves
 partial failures without shrinking the planned denominator. Three HTTP-boundary
 benchmark tests pass; package suite still passes 194 tests with six skips.
@@ -162,8 +162,8 @@ output tokens (78.51% reduction), same 11 model calls, no errors. All captured j
 sections match rendered text and hashes validate. Frozen-input replay: 187/187
 eligibility decisions agree, 82.59% fewer output tokens, ten valid batches.
 
-Read [the benchmark](../corpscout/services/company_research/COMPACT_SELECTOR_RESULTS_20260917.md) and
-[browse final captures](../corpscout/services/company_research/data/compact-selector-20260917/index.html).
+Read [the benchmark](../corpscout/services/crawler_service/COMPACT_SELECTOR_RESULTS_20260917.md) and
+[browse final captures](../corpscout/services/crawler_service/data/compact-selector-20260917/index.html).
 Broader initial-prompt checks captured all 13 listed Oxide jobs, preserved Vensas's
 explicit no-vacancy text but reached its 15-call budget, and found RT-Labs's Swedish
 vacancy with two 404s from unresolved source-template links. General language
@@ -190,14 +190,14 @@ first-page-only. Failed/unmatched evidence returns an unknown brief, not company
 claims. With a list, the flag explicitly adds the input page and applies the gate
 before any listed pages; that page counts toward the budget.
 
-Read [usage](../corpscout/services/company_research/CRAWL_AND_ANALYZE.md) and
-[live validation](../corpscout/services/company_research/SITE_INFO_RESULTS_20260917.md). NOVELIC and B92
+Read [usage](../corpscout/services/crawler_service/CRAWL_AND_ANALYZE.md) and
+[live validation](../corpscout/services/crawler_service/SITE_INFO_RESULTS_20260917.md). NOVELIC and B92
 each used one page and one model call: NOVELIC returned 100 words in four sentences
 in 10s; B92 returned 71 words in three sentences in 12s with skip_crawling. Both
 returned identical output fields, valid capture hashes and no errors or follow-up
 requests. 192 package tests ran successfully with six skipped; type/lint checks passed.
 The editable v0.21.0 package is installed. Outputs remain local under
-`../corpscout/services/company_research/data/site-info-20260917/`; no full fact extraction or NACE lookup ran.
+`../corpscout/services/crawler_service/data/site-info-20260917/`; no full fact extraction or NACE lookup ran.
 
 **NOVELIC custom-instruction crawl verified (v0.20.0).** Starting only from the
 homepage with jobs instructions, the crawler found Careers and captured all 16
@@ -206,8 +206,8 @@ All job-content sections match the rendered source text; capture hashes validate
 The exact two-page list also passed with zero model calls; Careers/Contact plus
 jobs instructions fetched only Careers and stayed within the supplied list.
 No fact extraction was run and no runtime changes were needed. Read
-[the live-test report](../corpscout/services/company_research/NOVELIC_JOBS_CRAWL_20260917.md) and browse
-[the local HTML index](../corpscout/services/company_research/data/novelic-jobs-instructions-20260917/index.html).
+[the live-test report](../corpscout/services/crawler_service/NOVELIC_JOBS_CRAWL_20260917.md) and browse
+[the local HTML index](../corpscout/services/crawler_service/data/novelic-jobs-instructions-20260917/index.html).
 Discovery used 86,972 input / 126,343 output tokens; API prices were not returned.
 This establishes 16/16 coverage of the captured Careers links, not whole-site
 completeness or independent vacancy validity. The current selector is functional
@@ -241,8 +241,8 @@ followed by the live NOVELIC validation recorded above.
 
 **Crawl and analysis separated (v0.19.0).** The current user direction is to collect
 useful pages as simple HTML locally, then process those saved pages in a separate
-LLM stage. Read [the two-stage guide](../corpscout/services/company_research/CRAWL_AND_ANALYZE.md).
-`company_research.crawl.crawl_company` / `company-research-crawl` returns a
+LLM stage. Read [the two-stage guide](../corpscout/services/crawler_service/CRAWL_AND_ANALYZE.md).
+`crawler_service.crawl.crawl_company` / `crawler-service-crawl` returns a
 `company-crawl/1.0` manifest and saves cleaned HTML plus source metadata. Supplying
 `pages` / repeated `--page` crawls only those URLs, with no LLM calls, automatic
 homepage, sitemap or link following. Automatic mode reuses the eligibility gate,
@@ -250,8 +250,8 @@ sitemap discovery and objective-balanced link selection. Extraction-dependent
 coverage, verified job follow-ups and yield feedback are unavailable in this stage;
 page order and coverage are not claimed to match an interleaved run exactly.
 
-`company_research.analysis.analyze_pages` owns saved-page extraction and final
-classification; the existing `company-research-pages` CLI now accepts `--crawl`.
+`crawler_service.analysis.analyze_pages` owns saved-page extraction and final
+classification; the existing `crawler-service-pages` CLI now accepts `--crawl`.
 The manifest, failed captures and partial status survive analysis. Paths, target
 identity and content hashes are validated before model calls. Source captures stay
 unchanged and can be moved as a folder or replayed under different model settings.
@@ -264,12 +264,12 @@ checks passed. Installed the editable v0.19.0 package and verified both CLI help
 interfaces. A real CloakBrowser/Crawl4AI run against a local HTTP fixture captured
 two supplied pages, retained JavaScript-rendered content in cleaned HTML, made zero
 model calls and requested no extra page or sitemap. Its local output is
-`../corpscout/services/company_research/data/crawl-split-smoke-20260917/`. No paid model experiment or
+`../corpscout/services/crawler_service/data/crawl-split-smoke-20260917/`. No paid model experiment or
 new public-site benchmark was performed for this split.
 
 **GLM comparison completed (v0.18.1).** Read
-[the comparison](../corpscout/services/company_research/NOVELIC_GLM_COMPARISON_20260917.md) and its
-[JSON summary](../corpscout/services/company_research/NOVELIC_GLM_COMPARISON_20260917.json). GLM 5.3 Flash
+[the comparison](../corpscout/services/crawler_service/NOVELIC_GLM_COMPARISON_20260917.md) and its
+[JSON summary](../corpscout/services/crawler_service/NOVELIC_GLM_COMPARISON_20260917.json). GLM 5.3 Flash
 through OpenRouter/Parasail, low reasoning and a 900-second deadline, processed the
 same 26 saved NOVELIC pages in 24m22s: 78 calls, 3,617,798 input / 240,591 output
 tokens, $0.62288 reported. Baseline DeepSeek high used 108 calls and an estimated
@@ -296,7 +296,7 @@ low-reasoning corpus metrics or report failed calls as free.
 
 **Current output boundary: JSON only (v0.18.0).** The user removed the RustFS/S3
 requirement after the NOVELIC evaluation. Removed the uploader, upload command,
-bucket option, storage dependency and lab upload hooks. `company-research-pages`
+bucket option, storage dependency and lab upload hooks. `crawler-service-pages`
 returns one JSON object on stdout, with progress on stderr; local diagnostics are
 optional via `--output`, otherwise temporary work is cleaned up. The Python runner
 returns the same dictionary. Multiple targets use a `results` array inside one
@@ -307,7 +307,7 @@ describe completed experiments, not current behavior. Do not reintroduce uploads
 and audit objects (82,101,127 bytes) were deleted from `crawls/company-research/`
 at the user's request. Object, version, delete-marker and multipart-upload listings
 are empty. Local results and archives remain available. See
-[the deletion receipt](../corpscout/services/company_research/RUSTFS_CLEANUP_RECEIPT.json); historical S3
+[the deletion receipt](../corpscout/services/crawler_service/RUSTFS_CLEANUP_RECEIPT.json); historical S3
 locations below no longer contain data.
 
 Validation: 173 package tests ran successfully, with six skipped. Ruff and type
@@ -317,7 +317,7 @@ has no uploader command or bucket option; HTTP-boundary tests verify single/batc
 JSON output, stderr progress and cleanup of temporary work.
 
 **Fresh NOVELIC scan evaluated; useful recall, integration gate still not passed.**
-Read [the September 17 report](../corpscout/services/company_research/NOVELIC_SCAN_20260917.md). The old
+Read [the September 17 report](../corpscout/services/crawler_service/NOVELIC_SCAN_20260917.md). The old
 autonomous URL controller was explicitly stopped after two pages and 32 calls
 ($0.30838 in returned usage; two requests have unknown usage). The separate guided
 26-page mention-first run completed with 108 calls, 4,729,866 input and 1,224,883
@@ -337,7 +337,7 @@ mechanical tools from the first response. Original attempts are preserved.
 Complete raw JSON and its separate quality audit are retained locally; their
 verified RustFS copies were subsequently deleted. The output remains explicitly
 partial, with 43/407 mentions needing review and
-unestablished site coverage. See [the receipts](../corpscout/services/company_research/NOVELIC_SCAN_RECEIPT.json).
+unestablished site coverage. See [the receipts](../corpscout/services/crawler_service/NOVELIC_SCAN_RECEIPT.json).
 Next fix semantic platform/format guards and preserve valid records during evidence
 repair, then compact repeated source context and replay these frozen pages. Thirteen
 mentions exceeded the application context limit; 25 classification decisions omitted
@@ -351,7 +351,7 @@ classification call, with 112- and 152-word descriptions. No sitemap or further 
 was requested. Google's first-page fetch was denied by Crawl4AI's robots check,
 so it returned `needs_review` without a model call. Fixed the fetch adapter's handling
 of the bare CrawlResult returned on robots denial; preserved original failures and
-the corrected retry. See [the report](../corpscout/services/company_research/SITE_GATE_REQUESTED_RESULTS.md).
+the corrected retry. See [the report](../corpscout/services/crawler_service/SITE_GATE_REQUESTED_RESULTS.md).
 
 **First-page company eligibility gate implemented (v0.17.0 / schema 1.11).**
 The URL crawler fetches and classifies its first page before sitemap discovery,
@@ -361,11 +361,11 @@ description of at most 200 words, even if a company operates them. Unclear, bloc
 or failed classifications stop with `needs_review`; no exploratory follow-up is
 allowed before admission. Company/product/service sites can continue. Saved-page
 extraction remains a unit/replay tool, and external job evidence is not independently
-rejected as a target site. Read [the validation report](../corpscout/services/company_research/SITE_GATE_RESULTS.md).
+rejected as a target site. Read [the validation report](../corpscout/services/crawler_service/SITE_GATE_RESULTS.md).
 
 **Implemented: mention-first page workflow and complete RustFS submission (v0.16.0).**
 Read [the results](page_agent_lab/MENTION_FLOW_RESULTS.md) and
-[the running guide](../corpscout/services/company_research/PAGE_RESEARCH.md). Seven saved pages produced
+[the running guide](../corpscout/services/crawler_service/PAGE_RESEARCH.md). Seven saved pages produced
 88 mentions, 174 other records and 446 links across five companies. Final complete
 JSON revisions were uploaded to the existing `crawls` bucket with read-back checksums.
 22/23 selected semantic controls passed; the unsupported AMD partnership is retained
@@ -392,7 +392,7 @@ catalog creation, proposal submission or other system integration is part of the
 current crawler task.
 
 **Current contract: return ALL research results as a JSON object.**
-Read [the output contract](../corpscout/services/company_research/TECHNOLOGY_MENTION_STORAGE.md).
+Read [the output contract](../corpscout/services/crawler_service/TECHNOLOGY_MENTION_STORAGE.md).
 The crawler returns a complete, versioned JSON object containing
 all objective results, raw mentions, original source/context text, final
 classifications, links, provenance, coverage and errors. Include known, unknown,
@@ -411,7 +411,7 @@ context, vendor partnerships), then resolve catalog identities. Keep raw mention
 immutable; unknown use is not false. This changes the earlier plan to tighten
 technology filtering in the page request: retain candidate context there and
 apply catalog eligibility in the final pass. Read
-[the detailed contract and prompt examples](../corpscout/services/company_research/TECHNOLOGY_MENTION_DESIGN.md).
+[the detailed contract and prompt examples](../corpscout/services/crawler_service/TECHNOLOGY_MENTION_DESIGN.md).
 Design saved; no runtime/schema change or new model test yet. Reuse the older
 statement pipeline's concepts without its full review chain or forced role scope.
 Next test must collect mentions from saved pages afresh, not only reclassify the
@@ -508,20 +508,20 @@ The [run receipt](page_agent_lab/RUN_RECEIPT.json) points to a verified 146-file
 archive under `/Users/graovic/pulsarpoint/company-research-snapshots/`.
 
 **Design direction: one page agent returns page data and scored visit targets.**
-Read [PAGE_AGENT_DESIGN.md](../corpscout/services/company_research/PAGE_AGENT_DESIGN.md). The coordinator
+Read [PAGE_AGENT_DESIGN.md](../corpscout/services/crawler_service/PAGE_AGENT_DESIGN.md). The coordinator
 persists page results, updates the existing queue and dispatches pending targets
 by priority. Each agent's factual context is its one page; company merge and catalog
 resolution follow. The standalone unit and comparison are implemented; the main
 crawler is unchanged. Integrate scheduling only after the remaining validation
 and objective-boundary gaps are addressed, then run an uninterrupted comparison.
-**Tested variant:** [two-pass page analysis](../corpscout/services/company_research/PAGE_AGENT_TWO_PASS.md):
+**Tested variant:** [two-pass page analysis](../corpscout/services/crawler_service/PAGE_AGENT_TWO_PASS.md):
 multi-label routing over all objectives, then selected specialists with their own
 prompts/examples and the original page as evidence. Compare against one-pass
 extraction under the same outer contract. Measure routing misses separately from
 extractor errors, and count all worker calls. See the completed pilot above.
 
 **DSPy RLM postponed by the user.** No implementation or model run has started.
-Keep [DSPY_RLM_PLAN.md](../corpscout/services/company_research/DSPY_RLM_PLAN.md) as a saved proposal;
+Keep [DSPY_RLM_PLAN.md](../corpscout/services/crawler_service/DSPY_RLM_PLAN.md) as a saved proposal;
 do not begin it unless the user resumes it. Current focus is the existing Crawl4AI
 and direct DeepSeek workflow. The Handelsbanken results support a supervised pilot,
 but do not establish reliable, complete research from a URL without intervention.
@@ -537,12 +537,12 @@ contact attribution; then run a fresh autonomous regression against the saved
 source-audited expectations. Measure elapsed time and calls as well as quality.
 These are next steps, not fixes already implemented. High reasoning remains a
 promising explicit setting for technology work; global defaults are unchanged.
-The [baseline receipt](../corpscout/services/company_research/RESEARCH_BASELINE_20260916.md) records the
+The [baseline receipt](../corpscout/services/crawler_service/RESEARCH_BASELINE_20260916.md) records the
 Git branches, local archive and verified manifest of the saved research.
 
 **Handelsbanken source-audited analysis and high/low comparison completed. Runtime 0.15.2.**
-Read [HANDELSBANKEN_ANALYSIS.md](../corpscout/services/company_research/HANDELSBANKEN_ANALYSIS.md) and
-`../corpscout/services/company_research/data/handelsbanken-20260916-review/company-analysis.json`.
+Read [HANDELSBANKEN_ANALYSIS.md](../corpscout/services/crawler_service/HANDELSBANKEN_ANALYSIS.md) and
+`../corpscout/services/crawler_service/data/handelsbanken-20260916-review/company-analysis.json`.
 The original low-reasoning analysis uses direct `deepseek-flash` (DeepSeek V4.1 Flash),
 not OpenRouter. The public Python API accepts `api="deepseek"`; the CLI still uses
 OpenRouter. No backend submission or deployment.
@@ -574,8 +574,8 @@ The saved Microsoft 365/Exchange replay recovered four observations. 144 regular
 and all four browser integration tests passed; source Ruff and type checks passed.
 
 **Completed reasoning experiment:** read
-[HANDELSBANKEN_REASONING_COMPARISON.md](../corpscout/services/company_research/HANDELSBANKEN_REASONING_COMPARISON.md)
-and `../corpscout/services/company_research/data/handelsbanken-20260916-reasoning/comparison.json`.
+[HANDELSBANKEN_REASONING_COMPARISON.md](../corpscout/services/crawler_service/HANDELSBANKEN_REASONING_COMPARISON.md)
+and `../corpscout/services/crawler_service/data/handelsbanken-20260916-reasoning/comparison.json`.
 Fresh paired low/high runs over the same 16 IT snapshots used 0.15.2, identical
 prompts, stable page ordering, local catalog and budgets. Identity controls: **31/38
 low, 36/38 high**; strict signal/scope: 29/38 and 33/38. Accepted observations: 107/113.
@@ -604,14 +604,14 @@ Recommendation: high is promising for technology work; retain low for routine li
 assessment. Fix role/team attribution, separate retained source identity from proposal
 metadata readiness, and explicitly exclude regulations/standards/generic categories
 from the specific-product technology catalogue. Defaults were not globally changed.
-The benchmark harness and audit are in `../corpscout/services/company_research/benchmarks/compare_reasoning.py`
+The benchmark harness and audit are in `../corpscout/services/crawler_service/benchmarks/compare_reasoning.py`
 and `audit_reasoning.py`; executed code and all artifacts are frozen in the run folder.
 Do not rerun or overwrite this completed experiment unless asked.
 
 ## Previous external-link implementation
 
 **External-link context implemented — 0.15.0, research schema 1.10.** Read
-[EXTERNAL_LINKS.md](../corpscout/services/company_research/EXTERNAL_LINKS.md). Every successfully fetched
+[EXTERNAL_LINKS.md](../corpscout/services/crawler_service/EXTERNAL_LINKS.md). Every successfully fetched
 page now produces a separate external-link inventory before model work and crawl
 exclusions. Full URLs retain query strings/fragments; observations preserve source
 page, fetch time, HTML hash/file, anchor/logo text, DOM region, heading and nearby text.
@@ -635,7 +635,7 @@ source text from hints and always say `independently_verified=false`. They do no
 create `company_relationships`, summary facts or backend mappings. A header alone
 does not prove a business affiliation; a partner is not automatically a subsidiary.
 
-Saved replay: `../corpscout/services/company_research/data/external-links-v015/`, six prior cleaned-HTML
+Saved replay: `../corpscout/services/crawler_service/data/external-links-v015/`, six prior cleaned-HTML
 pages, no recrawl. 49 occurrences (Memgraph 13, Oxide 24, RT-RK 12). Direct DeepSeek
 smoke: three calls, all 49 ID/schema/evidence checks passed, including 14 unknown and
 30 contextual-hint assessments. This is not an accuracy score; generic footer social
@@ -653,7 +653,7 @@ completeness and catalog-recovery gaps below remain outstanding.
 ## Previous additional website comparison
 
 **Three additional websites completed — unchanged runtime 0.14.4.** Read
-[DEEPSEEK_MORE_WEBSITES.md](../corpscout/services/company_research/DEEPSEEK_MORE_WEBSITES.md). Memgraph,
+[DEEPSEEK_MORE_WEBSITES.md](../corpscout/services/crawler_service/DEEPSEEK_MORE_WEBSITES.md). Memgraph,
 Oxide and RT-RK, two selected pages each, fetched once as native Crawl4AI cleaned HTML
 and paired across direct `deepseek-flash` and OpenRouter
 `deepseek/deepseek-v4-flash-0731`/Wafer. Same low reasoning, JSON object/schema prompt,
@@ -690,10 +690,10 @@ one invalid JSON and two empty answers; two complete/four partial pages. Direct 
 five unknown-cost deadline calls. Observed total about $0.326584. Direct completed more
 downstream work; this is not equal-output cost or isolated model-version comparison.
 
-Artifacts: `../corpscout/services/company_research/data/deepseek-more-websites-20260911/`, including frozen
+Artifacts: `../corpscout/services/crawler_service/data/deepseek-more-websites-20260911/`, including frozen
 sources/code/catalog/controls, raw calls, comparison, manual review and derived reviewed
 records. The folder uses UTC run date; local completion is 12 September. New reusable
-fetch/compare and offline-audit harnesses are in `../corpscout/services/company_research/benchmarks/`.
+fetch/compare and offline-audit harnesses are in `../corpscout/services/crawler_service/benchmarks/`.
 Ruff, type checking and whitespace checks pass. Offline audit verifies unchanged
 sources/controls/catalog and matching initial prompts; no credential values appear in
 the 315 scanned artifact/code/report files. Validation is saved in `verification.json`.
@@ -706,7 +706,7 @@ defaults changed, backend submissions, admin approvals, deployment or PDF work.
 ## Previous direct API comparison
 
 **Direct DeepSeek comparison completed — 0.14.4.** Read
-[DEEPSEEK_DIRECT_RESULTS.md](../corpscout/services/company_research/DEEPSEEK_DIRECT_RESULTS.md).
+[DEEPSEEK_DIRECT_RESULTS.md](../corpscout/services/crawler_service/DEEPSEEK_DIRECT_RESULTS.md).
 The `DEEPSEEK` credential in `jobs_extraction_lab/.env` is used with
 `https://api.deepseek.com/chat/completions`, model `deepseek-flash` (documented V4.1
 Flash). `ModelClient` supports both API dialects; normal crawler/CLI defaults remain
@@ -730,7 +730,7 @@ were not promoted to accepted specific technologies/company credentials. OpenRou
 failed both extraction attempts at the 120-second deadline: pending extraction, not
 negative findings. This was the optional statement path, not the regular jobs export.
 
-Artifacts: `../corpscout/services/company_research/data/deepseek-direct-20260910/`,
+Artifacts: `../corpscout/services/crawler_service/data/deepseek-direct-20260910/`,
 `deepseek-direct-20260910-job/`, and `deepseek-direct-20260910-smoke/`. Preserve all
 frozen source/HTML, requests, raw responses, controls, summaries and manual audits.
 All runs finished. 110 HTTP attempts total; direct estimated observed-usage cost
@@ -749,8 +749,8 @@ one run. No backend submissions, admin approvals, deployment, recrawl or PDF wor
 
 **Saved attribution/evidence fixes implemented and tested — 0.14.3**, optional schema
 **page-statements/1.3**, regular schema 1.9. Read
-[ATTRIBUTION_REPLAY_RESULTS.md](../corpscout/services/company_research/ATTRIBUTION_REPLAY_RESULTS.md) and
-[the final audit](../corpscout/services/company_research/data/attribution-audit-v0143/summary.json).
+[ATTRIBUTION_REPLAY_RESULTS.md](../corpscout/services/crawler_service/ATTRIBUTION_REPLAY_RESULTS.md) and
+[the final audit](../corpscout/services/crawler_service/data/attribution-audit-v0143/summary.json).
 
 The package checks reconstructed actors separately from prose, allows bounded
 source-supported actor corrections, repairs their quotations without changing facts,
@@ -771,7 +771,7 @@ Do not claim exhaustive recall or production readiness.
 Artifacts: full four-case replay `attribution-replay-v0141`, DMC recovery
 `attribution-recovery-v0142`, focused five-description evidence recovery
 `attribution-recovery-v0143`, and derived audited JSON in `attribution-audit-v0143`,
-all under `../corpscout/services/company_research/data/`. The interrupted `attribution-replay-v014` pilot is
+all under `../corpscout/services/crawler_service/data/`. The interrupted `attribution-replay-v014` pilot is
 preserved separately. Total this turn: **62 calls, $0.09172215 reported, 13 unknown-cost
 calls**. All runs ended; no deployment, DB submission, or PDF work. The final focused
 run matches its 0.14.3 source; older phases retain their own frozen implementations.
@@ -788,14 +788,14 @@ coverage remains untested.
 
 **Fresh five-company benchmark complete — 0.13.0**, optional statement schema
 **page-statements/1.2**; regular research schema remains 1.9. Read
-[FRESH_COMPANY_BENCHMARK.md](../corpscout/services/company_research/FRESH_COMPANY_BENCHMARK.md) and the
-[audited output index](../corpscout/services/company_research/data/fresh-company-statements-v1/README.md).
+[FRESH_COMPANY_BENCHMARK.md](../corpscout/services/crawler_service/FRESH_COMPANY_BENCHMARK.md) and the
+[audited output index](../corpscout/services/crawler_service/data/fresh-company-statements-v1/README.md).
 The optional workflow is **not ready for default use**.
 
 Multiple relationships are implemented. The isolated saved MCAP regression returned
 stated_use/role AND preferred_experience/role and both passed source review: two calls,
 $0.00176125, no unknown costs. It did not rerun catalog metadata or change the historical
-NOVELIC benchmark score. Artifacts: `../corpscout/services/company_research/data/mcap-multiple-relationships-v013/`.
+NOVELIC benchmark score. Artifacts: `../corpscout/services/crawler_service/data/mcap-multiple-relationships-v013/`.
 
 The fresh frozen run used DMC, Plausible, thoughtbot, OnLogic and IC Resources, starting
 from homepages only, two sites at a time. Same native Crawl4AI HTML, frozen catalog,
@@ -845,7 +845,7 @@ repeat this entire five-site crawl without a new instruction.
 
 **Page description review and individual recovery completed:** package **0.12.3**,
 regular research schema **1.9**, optional output schema **page-statements/1.1**.
-Read [PAGE_STATEMENTS_REVIEW_RESULTS.md](../corpscout/services/company_research/PAGE_STATEMENTS_REVIEW_RESULTS.md).
+Read [PAGE_STATEMENTS_REVIEW_RESULTS.md](../corpscout/services/crawler_service/PAGE_STATEMENTS_REVIEW_RESULTS.md).
 
 Descriptions are checked against each page's native cleaned HTML; minimal corrections
 need another source check. Names, company/holder, job and provenance are supplied by
@@ -855,7 +855,7 @@ job scope preserved. Catalog resolution also uses required per-item keys and ret
 good decisions. Final acceptance validates generic names and credential document
 metadata when loading saved findings as well as fresh model output.
 
-Final artifacts: `../corpscout/services/company_research/data/novelic-page-statements-v2-validated/`.
+Final artifacts: `../corpscout/services/crawler_service/data/novelic-page-statements-v2-validated/`.
 Start with `accepted-observations.json`; full records and accepted IDs are in
 `statement-result.json`. Read `comparison.json`, `manual-audit.json` and `manifest.json`
 for controls, remaining holds, cost and implementation provenance. Final result SHA256:
@@ -890,7 +890,7 @@ recovery experiment, not a fresh production crawl or controlled model comparison
 Verification covers **123 Python tests including three browser tests** (120 regular
 tests in the final run; browser tests passed in the preceding full run), Ruff,
 source/focused type checks, 0.12.3 wheel/source builds, diff checking and six saved-source
-hashes. Broad `ty check company_research` reports 19 diagnostics in benchmark scripts
+hashes. Broad `ty check crawler_service` reports 19 diagnostics in benchmark scripts
 and tests; do not describe that broad check as clean.
 The optional workflow is not enabled in default extraction;
 shared catalog handling and saved-finding acceptance guards did change. No active
@@ -909,12 +909,12 @@ normalization, raw-source meaning checks and catalog/proposal processing. The de
 crawler extraction is unchanged. The dedicated experimental JSON uses schema
 `page-statements/1.0`. Added `develops` / `offers` relationships to Python and the
 backoffice boundary. Read
-[PAGE_STATEMENTS_EXPERIMENT.md](../corpscout/services/company_research/PAGE_STATEMENTS_EXPERIMENT.md).
+[PAGE_STATEMENTS_EXPERIMENT.md](../corpscout/services/crawler_service/PAGE_STATEMENTS_EXPERIMENT.md).
 
-Prompts: `../corpscout/services/company_research/src/company_research/statement_prompts.py`.
-Implementation: `../corpscout/services/company_research/src/company_research/statements.py`.
-Artifacts: `../corpscout/services/company_research/data/novelic-page-statements-v1/` and
-`../corpscout/services/company_research/data/novelic-page-statements-v1-recovered/`.
+Prompts: `../corpscout/services/crawler_service/src/crawler_service/statement_prompts.py`.
+Implementation: `../corpscout/services/crawler_service/src/crawler_service/statements.py`.
+Artifacts: `../corpscout/services/crawler_service/data/novelic-page-statements-v1/` and
+`../corpscout/services/crawler_service/data/novelic-page-statements-v1-recovered/`.
 The recovery result SHA256 is
 `01a1dd12ad2f232500ec4f60581aa18fa5874354b495bdeff8edb47486805259`.
 `manual-audit.json` records findings and final source verification; original run
@@ -962,9 +962,9 @@ proposal descriptions/categories with bounded review. Metadata failure no longer
 causes HTML re-extraction. Required review gates and metadata hashes are enforced by
 the Python submission filter and backoffice boundary; administrator approval remains.
 Source review no longer sees generated technology context or proposed definitions.
-Read [the completed metadata replay report](../corpscout/services/company_research/NOVELIC_METADATA_REPLAY.md).
+Read [the completed metadata replay report](../corpscout/services/crawler_service/NOVELIC_METADATA_REPLAY.md).
 
-Final artifacts: `../corpscout/services/company_research/data/novelic-metadata-v18-final/`.
+Final artifacts: `../corpscout/services/crawler_service/data/novelic-metadata-v18-final/`.
 Frozen replay: 86 original observations from the previous completed NOVELIC run,
 123 versions after linked corrections, zero new crawler fetches or HTML extractions.
 All **19 known engineering overstatements** now pass as advertised expertise, and all
@@ -1005,8 +1005,8 @@ as pending, and compares separately stored credential versions correctly.
 `git diff --check` pass. Integrity/controller audits have no issues. No submissions,
 deployment or backoffice changes in this turn. PDF/OCR remains paused.
 
-Read [the completed controller report](../corpscout/services/company_research/NOVELIC_CONTROLLER_RECHECK.md).
-Final artifacts: `../corpscout/services/company_research/data/novelic-autonomous-v17-completed/`.
+Read [the completed controller report](../corpscout/services/crawler_service/NOVELIC_CONTROLLER_RECHECK.md).
+Final artifacts: `../corpscout/services/crawler_service/data/novelic-autonomous-v17-completed/`.
 The 24-page budget yielded 23 successful fetches and one broken mechanical URL.
 All 16 checked Careers listings remain; all five fetched descriptions yield accepted
 jobs (previously three). The Data Engineer posting retains its actual URL and 11
@@ -1062,8 +1062,8 @@ integrity audits returned no issues. Logs and code hashes are saved in the final
 artifact's `verification/` and `verification.json`. Backoffice was not changed or
 retested during this final scope/meaning pass.
 
-Read [the completed report](../corpscout/services/company_research/NOVELIC_SCOPE_RECHECK.md) and
-`../corpscout/services/company_research/data/novelic-autonomous-v16-validated/source-audit-issues.json`.
+Read [the completed report](../corpscout/services/crawler_service/NOVELIC_SCOPE_RECHECK.md) and
+`../corpscout/services/crawler_service/data/novelic-autonomous-v16-validated/source-audit-issues.json`.
 The final derived JSON and 23-statement overview are in that directory. It includes
 10 accepted technology observations across nine identities, all from job descriptions.
 CI/CD, a quality landing page misidentified as a certificate, and an overly broad
@@ -1094,8 +1094,8 @@ Technology submission now excludes unaccepted claims and evidence; the backoffic
 enforces the same acceptance boundary. All 67 Python tests (including actual browser
 closure/recovery and exhaustion) and 34 backoffice tests passed, along with Ruff,
 ty and wheel/source builds. The homepage-only NOVELIC run is saved under
-`../corpscout/services/company_research/data/novelic-autonomous-v15/`; it finished partial at the 24-page
-budget. Read the [autonomous report](../corpscout/services/company_research/NOVELIC_AUTONOMOUS_RESULTS.md)
+`../corpscout/services/crawler_service/data/novelic-autonomous-v15/`; it finished partial at the 24-page
+budget. Read the [autonomous report](../corpscout/services/crawler_service/NOVELIC_AUTONOMOUS_RESULTS.md)
 and its source-audit issues before consuming any output. It starts without guided page seeds and uses native Crawl4AI HTML,
 DeepSeek/Together, and the saved 7,981-entry catalog from the MCP test.
 
@@ -1111,17 +1111,17 @@ has been performed. Reported model charges were $0.20520180 plus eight calls wit
 unknown charges; the run made 124 calls and took 49 minutes 23 seconds.
 
 **Catalog MCP follow-up, 8 September:** package 0.6.0 now provides a
-[technology catalog MCP server](../corpscout/services/company_research/TECHNOLOGY_MCP.md). It refreshes
+[technology catalog MCP server](../corpscout/services/crawler_service/TECHNOLOGY_MCP.md). It refreshes
 from ClickHouse at startup, exposes search/details/categories, and prepares new
 technology drafts with mandatory description and category ID/suggestion. The
 existing submission/backoffice review flow remains responsible for persistence and
 approval. The live MCP test read all 7,981 technologies and prepared an ADS draft
 without a database write. Read-only stdio, the shared DeepSeek tool loop and proposal
 validation passed 60 package tests and 28 backoffice tests. Deployment remains out
-of scope. Artifacts: `../corpscout/services/company_research/data/catalog-mcp-live-v06-final/`.
+of scope. Artifacts: `../corpscout/services/crawler_service/data/catalog-mcp-live-v06-final/`.
 
 **Follow-up completed:** package 0.5.0 / schema 1.4 and the
-[NOVELIC recheck report](../corpscout/services/company_research/NOVELIC_RECHECK_RESULTS.md) now supersede
+[NOVELIC recheck report](../corpscout/services/crawler_service/NOVELIC_RECHECK_RESULTS.md) now supersede
 the extraction/discovery baseline discussed below. The report links the company
 JSON, frozen engineering replay and guided Careers/application extraction.
 They recovered 16 distinct management people, 16 Careers listings, five preferred
@@ -1189,7 +1189,7 @@ Existing benchmark originals and outputs remain unchanged.
 - Owners, subsidiaries, partners, customers and suppliers are distinct relations.
   Website certification claims are not independent certificate verification.
 
-The [package README](../corpscout/services/company_research/README.md) describes the implemented API,
+The [package README](../corpscout/services/crawler_service/README.md) describes the implemented API,
 CLI, defaults and limits. Current source has nine objectives, package version
 0.4.0 and result schema 1.3. Historical benchmark outputs use older versions;
 their accepted categories must not override the policy above.
@@ -1228,19 +1228,19 @@ and [Codex CLI](https://learn.chatgpt.com/docs/codex/cli).
 
 Our crawler already reads `/sitemap.xml`, sitemap declarations in `robots.txt`,
 nested sitemap indexes and links from fetched pages in
-[discovery.py](../corpscout/services/company_research/src/company_research/discovery.py). A sitemap is
+[discovery.py](../corpscout/services/crawler_service/src/crawler_service/discovery.py). A sitemap is
 an inventory of candidate URLs; it does not establish which information is present
 or identify every external recruiting/parent-company source. The missing capability
 to evaluate next is targeted source discovery driven by unresolved objectives.
 
-The [earlier pattern analysis](../corpscout/services/company_research/reference_analysis/novelic-01a07c8e/analysis.md)
-and [pattern definitions](../corpscout/services/company_research/reference_analysis/novelic-01a07c8e/patterns.json)
+The [earlier pattern analysis](../corpscout/services/crawler_service/reference_analysis/novelic-01a07c8e/analysis.md)
+and [pattern definitions](../corpscout/services/crawler_service/reference_analysis/novelic-01a07c8e/patterns.json)
 remain useful. Their 66-item snapshot was taken while the task was running;
 use the completed export above when discussing completed action counts.
 
 ## Concrete crawler issues to revisit
 
-The preserved [NOVELIC run](../corpscout/services/company_research/data/novelic-profile-20260907T152619Z/result.json)
+The preserved [NOVELIC run](../corpscout/services/crawler_service/data/novelic-profile-20260907T152619Z/result.json)
 ended `partial` at an eight-target page budget. Six pages fetched, two failed;
 three of the fetched pages had partial extraction. This was an older prompt/run,
 not a measurement of the current prompt's accuracy.
@@ -1259,7 +1259,7 @@ not a measurement of the current prompt's accuracy.
 
 The current prompt already excludes generic technology categories and asks for
 described services. Those edits still need measured end-to-end validation.
-Earlier [technology results](../corpscout/services/company_research/TECHNOLOGY_RESULTS.md) include
+Earlier [technology results](../corpscout/services/crawler_service/TECHNOLOGY_RESULTS.md) include
 categories now excluded; use their fixtures for attribution behavior, not as the
 final eligibility standard. Likewise, smoke-test counts are not recall scores.
 
@@ -1277,7 +1277,7 @@ final eligibility standard. Likewise, smoke-test counts are not recall scores.
    sitemap and navigation candidates; extract; then choose useful follow-ups.
    Follow official recruitment destinations and supported parent/subsidiary
    relationships. Add bounded targeted web search when those sources leave gaps.
-   This search extension is proposed, not currently part of `company_research`.
+   This search extension is proposed, not currently part of `crawler_service`.
 4. **Collect document links without parsing.** Suggested fields: document URL,
    discovery-page URL, link label/context, probable type, associated entity,
    stated period/date if visible, evidence, and `content_examined=false`.
@@ -1343,13 +1343,13 @@ work resumes.
 
 | Topic | Starting point |
 |---|---|
-| Direct DeepSeek versus pinned OpenRouter replay and job-page extraction | [DEEPSEEK_DIRECT_RESULTS.md](../corpscout/services/company_research/DEEPSEEK_DIRECT_RESULTS.md) |
-| Standalone crawler, run configuration and current limitations | [../corpscout/services/company_research/README.md](../corpscout/services/company_research/README.md) |
-| Site classification and conditional objectives | [SITE_PROFILE_FLOW.md](../corpscout/services/company_research/SITE_PROFILE_FLOW.md) |
+| Direct DeepSeek versus pinned OpenRouter replay and job-page extraction | [DEEPSEEK_DIRECT_RESULTS.md](../corpscout/services/crawler_service/DEEPSEEK_DIRECT_RESULTS.md) |
+| Standalone crawler, run configuration and current limitations | [../corpscout/services/crawler_service/README.md](../corpscout/services/crawler_service/README.md) |
+| Site classification and conditional objectives | [SITE_PROFILE_FLOW.md](../corpscout/services/crawler_service/SITE_PROFILE_FLOW.md) |
 | Crawl4AI link-selection behavior | [CRAWL4AI_LINK_SELECTION_ANALYSIS.md](jobs_extraction_lab/CRAWL4AI_LINK_SELECTION_ANALYSIS.md) |
 | HTML versus Markdown, repeatability, generic chunks | [NATIVE_CRAWL4AI_RESULTS.md](jobs_extraction_lab/NATIVE_CRAWL4AI_RESULTS.md), [VALIDATED_HTML_RESULTS.md](jobs_extraction_lab/VALIDATED_HTML_RESULTS.md), [HTML_WINDOWS_RESULTS.md](jobs_extraction_lab/HTML_WINDOWS_RESULTS.md) |
 | All-objective extraction and quotation problems | [company_objectives_lab/RESULTS.md](company_objectives_lab/RESULTS.md), [native comparison](company_objectives_lab/NATIVE_RESULTS.md) |
-| Technology identity, company/domain observations and DB plan | [TECHNOLOGY_DB_IMPLEMENTATION_PLAN.md](../corpscout/services/company_research/TECHNOLOGY_DB_IMPLEMENTATION_PLAN.md), [mapping notes](../corpscout/services/company_research/technology_mapping/README.md) |
+| Technology identity, company/domain observations and DB plan | [TECHNOLOGY_DB_IMPLEMENTATION_PLAN.md](../corpscout/services/crawler_service/TECHNOLOGY_DB_IMPLEMENTATION_PLAN.md), [mapping notes](../corpscout/services/crawler_service/technology_mapping/README.md) |
 | Exact prompt, frozen Astra reference and DeepSeek SDK comparison | [company_full_analysis_lab/README.md](company_full_analysis_lab/README.md), [RESULTS.md](company_full_analysis_lab/RESULTS.md) |
 | PDF service design and both OCR benchmarks | Links in the paused-research section above |
 

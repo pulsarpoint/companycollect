@@ -50,7 +50,7 @@ The final browser-service check showed zero active leases.
 ## Evidence
 
 Local runtime evidence is stored in the ignored directory
-`../company_research/data/challenge-real-20260919/`, including before/after
+`../crawler_service/data/challenge-real-20260919/`, including before/after
 captures and screenshots, agent journals, final jobs, original crawl JSON,
 `crawl-summary.json`, and combined metrics in `summary.json`.
 
@@ -103,7 +103,7 @@ Normal crawler request IDs:
 Both results and artifacts were uploaded to S3, including the failed Framework
 attempt. All test leases were released. Captures, screenshots, request payloads,
 job/result JSON, and summaries are under
-`../company_research/data/challenge-repeat-20260919/` (ignored runtime evidence).
+`../crawler_service/data/challenge-repeat-20260919/` (ignored runtime evidence).
 
 These results concern the current saved, headed browser pool after recycling;
 they do not measure headless behavior or how long verification remains accepted.

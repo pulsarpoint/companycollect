@@ -1,7 +1,7 @@
 import { ArrowLeftIcon } from "lucide-react";
 import { Link, Outlet, redirect, useLocation, useNavigation } from "react-router";
 import type { Route } from "./+types/admin-common-crawl-domain";
-import { TechnologySectionTabs } from "~/components/detail/technology-section-tabs";
+import { CommonCrawlSectionTabs } from "~/components/detail/technology-section-tabs";
 import { Badge } from "~/components/ui/badge";
 import { buttonVariants } from "~/components/ui/button";
 import {
@@ -37,12 +37,8 @@ export default function AdminCommonCrawlDomain({
   const navigation = useNavigation();
   const suffix = location.pathname.split("/")[4] ?? "";
   const section =
-    suffix === "technologies" ||
-    suffix === "web-technologies" ||
-    suffix === "infrastructure" ||
-    suffix === "ip-addresses" ||
-    suffix === "mail-security"
-      ? suffix
+    suffix === "technologies" || suffix === "web-technologies"
+      ? "web-technologies"
       : "overview";
 
   return (
@@ -65,15 +61,12 @@ export default function AdminCommonCrawlDomain({
           <Badge variant="outline">Domain evidence</Badge>
         </div>
         <p className="max-w-4xl text-sm text-muted-foreground">
-          Parsed Common Crawl evidence, discovered technologies, DNS records,
-          and associated IP addresses. Each source keeps its observation history.
+          Parsed Common Crawl evidence and technologies detected on archived pages.
         </p>
       </header>
-      <TechnologySectionTabs
+      <CommonCrawlSectionTabs
         basePath={commonCrawlDomainPath(loaderData.domain)}
         section={section}
-        websiteEvidenceOverview
-        mailSecurity
       />
       <Outlet />
     </div>

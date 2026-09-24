@@ -1,5 +1,7 @@
 """Typed Webtech observations and exact/reviewed catalog identity resolution."""
 
+from dagster_v3.defs.webtech.pages import page_identity
+
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -40,6 +42,8 @@ WEBTECH_TECHNOLOGY_COLUMNS = (
     "report_sha256",
     "run_id",
     "recorded_at",
+    "website_origin",
+    "page_url",
 )
 
 
@@ -159,15 +163,13 @@ def technology_rows(
                 reference.sha256,
                 run_id,
                 recorded_at,
+                *page_identity(document.requested_url),
             )
         )
     return rows
 
 
 def insert_technology_rows(client: Client, rows: list[tuple[object, ...]]) -> None:
-    for offset in range(0, len(rows), 50_000):
-        client.execute(
-            f"INSERT INTO corpscout.{WEBTECH_TECHNOLOGY_TABLE} "
-            f"({', '.join(WEBTECH_TECHNOLOGY_COLUMNS)}) VALUES",
-            rows[offset : offset + 50_000],
-        )
+    from dagster_v3.defs.webtech.writes import write_detection_rows
+
+    write_detection_rows(client, rows)

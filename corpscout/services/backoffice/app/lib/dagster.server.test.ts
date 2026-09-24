@@ -529,3 +529,9 @@ describe("dagsterRunUrl", () => {
     expect(dagsterRunUrl("r1")).toBeNull();
   });
 });
+
+it("filters queue task runs across jobs without a recent-runs cutoff", async () => {
+  const {impl, calls} = fetchFake([{data: {runsOrError: {__typename: "Runs", results: []}}}]);
+  await listRuns({limit: 1, tags: {"processing/task_id": "task"}, statuses: ["QUEUED", "STARTED"]}, {fetchImpl: impl, url: URL_OPTION});
+  expect(calls[0].body.variables).toEqual({limit: 1, filter: {tags: [{key: "processing/task_id", value: "task"}], statuses: ["QUEUED", "STARTED"]}});
+});

@@ -277,16 +277,15 @@ contact information is mandatory, not optional.** When you analyse a new source,
 - **`<src>_company_domains` feeds the cross-source graph**: one row per `(registry_id, domain)`,
   website preferred over email, exactly one `is_primary` per `registry_id` via the shared
   `elect_primary_domains()` election rule (website-sourced first, then current, then confidence,
-  then shortest/alphabetical domain); website rows carry `website_url/_normalized_url/_host`. Add a
-  UNION branch + the `domain_source` column to `domains/assets.py` so it lands in
-  `company_website_domains` → `domains`.
+  then shortest/alphabetical domain); website rows carry `website_url/_normalized_url/_host`. Keep the per-source
+  tables authoritative. The former cross-country registry domain aggregates and
+  their `domains_clickhouse` producer were retired on 2026-09-24.
 - Pull contacts on the source's normal cadence; they sit alongside the register, not the financials.
 - **Mandatory alongside currency (§7) and translation (§8).** Reference impl (canonical pair):
   `czech_ares` (`cz_company_contacts`/`cz_company_domains`) and `latvia_ur`
   (`lv_company_contacts`/`lv_company_domains`), both extracted from free-text legal names via the
   shared module below. Estonia reshaped in migration `000096` (data-preserving); Brazil/Norway/
-  Finland/wikidata reshaped in Phase D. **All seven sources now write the canonical pair; Phase E
-  (2026-07-05) switched the domain graph to read only the seven `<src>_company_domains` tables.**
+  Finland/wikidata reshaped in Phase D. **All seven sources write the canonical pair.**
 - **The pre-standard `<src>_websites`-shaped tables (`fi_websites`, `no_websites`,
   `wikidata_company_websites`, `br_websites`) are demoted to internal stages** — the domain graph no
   longer reads them. `fi_websites`/`no_websites`/`wikidata_company_websites` are consumed only by

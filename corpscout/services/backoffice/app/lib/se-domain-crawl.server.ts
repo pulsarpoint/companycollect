@@ -42,7 +42,7 @@ function crawlPrefix(crawlType: unknown): string {
 }
 
 /** Input asset config: Dagster evaluates the selection inside ClickHouse. */
-function inputConfig(selection: SeDomainSelection): Record<string, unknown> {
+export function inputConfig(selection: SeDomainSelection): Record<string, unknown> {
   const config: Record<string, unknown> = {
     source_relation: "corpscout.se_company_domain", source_final: true,
     id_column: "root_domain", website_column: "root_domain",

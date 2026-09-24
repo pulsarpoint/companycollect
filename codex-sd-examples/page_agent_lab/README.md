@@ -2,7 +2,7 @@
 
 Compare one combined extraction request with a router followed by independent
 objective-specific requests. This saved-page experiment sits alongside
-company_research; the main crawler's scheduling is still separate from this lab.
+crawler_service; the main crawler's scheduling is still separate from this lab.
 
 The [completed seven-page comparison](RESULTS.md) retained the selected facts in
 both variants. Routing cost more and introduced additional mistakes; the page
@@ -26,11 +26,11 @@ links. Prompts and illustrative examples are in [prompts.py](prompts.py).
 ## Run
 
 Run from codex-sd-examples using the existing Python 3.12 environment with
-company_research installed editable. The lab additionally requires
+crawler_service installed editable. The lab additionally requires
 jsonschema>=4.23,<5, already available in the research environment.
 
 ~~~sh
-uv pip install --python .venv/bin/python -e ../corpscout/services/company_research
+uv pip install --python .venv/bin/python -e ../corpscout/services/crawler_service
 .venv/bin/python -m unittest page_agent_lab.test_agent -v
 .venv/bin/python -m page_agent_lab.benchmark \
   --output page_agent_lab/data/my-new-one-pass
@@ -49,7 +49,7 @@ The output directory must be new; existing experiments are never overwritten.
 output directory for a later live run.
 
 The default corpus is the relocated service's
-`companycollect/corpscout/services/company_research/data`. Seven saved fixtures cover two IT
+`companycollect/corpscout/services/crawler_service/data`. Seven saved fixtures cover two IT
 ads, contacts, subsidiaries, a 30-entry careers listing with pagination,
 NOVELIC credentials, and a report hub with an embedded archive. These local data
 are not in Git. Missing snapshots cause an explicit preparation error.
@@ -108,7 +108,7 @@ that the company lacks that information.
 The reusable package now provides raw mention collection, a final relationship
 classifier, read-only catalog lookup and complete JSON output. See
 [the evaluated results](MENTION_FLOW_RESULTS.md) and
-[the running guide](../../corpscout/services/company_research/PAGE_RESEARCH.md).
+[the running guide](../../corpscout/services/crawler_service/PAGE_RESEARCH.md).
 The original one-pass/routed benchmark remains available through compatibility
 imports. `mention_replay.py` and `mention_validate.py` support independent replay
 of the classification and source-reference validation stages.

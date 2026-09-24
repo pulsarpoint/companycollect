@@ -28,12 +28,19 @@ export function WebtechSection({
   data,
   linkTechnologies = false,
   site,
+  historical = false,
 }: {
   data: Awaited<ReturnType<typeof getDomainWebtech>>;
   linkTechnologies?: boolean;
   site?: string;
+  historical?: boolean;
 }) {
   const { domain, scan, detections, catalog } = data;
+  if (data.pages && data.pages.length > 1) {
+    return <div className="flex flex-col gap-5">{data.pages.map(page => (
+      <WebtechSection key={page.scan.page_url} data={{ domain, ...page, catalog, pages: [] }} linkTechnologies={linkTechnologies} site={site} historical={historical} />
+    ))}</div>;
+  }
   if (!scan) {
     return (
       <Empty className="min-h-48 border">
@@ -57,7 +64,9 @@ export function WebtechSection({
           <Badge variant="secondary">{detections.length} technologies</Badge>
         </div>
         <CardDescription>
-          Technologies detected by the latest Webtech scan of {site || domain}.
+          {historical
+            ? "Results recorded for this historical Webtech scan."
+            : "Results from the latest Webtech scan of this requested page."}
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-5">
@@ -75,14 +84,22 @@ export function WebtechSection({
             <dd>{scan.detector_version}</dd>
           </div>
           <div>
-            <dt className="text-muted-foreground">Crawl</dt>
+            <dt className="text-muted-foreground">Scan batch</dt>
             <dd>{scan.crawl_id}</dd>
           </div>
           <div className="sm:col-span-2 xl:col-span-4">
-            <dt className="text-muted-foreground">Scanned page</dt>
+            <dt className="text-muted-foreground">Requested page</dt>
+            <dd className="break-all">{scan.page_url || scan.requested_url}</dd>
+          </div>
+          <div className="sm:col-span-2 xl:col-span-4">
+            <dt className="text-muted-foreground">Observed page (after redirects)</dt>
             <dd className="break-all">
-              {scan.final_url || scan.requested_url}
+              {scan.final_url || "No final page recorded"}
             </dd>
+          </div>
+          <div className="sm:col-span-2 xl:col-span-4">
+            <dt className="text-muted-foreground">Scan ID</dt>
+            <dd className="break-all font-mono text-xs">{scan.scan_id || "Not recorded in this legacy scan"}</dd>
           </div>
         </dl>
         {incomplete ? (
@@ -114,7 +131,7 @@ export function WebtechSection({
               <EmptyDescription>
                 {incomplete
                   ? "The scan was incomplete, so this does not establish that the domain uses no web technologies."
-                  : "No technology details are available from the latest scan."}
+                  : "No technology details are available from this scan."}
               </EmptyDescription>
             </EmptyHeader>
           </Empty>

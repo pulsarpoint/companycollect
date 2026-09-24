@@ -13,6 +13,7 @@ import psycopg2
 import pytest
 
 from dagster_v3.defs.common.processing import ProcessingResource
+from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.website_crawl.input import INPUT_TABLES
 from dagster_v3.defs.website_crawl.results import (
     RESULTS_BY_TYPE,
@@ -161,9 +162,10 @@ def run(database, asset=website_site_info_results, **config):
     return dg.materialize(
         [
             asset,
+            dg.AssetSpec("website_crawl_input"),
             dg.AssetSpec(asset.key.to_user_string().replace("_results", "_requests")),
         ],
-        resources={"clickhouse": resource, "processing": processing},
+        resources={"clickhouse": resource, "processing": processing, "crawler_queue_store": ObjectStoreResource(endpoint_url="http://test", access_key="test", secret_key="test")},
         run_config={
             "ops": {
                 asset.key.to_user_string(): {

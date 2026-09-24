@@ -57,4 +57,4 @@ crawls/company-crawls/sqlite-lease-novelic-20260919-1789818591/attempts/0001/res
 
 After cleanup, no browser assignments remained active and both browsers were
 running. Detailed receipts are retained locally in
-`../company_research/data/browser-sqlite-20260919/`.
+`../crawler_service/data/browser-sqlite-20260919/`.

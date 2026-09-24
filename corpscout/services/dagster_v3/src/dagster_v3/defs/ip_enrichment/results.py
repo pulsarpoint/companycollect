@@ -99,7 +99,7 @@ def insert_result(client, record):
     client.execute(
         f"INSERT INTO {RESULT_TABLE} ({','.join(record)}) VALUES",
         [tuple(record.values())],
-        settings={"async_insert": 0},
+        settings={"async_insert": 1, "wait_for_async_insert": 1},
     )
 
 
@@ -279,4 +279,12 @@ ip_enrichment_results_job = dg.define_asset_job(
     "ip_enrichment_results_job",
     selection=dg.AssetSelection.assets(ip_enrichment_results),
 )
-defs = dg.Definitions(assets=[ip_enrichment_results], jobs=[ip_enrichment_results_job])
+ip_enrichment_workflow = dg.define_asset_job(
+    "ip_enrichment_workflow",
+    selection=dg.AssetSelection.assets(ip_enrichment_results).upstream(),
+    description="Freeze an IP selection, then enrich it with GeoIP, ASN and RDAP.",
+)
+defs = dg.Definitions(
+    assets=[ip_enrichment_results],
+    jobs=[ip_enrichment_results_job, ip_enrichment_workflow],
+)

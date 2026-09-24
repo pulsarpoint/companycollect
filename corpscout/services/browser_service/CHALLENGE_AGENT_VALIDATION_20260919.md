@@ -60,7 +60,7 @@ Deployed agent run: `1c403c430a8a40b38b9e82d238ce2bf0`.
 Run screenshots and the action journal remain on the server at
 `/var/lib/browser-service/challenge-runs/1c403c430a8a40b38b9e82d238ce2bf0/`.
 A local evidence copy, along with both jobs and their JSON results read through
-ClickHouse, is under `../company_research/data/challenge-agent-20260919/` (ignored
+ClickHouse, is under `../crawler_service/data/challenge-agent-20260919/` (ignored
 runtime data). The temporary HTTP fixture server was stopped after verification.
 
 ## Limits

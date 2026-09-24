@@ -93,7 +93,7 @@ class ScanJob:
             final_manifest_location=final_manifest_location,
             progress_batch_size=progress_batch_size,
             recovered_results={
-                result.root_domain: result for result in manifest.results
+                (result.input_id or result.root_domain): result for result in manifest.results
             },
         )
         job.status = "completed"
@@ -115,7 +115,7 @@ class ScanJob:
 
     async def record_result(self, result: StoredResultReference) -> None:
         async with self._condition:
-            self.results[result.root_domain] = result
+            self.results[result.input_id or result.root_domain] = result
             self._pending_event_results.append(result)
             self._last_progress_at = datetime.now(UTC)
             self._last_progress_monotonic = time.monotonic()
@@ -442,9 +442,10 @@ class ScanCoordinator:
             WebtechCandidate(
                 root_domain=candidate.root_domain,
                 harmonic_rank=candidate.harmonic_rank,
+                task_id=candidate.task_id, input_id=candidate.input_id, page_url=candidate.page_url,
             )
             for candidate in job.manifest.candidates
-            if candidate.root_domain not in job.results
+            if (candidate.input_id or candidate.root_domain) not in job.results
         )
         LOGGER.info(
             "Webtech scan started scan_id=%s partition=%s total=%s recovered=%s "
@@ -471,7 +472,7 @@ class ScanCoordinator:
                 bucket=job.result_prefix.bucket,
                 key=(
                     f"{job.result_prefix.key}/"
-                    f"root_domain={result.candidate.root_domain}/report.json"
+                    + (f"input_id={result.candidate.input_id}/report.json" if result.candidate.input_id else f"root_domain={result.candidate.root_domain}/report.json")
                 ),
             )
             stored = await asyncio.to_thread(
@@ -482,6 +483,7 @@ class ScanCoordinator:
             reference = StoredResultReference(
                 root_domain=result.candidate.root_domain,
                 harmonic_rank=result.candidate.harmonic_rank,
+                input_id=result.candidate.input_id,
                 outcome=result.outcome,
                 timeout_stage=result.timeout_stage,
                 technology_count=(
@@ -669,7 +671,7 @@ class ScanCoordinator:
         manifest: CandidateManifest,
     ) -> dict[str, StoredResultReference]:
         candidates_by_domain = {
-            candidate.root_domain: candidate for candidate in manifest.candidates
+            (candidate.input_id or candidate.root_domain): candidate for candidate in manifest.candidates
         }
         recovered: dict[str, StoredResultReference] = {}
         listing_prefix = S3Location(
@@ -682,16 +684,17 @@ class ScanCoordinator:
             location = S3Location(bucket=result_prefix.bucket, key=key)
             body = self.store.read_bytes(location)
             document = StoredDomainResultDocument.model_validate_json(body)
-            candidate = candidates_by_domain.get(document.candidate.root_domain)
+            candidate = candidates_by_domain.get(document.candidate.input_id or document.candidate.root_domain)
             if (
                 document.scan_id != scan_id
                 or candidate is None
-                or candidate.harmonic_rank != document.candidate.harmonic_rank
+                or candidate != document.candidate
             ):
                 raise ValueError(f"stored result identity mismatch: {key}")
-            recovered[document.candidate.root_domain] = StoredResultReference(
+            recovered[document.candidate.input_id or document.candidate.root_domain] = StoredResultReference(
                 root_domain=document.candidate.root_domain,
                 harmonic_rank=document.candidate.harmonic_rank,
+                input_id=document.candidate.input_id,
                 outcome=document.outcome,
                 timeout_stage=document.timeout_stage,
                 technology_count=(
@@ -754,6 +757,9 @@ def _domain_result_document(
         candidate={
             "root_domain": result.candidate.root_domain,
             "harmonic_rank": result.candidate.harmonic_rank,
+            "task_id": result.candidate.task_id,
+            "input_id": result.candidate.input_id,
+            "page_url": result.candidate.page_url,
         },
         outcome=result.outcome,
         requested_url=result.requested_url,

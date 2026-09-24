@@ -11,13 +11,13 @@ from pathlib import Path
 
 import click
 import httpx
-from company_research.llm import ModelClient
-from company_research.models import ResearchConfig
-from company_research.storage import content_hash, write_json
-from company_research.technology_catalog import TechnologyCatalog
+from crawler_service.llm import ModelClient
+from crawler_service.models import ResearchConfig
+from crawler_service.storage import content_hash, write_json
+from crawler_service.technology_catalog import TechnologyCatalog
 from dotenv import dotenv_values
 
-from company_research import analysis, mentions, page_agent
+from crawler_service import analysis, mentions, page_agent
 
 
 async def run(args):

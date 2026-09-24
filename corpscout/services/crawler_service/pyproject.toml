@@ -1,0 +1,55 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "crawler-service"
+version = "0.42.0"
+description = "Company source-page collection with deferred offline analysis"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "beautifulsoup4>=4.12,<5",
+    "jsonschema>=4.23,<5",
+    "click>=8.1,<9",
+    "clickhouse-driver>=0.2.9,<0.3",
+    "defusedxml>=0.7,<1",
+    "httpx>=0.28,<1",
+    "pydantic>=2.12,<3",
+    "python-dotenv>=1,<2",
+    "tldextract>=5,<6",
+    "phonenumbers>=9,<10",
+    "trafilatura>=2.2,<3",
+]
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.28,<2"]
+service = [
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.42,<1",
+    "websockets>=15,<17",
+    "boto3>=1.40,<2",
+]
+
+[project.scripts]
+crawler-service = "crawler_service.service_cli:main"
+crawler-service-crawl = "crawler_service.crawl:main"
+crawler-service-clickhouse = "crawler_service.clickhouse_results:main"
+crawler-service-pages = "crawler_service.page_run:main"
+crawler-service-submit = "crawler_service.cli:submit"
+company-technology-mcp = "crawler_service.catalog_mcp:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/crawler_service"]
+
+[dependency-groups]
+test = ["corpscout-browser-service"]
+
+[tool.uv.sources]
+corpscout-browser-service = { path = "../browser_service" }
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "B"]

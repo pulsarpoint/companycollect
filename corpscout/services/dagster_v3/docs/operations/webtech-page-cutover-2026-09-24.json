@@ -1,0 +1,37 @@
+{
+  "validation": {
+    "webtech_domain_technologies": {
+      "missing_source_rows": 0,
+      "conflicting_reports": 0,
+      "logical_rows": 8050732
+    },
+    "webtech_domain_scan_results": {
+      "missing_source_rows": 0,
+      "conflicting_reports": 0,
+      "logical_rows": 977577
+    },
+    "incomplete_summaries": 0,
+    "orphan_reports": 0
+  },
+  "uuids": {
+    "webtech_domain_scan_results": "c3feaddb-3394-4bf0-838a-bbeea820c834",
+    "webtech_domain_scan_results_v2": "e7964a7c-07d1-4ea0-9baf-72f0f628b4a8",
+    "webtech_domain_technologies": "7b2ba6a9-bc27-436e-aed2-ddcf87428616",
+    "webtech_domain_technologies_current": "2065f2c3-ec19-424a-8540-8c69360e133d",
+    "webtech_domain_technologies_current_v2": "3826b789-24dd-40bc-aa1f-dec19ec19e44",
+    "webtech_domain_technologies_v2": "2dcb3568-a630-4623-8b81-e150f925e9d0"
+  },
+  "completed": [
+    "webtech_domain_technologies",
+    "webtech_domain_scan_results"
+  ],
+  "old_view": "CREATE VIEW corpscout.webtech_domain_technologies_current\n(\n    `root_domain` String,\n    `crawl_id` LowCardinality(String),\n    `detector_version` LowCardinality(String),\n    `scan_id` String,\n    `detected_name` String,\n    `technology_id` Nullable(UInt64),\n    `technology` String,\n    `catalog_match` LowCardinality(String),\n    `detected_slug` String,\n    `version` String,\n    `confidence` UInt8,\n    `category_ids` Array(UInt16),\n    `categories` Array(String),\n    `category_slugs` Array(String),\n    `requested_url` String,\n    `final_url` String,\n    `final_hostname` String,\n    `outcome` LowCardinality(String),\n    `analysis_status` LowCardinality(String),\n    `analysis_complete` UInt8,\n    `scanned_at` DateTime64(3, 'UTC'),\n    `result_bucket` LowCardinality(String),\n    `result_object_key` String,\n    `report_sha256` FixedString(64),\n    `run_id` String,\n    `recorded_at` DateTime64(3, 'UTC')\n)\nAS SELECT d.*\nFROM corpscout.webtech_domain_technologies AS d\nFINAL\nINNER JOIN corpscout.webtech_domain_scan_results AS s\nFINAL ON (d.root_domain = s.root_domain) AND (d.crawl_id = s.crawl_id) AND (d.detector_version = s.detector_version) AND (d.scan_id = s.scan_id) AND (d.report_sha256 = s.report_sha256)",
+  "view_recreated": true,
+  "final_uuids": {
+    "webtech_domain_scan_results": "e7964a7c-07d1-4ea0-9baf-72f0f628b4a8",
+    "webtech_domain_scan_results_v2": "c3feaddb-3394-4bf0-838a-bbeea820c834",
+    "webtech_domain_technologies": "2dcb3568-a630-4623-8b81-e150f925e9d0",
+    "webtech_domain_technologies_current": "8f0caebf-8ec9-4092-83c5-dc4afac916c3",
+    "webtech_domain_technologies_v2": "7b2ba6a9-bc27-436e-aed2-ddcf87428616"
+  }
+}

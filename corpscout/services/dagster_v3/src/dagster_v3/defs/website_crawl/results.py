@@ -121,7 +121,7 @@ class CrawlResultsConfig(dg.Config):
         return sorted(set(values))
 
 
-# company-research crawl API on the crawler VM, reached by its Tailscale MagicDNS name.
+# crawler-service API on the crawler VM, reached by its Tailscale MagicDNS name.
 DEFAULT_CRAWLER_API_URL = "http://crawler:8080"
 
 
@@ -298,11 +298,32 @@ def process_crawls(
     clickhouse: ClickhouseResource,
     processing: ProcessingResource,
     crawl_type: Literal["full", "jobs", "site_info"],
+    crawler_queue_store=None,
 ) -> dg.MaterializeResult:
     if (crawl_type == "site_info") != (config.page_selection == "basic_info"):
         raise ValueError(
             "basic_info page selection is required only for the basic-info results asset"
         )
+    if config.task_id and context.run.tags.get(TASK_TAG) not in (None, config.task_id):
+        raise ValueError("task_id differs from the task tagged on this run")
+    requested_task = config.task_id or context.run.tags.get(TASK_TAG)
+    if requested_task is not None:
+        with processing.get_store() as store:
+            task = store.task(requested_task)
+        if task is not None and task["queue_scope"] is not None:
+            from dagster_v3.defs.website_crawl.queue_execution import (
+                process_crawl_draft,
+            )
+
+            return process_crawl_draft(
+                context,
+                config,
+                clickhouse,
+                processing,
+                crawler_queue_store,
+                crawl_type,
+                requested_task,
+            )
     table = RESULTS_BY_TYPE[crawl_type]
     input_table = INPUTS_BY_TYPE[crawl_type] + "_current"
     execution = resolve_execution(context, config, processing, crawl_type)

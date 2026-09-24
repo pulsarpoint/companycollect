@@ -14,6 +14,7 @@ import pytest
 from pydantic import ValidationError
 
 from dagster_v3.defs.common.processing import ProcessingResource
+from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.website_crawl.assets import website_site_info_requests
 from dagster_v3.defs.website_crawl.input import INPUT_TABLES, TASK_DOMAINS
 from dagster_v3.defs.website_crawl.results import (
@@ -78,9 +79,9 @@ def selection(**extra) -> dict:
 def materialize(db, assets, ops, instance=None, raise_on_error=True):
     _, resource, processing = db
     return dg.materialize(
-        assets,
+        [*assets, dg.AssetSpec("website_crawl_input")],
         instance=instance,
-        resources={"clickhouse": resource, "processing": processing},
+        resources={"clickhouse": resource, "processing": processing, "crawler_queue_store": ObjectStoreResource(endpoint_url="http://test", access_key="test", secret_key="test")},
         run_config={"ops": {name: {"config": config} for name, config in ops.items()}},
         raise_on_error=raise_on_error,
     )

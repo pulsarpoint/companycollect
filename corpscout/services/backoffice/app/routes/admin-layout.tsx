@@ -97,6 +97,21 @@ function AdminBreadcrumbs() {
     </BreadcrumbList></Breadcrumb>;
   }
 
+  if (pathname === "/admin/webtech" || pathname.startsWith("/admin/webtech/")) {
+    const domain = pathname.split("/")[3];
+    const isInput = domain === "input";
+    const scan = pathname.split("/")[4] === "scan";
+    return <Breadcrumb><BreadcrumbList>
+      <BreadcrumbItem><BreadcrumbLink render={<Link to="/admin" />}>Admin</BreadcrumbLink></BreadcrumbItem>
+      <BreadcrumbSeparator />
+      <BreadcrumbItem>{domain ? <BreadcrumbLink render={<Link to="/admin/webtech" />}>Webtech</BreadcrumbLink> : <BreadcrumbPage>Webtech</BreadcrumbPage>}</BreadcrumbItem>
+      {domain ? <><BreadcrumbSeparator /><BreadcrumbItem>{scan
+        ? <BreadcrumbLink render={<Link to={`/admin/webtech/${domain}`} />}>{decodeURIComponent(domain)}</BreadcrumbLink>
+        : <BreadcrumbPage>{isInput ? "Inputs" : decodeURIComponent(domain)}</BreadcrumbPage>}</BreadcrumbItem></> : null}
+      {scan ? <><BreadcrumbSeparator /><BreadcrumbItem><BreadcrumbPage>Scan</BreadcrumbPage></BreadcrumbItem></> : null}
+    </BreadcrumbList></Breadcrumb>;
+  }
+
   if (onEsefPage || pathname === "/admin/ip-addresses" || pathname === "/admin/graph" || pathname.startsWith("/admin/crawls") || pathname.startsWith("/admin/browsers")) {
     return (
       <Breadcrumb>

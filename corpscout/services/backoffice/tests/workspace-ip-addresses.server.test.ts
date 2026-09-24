@@ -32,40 +32,29 @@ it("keeps unenriched DNS addresses and only enriches the displayed page", async 
   expect(db.chQuery.mock.calls[1][0]).toContain("max(last_seen)");
 });
 
-it("uses per-component current data, preserves legacy data on errors, and clears conclusive negatives", async () => {
+it("uses the unified current view and retains nulls and unenriched IPs", async () => {
   const keys = [1, 2, 3].map((i) => ({
     bucket: 0,
     ip_version: 4,
     ip: `192.0.2.${i}`,
   }));
-  const legacy = keys.map(({ ip }) => ({
-    ip,
-    country_iso_code: "US",
-    city_name: "Old city",
-    asn: 100,
-    asn_organization: "Old ASN",
-  }));
   db.chQuery
     .mockResolvedValueOnce(keys)
     .mockResolvedValueOnce([])
-    .mockResolvedValueOnce(legacy)
     .mockResolvedValueOnce([
       {
         ip: keys[0].ip,
-        city_data_status: "found",
         country_iso_code: "RS",
         city_name: null,
-        asn_data_status: "error",
-        asn: null,
+        asn: 100,
+        asn_organization: "Provider",
         rdap_matched_cidr: "192.0.2.0/24",
         rdap_name: "Network",
       },
       {
         ip: keys[1].ip,
-        city_data_status: "not_found",
         country_iso_code: null,
         city_name: null,
-        asn_data_status: "not_global",
         asn: null,
         asn_organization: null,
       },
@@ -81,9 +70,12 @@ it("uses per-component current data, preserves legacy data on errors, and clears
     country_iso_code: null,
     city_name: null,
     asn: null,
-    asn_organization: null,
   });
-  expect(result.rows[2]).toMatchObject({ country_iso_code: "US", asn: 100 });
+  expect(result.rows[2]).toMatchObject({ country_iso_code: null, asn: null });
+  expect(db.chQuery.mock.calls[2][0]).toContain(
+    "FROM corpscout.ip_enrichment_current",
+  );
+  expect(db.chQuery.mock.calls).toHaveLength(3);
 });
 
 it("binds the full cursor and canonicalizes exact IPv6 searches", async () => {

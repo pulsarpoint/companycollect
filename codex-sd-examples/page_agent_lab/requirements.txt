@@ -1,2 +1,2 @@
-# Install alongside the existing editable company_research environment.
+# Install alongside the existing editable crawler_service environment.
 jsonschema>=4.23,<5

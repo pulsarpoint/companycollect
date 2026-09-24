@@ -108,7 +108,9 @@ export default [
     route("domains/:domain/sites", "routes/admin-domain-sites.ts"),
     route("domains/:domain", "routes/admin-domain.tsx", [
       // The same domain-scoped loaders and views serve both domain entry points.
-      index("routes/admin-se-domain-technology.tsx", {
+      index("routes/admin-domain-index.ts"),
+      route("dns", "routes/admin-domain-dns.tsx"),
+      route("overview", "routes/admin-se-domain-technology.tsx", {
         id: "workspace-domain-overview",
       }),
       route("web-technologies", "routes/admin-domain-web-technologies.tsx"),
@@ -128,6 +130,14 @@ export default [
         id: "workspace-domain-mail-security",
       }),
     ]),
+    route("queues", "routes/admin-queues-index.tsx"),
+    route("queues/:type", "routes/admin-queue.tsx"),
+    route("webtech", "routes/admin-webtech.tsx"),
+    route("webtech/input", "routes/admin-webtech-input.tsx"),
+    route("crawler/queue-submissions/:runId", "routes/admin-crawl-queue-submission.ts"),
+    route("webtech/queue-submissions/:runId", "routes/admin-webtech-queue-submission.ts"),
+    route("webtech/:domain", "routes/admin-webtech-domain.tsx"),
+    route("webtech/:domain/scan", "routes/admin-webtech-scan.tsx"),
     route("common-crawl", "routes/admin-common-crawl.tsx"),
     route(
       "common-crawl/:domain",
@@ -136,23 +146,11 @@ export default [
         index("routes/admin-se-domain-web-intelligence.tsx", {
           id: "common-crawl-domain-evidence",
         }),
-        route("technologies", "routes/admin-se-domain-technology.tsx", {
+        route("technologies", "routes/admin-common-crawl-technologies.tsx", {
           id: "common-crawl-domain-technologies",
         }),
-        route("web-technologies", "routes/admin-domain-web-technologies.tsx", {
+        route("web-technologies", "routes/admin-common-crawl-technologies.tsx", {
           id: "common-crawl-domain-web-technologies",
-        }),
-        route("infrastructure", "routes/admin-se-domain-infrastructure.tsx", {
-          id: "common-crawl-domain-infrastructure",
-        }),
-        route("ip-addresses", "routes/admin-se-domain-ip-addresses.tsx", {
-          id: "common-crawl-domain-ip-addresses",
-        }),
-        route("ip-addresses/:address", "routes/admin-se-domain-ip-address.tsx", {
-          id: "common-crawl-domain-ip-address",
-        }),
-        route("mail-security", "routes/admin-se-domain-mail-security.tsx", {
-          id: "common-crawl-domain-mail-security",
         }),
       ],
     ),

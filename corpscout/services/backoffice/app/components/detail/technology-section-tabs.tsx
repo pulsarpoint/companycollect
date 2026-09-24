@@ -7,34 +7,30 @@ export function TechnologySectionTabs({
   section,
   search = "",
   mailSecurity = false,
-  websiteEvidenceOverview = false,
+  dnsRecords = false,
 }: {
   basePath: string;
-  section: TechnologySection | "technologies";
+  section: TechnologySection | "dns";
   search?: string;
   mailSecurity?: boolean;
-  websiteEvidenceOverview?: boolean;
+  dnsRecords?: boolean;
 }) {
   return (
     <div className="max-w-full overflow-x-auto">
       <Tabs value={section}>
         <TabsList aria-label="Domain technology sections">
-          <TabsTrigger
-            value="overview"
-            render={<NavLink to={`${basePath}${search}`} end />}
-            nativeButton={false}
-          >
-            {websiteEvidenceOverview ? "Website evidence" : "Overview"}
-          </TabsTrigger>
-          {websiteEvidenceOverview ? (
-            <TabsTrigger
-              value="technologies"
-              render={<NavLink to={`${basePath}/technologies${search}`} />}
-              nativeButton={false}
-            >
-              Archived technologies
+          {dnsRecords ? (
+            <TabsTrigger value="dns" render={<NavLink to={`${basePath}/dns${search}`} />} nativeButton={false}>
+              DNS records
             </TabsTrigger>
           ) : null}
+          <TabsTrigger
+            value="overview"
+            render={<NavLink to={`${basePath}${dnsRecords ? "/overview" : ""}${search}`} end />}
+            nativeButton={false}
+          >
+            Overview
+          </TabsTrigger>
           <TabsTrigger
             value="web-technologies"
             render={<NavLink to={`${basePath}/web-technologies${search}`} />}
@@ -42,21 +38,19 @@ export function TechnologySectionTabs({
           >
             Web technologies
           </TabsTrigger>
-          {!websiteEvidenceOverview ? (
-            <TabsTrigger
-              value="web-intelligence"
-              render={<NavLink to={`${basePath}/web-intelligence${search}`} />}
-              nativeButton={false}
-            >
-              Web intelligence
-            </TabsTrigger>
-          ) : null}
+          <TabsTrigger
+            value="web-intelligence"
+            render={<NavLink to={`${basePath}/web-intelligence${search}`} />}
+            nativeButton={false}
+          >
+            Web intelligence
+          </TabsTrigger>
           <TabsTrigger
             value="infrastructure"
             render={<NavLink to={`${basePath}/infrastructure${search}`} />}
             nativeButton={false}
           >
-            Infrastructure &amp; DNS
+            {dnsRecords ? "Infrastructure" : "Infrastructure & DNS"}
           </TabsTrigger>
           <TabsTrigger
             value="ip-addresses"
@@ -77,5 +71,34 @@ export function TechnologySectionTabs({
         </TabsList>
       </Tabs>
     </div>
+  );
+}
+
+export function CommonCrawlSectionTabs({
+  basePath,
+  section,
+}: {
+  basePath: string;
+  section: "overview" | "web-technologies";
+}) {
+  return (
+    <Tabs value={section}>
+      <TabsList aria-label="Common Crawl sections">
+        <TabsTrigger
+          value="overview"
+          render={<NavLink to={basePath} end />}
+          nativeButton={false}
+        >
+          Website evidence
+        </TabsTrigger>
+        <TabsTrigger
+          value="web-technologies"
+          render={<NavLink to={`${basePath}/web-technologies`} />}
+          nativeButton={false}
+        >
+          Web technologies
+        </TabsTrigger>
+      </TabsList>
+    </Tabs>
   );
 }

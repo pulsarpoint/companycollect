@@ -5,10 +5,10 @@ import json
 from pathlib import Path
 
 import click
-from company_research.models import ResearchConfig
-from company_research.storage import write_json
+from crawler_service.models import ResearchConfig
+from crawler_service.storage import write_json
 
-from company_research import analysis, mentions
+from crawler_service import analysis, mentions
 
 
 def revalidate(previous):

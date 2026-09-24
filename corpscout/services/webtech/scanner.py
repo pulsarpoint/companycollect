@@ -328,7 +328,7 @@ async def _scan_candidate_with_hard_timeout(
     started_at = datetime.now(UTC)
     started_monotonic = time.monotonic()
     page: Page | None = None
-    progress = _ScanProgress(requested_url=f"https://{candidate.root_domain}")
+    progress = _ScanProgress(requested_url=candidate.page_url or f"https://{candidate.root_domain}")
 
     try:
         async with asyncio.timeout(timeout_seconds):
@@ -460,7 +460,7 @@ async def _scan_candidate(
     started_monotonic: float,
     progress: _ScanProgress,
 ) -> WebtechDomainResult:
-    https_url = f"https://{candidate.root_domain}"
+    https_url = candidate.page_url or f"https://{candidate.root_domain}"
     requested_url = https_url
     http_fallback_used = False
 
@@ -472,6 +472,14 @@ async def _scan_candidate(
                 https_url,
             )
         except (PlaywrightError, PlaywrightTimeoutError) as https_error:
+            if candidate.page_url:
+                return WebtechDomainResult.failure(
+                    candidate=candidate, outcome="navigation_error", requested_url=requested_url,
+                    final_url=page.url if _is_web_url(page.url) else "",
+                    http_fallback_used=False, scanned_at=started_at,
+                    duration_ms=int((time.monotonic() - started_monotonic) * 1000),
+                    error_message=str(https_error),
+                )
             requested_url = f"http://{candidate.root_domain}"
             http_fallback_used = True
             progress.requested_url = requested_url

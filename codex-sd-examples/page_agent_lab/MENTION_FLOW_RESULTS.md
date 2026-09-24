@@ -6,7 +6,7 @@
 
 Storage follow-up, September 17: all remote experiment objects were deleted at the
 user's request, including every revision listed below. Local JSON results remain.
-See [the verified deletion receipt](../../corpscout/services/company_research/RUSTFS_CLEANUP_RECEIPT.json).
+See [the verified deletion receipt](../../corpscout/services/crawler_service/RUSTFS_CLEANUP_RECEIPT.json).
 The current v0.18.0 runner returns JSON and no longer uploads it.
 
 | Company | Pages | Raw mentions | Specific technology mentions | Technical context | Other records | Links |

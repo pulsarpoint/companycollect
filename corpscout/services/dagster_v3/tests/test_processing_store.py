@@ -98,6 +98,12 @@ def store(processing_postgres_url):
                     "000123_processing_brave_archive.up.sql"
                 ).read_text()
             )
+        with connection, connection.cursor() as cursor:
+            cursor.execute(
+                MIGRATION.with_name(
+                    "000124_processing_draft_tasks.up.sql"
+                ).read_text()
+            )
         yield ProcessingStore(connection), dsn
     finally:
         connection.close()

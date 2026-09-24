@@ -42,7 +42,7 @@ SQLite history and can be retried interactively with an embedded noVNC client.
 Set `CRAWLER_API_URL` and `CRAWLER_API_TOKEN` on the Backoffice server; optionally
 set `BROWSER_PUBLIC_URL` to a browser-reachable HTTPS/WSS proxy. The service
 credential stays server-side. See the crawler's
-[human-assistance contract](../company_research/HUMAN_ASSISTANCE.md).
+[human-assistance contract](../crawler_service/HUMAN_ASSISTANCE.md).
 
 **S3 saved · View** opens an archived result at `/admin/crawls/results`. Backoffice
 reads the selected object through ClickHouse's `website_crawl_results_s3_archive` mapping,
@@ -53,7 +53,7 @@ simplified and rendered HTML sources, discovered links, and the complete JSON.
 displayed as inert source. No new crawl or explicit table import is required.
 Apply migration 426 for request/attempt identity in newer S3 paths; the existing
 `company_crawl_results` named collection supplies S3 access on the ClickHouse
-server. See the crawler's [ClickHouse mapping](../company_research/CLICKHOUSE.md).
+server. See the crawler's [ClickHouse mapping](../crawler_service/CLICKHOUSE.md).
 
 **New test crawl** submits an editable full-crawl JSON request from the Backoffice
 server to the crawler's authenticated `POST /v1/crawls`. Enable it for testing with

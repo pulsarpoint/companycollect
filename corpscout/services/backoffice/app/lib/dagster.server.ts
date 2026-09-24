@@ -336,12 +336,13 @@ export async function launchRun(
 }
 
 export async function listRuns(
-  input: { job: string; limit: number; statuses?: readonly RunStatus[] },
+  input: { job?: string; limit: number; statuses?: readonly RunStatus[]; tags?: Record<string, string> },
   options: DagsterOptions = {},
 ): Promise<DagsterRun[]> {
   const variables: BackofficeRunsQueryVariables = {
     filter: {
-      pipelineName: input.job,
+      ...(input.job ? { pipelineName: input.job } : {}),
+      ...(input.tags ? { tags: Object.entries(input.tags).map(([key, value]) => ({key, value})) } : {}),
       ...(input.statuses ? { statuses: [...input.statuses] } : {}),
     },
     limit: input.limit,

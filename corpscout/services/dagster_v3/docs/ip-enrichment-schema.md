@@ -4,8 +4,8 @@ Migration `000433_corpscout_ip_enrichment` introduces two ClickHouse tables and
 one ordinary view in `corpscout`. The `ip_enrichment_input` Dagster asset prepares
 input batches from a list or a source relation. `ip_enrichment_results` processes
 a prepared task using the existing MaxMind mapping and RDAP network cache.
-Automatic pickup, historical imports, and application changes are separate work.
-The existing Common Crawl assets remain available.
+The Workspace IP addresses page submits both steps through `ip_enrichment_workflow`.
+The legacy GeoIP table and writer were retired by migrations 434–435.
 
 ## Input
 
@@ -171,6 +171,12 @@ Prerequisites are migration 000433, the existing RDAP tables and working
 `MAXMIND_DATABASE_DIRECTORY`. Missing storage or MaxMind files fails the run
 before processing. No runtime DDL is performed.
 
+Result and RDAP cache inserts use `async_insert=1` and `wait_for_async_insert=1`,
+matching Brave. Each write waits for ClickHouse to flush it before processing continues;
+network and segment writes complete before the lookup/result completion markers.
+ClickHouse can combine concurrent compatible inserts, but this sequential worker may
+still produce one-row flushes. Bulk input `INSERT SELECT` remains synchronous.
+
 Each input produces one result with task/input/execution identity and independent
 City, ASN, and RDAP outcomes. Non-public IPs receive `not_global` without external
 requests. An individual lookup failure does not discard the other components.
@@ -232,3 +238,26 @@ SHA-256 fingerprint of all migrated fields cannot be found in the destination. I
 removes the temporary import view, legacy current view and legacy table. Its down migration
 can reconstruct the source snapshot from the preserved import history. The forward-only
 production ledger should use a new repair migration if restoration is needed.
+
+
+## Workspace IP selection
+
+The admin IP addresses page can select individual addresses across pages, the visible
+page, or all addresses matching the applied search/version filters. Changing filters
+clears the selection. All-matching selection carries a compact filter plus explicit
+exclusions, and does not download the inventory into the browser or web server.
+
+`ip_enrichment_workflow` runs input preparation before results processing with one
+shared task UUID. Both selection modes use `source_relation: corpscout.commoncrawl_ip_addresses`.
+Individual selections use `filters.ip` with the checked addresses; all-matching
+selections use the applied search/version filters and exclusions. The application
+does not insert input rows itself. Table selection groups duplicate observations by canonical IP and
+keeps the maximum `last_seen`. `ip_search` accepts an exact IP (canonicalized) or a
+literal prefix matching the admin list. `excluded_ips` removes canonical IPs from
+that selection. The snapshot is frozen when the input step runs.
+
+The UI submits `max_requests: null` so the entire selected batch can be processed;
+the standalone worker default remains 250 requests. RDAP throttling, cache reuse,
+error reporting, history and interrupted-run resume behavior are unchanged. Large
+selections run in the background and the UI links to their Dagster run. Submission
+success means the run was accepted, not that enrichment has already completed.

@@ -58,7 +58,9 @@ class FakeClickhouseClient:
         self.rows = rows or []
         self.calls: list[tuple[str, Any]] = []
 
-    def execute(self, sql: str, parameters: Any = None) -> list[tuple[Any, ...]]:
+    def execute(self, sql: str, parameters: Any = None, *, settings=None) -> list[tuple[Any, ...]]:
+        if sql.startswith("INSERT INTO"):
+            assert settings == {"async_insert": 0}
         self.calls.append((sql, parameters))
         if "FROM system.tables" in sql:
             return [(name,) for name in parameters["tables"]]
@@ -119,11 +121,13 @@ def test_webtech_component_builds_polling_scan_definitions() -> None:
         "commoncrawl_webtech_candidates_manifest",
         "commoncrawl_webtech_remote_scan",
         "commoncrawl_webtech_results_clickhouse",
+        "webtech_scan_results",
     }
     assert not definitions.sensors
     assert {job.name for job in definitions.jobs or []} == {
         "commoncrawl_webtech_finalize_job",
         "commoncrawl_webtech_scan_job",
+        "webtech_scan_results_job",
     }
     api_resource = (definitions.resources or {})["webtech_api"]
     assert api_resource.model_dump()["api_token"] == "WEBTECH_API_TOKEN"

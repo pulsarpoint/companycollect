@@ -227,3 +227,12 @@ both the callback and watchdog timer from running. The next optimization should
 therefore reduce or isolate regex work, using conservative literal/Aho-Corasick
 prefiltering with normal JavaScript regex validation, cooperative chunks, or a
 terminable worker boundary.
+
+### Queue execution identities
+
+Schema 3 queue manifests keep `candidate.task_id` as the input queue identity.
+For draft queues, `crawl_id = webtech-<execution_id>` and the manifest's
+`dagster_run_id` carries that stable execution ID so retries reuse the same scan
+namespace. The actual retry's Dagster run ID is recorded by the orchestration
+layer. Legacy task manifests may use `webtech-<task_id>` instead. All candidates
+must belong to one task; input hashes and page/domain validation still apply.

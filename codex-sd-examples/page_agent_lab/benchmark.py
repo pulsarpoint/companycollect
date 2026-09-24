@@ -8,9 +8,9 @@ from pathlib import Path
 from typing import Literal
 
 import httpx
-from company_research.llm import ModelClient
-from company_research.models import ResearchConfig
-from company_research.storage import utc_now, write_json
+from crawler_service.llm import ModelClient
+from crawler_service.models import ResearchConfig
+from crawler_service.storage import utc_now, write_json
 from dotenv import dotenv_values
 
 from page_agent_lab.agent import PageAgent, PageInput, validate_records
@@ -178,7 +178,7 @@ def main() -> None:
         "--corpus",
         type=Path,
         default=Path(__file__).resolve().parents[2]
-        / "corpscout/services/company_research/data",
+        / "corpscout/services/crawler_service/data",
     )
     parser.add_argument("--env", type=Path, default=Path("jobs_extraction_lab/.env"))
     parser.add_argument("--prepare-only", action="store_true")

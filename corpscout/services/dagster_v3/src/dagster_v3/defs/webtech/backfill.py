@@ -4,7 +4,6 @@ import hashlib
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
 from typing import Any
 
 from clickhouse_driver import Client
@@ -21,8 +20,13 @@ from dagster_v3.defs.webtech.technologies import (
     technology_rows,
 )
 
+from dagster_v3.defs.webtech.pages import page_identity
+from dagster_v3.defs.webtech.writes import PAGE_KEY, destinations
+
 INDEX_COLUMNS = (
     "root_domain",
+    "website_origin",
+    "page_url",
     "crawl_id",
     "detector_version",
     "scan_id",
@@ -36,6 +40,7 @@ INDEX_COLUMNS = (
     "report_sha256",
     "report_size_bytes",
     "run_id",
+    "recorded_at",
 )
 
 
@@ -79,6 +84,8 @@ def read_indexed_technologies(
         or document.crawl_id != index["crawl_id"]
         or document.detector_version != index["detector_version"]
         or document.outcome != index["outcome"]
+        or page_identity(document.requested_url)
+        != (index["website_origin"], index["page_url"])
     ):
         raise ValueError(
             f"Stored Webtech report identity mismatch: {reference.object_key}"
@@ -89,7 +96,7 @@ def read_indexed_technologies(
         catalog,
         bucket=index["result_bucket"],
         run_id=index["run_id"],
-        recorded_at=datetime.now(UTC),
+        recorded_at=index["recorded_at"],
     )
     if len(rows) != reference.technology_count:
         raise ValueError(
@@ -112,7 +119,9 @@ def backfill_technology_results(
         )
     catalog = load_technology_catalog(client)
     object_store.client()  # Initialize once before sharing the boto client with workers.
-    cursor = ("", "", "", "")
+    suffix = destinations()[-1][0]
+    cursor = ("",) * len(PAGE_KEY)
+    key_sql = ", ".join(PAGE_KEY)
     processed = skipped = detections = 0
     with ThreadPoolExecutor(max_workers=workers) as executor:
         while limit == 0 or processed + skipped < limit:
@@ -123,28 +132,28 @@ def backfill_technology_results(
             )
             batch = client.execute(
                 f"SELECT {', '.join(INDEX_COLUMNS)} "
-                "FROM corpscout.webtech_domain_scan_results FINAL "
+                f"FROM corpscout.webtech_domain_scan_results{suffix} FINAL "
                 "WHERE technology_count > 0 "
-                "AND (root_domain, crawl_id, detector_version, scan_id) > %(cursor)s "
-                "ORDER BY root_domain, crawl_id, detector_version, scan_id LIMIT %(size)s",
+                f"AND ({key_sql}) > %(cursor)s "
+                f"ORDER BY {key_sql} LIMIT %(size)s",
                 {"cursor": cursor, "size": size},
             )
             if len(batch) == 0:
                 break
             indexes = [dict(zip(INDEX_COLUMNS, row, strict=True)) for row in batch]
             existing = {
-                tuple(row[:5]): int(row[5])
+                tuple(row[:-1]): int(row[-1])
                 for row in client.execute(
-                    "SELECT root_domain, crawl_id, detector_version, scan_id, report_sha256, count() "
-                    "FROM corpscout.webtech_domain_technologies FINAL "
+                    f"SELECT {key_sql}, report_sha256, count() "
+                    f"FROM corpscout.webtech_domain_technologies{suffix} FINAL "
                     "WHERE root_domain IN %(domains)s "
-                    "GROUP BY root_domain, crawl_id, detector_version, scan_id, report_sha256",
+                    f"GROUP BY {key_sql}, report_sha256",
                     {"domains": tuple(index["root_domain"] for index in indexes)},
                 )
             }
             pending = []
             for index in indexes:
-                key = tuple(index[name] for name in INDEX_COLUMNS[:4]) + (
+                key = tuple(index[name] for name in PAGE_KEY) + (
                     index["report_sha256"],
                 )
                 if existing.get(key) == index["technology_count"]:
@@ -164,7 +173,7 @@ def backfill_technology_results(
             insert_technology_rows(client, rows)
             processed += len(pending)
             detections += len(rows)
-            cursor = tuple(indexes[-1][name] for name in INDEX_COLUMNS[:4])
+            cursor = tuple(indexes[-1][name] for name in PAGE_KEY)
             logging.getLogger(__name__).info(
                 "Webtech backfill: %s reports indexed, %s skipped, %s detections written",
                 processed,

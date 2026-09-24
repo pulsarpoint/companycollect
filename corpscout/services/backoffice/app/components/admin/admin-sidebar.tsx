@@ -158,6 +158,9 @@ export function AdminSidebar() {
           <SidebarGroupLabel>Workspace</SidebarGroupLabel>
           <SidebarMenu>
             <SidebarMenuItem>
+              <SidebarMenuButton isActive={pathname.startsWith("/admin/queues")} tooltip="Queues" render={<Link to="/admin/queues" />}><WorkflowIcon /><span>Queues</span></SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
               <SidebarMenuButton isActive={pathname === "/admin/domains" || pathname.startsWith("/admin/domains/")} tooltip="Domains" render={<Link to="/admin/domains" />}>
                 <GlobeIcon /><span>Domains</span>
               </SidebarMenuButton>
@@ -192,6 +195,16 @@ export function AdminSidebar() {
               >
                 <SearchIcon />
                 <span>Common Crawl</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                isActive={pathname === "/admin/webtech" || pathname.startsWith("/admin/webtech/")}
+                tooltip="Webtech detections"
+                render={<Link to="/admin/webtech" />}
+              >
+                <TagsIcon />
+                <span>Webtech</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
             <SidebarMenuItem>

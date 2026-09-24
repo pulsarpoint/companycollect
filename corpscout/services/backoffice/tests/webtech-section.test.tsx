@@ -4,8 +4,11 @@ import { expect, it } from "vitest";
 import { WebtechSection } from "~/components/detail/webtech-section";
 
 const data: Parameters<typeof WebtechSection>[0]["data"] = {
+  pages: [],
   domain: "example.se",
   scan: {
+    website_origin: "https://example.se",
+    page_url: "https://example.se/",
     crawl_id: "crawl",
     scan_id: "scan",
     report_sha256: "hash",
@@ -18,6 +21,8 @@ const data: Parameters<typeof WebtechSection>[0]["data"] = {
   },
   detections: [
     {
+      website_origin: "https://example.se",
+      page_url: "https://example.se/",
       detected_name: "React",
       technology: "React",
       technology_id: "123",
@@ -28,6 +33,8 @@ const data: Parameters<typeof WebtechSection>[0]["data"] = {
       analysis_complete: 1,
     },
     {
+      website_origin: "https://example.se",
+      page_url: "https://example.se/",
       detected_name: "Unlisted tool",
       technology: "",
       technology_id: null,
@@ -93,4 +100,25 @@ it("distinguishes no scan, a zero-result scan and an incomplete scan", () => {
   expect(render({ ...data, detections: [] })).toContain(
     "Detection details are incomplete",
   );
+});
+
+it("renders separate requested pages and observed redirect destinations", () => {
+  const first = { scan: data.scan!, detections: data.detections };
+  const second = {
+    scan: { ...data.scan!, page_url: "https://example.se/admin", final_url: "https://shop.example.net/login" },
+    detections: [{ ...data.detections[0], version: "18.0" }],
+  };
+  const html = render({ ...data, pages: [first, second] });
+  expect(html).toContain("https://example.se/admin");
+  expect(html).toContain("https://shop.example.net/login");
+  expect(html.match(/Requested page/g)).toHaveLength(2);
+  expect(html).toContain("19.1");
+  expect(html).toContain("18.0");
+});
+
+it("labels historical results without presenting them as the latest scan", () => {
+  const html = renderToStaticMarkup(<MemoryRouter><WebtechSection data={data} historical /></MemoryRouter>);
+  expect(html).toContain("Results recorded for this historical Webtech scan");
+  expect(html).not.toContain("Results from the latest Webtech scan");
+  expect(html).toContain("Scan ID");
 });

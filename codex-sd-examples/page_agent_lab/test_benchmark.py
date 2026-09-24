@@ -4,8 +4,8 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from company_research.models import OBJECTIVES
-from company_research.storage import content_hash, write_json
+from crawler_service.models import OBJECTIVES
+from crawler_service.storage import content_hash, write_json
 
 from page_agent_lab.agent import PageInput, validate_records
 from page_agent_lab.audit import audit

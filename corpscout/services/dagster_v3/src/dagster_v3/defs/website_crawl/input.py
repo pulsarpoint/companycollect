@@ -39,8 +39,12 @@ class CrawlInputConfig(dg.Config):
         default=None,
         description="Selection task UUID. Defaults to the run's processing/task_id tag, then the run ID.",
     )
-    source_relation: str = Field(
-        description="Source ClickHouse database.table or view."
+    source_relation: str | None = Field(
+        default=None, description="Source ClickHouse database.table or view."
+    )
+    targets: list[str] = Field(
+        default_factory=list,
+        description="Explicit hostnames or HTTP(S) URLs, instead of a source table.",
     )
     id_column: str = Field(default="domain", description="Column matched by ids.")
     website_column: str = Field(
@@ -76,7 +80,9 @@ class CrawlInputConfig(dg.Config):
 
     @field_validator("source_relation")
     @classmethod
-    def source_name(cls, value: str) -> str:
+    def source_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         value = validate_relation(value)
         if value.split(".")[0] != "corpscout":
             raise ValueError("source_relation must be in the corpscout database")
@@ -86,6 +92,17 @@ class CrawlInputConfig(dg.Config):
 
     @model_validator(mode="after")
     def selection(self) -> Self:
+        if bool(self.targets) == (self.source_relation is not None):
+            raise ValueError("provide targets or source_relation, not both")
+        if self.targets and (
+            self.ids
+            or self.excluded_ids
+            or self.filters
+            or self.se_domain_filters is not None
+            or self.source_final
+            or self.select_all
+        ):
+            raise ValueError("table selection options require source_relation")
         for column in (self.id_column, self.website_column, *self.filters):
             if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", column) is None:
                 raise ValueError("column names must be simple SQL identifiers")
@@ -106,7 +123,8 @@ class CrawlInputConfig(dg.Config):
                 "SE domain filters require the current se_company_domain table with root_domain identity and website columns"
             )
         if not (
-            self.ids
+            self.targets
+            or self.ids
             or self.filters
             or self.select_all
             or (
@@ -139,13 +157,16 @@ def selected_domains_sql(config: CrawlInputConfig) -> tuple[str, dict]:
     limit = " LIMIT %(limit)s" if config.max_domains is not None else ""
     if config.max_domains is not None:
         parameters["limit"] = config.max_domains
+    source_rows = f"SELECT trimBoth(ifNull(toString(`{config.website_column}`), '')) AS raw_website FROM {config.source_relation}{final}{where}"
+    if config.targets:
+        parameters["targets"] = sorted(set(config.targets))
+        source_rows = "SELECT trimBoth(arrayJoin(%(targets)s)) AS raw_website"
     # Keep normalization and deduplication inside ClickHouse for large inventories.
     # Parse the authority explicitly: domain() drops some valid IDN/port combinations.
     return (
         f"""
         WITH source_rows AS (
-            SELECT trimBoth(ifNull(toString(`{config.website_column}`), '')) AS raw_website
-            FROM {config.source_relation}{final}{where}
+            {source_rows}
         ), urls AS (
             SELECT raw_website,
                 multiIf(
@@ -184,7 +205,7 @@ def selected_domains_sql(config: CrawlInputConfig) -> tuple[str, dict]:
 
 
 def selection_fingerprint(config: CrawlInputConfig, target: str) -> str:
-    selection = config.model_dump(exclude={"task_id"}, mode="json")
+    selection = config.model_dump(exclude={"task_id", "targets"}, mode="json")
     for key in ("ids", "excluded_ids"):
         selection[key] = sorted(set(selection[key]))
     selection["filters"] = {
@@ -201,6 +222,8 @@ def seed_crawl_inputs(
     processing: ProcessingResource,
     target: str,
 ) -> dg.MaterializeResult:
+    if config.source_relation is None:
+        raise ValueError("Use website_crawl_input for manual targets")
     if target not in INPUT_TABLES:
         raise ValueError("unknown crawl input table")
     crawl_type = CRAWL_TYPES[target]

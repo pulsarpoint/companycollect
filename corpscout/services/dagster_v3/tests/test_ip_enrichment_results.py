@@ -12,6 +12,7 @@ from dagster_v3.defs.commoncrawl_geoip.resources import MaxMindDatabaseResource
 from dagster_v3.defs.commoncrawl_rdap.client import RdapClientError
 from dagster_v3.defs.commoncrawl_rdap.rdap import RdapLookupResponse
 from dagster_v3.defs.ip_enrichment import enrichment, results
+from dagster_v3.defs.ip_enrichment.input import ip_enrichment_input
 from tests.test_ip_enrichment_input import (
     materialize as prepare_input,
     server as server,
@@ -366,3 +367,45 @@ def test_resume_rejects_different_task_or_lookup_policy(environment):
     assert not run(env, second_task, execution_id=first.run_id).success
     assert not run(env, first_task, execution_id=first.run_id, force_rdap=True).success
     assert env.calls == ["8.8.8.8"]
+
+
+def test_workflow_freezes_and_processes_the_same_task(environment):
+    env = environment
+    task = str(uuid4())
+    defs = dg.Definitions(
+        assets=[ip_enrichment_input, results.ip_enrichment_results],
+        jobs=[results.ip_enrichment_workflow],
+        resources={
+            "clickhouse": env.resource,
+            "processing": ProcessingResource(postgres_url=env.dsn),
+            "maxmind_geoip": env.maxmind,
+        },
+    )
+    result = defs.resolve_job_def("ip_enrichment_workflow").execute_in_process(
+        instance=env.instance,
+        run_config={
+            "ops": {
+                "ip_enrichment_input": {
+                    "config": {
+                        "task_id": task,
+                        "ips": ["8.8.8.8", "9.9.9.9", "127.0.0.1"],
+                    }
+                },
+                "ip_enrichment_results": {
+                    "config": {
+                        "task_id": task,
+                        "max_requests": None,
+                        "request_delay_seconds": 0,
+                    }
+                },
+            }
+        },
+    )
+    assert result.success
+    assert len(result.asset_materializations_for_node("ip_enrichment_input")) == 1
+    assert len(result.asset_materializations_for_node("ip_enrichment_results")) == 1
+    assert env.client.execute(
+        "SELECT ip FROM corpscout.ip_enrichment_results WHERE task_id=%(task)s ORDER BY ip",
+        {"task": task},
+    ) == [("127.0.0.1",), ("8.8.8.8",), ("9.9.9.9",)]
+    assert sorted(env.calls) == ["8.8.8.8", "9.9.9.9"]

@@ -137,34 +137,3 @@ CREATE TABLE IF NOT EXISTS corpscout.no_financial_statements
 )
 ENGINE = ReplacingMergeTree(resolved_at)
 ORDER BY (org_number, ifNull(fiscal_year, 0), accounts_type, source_record_id);
-
-CREATE TABLE IF NOT EXISTS corpscout.company_website_domains
-(
-    source_website_table LowCardinality(String),
-    source_website_id String,
-    country_iso2 Nullable(String),
-    source_slug LowCardinality(String),
-    company_id_type LowCardinality(String),
-    company_id String,
-    website_url String,
-    website_normalized_url String,
-    website_host String,
-    root_domain String,
-    is_current UInt8,
-    is_primary UInt8,
-    resolved_at DateTime64(3, 'UTC')
-)
-ENGINE = ReplacingMergeTree(resolved_at)
-ORDER BY (root_domain, source_slug, company_id_type, company_id, source_website_table, source_website_id);
-
-CREATE TABLE IF NOT EXISTS corpscout.domains
-(
-    root_domain String,
-    company_count UInt64,
-    website_count UInt64,
-    source_slug_count UInt64,
-    country_count UInt64,
-    resolved_at DateTime64(3, 'UTC')
-)
-ENGINE = ReplacingMergeTree(resolved_at)
-ORDER BY root_domain;

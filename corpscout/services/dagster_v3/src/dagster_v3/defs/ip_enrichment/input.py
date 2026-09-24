@@ -47,6 +47,10 @@ class IpEnrichmentInputConfig(dg.Config):
         default_factory=dict,
         description="Exact matches: OR within each value list, AND between columns.",
     )
+    ip_search: str = Field(
+        default="", description="Exact IP or literal IP prefix to select."
+    )
+    excluded_ips: list[str] = Field(default_factory=list)
     source_final: bool = False
     select_all: bool = False
     max_rows: int | None = Field(
@@ -68,7 +72,7 @@ class IpEnrichmentInputConfig(dg.Config):
     def valid_task_id(cls, value: str | None) -> str | None:
         return str(UUID(value)) if value is not None else None
 
-    @field_validator("ips")
+    @field_validator("ips", "excluded_ips")
     @classmethod
     def canonical_ips(cls, values: list[str]) -> list[str]:
         normalized = set()
@@ -82,6 +86,14 @@ class IpEnrichmentInputConfig(dg.Config):
             else:
                 normalized.add(str(address))
         return sorted(normalized)
+
+    @field_validator("ip_search")
+    @classmethod
+    def valid_search(cls, value: str) -> str:
+        value = value.strip().lower()
+        if value and re.fullmatch(r"[0-9a-f:.]{1,45}", value) is None:
+            raise ValueError("ip_search must be an IP address or literal IP prefix")
+        return value
 
     @field_validator("source_relation")
     @classmethod
@@ -125,6 +137,8 @@ class IpEnrichmentInputConfig(dg.Config):
         if self.source_relation is None:
             if (
                 self.filters
+                or self.ip_search
+                or self.excluded_ips
                 or self.source_final
                 or self.select_all
                 or self.ip_column != "ip"
@@ -132,7 +146,12 @@ class IpEnrichmentInputConfig(dg.Config):
                 or self.observed_at_column is not None
             ):
                 raise ValueError("table selection options require source_relation")
-        elif not (self.filters or self.max_rows is not None or self.select_all):
+        elif not (
+            self.filters
+            or self.ip_search
+            or self.max_rows is not None
+            or self.select_all
+        ):
             raise ValueError("provide filters, max_rows, or explicit select_all=true")
         return self
 
@@ -156,6 +175,29 @@ def selected_ips_sql(config: IpEnrichmentInputConfig) -> tuple[str, dict]:
         for index, (column, values) in enumerate(sorted(config.filters.items())):
             predicates.append(f"source.`{column}` IN %(filter_{index})s")
             params[f"filter_{index}"] = tuple(sorted(set(values)))
+        if config.ip_search:
+            try:
+                address = ip_address(config.ip_search)
+            except ValueError:
+                predicates.extend(
+                    [
+                        f"source.`{config.ip_column}` >= %(ip_prefix)s",
+                        f"source.`{config.ip_column}` < %(ip_prefix_end)s",
+                    ]
+                )
+                params["ip_prefix"] = config.ip_search
+                params["ip_prefix_end"] = config.ip_search[:-1] + chr(
+                    ord(config.ip_search[-1]) + 1
+                )
+            else:
+                canonical = (
+                    f"::ffff:{address.ipv4_mapped}"
+                    if isinstance(address, IPv6Address)
+                    and address.ipv4_mapped is not None
+                    else str(address)
+                )
+                predicates.append(f"{ip_value} = %(exact_ip)s")
+                params["exact_ip"] = canonical
         where = " WHERE " + " AND ".join(predicates) if predicates else ""
     record_id = (
         f"trimBoth(ifNull(toString(source.`{config.source_record_id_column}`), ''))"
@@ -167,6 +209,10 @@ def selected_ips_sql(config: IpEnrichmentInputConfig) -> tuple[str, dict]:
         if config.observed_at_column is not None
         else "CAST(NULL AS Nullable(DateTime64(6, 'UTC')))"
     )
+    excluded = ""
+    if config.excluded_ips:
+        excluded = " AND normalized_ip NOT IN %(excluded_ips)s"
+        params["excluded_ips"] = tuple(config.excluded_ips)
     limit = ""
     if config.max_rows is not None:
         limit = " LIMIT %(limit)s"
@@ -180,7 +226,7 @@ def selected_ips_sql(config: IpEnrichmentInputConfig) -> tuple[str, dict]:
             {record_id} AS record_ref, {observed_at} AS source_observed_at
         FROM {relation}{where}
     )
-    WHERE normalized_ip IS NOT NULL
+    WHERE normalized_ip IS NOT NULL{excluded}
     GROUP BY normalized_ip, record_ref
     ORDER BY ip, source_record_id{limit}""",
         params,
@@ -212,6 +258,11 @@ def ip_enrichment_input(
     context.instance.add_run_tags(context.run.run_id, {"processing/task_id": task_id})
     context.add_output_metadata({"task_id": task_id, "input_relation": INPUT_RELATION})
     selection = config.model_dump(exclude={"task_id"})
+    # Preserve fingerprints of already prepared batches that predate these optional filters.
+    if not selection["ip_search"]:
+        del selection["ip_search"]
+    if not selection["excluded_ips"]:
+        del selection["excluded_ips"]
     selection["filters"] = {
         key: sorted(set(values)) for key, values in config.filters.items()
     }
@@ -273,7 +324,12 @@ def ip_enrichment_input(
                     FROM ({sql}) AS selected""",
                     params,
                     query_id=query_id,
-                    settings={"async_insert": 0},
+                    settings={
+                        "async_insert": 0,
+                        "max_threads": 4,
+                        "max_bytes_before_external_group_by": 536870912,
+                        "max_bytes_before_external_sort": 536870912,
+                    },
                 )
                 [(unique_ips, invalid_ids)] = client.execute(
                     f"""SELECT uniqExact(ip), countIf(empty(source_record_id) OR position(source_record_id, char(0)) > 0)

@@ -1,7 +1,17 @@
-import { useEffect } from "react";
-import { Form, Link, useFetcher, useNavigation } from "react-router";
+import { useEffect, useRef, useState } from "react";
+import { data, Form, Link, useFetcher, useNavigation } from "react-router";
 import type { Route } from "./+types/admin-ip-addresses";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
+import { Checkbox } from "~/components/ui/checkbox";
+import {
+  IpEnrichmentSelectionError,
+  launchIpEnrichment,
+} from "~/lib/ip-enrichment.server";
+import {
+  isIpSelected,
+  selectIpAddresses,
+  type WorkspaceIpSelection,
+} from "~/lib/workspace-ip-selection";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
@@ -100,6 +110,47 @@ export async function loader({ request }: Route.LoaderArgs) {
   };
 }
 
+export async function action({ request }: Route.ActionArgs) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return data(
+      { ok: false as const, error: "Invalid enrichment request." },
+      { status: 400 },
+    );
+  }
+  if (body?.action !== "enrich") {
+    return data(
+      { ok: false as const, error: "Choose a supported IP address action." },
+      { status: 400 },
+    );
+  }
+  try {
+    return data(
+      await launchIpEnrichment(
+        body.selection,
+        process.env.BACKOFFICE_OPERATOR?.trim() || "backoffice",
+      ),
+    );
+  } catch (error) {
+    if (error instanceof IpEnrichmentSelectionError) {
+      return data(
+        { ok: false as const, error: error.message },
+        { status: 400 },
+      );
+    }
+    return data(
+      {
+        ok: false as const,
+        error:
+          "Could not submit enrichment. Check Dagster for a submitted run before retrying.",
+      },
+      { status: 502 },
+    );
+  }
+}
+
 export function meta() {
   return [{ title: "IP addresses | CompanyCollect" }];
 }
@@ -108,7 +159,39 @@ export default function WorkspaceIpAddresses({
   loaderData,
 }: Route.ComponentProps) {
   const { rows, filters, after, next, hasMore } = loaderData;
-  const busy = useNavigation().state !== "idle";
+  const navigationBusy = useNavigation().state !== "idle";
+  const fetcher = useFetcher<typeof action>();
+  const submitting = fetcher.state !== "idle";
+  const busy = navigationBusy || submitting;
+  const filterKey = JSON.stringify(filters);
+  const [selectionState, setSelectionState] = useState<{
+    filterKey: string;
+    selection: WorkspaceIpSelection;
+  }>({ filterKey, selection: { mode: "ips", ips: [] } });
+  const currentState =
+    selectionState.filterKey === filterKey
+      ? selectionState
+      : { filterKey, selection: { mode: "ips" as const, ips: [] } };
+  if (currentState !== selectionState) setSelectionState(currentState);
+  const selection = currentState.selection;
+  const setSelection = (selection: WorkspaceIpSelection) =>
+    setSelectionState({ filterKey, selection });
+  const submittedState = useRef<typeof selectionState | null>(null);
+  const handledRun = useRef<string | null>(null);
+  useEffect(() => {
+    if (fetcher.data?.ok && handledRun.current !== fetcher.data.runId) {
+      handledRun.current = fetcher.data.runId;
+      setSelectionState((current) =>
+        current === submittedState.current
+          ? { ...current, selection: { mode: "ips", ips: [] } }
+          : current,
+      );
+    }
+  }, [fetcher.data]);
+  const pageSelected = rows.filter((row) =>
+    isIpSelected(selection, row.ip),
+  ).length;
+  const hasSelection = selection.mode === "all" || selection.ips.length > 0;
   return (
     <div className="flex flex-col gap-6 p-4 md:p-6" aria-busy={busy}>
       <header className="flex flex-col gap-2">
@@ -156,10 +239,103 @@ export default function WorkspaceIpAddresses({
           </Button>
         </FieldGroup>
       </Form>
+      {fetcher.data && !submitting ? (
+        <Alert variant={fetcher.data.ok ? "default" : "destructive"}>
+          <AlertDescription>
+            {fetcher.data.ok ? (
+              <>
+                Enrichment submitted. GeoIP, ASN and RDAP will be processed in
+                the background.{" "}
+                {fetcher.data.runUrl ? (
+                  <a
+                    href={fetcher.data.runUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    View Dagster run
+                  </a>
+                ) : null}
+              </>
+            ) : (
+              fetcher.data.error
+            )}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-3">
+          <p className="text-muted-foreground text-sm" role="status">
+            {selection.mode === "all"
+              ? `All matching addresses selected across every page${selection.excludedIps.length ? ` · ${selection.excludedIps.length} excluded` : ""}`
+              : `${selection.ips.length.toLocaleString("en-US")} ${selection.ips.length === 1 ? "address" : "addresses"} selected`}
+          </p>
+          {selection.mode !== "all" && rows.length > 0 ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={() =>
+                setSelection({ mode: "all", filters, excludedIps: [] })
+              }
+            >
+              Select all matching addresses
+            </Button>
+          ) : null}
+          {hasSelection ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy}
+              onClick={() => setSelection({ mode: "ips", ips: [] })}
+            >
+              Clear selection
+            </Button>
+          ) : null}
+          <Button
+            size="sm"
+            disabled={busy || !hasSelection}
+            onClick={() => {
+              if (busy || !hasSelection) return;
+              submittedState.current = currentState;
+              void fetcher.submit(
+                JSON.stringify({ action: "enrich", selection }),
+                {
+                  method: "post",
+                  encType: "application/json",
+                  action: "/admin/ip-addresses",
+                },
+              );
+            }}
+          >
+            {submitting ? "Submitting…" : "Enrich IP addresses"}
+          </Button>
+        </div>
+        <p className="text-muted-foreground text-xs">
+          Updates GeoIP location and ASN, and retrieves RDAP registration and
+          network details. Fresh RDAP results are reused.
+        </p>
+      </div>
       <div className="rounded-lg border">
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-10">
+                <Checkbox
+                  aria-label="Select all addresses on this page"
+                  checked={rows.length > 0 && pageSelected === rows.length}
+                  indeterminate={pageSelected > 0 && pageSelected < rows.length}
+                  disabled={busy || !rows.length}
+                  onCheckedChange={(checked) =>
+                    setSelection(
+                      selectIpAddresses(
+                        selection,
+                        rows.map((row) => row.ip),
+                        checked,
+                      ),
+                    )
+                  }
+                />
+              </TableHead>
               <TableHead>IP address</TableHead>
               <TableHead>DNS type</TableHead>
               <TableHead>Location</TableHead>
@@ -171,7 +347,24 @@ export default function WorkspaceIpAddresses({
           </TableHeader>
           <TableBody>
             {rows.map((row) => (
-              <TableRow key={row.ip}>
+              <TableRow
+                key={row.ip}
+                data-state={
+                  isIpSelected(selection, row.ip) ? "selected" : undefined
+                }
+              >
+                <TableCell>
+                  <Checkbox
+                    aria-label={`Select ${row.ip}`}
+                    checked={isIpSelected(selection, row.ip)}
+                    disabled={busy}
+                    onCheckedChange={(checked) =>
+                      setSelection(
+                        selectIpAddresses(selection, [row.ip], checked),
+                      )
+                    }
+                  />
+                </TableCell>
                 <TableCell>
                   <span className="font-mono">{row.ip}</span>
                 </TableCell>
@@ -227,7 +420,7 @@ export default function WorkspaceIpAddresses({
             ))}
             {!rows.length ? (
               <TableRow>
-                <TableCell colSpan={7}>
+                <TableCell colSpan={8}>
                   <Empty>
                     <EmptyHeader>
                       <EmptyTitle>No matching IP addresses</EmptyTitle>
@@ -270,9 +463,8 @@ export default function WorkspaceIpAddresses({
       </div>
       <p className="text-muted-foreground text-xs">
         Address inventory: <code>corpscout.commoncrawl_ip_addresses</code>.{" "}
-        Location and ASN include earlier GeoIP lookups. RDAP networks appear as
-        addresses are processed by IP enrichment. A dash means no data is
-        available.
+        Location, ASN and RDAP come from saved IP enrichment results. A dash
+        means no data is available.
       </p>
     </div>
   );

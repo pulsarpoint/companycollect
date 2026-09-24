@@ -1,0 +1,49 @@
+---
+crawler_service_service_name: crawler-service
+# Preserve deployed filesystem ownership and absolute artifact paths across the rename.
+crawler_service_user: company-research
+crawler_service_source_dir: "{{ playbook_dir }}/.."
+crawler_service_deploy_dir: /opt/companycollect/corpscout/company_research
+crawler_service_state_dir: /var/lib/company-research
+crawler_service_cache_dir: /var/cache/company-research
+crawler_service_output_dir: "{{ crawler_service_state_dir }}/results"
+crawler_service_config_dir: /etc/company-research
+crawler_service_env_file: "{{ crawler_service_config_dir }}/company-research.env"
+
+crawler_service_python_version: "3.12.12"
+crawler_service_uv_version: "0.11.7"
+crawler_service_uv: "{{ crawler_service_deploy_dir }}/tools/bin/uv"
+crawler_service_install_environment:
+  UV_PYTHON_INSTALL_DIR: "{{ crawler_service_deploy_dir }}/python"
+  UV_CACHE_DIR: "{{ crawler_service_deploy_dir }}/uv-cache"
+  UV_LINK_MODE: copy
+crawler_service_runtime_environment:
+  HOME: "{{ crawler_service_state_dir }}"
+  XDG_CACHE_HOME: "{{ crawler_service_cache_dir }}"
+  PYTHONUNBUFFERED: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+
+crawler_service_listen_host: "0.0.0.0"
+crawler_service_port: 8080
+crawler_service_concurrency: 2
+crawler_service_human_enabled: true
+crawler_service_challenge_agent_enabled: true
+crawler_service_challenge_agent_max_runs: 3
+crawler_service_manual_concurrency: 2
+crawler_service_browser_api_url: http://127.0.0.1:8081
+crawler_service_browser_api_token: "{{ lookup('ansible.builtin.env', 'BROWSER_API_TOKEN') }}"
+crawler_service_max_pending: 100
+
+# Empty bucket keeps local-only delivery. Set to crawls to enable RustFS/S3.
+crawler_service_s3_bucket: "{{ lookup('ansible.builtin.env', 'CRAWL_S3_BUCKET') }}"
+crawler_service_s3_endpoint_url: "{{ lookup('ansible.builtin.env', 'CRAWL_S3_ENDPOINT_URL') }}"
+crawler_service_s3_prefix: company-crawls
+crawler_service_s3_region: us-east-1
+crawler_service_s3_access_key: "{{ lookup('ansible.builtin.env', 'AWS_ACCESS_KEY_ID') }}"
+crawler_service_s3_secret_key: "{{ lookup('ansible.builtin.env', 'AWS_SECRET_ACCESS_KEY') }}"
+crawler_service_s3_session_token: "{{ lookup('ansible.builtin.env', 'AWS_SESSION_TOKEN') }}"
+
+# Override with the ignored secrets.yml or controller environment variables.
+crawler_service_deepseek: "{{ lookup('ansible.builtin.env', 'DEEPSEEK') }}"
+crawler_service_openrouter: "{{ lookup('ansible.builtin.env', 'OPENROUTER_API_KEY') }}"
+crawler_service_api_token: "{{ lookup('ansible.builtin.env', 'CRAWL_API_TOKEN') }}"

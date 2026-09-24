@@ -106,6 +106,9 @@ class WebtechCandidate:
 
     root_domain: str
     harmonic_rank: int
+    task_id: str = ""
+    input_id: str = ""
+    page_url: str = ""
 
 
 type WebtechOutcome = Literal[

@@ -1,0 +1,102 @@
+{
+  "date": "2026-09-24",
+  "status": "complete",
+  "migrations": [
+    436,
+    437
+  ],
+  "backfill": {
+    "webtech_domain_technologies": 8050732,
+    "webtech_domain_scan_results": 977577
+  },
+  "reconciliation": {
+    "webtech_domain_technologies": {
+      "missing_source_rows": 0,
+      "conflicting_reports": 0,
+      "logical_rows": 8050732
+    },
+    "webtech_domain_scan_results": {
+      "missing_source_rows": 0,
+      "conflicting_reports": 0,
+      "logical_rows": 977577
+    },
+    "incomplete_summaries": 0,
+    "orphan_reports": 0
+  },
+  "original_view_benchmark": {
+    "root": {
+      "rows": [
+        [
+          22
+        ]
+      ],
+      "seconds": 0.117
+    },
+    "global": {
+      "rows": [
+        [
+          8050732,
+          700723
+        ]
+      ],
+      "seconds": 3.557
+    }
+  },
+  "page_view_benchmark": {
+    "root": {
+      "rows": [
+        [
+          11
+        ]
+      ],
+      "seconds": 0.11
+    },
+    "global": {
+      "rows": [
+        [
+          8044511,
+          700700
+        ]
+      ],
+      "seconds": 9.495
+    }
+  },
+  "report_samples": {
+    "reports": 16,
+    "detections": 169,
+    "checksum_and_identity_valid": true
+  },
+  "validation": {
+    "backend_tests": 174,
+    "frontend_tests": 22,
+    "dagster_definitions": "passed",
+    "typecheck": "passed",
+    "build": "passed",
+    "ui": "wordpress.org: 11 detections, normalized requested page, observed page shown"
+  },
+  "dagster_run": {
+    "runId": "2e20345a-e36d-406e-9f8c-4381e6bfc401",
+    "status": "SUCCESS"
+  },
+  "history_note": "All surviving source rows preserved. Older scans already replaced by the legacy key cannot be reconstructed from these tables; no missing historical outcomes were fabricated.",
+  "performance_note": "Single-domain current lookup remained about 0.11s. Full current-view enumeration measured 9.5s versus 3.6s previously; global domain-filter optimization remains deferred. The detail reader queries exact page/scan keys directly.",
+  "legacy_tables": [
+    "webtech_domain_scan_results_v2",
+    "webtech_domain_technologies_v2"
+  ],
+  "live_replay_readback": {
+    "replayed_scans": [
+      7609,
+      64847,
+      0
+    ],
+    "replayed_detections": [
+      64847,
+      0
+    ],
+    "history_counts": {
+      "webtech_domain_technologies": 8050732,
+      "webtech_domain_scan_results": 977577
+    }
+  }
+}

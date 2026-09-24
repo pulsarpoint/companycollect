@@ -6,7 +6,9 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 import scan_coordinator
 from config import WebtechServiceSettings
@@ -17,6 +19,7 @@ from models import (
 )
 from s3_store import S3Location, StoredObject, parse_s3_uri
 from service import create_app
+from service_models import CandidateManifest
 
 API_TOKEN = "test-webtech-token-with-safe-length"
 BASE_URI = "s3://webtech/webtech"
@@ -454,3 +457,66 @@ def _wait_for_terminal(
             cursor = payload["events"][-1]["sequence"]
         if payload["scan"]["status"] not in {"pending", "running"}:
             return payload["scan"]
+
+
+@pytest.mark.parametrize("separate_execution", [False, True])
+def test_task_pages_are_separate_and_resume_without_rescanning(separate_execution):
+    store = InMemoryRustfsStore()
+    document = json.loads(candidate_manifest())
+    task_id = str(uuid4())
+    execution_id = str(uuid4()) if separate_execution else task_id
+    document.update(schema_version=3, crawl_id=f"webtech-{execution_id}", dagster_run_id=execution_id)
+    document["candidates"] = [
+        {"root_domain": "novelic.com", "harmonic_rank": 0, "task_id": task_id,
+         "input_id": str(index) * 64, "page_url": f"https://novelic.com/{page}"}
+        for index, page in [(1, ""), (2, "contact")]
+    ]
+    body = json.dumps(document).encode()
+    store.objects[parse_s3_uri(MANIFEST_URI).key] = body
+    calls = []
+
+    async def fake_scan(candidates, *, settings, progress_callback):
+        calls.extend(candidate.page_url for candidate in candidates)
+        for candidate in candidates:
+            await progress_callback(WebtechDomainResult.failure(candidate=candidate, outcome="navigation_error", requested_url=candidate.page_url, final_url="", scanned_at=datetime.now(UTC), duration_ms=1, http_fallback_used=False, error_message="fixture"))
+        return ()
+
+    request = {**scan_request(body), "crawl_id": document["crawl_id"]}
+    headers = {"Authorization": f"Bearer {API_TOKEN}"}
+    for _ in range(2):
+        app = create_app(settings=service_settings(), store=store, scan_function=fake_scan)
+        with TestClient(app) as client:
+            response = client.post("/v1/scans", json=request, headers=headers)
+            assert response.status_code == 202, response.text
+            scan_id = response.json()["scan_id"]
+            for attempt in range(10):
+                snapshot = client.get(f"/v1/scans/{scan_id}", params={"wait_seconds": 1}, headers=headers).json()["scan"]
+                if snapshot["status"] == "completed":
+                    break
+            assert snapshot["status"] == "completed"
+            assert snapshot["completed_count"] == 2
+    assert calls == ["https://novelic.com/", "https://novelic.com/contact"]
+    reports = [json.loads(body) for key, body in store.objects.items() if key.endswith("/report.json")]
+    assert len(reports) == 2
+    assert {report["candidate"]["input_id"] for report in reports} == {"1" * 64, "2" * 64}
+
+
+@pytest.mark.parametrize("invalid", ["mixed_tasks", "bad_task", "bad_input", "outside_domain", "wrong_execution"])
+def test_execution_manifest_rejects_invalid_identities(invalid):
+    task_id, execution_id = str(uuid4()), str(uuid4())
+    document = json.loads(candidate_manifest())
+    document.update(schema_version=3, crawl_id=f"webtech-{execution_id}", dagster_run_id=execution_id)
+    candidate = {"root_domain": "example.com", "task_id": task_id, "input_id": "a" * 64, "page_url": "https://example.com/"}
+    document["candidates"] = [candidate]
+    if invalid == "mixed_tasks":
+        document["candidates"].append({**candidate, "task_id": str(uuid4()), "input_id": "b" * 64})
+    elif invalid == "bad_task":
+        candidate["task_id"] = "not-a-uuid"
+    elif invalid == "bad_input":
+        candidate["input_id"] = "invalid"
+    elif invalid == "outside_domain":
+        candidate["page_url"] = "https://other.com/"
+    else:
+        document["crawl_id"] = f"webtech-{uuid4()}"
+    with pytest.raises(ValidationError):
+        CandidateManifest.model_validate(document)

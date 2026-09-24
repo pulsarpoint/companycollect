@@ -1,6 +1,8 @@
 import re
 from datetime import datetime
 from typing import Literal, Self
+from urllib.parse import urlsplit
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -11,7 +13,7 @@ from models import (
     WebtechTimeoutStage,
 )
 
-CRAWL_ID_PATTERN = re.compile(r"CC-MAIN-[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+CRAWL_ID_PATTERN = re.compile(r"(?:CC-MAIN-[A-Za-z0-9][A-Za-z0-9._-]{0,127}|webtech-[a-f0-9-]{36})")
 SHA256_PATTERN = re.compile(r"[a-f0-9]{64}")
 
 type ScanStatus = Literal[
@@ -29,7 +31,10 @@ class Candidate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     root_domain: str = Field(min_length=1, max_length=253)
-    harmonic_rank: int = Field(ge=1)
+    harmonic_rank: int = Field(default=0, ge=0)
+    task_id: str = ""
+    input_id: str = ""
+    page_url: str = ""
 
     @field_validator("root_domain")
     @classmethod
@@ -50,7 +55,7 @@ class CandidateManifest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[2]
+    schema_version: Literal[2, 3]
     crawl_id: str
     partition_key: str = Field(
         min_length=1,
@@ -71,9 +76,30 @@ class CandidateManifest(BaseModel):
 
     @model_validator(mode="after")
     def validate_candidates(self) -> Self:
-        domains = [candidate.root_domain for candidate in self.candidates]
+        if self.schema_version == 3:
+            task_ids = {candidate.task_id for candidate in self.candidates}
+            if len(task_ids) > 1:
+                raise ValueError("candidate manifest must contain inputs from one task")
+            for candidate in self.candidates:
+                if str(UUID(candidate.task_id)) != candidate.task_id:
+                    raise ValueError("task_id must be a canonical UUID")
+                # Draft executions have their own immutable scan namespace. Legacy
+                # task manifests used the task UUID as that namespace instead.
+                if self.crawl_id not in {
+                    f"webtech-{self.dagster_run_id}",
+                    f"webtech-{candidate.task_id}",
+                }:
+                    raise ValueError("manifest namespace must match its execution or legacy task")
+                page = urlsplit(candidate.page_url)
+                host = page.hostname or ""
+                if (not re.fullmatch(r"[a-f0-9]{64}", candidate.input_id)
+                    or page.scheme not in {"http", "https"}
+                    or page.username is not None or page.password is not None
+                    or not (host == candidate.root_domain or host.endswith("." + candidate.root_domain))):
+                    raise ValueError("invalid task/page input identity")
+        domains = [candidate.input_id or candidate.root_domain for candidate in self.candidates]
         if len(domains) != len(set(domains)):
-            raise ValueError("candidate manifest contains duplicate root domains")
+            raise ValueError("candidate manifest contains duplicate target identities")
         return self
 
 
@@ -115,6 +141,7 @@ class StoredResultReference(BaseModel):
 
     root_domain: str
     harmonic_rank: int
+    input_id: str = ""
     outcome: str
     timeout_stage: str | None
     technology_count: int = Field(ge=0)

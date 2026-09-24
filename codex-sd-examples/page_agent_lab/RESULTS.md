@@ -124,7 +124,7 @@ when the page establishes the attribution. The routed version improved some
 attachments, but neither output is ready for automatic acceptance.
 
 There is also a concrete pre-existing phone-validation bug in
-company_research/content.py: the phone-specific digit comparison runs for every
+crawler_service/content.py: the phone-specific digit comparison runs for every
 anchor field, including owner. A correctly quoted owner such as Peter Grabe has
 no digits and therefore fails. The saved phone record shows the exact name and
 number both matching the source, yet receives owner_not_in_evidence.

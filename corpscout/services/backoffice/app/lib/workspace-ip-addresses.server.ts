@@ -22,8 +22,6 @@ interface Geoip {
 }
 
 interface Enrichment extends Geoip {
-  city_data_status: string;
-  asn_data_status: string;
   rdap_matched_cidr: string | null;
   rdap_name: string | null;
 }
@@ -230,7 +228,7 @@ export async function listWorkspaceIpAddresses(
     versions: page.map((row) => row.ip_version),
     ips: page.map((row) => row.ip),
   };
-  const [observations, legacy, enrichment] = await Promise.all([
+  const [observations, enrichment] = await Promise.all([
     chQuery<IpObservation>(
       `SELECT bucket, ip_version, ip, toString(min(first_seen)) AS first_seen,
        toString(max(last_seen)) AS last_seen FROM corpscout.commoncrawl_ip_addresses
@@ -238,42 +236,28 @@ export async function listWorkspaceIpAddresses(
        GROUP BY bucket, ip_version, ip ${QUERY_SETTINGS}`,
       pageParams,
     ),
-    chQuery<Geoip>(
-      `SELECT ip, country_iso_code, city_name, asn, asn_organization
-       FROM corpscout.commoncrawl_ip_geoip FINAL
-       WHERE (bucket, ip) IN arrayZip({buckets:Array(UInt16)}, {ips:Array(String)})
-       ${QUERY_SETTINGS}`,
-      pageParams,
-    ),
+    // Filter sorting-key columns before FINAL to avoid reading unrelated payloads.
     chQuery<Enrichment>(
       `SELECT ip, country_iso_code, city_name, asn, asn_organization,
-       city_data_status, asn_data_status, rdap_matched_cidr, rdap_name
+       rdap_matched_cidr, rdap_name
        FROM corpscout.ip_enrichment_current
        WHERE (bucket, ip) IN arrayZip({buckets:Array(UInt16)}, {ips:Array(String)})
-       ${QUERY_SETTINGS}`,
+       ${QUERY_SETTINGS}, optimize_move_to_prewhere_if_final=1`,
       pageParams,
     ),
   ]);
   const observationMap = new Map(observations.map((row) => [row.ip, row]));
-  const legacyMap = new Map(legacy.map((row) => [row.ip, row]));
   const enrichmentMap = new Map(enrichment.map((row) => [row.ip, row]));
-  const conclusive = new Set(["found", "not_found", "not_global"]);
   const rows = page.map((key): WorkspaceIpAddress => {
     const current = enrichmentMap.get(key.ip);
-    const fallback = legacyMap.get(key.ip);
-    // A conclusive negative clears older data; transient failures may retain it.
-    const city =
-      current && conclusive.has(current.city_data_status) ? current : fallback;
-    const asn =
-      current && conclusive.has(current.asn_data_status) ? current : fallback;
     return {
       ...key,
       first_seen: observationMap.get(key.ip)?.first_seen ?? "",
       last_seen: observationMap.get(key.ip)?.last_seen ?? "",
-      country_iso_code: city?.country_iso_code ?? null,
-      city_name: city?.city_name ?? null,
-      asn: asn?.asn ?? null,
-      asn_organization: asn?.asn_organization ?? null,
+      country_iso_code: current?.country_iso_code ?? null,
+      city_name: current?.city_name ?? null,
+      asn: current?.asn ?? null,
+      asn_organization: current?.asn_organization ?? null,
       rdap_matched_cidr: current?.rdap_matched_cidr ?? null,
       rdap_name: current?.rdap_name ?? null,
     };

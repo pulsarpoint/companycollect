@@ -289,3 +289,57 @@ def test_missing_source_column_does_not_admit_task(database, store):
         )
     assert queue.task(task)["status"] == "preparing"
     assert client.execute(f"SELECT count() FROM {INPUT_RELATION}") == [(0,)]
+
+
+@pytest.mark.parametrize(
+    ("search", "excluded", "expected"),
+    [
+        ("8.8.", ["8.8.4.4"], ["8.8.8.8"]),
+        ("8.8.8.8", [], ["8.8.8.8"]),
+        ("2001:4860:0:0:0:0:0:8888", [], ["2001:4860::8888"]),
+        ("", ["2001:4860:0:0:0:0:0:8888"], ["8.8.4.4", "8.8.8.8", "9.9.9.9"]),
+    ],
+)
+def test_inventory_search_and_exclusions_match_all_pages(
+    database, store, search, excluded, expected
+):
+    client, resource = database
+    client.execute("""INSERT INTO corpscout.ip_source_test VALUES
+        ('a', '8.8.8.8', 1, 'US', '2026-09-01', 1),
+        ('b', '8.8.8.8', 1, 'US', '2026-09-02', 1),
+        ('c', '8.8.4.4', 1, 'US', '2026-09-01', 1),
+        ('d', '9.9.9.9', 1, 'US', '2026-09-01', 1),
+        ('e', '2001:4860::8888', 1, 'US', '2026-09-01', 1),
+        ('f', '8.8.0.1', 0, 'US', '2026-09-01', 1)""")
+    assert materialize(
+        resource,
+        store[1],
+        source_relation="corpscout.ip_source_test",
+        ip_column="address",
+        observed_at_column="observed_at",
+        filters={"active": ["1"]},
+        select_all=True,
+        ip_search=search,
+        excluded_ips=excluded,
+    ).success
+    assert [
+        row[0] for row in client.execute(f"SELECT ip FROM {INPUT_RELATION} ORDER BY ip")
+    ] == expected
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"ips": ["8.8.8.8"], "ip_search": "8.8."},
+        {"ips": ["8.8.8.8"], "excluded_ips": ["8.8.8.8"]},
+        {"source_relation": "corpscout.ips", "ip_search": "%' OR 1=1"},
+        {
+            "source_relation": "corpscout.ips",
+            "select_all": True,
+            "excluded_ips": ["bad"],
+        },
+    ],
+)
+def test_invalid_inventory_filters(config):
+    with pytest.raises(ValidationError):
+        IpEnrichmentInputConfig(**config)

@@ -1,6 +1,6 @@
 """Compatibility exports for the frozen page-agent benchmark."""
 
-from company_research.page_prompts import (
+from crawler_service.page_prompts import (
     COMMON,
     LINKS,
     ROUTER,

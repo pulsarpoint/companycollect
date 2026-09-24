@@ -7,9 +7,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import httpx
-from company_research.llm import ModelClient
-from company_research.models import OBJECTIVES, ResearchConfig
-from company_research.storage import content_hash
+from crawler_service.llm import ModelClient
+from crawler_service.models import OBJECTIVES, ResearchConfig
+from crawler_service.storage import content_hash
 from jsonschema import Draft202012Validator
 
 from page_agent_lab.agent import (

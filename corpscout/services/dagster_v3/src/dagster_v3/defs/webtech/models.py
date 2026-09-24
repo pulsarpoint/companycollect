@@ -22,7 +22,10 @@ class WebtechCandidate(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     root_domain: str = Field(min_length=1, max_length=253)
-    harmonic_rank: int = Field(ge=1)
+    harmonic_rank: int = Field(default=0, ge=0)
+    task_id: str = ""
+    input_id: str = ""
+    page_url: str = ""
 
 
 class CandidateManifestDocument(BaseModel):
@@ -30,7 +33,7 @@ class CandidateManifestDocument(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[2]
+    schema_version: Literal[2, 3]
     crawl_id: str
     partition_key: str
     detector_version: Literal[WEBTECH_DETECTOR_VERSION]
@@ -68,6 +71,7 @@ class StoredResultReference(BaseModel):
 
     root_domain: str
     harmonic_rank: int
+    input_id: str = ""
     outcome: str
     timeout_stage: str | None
     technology_count: int = Field(ge=0)

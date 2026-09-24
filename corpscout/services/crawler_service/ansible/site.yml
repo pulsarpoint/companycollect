@@ -1,0 +1,412 @@
+---
+- name: Deploy the Corpscout company crawler as a system service
+  hosts: crawler_service_hosts
+  become: true
+  gather_facts: false
+  vars_files:
+    - vars.yml
+
+  tasks:
+    - name: Build the locked service artifact on the control machine
+      delegate_to: localhost
+      become: false
+      check_mode: false
+      tags: [build]
+      block:
+        - name: Create a temporary artifact directory
+          ansible.builtin.tempfile:
+            state: directory
+            prefix: crawler-service-deploy-
+          register: crawler_service_build_dir
+          changed_when: false
+
+        - name: Build the application wheel
+          ansible.builtin.command:
+            argv: [uv, build, --wheel, --out-dir, "{{ crawler_service_build_dir.path }}"]
+            chdir: "{{ crawler_service_source_dir }}"
+          changed_when: false
+
+        - name: Export the service dependencies from the unchanged lockfile
+          ansible.builtin.command:
+            argv:
+              - uv
+              - export
+              - --locked
+              - --extra
+              - service
+              - --no-dev
+              - --no-emit-project
+              - --no-header
+              - --output-file
+              - "{{ crawler_service_build_dir.path }}/requirements.txt"
+            chdir: "{{ crawler_service_source_dir }}"
+          changed_when: false
+
+        - name: Locate the built wheel
+          ansible.builtin.find:
+            paths: "{{ crawler_service_build_dir.path }}"
+            patterns: "*.whl"
+          register: crawler_service_wheels
+
+        - name: Require exactly one application artifact
+          ansible.builtin.assert:
+            that: crawler_service_wheels.matched == 1
+
+        - name: Hash the application and locked dependencies
+          ansible.builtin.stat:
+            path: "{{ item }}"
+            checksum_algorithm: sha256
+          loop:
+            - "{{ crawler_service_wheels.files[0].path }}"
+            - "{{ crawler_service_build_dir.path }}/requirements.txt"
+          register: crawler_service_artifacts
+
+        - name: Identify the immutable release
+          ansible.builtin.set_fact:
+            crawler_service_release_id: >-
+              {{ ((crawler_service_artifacts.results | map(attribute='stat.checksum') | join(''))
+                  ~ crawler_service_python_version) | hash('sha256') }}
+            crawler_service_wheel_name: "{{ crawler_service_wheels.files[0].path | basename }}"
+
+        - name: Report the built release
+          ansible.builtin.debug:
+            msg: "Release {{ crawler_service_release_id }} built in {{ crawler_service_build_dir.path }}"
+
+    - name: Read optional controller secrets
+      ansible.builtin.include_vars:
+        file: secrets.yml
+      when: lookup('ansible.builtin.fileglob', playbook_dir ~ '/secrets.yml') | length > 0
+      no_log: true
+
+    - name: Validate optional S3 delivery settings
+      ansible.builtin.assert:
+        that:
+          - not crawler_service_human_enabled or crawler_service_s3_bucket | length > 0
+          - not crawler_service_challenge_agent_enabled or crawler_service_human_enabled
+          - crawler_service_challenge_agent_max_runs | int >= 3
+          - crawler_service_challenge_agent_max_runs | int <= 1000
+          - (crawler_service_s3_access_key | length == 0) == (crawler_service_s3_secret_key | length == 0)
+          - (item | regex_search('[\x00-\x1f\x7f]')) is none
+        fail_msg: Human assistance requires S3 storage; configure a complete credential pair or the AWS credential provider chain.
+      loop:
+        - "{{ crawler_service_s3_bucket }}"
+        - "{{ crawler_service_s3_endpoint_url }}"
+        - "{{ crawler_service_s3_prefix }}"
+        - "{{ crawler_service_s3_region }}"
+        - "{{ crawler_service_s3_access_key }}"
+        - "{{ crawler_service_s3_secret_key }}"
+        - "{{ crawler_service_s3_session_token }}"
+      no_log: true
+
+    - name: Require credentials for the REST API and default model
+      ansible.builtin.assert:
+        that:
+          - crawler_service_browser_api_url | length > 0
+          - crawler_service_browser_api_token | length >= 32
+          - crawler_service_deepseek | length > 0
+          - crawler_service_api_token | length >= 32
+          - (crawler_service_deepseek | regex_search('[\x00-\x1f\x7f]')) is none
+          - (crawler_service_openrouter | regex_search('[\x00-\x1f\x7f]')) is none
+          - (crawler_service_api_token | regex_search('[\x00-\x1f\x7f]')) is none
+        fail_msg: Set DEEPSEEK and a 32-character CRAWL_API_TOKEN in secrets.yml or the controller environment.
+      no_log: true
+
+    - name: Gather target platform information
+      ansible.builtin.setup:
+        gather_subset: [min]
+
+    - name: Require a supported Linux system with systemd
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.system == 'Linux'
+          - ansible_facts.os_family == 'Debian'
+          - ansible_facts.service_mgr == 'systemd'
+          - ansible_facts.architecture in ['x86_64', 'aarch64']
+        fail_msg: This playbook supports Debian/Ubuntu hosts using systemd.
+
+    - name: Record the release path
+      ansible.builtin.set_fact:
+        crawler_service_release_dir: "{{ crawler_service_deploy_dir }}/releases/{{ crawler_service_release_id }}"
+
+    - name: Install and activate the service
+      when: not ansible_check_mode
+      block:
+        - name: Install Python bootstrap prerequisites
+          ansible.builtin.apt:
+            name: [python3-venv, python3-packaging, acl, ca-certificates]
+            state: present
+            update_cache: true
+            cache_valid_time: 3600
+
+        - name: Create the service group
+          ansible.builtin.group:
+            name: "{{ crawler_service_user }}"
+            system: true
+
+        - name: Create the unprivileged service user
+          ansible.builtin.user:
+            name: "{{ crawler_service_user }}"
+            group: "{{ crawler_service_user }}"
+            system: true
+            shell: /usr/sbin/nologin
+            home: "{{ crawler_service_state_dir }}"
+            create_home: false
+
+        - name: Create root-owned application directories
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: directory
+            owner: root
+            group: root
+            mode: "0755"
+          loop:
+            - "{{ crawler_service_deploy_dir }}"
+            - "{{ crawler_service_release_dir }}"
+            - "{{ crawler_service_config_dir }}"
+
+        - name: Create persistent service state and browser cache
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: directory
+            owner: "{{ crawler_service_user }}"
+            group: "{{ crawler_service_user }}"
+            mode: "0700"
+          loop:
+            - "{{ crawler_service_state_dir }}"
+            - "{{ crawler_service_output_dir }}"
+            - "{{ crawler_service_cache_dir }}"
+
+        - name: Install the pinned uv tool in its own environment
+          ansible.builtin.pip:
+            name: "uv=={{ crawler_service_uv_version }}"
+            virtualenv: "{{ crawler_service_deploy_dir }}/tools"
+            virtualenv_command: /usr/bin/python3 -m venv
+            umask: "0022"
+
+        - name: Copy only the application wheel and locked dependency list
+          ansible.builtin.copy:
+            src: "{{ item }}"
+            dest: "{{ crawler_service_release_dir }}/"
+            owner: root
+            group: root
+            mode: "0644"
+          loop:
+            - "{{ crawler_service_wheels.files[0].path }}"
+            - "{{ crawler_service_build_dir.path }}/requirements.txt"
+
+        - name: Inspect release installation status
+          ansible.builtin.stat:
+            path: "{{ crawler_service_release_dir }}/.ready"
+          register: crawler_service_release_ready
+
+        - name: Prepare the new release without changing the running process
+          when: not crawler_service_release_ready.stat.exists
+          environment: "{{ crawler_service_install_environment }}"
+          block:
+            - name: Create the release environment using the pinned Python runtime
+              ansible.builtin.command:
+                argv:
+                  - "{{ crawler_service_uv }}"
+                  - venv
+                  - --python
+                  - "{{ crawler_service_python_version }}"
+                  - "{{ crawler_service_release_dir }}/.venv"
+                creates: "{{ crawler_service_release_dir }}/.venv/bin/python"
+
+            - name: Install the exact locked dependencies with hash verification
+              ansible.builtin.command:
+                argv:
+                  - "{{ crawler_service_uv }}"
+                  - pip
+                  - sync
+                  - --python
+                  - "{{ crawler_service_release_dir }}/.venv/bin/python"
+                  - --require-hashes
+                  - "{{ crawler_service_release_dir }}/requirements.txt"
+              changed_when: true
+
+            - name: Install the application wheel without resolving dependencies again
+              ansible.builtin.command:
+                argv:
+                  - "{{ crawler_service_uv }}"
+                  - pip
+                  - install
+                  - --python
+                  - "{{ crawler_service_release_dir }}/.venv/bin/python"
+                  - --no-deps
+                  - "{{ crawler_service_release_dir }}/{{ crawler_service_wheel_name }}"
+              changed_when: true
+
+            - name: Verify the HTTP-only crawler imports without browser dependencies
+              ansible.builtin.command:
+                argv:
+                  - "{{ crawler_service_release_dir }}/.venv/bin/python"
+                  - -c
+                  - "from crawler_service.service_api import create_app; from crawler_service.browser_client import BrowserLeaseClient"
+              changed_when: false
+
+            - name: Mark the successfully prepared release
+              ansible.builtin.copy:
+                content: "{{ crawler_service_release_id }}\n"
+                dest: "{{ crawler_service_release_dir }}/.ready"
+                owner: root
+                group: root
+                mode: "0644"
+
+        - name: Inspect the previous release for rollback
+          ansible.builtin.stat:
+            path: "{{ crawler_service_deploy_dir }}/current"
+          register: crawler_service_previous_release
+
+        - name: Inspect the legacy service unit
+          ansible.builtin.stat:
+            path: /etc/systemd/system/company-research.service
+          register: crawler_service_legacy_unit
+
+        - name: Read existing worker states
+          ansible.builtin.service_facts:
+
+        - name: Record whether the legacy worker is running
+          ansible.builtin.set_fact:
+            crawler_service_legacy_running: >-
+              {{ ansible_facts.services.get('company-research.service', {}).get('state') == 'running' }}
+
+        - name: Inspect crawler readiness before activation
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ crawler_service_port }}/healthz"
+            use_proxy: false
+          register: crawler_service_before_activation
+          failed_when: false
+
+        - name: Require a healthy existing worker before checking active crawls
+          ansible.builtin.assert:
+            that: crawler_service_before_activation.status | default(0) == 200
+            fail_msg: Existing crawler is not healthy; inspect its work before deploying.
+          when: >-
+            crawler_service_legacy_running or
+            ansible_facts.services.get(crawler_service_service_name ~ '.service', {}).get('state') == 'running'
+
+        - name: Require an idle crawler before changing the running release
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ crawler_service_port }}/v1/crawls/status?state={{ item }}&limit=1"
+            headers:
+              Authorization: "Bearer {{ crawler_service_api_token }}"
+            use_proxy: false
+            return_content: true
+          loop: [queued, running, blocked, captcha, awaiting_human]
+          register: crawler_service_active_jobs
+          failed_when: >-
+            crawler_service_active_jobs.status != 200 or
+            crawler_service_active_jobs.json.total | int != 0
+          when: crawler_service_before_activation.status | default(0) == 200
+          no_log: true
+
+        - name: Install the service credentials
+          ansible.builtin.template:
+            src: crawler-service.env.j2
+            dest: "{{ crawler_service_env_file }}"
+            owner: root
+            group: "{{ crawler_service_user }}"
+            mode: "0640"
+          no_log: true
+          diff: false
+          notify: Restart crawler service
+
+        - name: Select the prepared release
+          ansible.builtin.file:
+            src: "{{ crawler_service_release_dir }}"
+            dest: "{{ crawler_service_deploy_dir }}/current"
+            state: link
+            owner: root
+            group: root
+          notify: Restart crawler service
+
+        - name: Install the systemd service
+          ansible.builtin.template:
+            src: crawler-service.service.j2
+            dest: "/etc/systemd/system/{{ crawler_service_service_name }}.service"
+            owner: root
+            group: root
+            mode: "0644"
+          notify: Restart crawler service
+
+        - name: Validate the installed systemd unit
+          ansible.builtin.command:
+            argv: [systemd-analyze, verify, "/etc/systemd/system/{{ crawler_service_service_name }}.service"]
+          changed_when: false
+
+        - name: Activate the renamed crawler with rollback
+          block:
+            - name: Stop and disable the legacy service before taking its port
+              ansible.builtin.systemd_service:
+                name: company-research
+                enabled: false
+                state: stopped
+              when: crawler_service_legacy_unit.stat.exists
+
+            - name: Apply pending service changes
+              ansible.builtin.meta: flush_handlers
+
+            - name: Enable the service at boot and keep it running
+              ansible.builtin.systemd_service:
+                name: "{{ crawler_service_service_name }}"
+                daemon_reload: true
+                enabled: true
+                state: started
+
+            - name: Wait for the REST worker to be ready
+              ansible.builtin.uri:
+                url: "http://127.0.0.1:{{ crawler_service_port }}/healthz"
+                status_code: 200
+                use_proxy: false
+              register: crawler_service_health
+              until: crawler_service_health.status | default(0) == 200
+              retries: 30
+              delay: 2
+          rescue:
+            - name: Stop the failed crawler release
+              ansible.builtin.systemd_service:
+                name: "{{ crawler_service_service_name }}"
+                state: stopped
+                enabled: false
+
+            - name: Restore the previous release link
+              ansible.builtin.file:
+                src: "{{ crawler_service_previous_release.stat.lnk_source }}"
+                dest: "{{ crawler_service_deploy_dir }}/current"
+                state: link
+                force: true
+              when: crawler_service_previous_release.stat.islnk | default(false)
+
+            - name: Restore the previous worker
+              ansible.builtin.systemd_service:
+                name: >-
+                  {{ 'company-research' if crawler_service_legacy_running
+                     else crawler_service_service_name }}
+                daemon_reload: true
+                enabled: true
+                state: started
+              when: crawler_service_previous_release.stat.islnk | default(false)
+
+            - name: Report failed crawler activation
+              ansible.builtin.fail:
+                msg: New crawler activation failed; the previous release was restored when available.
+
+    - name: Remove the temporary controller artifacts
+      ansible.builtin.file:
+        path: "{{ crawler_service_build_dir.path }}"
+        state: absent
+      delegate_to: localhost
+      become: false
+      check_mode: false
+      changed_when: false
+      when: crawler_service_build_dir is defined
+      tags: [always]
+
+  handlers:
+    - name: Restart crawler service
+      ansible.builtin.systemd_service:
+        name: "{{ crawler_service_service_name }}"
+        daemon_reload: true
+        enabled: true
+        state: restarted

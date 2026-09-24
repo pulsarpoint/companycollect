@@ -5,13 +5,17 @@ import { AdminSidebar } from "~/components/admin/admin-sidebar";
 import { SidebarProvider } from "~/components/ui/sidebar";
 
 const server = vi.hoisted(() => ({
+  addSeDomainsToWebtechQueue: vi.fn(),
   listSeDomainsPage: vi.fn(),
   loadSeDomainsCounts: vi.fn(),
   saveSeDomainCrawlInputs: vi.fn(),
+  addSeDomainsToCrawlQueue: vi.fn(),
   launchSeDomainCrawlWorkflow: vi.fn(),
 }));
 vi.mock("~/lib/se-domains-list.server", () => server);
+vi.mock("~/lib/webtech-queue.server", () => server);
 vi.mock("~/lib/se-domain-crawl.server", () => server);
+vi.mock("~/lib/crawl-queue.server", () => server);
 import { action, loader } from "~/routes/admin-se-companies-domains";
 import { SeDomainsTable } from "~/components/admin/se-domains-table";
 import { SeDomainsFilterFields } from "~/components/admin/se-domains-filter-sheet";
@@ -101,45 +105,39 @@ describe("admin-se-companies-domains route", () => {
     server.listSeDomainsPage.mockReset().mockResolvedValue({ rows: [ROW] });
     server.loadSeDomainsCounts.mockReset().mockResolvedValue(COUNTS);
     server.saveSeDomainCrawlInputs.mockReset();
+    server.addSeDomainsToCrawlQueue.mockReset();
     server.launchSeDomainCrawlWorkflow.mockReset();
   });
 
   it("submits the selected domains through the route action and returns the Dagster input run", async () => {
     const selection = { mode: "ids", domains: ["example.se"] };
     const run = { ok: true, requestId: "save-request", runId: "input-run", runUrl: "http://dagster/runs/input-run", table: "corpscout.website_jobs_crawl_requests" };
-    server.saveSeDomainCrawlInputs.mockResolvedValue(run);
+    server.addSeDomainsToCrawlQueue.mockResolvedValue(run);
     const response = await action({ request: new Request("http://x/admin/se/companies/domains", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "save_crawl_inputs", crawlType: "jobs", selection }),
+      body: JSON.stringify({ action: "add_crawl_inputs", submissionId: "receipt", crawlType: "jobs", selection }),
     }) } as never);
-    expect(response.data).toEqual({ ...run, workflow: false });
-    expect(server.saveSeDomainCrawlInputs).toHaveBeenCalledWith(selection, "jobs");
+    expect(response.data).toEqual({ ...run, kind: "crawl" });
+    expect(server.addSeDomainsToCrawlQueue).toHaveBeenCalledWith(selection, "jobs", "receipt", "backoffice");
   });
 
-  it("sends a selection for crawling through the Dagster workflow with the operator", async () => {
-    vi.stubEnv("BACKOFFICE_OPERATOR", "operator@example.se");
-    const selection = { mode: "ids", domains: ["example.se"] };
-    const settings = { api: "deepseek", model: "deepseek-flash" };
-    const run = { ok: true, requestId: "task", taskId: "task", runId: "workflow-run", runUrl: "http://dagster/runs/workflow-run" };
-    server.launchSeDomainCrawlWorkflow.mockResolvedValue(run);
-    const response = await action({ request: new Request("http://x/admin/se/companies/domains", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "send_for_crawl", crawlType: "site_info", selection, settings }),
-    }) } as never);
-    expect(response.data).toEqual({ ...run, workflow: true });
-    expect(server.launchSeDomainCrawlWorkflow).toHaveBeenCalledWith(selection, "site_info", settings, "operator@example.se");
-    expect(server.saveSeDomainCrawlInputs).not.toHaveBeenCalled();
-    vi.unstubAllEnvs();
+  it("rejects the old combined workflow action so queue additions cannot start crawling", async () => {
+    const response = await action({request: new Request("http://x/admin/se/companies/domains", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({action: "send_for_crawl", crawlType: "site_info", selection: {mode: "ids", domains: ["example.se"]}}),
+    })} as never);
+    expect(response.data.ok).toBe(false);
+    expect(server.launchSeDomainCrawlWorkflow).not.toHaveBeenCalled();
+    expect(server.addSeDomainsToCrawlQueue).not.toHaveBeenCalled();
   });
 
   it("returns a failed submission without reporting that inputs were queued", async () => {
-    server.saveSeDomainCrawlInputs.mockRejectedValue(new Error("Dagster is unavailable."));
+    server.addSeDomainsToCrawlQueue.mockRejectedValue(new Error("Dagster is unavailable."));
     const response = await action({ request: new Request("http://x/admin/se/companies/domains", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "save_crawl_inputs", crawlType: "full", selection: { mode: "ids", domains: ["example.se"] } }),
+      body: JSON.stringify({ action: "add_crawl_inputs", submissionId: "receipt", crawlType: "full", selection: { mode: "ids", domains: ["example.se"] } }),
     }) } as never);
     expect(response.data).toEqual({ ok: false, error: "Dagster is unavailable." });
     expect(response.init).toEqual({ status: 400 });
@@ -266,4 +264,16 @@ describe("admin-se-companies-domains route", () => {
     expect(html).toContain("Clear all");
     expect(html).not.toContain('name="source"');
   });
+});
+
+it("forwards a list selection to the input-only Webtech service", async () => {
+  const selection = {mode: "query", query: EMPTY_SE_DOMAINS_FILTERS, excludedDomains: ["example.se"]};
+  const run = {ok: true, runId: "input-run", status: "QUEUED", runUrl: null};
+  server.addSeDomainsToWebtechQueue.mockResolvedValue(run);
+  const response = await action({request: new Request("http://x/admin/se/companies/domains", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({action: "add_webtech_inputs", selection, submissionId: "receipt"}),
+  })} as never);
+  expect(response.data).toEqual({...run, kind: "webtech"});
+  expect(server.addSeDomainsToWebtechQueue).toHaveBeenCalledWith(selection, "receipt", expect.any(String));
 });
