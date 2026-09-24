@@ -336,12 +336,23 @@ sweden_company_refresh_job = dg.define_asset_job(
     ).upstream(),
 )
 
+# Bolagsverket republishes both bulk files every Monday (SCB by early afternoon UTC). Loading
+# Monday 22:00 Stockholm (about 40 min) puts fresh registers in front of the Sweden address chain,
+# which starts Tuesday 01:05 and whose extractors read se_scb_companies/se_bolagsverket_companies.
+# Stopped by default until the first live load was validated; the 2026-09-03 manual load did that,
+# and until 2026-09-25 the registers were only refreshed by hand.
 sweden_company_refresh_weekly = dg.ScheduleDefinition(
     name="sweden_company_refresh_weekly",
     job=sweden_company_refresh_job,
-    cron_schedule="15 6 * * 1",
-    execution_timezone="Europe/Belgrade",
-    default_status=dg.DefaultScheduleStatus.STOPPED,
+    cron_schedule="0 22 * * 1",
+    execution_timezone="Europe/Stockholm",
+    default_status=dg.DefaultScheduleStatus.RUNNING,
+    description=(
+        "Monday 22:00 Stockholm: download the weekly SCB and Bolagsverket bulk snapshots, rebuild "
+        "the DuckDB staging and normalized tables, publish the five ClickHouse register tables. "
+        "Runs the evening before the Sweden weekly address chain (Tuesday 01:05) so its extractors "
+        "see fresh registers."
+    ),
 )
 
 

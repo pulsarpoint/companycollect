@@ -170,7 +170,7 @@ their upstream dependencies, so the job runs raw S3 download/reuse, raw DuckDB
 rebuild, normalized DuckDB rebuild, current exports, and change-aware history
 publishes.
 
-`sweden_company_refresh_weekly` runs at `15 6 * * 1` in `Europe/Belgrade`, matching the observed roughly weekly source refresh and staggering it from other country jobs. The schedule is `STOPPED` by default until the first live materialization is validated.
+`sweden_company_refresh_weekly` runs at `0 22 * * 1` in `Europe/Stockholm`: Bolagsverket republishes both bulk files every Monday, and the load (about 40 minutes) finishes before the Sweden weekly address chain starts at 01:05 Tuesday, whose extractors read the register tables. It was `STOPPED` by default until the first live materialization was validated; the 2026-09-03 manual load validated it, and the schedule was set to `RUNNING` on 2026-09-25 after three weekly snapshots had gone unloaded.
 
 ## Out Of Scope
 

@@ -8,7 +8,7 @@ def test_sweden_company_refresh_job_and_schedule_registered() -> None:
 
     repo = load_defs().get_repository_def()
     schedule = repo.get_schedule_def("sweden_company_refresh_weekly")
-    assert schedule.cron_schedule == "15 6 * * 1"
+    assert schedule.cron_schedule == "0 22 * * 1"
     assert schedule.job.name == "sweden_company_refresh_job"
 
     asset_keys = {
@@ -51,6 +51,19 @@ def test_sweden_company_refresh_job_and_schedule_registered() -> None:
         # excludes readers across processes, so unpooled reads collide with
         # a concurrent refresh (see data-source-guidelines).
         assert clickhouse_node.pools == {"sweden_company_duckdb"}
+
+
+def test_sweden_company_refresh_weekly_feeds_the_address_chain() -> None:
+    """Re-enabled 2026-09-25 (spec 2026-09-24-address-weekly-chain-design.md, follow-up): the
+    registers were last loaded by hand on 2026-09-03 while Bolagsverket republishes both bulk
+    files every Monday. Monday 22:00 Stockholm loads them (about 40 min) before the Sweden
+    address chain starts at 01:05 Tuesday, so the address extractors see fresh registers."""
+    from dagster_v3.defs.sweden_company.assets import sweden_company_refresh_weekly
+
+    assert sweden_company_refresh_weekly.cron_schedule == "0 22 * * 1"
+    assert sweden_company_refresh_weekly.execution_timezone == "Europe/Stockholm"
+    assert sweden_company_refresh_weekly.default_status == dg.DefaultScheduleStatus.RUNNING
+    assert sweden_company_refresh_weekly.job.name == "sweden_company_refresh_job"
 
 
 def test_sweden_company_docs_describe_registry_pipeline_scope() -> None:
