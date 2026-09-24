@@ -83,7 +83,12 @@ the playbooks stop the service.
   `cd` paths become `corpscout/services/cc-processor/tools/<name>`. The server path
   `/opt/companycollect/corpscout/commoncrawl/embedding-ab` in embedding-ab's README is a real host
   path and stays.
-- `services/cc-processor/tools/load-domain-ranks.sh`: comment points at `services/cc-processor/.env`.
+- `services/cc-processor/tools/load-domain-ranks.sh`: the prerequisite comment AND the source line
+  `. "$(dirname "$0")/cc-processor/.env"` (broken since the July move) point at
+  `services/cc-processor/.env` via `$(dirname "$0")/../.env`; the migrate hint becomes
+  `(cd ../../.. && make clickhouse-migrate-up)` (the corpscout root Makefile owns that target).
+- The two moved DNS specs keep working sibling links: `../cc-dns-scan/` and `../cc-dns-axfr/`
+  become `../` (own package) and `../../cc-dns-<other>/` respectively.
 - `services/cc-processor/README.md` and `services/cc-processor/deploy/README.md`: repository paths
   `corpscout/commoncrawl/cc-processor…` become `corpscout/services/cc-processor…`. Server paths
   under `/opt/companycollect/corpscout/commoncrawl/cc-processor` are real and stay.
@@ -92,7 +97,9 @@ the playbooks stop the service.
 - Root `.gitignore`: replace the two `corpscout/commoncrawl/…` lines with
   `corpscout/services/cc-processor/tools/**/uv.lock`. The tracked
   `cc-warc-index-builder/uv.lock` is outside that pattern, so no exception is needed.
-- Historical dated specs and plans that cite `commoncrawl/…` paths are left untouched.
+- Historical dated specs and plans that cite `commoncrawl/…` paths are left untouched, and so are
+  the eight processor design docs moved to `services/cc-processor/docs/`: they describe retired or
+  earlier designs and only change location.
 
 ## 6. Commits
 
