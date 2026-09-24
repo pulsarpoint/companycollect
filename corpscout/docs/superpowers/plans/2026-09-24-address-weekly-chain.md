@@ -53,6 +53,10 @@ project: the full load needs env vars pytest does not carry (see `dg check defs`
 import dagster as dg
 
 from dagster_v3.defs.se_company.address import assets as address_assets
+from dagster_v3.defs.se_company.address import bolagsverket as address_bolagsverket
+from dagster_v3.defs.se_company.address import esef as address_esef
+from dagster_v3.defs.se_company.address import ratsit as address_ratsit
+from dagster_v3.defs.se_company.address import scb as address_scb
 from dagster_v3.defs.sweden_address_osm import assets as osm_assets
 from dagster_v3.defs.sweden_company import (
     address_geocoding_assets as weekly,
@@ -80,9 +84,21 @@ EXPECTED_SELECTION = {
 
 
 def _weekly_defs() -> dg.Definitions:
-    """Only the modules the weekly touches, with mock resources so the job resolves."""
+    """Only the modules the weekly touches, with mock resources so the job resolves.
+
+    The four extractor assets live in per-source modules (scb, bolagsverket, ratsit, esef)
+    under se_company/address, not in assets.py; without them the job cannot resolve."""
     assets = dg.load_assets_from_modules(
-        [address_assets, osm_assets, centroid_assets, companies_current_asset]
+        [
+            address_assets,
+            address_scb,
+            address_bolagsverket,
+            address_ratsit,
+            address_esef,
+            osm_assets,
+            centroid_assets,
+            companies_current_asset,
+        ]
     )
     return dg.Definitions(
         assets=assets,
@@ -599,3 +615,9 @@ Expected: `fold_after` > `fold_before` and within the run's window; `md5s_after 
 - [ ] **Step 5: Record**
 
 No commit. Report: run id, status, per-step durations, the three before/after values, and any concern (for example a fold longer than 3.5 h, or a warm step with near-zero cache hits, which is expected until the invalidation redesign).
+
+---
+
+### Recorded after execution
+
+Task 1's original helper imported only `se_company/address/assets.py`; the four extractor assets are defined in `scb.py`, `bolagsverket.py`, `ratsit.py` and `esef.py`, so the helper above was amended to load them (test scaffolding only; production code unchanged). Commits: ebed7e595 (Task 1), 68b3763b8 (Task 2), 5b5f3d575 (Task 3).
