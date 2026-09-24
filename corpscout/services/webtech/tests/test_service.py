@@ -78,9 +78,7 @@ class InMemoryRustfsStore:
         return location.key in self.objects
 
     def list_keys(self, prefix: S3Location) -> tuple[str, ...]:
-        return tuple(
-            key for key in sorted(self.objects) if key.startswith(prefix.key)
-        )
+        return tuple(key for key in sorted(self.objects) if key.startswith(prefix.key))
 
 
 def service_settings() -> WebtechServiceSettings:
@@ -331,7 +329,9 @@ def test_resubmit_recovers_stored_domains_after_a_failed_scan() -> None:
 
     async def fail_once_then_complete(candidates, *, settings, progress_callback):
         del settings
-        attempted_domains.append(tuple(candidate.root_domain for candidate in candidates))
+        attempted_domains.append(
+            tuple(candidate.root_domain for candidate in candidates)
+        )
         results = []
         for position, candidate in enumerate(candidates):
             result = completed_result(candidate)
@@ -465,10 +465,19 @@ def test_task_pages_are_separate_and_resume_without_rescanning(separate_executio
     document = json.loads(candidate_manifest())
     task_id = str(uuid4())
     execution_id = str(uuid4()) if separate_execution else task_id
-    document.update(schema_version=3, crawl_id=f"webtech-{execution_id}", dagster_run_id=execution_id)
+    document.update(
+        schema_version=3,
+        crawl_id=f"webtech-{execution_id}",
+        dagster_run_id=execution_id,
+    )
     document["candidates"] = [
-        {"root_domain": "novelic.com", "harmonic_rank": 0, "task_id": task_id,
-         "input_id": str(index) * 64, "page_url": f"https://novelic.com/{page}"}
+        {
+            "root_domain": "novelic.com",
+            "harmonic_rank": 0,
+            "task_id": task_id,
+            "input_id": str(index) * 64,
+            "page_url": f"https://novelic.com/{page}",
+        }
         for index, page in [(1, ""), (2, "contact")]
     ]
     body = json.dumps(document).encode()
@@ -478,38 +487,74 @@ def test_task_pages_are_separate_and_resume_without_rescanning(separate_executio
     async def fake_scan(candidates, *, settings, progress_callback):
         calls.extend(candidate.page_url for candidate in candidates)
         for candidate in candidates:
-            await progress_callback(WebtechDomainResult.failure(candidate=candidate, outcome="navigation_error", requested_url=candidate.page_url, final_url="", scanned_at=datetime.now(UTC), duration_ms=1, http_fallback_used=False, error_message="fixture"))
+            await progress_callback(
+                WebtechDomainResult.failure(
+                    candidate=candidate,
+                    outcome="navigation_error",
+                    requested_url=candidate.page_url,
+                    final_url="",
+                    scanned_at=datetime.now(UTC),
+                    duration_ms=1,
+                    http_fallback_used=False,
+                    error_message="fixture",
+                )
+            )
         return ()
 
     request = {**scan_request(body), "crawl_id": document["crawl_id"]}
     headers = {"Authorization": f"Bearer {API_TOKEN}"}
     for _ in range(2):
-        app = create_app(settings=service_settings(), store=store, scan_function=fake_scan)
+        app = create_app(
+            settings=service_settings(), store=store, scan_function=fake_scan
+        )
         with TestClient(app) as client:
             response = client.post("/v1/scans", json=request, headers=headers)
             assert response.status_code == 202, response.text
             scan_id = response.json()["scan_id"]
             for attempt in range(10):
-                snapshot = client.get(f"/v1/scans/{scan_id}", params={"wait_seconds": 1}, headers=headers).json()["scan"]
+                snapshot = client.get(
+                    f"/v1/scans/{scan_id}", params={"wait_seconds": 1}, headers=headers
+                ).json()["scan"]
                 if snapshot["status"] == "completed":
                     break
             assert snapshot["status"] == "completed"
             assert snapshot["completed_count"] == 2
     assert calls == ["https://novelic.com/", "https://novelic.com/contact"]
-    reports = [json.loads(body) for key, body in store.objects.items() if key.endswith("/report.json")]
+    reports = [
+        json.loads(body)
+        for key, body in store.objects.items()
+        if key.endswith("/report.json")
+    ]
     assert len(reports) == 2
-    assert {report["candidate"]["input_id"] for report in reports} == {"1" * 64, "2" * 64}
+    assert {report["candidate"]["input_id"] for report in reports} == {
+        "1" * 64,
+        "2" * 64,
+    }
 
 
-@pytest.mark.parametrize("invalid", ["mixed_tasks", "bad_task", "bad_input", "outside_domain", "wrong_execution"])
+@pytest.mark.parametrize(
+    "invalid",
+    ["mixed_tasks", "bad_task", "bad_input", "outside_domain", "wrong_execution"],
+)
 def test_execution_manifest_rejects_invalid_identities(invalid):
     task_id, execution_id = str(uuid4()), str(uuid4())
     document = json.loads(candidate_manifest())
-    document.update(schema_version=3, crawl_id=f"webtech-{execution_id}", dagster_run_id=execution_id)
-    candidate = {"root_domain": "example.com", "task_id": task_id, "input_id": "a" * 64, "page_url": "https://example.com/"}
+    document.update(
+        schema_version=3,
+        crawl_id=f"webtech-{execution_id}",
+        dagster_run_id=execution_id,
+    )
+    candidate = {
+        "root_domain": "example.com",
+        "task_id": task_id,
+        "input_id": "a" * 64,
+        "page_url": "https://example.com/",
+    }
     document["candidates"] = [candidate]
     if invalid == "mixed_tasks":
-        document["candidates"].append({**candidate, "task_id": str(uuid4()), "input_id": "b" * 64})
+        document["candidates"].append(
+            {**candidate, "task_id": str(uuid4()), "input_id": "b" * 64}
+        )
     elif invalid == "bad_task":
         candidate["task_id"] = "not-a-uuid"
     elif invalid == "bad_input":
@@ -524,10 +569,19 @@ def test_execution_manifest_rejects_invalid_identities(invalid):
 
 def _execution_manifest(execution_id, task_id, pages):
     document = json.loads(candidate_manifest())
-    document.update(schema_version=3, crawl_id=f"webtech-{execution_id}", dagster_run_id=execution_id)
+    document.update(
+        schema_version=3,
+        crawl_id=f"webtech-{execution_id}",
+        dagster_run_id=execution_id,
+    )
     document["candidates"] = [
-        {"root_domain": "novelic.com", "harmonic_rank": 0, "task_id": task_id,
-         "input_id": str(index) * 64, "page_url": f"https://novelic.com/{page}"}
+        {
+            "root_domain": "novelic.com",
+            "harmonic_rank": 0,
+            "task_id": task_id,
+            "input_id": str(index) * 64,
+            "page_url": f"https://novelic.com/{page}",
+        }
         for index, page in pages
     ]
     return document
@@ -542,8 +596,12 @@ def _run_scan(store, document, uri, scanned):
 
     body = json.dumps(document).encode()
     store.objects[parse_s3_uri(uri).key] = body
-    request = {**scan_request(body), "crawl_id": document["crawl_id"],
-               "partition_key": document["partition_key"], "candidate_manifest_uri": uri}
+    request = {
+        **scan_request(body),
+        "crawl_id": document["crawl_id"],
+        "partition_key": document["partition_key"],
+        "candidate_manifest_uri": uri,
+    }
     headers = {"Authorization": f"Bearer {API_TOKEN}"}
     app = create_app(settings=service_settings(), store=store, scan_function=fake_scan)
     with TestClient(app) as client:
@@ -552,8 +610,11 @@ def _run_scan(store, document, uri, scanned):
         scan_id = response.json()["scan_id"]
         events, cursor = [], 0
         while True:
-            payload = client.get(f"/v1/scans/{scan_id}", params={"after_event": cursor, "wait_seconds": 1},
-                                 headers=headers).json()
+            payload = client.get(
+                f"/v1/scans/{scan_id}",
+                params={"after_event": cursor, "wait_seconds": 1},
+                headers=headers,
+            ).json()
             events.extend(payload["events"])
             if payload["events"]:
                 cursor = payload["events"][-1]["sequence"]
@@ -568,9 +629,16 @@ def test_events_carry_every_stored_result_reference():
     document = _execution_manifest(execution_id, task_id, [(1, ""), (2, "a"), (3, "b")])
     events = _run_scan(store, document, f"{BASE_URI}/candidates/one.json", [])
     references = [item for event in events for item in event["results"]]
-    assert sorted(item["input_id"] for item in references) == ["1" * 64, "2" * 64, "3" * 64]
+    assert sorted(item["input_id"] for item in references) == [
+        "1" * 64,
+        "2" * 64,
+        "3" * 64,
+    ]
     for item in references:
-        assert f"/crawl_id=webtech-{execution_id}/pages/input_id={item['input_id']}/report.json" in item["object_key"]
+        assert (
+            f"/crawl_id=webtech-{execution_id}/pages/input_id={item['input_id']}/report.json"
+            in item["object_key"]
+        )
         assert item["object_key"] in store.objects
 
 
@@ -587,13 +655,128 @@ def test_pages_done_in_one_envelope_are_reused_by_another():
     events = _run_scan(store, second, f"{BASE_URI}/candidates/second.json", scanned)
     assert scanned == ["https://novelic.com/b"]
     assert [item["input_id"] for item in events[0]["results"]] == ["2" * 64]
-    assert sorted(item["input_id"] for event in events for item in event["results"]) == ["2" * 64, "3" * 64]
+    assert sorted(
+        item["input_id"] for event in events for item in event["results"]
+    ) == ["2" * 64, "3" * 64]
 
 
 def test_another_execution_does_not_reuse_pages():
     store = InMemoryRustfsStore()
     task_id = str(uuid4())
-    _run_scan(store, _execution_manifest(str(uuid4()), task_id, [(1, "")]), f"{BASE_URI}/candidates/a.json", [])
+    _run_scan(
+        store,
+        _execution_manifest(str(uuid4()), task_id, [(1, "")]),
+        f"{BASE_URI}/candidates/a.json",
+        [],
+    )
     scanned = []
-    _run_scan(store, _execution_manifest(str(uuid4()), task_id, [(1, "")]), f"{BASE_URI}/candidates/b.json", scanned)
+    _run_scan(
+        store,
+        _execution_manifest(str(uuid4()), task_id, [(1, "")]),
+        f"{BASE_URI}/candidates/b.json",
+        scanned,
+    )
     assert scanned == ["https://novelic.com/"]
+
+
+def _envelope_request(store, document, uri):
+    from service_models import ScanRequest
+
+    body = json.dumps(document).encode()
+    store.objects[parse_s3_uri(uri).key] = body
+    return ScanRequest.model_validate(
+        {
+            **scan_request(body),
+            "crawl_id": document["crawl_id"],
+            "partition_key": document["partition_key"],
+            "candidate_manifest_uri": uri,
+        }
+    )
+
+
+def test_new_envelope_of_the_same_execution_supersedes_the_running_scan(caplog):
+    store = InMemoryRustfsStore()
+    execution_id, task_id = str(uuid4()), str(uuid4())
+    first = _execution_manifest(execution_id, task_id, [(1, ""), (2, "a"), (3, "b")])
+    first["partition_key"] = "envelope-first"
+    # Page 1 was published from the first envelope, so the next envelope omits it.
+    second = _execution_manifest(execution_id, task_id, [(2, "a"), (3, "b")])
+    second["partition_key"] = "envelope-second"
+    scanned: list[list[str]] = []
+    blocked = asyncio.Event()
+
+    async def scan(candidates, *, settings, progress_callback):
+        del settings
+        scanned.append([candidate.page_url for candidate in candidates])
+        if len(scanned) == 1:
+            for candidate in candidates[:2]:
+                await progress_callback(completed_result(candidate))
+            blocked.set()
+            await asyncio.Event().wait()  # a scan that would run for hours
+        for candidate in candidates:
+            await progress_callback(completed_result(candidate))
+        return ()
+
+    async def scenario():
+        coordinator = scan_coordinator.ScanCoordinator(
+            settings=service_settings(), store=store, scan_function=scan
+        )
+        old = await coordinator.submit(
+            _envelope_request(store, first, f"{BASE_URI}/candidates/first.json")
+        )
+        await blocked.wait()
+        new = await coordinator.submit(
+            _envelope_request(store, second, f"{BASE_URI}/candidates/second.json")
+        )
+        assert new.scan_id != old.scan_id
+        await coordinator.jobs[new.scan_id].task
+        return coordinator, old.scan_id, new.scan_id
+
+    with caplog.at_level(logging.INFO, logger="uvicorn.error"):
+        coordinator, old_id, new_id = asyncio.run(scenario())
+
+    assert coordinator.jobs[old_id].status == "cancelled"
+    new_job = coordinator.jobs[new_id]
+    assert new_job.status == "completed"
+    assert coordinator.active_scan_id is None
+    # Page 2, stored by the superseded scan, is recovered and reported first; only page 3 is scanned.
+    assert scanned == [
+        ["https://novelic.com/", "https://novelic.com/a", "https://novelic.com/b"],
+        ["https://novelic.com/b"],
+    ]
+    assert [item.input_id for item in new_job.events[0].results] == ["2" * 64]
+    assert sorted(new_job.results) == ["2" * 64, "3" * 64]
+    assert (
+        f"Webtech scan superseded old={old_id} new={new_id} "
+        f"crawl_id=webtech-{execution_id}" in caplog.text
+    )
+
+
+def test_another_execution_still_gets_busy_while_a_scan_runs():
+    store = InMemoryRustfsStore()
+    task_id = str(uuid4())
+    first = _execution_manifest(str(uuid4()), task_id, [(1, "")])
+    other = _execution_manifest(str(uuid4()), task_id, [(2, "a")])
+    started = asyncio.Event()
+
+    async def scan(candidates, *, settings, progress_callback):
+        del candidates, settings, progress_callback
+        started.set()
+        await asyncio.Event().wait()
+
+    async def scenario():
+        coordinator = scan_coordinator.ScanCoordinator(
+            settings=service_settings(), store=store, scan_function=scan
+        )
+        running = await coordinator.submit(
+            _envelope_request(store, first, f"{BASE_URI}/candidates/first.json")
+        )
+        await started.wait()
+        with pytest.raises(scan_coordinator.ScanBusyError):
+            await coordinator.submit(
+                _envelope_request(store, other, f"{BASE_URI}/candidates/other.json")
+            )
+        assert coordinator.jobs[running.scan_id].status == "running"
+        await coordinator.shutdown()
+
+    asyncio.run(scenario())

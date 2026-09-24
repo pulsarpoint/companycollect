@@ -77,7 +77,15 @@ worker moves on. If a scan still makes no progress for 10 minutes, the service
 marks it `failed` and frees the slot.
 
 Only one scan can be active because one workstation owns the configured browser
-capacity. Dagster's asset step submits the scan and polls it with zero-wait
+capacity. A submit while another execution's scan is pending or running is
+rejected with `409 Conflict`. A submit for a different envelope of the *same*
+execution (same `crawl_id`, different scan ID) supersedes the active scan: the
+service cancels it, logs `Webtech scan superseded old=… new=… crawl_id=…`, and
+accepts the new envelope. Pages the superseded scan already stored are recovered
+from the execution's page objects and reported in the new scan's first event, so
+a resumed Dagster run never waits for an orphaned scan of its own execution.
+Resubmitting the identical envelope reattaches to its scan instead.
+Dagster's asset step submits the scan and polls it with zero-wait
 status requests every two seconds; after 15 minutes without progress it cancels
 the remote scan and fails the step so a run retry resubmits. If the process
 restarts or a scan failed, the resubmission reconstructs already completed
