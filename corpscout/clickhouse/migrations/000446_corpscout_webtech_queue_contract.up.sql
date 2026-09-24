@@ -28,4 +28,5 @@ CREATE TABLE corpscout.webtech_scan_input
 )
 ENGINE = MergeTree
 PARTITION BY task_id
-ORDER BY (task_id, input_id);
+ORDER BY (task_id, input_id)
+SETTINGS number_of_free_entries_in_pool_to_execute_mutation = 1;
