@@ -84,6 +84,18 @@ parts in a partition and rejects them at 3,000.
 - A crash loses only the unflushed buffer. Those entries are still `remaining`, and
   their stable request IDs make the service return the stored outcome on resubmit.
 
+Rejected alternatives:
+
+- **Buffer engine in front of the results table.** Its data is in memory and is lost
+  on an abnormal restart (ClickHouse docs), which would silently break "done means a
+  result exists". ClickHouse itself recommends async inserts instead.
+- **Staging MergeTree plus a mover job.** Durable, but stores every result twice, adds
+  a job with its own crash window, delays visibility, and still creates one part per
+  result in the staging table.
+- **Relying on server-side async insert batching alone.** It only combines inserts
+  that arrive together from concurrent clients; a writer that waits for each
+  acknowledgement flushes one row at a time.
+
 ### Recovery
 
 - Dagster retries and re-executions keep the original run ID, which is the execution
