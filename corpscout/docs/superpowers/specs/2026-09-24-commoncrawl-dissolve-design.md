@@ -135,6 +135,7 @@ Only these paths are staged; the unrelated uncommitted work elsewhere in the tre
 ## 9. Follow-ups
 
 - Rename the hetzner01 install dirs to `/opt/companycollect/corpscout/services/cc-dns-<x>` and
-  migrate the state dir, scheduled between scan cycles. Requires a small migration task in each
-  playbook and a stop/move/start.
+  migrate the state dir. The scanners run continuous cycles by design (they never "finish"), so this
+  is a deliberate stop/move/start at any convenient time; the resumable SQLite state means the pause
+  loses no work. Requires a small migration task in each playbook.
 - Bring the cc-processor deploy README's `deploy_root` wording in line once that rename lands.

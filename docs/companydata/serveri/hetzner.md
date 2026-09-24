@@ -14,7 +14,8 @@ services are in /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/servi
 and /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/cc-dns-axfr
 
 
-deployment using ansible (the playbooks stop and disable the unit; run only between scan cycles)
+deployment using ansible (the playbooks stop and disable the unit; the scanners run continuous
+cycles with resumable SQLite state, so a deploy is a brief pause, not lost work — `systemctl enable --now` afterwards)
 /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/cc-dns-scan/ansible
 /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/cc-dns-axfr/ansible
 
