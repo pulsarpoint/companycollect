@@ -10,11 +10,13 @@ PING hetzner01.taileb086.ts.net (100.106.174.123): 56 data bytes
 64 bytes from 100.106.174.123: icmp_seq=0 ttl=64 time=47.384 ms
 64 bytes from 100.106.174.123: icmp_seq=1 ttl=64 time=62.862 ms
 
-services are in the /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/commoncrawl
+services are in /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/cc-dns-scan
+and /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/cc-dns-axfr
 
 
-deployment using ansible 
-/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/commoncrawl/deploy
+deployment using ansible (the playbooks stop and disable the unit; run only between scan cycles)
+/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/cc-dns-scan/ansible
+/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/cc-dns-axfr/ansible
 
 
 

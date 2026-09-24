@@ -34,6 +34,16 @@ Component details remain in
 [`cc-warc-index-builder/README.md`](cc-warc-index-builder/README.md) and
 [`cc-enrich-worker/README.md`](cc-enrich-worker/README.md).
 
+## Tools and design docs
+
+- [`tools/`](tools/) holds the offline helpers that used to sit beside this project in the retired
+  `commoncrawl/` folder: `embedding-ab/` (instructed-vs-neutral embedding A/B scripts),
+  `embedding-tools/` (utilities for the stored page-embedding parquet files), `embedding-vllm.sh`
+  (launches the embedding endpoint) and `load-domain-ranks.sh` (loads Common Crawl webgraph ranks
+  into ClickHouse; sources this project's `.env`).
+- [`docs/`](docs/) holds the historical design documents for the processor and its embeddings, plus
+  dated plans under `docs/superpowers/plans/`. They keep their original text and are not maintained.
+
 ## Prerequisites
 
 Catalog building requires:

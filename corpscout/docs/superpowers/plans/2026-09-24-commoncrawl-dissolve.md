@@ -16,7 +16,7 @@
 - **Never run either Ansible playbook against a host.** Both scanners are mid-cycle on `hetzner01` and the playbooks stop the service. Only `ansible-playbook --syntax-check` is allowed.
 - **Server-side paths stay exactly as they are** (`/opt/companycollect/corpscout/commoncrawl/...`). Any string starting with `/opt/companycollect/` is a host path and must NOT be edited.
 - Go module names stay `cc-dns-scan` and `cc-dns-axfr`. No `go.mod` edits.
-- Exactly two commits: Task 1 commits the moves; Tasks 2-5 only stage; Task 6 commits the edits. Stage only the paths named in this plan. The tree holds ~290 unrelated dirty files from other workstreams; never `git add -A`, never `git add .`.
+- Two main commits: Task 1 commits the moves; Tasks 2-5 only stage; Task 6 commits the edits. Pointers that review finds afterwards go into small append-only follow-up commits (spec section 6 item 3), never into an amend of a commit already on `main`. Stage only the paths named in this plan. The tree holds ~290 unrelated dirty files from other workstreams; never `git add -A`, never `git add .`.
 - Commit messages follow Conventional Commits and end with the line `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`.
 - `ansible-playbook` refuses non-blocking stdio in this tool. Always run it as `ansible-playbook ... < /dev/null > /tmp/ansible-out.txt 2>&1; echo "rc=$?"; cat /tmp/ansible-out.txt`.
 - Use `rg`, not `grep`. Use `sed -n` / `cat` to read; use the Edit tool (or `python3` with exact strings) to change files. macOS `sed -i` needs `sed -i ''`.
@@ -641,7 +641,7 @@ rg -n 'commoncrawl' services/cc-dns-scan services/cc-dns-axfr services/cc-proces
   | rg -v '/opt/companycollect/corpscout/commoncrawl|\{\{ deploy_root \}\}/corpscout/commoncrawl|commoncrawl_|corpscout\.commoncrawl|Common Crawl|commoncrawl\.org|s3://crawls/commoncrawl|"commoncrawl"|commoncrawl/catalogs|commoncrawl2|CC-MAIN' \
   || echo "no stale repository paths"
 ```
-Expected: `no stale repository paths`. Allowed survivors are excluded by the second filter: host paths under `/opt/...` or built from `{{ deploy_root }}`, the `"commoncrawl"` S3 bucket and `commoncrawl/catalogs` prefix literals in Go/Python, ClickHouse table names (`commoncrawl_*`, `corpscout.commoncrawl…`), the words "Common Crawl", the `commoncrawl.org` site, the S3 prefix, the `commoncrawl2` hostname and `CC-MAIN` crawl ids. If anything else prints, it is a missed pointer: fix it, `git add` it, and rerun. The eight moved
+Expected: `no stale repository paths`. Allowed survivors are excluded by the second filter: host paths under `/opt/...` or built from `{{ deploy_root }}`, the `"commoncrawl"` S3 bucket and `commoncrawl/catalogs` prefix literals in Go/Python, ClickHouse table names (`commoncrawl_*`, `corpscout.commoncrawl…`), the words "Common Crawl", the `commoncrawl.org` site, the S3 prefix, the `commoncrawl2` hostname and `CC-MAIN` crawl ids. If anything else prints, it is a missed pointer: record it for the follow-up commit that spec section 6 item 3 permits, fix it there, and rerun this sweep afterwards. The eight moved
 processor design docs under `services/cc-processor/docs/` are excluded on purpose: they are
 historical designs and keep their original text (spec section 5).
 
