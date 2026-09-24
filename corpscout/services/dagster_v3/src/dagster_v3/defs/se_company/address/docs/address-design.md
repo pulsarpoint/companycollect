@@ -41,8 +41,10 @@ After a `NORMALIZER_VERSION` bump, run `se_company_address_normalize` before any
 a company has been (re)normalized, its main row's `normalizer_version` still does not match
 the new constant, so `stale_companies_sql` keeps marking it stale and every fold pass
 rewrites it -- still with the old normalizer's output, because the normalized row itself has
-not been recomputed yet. The weekly job already normalizes before anything folds; the fold
-itself stays manual, so this ordering is on whoever launches a bucket or backfill by hand.
+not been recomputed yet. The weekly chain (`sweden_company_address_geocoding_weekly_job`,
+Tuesday 01:05 Stockholm, spec `docs/superpowers/specs/2026-09-24-address-weekly-chain-design.md`)
+normalizes before it warms and folds, so the scheduled path always has this ordering; only a
+bucket or backfill launched by hand needs the operator to keep it.
 
 ## Change rule
 
@@ -159,8 +161,13 @@ The backoffice's Company actions → Addresses menu offers two global jobs:
 The latter folds all 64 buckets sequentially using the existing OSM workbench pool.
 The backoffice sends `execute: true`, `page_size: 10000` to each extractor, and
 `changed_only: true`, `page_size: 20000` to normalization and publication. No company
-filters or LLM settings are sent. The redundant extract job and stopped address weekly
-schedule were removed. Internal bucket and targeted correction folds remain available.
+filters or LLM settings are sent. Since 2026-09-24 the fold also runs on a schedule again: the
+weekly chain in `sweden_company/address_geocoding_assets.py` extracts, normalizes, refreshes
+OSM and the centroids, warms, folds all 64 buckets with `changed_only=True`, then refreshes the
+companies serving view (Tuesday 01:05 Stockholm; about 4.5 h until the cache-invalidation
+redesign). The 2026-09-15 decision to keep the fold manual was reversed because nothing had
+published addresses since 2026-09-13. Internal bucket and targeted correction folds remain
+available; they share the DuckDB pool with the weekly and wait while it runs.
 
 ## Geocoding (slice 2a)
 
