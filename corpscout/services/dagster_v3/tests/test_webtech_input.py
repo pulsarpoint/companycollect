@@ -218,7 +218,9 @@ def test_retry_replaces_only_its_own_rows_from_the_current_source(
     client.execute(
         "INSERT INTO corpscout.webtech_test_source VALUES ('1','novelic.com','SE'),('2','example.org','DE')"
     )
-    other = add(resource, processing, objects, targets=["other.se"], source_name="manual")
+    other = add(
+        resource, processing, objects, targets=["other.se"], source_name="manual"
+    )
     submission_id = str(uuid4())
     config = dict(
         submission_id=submission_id,
@@ -237,15 +239,21 @@ def test_retry_replaces_only_its_own_rows_from_the_current_source(
         patch.setattr(module, "insert_input_batch", crash_after_insert)
         with pytest.raises(RuntimeError, match="acknowledgement"):
             add(resource, processing, objects, **config)
-    client.execute("INSERT INTO corpscout.webtech_test_source VALUES ('3','example.com','SE')")
+    client.execute(
+        "INSERT INTO corpscout.webtech_test_source VALUES ('3','example.com','SE')"
+    )
     result = add(resource, processing, objects, **config)
     # The retry reselects the source: its own rows are replaced, other submissions kept.
     assert result["input_count"] == 2
-    assert sorted(client.execute(
-        "SELECT root_domain, submission_id != '' FROM corpscout.webtech_scan_input"
-    )) == [("example.com", True), ("novelic.com", True), ("other.se", True)]
+    assert sorted(
+        client.execute(
+            "SELECT root_domain, submission_id != '' FROM corpscout.webtech_scan_input"
+        )
+    ) == [("example.com", True), ("novelic.com", True), ("other.se", True)]
     assert result["task_id"] == other["task_id"]
-    assert not [key for (_, key) in objects.client().objects if key.startswith("queue-inputs/")]
+    assert not [
+        key for (_, key) in objects.client().objects if key.startswith("queue-inputs/")
+    ]
 
 
 def test_se_selection_filters_latest_rows_and_deduplicates_roots(
@@ -363,6 +371,7 @@ def test_new_selection_options_preserve_old_submission_fingerprints(
         draft_queue.submission(processing, submission_id)["selection_fingerprint"]
         == expected
     )
+
 
 def test_entry_table_follows_the_queue_contract(database):
     client, _ = database

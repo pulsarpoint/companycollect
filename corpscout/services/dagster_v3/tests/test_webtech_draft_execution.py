@@ -587,6 +587,10 @@ def test_import_retry_fences_orphaned_clickhouse_insert(
 
     client, resource = database
     processing, _ = store
+    # A sibling submission in the same draft must survive the retry untouched.
+    other = add(
+        resource, processing, objects, targets=["other.se"], source_name="manual"
+    )
     receipt_id = str(uuid4())
 
     def interrupt(*args, **kwargs):
@@ -604,36 +608,30 @@ def test_import_retry_fences_orphaned_clickhouse_insert(
             )
     receipt = draft_queue.submission(processing, receipt_id)
     task_id = str(receipt["task_id"])
-    row = next(
-        json.loads(body.splitlines()[0])
-        for (_, key), body in objects.client().objects.items()
-        if key.endswith(".jsonl")
-    )
+    assert task_id == other["task_id"]
+    identity, domain, origin, page = module.normalized_target("novelic.com")
     query_id = "webtech-submission:" + receipt_id
 
     def orphan():
         with resource.get_connection() as writer:
-            # The prior process's PostgreSQL lock is gone, but its insert is alive.
+            # The prior process's PostgreSQL lock is gone, but its insert is alive:
+            # a stable query under the retry's fencing query_id, still writing this
+            # submission's own row (task_id, submission_id).
             return writer.execute(
                 f"INSERT INTO {module.INPUT_RELATION} ({','.join(module.INPUT_COLUMNS)}) "
-                "SELECT %(task)s,%(identity)s,%(root)s,%(origin)s,%(page)s,%(source)s,%(record)s,%(run)s "
-                "FROM numbers(1) WHERE sleep(3)=0",
-                dict(
-                    zip(
-                        (
-                            "task",
-                            "identity",
-                            "root",
-                            "origin",
-                            "page",
-                            "source",
-                            "record",
-                            "run",
-                        ),
-                        row,
-                        strict=True,
-                    )
-                ),
+                "SELECT %(task)s,%(identity)s,%(root)s,%(origin)s,%(page)s,%(source)s,"
+                "%(record)s,%(run)s,%(submission)s FROM numbers(1) WHERE sleep(3)=0",
+                {
+                    "task": task_id,
+                    "identity": identity,
+                    "root": domain,
+                    "origin": origin,
+                    "page": page,
+                    "source": "manual",
+                    "record": "novelic.com",
+                    "run": str(uuid4()),
+                    "submission": receipt_id,
+                },
                 query_id=query_id,
             )
 
@@ -658,8 +656,16 @@ def test_import_retry_fences_orphaned_clickhouse_insert(
             ServerException, match="cancelled|cancel|QUERY_WAS_CANCELLED"
         ):
             future.result(timeout=10)
-    assert result["task_id"] == task_id and result["total"] == 1
-    assert client.execute("SELECT count() FROM corpscout.webtech_scan_input") == [(1,)]
+    # The retry killed the orphaned query and deleted only its own rows before
+    # reselecting: exactly one row per submission, no duplicate, sibling intact.
+    assert result["task_id"] == task_id
+    assert result["input_count"] == 1
+    assert result["total"] == 2
+    assert sorted(
+        client.execute(
+            "SELECT root_domain, submission_id FROM corpscout.webtech_scan_input"
+        )
+    ) == sorted([("novelic.com", receipt_id), ("other.se", other["submission_id"])])
 
 
 def test_cleanup_is_scoped_and_retries_lost_delete_ack(
