@@ -1,9 +1,13 @@
 # Task-scoped Webtech input
 
-Migration 438 creates `corpscout.webtech_scan_input` and adds `task_id` / `input_id`
-to scan summaries. Deploy the scanner's manifest protocol 3 before starting task
-scans. Existing protocol-2 Common Crawl jobs remain compatible; use the new task
-workflow for new submissions. Old scan history remains intact.
+Migration 438 created `corpscout.webtech_scan_input` and added `task_id` / `input_id`
+to scan summaries, replacing the harmonic-rank-only Common Crawl partition workflow
+for new submissions with an explicit, source-agnostic queue keyed by task. Migration
+446 later reshaped that table into the current queue contract — see
+[webtech-draft-queue.md](webtech-draft-queue.md) for the full current lifecycle
+(open drafts, submissions, envelopes). This page covers input selection mechanics
+that still apply: normalization, source options and validation. Old scan history
+remains intact.
 
 ## Prepare
 
@@ -16,8 +20,10 @@ ops:
       task_id: "bdcc7c63-b24e-4f67-9c95-7a7bd34ebd0f"
       targets: ["novelic.com", "https://shop.example.com/products"]
       source_name: "manual"
-      force_rescan: false
 ```
+
+`force_rescan` is not an input-selection option; it belongs to `webtech_scan_results`
+(see [webtech-draft-queue.md](webtech-draft-queue.md)).
 
 Or select from any permitted ClickHouse source:
 
@@ -49,10 +55,13 @@ the first source record in sorted order supplies provenance. Invalid targets fai
 preparation, rather than being silently omitted. Different tasks may submit the
 same page independently.
 
-By default, preparation skips pages scanned with the same detector during the
-past calendar month, including failures. `force_rescan` bypasses this. Freshness
-is applied once: a selected task never rereads the source or recomputes its
-selection on retry. New configuration or detector version requires a new task ID.
+Preparation (`webtech_scan_input`) itself never applies freshness filtering or
+rereads its source on retry — it only inserts normalized pages. Freshness (skip
+pages already scanned successfully by the same detector within a recent window)
+is decided later, live, each time `webtech_scan_results` computes remaining work
+for an execution; see [webtech-draft-queue.md](webtech-draft-queue.md). New input
+configuration or detector version does not by itself require a new task ID —
+reusing an open draft's task_id just adds more pages to it.
 
 ## Process and resume
 
@@ -66,20 +75,30 @@ ops:
 ```
 
 Selection metadata and its fingerprint use the existing PostgreSQL processing
-store, as with Brave; bulk input rows live in ClickHouse. A task supports up to
-one million pages, processed in 128 root-domain hash buckets. Each nonempty bucket
-has an immutable RustFS manifest keyed by task and bucket. The existing `crawl_id`
-result field holds a source-neutral `webtech-<task_id>` batch label for these scans.
+store, as with Brave; bulk input rows live in ClickHouse. There is no per-bucket
+manifest and no 128-way root-domain hash-bucketing: remaining pages for an
+execution are read directly from `webtech_scan_input` and `webtech_domain_scan_results`
+and submitted to the scanner in batch-sized envelopes (default 5,000 pages), looping
+until nothing remains. Each envelope's object-store manifest is named
+`envelope-<hash>`, a deterministic digest of its own input IDs — it is transport
+only, not a durable index. The `crawl_id` result field holds a source-neutral
+`webtech-<execution_id>` label shared by every envelope of one execution, which is
+what lets a later envelope of the same execution resume/reuse pages the scanner
+already stored, and lets the scanner supersede an orphaned scan from an earlier
+envelope of the same execution rather than reject it with `409 Conflict` (a
+different execution's `crawl_id` still gets 409). See
+[webtech-draft-queue.md](webtech-draft-queue.md) for the full envelope loop,
+micro-batched result publishing and completion/cleanup (`DROP PARTITION`).
 
 The scanner keys task work and result objects by input ID, preserving multiple
 pages under one domain. Explicit URLs are scanned exactly, without the legacy
 domain-only HTTP scheme fallback. Redirect destinations remain observations.
 
-Retry the results job with the same task ID after interruption. Persisted page
-results and completed remote manifests are reused; result indexing is idempotent.
-The asset logs indexed inputs versus the frozen total after each bucket. Preparing
-input retries fence stale inserts and remove only unfinished rows for that task.
-Selected inputs cannot be overwritten by the input asset.
+Retry the results job with the same task ID (and execution_id, if supplied) after
+interruption. Results already published for this execution are excluded from
+"remaining" automatically, so a resume never resubmits them to the scanner.
+Preparing input retries fence stale inserts and remove only unfinished rows for
+that task. Selected (frozen) inputs cannot be overwritten by the input asset.
 
 `processing.tasks.status = selected` means membership is prepared, not that the
 scanner is pending or completed. Dagster/scanner progress describes execution;
