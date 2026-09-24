@@ -154,6 +154,8 @@ class RemoteScanProgressEvent(BaseModel):
     window_technology_count: int
     elapsed_seconds: float
     domains_per_minute: float
+    # Stored page results in this window. Empty from scanners that predate it.
+    results: list[StoredResultReference] = Field(default_factory=list)
 
 
 class RemoteScanSnapshot(BaseModel):
