@@ -70,7 +70,7 @@ def database(server):
     client.execute("DROP TABLE IF EXISTS corpscout.webtech_scan_input")
     client.execute("DROP TABLE IF EXISTS corpscout.webtech_domain_scan_results")
     client.execute(
-        "CREATE TABLE corpscout.webtech_domain_scan_results (root_domain String,website_origin String,page_url String,detector_version String,scanned_at DateTime64(3,'UTC'),scan_id String,outcome String) ENGINE=ReplacingMergeTree ORDER BY (root_domain,website_origin,page_url,detector_version,scan_id)"
+        "CREATE TABLE corpscout.webtech_domain_scan_results (root_domain String,website_origin String,page_url String,detector_version String,scanned_at DateTime64(3,'UTC'),scan_id String,outcome String,crawl_id String DEFAULT '') ENGINE=ReplacingMergeTree ORDER BY (root_domain,website_origin,page_url,detector_version,scan_id)"
     )
     migration = (
         Path(__file__).parents[3]
@@ -79,6 +79,11 @@ def database(server):
     for statement in migration.read_text().split(";"):
         if statement.strip():
             client.execute(statement)
+    for name in ("000446_corpscout_webtech_queue_contract.up.sql",):
+        path = Path(__file__).parents[3] / "clickhouse/migrations" / name
+        for statement in path.read_text().split(";"):
+            if statement.strip():
+                client.execute(statement)
     return client, resource
 
 
@@ -360,3 +365,9 @@ def test_new_selection_options_preserve_old_submission_fingerprints(
         draft_queue.submission(processing, submission_id)["selection_fingerprint"]
         == expected
     )
+
+def test_entry_table_follows_the_queue_contract(database):
+    client, _ = database
+    assert client.execute(
+        "SELECT partition_key, sorting_key FROM system.tables WHERE database='corpscout' AND name='webtech_scan_input'"
+    ) == [("task_id", "task_id, input_id")]
