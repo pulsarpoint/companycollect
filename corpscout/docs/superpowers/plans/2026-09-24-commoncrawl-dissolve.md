@@ -27,7 +27,7 @@
 ### Task 1: Move everything and delete the stale files (commit 1)
 
 **Files:**
-- Move (git): all 148 tracked paths under `commoncrawl/` listed in the spec's section 3
+- Move (git): all 154 tracked paths under `commoncrawl/` listed in the spec's section 3
 - Delete (git): `commoncrawl/README.md`, `commoncrawl/ARCHITECTURE.md`, `commoncrawl/Makefile`, `commoncrawl/.dockerignore`
 - Delete (disk, untracked): `commoncrawl/dist/`, `commoncrawl/data/`
 
@@ -44,7 +44,7 @@ git status --short -- commoncrawl services/cc-processor ../.gitignore
 for p in services/cc-dns-scan services/cc-dns-axfr services/cc-processor/tools services/cc-processor/docs; do test -e "$p" && echo "EXISTS: $p"; done
 git ls-files commoncrawl | wc -l
 ```
-Expected: the `git status` prints nothing; no `EXISTS:` lines; the count is `148`.
+Expected: the `git status` prints nothing; no `EXISTS:` lines; the count is `154`.
 If `git status` prints anything, STOP: another workstream touched these paths since the spec was written.
 
 - [ ] **Step 2: Move the two scanners with their playbooks and specs**
@@ -108,7 +108,7 @@ git diff --cached --name-status | rg '^D'
 ```
 Expected:
 - first line `0`;
-- the histogram shows `144 R` and `4 D` (148 tracked paths minus the 4 deletions are renames);
+- the histogram shows `150 R` and `4 D` (154 tracked paths minus the 4 deletions are renames);
 - `all renames are 100%`;
 - exactly four `D` lines: `commoncrawl/.dockerignore`, `commoncrawl/ARCHITECTURE.md`, `commoncrawl/Makefile`, `commoncrawl/README.md`.
 
@@ -147,7 +147,7 @@ MSG
 git show --stat --format='%h %s' HEAD | tail -1
 git log --oneline --follow -2 -- services/cc-dns-scan/go.mod
 ```
-Expected: the stat line says `148 files changed` and reports only `deletions(-)`, no insertions (renames add nothing; the four deletions remove lines); the `--follow -2` log shows this commit AND the pre-move commit that last touched `go.mod` (history preserved).
+Expected: the stat line says `154 files changed` and reports only `deletions(-)`, no insertions (renames add nothing; the four deletions remove lines); the `--follow -2` log shows this commit AND the pre-move commit that last touched `go.mod` (history preserved).
 
 ---
 

@@ -29,6 +29,7 @@ the folder is a live system, so the folder goes away rather than lingering half-
 | Root `.gitignore` | `corpscout/commoncrawl/**/uv.lock` + `!corpscout/commoncrawl/cc-processor/cc-warc-index-builder/uv.lock` | Exception is stale; that lock is tracked at `services/cc-processor/cc-warc-index-builder/uv.lock` |
 | Historical docs citing old paths | `docs/superpowers/specs/2026-07-05-…`, `docs/superpowers/plans/2026-07-05-…`, `cc-dns-scan/docs/superpowers/plans/*` | Dated records |
 
+In total 154 tracked paths live under `commoncrawl/` (the six rows above plus the six top-level files).
 No path under `commoncrawl/`, `services/cc-processor/` or the root `.gitignore` is part of the
 uncommitted work currently in the tree.
 
