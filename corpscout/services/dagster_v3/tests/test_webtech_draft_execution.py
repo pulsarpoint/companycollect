@@ -428,109 +428,113 @@ def test_finish_counts_results_and_skips_then_purge_drops_the_partition(
     assert processing.task(task_id)["inputs_purged_at"] is not None
 
 
-@pytest.mark.parametrize("failed_domain", [None, "example.com"])
-def test_results_asset_publishes_continuously_resumes_and_clears(
-    database, store, objects, monkeypatch, failed_domain
-):
-    import dagster as dg
-    from dagster_v3.defs.common.processing import ProcessingResource
-    from dagster_v3.defs.webtech import task_assets as module
-    from dagster_v3.defs.webtech.client import WebtechApiResource
-    from dagster_v3.defs.webtech.models import RemoteScanSnapshot, StoredResultReference
-    from dagster_v3.defs.webtech.storage import WebtechS3Destination
+class FakeScanner:
+    """Seams of the results asset: submit, monitor, publish and the final manifest."""
 
-    client, resource = database
-    processing, dsn = store
-    task_id = add(
-        resource, processing, objects, targets=["novelic.com", "example.com", "a.com"]
-    )["task_id"]
-    envelopes = {}
-    published = []
-    crash_once = [True]
+    def __init__(self, client, objects, task_id, failed_domain=None):
+        self.client = client
+        self.objects = objects
+        self.task_id = task_id
+        self.failed_domain = failed_domain
+        self.envelopes: dict[str, list[dict]] = {}
+        self.submitted: list[str] = []
+        self.published: list[str] = []
+        self.insert_calls: list[int] = []  # batch size of every insert attempt
+        self.failing_inserts = 0  # the next N inserts are not acknowledged
+        self.missed_events: set[str] = set()  # pages only the final manifest lists
+        self.crash_after_pages: int | None = None  # the monitor dies once, mid-envelope
 
-    def outcome(root):
-        return "navigation_error" if root == failed_domain else "success"
+    def reference(self, row):
+        from dagster_v3.defs.webtech.models import StoredResultReference
 
-    def submit(api, manifest):
-        del api
-        document = json.loads(objects.read_bytes(manifest.uri.split("/", 3)[3]))
-        envelopes[manifest.partition_key] = document["candidates"]
+        failed = row["root_domain"] == self.failed_domain
+        return StoredResultReference(
+            root_domain=row["root_domain"],
+            harmonic_rank=0,
+            input_id=row["input_id"],
+            outcome="navigation_error" if failed else "success",
+            timeout_stage=None,
+            technology_count=0,
+            duration_ms=1,
+            object_key=f"webtech/pages/{row['input_id']}",
+            sha256="0" * 64,
+            size_bytes=1,
+        )
+
+    def snapshot(self, manifest_uri, crawl_id, key, total, *, completed):
+        from dagster_v3.defs.webtech.models import RemoteScanSnapshot
+
         now = datetime.now(UTC)
         return RemoteScanSnapshot(
-            scan_id=manifest.partition_key,
-            status="running",
-            crawl_id=manifest.crawl_id,
-            partition_key=manifest.partition_key,
+            scan_id=key,
+            status="completed" if completed else "running",
+            crawl_id=crawl_id,
+            partition_key=key,
             detector_version=WEBTECH_DETECTOR_VERSION,
-            candidate_manifest_uri=manifest.uri,
+            candidate_manifest_uri=manifest_uri,
             result_prefix_uri="s3://webtech/webtech/x",
             final_manifest_uri="s3://webtech/webtech/x/final.json",
-            total_count=len(document["candidates"]),
-            completed_count=0,
+            total_count=total,
+            completed_count=total if completed else 0,
             outcome_counts={},
             technology_count=0,
             started_at=now,
-            finished_at=None,
-            last_progress_at=now,
-            elapsed_seconds=0,
-            progress_age_seconds=0,
-            domains_per_minute=0,
-            latest_event_sequence=0,
-            error_message="",
-        )
-
-    def monitor(*, submission, on_results, on_poll, **kwargs):
-        del kwargs
-        candidates = envelopes[submission.scan_id]
-        on_results(
-            [
-                StoredResultReference(
-                    root_domain=row["root_domain"],
-                    harmonic_rank=0,
-                    input_id=row["input_id"],
-                    outcome=outcome(row["root_domain"]),
-                    timeout_stage=None,
-                    technology_count=0,
-                    duration_ms=1,
-                    object_key=f"webtech/pages/{row['input_id']}",
-                    sha256="0" * 64,
-                    size_bytes=1,
-                )
-                for row in candidates
-            ]
-        )
-        on_poll()
-        now = datetime.now(UTC)
-        return RemoteScanSnapshot(
-            scan_id=submission.scan_id,
-            status="completed",
-            crawl_id=submission.manifest.crawl_id,
-            partition_key=submission.scan_id,
-            detector_version=WEBTECH_DETECTOR_VERSION,
-            candidate_manifest_uri=submission.manifest.uri,
-            result_prefix_uri="s3://webtech/webtech/x",
-            final_manifest_uri="s3://webtech/webtech/x/final.json",
-            total_count=len(candidates),
-            completed_count=len(candidates),
-            outcome_counts={},
-            technology_count=0,
-            started_at=now,
-            finished_at=now,
+            finished_at=now if completed else None,
             last_progress_at=now,
             elapsed_seconds=1,
             progress_age_seconds=0,
             domains_per_minute=60,
-            latest_event_sequence=1,
+            latest_event_sequence=1 if completed else 0,
             error_message="",
         )
 
-    def index(**kwargs):
+    def submit(self, api, manifest):
+        del api
+        document = json.loads(self.objects.read_bytes(manifest.uri.split("/", 3)[3]))
+        self.envelopes[manifest.partition_key] = document["candidates"]
+        self.submitted.append(manifest.partition_key)
+        return self.snapshot(
+            manifest.uri,
+            manifest.crawl_id,
+            manifest.partition_key,
+            len(document["candidates"]),
+            completed=False,
+        )
+
+    def monitor(self, *, submission, on_results, on_poll, **kwargs):
+        del kwargs
+        candidates = self.envelopes[submission.scan_id]
+        for position, row in enumerate(candidates):
+            if (
+                self.crash_after_pages is not None
+                and position == self.crash_after_pages
+            ):
+                self.crash_after_pages = None
+                raise RuntimeError("Dagster step died mid-envelope")
+            if row["input_id"] not in self.missed_events:
+                on_results([self.reference(row)])
+            on_poll()
+        return self.snapshot(
+            submission.manifest.uri,
+            submission.manifest.crawl_id,
+            submission.scan_id,
+            len(candidates),
+            completed=True,
+        )
+
+    def final_manifest(self, *, reference, **kwargs):
+        del kwargs
+        rows = self.envelopes[reference.scan_id]
+        return type("Final", (), {"results": [self.reference(row) for row in rows]})()
+
+    def index(self, **kwargs):
         references = kwargs["references"]
-        if crash_once[0]:
-            crash_once[0] = False
+        self.insert_calls.append(len(references))
+        if self.failing_inserts:
+            self.failing_inserts -= 1
             raise RuntimeError("insert not acknowledged")
-        published.extend(item.input_id for item in references)
-        client.execute(
+        self.published.extend(item.input_id for item in references)
+        self.client.execute(
             "INSERT INTO corpscout.webtech_domain_scan_results (crawl_id,root_domain,website_origin,page_url,detector_version,scanned_at,scan_id,outcome,task_id,input_id) VALUES",
             [
                 (
@@ -542,7 +546,7 @@ def test_results_asset_publishes_continuously_resumes_and_clears(
                     datetime.now(UTC),
                     "scan",
                     item.outcome,
-                    task_id,
+                    self.task_id,
                     item.input_id,
                 )
                 for item in references
@@ -550,21 +554,44 @@ def test_results_asset_publishes_continuously_resumes_and_clears(
         )
         return len(references)
 
-    monkeypatch.setattr(module, "submit_envelope", submit)
-    monkeypatch.setattr(module, "monitor_webtech_scan", monitor)
-    monkeypatch.setattr(module, "index_result_references", index)
-    monkeypatch.setattr(
-        module,
-        "read_final_manifest",
-        lambda **kwargs: type("Final", (), {"results": []})(),
-    )
+
+def results_harness(
+    database, store, objects, monkeypatch, *, failed_domain=None, eager_flush=False
+):
+    """Build the results asset around a FakeScanner; eager_flush publishes on every poll."""
+    import dagster as dg
+    from dagster_v3.defs.common.processing import ProcessingResource
+    from dagster_v3.defs.common.result_buffer import ResultBuffer
+    from dagster_v3.defs.webtech import task_assets as module
+    from dagster_v3.defs.webtech.client import WebtechApiResource
+    from dagster_v3.defs.webtech.storage import WebtechS3Destination
+
+    client, resource = database
+    processing, dsn = store
+    task_id = add(
+        resource, processing, objects, targets=["novelic.com", "example.com", "a.com"]
+    )["task_id"]
+    scanner = FakeScanner(client, objects, task_id, failed_domain)
+    monkeypatch.setattr(module, "submit_envelope", scanner.submit)
+    monkeypatch.setattr(module, "monitor_webtech_scan", scanner.monitor)
+    monkeypatch.setattr(module, "index_result_references", scanner.index)
+    monkeypatch.setattr(module, "read_final_manifest", scanner.final_manifest)
+    if eager_flush:
+        monkeypatch.setattr(
+            module,
+            "ResultBuffer",
+            lambda flush, **kwargs: ResultBuffer(flush, max_items=500, max_seconds=0.0),
+        )
     results = module.build_webtech_task_asset(
         WebtechS3Destination(bucket="webtech", prefix="webtech")
     )
 
+    instance = dg.DagsterInstance.ephemeral()
+
     def run(**config):
         return dg.materialize(
             [results, dg.AssetSpec("webtech_scan_input")],
+            instance=instance,
             resources={
                 "clickhouse": resource,
                 "processing": ProcessingResource(postgres_url=dsn),
@@ -583,14 +610,18 @@ def test_results_asset_publishes_continuously_resumes_and_clears(
             raise_on_error=False,
         )
 
-    assert not run().success  # the first insert was not acknowledged
-    execution_id = processing.task(task_id)["config"]["execution"]["execution_id"]
-    assert run(execution_id=execution_id).success
-    # Envelopes are rebuilt from what remains; every page is published exactly once.
-    assert len(published) == 3 and len(set(published)) == 3
+    run.instance = instance
+    return task_id, scanner, run
+
+
+def assert_completed_once(database, store, objects, task_id, scanner, succeeded=3):
+    client, _ = database
+    processing, _ = store
+    assert sorted(scanner.published) == sorted(set(scanner.published))
+    assert len(scanner.published) == 3
     task = processing.task(task_id)
     assert task["status"] == "completed"
-    assert task["succeeded_count"] == 3 - int(failed_domain is not None)
+    assert task["succeeded_count"] == succeeded
     assert task["inputs_purged_at"] is not None
     assert client.execute("SELECT count() FROM corpscout.webtech_scan_input") == [(0,)]
     assert not [
@@ -598,6 +629,82 @@ def test_results_asset_publishes_continuously_resumes_and_clears(
         for (_, key) in objects.client().objects
         if key.startswith("queue-executions/")
     ]
+
+
+@pytest.mark.parametrize("failed_domain", [None, "example.com"])
+def test_results_asset_publishes_continuously_resumes_and_clears(
+    database, store, objects, monkeypatch, failed_domain
+):
+    processing, _ = store
+    task_id, scanner, run = results_harness(
+        database, store, objects, monkeypatch, failed_domain=failed_domain
+    )
+    scanner.failing_inserts = 1
+
+    assert not run().success  # the end-of-envelope insert was not acknowledged
+    execution_id = processing.task(task_id)["config"]["execution"]["execution_id"]
+    assert run(execution_id=execution_id).success
+    # Envelopes are rebuilt from what remains; one insert per envelope, not per page.
+    assert scanner.insert_calls == [2, 2, 1]
+    assert_completed_once(
+        database, store, objects, task_id, scanner, 3 - int(failed_domain is not None)
+    )
+
+
+def test_results_asset_survives_a_failed_insert_while_polling(
+    database, store, objects, monkeypatch
+):
+    task_id, scanner, run = results_harness(
+        database, store, objects, monkeypatch, eager_flush=True
+    )
+    scanner.failing_inserts = 1
+
+    result = run()
+    assert result.success
+    # The failed poll-time insert kept its page, and the next poll published it.
+    assert scanner.insert_calls == [1, 1, 1, 1]
+    messages = [entry.user_message for entry in run.instance.all_logs(result.run_id)]
+    assert any("Webtech result publish failed while polling" in m for m in messages)
+    assert_completed_once(database, store, objects, task_id, scanner)
+
+
+def test_results_asset_publishes_pages_only_the_final_manifest_lists(
+    database, store, objects, monkeypatch
+):
+    task_id, scanner, run = results_harness(database, store, objects, monkeypatch)
+    missed = sorted(
+        input_id
+        for (input_id,) in database[0].execute(
+            "SELECT input_id FROM corpscout.webtech_scan_input WHERE task_id=%(task)s",
+            {"task": task_id},
+        )
+    )[0]
+    scanner.missed_events = {missed}
+
+    assert run().success
+    assert missed in scanner.published
+    # The envelope's events (1 page) and the reconciliation top-up (1 page), then envelope 2.
+    assert scanner.insert_calls == [1, 1, 1]
+    assert_completed_once(database, store, objects, task_id, scanner)
+
+
+def test_results_asset_resumes_with_a_new_envelope_after_a_partial_publish(
+    database, store, objects, monkeypatch
+):
+    processing, _ = store
+    task_id, scanner, run = results_harness(
+        database, store, objects, monkeypatch, eager_flush=True
+    )
+    scanner.crash_after_pages = 1
+
+    assert not run().success
+    assert len(scanner.published) == 1  # the first page was published before the crash
+    execution_id = processing.task(task_id)["config"]["execution"]["execution_id"]
+    assert run(execution_id=execution_id).success
+    # What remains differs from the first envelope, so the retry sends a new envelope.
+    assert len(scanner.submitted) == 2
+    assert scanner.submitted[1] != scanner.submitted[0]
+    assert_completed_once(database, store, objects, task_id, scanner)
 
 
 def test_addition_losing_freeze_race_moves_to_next_draft(

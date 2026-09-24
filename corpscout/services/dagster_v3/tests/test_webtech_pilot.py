@@ -58,7 +58,9 @@ class FakeClickhouseClient:
         self.rows = rows or []
         self.calls: list[tuple[str, Any]] = []
 
-    def execute(self, sql: str, parameters: Any = None, *, settings=None) -> list[tuple[Any, ...]]:
+    def execute(
+        self, sql: str, parameters: Any = None, *, settings=None
+    ) -> list[tuple[Any, ...]]:
         if sql.startswith("INSERT INTO"):
             assert settings == {"async_insert": 0}
         self.calls.append((sql, parameters))
@@ -931,3 +933,98 @@ def test_webtech_backfill_checks_identity_and_preserves_report_details(
     index["root_domain"] = "wrong.example"
     with pytest.raises(ValueError, match="identity mismatch"):
         read_indexed_technologies(index, store, catalog)
+
+
+def _page_reference(name: str):
+    from dagster_v3.defs.webtech.models import StoredResultReference
+
+    return StoredResultReference(
+        root_domain="example.com",
+        harmonic_rank=1,
+        input_id=name * 64,
+        outcome="success",
+        timeout_stage=None,
+        technology_count=0,
+        duration_ms=1,
+        object_key=f"webtech/pages/{name}",
+        sha256="0" * 64,
+        size_bytes=1,
+    )
+
+
+def _progress_event(sequence: int, *references):
+    from dagster_v3.defs.webtech.models import RemoteScanProgressEvent
+
+    return RemoteScanProgressEvent(
+        sequence=sequence,
+        completed_count=sequence,
+        total_count=1,
+        window_count=len(references),
+        window_outcome_counts={"success": len(references)},
+        window_technology_count=0,
+        elapsed_seconds=1,
+        domains_per_minute=60,
+        results=list(references),
+    )
+
+
+def test_monitor_hands_over_event_results_and_resets_cursor_after_resubmit() -> None:
+    from dagster_v3.defs.webtech.client import UnknownRemoteScanError
+
+    running = _remote_snapshot(
+        "running", scan_id="scan-one", completed_count=0, total_count=1
+    )
+    completed = _remote_snapshot(
+        "completed", scan_id="scan-one", completed_count=1, total_count=1
+    )
+    a, b, c = _page_reference("a"), _page_reference("b"), _page_reference("c")
+    trace: list[str] = []
+
+    class ScriptedApi:
+        def __init__(self) -> None:
+            self.after_events: list[int] = []
+            self.script = [
+                RemoteScanPollResponse(
+                    scan=running,
+                    events=[_progress_event(1, a), _progress_event(2, b)],
+                ),
+                UnknownRemoteScanError("scanner restarted"),
+                RemoteScanPollResponse(scan=completed, events=[_progress_event(1, c)]),
+            ]
+
+        def poll(self, scan_id, *, after_event, wait_seconds):
+            del scan_id, wait_seconds
+            self.after_events.append(after_event)
+            step = self.script.pop(0)
+            if isinstance(step, Exception):
+                raise step
+            return step
+
+        def submit(self, manifest):
+            del manifest
+            trace.append("submit")
+            return running
+
+    api = ScriptedApi()
+    object_store = FakeObjectStore()
+    _store_final_manifest(object_store, completed)
+    received: list[list[str]] = []
+
+    with dg.build_asset_context(instance=dg.DagsterInstance.ephemeral()) as context:
+        snapshot = monitor_webtech_scan(
+            context=context,
+            submission=_submission("scan-one"),
+            webtech_api=api,
+            webtech_object_store=object_store,
+            destination=WebtechS3Destination(bucket="webtech", prefix="webtech"),
+            poll_interval_seconds=2,
+            sleep=lambda seconds: trace.append(f"sleep {seconds}"),
+            on_results=lambda refs: received.append([ref.input_id for ref in refs]),
+            on_poll=lambda: trace.append("on_poll"),
+        )
+
+    assert snapshot == completed
+    assert received == [["a" * 64], ["b" * 64], ["c" * 64]]
+    # The cursor advances from event sequences and restarts at 0 after a resubmit.
+    assert api.after_events == [0, 2, 0]
+    assert trace == ["on_poll", "sleep 2", "submit", "on_poll", "sleep 2"]

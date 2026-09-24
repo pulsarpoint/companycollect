@@ -181,6 +181,26 @@ def build_webtech_task_asset(destination: WebtechS3Destination):
                 )
 
             buffer = ResultBuffer(publish, max_items=500, max_seconds=5.0)
+
+            def publish_while_polling(flush) -> None:
+                # A failed insert during polling keeps its rows buffered for the next
+                # poll; only the end-of-envelope flush fails the run.
+                try:
+                    flush()
+                except Exception as error:
+                    context.log.warning(
+                        "Webtech result publish failed while polling; %s results kept "
+                        "for the next attempt: %s",
+                        len(buffer),
+                        error,
+                    )
+
+            def on_results(references) -> None:
+                publish_while_polling(lambda: buffer.add(references))
+
+            def on_poll() -> None:
+                publish_while_polling(buffer.flush_if_due)
+
             envelopes = 0
             while True:
                 with clickhouse.get_connection() as client:
@@ -219,8 +239,8 @@ def build_webtech_task_asset(destination: WebtechS3Destination):
                     webtech_api=webtech_api,
                     webtech_object_store=webtech_object_store,
                     destination=destination,
-                    on_results=buffer.add,
-                    on_poll=buffer.flush_if_due,
+                    on_results=on_results,
+                    on_poll=on_poll,
                 )
                 buffer.flush()
                 # Reconcile with the final manifest: it lists every result of the scan,
