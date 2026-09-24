@@ -1,5 +1,6 @@
 import hashlib
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from urllib.parse import urlsplit
@@ -250,6 +251,73 @@ def index_final_results(
 
             publish_scan_rows(client, rows, detections)
     return len(rows)
+
+
+def index_result_references(
+    *,
+    clickhouse: ClickhouseResource,
+    object_store: ObjectStoreResource,
+    destination: WebtechS3Destination,
+    crawl_id: str,
+    detector_version: str,
+    references: Sequence[StoredResultReference],
+    dagster_run_id: str,
+) -> int:
+    """Publish stored page results of one execution, from any of its envelopes."""
+    if not references:
+        return 0
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=WEBTECH_CLICKHOUSE_DATABASE,
+        tables=[WEBTECH_RESULT_TABLE, WEBTECH_TECHNOLOGY_TABLE, "technology_catalog", "technology_aliases"],
+    )
+    with clickhouse.get_connection() as client:
+        catalog = load_technology_catalog(client)
+    recorded_at = datetime.now(UTC)
+    rows, detections, seen = [], [], set()
+    for reference in references:
+        if reference.input_id in seen:
+            continue
+        seen.add(reference.input_id)
+        body = object_store.read_bytes(reference.object_key, bucket=destination.bucket)
+        _validate_result_body(reference, body)
+        stored = StoredDomainResultDocument.model_validate_json(body)
+        _validate_execution_result_identity(
+            stored, reference=reference, crawl_id=crawl_id, detector_version=detector_version
+        )
+        detections.extend(
+            technology_rows(stored, reference, catalog, bucket=destination.bucket,
+                            run_id=dagster_run_id, recorded_at=recorded_at)
+        )
+        rows.append(
+            _clickhouse_row(stored, result_reference=reference, dagster_run_id=dagster_run_id,
+                            recorded_at=recorded_at, result_bucket=destination.bucket)
+        )
+    with clickhouse.get_connection() as client:
+        from dagster_v3.defs.webtech.writes import publish_scan_rows
+
+        publish_scan_rows(client, rows, detections)
+    return len(rows)
+
+
+def _validate_execution_result_identity(
+    document: StoredDomainResultDocument,
+    *,
+    reference: StoredResultReference,
+    crawl_id: str,
+    detector_version: str,
+) -> None:
+    # The scan and envelope may differ: pages are reused across envelopes of an execution.
+    if (
+        document.crawl_id != crawl_id
+        or document.detector_version != detector_version
+        or not reference.input_id
+        or document.candidate.input_id != reference.input_id
+        or document.candidate.root_domain != reference.root_domain
+        or document.outcome != reference.outcome
+        or _technology_count(document.report) != reference.technology_count
+    ):
+        raise ValueError(f"result identity mismatch: {reference.object_key}")
 
 
 def _validate_result_body(
