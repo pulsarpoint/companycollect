@@ -2,11 +2,7 @@
 
 import hashlib
 import json
-from itertools import batched
-from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Literal
-from urllib.parse import urlsplit
 from uuid import UUID
 
 import dagster as dg
@@ -15,7 +11,6 @@ from pydantic import Field, field_validator
 
 from dagster_v3.defs.common import draft_queue
 from dagster_v3.defs.common.processing import ProcessingResource
-from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.website_crawl.input import (
     INPUT_TABLES,
     TASK_DOMAINS,
@@ -43,7 +38,7 @@ class CrawlQueueInputConfig(CrawlInputConfig):
         return value
 
 
-def load_crawl_draft(config, submission_id, store, clickhouse, objects):
+def load_crawl_draft(config, submission_id, store, clickhouse):
     selection = config.model_dump(exclude={"task_id", "submission_id", "queue_scope"})
     for key in ("ids", "excluded_ids", "targets"):
         selection[key] = sorted(set(selection[key]))
@@ -126,96 +121,66 @@ def load_crawl_draft(config, submission_id, store, clickhouse, objects):
                     "total": store.task(task_id)["total"],
                 }
             try:
-                with (
-                    clickhouse.get_connection() as client,
-                    TemporaryDirectory(prefix="crawl-input-") as temporary,
-                ):
-                    path = Path(temporary) / "inputs.jsonl"
+                with clickhouse.get_connection() as client:
                     query_id = "crawl-queue-import:" + submission_id
                     client.execute(
                         "KILL QUERY WHERE query_id=%(id)s SYNC", {"id": query_id}
                     )
-                    if receipt["manifest_uri"] is None:
-                        count = 0
-                        with path.open("w") as output:
-                            for row in client.execute_iter(
-                                *selected_domains_sql(config)
-                            ):
-                                count += 1
-                                if count > 1_000_000:
-                                    raise ValueError(
-                                        "A crawl submission supports at most one million domains"
-                                    )
-                                output.write(json.dumps(row) + "\n")
-                        if config.targets and count == 0:
-                            raise ValueError("No valid HTTP(S) websites in targets")
-                        digest = hashlib.sha256(path.read_bytes()).hexdigest()
-                        key = f"queue-inputs/crawler/{task_id}/{submission_id}/{digest}.jsonl"
-                        objects.ensure_bucket()
-                        objects.upload_file(key, path)
-                        draft_queue.save_manifest(
-                            store, submission_id, f"s3://{objects.bucket}/{key}"
+                    # A retry replaces only this submission's rows, from the current source.
+                    client.execute(
+                        f"DELETE FROM {TASK_DOMAINS} WHERE task_id=%(task)s AND submission_id=%(submission)s",
+                        {"task": task_id, "submission": submission_id},
+                        settings={"lightweight_deletes_sync": 2},
+                    )
+                    selected_sql, params = selected_domains_sql(config)
+                    params.update(
+                        source=config.source_relation or "manual",
+                        task=task_id,
+                        type=config.crawl_type,
+                        submission=submission_id,
+                        priority=config.priority,
+                    )
+                    settings = {"async_insert": 0, "use_query_cache": 0}
+                    [(count,)] = client.execute(
+                        f"SELECT count() FROM ({selected_sql}) AS selected",
+                        params,
+                        query_id=query_id,
+                        settings=settings,
+                    )
+                    if count > 1_000_000:
+                        raise ValueError(
+                            "A crawl submission supports at most one million domains"
                         )
-                    else:
-                        uri = urlsplit(receipt["manifest_uri"])
-                        key = uri.path.lstrip("/")
-                        if (
-                            uri.scheme != "s3"
-                            or uri.netloc != objects.bucket
-                            or not key.startswith(
-                                f"queue-inputs/crawler/{task_id}/{submission_id}/"
-                            )
-                        ):
-                            raise ValueError("Unexpected crawl input manifest location")
-                        objects.download_file(key, path)
-                        if (
-                            hashlib.sha256(path.read_bytes()).hexdigest()
-                            != Path(key).stem
-                        ):
-                            raise ValueError("Crawl input manifest checksum mismatch")
+                    if config.targets and count == 0:
+                        raise ValueError("No valid HTTP(S) websites in targets")
                     target = INPUT_TABLES[
                         ("full", "jobs", "site_info").index(config.crawl_type)
                     ]
-                    count = 0
-                    with path.open() as source:
-                        for lines in batched(source, 5000):
-                            rows = [json.loads(line) for line in lines]
-                            count += len(rows)
-                            # Persist recurring presets without replacing operator settings.
-                            source_sql = "SELECT tupleElement(x,1) AS domain,tupleElement(x,2) AS website_url FROM (SELECT arrayJoin(%(rows)s) AS x)"
-                            params = {
-                                "rows": [tuple(row) for row in rows],
-                                "source": config.source_relation or "manual",
-                                "task": task_id,
-                                "type": config.crawl_type,
-                                "submission": submission_id,
-                            }
-                            priority = (
-                                ", priority" if config.priority is not None else ""
-                            )
-                            priority_value = (
-                                ", %(priority)s" if config.priority is not None else ""
-                            )
-                            params["priority"] = config.priority
-                            client.execute(
-                                f"""INSERT INTO {target} (domain,website_url,source,created_at,updated_at,revision{priority})
-                                SELECT s.domain,s.website_url,%(source)s,now64(6),now64(6),1{priority_value}
-                                FROM ({source_sql}) AS s LEFT ANTI JOIN {target}_current AS e ON s.domain=e.domain""",
-                                params,
-                                query_id=query_id,
-                                settings={"async_insert": 0},
-                            )
-                            client.execute(
-                                f"""INSERT INTO {TASK_DOMAINS} (task_id,crawl_type,domain,website_url,source_name,submission_id)
-                                SELECT %(task)s,%(type)s,s.domain,s.website_url,%(source)s,%(submission)s
-                                FROM ({source_sql}) AS s LEFT ANTI JOIN
-                                (SELECT domain FROM {TASK_DOMAINS} FINAL WHERE task_id=%(task)s) AS e ON s.domain=e.domain""",
-                                params,
-                                query_id=query_id,
-                                settings={"async_insert": 0},
-                            )
+                    priority = ", priority" if config.priority is not None else ""
+                    priority_value = (
+                        ", %(priority)s" if config.priority is not None else ""
+                    )
+                    # Persist recurring presets without replacing operator settings.
+                    client.execute(
+                        f"""INSERT INTO {target} (domain,website_url,source,created_at,updated_at,revision{priority})
+                        SELECT s.domain,s.website_url,%(source)s,now64(6),now64(6),1{priority_value}
+                        FROM ({selected_sql}) AS s LEFT ANTI JOIN {target}_current AS e ON s.domain=e.domain""",
+                        params,
+                        query_id=query_id,
+                        settings=settings,
+                    )
+                    # Entries land straight in the task's partition; the first queued URL wins.
+                    client.execute(
+                        f"""INSERT INTO {TASK_DOMAINS} (task_id,crawl_type,domain,website_url,source_name,submission_id)
+                        SELECT %(task)s,%(type)s,s.domain,s.website_url,%(source)s,%(submission)s
+                        FROM ({selected_sql}) AS s LEFT ANTI JOIN
+                        (SELECT domain FROM {TASK_DOMAINS} WHERE task_id=%(task)s) AS e ON s.domain=e.domain""",
+                        params,
+                        query_id=query_id,
+                        settings=settings,
+                    )
                     [(total,)] = client.execute(
-                        f"SELECT count() FROM {TASK_DOMAINS} FINAL WHERE task_id=%(task)s",
+                        f"SELECT count() FROM {TASK_DOMAINS} WHERE task_id=%(task)s",
                         {"task": task_id},
                     )
                     if total > 1_000_000:
@@ -242,7 +207,7 @@ def load_crawl_draft(config, submission_id, store, clickhouse, objects):
 
 @dg.asset(
     group_name="website_crawl",
-    kinds={"clickhouse", "postgres", "s3"},
+    kinds={"clickhouse", "postgres"},
     pool="website_crawl_input",
     metadata={"dagster/table_name": TASK_DOMAINS},
     description="Append manual URLs or source selections to the open crawl draft. Does not start crawling or skip recent results.",
@@ -252,7 +217,6 @@ def website_crawl_input(
     config: CrawlQueueInputConfig,
     clickhouse: ClickhouseResource,
     processing: ProcessingResource,
-    crawler_queue_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
     submission_id = (
         config.submission_id
@@ -264,9 +228,7 @@ def website_crawl_input(
         context.run.run_id, {"processing/submission_id": submission_id}
     )
     with processing.get_store() as store:
-        metadata = load_crawl_draft(
-            config, submission_id, store, clickhouse, crawler_queue_store
-        )
+        metadata = load_crawl_draft(config, submission_id, store, clickhouse)
     context.instance.add_run_tags(
         context.run.run_id, {"processing/task_id": metadata["task_id"]}
     )
@@ -276,10 +238,4 @@ def website_crawl_input(
 website_crawl_input_job = dg.define_asset_job(
     "website_crawl_input_job", selection=dg.AssetSelection.assets(website_crawl_input)
 )
-defs = dg.Definitions(
-    assets=[website_crawl_input],
-    jobs=[website_crawl_input_job],
-    resources={
-        "crawler_queue_store": ObjectStoreResource(bucket="website-crawl-queues"),
-    },
-)
+defs = dg.Definitions(assets=[website_crawl_input], jobs=[website_crawl_input_job])

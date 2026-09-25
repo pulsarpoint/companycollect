@@ -1,38 +1,38 @@
-"""Materialize selections against a disposable ClickHouse server, never production."""
+"""Selection SQL and CrawlInputConfig against a disposable ClickHouse server, never production."""
 
 import subprocess
 import time
 from collections.abc import Iterator
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from uuid import uuid4
 
-import dagster as dg
 import pytest
 from clickhouse_driver import Client
 from clickhouse_driver.errors import ServerException
 from dagster_clickhouse import ClickhouseResource
 from pydantic import ValidationError
 
-from dagster_v3.defs.common.processing import ProcessingResource
-from dagster_v3.defs.website_crawl.assets import (
-    website_full_crawl_requests,
-    website_jobs_crawl_requests,
-    website_site_info_requests,
-)
 from dagster_v3.defs.website_crawl.input import (
     INPUT_TABLES,
     TASK_DOMAINS,
     CrawlInputConfig,
 )
+from dagster_v3.defs.website_crawl.queue_input import (
+    CrawlQueueInputConfig,
+    load_crawl_draft,
+)
 from dagster_v3.defs.website_crawl.se_domains import SeDomainFilters
 from tests.clickhouse_local import CLICKHOUSE_IMAGE, clickhouse_local_command
 from tests.test_processing_store import processing_postgres_url, store  # noqa: F401
 
-ASSETS = (
-    website_full_crawl_requests,
-    website_jobs_crawl_requests,
-    website_site_info_requests,
+CRAWL_TYPES = ("full", "jobs", "site_info")
+TARGETS = dict(zip(CRAWL_TYPES, INPUT_TABLES, strict=True))
+# The entry-table migrations, in ledger order, applied once per module.
+MIGRATIONS = (
+    "000429_corpscout_website_crawl_requests.up.sql",
+    "000431_corpscout_website_crawl_task_domains.up.sql",
+    "000445_corpscout_crawl_draft_queue.up.sql",
+    "000448_corpscout_crawl_queue_contract.up.sql",
 )
 
 
@@ -60,15 +60,22 @@ def server() -> Iterator[tuple[Client, ClickhouseResource]]:
         capture_output=True,
     )
     try:
-        port_output = subprocess.run(
-            ["docker", "port", name, "9000"],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout
+        # docker can report the mapping a moment after `run -d` returns.
+        port_output = ""
+        port_deadline = time.monotonic() + 10
+        while ":" not in port_output:
+            if time.monotonic() > port_deadline:
+                raise RuntimeError(f"no published port for {name}")
+            port_output = subprocess.run(
+                ["docker", "port", name, "9000"],
+                capture_output=True,
+                text=True,
+            ).stdout
+            if ":" not in port_output:
+                time.sleep(0.2)
         resource = ClickhouseResource(
             host="127.0.0.1",
-            port=int(port_output.strip().rsplit(":", 1)[1]),
+            port=int(port_output.strip().splitlines()[0].rsplit(":", 1)[1]),
             user="test",
             password="test",
             database="default",
@@ -98,11 +105,10 @@ def server() -> Iterator[tuple[Client, ClickhouseResource]]:
             time.sleep(0.2)
         with resource.get_connection() as client:
             migrations = Path(__file__).resolve().parents[3] / "clickhouse/migrations"
-            for name in (
-                "000429_corpscout_website_crawl_requests.up.sql",
-                "000431_corpscout_website_crawl_task_domains.up.sql",
-            ):
-                for statement in (migrations / name).read_text(encoding="utf-8").split(";"):
+            for name in MIGRATIONS:
+                for statement in (
+                    (migrations / name).read_text(encoding="utf-8").split(";")
+                ):
                     if statement.strip():
                         client.execute(statement)
             yield client, resource
@@ -110,46 +116,38 @@ def server() -> Iterator[tuple[Client, ClickhouseResource]]:
         subprocess.run(["docker", "rm", "-f", name], check=False, capture_output=True)
 
 
-# Selections are frozen under processing.tasks records in a disposable PostgreSQL.
-PROCESSING: dict[str, ProcessingResource] = {}
-
-
 @pytest.fixture
 def database(server, store):  # noqa: F811
     client, resource = server
-    PROCESSING["resource"] = ProcessingResource(postgres_url=store[1])
+    processing, _ = store
     for table in (*INPUT_TABLES, TASK_DOMAINS):
         client.execute(f"TRUNCATE TABLE {table}")
     client.execute("DROP TABLE IF EXISTS corpscout.crawl_test_source")
     client.execute("""CREATE TABLE corpscout.crawl_test_source (
         company_id String, website Nullable(String), country String, active UInt8, version UInt64
     ) ENGINE = ReplacingMergeTree(version) ORDER BY company_id""")
-    yield client, resource
+    return client, resource, processing
 
 
-def materialize(asset, resource, **selection):
-    return dg.materialize(
-        [asset],
-        resources={"clickhouse": resource, "processing": PROCESSING["resource"]},
-        run_config={
-            "ops": {
-                asset.key.to_user_string(): {
-                    "config": {
-                        "source_relation": "corpscout.crawl_test_source",
-                        "id_column": "company_id",
-                        "website_column": "website",
-                        **selection,
-                    }
-                }
-            }
+def add(database, crawl_type="full", **selection):
+    """Import a source selection into the open draft of ``crawl_type``."""
+    _, resource, processing = database
+    config = CrawlQueueInputConfig(
+        crawl_type=crawl_type,
+        **{
+            "source_relation": "corpscout.crawl_test_source",
+            "id_column": "company_id",
+            "website_column": "website",
+            **selection,
         },
     )
+    return load_crawl_draft(config, str(uuid4()), processing, resource)
 
 
-@pytest.mark.parametrize("asset", ASSETS, ids=lambda asset: asset.key.to_user_string())
-def test_ids_and_filters_seed_each_destination_and_preserve_edits(database, asset):
-    client, resource = database
-    target = "corpscout." + asset.key.to_user_string()
+@pytest.mark.parametrize("crawl_type", CRAWL_TYPES)
+def test_ids_and_filters_seed_each_destination_and_preserve_edits(database, crawl_type):
+    client, *_ = database
+    target = TARGETS[crawl_type]
     client.execute(f"SYSTEM STOP MERGES {target}")
     client.execute(
         "INSERT INTO corpscout.crawl_test_source VALUES",
@@ -160,14 +158,14 @@ def test_ids_and_filters_seed_each_destination_and_preserve_edits(database, asse
             ("4", "frame.work", "SE", 0, 1),
         ],
     )
-    result = materialize(
-        asset,
-        resource,
+    result = add(
+        database,
+        crawl_type,
         ids=["1", "2", "3", "4"],
         filters={"country": ["SE"], "active": ["1"]},
         priority=80,
     )
-    assert result.success
+    assert result["total"] == 1
     assert client.execute(
         f"SELECT domain, website_url, priority, enabled, source, revision, bucket < 256 FROM {target}_current"
     ) == [
@@ -181,18 +179,18 @@ def test_ids_and_filters_seed_each_destination_and_preserve_edits(database, asse
             1,
         )
     ]
-    metadata = result.asset_materializations_for_node(asset.key.to_user_string())[
-        0
-    ].metadata
-    assert metadata["inserted_domains"].value == 1
     assert client.execute(
         f"SELECT countIf(created_at = updated_at AND created_at > toDateTime64('2026-01-01', 6)) FROM {target}"
     ) == [(1,)]
+    assert client.execute(
+        f"SELECT crawl_type, domain, website_url FROM {TASK_DOMAINS}"
+    ) == [(crawl_type, "novelic.com", "https://novelic.com/")]
     client.execute(f"""INSERT INTO {target}
         SELECT * EXCEPT bucket REPLACE (false AS enabled, 2 AS revision, 10 AS priority, 'operator' AS instructions)
         FROM {target}_current""")
-    repeated = materialize(asset, resource, ids=["1", "2", "3"], priority=99)
-    assert repeated.success
+    repeated = add(database, crawl_type, ids=["1", "2", "3"], priority=99)
+    assert repeated["total"] == 2
+    # The existing operator row keeps its settings; membership does not re-enable it.
     assert client.execute(
         f"SELECT domain, priority, enabled, instructions, revision FROM {target}_current ORDER BY domain"
     ) == [
@@ -207,7 +205,7 @@ def test_ids_and_filters_seed_each_destination_and_preserve_edits(database, asse
 
 
 def test_filter_only_final_reads_and_parameter_binding(database):
-    client, resource = database
+    client, *_ = database
     client.execute("SYSTEM STOP MERGES corpscout.crawl_test_source")
     client.execute(
         "INSERT INTO corpscout.crawl_test_source VALUES",
@@ -218,29 +216,24 @@ def test_filter_only_final_reads_and_parameter_binding(database):
             ("3", "frame.work", "US", 1, 1),
         ],
     )
-    result = materialize(
-        website_full_crawl_requests,
-        resource,
+    add(
+        database,
+        "full",
         source_final=True,
         filters={"active": ["1"], "country": ["SE", "BE"]},
     )
-    assert result.success
     assert client.execute(
         "SELECT domain, priority FROM corpscout.website_full_crawl_requests_current"
     ) == [("melexis.com", 50)]
-    assert materialize(
-        website_jobs_crawl_requests, resource, ids=["1') OR 1=1 --"]
-    ).success
-    assert materialize(
-        website_jobs_crawl_requests, resource, filters={"country": ["SE') OR 1=1 --"]}
-    ).success
+    add(database, "jobs", ids=["1') OR 1=1 --"])
+    add(database, "jobs", filters={"country": ["SE') OR 1=1 --"]})
     assert client.execute(
         "SELECT count() FROM corpscout.website_jobs_crawl_requests"
     ) == [(0,)]
 
 
 def test_url_normalization_invalid_inputs_and_stable_limit(database):
-    client, resource = database
+    client, *_ = database
     client.execute(
         "INSERT INTO corpscout.crawl_test_source VALUES",
         [
@@ -264,7 +257,7 @@ def test_url_normalization_invalid_inputs_and_stable_limit(database):
             )
         ],
     )
-    assert materialize(website_full_crawl_requests, resource, select_all=True).success
+    add(database, "full", select_all=True)
     assert client.execute(
         "SELECT domain, website_url FROM corpscout.website_full_crawl_requests_current ORDER BY domain"
     ) == [
@@ -272,65 +265,24 @@ def test_url_normalization_invalid_inputs_and_stable_limit(database):
         ("example.com", "https://example.com"),
         ("xn--bcher-kva.de", "https://www.xn--bcher-kva.de:8080/jobs?x=1"),
     ]
-    assert materialize(
-        website_jobs_crawl_requests, resource, select_all=True, max_domains=1
-    ).success
+    add(database, "jobs", select_all=True, max_domains=1)
     assert client.execute(
         "SELECT domain FROM corpscout.website_jobs_crawl_requests_current"
     ) == [("careers.example.com",)]
-    assert materialize(
-        website_jobs_crawl_requests, resource, select_all=True, max_domains=1
-    ).success
+    add(database, "jobs", select_all=True, max_domains=1)
     assert client.execute(
         "SELECT count() FROM corpscout.website_jobs_crawl_requests"
     ) == [(1,)]
 
 
 def test_missing_source_columns_fail_before_writing(database):
-    client, resource = database
-    with pytest.raises(ValueError, match="source is missing columns"):
-        materialize(
-            website_full_crawl_requests, resource, filters={"not_a_column": ["value"]}
-        )
+    client, *_ = database
+    with pytest.raises(ServerException):
+        add(database, "full", filters={"not_a_column": ["value"]})
     assert client.execute(
         "SELECT count() FROM corpscout.website_full_crawl_requests"
     ) == [(0,)]
-
-
-def test_overlapping_server_query_cannot_seed_twice(database):
-    client, resource = database
-    client.execute(
-        "INSERT INTO corpscout.crawl_test_source VALUES",
-        [
-            ("1", "novelic.com", "SE", 1, 1),
-        ],
-    )
-    query_id = "website-crawl-input:corpscout.website_full_crawl_requests"
-
-    def hold_query_id():
-        with resource.get_connection() as held_client:
-            held_client.execute("SELECT sleep(3)", query_id=query_id)
-
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        held = executor.submit(hold_query_id)
-        deadline = time.monotonic() + 2
-        while client.execute(
-            "SELECT count() FROM system.processes WHERE query_id=%(query_id)s",
-            {"query_id": query_id},
-        ) == [(0,)]:
-            assert time.monotonic() < deadline
-            time.sleep(0.02)
-        with pytest.raises(ServerException, match="is already running") as error:
-            materialize(website_full_crawl_requests, resource, ids=["1"])
-        assert error.value.code == 216
-        held.result(timeout=5)
-    assert client.execute(
-        "SELECT count() FROM corpscout.website_full_crawl_requests"
-    ) == [(0,)]
-    assert materialize(website_full_crawl_requests, resource, ids=["1"]).success
-    assert client.execute(
-        "SELECT count() FROM corpscout.website_full_crawl_requests"
-    ) == [(1,)]
+    assert client.execute(f"SELECT count() FROM {TASK_DOMAINS}") == [(0,)]
 
 
 @pytest.mark.parametrize(
@@ -360,7 +312,7 @@ def test_invalid_selection_is_rejected(overrides):
 
 @pytest.fixture
 def se_domains(database):
-    client, resource = database
+    client, *_ = database
     client.execute("DROP TABLE IF EXISTS corpscout.se_company_domain")
     client.execute("""CREATE TABLE corpscout.se_company_domain (
         company_id String, root_domain String, sources Array(String), association String,
@@ -386,7 +338,15 @@ def se_domains(database):
             ),
         ],
     )
-    return client, resource
+    return database
+
+
+SE_SOURCE = {
+    "source_relation": "corpscout.se_company_domain",
+    "source_final": True,
+    "id_column": "root_domain",
+    "website_column": "root_domain",
+}
 
 
 @pytest.mark.parametrize(
@@ -422,47 +382,27 @@ def se_domains(database):
     ],
 )
 def test_se_domain_criteria_match_current_entity(se_domains, filters, expected):
-    client, resource = se_domains
-    result = materialize(
-        website_full_crawl_requests,
-        resource,
-        source_relation="corpscout.se_company_domain",
-        source_final=True,
-        id_column="root_domain",
-        website_column="root_domain",
-        se_domain_filters=filters,
-    )
-    assert result.success
+    client, *_ = se_domains
+    add(se_domains, "full", **SE_SOURCE, se_domain_filters=filters)
     assert client.execute(
         "SELECT domain FROM corpscout.website_full_crawl_requests_current ORDER BY domain"
     ) == [(domain,) for domain in expected]
 
 
 def test_se_domain_query_exclusions_apply_to_whole_domain(se_domains):
-    client, resource = se_domains
-    assert materialize(
-        website_jobs_crawl_requests,
-        resource,
-        source_relation="corpscout.se_company_domain",
-        source_final=True,
-        id_column="root_domain",
-        website_column="root_domain",
+    client, *_ = se_domains
+    add(
+        se_domains,
+        "jobs",
+        **SE_SOURCE,
         select_all=True,
         se_domain_filters={"status": "active"},
         excluded_ids=["shared.example"],
-    ).success
+    )
     assert client.execute(
         "SELECT domain FROM corpscout.website_jobs_crawl_requests_current ORDER BY domain"
     ) == [("second.example",), ("solo.example",)]
-    assert materialize(
-        website_site_info_requests,
-        resource,
-        source_relation="corpscout.se_company_domain",
-        source_final=True,
-        id_column="root_domain",
-        website_column="root_domain",
-        ids=["shared.example", "shared.example"],
-    ).success
+    add(se_domains, "site_info", **SE_SOURCE, ids=["shared.example", "shared.example"])
     assert client.execute(
         "SELECT domain FROM corpscout.website_site_info_requests_current"
     ) == [("shared.example",)]
@@ -494,10 +434,7 @@ def test_se_filters_require_correct_source_identity_and_final():
         with pytest.raises(ValidationError):
             CrawlInputConfig(
                 **{
-                    "source_relation": "corpscout.se_company_domain",
-                    "source_final": True,
-                    "id_column": "root_domain",
-                    "website_column": "root_domain",
+                    **SE_SOURCE,
                     "se_domain_filters": SeDomainFilters(source="brave"),
                     **overrides,
                 }

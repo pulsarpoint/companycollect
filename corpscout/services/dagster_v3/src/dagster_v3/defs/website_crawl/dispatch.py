@@ -81,9 +81,18 @@ def crawl_payload(row: dict, crawl_type: str, batch_id: str) -> dict:
     return payload
 
 
+class CrawlRequestConflict(ValueError):
+    """The crawler already holds this request ID with a different payload (HTTP 409)."""
+
+
+# Statuses worth retrying with the same request: capacity and gateway failures.
+TRANSIENT_STATUSES = (429, 500, 502, 503, 504)
+RETRY_SECONDS = 120
+
+
 def send_crawl(http: Session, url: str, payload: dict, *, validate: bool) -> dict:
     """Retry ambiguous POSTs with the same durable crawler request ID."""
-    deadline = monotonic() + 120
+    deadline = monotonic() + RETRY_SECONDS
     path = "/v1/crawls/validate" if validate else "/v1/crawls"
     while True:
         try:
@@ -104,6 +113,8 @@ def send_crawl(http: Session, url: str, payload: dict, *, validate: bool) -> dic
                 if result.get("request_id") != payload["request_id"]:
                     raise ValueError("Crawler returned a different request identity")
                 return result
+            if response.status_code == 409 and not validate:
+                raise CrawlRequestConflict("Crawler rejected submission with HTTP 409")
             if response.status_code not in (429, 502, 503, 504):
                 raise ValueError(
                     f"Crawler rejected {'validation' if validate else 'submission'} with HTTP {response.status_code}"
@@ -111,3 +122,45 @@ def send_crawl(http: Session, url: str, payload: dict, *, validate: bool) -> dic
             if monotonic() >= deadline:
                 raise RuntimeError("Crawler capacity unavailable; retry this batch ID")
         sleep(2)
+
+
+def _get(http: Session, url: str, *, read_timeout: int):
+    """GET with the same bounded retry as send_crawl for transport and 5xx failures."""
+    deadline = monotonic() + RETRY_SECONDS
+    while True:
+        try:
+            response = http.get(url, timeout=(10, read_timeout), allow_redirects=False)
+        except RequestException:
+            if monotonic() >= deadline:
+                raise RuntimeError(
+                    "Crawler did not answer; resume this task to recover safely"
+                ) from None
+        else:
+            if response.status_code not in TRANSIENT_STATUSES:
+                return response
+            if monotonic() >= deadline:
+                response.raise_for_status()
+        sleep(2)
+
+
+def fetch_crawl(http: Session, url: str, request_id: str) -> dict | None:
+    """The crawler's job for a request ID, or None when it has none."""
+    response = _get(http, f"{url.rstrip('/')}/v1/crawls/{request_id}", read_timeout=30)
+    if response.status_code == 404:
+        return None
+    response.raise_for_status()
+    job = response.json()
+    if job.get("request_id") != request_id:
+        raise ValueError("Crawler returned a different request identity")
+    return job
+
+
+def fetch_result(http: Session, url: str, request_id: str) -> dict | None:
+    """The stored crawl result, or None while the crawler says it is not ready (409)."""
+    response = _get(
+        http, f"{url.rstrip('/')}/v1/crawls/{request_id}/result", read_timeout=60
+    )
+    if response.status_code == 409:
+        return None
+    response.raise_for_status()
+    return response.json()

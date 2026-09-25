@@ -4,16 +4,15 @@ import dagster as dg
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.common.processing import ProcessingResource
-from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.website_crawl.results import CrawlResultsConfig, process_crawls
 
 
 @dg.asset(
     group_name="website_crawl",
     kinds={"clickhouse"},
-    deps=["website_full_crawl_requests", "website_crawl_input"],
+    deps=["website_crawl_input"],
     metadata={"dagster/table_name": "corpscout.website_full_crawl_results"},
-    description="Process a frozen crawl task (every enabled domain of task_id, resumable by execution_id) or a bounded batch of explicit or due inputs, and store completed crawler responses.",
+    description="Process a crawl draft (task_id) or a bounded batch of explicit or due inputs, and store completed crawler responses.",
     pool="website_crawl_results",
 )
 def website_full_crawl_results(
@@ -21,19 +20,16 @@ def website_full_crawl_results(
     config: CrawlResultsConfig,
     clickhouse: ClickhouseResource,
     processing: ProcessingResource,
-    crawler_queue_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
-    return process_crawls(
-        context, config, clickhouse, processing, "full", crawler_queue_store
-    )
+    return process_crawls(context, config, clickhouse, processing, "full")
 
 
 @dg.asset(
     group_name="website_crawl",
     kinds={"clickhouse"},
-    deps=["website_jobs_crawl_requests", "website_crawl_input"],
+    deps=["website_crawl_input"],
     metadata={"dagster/table_name": "corpscout.website_jobs_crawl_results"},
-    description="Process a frozen crawl task (every enabled domain of task_id, resumable by execution_id) or a bounded batch of explicit or due inputs, and store completed crawler responses.",
+    description="Process a crawl draft (task_id) or a bounded batch of explicit or due inputs, and store completed crawler responses.",
     pool="website_crawl_results",
 )
 def website_jobs_crawl_results(
@@ -41,19 +37,16 @@ def website_jobs_crawl_results(
     config: CrawlResultsConfig,
     clickhouse: ClickhouseResource,
     processing: ProcessingResource,
-    crawler_queue_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
-    return process_crawls(
-        context, config, clickhouse, processing, "jobs", crawler_queue_store
-    )
+    return process_crawls(context, config, clickhouse, processing, "jobs")
 
 
 @dg.asset(
     group_name="website_crawl",
     kinds={"clickhouse"},
-    deps=["website_site_info_requests", "website_crawl_input"],
+    deps=["website_crawl_input"],
     metadata={"dagster/table_name": "corpscout.website_site_info_results"},
-    description="Process a frozen crawl task (every enabled domain of task_id, resumable by execution_id) or a bounded batch of explicit or due inputs, and store completed crawler responses.",
+    description="Process a crawl draft (task_id) or a bounded batch of explicit or due inputs, and store completed crawler responses.",
     pool="website_crawl_results",
 )
 def website_site_info_results(
@@ -61,11 +54,8 @@ def website_site_info_results(
     config: CrawlResultsConfig,
     clickhouse: ClickhouseResource,
     processing: ProcessingResource,
-    crawler_queue_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
-    return process_crawls(
-        context, config, clickhouse, processing, "site_info", crawler_queue_store
-    )
+    return process_crawls(context, config, clickhouse, processing, "site_info")
 
 
 defs = dg.Definitions(
@@ -86,21 +76,6 @@ defs = dg.Definitions(
         dg.define_asset_job(
             "website_site_info_results_job",
             selection=dg.AssetSelection.assets(website_site_info_results),
-        ),
-        # Brave-style workflows: the input asset freezes a task selection and tags the
-        # run with processing/task_id, then the results asset processes that whole task.
-        *(
-            dg.define_asset_job(
-                f"{prefix}_workflow",
-                selection=dg.AssetSelection.assets(
-                    f"{prefix}_requests", f"{prefix}_results"
-                ),
-            )
-            for prefix in (
-                "website_full_crawl",
-                "website_jobs_crawl",
-                "website_site_info",
-            )
         ),
     ],
 )

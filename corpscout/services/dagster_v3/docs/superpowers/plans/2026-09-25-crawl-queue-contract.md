@@ -22,7 +22,7 @@
 - Result writes go through `defs/common/result_buffer.py:ResultBuffer` (rows kept on a failed flush, end-of-run flush raises) (D6).
 - Completion: `succeeded`/`failed` from results, `skipped = total − succeeded − failed`, refuse while anything dispatchable remains; cleanup is `ALTER TABLE … DROP PARTITION <task_id>`; record `inputs_purged_at` (D7).
 - Webtech is switched to the shared module WITHOUT behaviour change; its suites stay green (D8).
-- Destructive migrations carry an inline `throwIf` gate; migration comments must not contain `;` (tests split files on `;`). Next free migration number on main is **000447** (`ls clickhouse/migrations | tail` ends at 000446); re-check prod `schema_migrations` before applying (memory: renumber before merge).
+- Destructive migrations carry an inline `throwIf` gate; migration comments must not contain `;` (tests split files on `;`). Next free migration number on main is **000448** (renumbered from 447 on 2026-09-25: the Common Crawl graph-ranks work took 000447 on main and prod); re-check prod `schema_migrations` before applying (memory: renumber before merge).
 - Commands: `uv run --frozen --no-sync pytest … -q -p no:cacheprovider` and `uv run --frozen --no-sync dg check defs` from `services/dagster_v3`; `uv run --frozen --no-sync ruff format <touched files>` and `uv run --frozen --no-sync ruff check <touched files>` on touched Python files only; backoffice `npm run typecheck` and targeted `npx vitest run <file>` only (the full suite hits prod ClickHouse).
 - Commit by explicit path, never `git add -A` (`searcher/` is unrelated untracked work). Conventional commits with trailer `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>`.
 - Do not restart `corpscout-dagster-dev`; deploy by `light_sync`. Task 9 requires the owner's go-ahead.
@@ -46,7 +46,7 @@ The owner's suggested order put the migration second and the removal of the Brav
 | `services/dagster_v3/src/dagster_v3/defs/website_crawl/results.py` | modify | refresh sweep / explicit-domain batches only; drafts delegate |
 | `services/dagster_v3/src/dagster_v3/defs/website_crawl/results_assets.py` | modify | no `*_workflow` jobs, no `crawler_queue_store` |
 | `services/dagster_v3/src/dagster_v3/defs/common/draft_queue.py` | modify | `save_manifest` removed |
-| `clickhouse/migrations/000447_corpscout_crawl_queue_contract.{up,down}.sql` | create | partitioned entry table |
+| `clickhouse/migrations/000448_corpscout_crawl_queue_contract.{up,down}.sql` | create | partitioned entry table |
 | `services/dagster_v3/tests/test_queue_execution_common.py` | create | shared lifecycle unit tests |
 | `services/dagster_v3/tests/test_website_crawl_input_assets.py` | rewrite | selection SQL + `CrawlInputConfig` coverage through `load_crawl_draft`; owns the module `server` fixture |
 | `services/dagster_v3/tests/test_website_crawl_tasks.py` | delete | (all tests were the removed path) |
@@ -1240,11 +1240,11 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 
 ---
 
-### Task 3: Partitioned entry table (migration 000447) and the entry-table contract test
+### Task 3: Partitioned entry table (migration 000448) and the entry-table contract test
 
 **Files:**
-- Create: `clickhouse/migrations/000447_corpscout_crawl_queue_contract.up.sql`
-- Create: `clickhouse/migrations/000447_corpscout_crawl_queue_contract.down.sql`
+- Create: `clickhouse/migrations/000448_corpscout_crawl_queue_contract.up.sql`
+- Create: `clickhouse/migrations/000448_corpscout_crawl_queue_contract.down.sql`
 - Modify: `services/dagster_v3/tests/test_clickhouse_migrations.py:461` (`EXPECTED_MIGRATIONS`)
 - Modify: `services/dagster_v3/tests/test_website_crawl_input_assets.py` (`MIGRATIONS` tuple)
 - Modify: `services/dagster_v3/tests/test_crawl_draft_queue.py:23-43` (`db` fixture) and every `{TASK_DOMAINS} FINAL`
@@ -1264,7 +1264,7 @@ Expected: `446	0`. If another workstream took 447 on main or prod, use the next 
 
 - [ ] **Step 2: Write the migrations**
 
-`clickhouse/migrations/000447_corpscout_crawl_queue_contract.up.sql`:
+`clickhouse/migrations/000448_corpscout_crawl_queue_contract.up.sql`:
 
 ```sql
 CREATE DATABASE IF NOT EXISTS corpscout;
@@ -1300,7 +1300,7 @@ ORDER BY (task_id, domain)
 SETTINGS number_of_free_entries_in_pool_to_execute_mutation = 1;
 ```
 
-`clickhouse/migrations/000447_corpscout_crawl_queue_contract.down.sql` (the 431 + 445 layout):
+`clickhouse/migrations/000448_corpscout_crawl_queue_contract.down.sql` (the 431 + 445 layout):
 
 ```sql
 SELECT throwIf(count() > 0, 'website_crawl_task_domains must be empty before its layout changes')
@@ -1328,11 +1328,11 @@ SETTINGS number_of_free_entries_in_pool_to_execute_mutation = 1;
 
 - [ ] **Step 3: Register the migration and apply it in the crawl fixtures**
 
-In `services/dagster_v3/tests/test_clickhouse_migrations.py`, append `"000447_corpscout_crawl_queue_contract",` as the last entry of `EXPECTED_MIGRATIONS` (after line 461).
+In `services/dagster_v3/tests/test_clickhouse_migrations.py`, append `"000448_corpscout_crawl_queue_contract",` as the last entry of `EXPECTED_MIGRATIONS` (after line 461).
 
-In `services/dagster_v3/tests/test_website_crawl_input_assets.py`, add `"000447_corpscout_crawl_queue_contract.up.sql",` as the last entry of `MIGRATIONS`.
+In `services/dagster_v3/tests/test_website_crawl_input_assets.py`, add `"000448_corpscout_crawl_queue_contract.up.sql",` as the last entry of `MIGRATIONS`.
 
-In `services/dagster_v3/tests/test_crawl_draft_queue.py`, replace the `db` fixture with (the module `server` fixture already holds the 447 layout; re-applying 447 per test would trip its gate):
+In `services/dagster_v3/tests/test_crawl_draft_queue.py`, replace the `db` fixture with (the module `server` fixture already holds the 448 layout; re-applying 448 per test would trip its gate):
 
 ```python
 @pytest.fixture
@@ -1396,7 +1396,7 @@ Expected: all pass (the draft import still writes `website_url`, `source_name`, 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add clickhouse/migrations/000447_corpscout_crawl_queue_contract.up.sql clickhouse/migrations/000447_corpscout_crawl_queue_contract.down.sql services/dagster_v3/tests/test_clickhouse_migrations.py services/dagster_v3/tests/test_website_crawl_input_assets.py services/dagster_v3/tests/test_crawl_draft_queue.py services/dagster_v3/src/dagster_v3/defs/website_crawl/queue_input.py services/dagster_v3/src/dagster_v3/defs/website_crawl/queue_execution.py
+git add clickhouse/migrations/000448_corpscout_crawl_queue_contract.up.sql clickhouse/migrations/000448_corpscout_crawl_queue_contract.down.sql services/dagster_v3/tests/test_clickhouse_migrations.py services/dagster_v3/tests/test_website_crawl_input_assets.py services/dagster_v3/tests/test_crawl_draft_queue.py services/dagster_v3/src/dagster_v3/defs/website_crawl/queue_input.py services/dagster_v3/src/dagster_v3/defs/website_crawl/queue_execution.py
 git commit -m "feat(clickhouse): partition website_crawl_task_domains by task with a required submission_id
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
@@ -3058,7 +3058,7 @@ Backoffice **SE → Domains → Add to crawl queue** launches only `website_craw
 Choose full crawl, jobs, or basic site info. Each type has one open draft per `queue_scope`
 (default `workspace`). Multiple table selections and explicit URLs append to that draft.
 Duplicate domains are retained once; the first queued URL wins until processing finishes.
-Adding inputs never checks freshness or starts a crawl. Since ClickHouse migration 447 the
+Adding inputs never checks freshness or starts a crawl. Since ClickHouse migration 448 the
 draft follows the shared processing queue contract
 (`docs/superpowers/specs/2026-09-24-shared-processing-queue-contract-design.md`), like Webtech.
 
@@ -3165,7 +3165,7 @@ In `website-crawl-design.md` replace lines 1-15 (heading through "All three asse
 ```markdown
 # Website crawl input selection
 
-`website_crawl_input` (job `website_crawl_input_job`) selects website domains from an existing ClickHouse table or view, or from explicit targets, inserts missing recurring presets into the tables created by migration `000429` and appends the domains to the open crawl draft of the chosen `crawl_type` (`corpscout.website_crawl_task_domains`, migration `000447`). Processing is a separate step: see [crawler-draft-queue.md](../../../../../docs/operations/crawler-draft-queue.md) and [the processing guide](website-crawl-processing.md).
+`website_crawl_input` (job `website_crawl_input_job`) selects website domains from an existing ClickHouse table or view, or from explicit targets, inserts missing recurring presets into the tables created by migration `000429` and appends the domains to the open crawl draft of the chosen `crawl_type` (`corpscout.website_crawl_task_domains`, migration `000448`). Processing is a separate step: see [crawler-draft-queue.md](../../../../../docs/operations/crawler-draft-queue.md) and [the processing guide](website-crawl-processing.md).
 
 ## Selection configuration
 
@@ -3299,7 +3299,7 @@ Expected: `0`. If not 0, stop: someone queued crawl entries on the old layout; f
 - [ ] **Step 2: Preconditions**
 
 - No active crawl run: for each of `website_full_crawl_results_job`, `website_jobs_crawl_results_job`, `website_site_info_results_job`, `website_crawl_input_job`, the Dagster UI run list filtered to `STARTED`/`QUEUED` is empty.
-- Prod ledger: `ssh companycollect 'sudo docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT version, dirty FROM corpscout.schema_migrations ORDER BY version DESC LIMIT 1"'` → `446	0`.
+- Prod ledger (the ledger is TinyLog and keeps a dirty=1 and a dirty=0 row per version): `ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT max(version) FROM corpscout.schema_migrations WHERE dirty=0"'` → `447`, and no version above 447 with only a dirty=1 row.
 - Not inside the Tuesday 01:05 Stockholm address-chain window.
 - Everything is merged on `main` and the tree is clean (`git status --short` shows only `?? searcher/`).
 
@@ -3310,7 +3310,7 @@ The owner restarts the local backoffice dev server on `main` (server modules cha
 - [ ] **Step 4: Apply the migration (single step)**
 
 Run from `corpscout/`: `make clickhouse-migrate-up-one </dev/null`
-Expected: `447/u corpscout_crawl_queue_contract`, then
+Expected: `448/u corpscout_crawl_queue_contract`, then
 
 ```bash
 ssh companycollect 'sudo docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT engine, partition_key, sorting_key FROM system.tables WHERE database='"'"'corpscout'"'"' AND name='"'"'website_crawl_task_domains'"'"'"'

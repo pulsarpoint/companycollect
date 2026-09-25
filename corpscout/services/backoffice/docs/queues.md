@@ -19,9 +19,9 @@ Webtech draft submissions can be appended until its results asset begins. Freshn
 
 Other processors retain their existing fixed input selection lifecycle. Existing source-page input-plus-processing actions are unchanged; this page provides separate processing of already prepared tasks. It does not yet provide input import, cancellation, cleanup or saved profile management.
 
-The sheet accepts an execution ID for resuming with original settings. Webtech draft queues reuse their saved execution by default. Fully processed tasks clear their input rows after every outcome is published, retaining task history, manifests and scan results. Website errors produce a “Completed with errors” history entry with an error count. Pipeline failures that leave work incomplete keep their inputs for recovery. Add failed pages to a new queue for another attempt. To rescan a completed task, add the pages to a new queue. Other processors use the original results run ID for resumption. Progress and errors are available through the linked Dagster run; Refresh updates the page's status.
+The sheet accepts an execution ID for resuming with original settings. Webtech draft queues reuse their saved execution by default. Fully processed tasks clear their input rows after every outcome is published, retaining task history and results. Website errors produce a “Completed with errors” history entry with an error count. Pipeline failures that leave work incomplete keep their inputs for recovery. Add failed pages to a new queue for another attempt. To rescan a completed task, add the pages to a new queue. Other processors use the original results run ID for resumption. Progress and errors are available through the linked Dagster run; Refresh updates the page's status.
 
-The action checks task membership in the chosen input table, blocks known active runs (including input and combined workflow runs), restricts parameter names and numeric ranges, and lets Dagster validate the asset config. It never accepts arbitrary jobs, assets, resources, tables or selection overrides. Request tags recover a retry after a lost launch acknowledgement. Check-plus-launch is serialized per task within a Backoffice instance; this is not a cross-instance distributed lock. Processor task locks and lifecycle validation remain authoritative.
+The action checks task membership in the chosen input table, blocks known active runs (including input runs), restricts parameter names and numeric ranges, and lets Dagster validate the asset config. It never accepts arbitrary jobs, assets, resources, tables or selection overrides. Request tags recover a retry after a lost launch acknowledgement. Check-plus-launch is serialized per task within a Backoffice instance; this is not a cross-instance distributed lock. Processor task locks and lifecycle validation remain authoritative.
 
 ## Verification
 
@@ -53,14 +53,22 @@ The Webtech page automatically opens the latest remaining input task and drops o
 SE → Domains → Add to crawl queue imports into `website_crawl_task_domains` through
 `website_crawl_input_job`. Each crawl type (full, jobs, basic site info) has its own open
 workspace draft. Imports can combine source selections and manual targets (Dagster config).
-The existing recurring request tables remain presets.
+The existing recurring request tables remain presets. The entry table is partitioned by task
+and read without `FINAL`.
 
 Queues → Crawler automatically selects the current draft. Configure processing opens the
-sheet; Start launches only the chosen `website_*_results` asset. Freshness and force settings
-are evaluated during execution preparation. Interrupted runs retain inputs and resume the
-saved profile/request identities. Completed tasks clear membership after all outcomes are
-saved, including terminal website errors. History and links to Dagster remain visible.
-The old immediate “Send for crawl” action is removed from the domains page.
+sheet; Start launches only the chosen `website_*_results` asset with `task_id`. Freshness and
+force settings are evaluated during execution against the frozen start time: any successful
+crawl inside that window counts, and a later failure never hides it. Interrupted runs retain
+inputs and resume the saved execution by re-sending requests; the crawler reattaches to a
+request it already holds as a no-op, but a preset edited mid-execution stops the run instead
+of silently crawling under the new settings. Completed tasks drop their partition after every
+outcome is stored, including terminal website errors. History and links to Dagster remain
+visible. `batch_size` is not a crawler queue parameter; the window size `max_in_flight` is.
+
+The crawler page (`/admin/crawls`) shows saved-input batches only; draft tasks and their runs
+are followed on the queue page. The old immediate “Send for crawl” action and the crawl-task
+resume on the crawler page are removed.
 
 Import status uses the same polling/status component as Webtech, with stable submission IDs
 for retries. A successful Dagster import clears the selection; an accepted launch alone does not.

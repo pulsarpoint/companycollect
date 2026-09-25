@@ -7,6 +7,7 @@ import dagster as dg
 from dagster_clickhouse import ClickhouseResource
 from pydantic import Field, field_validator
 
+from dagster_v3.defs.common import queue_execution
 from dagster_v3.defs.common.clickhouse_queue import ClickHouseInputQueue
 from dagster_v3.defs.common.processing import ProcessingResource, ProcessingStore
 from dagster_v3.defs.common.resources import ObjectStoreResource
@@ -16,7 +17,6 @@ from dagster_v3.defs.webtech.client import WebtechApiResource
 from dagster_v3.defs.webtech.execution import (
     execution_crawl_id,
     finish_execution,
-    purge_completed_inputs,
     remaining_inputs,
     start_execution,
 )
@@ -63,25 +63,16 @@ def complete_task(
     context, store: ProcessingStore, clickhouse: ClickhouseResource, task: dict
 ) -> dict:
     """Website errors are published outcomes; only pipeline errors fail the run."""
-    failed = task["terminal_failed_count"]
-    outcome = "completed_with_errors" if failed else "completed"
-    purge_completed_inputs(store, clickhouse, str(task["task_id"]))
-    context.instance.add_run_tags(
-        context.run.run_id,
-        {
-            "webtech/outcome": outcome,
-            "webtech/succeeded_pages": str(task["succeeded_count"]),
-            "webtech/failed_pages": str(failed),
-            "webtech/skipped_pages": str(task["skipped_count"]),
-        },
+    return queue_execution.complete_task(
+        context,
+        store,
+        clickhouse,
+        task,
+        processor=PROCESSOR_VERSION,
+        relation=INPUT_RELATION,
+        tag_prefix="webtech",
+        label="Webtech",
     )
-    return {
-        "completion_status": outcome,
-        "succeeded_pages": task["succeeded_count"],
-        "failed_pages": failed,
-        "skipped_recent": task["skipped_count"],
-        "inputs_purged": True,
-    }
 
 
 def build_webtech_task_asset(destination: WebtechS3Destination):
