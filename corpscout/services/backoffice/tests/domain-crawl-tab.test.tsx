@@ -19,51 +19,115 @@ function render(data: Awaited<ReturnType<typeof loader>>) {
   const router = createMemoryRouter([{path: "*", element: <DomainCrawl {...({loaderData: data} as Parameters<typeof DomainCrawl>[0])} />}], {initialEntries: ["/admin/se/companies/domains/100.se/crawl"]});
   return renderToStaticMarkup(<RouterProvider router={router} />);
 }
+function panels(data: Awaited<ReturnType<typeof loader>>) {
+  const html = render(data);
+  const sidebarStart = html.indexOf("<aside");
+  return {html, main: html.slice(html.indexOf("<section"), sidebarStart), sidebar: html.slice(sidebarStart)};
+}
+function rows(summary = [latest, saved], history: DomainCrawlResult[] = summary, requested = history) {
+  database.chQuery.mockImplementation(async (query: string, params: {requestId?: string; attempt?: number}) => {
+    if (query.includes("UNION ALL")) return summary;
+    if (query.includes("request_id = {requestId:String}")) return requested.filter(row => row.request_id === params.requestId && row.attempt === params.attempt);
+    return history;
+  });
+}
 beforeEach(() => {
   vi.clearAllMocks();
-  database.chQuery.mockResolvedValue([latest, saved]);
+  rows();
   archive.readCrawlArchive.mockImplementation(async path => ({domain: "100.se", result_json: JSON.stringify(path === saved.s3_path ? success : failure)}));
 });
 
-it("shows completed but unsuccessful classification as Failed with the JSON provider reason", async () => {
+it("defaults to the last good parsed result while the latest failed attempt and reason stay in the sidebar", async () => {
   const data = await get();
-  const html = render(data);
-  expect(html).toContain(">Failed<");
-  expect(html).toContain("No allowed providers are available for the selected model.");
-  expect(html).toContain("OpenRouter HTTP 404");
-  expect(html).toContain("model unavailable");
-  expect(html).toContain("needs_review");
-  expect(html).toContain("Processing: completed");
-  expect(html).toContain("2026-09-25T14:50:24Z");
-  expect(html).toContain("From an earlier attempt");
-  expect(html).not.toContain(">Successful<");
-  expect(data.details?.result?.request_id).toBe("latest");
+  const {main, sidebar} = panels(data);
+  expect(data.details?.result?.request_id).toBe("older");
+  expect(main).toContain("Last good result");
+  expect(main).toContain(">Successful<");
+  expect(main).toContain("Swedish news website");
+  expect(main).toContain("Publishing news");
+  expect(main).toContain("Site classification");
+  expect(main).toContain("Full JSON");
+  expect(main).not.toContain(">Failed<");
+  expect(sidebar).toContain('aria-label="Recent crawl attempts"');
+  expect(sidebar).toContain(">Failed<");
+  expect(sidebar).toContain("No allowed providers are available for the selected model.");
+  expect(sidebar).toContain("2026-09-25T14:50:24Z");
+  expect(sidebar).toContain('?type=site_info&amp;request=latest&amp;attempt=1"');
+  expect(sidebar.match(/<a [^>]*aria-current="true"[^>]*>/)?.[0]).toContain('?type=site_info&amp;request=older&amp;attempt=1"');
+  expect(archive.readCrawlArchive).toHaveBeenCalledWith(saved.s3_path);
+  expect(archive.readCrawlArchive).toHaveBeenCalledWith(latest.s3_path);
 });
 
-it("renders earlier saved classification as parsed fields while retaining the latest failed status", async () => {
-  const data = await get("?type=site_info&result=saved");
-  const html = render(data);
-  expect(html).toContain("Earlier saved result");
-  expect(html).toContain(">Failed<");
-  expect(html).toContain("Site classification");
-  expect(html).toContain("Swedish news website");
-  expect(html).toContain("Publishing news");
-  expect(html).toContain("<dt");
-  expect(html).toContain("Full JSON");
-  expect(data.details?.result?.request_id).toBe("older");
+it("keeps explicit latest and saved result links compatible", async () => {
+  const data = await get("?type=site_info&result=latest");
+  const {main} = panels(data);
+  expect(data.details?.result?.request_id).toBe("latest");
+  expect(main).toContain("Latest attempt details");
+  expect(main).toContain(">Failed<");
+  expect(main).toContain("No allowed providers are available for the selected model.");
+  expect(main).toContain("OpenRouter HTTP 404");
+  expect(main).toContain("model unavailable");
+  expect(main).toContain("needs_review");
+  expect(main).toContain("Processing: completed");
+  expect(main).toContain("View last good result");
+  const savedData = await get("?type=site_info&result=saved");
+  expect(savedData.details?.result?.request_id).toBe("older");
+  expect(panels(savedData).main).toContain("Last good result");
+});
+
+it("selects an attempt by its URL identity and restores the same result on refresh", async () => {
+  const query = "?type=site_info&request=latest&attempt=1";
+  const data = await get(query);
+  const reloaded = await get(query);
+  expect(data.details?.result?.request_id).toBe("latest");
+  expect(reloaded.details?.result).toEqual(data.details?.result);
+  const {main, sidebar} = panels(data);
+  expect(main).toContain(">Failed<");
+  expect(main).toContain("No allowed providers are available for the selected model.");
+  expect(main).toContain("View last good result");
+  expect(sidebar.match(/<a [^>]*aria-current="true"[^>]*>/)?.[0]).toContain('?type=site_info&amp;request=latest&amp;attempt=1"');
+  expect(database.chQuery).toHaveBeenCalledWith(expect.stringContaining("AND request_id = {requestId:String} AND attempt = {attempt:UInt32}"), {domain: "100.se", requestId: "latest", attempt: 1});
+});
+
+it("keeps retries distinct and can select an attempt outside the recent history window", async () => {
+  const retried = {...latest, attempt: 2};
+  const older = {...saved, request_id: "outside-window", finished_at: "2026-09-10T10:00:00Z"};
+  rows([retried, saved], [retried, latest], [retried, latest, older]);
+  const retry = await get("?type=site_info&request=latest&attempt=1");
+  expect(retry.details?.result?.attempt).toBe(1);
+  const {sidebar} = panels(retry);
+  expect(sidebar).toContain('?type=site_info&amp;request=latest&amp;attempt=2"');
+  expect(sidebar.match(/<a [^>]*aria-current="true"[^>]*>/)?.[0]).toContain('?type=site_info&amp;request=latest&amp;attempt=1"');
+  const data = await get("?type=site_info&request=outside-window&attempt=1");
+  expect(data.details?.result?.request_id).toBe("outside-window");
+  expect(panels(data).main).toContain("Attempt details");
+  expect(panels(data).main).toContain("Swedish news website");
+  expect(data.details?.attempts).toHaveLength(2);
+  expect(database.chQuery).toHaveBeenCalledWith(expect.stringContaining("LIMIT 20"), {domain: "100.se"});
+});
+
+it("falls back to the latest failed attempt when there has been no good result", async () => {
+  rows([latest]);
+  const data = await get();
+  const {main} = panels(data);
+  expect(data.details?.result?.request_id).toBe("latest");
+  expect(main).toContain("Latest attempt details");
+  expect(main).toContain(">Failed<");
+  expect(main).toContain("No allowed providers are available for the selected model.");
+  expect(main).not.toContain("View last good result");
 });
 
 it("retains Failed when JSON cannot be read and reports the archive error separately", async () => {
   archive.readCrawlArchive.mockRejectedValue(new Error("private credentials"));
-  const html = render(await get());
-  expect(html).toContain(">Failed<");
+  const {html, sidebar} = panels(await get());
+  expect(sidebar).toContain(">Failed<");
+  expect(sidebar).toContain("Failure reason unavailable because the saved JSON could not be read.");
   expect(html).toContain("Saved JSON unavailable");
   expect(html).not.toContain("private credentials");
-  expect(html.match(/Not crawled/g)).toHaveLength(2);
 });
 
 it("keeps explicit row errors without requiring an archive", async () => {
-  database.chQuery.mockResolvedValue([{...latest, state: "failed", crawl_status: "failed", error: "Navigation timed out", s3_path: "", s3_state: "pending"}]);
+  rows([{...latest, state: "failed", crawl_status: "failed", error: "Navigation timed out", s3_path: "", s3_state: "pending"}]);
   const html = render(await get());
   expect(html).toContain("Navigation timed out");
   expect(html).toContain(">Failed<");
@@ -71,9 +135,10 @@ it("keeps explicit row errors without requiring an archive", async () => {
 });
 
 it("distinguishes no history from an unavailable database", async () => {
-  database.chQuery.mockResolvedValue([]);
+  rows([]);
   const empty = render(await get());
-  expect(empty.match(/Not crawled/g)).toHaveLength(3);
+  expect(empty).toContain("Not crawled. No result has been recorded for this type.");
+  expect(empty).toContain("No recorded attempts for this crawl type.");
   expect(empty).not.toContain(">Failed<");
   database.chQuery.mockRejectedValue(new Error("private"));
   const unavailable = render(await get());
@@ -83,10 +148,31 @@ it("distinguishes no history from an unavailable database", async () => {
 
 it("ignores arbitrary archive parameters and rejects a mismatched archive domain", async () => {
   archive.readCrawlArchive.mockResolvedValue({domain: "other.se", result_json: JSON.stringify(success)});
-  const data = await get("?type=unknown&path=crawls/other/result.json.gz");
-  expect(archive.readCrawlArchive).toHaveBeenCalledWith(latest.s3_path);
+  const data = await get("?type=site_info&path=crawls/other/result.json.gz");
+  expect(archive.readCrawlArchive).toHaveBeenCalledWith(saved.s3_path);
+  expect(archive.readCrawlArchive).not.toHaveBeenCalledWith("crawls/other/result.json.gz");
   expect(data.details?.payload).toBeNull();
   expect(data.details?.archiveError).toBeTruthy();
+});
+
+it.each([
+  "?type=unknown",
+  "?request=latest&attempt=1",
+  "?type=site_info&request=latest",
+  "?type=site_info&attempt=1",
+  "?type=site_info&request=latest&attempt=0",
+  "?type=site_info&request=latest&attempt=1.5",
+  "?type=site_info&request=latest&attempt=4294967296",
+  "?type=site_info&request=../other&attempt=1",
+])("rejects an incomplete or invalid attempt identity: %s", async query => {
+  await expect(get(query)).rejects.toMatchObject({status: 400});
+  expect(database.chQuery).not.toHaveBeenCalled();
+  expect(archive.readCrawlArchive).not.toHaveBeenCalled();
+});
+
+it("returns not found for an unknown valid identity instead of silently displaying the default result", async () => {
+  await expect(get("?type=site_info&request=missing&attempt=1")).rejects.toMatchObject({status: 404});
+  expect(archive.readCrawlArchive).not.toHaveBeenCalled();
 });
 
 it("preserves partial, cancelled, skipped, and successful outcomes", () => {
@@ -96,13 +182,20 @@ it("preserves partial, cancelled, skipped, and successful outcomes", () => {
   expect(domainCrawlStatus({...saved, crawl_status: "finished"} as DomainCrawlResult)).toBe("Crawled");
 });
 
-it("renders successful collected pages and escapes source HTML", async () => {
-  database.chQuery.mockResolvedValue([{...latest, successful: true, crawl_status: "finished"}]);
+it("shows a successful latest attempt as the last good result with parsed pages and escaped source HTML", async () => {
+  const completed = {...latest, successful: true, crawl_status: "finished"};
+  rows([completed, {...completed, kind: "saved"}], [completed]);
   archive.readCrawlArchive.mockResolvedValue({domain: "100.se", result_json: JSON.stringify({crawl: {status: "finished", site_info: {operator_name: '<script>alert("unsafe")</script>'}, pages: [{source_url: "https://100.se/", status_code: 200, fetch_status: "fetched"}]}, documents: [{url: "https://100.se/", input: {observations: {contacts: [{email: "hello@100.se"}]}}}]})});
-  const html = render(await get());
-  expect(html).toContain(">Crawled<");
-  expect(html).toContain("Collected pages (1)");
-  expect(html).toContain("Fetched pages");
-  expect(html).toContain("200");
-  expect(html).not.toContain('<script>alert("unsafe")</script>');
+  const data = await get();
+  const {main, sidebar} = panels(data);
+  expect(data.details?.result?.request_id).toBe("latest");
+  expect(main).toContain("Last good result");
+  expect(main).toContain(">Successful<");
+  expect(main).toContain("Collected pages (1)");
+  expect(main).toContain("Fetched pages");
+  expect(main).toContain("200");
+  expect(main).not.toContain('<script>alert("unsafe")</script>');
+  expect(main).not.toContain("A newer attempt");
+  expect(sidebar).not.toContain(">Failed<");
+  expect(archive.readCrawlArchive).toHaveBeenCalledTimes(1);
 });

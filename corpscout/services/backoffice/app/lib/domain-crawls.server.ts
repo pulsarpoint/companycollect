@@ -47,12 +47,30 @@ export async function loadDomainCrawls(domain: string): Promise<DomainCrawlSumma
   }));
 }
 
-/** Read JSON only for known objects belonging to this domain; keep status when an archive is unavailable. */
-export async function loadDomainCrawlDetails(domain: string, selectedType: string | null, previous: boolean) {
+/** Default to retained good data; explicit attempt identities remain stable beyond the recent list. */
+export async function loadDomainCrawlDetails(
+  domain: string,
+  selectedType: string | null,
+  requested: {requestId: string; attempt: number} | null,
+  latest = false,
+) {
   const crawls = await loadDomainCrawls(domain);
-  const selected = crawls.find(crawl => crawl.type === selectedType) ?? crawls.find(crawl => crawl.latest) ?? crawls[0];
-  const paths = [...new Set(crawls.map(crawl => crawl.latest).concat(previous ? [selected.saved] : [])
-    .filter(result => result?.s3_state === "uploaded" && result.s3_path).map(result => result!.s3_path))];
+  const selected = crawls.find(crawl => crawl.type === selectedType) ?? crawls.find(crawl => crawl.saved) ?? crawls.find(crawl => crawl.latest) ?? crawls[0];
+  const table = CRAWLS.find(crawl => crawl.type === selected.type)!.table;
+  const columns = `request_id, attempt, state, crawl_status, successful,
+    formatDateTime(finished_at, '%Y-%m-%dT%H:%i:%SZ', 'UTC') AS finished_at, error, s3_path, s3_state`;
+  const [attempts, requestedRows] = await Promise.all([
+    chQuery<DomainCrawlResult>(`SELECT ${columns} FROM corpscout.${table} AS results FINAL
+      WHERE domain = {domain:String}
+      ORDER BY results.finished_at DESC, request_id DESC, attempt DESC LIMIT 20`, {domain}),
+    requested ? chQuery<DomainCrawlResult>(`SELECT ${columns} FROM corpscout.${table} AS results FINAL
+      WHERE domain = {domain:String} AND request_id = {requestId:String} AND attempt = {attempt:UInt32}
+      LIMIT 1`, {domain, ...requested}) : Promise.resolve([]),
+  ]);
+  if (requested && !requestedRows.length) throw new Response("This crawl attempt was not found for this domain and crawl type.", {status: 404});
+  const result = requested ? requestedRows[0] : latest ? selected.latest : selected.saved ?? selected.latest;
+  const showingSaved = result != null && result.request_id === selected.saved?.request_id && result.attempt === selected.saved.attempt;
+  const paths = [...new Set([result, selected.latest].flatMap(item => item?.s3_state === "uploaded" && item.s3_path ? [item.s3_path] : []))];
   const archives = new Map<string, {payload: Record<string, unknown> | null; error: string | null}>(await Promise.all(paths.map(async path => {
     try {
       const archive = await readCrawlArchive(path);
@@ -64,14 +82,16 @@ export async function loadDomainCrawlDetails(domain: string, selectedType: strin
       return [path, {payload: null, error: "The saved JSON could not be read. Refresh to retry; the recorded crawl status is still shown."}] as const;
     }
   })));
-  const summaries = crawls.map(crawl => {
-    if (!crawl.latest) return crawl;
-    const archive = archives.get(crawl.latest.s3_path);
-    const reason = archive?.payload ? crawlFailureReason(archive.payload) : "";
-    return {...crawl, latest: {...crawl.latest, error: crawl.latest.error || (!crawl.latest.successful ? reason || (archive?.error ? "Failure reason unavailable because the saved JSON could not be read." : "No failure reason was recorded.") : "")}};
-  });
-  const result = previous ? selected.saved : selected.latest;
+  const withReason = (item: DomainCrawlResult): DomainCrawlResult => {
+    if (item.successful || item.error) return item;
+    const archive = archives.get(item.s3_path);
+    return {...item, error: archive?.payload ? crawlFailureReason(archive.payload) || "No failure reason was recorded."
+      : archive?.error ? "Failure reason unavailable because the saved JSON could not be read." : ""};
+  };
   const archive = result ? archives.get(result.s3_path) : null;
-  return {crawls: summaries, selectedType: selected.type, previous, result,
+  return {crawls, selectedType: selected.type, showingSaved,
+    result: result ? withReason(result) : null,
+    latest: selected.latest ? withReason(selected.latest) : null,
+    attempts: attempts.map(withReason),
     payload: archive?.payload ?? null, archiveError: archive?.error ?? null};
 }

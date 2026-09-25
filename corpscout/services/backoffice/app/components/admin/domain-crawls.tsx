@@ -1,56 +1,37 @@
-import { domainCrawlStatus } from "~/lib/domain-crawl-status";
 import { Link } from "react-router";
-import type { DomainCrawlResult, DomainCrawlSummary } from "~/lib/domain-crawls.server";
-import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
+import { domainCrawlStatus } from "~/lib/domain-crawl-status";
+import type { DomainCrawlResult } from "~/lib/domain-crawls.server";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/ui/table";
+import { cn } from "~/lib/utils";
 
-function CrawlTime({value}: {value: string}) {
+export function CrawlTime({value}: {value: string}) {
   return <time dateTime={value}>{new Intl.DateTimeFormat("en-GB", {
     dateStyle: "medium", timeStyle: "short", timeZone: "UTC",
   }).format(new Date(value))} UTC</time>;
 }
 
-function ResultLink({result, children}: {result: DomainCrawlResult; children: React.ReactNode}) {
-  return result.s3_state === "uploaded" && result.s3_path
-    ? <Link className="underline underline-offset-4" to={`/admin/crawls/results?${new URLSearchParams({path: result.s3_path})}`}>{children}</Link>
-    : null;
-}
-
-export function DomainCrawls({domain, crawls, error, onRefresh, loading}: {
-  domain: string; crawls: DomainCrawlSummary[] | null; error: string | null; onRefresh: () => void; loading: boolean;
+export function DomainCrawls({domain, type, attempts, selected, latest}: {
+  domain: string; type: string; attempts: DomainCrawlResult[]; selected: DomainCrawlResult | null; latest: DomainCrawlResult | null;
 }) {
-  return <section className="flex flex-col gap-3" aria-labelledby="domain-crawls-heading">
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <div><h3 id="domain-crawls-heading" className="text-lg font-semibold">Crawl data</h3>
-        <p className="text-sm text-muted-foreground">Saved results and the latest completed attempt for each crawl type.</p></div>
-      <div className="flex gap-2">
-        <Button variant="outline" size="sm" nativeButton={false} render={<Link to={`/admin/crawls?${new URLSearchParams({domain, input_domain: domain})}`} />}>Crawl history</Button>
-        <Button variant="outline" size="sm" onClick={onRefresh} disabled={loading}>Refresh crawl status</Button>
-      </div>
-    </div>
-    {error ? <Alert variant="destructive"><AlertTitle>Crawl status unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : crawls && <Table>
-      <TableHeader><TableRow><TableHead>Crawl type</TableHead><TableHead>Saved data</TableHead><TableHead>Last crawl status</TableHead><TableHead>Last attempt finished</TableHead><TableHead>Result</TableHead></TableRow></TableHeader>
-      <TableBody>{crawls.map(({type, label, latest, saved}) => <TableRow key={type}>
-        <TableCell><Link className="underline underline-offset-4" to={`?type=${type}`}>{label}</Link></TableCell>
-        <TableCell><div className="flex flex-col gap-1">
-          <span>{saved ? saved.crawl_status === "skip_crawling" ? "Classification only" : "Crawled data available" : latest ? "No successful result" : "No saved data"}</span>
-          {saved && <span className="text-xs text-muted-foreground"><CrawlTime value={saved.finished_at} /></span>}
-          {saved && latest && (saved.request_id !== latest.request_id || saved.attempt !== latest.attempt) && <span className="text-xs text-muted-foreground">From an earlier attempt</span>}
-        </div></TableCell>
-        <TableCell><div className="flex max-w-md flex-col gap-1">
-          <Badge variant={!latest ? "outline" : latest.successful ? "secondary" : "destructive"}>{latest ? domainCrawlStatus(latest) : "Not crawled"}</Badge>
-          {latest && <span className="text-xs text-muted-foreground">Recorded outcome: {latest.crawl_status} · Processing: {latest.state}</span>}
-          {latest?.error && <p className="whitespace-normal break-words text-xs text-muted-foreground">{latest.error}</p>}
-        </div></TableCell>
-        <TableCell>{latest ? <CrawlTime value={latest.finished_at} /> : "—"}</TableCell>
-        <TableCell><div className="flex flex-col gap-1">
-          {latest ? <ResultLink result={latest}>Latest attempt</ResultLink> : "—"}
-          {saved && latest && (saved.request_id !== latest.request_id || saved.attempt !== latest.attempt) && <ResultLink result={saved}>Saved data</ResultLink>}
-        </div></TableCell>
-      </TableRow>)}</TableBody>
-    </Table>}
-    {crawls && !error && <p className="text-xs text-muted-foreground">A classification skip means the first page was inspected and further crawling was skipped. A later failed attempt does not remove an earlier saved result.</p>}
-  </section>;
+  return <aside className="flex min-w-0 flex-col gap-3 lg:border-l lg:pl-5" aria-label="Recent crawl attempts">
+    <div><h3 className="text-lg font-semibold">Recent attempts</h3>
+      <p className="text-sm text-muted-foreground">Latest 20 attempts, newest first. Select one to view its saved details.</p></div>
+    <ol className="flex flex-col gap-2">{attempts.map(attempt => {
+      const current = attempt.request_id === selected?.request_id && attempt.attempt === selected.attempt;
+      const newest = attempt.request_id === latest?.request_id && attempt.attempt === latest.attempt;
+      return <li key={`${attempt.request_id}:${attempt.attempt}`}>
+        <Link to={`?${new URLSearchParams({type, request: attempt.request_id, attempt: String(attempt.attempt)})}`}
+          aria-current={current ? "true" : undefined}
+          className={cn("flex flex-col gap-2 rounded-md border p-3 text-sm hover:bg-muted/50 focus-visible:outline-2 focus-visible:outline-ring", current && "border-primary bg-muted/50")}>
+          <div className="flex flex-wrap items-center gap-2"><Badge variant={attempt.successful ? "secondary" : "destructive"}>{attempt.successful ? "Successful" : domainCrawlStatus(attempt)}</Badge>{newest && <span className="text-xs text-muted-foreground">Latest attempt</span>}{current && <span className="text-xs">Viewing</span>}</div>
+          <CrawlTime value={attempt.finished_at} />
+          <span className="break-all text-xs text-muted-foreground">{attempt.request_id} · Attempt {attempt.attempt}</span>
+          {attempt.error && <p className="line-clamp-3 break-words text-xs text-muted-foreground">{attempt.error}</p>}
+        </Link>
+      </li>;
+    })}</ol>
+    {!attempts.length && <p className="text-sm text-muted-foreground">No recorded attempts for this crawl type.</p>}
+    <Button variant="outline" size="sm" nativeButton={false} render={<Link to={`/admin/crawls?${new URLSearchParams({domain, input_domain: domain})}`} />}>All crawl history</Button>
+  </aside>;
 }
