@@ -46,6 +46,7 @@ commoncrawl_graph_discovery_job = dg.define_asset_job(
     selection=dg.AssetSelection.assets(commoncrawl_graph_release_catalog),
 )
 commoncrawl_graph_discovery_schedule = dg.ScheduleDefinition(
+    name="commoncrawl_graph_discovery_schedule",
     job=commoncrawl_graph_discovery_job,
     cron_schedule="17 4 * * *",
     execution_timezone="UTC",

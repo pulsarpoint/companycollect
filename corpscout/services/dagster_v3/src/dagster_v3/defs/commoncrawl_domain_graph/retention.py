@@ -202,6 +202,7 @@ commoncrawl_graph_cleanup_job = dg.define_asset_job(
     selection=dg.AssetSelection.assets(commoncrawl_domain_graph_cleanup),
 )
 commoncrawl_graph_cleanup_schedule = dg.ScheduleDefinition(
+    name="commoncrawl_graph_cleanup_schedule",
     job=commoncrawl_graph_cleanup_job,
     cron_schedule="43 * * * *",
     execution_timezone="UTC",

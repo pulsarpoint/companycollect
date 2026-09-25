@@ -17,6 +17,23 @@ from tests.test_processing_store import (
 )
 
 
+def test_schedule_names_match_backoffice_contract():
+    from dagster_v3.defs.commoncrawl_domain_graph.discovery import (
+        commoncrawl_graph_discovery_schedule,
+    )
+    from dagster_v3.defs.commoncrawl_domain_graph.retention import (
+        commoncrawl_graph_cleanup_schedule,
+    )
+
+    assert (
+        commoncrawl_graph_discovery_schedule.name
+        == "commoncrawl_graph_discovery_schedule"
+    )
+    assert (
+        commoncrawl_graph_cleanup_schedule.name == "commoncrawl_graph_cleanup_schedule"
+    )
+
+
 def release(key, end):
     return GraphRelease(
         key,
