@@ -6,7 +6,7 @@ Choose full crawl, jobs, or basic site info. Each type has one open draft per `q
 Duplicate domains are retained once; the first queued URL wins until processing finishes.
 Adding inputs never checks freshness or starts a crawl. Since ClickHouse migration 447 the
 draft follows the shared processing queue contract
-(`docs/superpowers/specs/2026-09-24-shared-processing-queue-contract-design.md`), like Webtech.
+([spec](../superpowers/specs/2026-09-24-shared-processing-queue-contract-design.md)), like Webtech.
 
 ## Storage
 

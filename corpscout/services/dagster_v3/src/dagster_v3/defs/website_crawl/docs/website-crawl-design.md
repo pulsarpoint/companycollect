@@ -34,8 +34,9 @@ Select active SE domains supported by Brave with confidence at least 80%, exclud
 
 ```yaml
 ops:
-  website_full_crawl_requests:
+  website_crawl_input:
     config:
+      crawl_type: full
       source_relation: corpscout.se_company_domain
       source_final: true
       id_column: root_domain
@@ -53,8 +54,9 @@ Select specific company IDs and their active websites:
 
 ```yaml
 ops:
-  website_full_crawl_requests:
+  website_crawl_input:
     config:
+      crawl_type: full
       source_relation: corpscout.company_domains_resolved
       id_column: company_id
       website_column: website_host
@@ -69,8 +71,9 @@ Select jobs inputs by filters alone:
 
 ```yaml
 ops:
-  website_jobs_crawl_requests:
+  website_crawl_input:
     config:
+      crawl_type: jobs
       source_relation: corpscout.company_domains_resolved
       website_column: website_host
       filters:
@@ -83,13 +86,14 @@ Select basic-info inputs from a domain inventory:
 
 ```yaml
 ops:
-  website_site_info_requests:
+  website_crawl_input:
     config:
+      crawl_type: site_info
       source_relation: corpscout.domains
       ids: ["novelic.com", "melexis.com"]
 ```
 
-Use the corresponding job in the Dagster Launchpad. IDs must exist in the named source. These examples do not directly submit new domains absent from that source.
+Launch `website_crawl_input_job` in the Dagster Launchpad; each run appends to the open draft for its crawl type and queue scope. IDs must exist in the named source. These examples do not directly submit new domains absent from that source.
 
 ## Crawl drafts
 
