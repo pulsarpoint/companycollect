@@ -60,15 +60,22 @@ def server() -> Iterator[tuple[Client, ClickhouseResource]]:
         capture_output=True,
     )
     try:
-        port_output = subprocess.run(
-            ["docker", "port", name, "9000"],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout
+        # docker can report the mapping a moment after `run -d` returns.
+        port_output = ""
+        port_deadline = time.monotonic() + 10
+        while ":" not in port_output:
+            if time.monotonic() > port_deadline:
+                raise RuntimeError(f"no published port for {name}")
+            port_output = subprocess.run(
+                ["docker", "port", name, "9000"],
+                capture_output=True,
+                text=True,
+            ).stdout
+            if ":" not in port_output:
+                time.sleep(0.2)
         resource = ClickhouseResource(
             host="127.0.0.1",
-            port=int(port_output.strip().rsplit(":", 1)[1]),
+            port=int(port_output.strip().splitlines()[0].rsplit(":", 1)[1]),
             user="test",
             password="test",
             database="default",
