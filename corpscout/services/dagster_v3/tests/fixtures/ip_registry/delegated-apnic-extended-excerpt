@@ -2,14 +2,15 @@
 #
 # 	CONDITIONS OF USE
 #
-2.3|apnic|20260926|8||20260925|+1000
+2.3|apnic|20260926|9||20260925|+1000
 apnic|*|asn|*|0|summary
-apnic|*|ipv4|*|6|summary
+apnic|*|ipv4|*|7|summary
 apnic|*|ipv6|*|2|summary
 apnic|AU|ipv4|1.0.0.0|256|20110811|assigned|A91872ED
 apnic|AU|ipv4|101.0.64.0|16384|20101213|allocated|A916B33E
 apnic|AU|ipv4|103.0.0.0|65536|20110405|allocated|A91872ED
 apnic|VN|ipv4|103.35.64.0|1024|20150813|allocated|A9271131
+apnic|JP|ipv4|133.0.0.0|16777216|19970301|allocated|A92E7281
 apnic||ipv4|14.102.240.0|4096||available|
 apnic||ipv4|27.0.8.0|1024||reserved|
 apnic|JP|ipv6|2001:200::|35|19990813|allocated|A916B6AA

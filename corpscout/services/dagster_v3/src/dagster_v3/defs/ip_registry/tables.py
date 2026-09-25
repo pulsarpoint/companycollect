@@ -4,6 +4,8 @@ DATABASE = "corpscout"
 SNAPSHOTS_TABLE = "ip_registry_snapshots"
 IANA_TABLE = "ip_registry_iana_blocks"
 SPECIAL_TABLE = "ip_registry_special_segments"
+# Allocated/assigned records wide enough to cover an entire IANA block (source.HolderBlock).
+HOLDER_TABLE = "ip_registry_holder_blocks"
 SPECIAL_TRIE = "ip_registry_special_trie"
 READY_VIEW = "ip_registry_ready"
 IP_REGISTRY_POOL = "ip_registry"
@@ -67,3 +69,5 @@ SPECIAL_COLUMNS = (
     "cidrs",
     "loaded_at",
 )
+# Same shape as SPECIAL_COLUMNS; status is 'allocated' or 'assigned'.
+HOLDER_COLUMNS = SPECIAL_COLUMNS

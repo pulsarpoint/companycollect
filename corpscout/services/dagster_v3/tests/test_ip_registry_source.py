@@ -43,7 +43,7 @@ def test_designation_rir(designation, rir):
 
 def test_parse_iana_ipv4_excerpt():
     blocks = source.parse_iana_csv(excerpt("iana-ipv4-excerpt.csv"), "iana_ipv4")
-    assert len(blocks) == 23
+    assert len(blocks) == 27
     by_prefix = {block.prefix: block for block in blocks}
     assert set(by_prefix) == {
         f"{octet}.0.0.0/8"
@@ -52,14 +52,17 @@ def test_parse_iana_ipv4_excerpt():
             1,
             2,
             5,
+            7,
             8,
             14,
             19,
             23,
+            25,
             27,
             38,
             41,
             45,
+            73,
             85,
             100,
             101,
@@ -68,6 +71,7 @@ def test_parse_iana_ipv4_excerpt():
             104,
             111,
             113,
+            133,
             195,
             240,
             255,
@@ -106,7 +110,7 @@ def test_parse_iana_ipv4_excerpt():
         by_prefix["8.0.0.0/8"].rdap
         == "https://rdap.arin.net/registryhttp://rdap.arin.net/registry"
     )
-    assert sum(1 for block in blocks if block.rir) == 18
+    assert sum(1 for block in blocks if block.rir) == 22
 
 
 def test_parse_iana_ipv6_excerpt_handles_multiline_notes():
@@ -144,6 +148,7 @@ def test_parse_iana_ipv6_excerpt_handles_multiline_notes():
         "Prefix,Designation,Date,WHOIS,RDAP,Status,Note\n103/8,APNIC,2011-02,,,PENDING,\n",
         "Prefix,Designation,Date,Status,Note\n103/8,APNIC,2011-02,ALLOCATED,\n",
         "Prefix,Designation,Date,WHOIS,RDAP,Status,Note\n103/8,APNIC\n",
+        "Prefix,Designation,Date,WHOIS,RDAP,Status,Note\n103/8,APNIC,2011-02,,,ALLOCATED,,extra\n",
     ],
 )
 def test_parse_iana_rejects_unknown_status_columns_or_short_rows(text):
@@ -171,15 +176,15 @@ def test_parse_delegated_ripencc_excerpt_counts_the_whole_file_but_keeps_only_sp
         "2",
         "ripencc",
         "1790287199",
-        11,
+        13,
     )
     assert (header.start_date, header.end_date, header.utc_offset) == (
         "19700101",
         date(2026, 9, 24),
         "+0200",
     )
-    assert parsed.summaries == {"ipv4": 8, "asn": 0, "ipv6": 3}
-    assert parsed.record_lines == 11
+    assert parsed.summaries == {"ipv4": 9, "asn": 0, "ipv6": 4}
+    assert parsed.record_lines == 13
     assert [(segment.start_address, segment.status) for segment in parsed.special] == [
         ("85.8.248.0", "available"),
         ("5.134.16.0", "reserved"),
@@ -209,7 +214,7 @@ def test_parse_delegated_other_registries():
     arin = source.parse_delegated(excerpt("delegated-arin-extended-excerpt"), "arin")
     assert (
         arin.header.serial == "1790341220831"
-        and arin.record_lines == 9
+        and arin.record_lines == 11
         and arin.summaries["asn"] == 2
     )
     [reserved] = arin.special  # 768 addresses are not a power of two: two CIDRs
@@ -244,13 +249,60 @@ def test_parse_delegated_other_registries():
 @pytest.mark.parametrize(
     ("registry_name", "mutate", "message"),
     [
-        ("ripencc", lambda t: t.replace("|11|", "|12|", 1), "announces 12 records"),
+        ("ripencc", lambda t: t.replace("|13|", "|14|", 1), "announces 14 records"),
         (
             "ripencc",
-            lambda t: t.replace("ipv4|*|8|summary", "ipv4|*|7|summary"),
-            "ipv4 summary 7",
+            lambda t: t.replace("ipv4|*|9|summary", "ipv4|*|8|summary"),
+            "ipv4 summary 8",
         ),
         ("apnic", lambda t: t, "belongs to 'ripencc'"),
+        (
+            "ripencc",
+            lambda t: t.replace("ripencc|SE|ipv4|2.0.0.0|", "arin|SE|ipv4|2.0.0.0|"),
+            "line 5 belongs to 'arin'",
+        ),
+        (
+            "ripencc",
+            lambda t: t.replace("ripencc|*|asn|*|0|summary", "arin|*|asn|*|0|summary"),
+            "summary line 3 belongs to 'arin'",
+        ),
+        (
+            "ripencc",
+            lambda t: t.replace(
+                "ripencc|*|asn|*|0|summary",
+                "ripencc|*|asn|*|0|summary\nripencc|*|asn|*|0|summary",
+            ),
+            "duplicate asn summary",
+        ),
+        (
+            "ripencc",
+            lambda t: t.replace("ripencc|*|asn|*|0|summary\n", ""),
+            "no asn summary line",
+        ),
+        (
+            "ripencc",
+            lambda t: t.replace(
+                "ripencc|*|asn|*|0|summary", "ripencc|*|asn|*|1|summary"
+            ),
+            "asn summary 1 != 0",
+        ),
+        (
+            "ripencc",
+            lambda t: t.replace(
+                "ripencc|*|asn|*|0|summary", "ripencc|*|ipx|*|0|summary"
+            ),
+            "unknown type 'ipx'",
+        ),
+        (
+            "ripencc",
+            lambda t: t.replace("|85.8.248.0|2048||", "|85.8.248.0|0||"),
+            "85.8.248.0 \\+ 0 addresses is not an IPv4 range",
+        ),
+        (
+            "ripencc",
+            lambda t: t.replace("|85.8.248.0|2048||", "|255.255.255.0|512||"),
+            "255.255.255.0 \\+ 512 addresses is not an IPv4 range",
+        ),
         (
             "ripencc",
             lambda t: t.replace("|allocated|172ce676", "|pending|172ce676"),
@@ -356,9 +408,9 @@ def test_registry_class_rule(label, ctx, expected):
 
 def test_registry_class_sql_mirrors_the_python_rule_text():
     for fragment in (
-        "NOT ready, 'unknown'",
-        "covered_rir_blocks > 0, 'registry_level'",
-        "special.2 IN ('available', 'reserved') OR iana.3 IN ('', 'RESERVED'), 'unallocated'",
+        "NOT ifNull(ready, 0), 'unknown'",
+        "ifNull(covered_rir_blocks, 0) > 0, 'registry_level'",
+        "ifNull(special.2, '') IN ('available', 'reserved') OR ifNull(iana.3, '') IN ('', 'RESERVED'), 'unallocated'",
         "'reusable') AS registry_class",
     ):
         assert fragment in registry.REGISTRY_CLASS_SQL
@@ -398,3 +450,142 @@ def test_fixture_urls_are_the_published_ones():
         "ripencc",
     )
     assert tables.SNAPSHOTS_KEPT == 2
+
+
+def test_parse_delegated_counts_asn_records_against_their_summary():
+    arin = source.parse_delegated(excerpt("delegated-arin-extended-excerpt"), "arin")
+    assert arin.summaries == {"asn": 2, "ipv4": 6, "ipv6": 3}
+    text = excerpt("delegated-arin-extended-excerpt").replace(
+        "arin|*|asn|*|2|summary", "arin|*|asn|*|3|summary"
+    )
+    with pytest.raises(ValueError, match="asn summary 3 != 2"):
+        source.parse_delegated(text, "arin")
+
+
+FIXTURE_FILES = (
+    ("iana-ipv4-excerpt.csv", "iana_ipv4"),
+    ("iana-ipv6-excerpt.csv", "iana_ipv6"),
+    ("delegated-afrinic-extended-excerpt", "afrinic"),
+    ("delegated-apnic-extended-excerpt", "apnic"),
+    ("delegated-arin-extended-excerpt", "arin"),
+    ("delegated-lacnic-extended-excerpt", "lacnic"),
+    ("delegated-ripencc-extended-excerpt", "ripencc"),
+)
+
+
+def parse_fixture(text: str, name: str):
+    if name.startswith("iana_"):
+        return source.parse_iana_csv(text, name)
+    return source.parse_delegated(text, name)
+
+
+@pytest.mark.parametrize(("filename", "name"), FIXTURE_FILES)
+def test_crlf_files_parse_like_lf_files(filename, name):
+    text = excerpt(filename)
+    assert parse_fixture(text.replace("\n", "\r\n"), name) == parse_fixture(text, name)
+
+
+def test_parse_delegated_keeps_holder_blocks_wide_enough_for_an_iana_block():
+    ripencc = source.parse_delegated(
+        excerpt("delegated-ripencc-extended-excerpt"), "ripencc"
+    )
+    # 25.0.0.0/8 (UK MoD) covers IANA 25/8; 2a00::/22 is a candidate that covers no IANA
+    # block — the exact containment test is left to SQL, so the kept rows are a superset.
+    assert [(h.start_address, h.status, h.cidrs) for h in ripencc.holders] == [
+        ("25.0.0.0", "assigned", ("25.0.0.0/8",)),
+        ("2a00::", "allocated", ("2a00::/22",)),
+    ]
+    assert (ripencc.holder_count(4), ripencc.holder_count(6)) == (1, 1)
+    arin = source.parse_delegated(excerpt("delegated-arin-extended-excerpt"), "arin")
+    assert [h.start_address for h in arin.holders] == [
+        "7.0.0.0",
+        "19.0.0.0",
+        "73.0.0.0",
+    ]
+    comcast = arin.holders[2]
+    assert (comcast.first, comcast.last) == (
+        source.address_int("73.0.0.0"),
+        source.address_int("73.255.255.255"),
+    )
+    apnic = source.parse_delegated(excerpt("delegated-apnic-extended-excerpt"), "apnic")
+    assert [(h.cc, h.start_address, h.cidrs) for h in apnic.holders] == [
+        ("JP", "133.0.0.0", ("133.0.0.0/8",))
+    ]
+    for name in ("lacnic", "afrinic"):
+        parsed = source.parse_delegated(
+            excerpt(f"delegated-{name}-extended-excerpt"), name
+        )
+        assert parsed.holders == ()
+
+
+def test_holder_max_prefix_is_derived_from_the_iana_blocks():
+    blocks = source.parse_iana_csv(
+        excerpt("iana-ipv4-excerpt.csv"), "iana_ipv4"
+    ) + source.parse_iana_csv(excerpt("iana-ipv6-excerpt.csv"), "iana_ipv6")
+    assert (
+        source.holder_prefix_limits(blocks) == source.HOLDER_MAX_PREFIX == {4: 8, 6: 23}
+    )
+
+
+def reference_rows():
+    iana = source.parse_iana_csv(
+        excerpt("iana-ipv4-excerpt.csv"), "iana_ipv4"
+    ) + source.parse_iana_csv(excerpt("iana-ipv6-excerpt.csv"), "iana_ipv6")
+    holders, special = [], []
+    for filename, name in FIXTURE_FILES[2:]:
+        parsed = source.parse_delegated(excerpt(filename), name)
+        holders.extend(parsed.holders)
+        special.extend(parsed.special)
+    return iana, holders, special
+
+
+@pytest.mark.parametrize(
+    ("first", "last", "covered", "expected"),
+    [
+        (
+            "73.0.0.0",
+            "73.255.255.255",
+            0,
+            "reusable",
+        ),  # Comcast holds all of ARIN's 73/8
+        ("103.0.0.0", "103.255.255.255", 1, "registry_level"),  # APNIC-AP
+        ("133.0.0.0", "133.255.255.255", 0, "reusable"),  # JPNIC holds 133/8
+        ("7.0.0.0", "7.255.255.255", 0, "reusable"),  # DoD
+        ("25.0.0.0", "25.255.255.255", 0, "reusable"),  # UK MoD
+        ("102.0.0.0", "103.255.255.255", 2, "registry_level"),
+        ("2600::", "260f:ffff:ffff:ffff:ffff:ffff:ffff:ffff", 1, "registry_level"),
+        ("8.8.8.0", "8.8.8.255", 0, "reusable"),
+        ("45.68.105.0", "45.68.105.255", 0, "unallocated"),  # LACNIC reserved
+        ("240.0.0.0", "240.255.255.255", 0, "unallocated"),  # IANA Future use
+    ],
+)
+def test_registry_context_reference_over_the_fixtures(first, last, covered, expected):
+    iana, holders, special = reference_rows()
+    ctx = registry.registry_context(
+        source.address_int(first), source.address_int(last), iana, holders, special
+    )
+    assert (ctx.covered_rir_blocks, registry.registry_class(ctx)) == (covered, expected)
+
+
+def test_registry_context_is_unknown_until_ready():
+    iana, holders, special = reference_rows()
+    ctx = registry.registry_context(
+        source.address_int("103.0.0.0"),
+        source.address_int("103.255.255.255"),
+        iana,
+        holders,
+        special,
+        ready=False,
+    )
+    assert registry.registry_class(ctx) == "unknown"
+
+
+def test_registry_context_sql_excludes_holder_covered_blocks_and_defaults_ready():
+    sql = registry.REGISTRY_CONTEXT_SQL
+    assert sql.startswith(
+        "SELECT ifNull((SELECT ready FROM corpscout.ip_registry_ready), 0) AS ready,"
+    )
+    assert "CROSS JOIN corpscout.ip_registry_holder_blocks_current AS h" in sql
+    assert "(toUInt128(first_ip), toUInt128(last_ip)) NOT IN (" in sql
+    assert tables.HOLDER_TABLE == "ip_registry_holder_blocks"
+    assert tables.HOLDER_COLUMNS == tables.SPECIAL_COLUMNS
