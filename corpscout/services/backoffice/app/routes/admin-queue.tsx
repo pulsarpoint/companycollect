@@ -1,3 +1,4 @@
+import { QueueHistorySources } from "~/components/admin/queue-history-sources";
 import { data, redirect, Form, Link, useNavigation, useRevalidator, useSearchParams } from "react-router";
 import { PlayIcon, RefreshCwIcon } from "lucide-react";
 import type { Route } from "./+types/admin-queue";
@@ -139,12 +140,13 @@ export default function AdminQueue({loaderData}: Route.ComponentProps) {
       <h2 className="text-lg font-semibold">Recent task history</h2>
       <p className="text-sm text-muted-foreground">Latest processing run for each task{filters.type === "crawler" ? " across all crawl types" : ""}. Completed inputs are removed from Webtech and Crawler queues; results and history remain available.</p>
       {historyError && <Alert variant="destructive"><AlertDescription>{historyError}</AlertDescription></Alert>}
-      <Table><TableHeader><TableRow><TableHead>Started (UTC)</TableHead><TableHead>Task</TableHead>{filters.type === "crawler" && <TableHead>Crawl type</TableHead>}<TableHead>Processing status</TableHead><TableHead>Details</TableHead></TableRow></TableHeader>
+      <Table><TableHeader><TableRow><TableHead>Started (UTC)</TableHead>{(filters.type === "crawler" || filters.type === "webtech") && <TableHead>Source domains / websites</TableHead>}<TableHead>Task</TableHead>{filters.type === "crawler" && <TableHead>Crawl type</TableHead>}<TableHead>Processing status</TableHead><TableHead>Details</TableHead></TableRow></TableHeader>
         <TableBody>{history.map(task => <TableRow key={`${task.crawlType}:${task.taskId}`}>
           <TableCell>{task.startedAt ? task.startedAt.replace("T", " ").replace(/\.\d+Z$/, "") : "Not started"}</TableCell>
+          {(filters.type === "crawler" || filters.type === "webtech") && <TableCell className="align-top"><QueueHistorySources type={filters.type} taskId={task.taskId} crawlType={task.crawlType} sources={task.sources} error={task.sourcesError} /></TableCell>}
           <TableCell className="font-mono text-xs">{task.taskId}</TableCell>{filters.type === "crawler" && <TableCell>{CRAWL_QUEUES.find(queue => queue.id === task.crawlType)?.label}</TableCell>}<TableCell><Badge variant="outline">{task.outcome === "completed_with_errors" ? "Completed with errors" : task.outcome === "completed" ? "Completed" : task.status}</Badge>{task.failedPages != null && task.failedPages > 0 && <p className="text-xs text-muted-foreground">{task.failedPages} {filters.type === "crawler" ? "crawl errors" : "page errors"} · results saved</p>}{task.skippedPages != null && task.skippedPages > 0 && <p className="text-xs text-muted-foreground">{task.skippedPages} {task.skippedPages === 1 ? "input skipped" : "inputs skipped"}</p>}</TableCell>
           <TableCell>{task.runUrl && <a className="underline" href={task.runUrl} target="_blank" rel="noreferrer">View in Dagster</a>}</TableCell>
-        </TableRow>)}{!history.length && !historyError && <TableRow><TableCell colSpan={filters.type === "crawler" ? 5 : 4}>No processing runs yet.</TableCell></TableRow>}</TableBody>
+        </TableRow>)}{!history.length && !historyError && <TableRow><TableCell colSpan={filters.type === "crawler" ? 6 : filters.type === "webtech" ? 5 : 4}>No processing runs yet.</TableCell></TableRow>}</TableBody>
       </Table>
     </section>
     {filters.task && searchParams.get("configure") === "1" && <QueueProcessSheet key={identity} filters={filters} total={inputs.selectedTotal} asset={inputs.asset} blockedReason={processingBlocked} onClose={() => configureProcessing(false)} />}

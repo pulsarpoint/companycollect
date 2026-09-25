@@ -1,3 +1,4 @@
+import { loadQueueSourceSummaries, type QueueHistoryReference, type QueueSourceSummary } from "~/lib/queue-history.server";
 import { createHash } from "node:crypto";
 import { CrawlLlmError, prepareCrawlSettings, verifySelectedLlm } from "~/lib/crawl-llm.server";
 import { chQuery } from "~/lib/clickhouse.server";
@@ -97,10 +98,13 @@ export async function loadQueueHistory(filters: QueueFilters) {
     crawlType: filters.type === "crawler" ? selection.crawlType : null,
     runs: await listRuns({job: queueDefinition(selection).job, limit: 50}),
   })));
+  const references: QueueHistoryReference[] = [];
   const latest = new Map<string, {taskId: string; status: string; runUrl: string | null; startedAt: string | null; outcome: string | null; failedPages: number | null; skippedPages: number | null; crawlType: CrawlQueueType | null}>();
   for (const {runs, crawlType} of groups) for (const run of runs) {
     const taskId = run.tags["processing/task_id"];
-    if (!taskId || !QUEUE_UUID.test(taskId) || latest.has(`${crawlType}:${taskId}`)) continue;
+    if (!taskId || !QUEUE_UUID.test(taskId)) continue;
+    references.push({taskId, crawlType, executionId: run.tags["crawler/execution_id"] || run.runId});
+    if (latest.has(`${crawlType}:${taskId}`)) continue;
     const prefix = filters.type === "crawler" ? "crawler" : "webtech";
     const outcome = run.status === "SUCCESS" && ["completed", "completed_with_errors"].includes(run.tags[`${prefix}/outcome`]) ? run.tags[`${prefix}/outcome`] : null;
     latest.set(`${crawlType}:${taskId}`, {taskId, crawlType, status: run.status, runUrl: dagsterRunUrl(run.runId), outcome,
@@ -108,8 +112,16 @@ export async function loadQueueHistory(filters: QueueFilters) {
       skippedPages: outcome && /^\d+$/.test(run.tags[`${prefix}/skipped_pages`] ?? "") ? Number(run.tags[`${prefix}/skipped_pages`]) : null,
       startedAt: run.startTime == null ? null : new Date(run.startTime * 1000).toISOString()});
   }
-  return [...latest.values()].sort((a, b) =>
+  const history = [...latest.values()].sort((a, b) =>
     (b.startedAt ? Date.parse(b.startedAt) : Infinity) - (a.startedAt ? Date.parse(a.startedAt) : Infinity)).slice(0, 50);
+  let sources: QueueSourceSummary[] = [];
+  let sourcesError = false;
+  if (filters.type === "crawler" || filters.type === "webtech") {
+    try { sources = await loadQueueSourceSummaries(filters.type, references.filter(ref => history.some(task => task.taskId === ref.taskId && task.crawlType === ref.crawlType))); }
+    catch { sourcesError = true; }
+  }
+  return history.map(task => ({...task, sourcesError,
+    sources: sources.find(source => source.task_id === task.taskId && source.task_type === (task.crawlType ?? "webtech")) ?? null}));
 }
 
 const EXTRA_FIELDS = {

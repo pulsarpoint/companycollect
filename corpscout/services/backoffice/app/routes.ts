@@ -132,6 +132,7 @@ export default [
     ]),
     route("queues", "routes/admin-queues-index.tsx"),
     route("queues/:type", "routes/admin-queue.tsx"),
+    route("queues/:type/sources", "routes/admin-queue-sources.ts"),
     route("webtech", "routes/admin-webtech.tsx"),
     route("webtech/input", "routes/admin-webtech-input.tsx"),
     route("crawler/queue-submissions/:runId", "routes/admin-crawl-queue-submission.ts"),

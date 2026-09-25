@@ -57,6 +57,9 @@ def db(server, store):  # noqa: F811
     ):
         if statement.strip():
             client.execute(statement)
+    for statement in (migrations / "000449_corpscout_queue_task_sources.up.sql").read_text().split(";"):
+        if statement.strip():
+            client.execute(statement)
     for table in (
         *INPUT_TABLES,
         TASK_DOMAINS,
