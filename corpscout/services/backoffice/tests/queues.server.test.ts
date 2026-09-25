@@ -91,6 +91,13 @@ describe("queue processing", () => {
   });
 });
 
+it("reads the crawler entry table without FINAL and rejects the retired batch_size", async () => {
+  vi.mocked(chQuery).mockResolvedValue([]);
+  await loadQueueInputs(filters("crawler", "site_info"));
+  for (const [sql] of vi.mocked(chQuery).mock.calls) expect(sql).not.toContain("website_crawl_task_domains FINAL");
+  await expect(startQueueProcessing(filters("crawler"), JSON.stringify({...crawlConfig, batch_size: 25}), request, "operator")).rejects.toThrow("batch_size");
+});
+
 it.each([{batch_size: 5000}, {recent_days: 3651}, {force_rescan: "true"}, {recent_days: 1.5}, {execution_id: "invalid"}])("rejects invalid parameters before launching: %j", async config => {
   await expect(startQueueProcessing(filters(), JSON.stringify(config), request, "operator")).rejects.toThrow();
   expect(launchRun).not.toHaveBeenCalled();

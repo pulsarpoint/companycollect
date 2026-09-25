@@ -8,9 +8,7 @@ const server = vi.hoisted(() => ({
   addSeDomainsToWebtechQueue: vi.fn(),
   listSeDomainsPage: vi.fn(),
   loadSeDomainsCounts: vi.fn(),
-  saveSeDomainCrawlInputs: vi.fn(),
   addSeDomainsToCrawlQueue: vi.fn(),
-  launchSeDomainCrawlWorkflow: vi.fn(),
 }));
 vi.mock("~/lib/se-domains-list.server", () => server);
 vi.mock("~/lib/webtech-queue.server", () => server);
@@ -104,9 +102,7 @@ describe("admin-se-companies-domains route", () => {
   beforeEach(() => {
     server.listSeDomainsPage.mockReset().mockResolvedValue({ rows: [ROW] });
     server.loadSeDomainsCounts.mockReset().mockResolvedValue(COUNTS);
-    server.saveSeDomainCrawlInputs.mockReset();
     server.addSeDomainsToCrawlQueue.mockReset();
-    server.launchSeDomainCrawlWorkflow.mockReset();
   });
 
   it("submits the selected domains through the route action and returns the Dagster input run", async () => {
@@ -122,13 +118,12 @@ describe("admin-se-companies-domains route", () => {
     expect(server.addSeDomainsToCrawlQueue).toHaveBeenCalledWith(selection, "jobs", "receipt", "backoffice");
   });
 
-  it("rejects the old combined workflow action so queue additions cannot start crawling", async () => {
+  it("rejects the retired send_for_crawl action so queue additions cannot start crawling", async () => {
     const response = await action({request: new Request("http://x/admin/se/companies/domains", {
       method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify({action: "send_for_crawl", crawlType: "site_info", selection: {mode: "ids", domains: ["example.se"]}}),
     })} as never);
     expect(response.data.ok).toBe(false);
-    expect(server.launchSeDomainCrawlWorkflow).not.toHaveBeenCalled();
     expect(server.addSeDomainsToCrawlQueue).not.toHaveBeenCalled();
   });
 

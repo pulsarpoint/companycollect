@@ -28,7 +28,7 @@ function queueDefinition(filters: QueueFilters) {
       const prefix = filters.crawlType === "site_info" ? "website_site_info" : `website_${filters.crawlType}_crawl`;
       return {
         table: "corpscout.website_crawl_task_domains", asset: `${prefix}_results`, job: `${prefix}_results_job`,
-        from: "corpscout.website_crawl_task_domains FINAL", where: "crawl_type = {crawlType:String}",
+        from: "corpscout.website_crawl_task_domains", where: "crawl_type = {crawlType:String}",
         target: "domain", detail: "website_url", source: "source_name", record: "domain", time: "toString(created_at)", id: "domain",
       };
     }
@@ -101,7 +101,7 @@ const EXTRA_FIELDS = {
   webtech: ["execution_id", "force_rescan", "recent_days"],
   brave: ["execution_id", "query_type", "query_template", "force", "rescan_old", "requests_per_route", "input_batch_size", "answer_timeout_seconds", "progress_log_every", "progress_log_interval_seconds"],
   "ip-enrichment": ["execution_id", "batch_size", "max_requests", "request_delay_seconds", "parent_depth", "rdap_cache_days", "force_rdap", "rate_limit_retry_seconds", "transient_retry_seconds"],
-  crawler: ["execution_id", "batch_size", "max_in_flight", "refresh_interval_days", "force_refresh", "challenge_agent_model", "challenge_agent_max_runs", "api", "model", "max_pages", "max_model_calls", "page_selection", "instructions", "wait_timeout_seconds", "poll_interval_seconds"],
+  crawler: ["execution_id", "max_in_flight", "refresh_interval_days", "force_refresh", "challenge_agent_model", "challenge_agent_max_runs", "api", "model", "max_pages", "max_model_calls", "page_selection", "instructions", "wait_timeout_seconds", "poll_interval_seconds"],
 } as const;
 
 export function parseQueueConfig(filters: QueueFilters, serialized: string) {
@@ -117,7 +117,7 @@ export function parseQueueConfig(filters: QueueFilters, serialized: string) {
   }
   if (config.execution_id != null && (typeof config.execution_id !== "string" || !QUEUE_UUID.test(config.execution_id))) throw new QueueRequestError("execution_id must be a UUID from the original execution.");
   const numeric = filters.type === "crawler" ? {
-    batch_size: [1, 100], max_in_flight: [1, 20], refresh_interval_days: [1, 3650],
+    max_in_flight: [1, 20], refresh_interval_days: [1, 3650],
     challenge_agent_max_runs: [3, 1000], max_pages: [1, 500], max_model_calls: [1, 1000],
     wait_timeout_seconds: [Number.MIN_VALUE, 86400, true], poll_interval_seconds: [Number.MIN_VALUE, 30, true],
   } : QUEUE_NUMBER_LIMITS[filters.type];

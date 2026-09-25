@@ -10,7 +10,7 @@ import { CRAWL_STATES, isCrawlWaiting, type CrawlAttempt, type CrawlPublishRecei
 import { CrawlBrowser } from "~/components/admin/crawl-browser";
 import { CrawlSubmit } from "~/components/admin/crawl-submit";
 import { CrawlProgress } from "~/components/admin/crawl-progress";
-import { loadCrawlProgress, resumeCrawlTask } from "~/lib/crawl-progress.server";
+import { loadCrawlProgress } from "~/lib/crawl-progress.server";
 import { CrawlInputs } from "~/components/admin/crawl-inputs";
 import { loadCrawlInputs, startSavedCrawls } from "~/lib/crawl-inputs.server";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
@@ -51,10 +51,6 @@ export async function action({request}: Route.ActionArgs) {
   if (intent === "start-inputs") {
     try { return {error: null, intent, batch: await startSavedCrawls(form)}; }
     catch (error) { return {error: error instanceof Error ? error.message : "Starting saved crawls failed."}; }
-  }
-  if (intent === "resume-task") {
-    try { return {error: null, intent, resumed: await resumeCrawlTask(form.get("crawl_type"), form.get("execution_id"))}; }
-    catch (error) { return {error: error instanceof Error ? error.message : "Resuming the crawl task failed."}; }
   }
   if (intent === "submit") {
     try { return {error: null, intent, receipt: await publishTestCrawl(String(form.get("body") || ""))}; }
@@ -159,7 +155,7 @@ export default function AdminCrawls({loaderData}: Route.ComponentProps) {
         <Button variant="outline" onClick={() => void revalidate()}><RefreshCwIcon data-icon="inline-start" />Refresh</Button></div>
     </div>
     {loaderData.inputsError && <Alert variant="destructive"><AlertTitle>Crawl inputs unavailable</AlertTitle><AlertDescription>{loaderData.inputsError}</AlertDescription></Alert>}
-    {loaderData.inputs && <CrawlInputs key={`${loaderData.inputs.type}:${loaderData.inputs.domain}:${loaderData.inputs.offset}`} snapshot={loaderData.inputs}><CrawlProgress snapshot={loaderData.progress} error={loaderData.progressError} type={loaderData.inputs.type} /></CrawlInputs>}
+    {loaderData.inputs && <CrawlInputs key={`${loaderData.inputs.type}:${loaderData.inputs.domain}:${loaderData.inputs.offset}`} snapshot={loaderData.inputs}><CrawlProgress snapshot={loaderData.progress} error={loaderData.progressError} /></CrawlInputs>}
     <div className="border-t pt-6" id="crawl-attempts"><h2 className="text-lg font-semibold">Crawl attempts</h2><p className="text-sm text-muted-foreground">All crawl types and sources · Live requests, saved results, and failures available for retry.</p></div>
     {submission && <Alert><AlertTitle>Crawler accepted the request</AlertTitle>
       <AlertDescription><p>{submission.request_id} · {submission.state.replaceAll("_", " ")}</p>
