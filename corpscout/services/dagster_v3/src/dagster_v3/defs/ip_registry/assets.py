@@ -5,14 +5,19 @@ statistics, ~45 MB in total) are downloaded and verified as whole files (checksu
 line, record and summary counts, no sharp shrink of the whole-file record count against the
 current snapshot). Only the IANA blocks, the RIRs' available/reserved ranges (special
 segments) and their whole-block allocated/assigned records (holder blocks) are inserted, as a
-dated snapshot whose ledger row is written last. The loader then drops every partition of that
-source except the current and the previous snapshot. Then every cached RDAP registration is
-classified in SQL and rdap_network_trie is reloaded. Non-partitioned full refresh (the whole
-dataset comes back per request), daily schedule stopped by default, one pool for the chain.
+dated snapshot whose ledger row is written after its rows. A file re-published for the current
+date never empties the current snapshot: its rows are inserted with a newer loaded_at (the
+ReplacingMergeTree version), the ledger row follows, and only then are the older rows of that
+snapshot deleted, so readers see the old rows, then old plus new, then the new rows. The loader
+then drops every partition of that source except the current and the previous snapshot. Then
+every cached RDAP registration is classified in SQL and rdap_network_trie is reloaded.
+Non-partitioned full refresh (the whole dataset comes back per request), daily schedule
+stopped by default, one pool for the chain.
 """
 
 import hashlib
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from ipaddress import IPv6Address
@@ -44,6 +49,10 @@ MAX_SHRINK_RATIO = 0.05
 IANA_MIN_ROWS = {"iana_ipv4": 256, "iana_ipv6": 40}
 FRESH_SNAPSHOT_DAYS = 3  # the RIRs publish daily
 FRESH_VERIFIED_DAYS = 2  # every source must have been re-checked recently
+# The registries' servers answer slowly or 5xx now and then; a loader retries the whole
+# download after five minutes (dlt's session already retries single requests).
+LOADER_RETRY_POLICY = dg.RetryPolicy(max_retries=2, delay=300)
+USER_AGENT = "CorpScout ip-registry/1.0"
 SNAPSHOT_INSERT_SQL = f"INSERT INTO corpscout.{tables.SNAPSHOTS_TABLE} ({', '.join(tables.SNAPSHOT_COLUMNS)}) VALUES"
 IANA_INSERT_SQL = f"INSERT INTO corpscout.{tables.IANA_TABLE} ({', '.join(tables.IANA_COLUMNS)}) VALUES"
 SPECIAL_INSERT_SQL = f"INSERT INTO corpscout.{tables.SPECIAL_TABLE} ({', '.join(tables.SPECIAL_COLUMNS)}) VALUES"
@@ -61,14 +70,36 @@ class IpRegistryConfig(dg.Config):
 
 def fetch(url: str) -> tuple[bytes, Mapping[str, str]]:
     """The body and headers of a small public file (dlt's session retries connection errors and 5xx)."""
-    response = requests.get(url, timeout=(10, 300))
+    response = requests.get(url, timeout=(10, 300), headers={"User-Agent": USER_AGENT})
     response.raise_for_status()
     return response.content, response.headers
+
+
+def fetch_delegated(url: str) -> tuple[bytes, str]:
+    """A delegated file and its .md5 text; downloaded once more when the digests disagree.
+
+    A mismatch is usually a file replaced between the two requests. The second answer is
+    returned either way; load_delegated_source refuses it if it still disagrees.
+    """
+    body, md5_text = b"", ""
+    for _ in range(2):
+        body, _ = fetch(url)
+        md5_body, _ = fetch(url + ".md5")
+        md5_text = md5_body.decode("utf-8")
+        if hashlib.md5(body).hexdigest() == parse_md5(md5_text):
+            break
+    return body, md5_text
 
 
 def freshness_now() -> datetime:
     """The clock of the freshness checks (a seam so tests do not depend on today's date)."""
     return datetime.now(UTC)
+
+
+def snapshot_loaded_at() -> datetime:
+    """Now, truncated to the millisecond of the DateTime64(3) loaded_at columns."""
+    now = datetime.now(UTC)
+    return now.replace(microsecond=now.microsecond // 1000 * 1000)
 
 
 def current_snapshot(client, source: str) -> dict | None:
@@ -159,6 +190,27 @@ def drop_snapshot_partition(
     )
 
 
+def delete_stale_rows(
+    client, *, table: str, source: str, snapshot_date: date, loaded_at: datetime
+) -> None:
+    """Delete the rows of one snapshot partition written before loaded_at.
+
+    A synchronous mutation (mutations_sync=2) restricted to the partition: the partitions are
+    small (the largest RIR snapshot is about 100k rows) and a mutation physically rewrites the
+    parts, so FINAL readers never meet a lightweight-delete mask over a ReplacingMergeTree.
+    """
+    client.execute(
+        f"""ALTER TABLE corpscout.{table} DELETE IN PARTITION (%(source)s, %(snapshot_date)s)
+        WHERE loaded_at < toDateTime64(%(loaded_at)s, 3, 'UTC')""",
+        {
+            "source": source,
+            "snapshot_date": snapshot_date,
+            "loaded_at": loaded_at.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
+        },
+        settings={"mutations_sync": 2},
+    )
+
+
 def drop_superseded_snapshots(
     client, *, table: str, key_column: str, source: str
 ) -> list[date]:
@@ -194,6 +246,74 @@ def drop_superseded_snapshots(
     return dropped
 
 
+@dataclass(frozen=True)
+class SnapshotRows:
+    """The rows one snapshot writes to one data table, built for a given loaded_at."""
+
+    table: str
+    key_column: str
+    insert_sql: str
+    count: int
+    build: Callable[[datetime], list[tuple]]
+
+
+def stored_rows_match(
+    client, *, source: str, snapshot_date: date, parts: Sequence[SnapshotRows]
+) -> bool:
+    """Whether readers (FINAL) see exactly as many rows of the snapshot as the file has.
+
+    False after a run died between the ledger row and the stale-row delete: the file is
+    identical to the ledger's, but rows it removed are still visible.
+    """
+    for part in parts:
+        [(stored,)] = client.execute(
+            f"""SELECT count() FROM corpscout.{part.table} FINAL
+            WHERE {part.key_column} = %(source)s AND snapshot_date = %(snapshot_date)s""",
+            {"source": source, "snapshot_date": snapshot_date},
+        )
+        if stored != part.count:
+            return False
+    return True
+
+
+def store_snapshot(
+    client,
+    *,
+    source: str,
+    snapshot_date: date,
+    current: dict | None,
+    parts: Sequence[SnapshotRows],
+    write_ledger: Callable[[], None],
+) -> None:
+    """Insert a snapshot's rows, then its ledger row, without ever emptying the current snapshot.
+
+    New date: the partition can only hold leftovers of an earlier failed load (it is not
+    current yet), so it is dropped first. Current date (a re-published file or a repair): the
+    new rows go in with a newer loaded_at next to the current ones, so FINAL readers see the old
+    rows, then a superset, and after the ledger row the rows written before loaded_at are
+    deleted. A failure at any step leaves the old rows visible and the next run converges.
+    """
+    same_date = current is not None and current["snapshot_date"] == snapshot_date
+    if not same_date:
+        for part in parts:
+            drop_snapshot_partition(
+                client, table=part.table, source=source, snapshot_date=snapshot_date
+            )
+    loaded_at = snapshot_loaded_at()
+    for part in parts:
+        insert_rows(client, part.insert_sql, part.build(loaded_at))
+    write_ledger()
+    if same_date:
+        for part in parts:
+            delete_stale_rows(
+                client,
+                table=part.table,
+                source=source,
+                snapshot_date=snapshot_date,
+                loaded_at=loaded_at,
+            )
+
+
 def iana_snapshot_date(headers: Mapping[str, str]) -> date:
     value = headers.get("Last-Modified")
     if not value:
@@ -213,7 +333,7 @@ def load_iana_source(
     """Parse, validate and store one IANA file; an already loaded snapshot only refreshes verified_at.
 
     A file re-published under the same Last-Modified date with a different checksum replaces
-    that snapshot's partition (ReplacingMergeTree would otherwise keep rows the file removed).
+    that snapshot (see store_snapshot).
     """
     blocks = parse_iana_csv(body.decode("utf-8-sig"), source)
     floor = IANA_MIN_ROWS[source] if min_rows is None else min_rows
@@ -224,22 +344,13 @@ def load_iana_source(
     current = current_snapshot(client, source)
     ipv4 = sum(block.ip_version == 4 for block in blocks)
     ipv6 = sum(block.ip_version == 6 for block in blocks)
-    loaded = not (
-        current is not None
-        and current["snapshot_date"] == snapshot_date
-        and current["checksum"] == checksum
-    )
-    if loaded:
-        refuse_older(source, current, snapshot_date)
-        # Clears a re-published same-date snapshot or the leftovers of a failed load.
-        drop_snapshot_partition(
-            client, table=tables.IANA_TABLE, source=source, snapshot_date=snapshot_date
-        )
-        loaded_at = datetime.now(UTC)
-        insert_rows(
-            client,
-            IANA_INSERT_SQL,
-            [
+    parts = [
+        SnapshotRows(
+            table=tables.IANA_TABLE,
+            key_column="source",
+            insert_sql=IANA_INSERT_SQL,
+            count=len(blocks),
+            build=lambda loaded_at: [
                 (
                     block.source,
                     snapshot_date,
@@ -259,16 +370,40 @@ def load_iana_source(
                 for block in blocks
             ],
         )
-    record_snapshot(
-        client,
-        source=source,
-        snapshot_date=snapshot_date,
-        checksum=checksum,
-        serial=headers.get("Last-Modified", ""),
-        records=(ipv4, ipv6),
-        segments=(ipv4, ipv6),
-        url=url,
+    ]
+
+    def write_ledger() -> None:
+        record_snapshot(
+            client,
+            source=source,
+            snapshot_date=snapshot_date,
+            checksum=checksum,
+            serial=headers.get("Last-Modified", ""),
+            records=(ipv4, ipv6),
+            segments=(ipv4, ipv6),
+            url=url,
+        )
+
+    identical = (
+        current is not None
+        and current["snapshot_date"] == snapshot_date
+        and current["checksum"] == checksum
     )
+    repaired = identical and not stored_rows_match(
+        client, source=source, snapshot_date=snapshot_date, parts=parts
+    )
+    if identical and not repaired:
+        write_ledger()
+    else:
+        refuse_older(source, current, snapshot_date)
+        store_snapshot(
+            client,
+            source=source,
+            snapshot_date=snapshot_date,
+            current=current,
+            parts=parts,
+            write_ledger=write_ledger,
+        )
     dropped = drop_superseded_snapshots(
         client, table=tables.IANA_TABLE, key_column="source", source=source
     )
@@ -276,7 +411,8 @@ def load_iana_source(
         "source": source,
         "snapshot_date": snapshot_date.isoformat(),
         "rows": len(blocks),
-        "loaded": loaded,
+        "loaded": not identical or repaired,
+        "repaired": repaired,
         "sha256": checksum,
         "dropped_snapshots": len(dropped),
     }
@@ -307,9 +443,9 @@ def load_delegated_source(
     """Verify the published MD5, parse the whole file, validate it against the current snapshot
     and store its special segments and holder blocks.
 
-    Write order: special rows, holder rows, the ledger row (which makes them current), then
-    retention. A file re-published for the current date with a different checksum replaces
-    that date's partitions; an identical file only refreshes verified_at.
+    Write order (store_snapshot): special rows, holder rows, the ledger row (which makes them
+    current), stale rows of a re-published current date; then retention. An identical file
+    only refreshes verified_at.
     """
     digest = hashlib.md5(body).hexdigest()
     expected = parse_md5(md5_text)
@@ -325,44 +461,63 @@ def load_delegated_source(
     holders = (parsed.holder_count(4), parsed.holder_count(6))
     snapshot_date = parsed.header.end_date
     current = current_snapshot(client, registry)
-    loaded = not (
+    parts = [
+        SnapshotRows(
+            table=tables.SPECIAL_TABLE,
+            key_column="registry",
+            insert_sql=SPECIAL_INSERT_SQL,
+            count=len(parsed.special),
+            build=lambda loaded_at: [
+                _range_row(segment, snapshot_date, loaded_at)
+                for segment in parsed.special
+            ],
+        ),
+        SnapshotRows(
+            table=tables.HOLDER_TABLE,
+            key_column="registry",
+            insert_sql=HOLDER_INSERT_SQL,
+            count=len(parsed.holders),
+            build=lambda loaded_at: [
+                _range_row(block, snapshot_date, loaded_at) for block in parsed.holders
+            ],
+        ),
+    ]
+
+    def write_ledger() -> None:
+        record_snapshot(
+            client,
+            source=registry,
+            snapshot_date=snapshot_date,
+            checksum=digest,
+            serial=parsed.header.serial,
+            records=(ipv4, ipv6),
+            segments=segments,
+            holders=holders,
+            url=url,
+        )
+
+    identical = (
         current is not None
         and current["snapshot_date"] == snapshot_date
         and current["checksum"] == digest
     )
-    if loaded:
-        refuse_older(registry, current, snapshot_date)
-        refuse_shrink(registry, current, ipv4, ipv6, allow_shrink=allow_shrink)
-        # Clears a re-published same-date snapshot or the leftovers of a failed load.
-        for table in RIR_DATA_TABLES:
-            drop_snapshot_partition(
-                client, table=table, source=registry, snapshot_date=snapshot_date
-            )
-        loaded_at = datetime.now(UTC)
-        insert_rows(
-            client,
-            SPECIAL_INSERT_SQL,
-            [
-                _range_row(segment, snapshot_date, loaded_at)
-                for segment in parsed.special
-            ],
-        )
-        insert_rows(
-            client,
-            HOLDER_INSERT_SQL,
-            [_range_row(block, snapshot_date, loaded_at) for block in parsed.holders],
-        )
-    record_snapshot(
-        client,
-        source=registry,
-        snapshot_date=snapshot_date,
-        checksum=digest,
-        serial=parsed.header.serial,
-        records=(ipv4, ipv6),
-        segments=segments,
-        holders=holders,
-        url=url,
+    repaired = identical and not stored_rows_match(
+        client, source=registry, snapshot_date=snapshot_date, parts=parts
     )
+    if identical and not repaired:
+        write_ledger()
+    else:
+        refuse_older(registry, current, snapshot_date)
+        if not identical:
+            refuse_shrink(registry, current, ipv4, ipv6, allow_shrink=allow_shrink)
+        store_snapshot(
+            client,
+            source=registry,
+            snapshot_date=snapshot_date,
+            current=current,
+            parts=parts,
+            write_ledger=write_ledger,
+        )
     dropped = set()
     for table in RIR_DATA_TABLES:
         dropped.update(
@@ -379,52 +534,65 @@ def load_delegated_source(
         "segments_ipv6": segments[1],
         "holders_ipv4": holders[0],
         "holders_ipv6": holders[1],
-        "loaded": loaded,
+        "loaded": not identical or repaired,
+        "repaired": repaired,
         "md5": digest,
         "serial": parsed.header.serial,
         "dropped_snapshots": len(dropped),
     }
 
 
-@dg.asset(
-    group_name=GROUP_NAME,
-    kinds={"python", "clickhouse", "iana"},
-    pool=tables.IP_REGISTRY_POOL,
-    description="Downloads IANA's ipv4-address-space and ipv6-unicast-address-assignments CSVs and "
-    "stores them as a dated snapshot (Last-Modified) of the top-level address blocks.",
-)
-def ip_registry_iana_blocks(
-    context: dg.AssetExecutionContext, clickhouse: ClickhouseResource
-) -> dg.MaterializeResult:
-    assert_clickhouse_tables_exist(
-        clickhouse,
-        database=tables.DATABASE,
-        tables=(tables.SNAPSHOTS_TABLE, tables.IANA_TABLE),
+def iana_blocks_asset(
+    retry_policy: dg.RetryPolicy | None = LOADER_RETRY_POLICY,
+) -> dg.AssetsDefinition:
+    @dg.asset(
+        name="ip_registry_iana_blocks",
+        group_name=GROUP_NAME,
+        kinds={"python", "clickhouse", "iana"},
+        pool=tables.IP_REGISTRY_POOL,
+        retry_policy=retry_policy,
+        description="Downloads IANA's ipv4-address-space and ipv6-unicast-address-assignments CSVs "
+        "and stores them as a dated snapshot (Last-Modified) of the top-level address blocks.",
     )
-    metadata = {}
-    with clickhouse.get_connection() as client:
-        for source, url in tables.IANA_SOURCES.items():
-            body, headers = fetch(url)
-            result = load_iana_source(
-                client, source, body=body, headers=headers, url=url
-            )
-            context.log.info("%s: %s", source, result)
-            metadata.update(
-                {
-                    f"{source}_{key}": value
-                    for key, value in result.items()
-                    if key != "source"
-                }
-            )
-    return dg.MaterializeResult(metadata=metadata)
+    def _asset(
+        context: dg.AssetExecutionContext, clickhouse: ClickhouseResource
+    ) -> dg.MaterializeResult:
+        assert_clickhouse_tables_exist(
+            clickhouse,
+            database=tables.DATABASE,
+            tables=(tables.SNAPSHOTS_TABLE, tables.IANA_TABLE),
+        )
+        metadata = {}
+        with clickhouse.get_connection() as client:
+            for source, url in tables.IANA_SOURCES.items():
+                body, headers = fetch(url)
+                result = load_iana_source(
+                    client, source, body=body, headers=headers, url=url
+                )
+                context.log.info("%s: %s", source, result)
+                metadata.update(
+                    {
+                        f"{source}_{key}": value
+                        for key, value in result.items()
+                        if key != "source"
+                    }
+                )
+        return dg.MaterializeResult(metadata=metadata)
+
+    return _asset
 
 
-def special_segment_asset(registry: str, url: str) -> dg.AssetsDefinition:
+def special_segment_asset(
+    registry: str,
+    url: str,
+    retry_policy: dg.RetryPolicy | None = LOADER_RETRY_POLICY,
+) -> dg.AssetsDefinition:
     @dg.asset(
         name=f"ip_registry_special_segments_{registry}",
         group_name=GROUP_NAME,
         kinds={"python", "clickhouse", "rir"},
         pool=tables.IP_REGISTRY_POOL,
+        retry_policy=retry_policy,
         description=f"Downloads {url} and its .md5, verifies the whole file and stores its "
         "available/reserved ipv4/ipv6 ranges and its whole-block allocated/assigned records as "
         "the snapshot dated by the file's end date, then reloads the special-segment trie.",
@@ -439,14 +607,13 @@ def special_segment_asset(registry: str, url: str) -> dg.AssetsDefinition:
             database=tables.DATABASE,
             tables=(tables.SNAPSHOTS_TABLE, tables.SPECIAL_TABLE, tables.HOLDER_TABLE),
         )
-        body, _ = fetch(url)
-        md5_body, _ = fetch(url + ".md5")
+        body, md5_text = fetch_delegated(url)
         with clickhouse.get_connection() as client:
             result = load_delegated_source(
                 client,
                 registry,
                 body=body,
-                md5_text=md5_body.decode("utf-8"),
+                md5_text=md5_text,
                 url=url,
                 allow_shrink=config.allow_shrink,
             )
@@ -457,6 +624,7 @@ def special_segment_asset(registry: str, url: str) -> dg.AssetsDefinition:
     return _asset
 
 
+ip_registry_iana_blocks = iana_blocks_asset()
 special_segment_assets = [
     special_segment_asset(registry, url) for registry, url in tables.RIR_SOURCES.items()
 ]

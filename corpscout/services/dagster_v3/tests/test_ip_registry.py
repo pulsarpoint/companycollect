@@ -888,27 +888,64 @@ def dated_ripencc(day: bytes, body: bytes | None = None) -> dict:
     }
 
 
+def loader_assets():
+    """The loader assets without their retry policy (a failing step must not wait 5 minutes)."""
+    return [
+        assets.iana_blocks_asset(retry_policy=None),
+        *(
+            assets.special_segment_asset(registry_name, url, retry_policy=None)
+            for registry_name, url in tables.RIR_SOURCES.items()
+        ),
+    ]
+
+
 def refresh(resource, **config):
+    loaders = loader_assets()
     return dg.materialize(
-        [
-            assets.ip_registry_iana_blocks,
-            *assets.special_segment_assets,
-            assets.rdap_network_registry_class,
-            *assets.checks,
-        ],
+        [*loaders, assets.rdap_network_registry_class, *assets.checks],
         resources={"clickhouse": resource},
         run_config=(
-            {
-                "ops": {
-                    asset.op.name: {"config": config}
-                    for asset in assets.special_segment_assets
-                }
-            }
+            {"ops": {asset.op.name: {"config": config} for asset in loaders[1:]}}
             if config
             else None
         ),
         raise_on_error=False,
     )
+
+
+def republished_ripencc() -> bytes:
+    """The RIPE excerpt re-published for the same date: RIPE allocated the available
+    85.8.248.0/21, and 2a00::/22 shrank to a /24 (no longer a holder block)."""
+    return (
+        RIPENCC_EXCERPT.read_bytes()
+        .replace(
+            b"ripencc||ipv4|85.8.248.0|2048||available\n",
+            b"ripencc|SE|ipv4|85.8.248.0|2048|20260924|allocated|x\n",
+        )
+        .replace(b"ripencc|DE|ipv6|2a00::|22|", b"ripencc|DE|ipv6|2a00::|24|")
+    )
+
+
+def fail_insert(monkeypatch, sql: str):
+    """Make every insert of one statement raise; returns the real insert_rows to restore."""
+    real = assets.insert_rows
+
+    def insert_rows(client, statement, rows):
+        if statement == sql:
+            raise RuntimeError("injected insert failure")
+        real(client, statement, rows)
+
+    monkeypatch.setattr(assets, "insert_rows", insert_rows)
+    return real
+
+
+def ripencc_rows(client, table: str, *, final: bool) -> list[str]:
+    return [
+        start
+        for (start,) in client.execute(
+            f"SELECT start_address FROM corpscout.{table} {'FINAL' if final else ''} WHERE registry = 'ripencc' ORDER BY start_address"
+        )
+    ]
 
 
 def test_refresh_loads_every_source_classifies_and_passes_the_checks(
@@ -1031,14 +1068,7 @@ def test_a_republished_same_date_file_replaces_its_snapshot(clean, monkeypatch):
     # Same end date, different content: RIPE allocated the available 85.8.248.0/21, and the
     # 2a00::/22 record shrank to a /24 (no longer a holder block). IANA re-published the IPv4
     # file under the same Last-Modified without the 240/8 row.
-    changed = (
-        RIPENCC_EXCERPT.read_bytes()
-        .replace(
-            b"ripencc||ipv4|85.8.248.0|2048||available\n",
-            b"ripencc|SE|ipv4|85.8.248.0|2048|20260924|allocated|x\n",
-        )
-        .replace(b"ripencc|DE|ipv6|2a00::|22|", b"ripencc|DE|ipv6|2a00::|24|")
-    )
+    changed = republished_ripencc()
     iana_ipv4 = (FIXTURES / "iana-ipv4-excerpt.csv").read_bytes()
     iana_lines = iana_ipv4.splitlines(keepends=True)
     dropped_line = next(line for line in iana_lines if line.startswith(b"240/8"))
@@ -1062,16 +1092,15 @@ def test_a_republished_same_date_file_replaces_its_snapshot(clean, monkeypatch):
     assert client.execute(
         "SELECT snapshot_date, checksum, segments_ipv4, holders_ipv4, holders_ipv6 FROM corpscout.ip_registry_snapshots FINAL WHERE source = 'ripencc'"
     ) == [(date(2026, 9, 24), hashlib.md5(changed).hexdigest(), 1, 1, 0)]
-    assert client.execute(
-        "SELECT start_address FROM corpscout.ip_registry_special_segments FINAL WHERE registry = 'ripencc'"
-    ) == [("5.134.16.0",)]
-    assert client.execute(
-        "SELECT start_address FROM corpscout.ip_registry_holder_blocks FINAL WHERE registry = 'ripencc'"
-    ) == [("25.0.0.0",)]
+    # Exactly the new rows, with and without FINAL: the older versions were deleted.
+    for final in (True, False):
+        assert ripencc_rows(client, tables.SPECIAL_TABLE, final=final) == ["5.134.16.0"]
+        assert ripencc_rows(client, tables.HOLDER_TABLE, final=final) == ["25.0.0.0"]
     assert special_of(client, "85.8.250.1") == ("", "", 0, 0)
-    assert client.execute(
-        "SELECT count() FROM corpscout.ip_registry_iana_blocks FINAL WHERE source = 'iana_ipv4'"
-    ) == [(26,)]
+    for final in ("FINAL", ""):
+        assert client.execute(
+            f"SELECT count() FROM corpscout.ip_registry_iana_blocks {final} WHERE source = 'iana_ipv4'"
+        ) == [(26,)]
     assert iana_of(client, "240.0.0.1") == ("", "", "")
 
 
@@ -1217,3 +1246,192 @@ def test_definitions_expose_the_daily_job_stopped_by_default():
         *(f"ip_registry_special_segments_{r}" for r in tables.RIR_SOURCES),
     }
     assert len(assets.checks) == 7
+
+
+def test_a_failed_same_date_republish_keeps_the_current_rows_visible_and_a_retry_converges(
+    clean, monkeypatch
+):
+    """Ruling R5: a re-published current snapshot is never empty or partial for readers."""
+    client, resource = clean
+    stored = insert_case_networks(client)
+    fixture_http(monkeypatch)
+    assert refresh(resource).success
+    original = hashlib.md5(RIPENCC_EXCERPT.read_bytes()).hexdigest()
+    changed = republished_ripencc()
+    available = stored["ripencc:AVAILABLE"][0]
+    assert per_miss_sql(client, available) == (0, "unallocated")
+    # The re-published file dies after its special rows, before its holder rows.
+    fixture_http(monkeypatch, tamper=dated_ripencc(b"20260924", changed))
+    real_insert_rows = fail_insert(monkeypatch, assets.HOLDER_INSERT_SQL)
+    assert not refresh(resource).success
+    assert client.execute(
+        "SELECT checksum FROM corpscout.ip_registry_snapshots FINAL WHERE source = 'ripencc'"
+    ) == [(original,)]
+    # Readers see a superset of the old and the new rows, never an empty snapshot.
+    assert ripencc_rows(client, tables.SPECIAL_TABLE, final=True) == [
+        "5.134.16.0",
+        "85.8.248.0",
+    ]
+    assert client.execute(
+        "SELECT start_address FROM corpscout.ip_registry_special_segments_current WHERE registry = 'ripencc' ORDER BY start_address"
+    ) == [("5.134.16.0",), ("85.8.248.0",)]
+    assert client.execute(
+        "SELECT start_address FROM corpscout.ip_registry_holder_blocks_current WHERE registry = 'ripencc' ORDER BY start_address"
+    ) == [("25.0.0.0",), ("2a00::",)]
+    assert client.execute(
+        "SELECT unheld_rir_block FROM corpscout.ip_registry_iana_blocks_rule_current WHERE prefix = '25.0.0.0/8'"
+    ) == [(0,)]
+    reload_tries(client)
+    assert special_of(client, "85.8.250.1")[:2] == ("ripencc", "available")
+    assert per_miss_sql(client, available) == (0, "unallocated")
+    context = registry.classify_registration(client, available).context
+    assert context.ready and context.special.status == "available"
+    assert client.execute(
+        "SELECT registry_class FROM corpscout.rdap_network_registry_class_current WHERE network_key = 'ripencc:AVAILABLE'"
+    ) == [("unallocated",)]
+    # The retry converges to exactly the new rows and reclassifies.
+    monkeypatch.setattr(assets, "insert_rows", real_insert_rows)
+    result = refresh(resource)
+    assert result.success
+    assert client.execute(
+        "SELECT checksum FROM corpscout.ip_registry_snapshots FINAL WHERE source = 'ripencc'"
+    ) == [(hashlib.md5(changed).hexdigest(),)]
+    for final in (True, False):
+        assert ripencc_rows(client, tables.SPECIAL_TABLE, final=final) == ["5.134.16.0"]
+        assert ripencc_rows(client, tables.HOLDER_TABLE, final=final) == ["25.0.0.0"]
+    assert special_of(client, "85.8.250.1") == ("", "", 0, 0)
+    assert client.execute(
+        "SELECT registry_class FROM corpscout.rdap_network_registry_class_current WHERE network_key = 'ripencc:AVAILABLE'"
+    ) == [("reusable",)]
+
+
+def test_a_run_that_died_before_deleting_stale_rows_is_repaired_by_the_next_run(
+    clean, monkeypatch
+):
+    client, resource = clean
+    fixture_http(monkeypatch)
+    assert refresh(resource).success
+    changed = republished_ripencc()
+    fixture_http(monkeypatch, tamper=dated_ripencc(b"20260924", changed))
+
+    def delete_fails(*args, **kwargs):
+        raise RuntimeError("injected delete failure")
+
+    real_delete = assets.delete_stale_rows
+    monkeypatch.setattr(assets, "delete_stale_rows", delete_fails)
+    assert not refresh(resource).success
+    # The ledger already names the new file, the stale rows are still visible (a superset).
+    assert client.execute(
+        "SELECT checksum FROM corpscout.ip_registry_snapshots FINAL WHERE source = 'ripencc'"
+    ) == [(hashlib.md5(changed).hexdigest(),)]
+    assert ripencc_rows(client, tables.SPECIAL_TABLE, final=True) == [
+        "5.134.16.0",
+        "85.8.248.0",
+    ]
+    # The same file again: identical to the ledger, but the stored rows do not match it.
+    monkeypatch.setattr(assets, "delete_stale_rows", real_delete)
+    result = refresh(resource)
+    assert result.success
+    metadata = result.asset_materializations_for_node(
+        "ip_registry_special_segments_ripencc"
+    )[0].metadata
+    assert (metadata["loaded"].value, metadata["repaired"].value) == (True, True)
+    for final in (True, False):
+        assert ripencc_rows(client, tables.SPECIAL_TABLE, final=final) == ["5.134.16.0"]
+        assert ripencc_rows(client, tables.HOLDER_TABLE, final=final) == ["25.0.0.0"]
+    again = (
+        refresh(resource)
+        .asset_materializations_for_node("ip_registry_special_segments_ripencc")[0]
+        .metadata
+    )
+    assert (again["loaded"].value, again["repaired"].value) == (False, False)
+
+
+def test_a_failed_new_date_load_keeps_the_old_snapshot_and_a_retry_drops_its_leftovers(
+    clean, monkeypatch
+):
+    client, resource = clean
+    fixture_http(monkeypatch)
+    assert refresh(resource).success
+    # The failed attempt's file lists one more reserved range than the file of the retry.
+    extra = (
+        RIPENCC_EXCERPT.read_bytes()
+        .replace(b"2|ripencc|1790287199|13|", b"2|ripencc|1790287199|14|", 1)
+        .replace(b"ripencc|*|ipv4|*|9|summary", b"ripencc|*|ipv4|*|10|summary", 1)
+        .replace(
+            b"ripencc||ipv4|5.134.16.0|2048||reserved\n",
+            b"ripencc||ipv4|5.134.16.0|2048||reserved\nripencc||ipv4|5.134.24.0|2048||reserved\n",
+        )
+    )
+    fixture_http(monkeypatch, tamper=dated_ripencc(b"20260925", extra))
+    real_insert_rows = fail_insert(monkeypatch, assets.HOLDER_INSERT_SQL)
+    assert not refresh(resource).success
+    assert client.execute(
+        "SELECT snapshot_date FROM corpscout.ip_registry_current_snapshots WHERE source = 'ripencc'"
+    ) == [(date(2026, 9, 24),)]
+    assert client.execute(
+        "SELECT snapshot_date, count() FROM corpscout.ip_registry_special_segments_current WHERE registry = 'ripencc' GROUP BY snapshot_date"
+    ) == [(date(2026, 9, 24), 2)]
+    assert client.execute(
+        "SELECT count() FROM corpscout.ip_registry_special_segments WHERE registry = 'ripencc' AND snapshot_date = '2026-09-25'"
+    ) == [(3,)]  # leftovers of the failed load, not current
+    monkeypatch.setattr(assets, "insert_rows", real_insert_rows)
+    fixture_http(monkeypatch, tamper=dated_ripencc(b"20260925"))
+    assert refresh(resource).success
+    assert client.execute(
+        "SELECT snapshot_date FROM corpscout.ip_registry_current_snapshots WHERE source = 'ripencc'"
+    ) == [(date(2026, 9, 25),)]
+    for table, expected in (
+        (tables.SPECIAL_TABLE, [("5.134.16.0",), ("85.8.248.0",)]),
+        (tables.HOLDER_TABLE, [("25.0.0.0",), ("2a00::",)]),
+    ):
+        assert (
+            client.execute(
+                f"SELECT start_address FROM corpscout.{table} WHERE registry = 'ripencc' AND snapshot_date = '2026-09-25' ORDER BY start_address"
+            )
+            == expected
+        )
+
+
+def test_delegated_download_is_fetched_once_more_on_a_checksum_mismatch(monkeypatch):
+    url = tables.RIR_SOURCES["ripencc"]
+    new = RIPENCC_EXCERPT.read_bytes()
+    md5 = f"MD5 (x) = {hashlib.md5(new).hexdigest()}\n".encode()
+    answers = {url: [b"replaced meanwhile", new], url + ".md5": [md5, md5]}
+    calls = []
+
+    def fetch(requested):
+        calls.append(requested)
+        return answers[requested].pop(0), {}
+
+    monkeypatch.setattr(assets, "fetch", fetch)
+    assert assets.fetch_delegated(url) == (new, md5.decode())
+    assert calls == [url, url + ".md5", url, url + ".md5"]
+
+
+def test_downloads_identify_themselves_and_loaders_retry():
+    class Response:
+        content, headers = b"body", {"Last-Modified": IANA_LAST_MODIFIED}
+
+        def raise_for_status(self):
+            return None
+
+    seen = {}
+
+    def get(url, **kwargs):
+        seen.update(url=url, **kwargs)
+        return Response()
+
+    original = assets.requests.get
+    assets.requests.get = get
+    try:
+        assert assets.fetch("https://example.invalid/file") == (
+            b"body",
+            {"Last-Modified": IANA_LAST_MODIFIED},
+        )
+    finally:
+        assets.requests.get = original
+    assert seen["headers"] == {"User-Agent": "CorpScout ip-registry/1.0"}
+    for asset in (assets.ip_registry_iana_blocks, *assets.special_segment_assets):
+        assert asset.op.retry_policy == dg.RetryPolicy(max_retries=2, delay=300)
+    assert assets.rdap_network_registry_class.op.retry_policy is None
