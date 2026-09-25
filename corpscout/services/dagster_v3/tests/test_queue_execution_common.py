@@ -127,3 +127,11 @@ def test_completion_never_precedes_a_freeze_from_a_faster_clock(store):  # noqa:
     )
     assert task["status"] == "completed"
     assert task["completed_at"] >= task["frozen_at"]
+
+
+def test_explicit_execution_id_only_resumes(store):  # noqa: F811
+    processing, _ = store
+    task_id = draft(processing)
+    with pytest.raises(ValueError, match="No saved execution to resume"):
+        start(processing, task_id, execution_id=str(uuid4()))
+    assert processing.task(task_id)["status"] == "draft"

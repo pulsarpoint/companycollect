@@ -43,6 +43,10 @@ def start_execution(
     if task is None or task["processor"] != processor or task["queue_scope"] is None:
         raise ValueError(f"Expected a {label} draft queue")
     saved = task["config"].get("execution")
+    if execution_id is not None and saved is None:
+        # An explicit id names an execution to resume. Using it for a first start could
+        # adopt another task's request ids and results.
+        raise ValueError("No saved execution to resume; omit execution_id to start")
     identity = execution_id or (
         saved["execution_id"] if saved else default_execution_id or str(uuid4())
     )

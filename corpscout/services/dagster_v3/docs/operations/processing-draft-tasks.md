@@ -52,7 +52,8 @@ adapter must implement activation/completion before adopting this lifecycle.
 
 `processing.input_submissions` stores one receipt per import, not one row per
 domain. It contains `submission_id`, `task_id`, source name, selection config and
-fingerprint, optional immutable manifest URI, status, count, timestamps and error.
+fingerprint, status, count, timestamps and error. `manifest_uri` stays NULL:
+imports stream straight into the processor's ClickHouse entry table.
 The selection config describes source filters/mapping or references a manual
 upload; credentials and bulk inputs do not belong in PostgreSQL.
 
@@ -143,7 +144,7 @@ executions. A new execution clears completion eligibility before being launched.
 Record `inputs_purged_at` only after deletion is verified, preserving task and
 submission metadata, configuration snapshots and results. A cleanup retry checks
 what remains and finishes the same deletion. Never reuse a purged task for a new
-execution; reconstruct a new draft from retained manifests if needed.
+execution; add the inputs to a new draft instead.
 
 Retention duration and cleanup scheduling are intentionally not enabled in this
 schema-only step. No data is automatically deleted by migration 124.
