@@ -504,8 +504,9 @@ function AddressesCard({
         )}
         {intelligence.truncated.addresses ? (
           <p className="mt-3 text-xs text-muted-foreground">
-            Showing the first {numberFormat.format(intelligence.addresses.length)}{" "}
-            bounded address observations.
+            Showing the first{" "}
+            {numberFormat.format(intelligence.addresses.length)} bounded address
+            observations.
           </p>
         ) : null}
       </CardContent>
@@ -959,7 +960,10 @@ function SecurityCard({ snapshots }: { snapshots: WebSecuritySnapshot[] }) {
 }
 
 function AuthorityCard({ snapshots }: { snapshots: WebAuthoritySnapshot[] }) {
-  const latest = snapshots[0];
+  const latest =
+    snapshots.find((row) => row.isCurrentRelease) ??
+    snapshots.find((row) => row.harmonicRank !== null) ??
+    snapshots[0];
   return (
     <Card>
       <CardHeader>
@@ -968,7 +972,8 @@ function AuthorityCard({ snapshots }: { snapshots: WebAuthoritySnapshot[] }) {
           <div>
             <CardTitle>Web graph authority</CardTitle>
             <CardDescription className="mt-1">
-              Common Crawl link-graph measurements and their history.
+              Domain-level Common Crawl rankings by graph coverage date. Lower
+              rank positions are better; positive changes mean improvement.
             </CardDescription>
           </div>
         </div>
@@ -976,17 +981,31 @@ function AuthorityCard({ snapshots }: { snapshots: WebAuthoritySnapshot[] }) {
       <CardContent>
         {latest ? (
           <div className="flex flex-col gap-4">
+            <p className="text-sm text-muted-foreground">
+              {latest.availability === "not_imported"
+                ? "Rankings have not been imported yet"
+                : latest.isCurrentRelease
+                  ? `Latest loaded release: ${latest.crawlId}`
+                  : `Last known measurement: ${latest.crawlId}`}
+              {latest.harmonicRank === null && latest.availability === "loaded"
+                ? " · Domain absent from this release"
+                : ""}
+            </p>
             <dl className="grid gap-3 sm:grid-cols-3">
               <div className="rounded-lg border bg-muted/20 p-3">
                 <dt className="text-muted-foreground text-xs">Harmonic rank</dt>
                 <dd className="mt-1 text-lg font-semibold tabular-nums">
-                  {numberFormat.format(latest.harmonicRank)}
+                  {latest.harmonicRank === null
+                    ? "—"
+                    : numberFormat.format(latest.harmonicRank)}
                 </dd>
               </div>
               <div className="rounded-lg border bg-muted/20 p-3">
                 <dt className="text-muted-foreground text-xs">PageRank rank</dt>
                 <dd className="mt-1 text-lg font-semibold tabular-nums">
-                  {numberFormat.format(latest.pageRankRank)}
+                  {latest.pageRankRank === null
+                    ? "—"
+                    : numberFormat.format(latest.pageRankRank)}
                 </dd>
               </div>
               <div className="rounded-lg border bg-muted/20 p-3">
@@ -994,19 +1013,22 @@ function AuthorityCard({ snapshots }: { snapshots: WebAuthoritySnapshot[] }) {
                   Observed hosts
                 </dt>
                 <dd className="mt-1 text-lg font-semibold tabular-nums">
-                  {compactNumberFormat.format(latest.observedHosts)}
+                  {latest.observedHosts === null
+                    ? "—"
+                    : compactNumberFormat.format(latest.observedHosts)}
                 </dd>
               </div>
             </dl>
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Crawl</TableHead>
+                  <TableHead>Graph release / coverage</TableHead>
                   <TableHead>Harmonic centrality</TableHead>
                   <TableHead>Harmonic rank</TableHead>
                   <TableHead>PageRank</TableHead>
                   <TableHead>PageRank rank</TableHead>
                   <TableHead>Hosts</TableHead>
+                  <TableHead>Position change (harmonic / PageRank)</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -1014,23 +1036,55 @@ function AuthorityCard({ snapshots }: { snapshots: WebAuthoritySnapshot[] }) {
                   <TableRow key={snapshot.crawlId}>
                     <TableCell className="font-mono text-xs">
                       {snapshot.crawlId}
+                      <div>
+                        {snapshot.coverageEnd ?? "Coverage unknown"}
+                        {snapshot.legacy
+                          ? " · Legacy data"
+                          : snapshot.availability === "not_imported"
+                            ? " · Not imported"
+                            : snapshot.harmonicRank === null
+                              ? " · Domain absent"
+                              : ""}
+                        {snapshot.population
+                          ? ` · ${compactNumberFormat.format(snapshot.population)} domains`
+                          : ""}
+                      </div>
                     </TableCell>
                     <TableCell className="tabular-nums">
-                      {snapshot.harmonicCentrality.toLocaleString("en-US", {
+                      {snapshot.harmonicCentrality?.toLocaleString("en-US", {
                         maximumFractionDigits: 4,
-                      })}
+                      }) ?? "—"}
                     </TableCell>
                     <TableCell className="tabular-nums">
-                      {numberFormat.format(snapshot.harmonicRank)}
+                      {snapshot.harmonicRank === null
+                        ? "—"
+                        : numberFormat.format(snapshot.harmonicRank)}
                     </TableCell>
                     <TableCell className="tabular-nums">
-                      {snapshot.pageRank.toExponential(3)}
+                      {snapshot.pageRank?.toExponential(3) ?? "—"}
                     </TableCell>
                     <TableCell className="tabular-nums">
-                      {numberFormat.format(snapshot.pageRankRank)}
+                      {snapshot.pageRankRank === null
+                        ? "—"
+                        : numberFormat.format(snapshot.pageRankRank)}
                     </TableCell>
                     <TableCell className="tabular-nums">
-                      {numberFormat.format(snapshot.observedHosts)}
+                      {snapshot.observedHosts === null
+                        ? "—"
+                        : numberFormat.format(snapshot.observedHosts)}
+                    </TableCell>
+                    <TableCell>
+                      {snapshot.harmonicRankChange == null
+                        ? "—"
+                        : new Intl.NumberFormat("en-US", {
+                            signDisplay: "always",
+                          }).format(snapshot.harmonicRankChange)}{" "}
+                      /{" "}
+                      {snapshot.pageRankChange == null
+                        ? "—"
+                        : new Intl.NumberFormat("en-US", {
+                            signDisplay: "always",
+                          }).format(snapshot.pageRankChange)}
                     </TableCell>
                   </TableRow>
                 ))}

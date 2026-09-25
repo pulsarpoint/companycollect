@@ -146,3 +146,41 @@ describe("WebIntelligenceSection", () => {
     expect(html).toContain("CC-MAIN-2026-30");
   });
 });
+
+it("distinguishes an absent domain from an unimported ranking release", () => {
+  const snapshot = {
+    ...intelligence.authoritySnapshots[0],
+    harmonicRank: null,
+    harmonicCentrality: null,
+    pageRank: null,
+    pageRankRank: null,
+    observedHosts: null,
+  };
+  const html = renderToStaticMarkup(
+    <WebIntelligenceSection
+      intelligence={{
+        ...intelligence,
+        authoritySnapshots: [
+          {
+            ...snapshot,
+            crawlId: "cc-main-2026-jul-aug-sep",
+            coverageEnd: "2026-09-01",
+            isCurrentRelease: true,
+            availability: "loaded",
+            population: 200,
+          },
+          {
+            ...snapshot,
+            crawlId: "cc-main-2026-jun-jul-aug",
+            coverageEnd: "2026-08-01",
+            availability: "not_imported",
+          },
+        ],
+      }}
+    />,
+  );
+  expect(html).toContain("Domain absent");
+  expect(html).toContain("Not imported");
+  expect(html).toContain("200 domains");
+  expect(html).not.toContain("NaN");
+});

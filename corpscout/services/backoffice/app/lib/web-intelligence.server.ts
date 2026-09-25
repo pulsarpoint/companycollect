@@ -1,3 +1,7 @@
+import {
+  graphReleases,
+  loadedRankingReleases,
+} from "~/lib/commoncrawl-graph.server";
 import { chQuery } from "~/lib/clickhouse.server";
 import type {
   CompanyWebIntelligence,
@@ -226,7 +230,7 @@ const pageSignalsSql = `SELECT
 FROM commoncrawl_page_signals
 PREWHERE root_domain = {domain:String}
 ORDER BY crawl_id DESC, resolved_at DESC
-LIMIT 24`;
+`;
 
 const pageMetadataSql = `SELECT
   crawl_id,
@@ -241,7 +245,7 @@ const pageMetadataSql = `SELECT
 FROM commoncrawl_domain_page_meta
 PREWHERE root_domain = {domain:String}
 ORDER BY crawl_id DESC, resolved_at DESC
-LIMIT 24`;
+`;
 
 const securitySql = `SELECT
   crawl_id,
@@ -251,7 +255,7 @@ const securitySql = `SELECT
 FROM commoncrawl_domain_security
 PREWHERE root_domain = {domain:String}
 ORDER BY crawl_id DESC, resolved_at DESC
-LIMIT 24`;
+`;
 
 const authoritySql = `SELECT
   crawl_id,
@@ -264,7 +268,7 @@ const authoritySql = `SELECT
 FROM commoncrawl_domain_graph_signals
 PREWHERE root_domain = {domain:String}
 ORDER BY crawl_id DESC, resolved_at DESC
-LIMIT 24`;
+`;
 
 /**
  * Mirrors ReplacingMergeTree latest-row semantics after a root-domain-pruned
@@ -494,6 +498,97 @@ function authoritySnapshots(rows: AuthorityRow[]): WebAuthoritySnapshot[] {
     }));
 }
 
+export async function loadAuthoritySnapshots(
+  domain: string,
+): Promise<WebAuthoritySnapshot[]> {
+  const legacy = authoritySnapshots(
+    await chQuery<AuthorityRow>(authoritySql, { domain }),
+  );
+  if (!process.env.COMMONCRAWL_GRAPH_PG_URL) return legacy;
+  const [catalog, loaded] = await Promise.all([
+    graphReleases(),
+    loadedRankingReleases(),
+  ]);
+  const releases = catalog.filter((r) =>
+    loaded.some((l) => l.graph_release === r.graph_release),
+  );
+  const rows = releases.length
+    ? await chQuery<AuthorityRow>(
+        `SELECT graph_release AS crawl_id, cc_harmonic_centrality,
+    cc_harmonic_rank, cc_pagerank, cc_pagerank_rank, n_hosts, toString(loaded_at) AS resolved_at
+    FROM corpscout.commoncrawl_domain_graph_ranks PREWHERE root_domain={domain:String}
+    WHERE graph_release IN {releases:Array(String)}`,
+        { domain, releases: releases.map((r) => r.graph_release) },
+      )
+    : [];
+  const normalized = authoritySnapshots(rows);
+  const latest = releases.find((r) => r.coverage_end !== null)?.graph_release;
+  const history: WebAuthoritySnapshot[] = catalog
+    .filter((release) => release.ranks_available || releases.includes(release))
+    .map((release) => {
+      const published = loaded.find(
+        (r) => r.graph_release === release.graph_release,
+      );
+      const old = published
+        ? undefined
+        : legacy.find((r) => r.crawlId.toLowerCase() === release.graph_release);
+      return {
+        ...(normalized.find((r) => r.crawlId === release.graph_release) ??
+          old ?? {
+            harmonicCentrality: null,
+            harmonicRank: null,
+            pageRank: null,
+            pageRankRank: null,
+            observedHosts: null,
+            observedAt: "",
+          }),
+        crawlId: release.graph_release,
+        coverageEnd: release.coverage_end,
+        isCurrentRelease: release.graph_release === latest,
+        legacy: Boolean(old),
+        availability: published ? "loaded" : old ? "legacy" : "not_imported",
+        population: published?.rows ? Number(published.rows) : undefined,
+      };
+    });
+  for (const row of legacy) {
+    const canonical = row.crawlId.toLowerCase();
+    if (history.some((r) => r.crawlId === canonical)) continue;
+    history.push({
+      ...row,
+      crawlId: canonical,
+      coverageEnd:
+        catalog.find((r) => r.graph_release === canonical)?.coverage_end ??
+        null,
+      isCurrentRelease: false,
+      legacy: true,
+      availability: "legacy",
+    });
+  }
+  history.sort((a, b) =>
+    (b.coverageEnd ?? "").localeCompare(a.coverageEnd ?? ""),
+  );
+  for (let i = 0; i < history.length - 1; i++) {
+    const current = history[i],
+      previous = history[i + 1];
+    if (
+      !current.coverageEnd ||
+      !previous.coverageEnd ||
+      current.legacy ||
+      previous.legacy
+    )
+      continue;
+    current.harmonicRankChange =
+      current.harmonicRank !== null && previous.harmonicRank !== null
+        ? previous.harmonicRank - current.harmonicRank
+        : null;
+    current.pageRankChange =
+      current.pageRankRank !== null && previous.pageRankRank !== null
+        ? previous.pageRankRank - current.pageRankRank
+        : null;
+  }
+  return history;
+}
+
 /**
  * Loads bounded, source-linked observations for one exact root domain.
  * Returned claims remain unverified website evidence; callers must not merge
@@ -513,7 +608,7 @@ export async function getDomainWebIntelligence(
     chQuery<PageSignalRow>(pageSignalsSql, { domain }),
     chQuery<PageMetadataRow>(pageMetadataSql, { domain }),
     chQuery<SecurityRow>(securitySql, { domain }),
-    chQuery<AuthorityRow>(authoritySql, { domain }),
+    loadAuthoritySnapshots(domain),
   ]);
   const coverageRows = await coveragePromise;
   const crawlIds = coverageRows.map((row) => row.crawl_id);
@@ -552,7 +647,7 @@ export async function getDomainWebIntelligence(
     industrySnapshots: industrySnapshots(industryRows, signalRows),
     pageMetadataSnapshots: pageMetadataSnapshots(metadataRows),
     securitySnapshots: securitySnapshots(securityRows),
-    authoritySnapshots: authoritySnapshots(authorityRows),
+    authoritySnapshots: authorityRows,
     truncated: {
       organizationClaims: profileRows.length === MAX_PROFILE_ROWS,
       addresses: addressRows.length === MAX_ADDRESS_ROWS,

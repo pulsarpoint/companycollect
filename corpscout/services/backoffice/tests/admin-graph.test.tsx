@@ -19,7 +19,16 @@ vi.mock("~/lib/domain-graph.server", () => ({
   getDomainGraphImports,
   searchDomainGraph,
 }));
-const { default: AdminGraph, loader } = await import("~/routes/admin-graph");
+vi.mock("~/lib/commoncrawl-graph.server", () => ({
+  graphDashboard: vi.fn().mockResolvedValue(null),
+  graphAction: vi.fn(),
+  GraphRequestError: class extends Error {},
+}));
+const {
+  default: AdminGraph,
+  loader,
+  action,
+} = await import("~/routes/admin-graph");
 
 const release: DomainGraphRelease = {
   graph_release: "cc-main-2026-jun-jul-aug",
@@ -256,4 +265,15 @@ describe("Graph route", () => {
     expect(item).toContain(">Graph<");
     expect(item).toContain('data-active=""');
   });
+});
+
+it("rejects graph actions submitted from another origin", async () => {
+  const request = new Request("https://backoffice.example/admin/graph", {
+    method: "POST",
+    headers: { origin: "https://untrusted.example" },
+    body: new URLSearchParams({ intent: "backfill" }),
+  });
+  await expect(
+    action({ request } as Parameters<typeof action>[0]),
+  ).rejects.toMatchObject({ status: 403 });
 });

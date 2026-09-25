@@ -56,13 +56,18 @@ def test_registered_job_selects_source_both_files_and_publication():
     from dagster_v3.defs.commoncrawl_domain_graph import assets
     from dagster_clickhouse import ClickhouseResource
 
+    from dagster_v3.defs.commoncrawl_domain_graph import rank_assets, retention
+    from dagster_v3.defs.commoncrawl_domain_graph.store import GraphCatalogResource
+    from dagster_v3.defs.common.resources import ObjectStoreResource
+
+    all_assets = [
+        value
+        for module in (assets, rank_assets, retention)
+        for value in vars(module).values()
+        if isinstance(value, dg.AssetsDefinition)
+    ]
     defs = dg.Definitions(
-        assets=[
-            assets.commoncrawl_domain_graph_source,
-            assets.commoncrawl_domain_graph_nodes,
-            assets.commoncrawl_domain_graph_edges,
-            assets.commoncrawl_domain_graph_snapshots,
-        ],
+        assets=all_assets,
         jobs=[assets.commoncrawl_domain_graph_job],
         resources={
             "clickhouse": ClickhouseResource(
@@ -71,15 +76,27 @@ def test_registered_job_selects_source_both_files_and_publication():
                 user="test",
                 password="test",
                 database="corpscout",
-            )
+            ),
+            "graph_catalog": GraphCatalogResource(
+                postgres_url="postgresql://localhost/test"
+            ),
+            "graph_objects": ObjectStoreResource(bucket="commoncrawl-graphs"),
         },
     )
     job = defs.resolve_job_def("commoncrawl_domain_graph_job")
-    assert set(job.asset_layer.executable_asset_keys) == {
-        assets.commoncrawl_domain_graph_source.key,
-        assets.commoncrawl_domain_graph_nodes.key,
-        assets.commoncrawl_domain_graph_edges.key,
-        assets.commoncrawl_domain_graph_snapshots.key,
+    assert {key.to_user_string() for key in job.asset_layer.executable_asset_keys} == {
+        "commoncrawl_domain_graph_" + suffix
+        for suffix in (
+            "source",
+            "nodes_raw",
+            "edges_raw",
+            "nodes",
+            "edges",
+            "snapshots",
+            "ranks_raw",
+            "ranks",
+            "active",
+        )
     }
 
 
@@ -135,6 +152,16 @@ def test_wrong_release_input_is_rejected_before_database_access(name, tiny_sourc
     from dagster_clickhouse import ClickhouseResource
     from dagster_v3.defs.commoncrawl_domain_graph import assets
 
+    from dagster_v3.defs.commoncrawl_domain_graph.download import CachedArtifact
+
+    kind = name.rsplit("_", 1)[1]
+    artifact = (
+        CachedArtifact(
+            assets.graph_artifact(tiny_source, kind), "test", "test", "a" * 64, "test"
+        )
+        if kind in ("nodes", "edges")
+        else None
+    )
     with dg.build_asset_context(partition_key="cc-main-2025-jun-jul-aug") as context:
         with pytest.raises(ValueError, match="release partition"):
             getattr(assets, name)(
@@ -146,5 +173,10 @@ def test_wrong_release_input_is_rejected_before_database_access(name, tiny_sourc
                     user="test",
                     password="test",
                     database="corpscout",
+                ),
+                **(
+                    {name + "_raw": artifact}
+                    if name.endswith(("nodes", "edges"))
+                    else {}
                 ),
             )

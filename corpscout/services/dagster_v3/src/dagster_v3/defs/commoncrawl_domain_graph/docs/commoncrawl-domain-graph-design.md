@@ -1,46 +1,45 @@
-# Common Crawl domain graph
+# Common Crawl domain graph and ranking history
 
-This pipeline loads the complete global directed domain graph into ClickHouse.
-It supports domain discovery for every country, independently of company selection,
-Brave processing, and crawler enrichment. A graph edge means a captured hyperlink,
-not common ownership or even the same industry.
+Updated 2026-09-25. The release catalog, ranking ingestion, safe active-graph switch,
+and latest-only graph retention supersede the original manual-import workflow below.
+All historical rankings are retained; only the active full graph remains after cleanup.
 
-## Source and asset flow
+The operational contract, configuration and rollout are documented in
+[Common Crawl graph operations](../../../../../docs/operations/commoncrawl-graph.md).
+The Dagster group remains `commoncrawl_domain_graph`; the full import now selects
+nine partitioned assets. Rankings have a separate two-asset job in the same group.
+Daily discovery and hourly cleanup are unpartitioned jobs. All new automation is
+initially stopped. PostgreSQL owns discovered releases, pinned request manifests,
+and the current graph pointer; ClickHouse owns bulk data. Complete rank partitions
+are their own publication record.
 
-Source: [Common Crawl June–August 2026 domain graph](https://data.commoncrawl.org/projects/hyperlinkgraph/cc-main-2026-jun-jul-aug/index.html).
-The release contains 119,722,885 pay-level domain nodes and 2,450,405,793 directed
-edges. Vertices are 893,039,383 compressed bytes; edges are 9,425,755,189 bytes.
-The graph uses Common Crawl's public-suffix normalization. Node IDs are stable
-within one release only, so every lookup and relationship includes `graph_release`.
+## Source and asset shape
 
-Group: `commoncrawl_domain_graph`. Job: `commoncrawl_domain_graph_job`.
+The source is the Common Crawl **pay-level domain graph**, not the host graph.
+Node IDs belong to one graph release; every relationship includes `graph_release`.
+The initial audit of `cc-main-2026-jun-jul-aug` found 119,722,885 nodes and
+2,450,405,793 directed edges. New releases use their own published counts.
 
 ```text
+commoncrawl_graph_release_catalog                 (unpartitioned)
+
 commoncrawl_domain_graph_source
-  ├── commoncrawl_domain_graph_nodes
-  └── commoncrawl_domain_graph_edges
-          ↓ both validated
-commoncrawl_domain_graph_snapshots
-          ↓ query view
-commoncrawl_domain_connections(graph_release, domain)
+  ├── commoncrawl_domain_graph_nodes_raw → commoncrawl_domain_graph_nodes
+  └── commoncrawl_domain_graph_edges_raw → commoncrawl_domain_graph_edges
+                                                   ↓ both validated
+                                      commoncrawl_domain_graph_snapshots
+commoncrawl_domain_graph_ranks_raw → commoncrawl_domain_graph_ranks
+                                                   ↓ both published
+                                      commoncrawl_domain_graph_active
+
+commoncrawl_domain_graph_cleanup                  (unpartitioned)
 ```
 
-The source asset uses dlt's retrying HTTP session to read the release index,
-published statistics and HTTP file metadata. Dagster persists its typed output
-through the IO manager; the completed snapshot table retains the URLs, ETags,
-counts and publishing run ID. Release is the Dagster dynamic partition key, using
-`commoncrawl_domain_graph_release`. Add `cc-main-2026-jun-jul-aug` in the partition
-picker, select it, and materialize the job. No additional run configuration is needed:
-
-```yaml
-{}
-```
-
-No schedule is enabled. New releases are selected explicitly and retained alongside
-existing releases. The job selects all upstream assets. Each release has separate
-Dagster input storage and step progress, and every downstream asset checks its input
-release against its materialization partition. Concurrent runs for different
-releases cannot overwrite each other's source metadata.
+Discovery registers exact official IDs in the dynamic partition set. Source and
+rank raw assets pin one immutable catalog manifest per import run. A ranks-only
+job does not require graph files. Backoffice queues durable requests; the Dagster
+sensor selects the full or rank job. Both use one partition per run. A manual
+Dagster full import requires discovery first and uses empty run configuration.
 
 ## Storage and ingestion decisions
 
@@ -53,7 +52,7 @@ Migration `000418_corpscout_commoncrawl_domain_graph` owns three tables and a vi
 | `commoncrawl_domain_graph_snapshots` | One published record per complete release, read with `FINAL` |
 | `commoncrawl_domain_connections` | Parameterized view returning connected domains and direction flags |
 
-Raw gzip TSV is parsed by ClickHouse's native `url()` reader. The vertices contain
+Verified cached gzip TSV is parsed by ClickHouse's native `s3()` reader through the `commoncrawl_graph_cache` named collection. The direct `url()` helper remains for isolated legacy-path regression tests. The vertices contain
 `node_id`, reversed domain labels, and host count; SQL reverses the labels into the
 normal domain name. Edges contain two UInt32 IDs. Both native tables are partitioned
 by immutable release. Projections store both access orders and are maintained by
@@ -77,15 +76,13 @@ file-to-ClickHouse load, with no local analytical transform or company filtering
 Staging billions of edges in DuckDB and then exporting Python rows would duplicate
 storage and serialization. ClickHouse itself provides native parsing, bounded
 blocks, sorting, compression and staging validation. Unlike a rolling full-refresh
-register, each named graph release is retained and has a different node-ID namespace.
+register, each named graph release has a different node-ID namespace, and replacement temporarily retains two releases.
 Both Dagster and ClickHouse are therefore partitioned by immutable graph release.
 Backfills use one release per run. This also isolates the source IO-manager output,
 which would otherwise be overwritten by simultaneous releases of an unpartitioned asset.
 
 No monetary values, translatable labels, or contact records exist in this source.
-Domain names are identifiers, not text to translate. No S3 result queue or PostgreSQL
-per-edge progress records are needed: Dagster tracks file steps, while ClickHouse
-owns bulk staging and publication.
+Domain names are identifiers, not text to translate. PostgreSQL stores small release/file/request records, never per-edge progress. Dagster tracks file steps; the object store caches raw gzip; ClickHouse owns bulk staging and publication.
 
 ## Retry and publication contract
 
@@ -110,12 +107,11 @@ owns bulk staging and publication.
   staging table. A cleanup failure logs the staging table name for investigation.
 
 Publication of the two physical tables is not a cross-table transaction. Release
-identity plus the final snapshot marker provides the reader contract. Consumers
-that query base tables directly must first check the snapshot marker themselves.
+identity plus the final snapshot marker provides the reader contract. Consumers resolve the PostgreSQL active pointer once, then use that release for every node/edge query. The snapshot marker is an additional completeness guard, not the current-release selector.
 
 ## SQL usage
 
-Published releases, most recently published first:
+Graph snapshot inventory (publication time is ingestion time; do not use this ordering to choose the active graph):
 
 ```sql
 SELECT graph_release, node_count, edge_count, published_at
@@ -148,8 +144,7 @@ after a full import. Broad hub domains naturally return much larger neighborhood
 
 ## Backoffice graph explorer
 
-Workspace → Graph (`/admin/graph`) searches this view by domain and published
-release. Pasted website URLs are normalized to lowercase hostnames, with `www`
+Workspace → Graph (`/admin/graph`) searches the active full graph by domain. It also manages discovered releases and ranking imports. Pasted website URLs are normalized to lowercase hostnames, with `www`
 removed. Other subdomains are not guessed into registrable domains; use the
 pay-level domain from the source graph, including suffixes such as `.co.uk`.
 
@@ -160,13 +155,14 @@ Clicking a neighbor starts a new graph search in the same release. The evidence
 link opens the existing Common Crawl domain page for further investigation.
 
 Search state and pagination live in the URL. Queries use bound parameters, server-side
-paging (at most 200 rows), and a 20-second per-query limit. The release picker shows
-published snapshots and pending imports from the latest Dagster attempt for each
-release. Pending imports show their status and a run link; active imports refresh
-every 10 seconds while the page is visible. Search remains disabled until the
-snapshot marker is published. Dagster status failures do not block searches of
-published releases. Unpublished graphs, absent domains, isolated domains,
-empty direction filters, and query failures have distinct UI states.
+paging (at most 200 rows), and a 20-second per-query limit. The release picker
+shows the active graph and pending full imports. Retired links explain retention.
+Active imports refresh every 10 seconds while the page is visible. A Dagster
+outage does not block published searches. During a catalog outage, a previously
+read active pointer can be used for up to eight minutes, bounded below the
+retirement grace period; after that the reader fails closed. This avoids guessing
+which snapshot became active. Absent domains, isolated domains, empty direction
+filters and query failures remain distinct UI states.
 
 The UI resolves the searched domain once, then computes direction counts using
 numeric adjacency IDs only. It applies the chosen direction filter before joining

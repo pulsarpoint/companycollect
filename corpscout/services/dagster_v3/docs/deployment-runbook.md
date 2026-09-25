@@ -197,3 +197,11 @@ Rules (see CLAUDE.md "ClickHouse migrations"):
 - **The health-check script has no managed timer.** Deployment-time GraphQL
   checks and systemd restart supervision remain active, but queue repair is not
   independently scheduled by this role.
+
+## Common Crawl graph rollout
+
+The release catalog and new backoffice controls require additive PostgreSQL/ClickHouse
+migrations, a shared application catalog URL, and a ClickHouse S3 named collection.
+Follow [Common Crawl graph operations](operations/commoncrawl-graph.md) for the ordered
+bootstrap, graph adoption, ranking backfill and schedule activation. Do not enable
+cleanup before the existing graph has an authoritative active pointer.

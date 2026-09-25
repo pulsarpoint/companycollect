@@ -93,12 +93,19 @@ export interface WebSecuritySnapshot {
 
 export interface WebAuthoritySnapshot {
   crawlId: string;
-  harmonicCentrality: number;
-  harmonicRank: number;
-  pageRank: number;
-  pageRankRank: number;
-  observedHosts: number;
+  harmonicCentrality: number | null;
+  harmonicRank: number | null;
+  pageRank: number | null;
+  pageRankRank: number | null;
+  observedHosts: number | null;
   observedAt: string;
+  coverageEnd?: string | null;
+  isCurrentRelease?: boolean;
+  availability?: "loaded" | "not_imported" | "legacy";
+  population?: number;
+  legacy?: boolean;
+  harmonicRankChange?: number | null;
+  pageRankChange?: number | null;
 }
 
 export interface CompanyWebIntelligence {

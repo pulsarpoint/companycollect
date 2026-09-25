@@ -1,7 +1,18 @@
+import {
+  graphDashboard,
+  graphAction,
+  GraphRequestError,
+} from "~/lib/commoncrawl-graph.server";
+import { GraphReleases } from "~/components/admin/graph-releases";
 import type { Route } from "./+types/admin-graph";
 import { useEffect, useState } from "react";
 import { LoaderCircleIcon, NetworkIcon, SearchIcon } from "lucide-react";
-import { Form, useNavigation, useRevalidator } from "react-router";
+import {
+  Form,
+  useNavigation,
+  useRevalidator,
+  useActionData,
+} from "react-router";
 import { DomainConnections } from "~/components/admin/domain-connections";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Button } from "~/components/ui/button";
@@ -42,6 +53,7 @@ import type {
 const nf = new Intl.NumberFormat("en-US");
 
 export async function loader({ request }: Route.LoaderArgs) {
+  const dashboard = await graphDashboard().catch(() => null);
   const search = parseDomainGraphSearch(new URL(request.url));
   let releases: DomainGraphRelease[] = [];
   let imports: DomainGraphImport[] = [];
@@ -75,7 +87,10 @@ export async function loader({ request }: Route.LoaderArgs) {
       !imports.some((item) => item.graph_release === search.release)
     ) {
       error =
-        "This graph release is not available. Choose a published release.";
+        dashboard?.releases.find((r) => r.graph_release === search.release)
+          ?.graph_status === "retired"
+          ? "This full graph was retired after a newer release became active. Its rankings remain available in domain history."
+          : "This graph release is not available. Choose the active release.";
     }
     if (!error && search.domain && published) {
       result = await searchDomainGraph(search);
@@ -94,10 +109,33 @@ export async function loader({ request }: Route.LoaderArgs) {
     releases,
     imports,
     importStatusError,
+    dashboard,
     result,
     error,
     failed,
   };
+}
+
+export async function action({ request }: Route.ActionArgs) {
+  if (
+    request.method !== "POST" ||
+    request.headers.get("origin") !== new URL(request.url).origin
+  )
+    throw new Response("Forbidden", { status: 403 });
+  try {
+    return {
+      message: await graphAction(await request.formData()),
+      error: false,
+    };
+  } catch (error) {
+    return {
+      message:
+        error instanceof GraphRequestError
+          ? error.message
+          : "The request could not be completed. Refresh the page to check its status before retrying.",
+      error: true,
+    };
+  }
 }
 
 export function meta() {
@@ -110,10 +148,12 @@ export default function AdminGraph({ loaderData }: Route.ComponentProps) {
     releases,
     imports,
     importStatusError,
+    dashboard,
     result,
     error,
     failed,
   } = loaderData;
+  const feedback = useActionData<typeof action>();
   const [selectedRelease, setSelectedRelease] = useState(search.release);
   useEffect(() => setSelectedRelease(search.release), [search.release]);
   const navigation = useNavigation();
@@ -130,7 +170,13 @@ export default function AdminGraph({ loaderData }: Route.ComponentProps) {
   );
   const { revalidate, state: refreshState } = revalidator;
   useEffect(() => {
-    if (!importing?.active) return;
+    if (
+      !importing?.active &&
+      !dashboard?.releases.some((r) =>
+        ["queued", "launching", "running"].includes(r.status ?? ""),
+      )
+    )
+      return;
     const refresh = () => {
       if (
         document.visibilityState === "visible" &&
@@ -145,7 +191,13 @@ export default function AdminGraph({ loaderData }: Route.ComponentProps) {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", refresh);
     };
-  }, [importing?.active, navigation.state, refreshState, revalidate]);
+  }, [
+    importing?.active,
+    dashboard,
+    navigation.state,
+    refreshState,
+    revalidate,
+  ]);
 
   return (
     <div className="flex flex-1 flex-col gap-6 p-4 md:p-6" aria-busy={loading}>
@@ -156,6 +208,22 @@ export default function AdminGraph({ loaderData }: Route.ComponentProps) {
           out, which link back, and where the connection is mutual.
         </p>
       </header>
+
+      {feedback && (
+        <Alert variant={feedback.error ? "destructive" : "default"}>
+          <AlertDescription>{feedback.message}</AlertDescription>
+        </Alert>
+      )}
+      {dashboard ? (
+        <GraphReleases dashboard={dashboard} busy={loading} />
+      ) : (
+        <Alert>
+          <AlertDescription>
+            Release management is unavailable. The catalog connection and
+            migrations must be configured.
+          </AlertDescription>
+        </Alert>
+      )}
 
       <Form
         key={`${search.domain}\u0000${search.release}`}

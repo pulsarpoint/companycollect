@@ -41,7 +41,7 @@ runtime without embedding the secret in component YAML.
 Three durable assets share 128 static partitions, `hash_000` through `hash_127`:
 
 1. `commoncrawl_webtech_candidates_manifest` selects ordered candidates from
-   `corpscout.commoncrawl_domain_graph_signals FINAL` and writes the input
+   `corpscout.commoncrawl_domain_graph_ranks` and writes the input
    manifest to RustFS.
 2. `commoncrawl_webtech_remote_scan` submits or attaches to the deterministic
    remote scan, then stays `STARTED` while it polls every two seconds with a

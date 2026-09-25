@@ -115,13 +115,22 @@ class WebtechInputConfig(dg.Config):
             or self.select_all
         ):
             raise ValueError("table selection options require source_relation")
-        if (
-            self.harmonic_rank_limit is not None
-            and self.source_relation != "corpscout.commoncrawl_domain_graph_signals"
+        if self.harmonic_rank_limit is not None and self.source_relation not in (
+            "corpscout.commoncrawl_domain_graph_signals",
+            "corpscout.commoncrawl_domain_graph_ranks",
         ):
             raise ValueError(
                 "harmonic_rank_limit is only for the Common Crawl graph source"
             )
+        if self.source_relation == "corpscout.commoncrawl_domain_graph_ranks":
+            if len(self.filters.get("graph_release", [])) != 1:
+                raise ValueError(
+                    "Select exactly one published graph_release for ranking inputs"
+                )
+            if self.source_final:
+                raise ValueError(
+                    "The partitioned rankings table does not require FINAL"
+                )
         return self
 
 
