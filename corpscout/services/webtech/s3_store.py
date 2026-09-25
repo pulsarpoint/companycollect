@@ -16,11 +16,6 @@ class S3Location:
     bucket: str
     key: str
 
-    @property
-    def uri(self) -> str:
-        suffix = f"/{self.key}" if self.key else ""
-        return f"s3://{self.bucket}{suffix}"
-
 
 @dataclass(frozen=True, slots=True)
 class StoredObject:

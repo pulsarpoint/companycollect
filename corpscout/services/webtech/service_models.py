@@ -92,7 +92,10 @@ class ScanRequest(BaseModel):
                     or host.endswith("." + candidate.root_domain)
                 )
             ):
-                raise ValueError("invalid task/page input identity")
+                raise ValueError(
+                    f"invalid task/page input identity: input_id={candidate.input_id!r} "
+                    f"page_url={candidate.page_url!r}"
+                )
         input_ids = [candidate.input_id for candidate in self.candidates]
         if len(input_ids) != len(set(input_ids)):
             raise ValueError("scan request contains duplicate input_ids")
