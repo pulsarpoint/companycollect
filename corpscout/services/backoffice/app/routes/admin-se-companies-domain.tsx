@@ -10,8 +10,6 @@ import {
 import { TechnologySectionTabs } from "~/components/detail/technology-section-tabs";
 import type { TechnologySection } from "~/lib/company-tabs";
 import { DomainConnections } from "~/components/admin/domain-connections";
-import { DomainCrawls } from "~/components/admin/domain-crawls";
-import { loadDomainCrawls } from "~/lib/domain-crawls.server";
 import {
   seCompanyDomainsHref,
   seDomainCompanyColumns,
@@ -76,9 +74,8 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   let result: DomainGraphResult | null = null;
   let companyCounts: Record<string, number> = {};
   let error: string | null = null;
-  let crawlError: string | null = null;
 
-  const [companies, graph, crawls] = await Promise.all([
+  const [companies, graph] = await Promise.all([
     loadSeDomainCompanies(domain),
     (async () => {
       if (!overview) return { release: null, result: null };
@@ -101,10 +98,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
         "The graph could not be loaded. Please retry. Large domains may take longer to query.";
       return { release: null, result: null };
     }),
-    overview ? loadDomainCrawls(domain).catch(() => {
-      crawlError = "Saved crawl results could not be loaded. Refresh crawl status to retry.";
-      return null;
-    }) : Promise.resolve(null),
+
   ]);
   release = graph.release;
   result = graph.result;
@@ -123,8 +117,6 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     result,
     companyCounts,
     error,
-    crawls,
-    crawlError,
   };
 }
 
@@ -145,7 +137,8 @@ export default function AdminSeCompaniesDomain({
     decodeURIComponent(location.pathname)
       .slice(basePath.length)
       .split("/")[1] ?? "";
-  const section: TechnologySection =
+  const section: TechnologySection | "crawl" =
+    suffix === "crawl" ||
     suffix === "web-technologies" ||
     suffix === "infrastructure" ||
     suffix === "web-intelligence" ||
@@ -220,9 +213,8 @@ export default function AdminSeCompaniesDomain({
         basePath={basePath}
         section={section}
         mailSecurity
+        crawl
       />
-      {section === "overview" && <DomainCrawls domain={domain} crawls={loaderData.crawls} error={loaderData.crawlError}
-        onRefresh={() => revalidator.revalidate()} loading={loading} />}
       <Outlet />
 
       {section === "overview" ? (

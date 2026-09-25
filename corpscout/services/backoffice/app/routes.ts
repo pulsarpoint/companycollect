@@ -241,6 +241,7 @@ export default [
       route("domains", "routes/admin-se-companies-domains.tsx"),
       route("domains/:domain", "routes/admin-se-companies-domain.tsx", [
         index("routes/admin-se-domain-technology.tsx"),
+        route("crawl", "routes/admin-se-domain-crawl.tsx"),
         route("web-technologies", "routes/admin-se-domain-web-technologies.tsx"),
         route("web-intelligence", "routes/admin-se-domain-web-intelligence.tsx"),
         route("infrastructure", "routes/admin-se-domain-infrastructure.tsx"),

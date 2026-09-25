@@ -1,3 +1,6 @@
+import { readCrawlArchive } from "~/lib/crawl-results.server";
+import { resultObject } from "~/lib/crawl-results";
+import { crawlFailureReason } from "~/lib/domain-crawl-status";
 import { chQuery } from "~/lib/clickhouse.server";
 import type { DomainCrawlType } from "~/lib/se-domain-selection";
 
@@ -42,4 +45,33 @@ export async function loadDomainCrawls(domain: string): Promise<DomainCrawlSumma
     latest: rows.find(row => row.type === type && row.kind === "latest") ?? null,
     saved: rows.find(row => row.type === type && row.kind === "saved") ?? null,
   }));
+}
+
+/** Read JSON only for known objects belonging to this domain; keep status when an archive is unavailable. */
+export async function loadDomainCrawlDetails(domain: string, selectedType: string | null, previous: boolean) {
+  const crawls = await loadDomainCrawls(domain);
+  const selected = crawls.find(crawl => crawl.type === selectedType) ?? crawls.find(crawl => crawl.latest) ?? crawls[0];
+  const paths = [...new Set(crawls.map(crawl => crawl.latest).concat(previous ? [selected.saved] : [])
+    .filter(result => result?.s3_state === "uploaded" && result.s3_path).map(result => result!.s3_path))];
+  const archives = new Map<string, {payload: Record<string, unknown> | null; error: string | null}>(await Promise.all(paths.map(async path => {
+    try {
+      const archive = await readCrawlArchive(path);
+      if (archive.domain !== domain) throw new Error("Archive domain mismatch");
+      const payload: unknown = JSON.parse(archive.result_json);
+      if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("Invalid result object");
+      return [path, {payload: resultObject(payload), error: null}] as const;
+    } catch {
+      return [path, {payload: null, error: "The saved JSON could not be read. Refresh to retry; the recorded crawl status is still shown."}] as const;
+    }
+  })));
+  const summaries = crawls.map(crawl => {
+    if (!crawl.latest) return crawl;
+    const archive = archives.get(crawl.latest.s3_path);
+    const reason = archive?.payload ? crawlFailureReason(archive.payload) : "";
+    return {...crawl, latest: {...crawl.latest, error: crawl.latest.error || (!crawl.latest.successful ? reason || (archive?.error ? "Failure reason unavailable because the saved JSON could not be read." : "No failure reason was recorded.") : "")}};
+  });
+  const result = previous ? selected.saved : selected.latest;
+  const archive = result ? archives.get(result.s3_path) : null;
+  return {crawls: summaries, selectedType: selected.type, previous, result,
+    payload: archive?.payload ?? null, archiveError: archive?.error ?? null};
 }

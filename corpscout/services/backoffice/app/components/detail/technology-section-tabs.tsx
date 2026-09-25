@@ -8,12 +8,14 @@ export function TechnologySectionTabs({
   search = "",
   mailSecurity = false,
   dnsRecords = false,
+  crawl = false,
 }: {
   basePath: string;
-  section: TechnologySection | "dns";
+  section: TechnologySection | "dns" | "crawl";
   search?: string;
   mailSecurity?: boolean;
   dnsRecords?: boolean;
+  crawl?: boolean;
 }) {
   return (
     <div className="max-w-full overflow-x-auto">
@@ -31,6 +33,7 @@ export function TechnologySectionTabs({
           >
             Overview
           </TabsTrigger>
+          {crawl && <TabsTrigger value="crawl" render={<NavLink to={`${basePath}/crawl${search}`} />} nativeButton={false}>Crawl</TabsTrigger>}
           <TabsTrigger
             value="web-technologies"
             render={<NavLink to={`${basePath}/web-technologies${search}`} />}

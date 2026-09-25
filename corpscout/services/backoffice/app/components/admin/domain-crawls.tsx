@@ -1,18 +1,10 @@
+import { domainCrawlStatus } from "~/lib/domain-crawl-status";
 import { Link } from "react-router";
 import type { DomainCrawlResult, DomainCrawlSummary } from "~/lib/domain-crawls.server";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/ui/table";
-
-function outcome(result: DomainCrawlResult) {
-  if (result.state === "failed" || result.state === "cancelled") return result.state === "failed" ? "Failed" : "Cancelled";
-  if (result.crawl_status === "skip_crawling") return "Skipped by classification";
-  if (result.crawl_status === "needs_review") return "Needs review";
-  if (result.crawl_status === "partial") return "Partial";
-  if (result.crawl_status === "finished" && result.successful) return "Crawled";
-  return result.crawl_status === "failed" ? "Failed" : "Unsuccessful";
-}
 
 function CrawlTime({value}: {value: string}) {
   return <time dateTime={value}>{new Intl.DateTimeFormat("en-GB", {
@@ -41,14 +33,15 @@ export function DomainCrawls({domain, crawls, error, onRefresh, loading}: {
     {error ? <Alert variant="destructive"><AlertTitle>Crawl status unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : crawls && <Table>
       <TableHeader><TableRow><TableHead>Crawl type</TableHead><TableHead>Saved data</TableHead><TableHead>Last crawl status</TableHead><TableHead>Last attempt finished</TableHead><TableHead>Result</TableHead></TableRow></TableHeader>
       <TableBody>{crawls.map(({type, label, latest, saved}) => <TableRow key={type}>
-        <TableCell>{label}</TableCell>
+        <TableCell><Link className="underline underline-offset-4" to={`?type=${type}`}>{label}</Link></TableCell>
         <TableCell><div className="flex flex-col gap-1">
           <span>{saved ? saved.crawl_status === "skip_crawling" ? "Classification only" : "Crawled data available" : latest ? "No successful result" : "No saved data"}</span>
           {saved && <span className="text-xs text-muted-foreground"><CrawlTime value={saved.finished_at} /></span>}
           {saved && latest && (saved.request_id !== latest.request_id || saved.attempt !== latest.attempt) && <span className="text-xs text-muted-foreground">From an earlier attempt</span>}
         </div></TableCell>
         <TableCell><div className="flex max-w-md flex-col gap-1">
-          <Badge variant={!latest ? "outline" : latest.successful ? "secondary" : "destructive"}>{latest ? outcome(latest) : "Not crawled"}</Badge>
+          <Badge variant={!latest ? "outline" : latest.successful ? "secondary" : "destructive"}>{latest ? domainCrawlStatus(latest) : "Not crawled"}</Badge>
+          {latest && <span className="text-xs text-muted-foreground">Recorded outcome: {latest.crawl_status} · Processing: {latest.state}</span>}
           {latest?.error && <p className="whitespace-normal break-words text-xs text-muted-foreground">{latest.error}</p>}
         </div></TableCell>
         <TableCell>{latest ? <CrawlTime value={latest.finished_at} /> : "—"}</TableCell>
