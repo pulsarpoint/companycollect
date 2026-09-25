@@ -7,24 +7,25 @@ import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Field, FieldGroup, FieldLabel } from "~/components/ui/field";
 import { Input } from "~/components/ui/input";
-import { NativeSelect, NativeSelectOption } from "~/components/ui/native-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "~/components/ui/tabs";
-import { QUEUE_PAGE_SIZE, QUEUE_TYPES, parseQueueFilters, queuePath } from "~/lib/queues";
-import { QueueRequestError, loadQueueInputs, loadQueueRuns, loadQueueHistory, startQueueProcessing } from "~/lib/queues.server";
+import { CRAWL_QUEUES, QUEUE_PAGE_SIZE, QUEUE_TYPES, parseQueueFilters, queuePath } from "~/lib/queues";
+import { QueueRequestError, loadCrawlQueueCounts, loadQueueInputs, loadQueueRuns, loadQueueHistory, startQueueProcessing } from "~/lib/queues.server";
 import { DagsterRunConfigValidationError } from "~/lib/dagster.server";
 
 export async function loader({request, params}: Route.LoaderArgs) {
   let filters;
   try { filters = parseQueueFilters(params.type, new URL(request.url).searchParams); }
   catch (error) { throw new Response(error instanceof Error ? error.message : "Invalid queue", {status: 400}); }
-  const [inputs, runState, history] = await Promise.allSettled([loadQueueInputs(filters), loadQueueRuns(filters.task), loadQueueHistory(filters)]);
+  const [inputs, runState, history, crawlCounts] = await Promise.allSettled([loadQueueInputs(filters), loadQueueRuns(filters.task), loadQueueHistory(filters),
+    filters.type === "crawler" ? loadCrawlQueueCounts() : Promise.resolve(null)]);
   if (inputs.status === "rejected") throw inputs.reason;
   if ((filters.type === "webtech" || filters.type === "crawler") && (!filters.task || inputs.value.selectedTotal === 0)) {
     const currentTask = inputs.value.tasks[0]?.task_id ?? "";
     if (currentTask !== filters.task) throw redirect(queuePath(filters, {task: currentTask, page: 1, taskPage: 1}));
   }
   return { filters, inputs: inputs.value,
+    crawlCounts: crawlCounts.status === "fulfilled" ? crawlCounts.value : null,
     history: history.status === "fulfilled" ? history.value : [],
     historyError: history.status === "rejected" ? "Task history is unavailable. Refresh to retry." : null,
     runState: runState.status === "fulfilled" ? runState.value : null,
@@ -51,7 +52,7 @@ export async function action({request, params}: Route.ActionArgs) {
 export function meta() { return [{title: "Queues | CompanyCollect"}]; }
 
 export default function AdminQueue({loaderData}: Route.ComponentProps) {
-  const {filters, inputs, runState, runError, history, historyError} = loaderData;
+  const {filters, inputs, runState, runError, history, historyError, crawlCounts} = loaderData;
   const [searchParams, setSearchParams] = useSearchParams();
   const identity = `${filters.type}:${filters.crawlType}:${filters.task}`;
   const busy = useNavigation().state !== "idle";
@@ -77,6 +78,12 @@ export default function AdminQueue({loaderData}: Route.ComponentProps) {
     <Tabs value={filters.type}><TabsList aria-label="Queue types" className="max-w-full overflow-x-auto">
       {QUEUE_TYPES.map(queue => <TabsTrigger key={queue.id} value={queue.id} nativeButton={false} render={<Link to={`/admin/queues/${queue.id}`} />}>{queue.label}</TabsTrigger>)}
     </TabsList></Tabs>
+    {filters.type === "crawler" && <Tabs value={filters.crawlType}><TabsList aria-label="Crawler queues" className="max-w-full overflow-x-auto">
+      {CRAWL_QUEUES.map(queue => <TabsTrigger key={queue.id} value={queue.id} nativeButton={false}
+        render={<Link to={queuePath(filters, {crawlType: queue.id, task: "", search: "", page: 1, taskPage: 1})} />}>
+        {queue.label}<Badge variant={crawlCounts?.[queue.id] ? "default" : "outline"} aria-label={crawlCounts ? `${crawlCounts[queue.id]} queued ${crawlCounts[queue.id] === 1 ? "entry" : "entries"}` : "Queued entries unavailable"}>{crawlCounts ? crawlCounts[queue.id].toLocaleString() : "–"}</Badge>
+      </TabsTrigger>)}
+    </TabsList></Tabs>}
     <section className="flex flex-col gap-4" aria-label="Queue inputs">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-col gap-1"><h2 className="text-lg font-semibold">{QUEUE_TYPES.find(queue => queue.id === filters.type)?.label} inputs</h2>
@@ -86,10 +93,7 @@ export default function AdminQueue({loaderData}: Route.ComponentProps) {
       {processingBlocked && <p className="text-sm text-muted-foreground" role="status">{processingBlocked}</p>}
       <Form method="get" key={JSON.stringify(filters)}>
         <FieldGroup className="sm:flex-row sm:flex-wrap sm:items-end">
-          {filters.type === "crawler" && <Field className="sm:max-w-48"><FieldLabel htmlFor="queue-crawl-type">Crawler queue</FieldLabel>
-            <NativeSelect id="queue-crawl-type" name="crawlType" defaultValue={filters.crawlType}>
-              <NativeSelectOption value="full">Full crawl</NativeSelectOption><NativeSelectOption value="jobs">Jobs</NativeSelectOption><NativeSelectOption value="site_info">Site information</NativeSelectOption>
-            </NativeSelect></Field>}
+          {filters.type === "crawler" && <input type="hidden" name="crawlType" value={filters.crawlType} />}
           <input type="hidden" name="task" value={filters.task} />
           <Field className="sm:max-w-xs"><FieldLabel htmlFor="queue-search">Search inputs</FieldLabel><Input id="queue-search" name="search" defaultValue={filters.search} placeholder={filters.type === "brave" ? "Company name or country:ID" : filters.type === "ip-enrichment" ? "IP address" : "Domain or page URL"} /></Field>
           <Button type="submit" disabled={busy}>Apply</Button>

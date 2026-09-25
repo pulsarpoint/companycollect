@@ -7,6 +7,11 @@ export const QUEUE_TYPES = [
 ] as const;
 export type QueueType = typeof QUEUE_TYPES[number]["id"];
 export type CrawlQueueType = "full" | "jobs" | "site_info";
+export const CRAWL_QUEUES: readonly {id: CrawlQueueType; label: string}[] = [
+  {id: "full", label: "Full crawl"},
+  {id: "jobs", label: "Jobs"},
+  {id: "site_info", label: "Site information"},
+];
 export const QUEUE_PAGE_SIZE = 25;
 export const QUEUE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const ACTIVE_QUEUE_RUNS = ["QUEUED", "NOT_STARTED", "MANAGED", "STARTING", "STARTED", "CANCELING"] as const;

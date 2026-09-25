@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { QUEUE_TEMPLATES, parseQueueFilters } from "~/lib/queues";
-import { loadQueueInputs, parseQueueConfig, startQueueProcessing } from "~/lib/queues.server";
+import { loadCrawlQueueCounts, loadQueueInputs, parseQueueConfig, startQueueProcessing } from "~/lib/queues.server";
 import { chQuery } from "~/lib/clickhouse.server";
 import { launchRun, listRuns } from "~/lib/dagster.server";
 
@@ -121,4 +121,10 @@ it("distinguishes completed website errors from a failed pipeline run", async ()
   expect(await loadQueueHistory(filters())).toEqual([expect.objectContaining({status: "SUCCESS", outcome: "completed_with_errors", failedPages: 5})]);
   vi.mocked(listRuns).mockResolvedValue([{runId: "failed", status: "FAILURE", startTime: null, tags}] as never);
   expect(await loadQueueHistory(filters())).toEqual([expect.objectContaining({status: "FAILURE", outcome: null, failedPages: null})]);
+});
+
+it("counts crawler queue entries per crawl type, zero for empty queues", async () => {
+  vi.mocked(chQuery).mockResolvedValue([{crawl_type: "site_info", total: "4"}, {crawl_type: "jobs", total: "1200"}]);
+  expect(await loadCrawlQueueCounts()).toEqual({full: 0, jobs: 1200, site_info: 4});
+  expect(vi.mocked(chQuery).mock.calls.at(-1)?.[0]).toContain("FROM corpscout.website_crawl_task_domains GROUP BY crawl_type");
 });

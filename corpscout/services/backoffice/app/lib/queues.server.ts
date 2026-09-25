@@ -3,7 +3,7 @@ import { chQuery } from "~/lib/clickhouse.server";
 import { dagsterRunUrl, launchRun, listRuns } from "~/lib/dagster.server";
 import { objectSettings, parseCrawlSettings } from "~/lib/crawl-settings.server";
 import { assertWebtechAvailable } from "~/lib/webtech-maintenance.server";
-import { ACTIVE_QUEUE_RUNS, QUEUE_NUMBER_LIMITS, QUEUE_PAGE_SIZE, QUEUE_UUID, type QueueFilters } from "~/lib/queues";
+import { ACTIVE_QUEUE_RUNS, QUEUE_NUMBER_LIMITS, QUEUE_PAGE_SIZE, QUEUE_UUID, type CrawlQueueType, type QueueFilters } from "~/lib/queues";
 
 export class QueueRequestError extends Error {}
 
@@ -65,6 +65,15 @@ export async function loadQueueInputs(filters: QueueFilters) {
   return { table: def.table, asset: def.asset, tasks, rows,
     totalInputs: Number(overview[0]?.total ?? 0), totalTasks: Number(overview[0]?.tasks ?? 0),
     selectedTotal: Number(counts[0]?.total ?? 0), matching: Number(counts[0]?.matching ?? 0) };
+}
+
+/** Queued entries per crawler queue (full, jobs, site_info), for the queue tabs. */
+export async function loadCrawlQueueCounts(): Promise<Record<CrawlQueueType, number>> {
+  const rows = await chQuery<{crawl_type: string; total: string}>(
+    "SELECT crawl_type, toString(count()) AS total FROM corpscout.website_crawl_task_domains GROUP BY crawl_type", {});
+  const counts: Record<CrawlQueueType, number> = {full: 0, jobs: 0, site_info: 0};
+  for (const row of rows) if (row.crawl_type in counts) counts[row.crawl_type as CrawlQueueType] = Number(row.total);
+  return counts;
 }
 
 export async function loadQueueRuns(task: string) {
