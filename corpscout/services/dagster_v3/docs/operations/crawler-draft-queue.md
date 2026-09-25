@@ -65,9 +65,10 @@ lock, the results asset:
    computed in SQL) has no row in the results table for this execution (`run_id =
    execution_id`), joined with the current preset. For each page of 500 remaining entries the
    asset builds the payload (`effective_payload`) and skips disabled presets and fresh
-   entries. An entry is fresh when any result for its `(domain, work_key)` with `finished_at`
-   in `[freshness_cutoff, started_at]` was successful — a later failure inside that window
-   never hides that success; `force_refresh` disables only that skip. Skips are not stored;
+   entries. An entry is fresh only when the latest result for its domain with `finished_at`
+   in `[freshness_cutoff, started_at]` was successful and matches its current `work_key`.
+   A later failure, even with different content/model settings, makes the domain eligible
+   again; earlier successful data remains available. `force_refresh` disables only that skip. Skips are not stored;
    they are recomputed on every pass;
 3. keeps at most `max_in_flight` requests outstanding. Dispatch always **POSTs** the request
    (`POST /v1/crawls`); there is no GET-first check. The crawler treats an identical re-POST of

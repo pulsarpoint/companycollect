@@ -68,7 +68,11 @@ duplicate writes of the same attempt. `*_latest` selects the newest attempt, inc
 failures, per `(domain, work_key)`. `*_latest_success` selects the newest valid response
 for that same domain/effective content configuration. Failed,
 partial and needs-review outcomes remain in history but do not satisfy freshness.
-An unsuccessful later response never hides an earlier fresh success. API/model,
+Freshness uses the latest attempt for the domain within the execution's frozen
+window, including attempts with a different model/configuration. A later failed,
+partial or needs-review result makes the domain eligible again; an older saved
+success remains queryable but cannot suppress that retry. The latest successful
+attempt must also match the requested work key. API/model,
 page selection, content limits and artifact requirements affect the work key;
 priority, browser mode and CAPTCHA agent settings do not.
 

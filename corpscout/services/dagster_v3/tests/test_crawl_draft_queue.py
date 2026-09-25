@@ -542,7 +542,8 @@ def test_request_id_matches_between_sql_and_python(db):
     assert from_sql.startswith("dagster-crawl-") and len(from_sql) == 14 + 64
 
 
-def test_remaining_excludes_own_results_fresh_successes_and_disabled_presets(db):
+@pytest.mark.parametrize("changed_model", [False, True])
+def test_remaining_excludes_own_results_fresh_successes_and_disabled_presets(db, changed_model):
     client, resource, _, _ = db
     task_id = add(db, targets=["one.example", "two.example", "three.example"])[
         "task_id"
@@ -610,13 +611,13 @@ def test_remaining_excludes_own_results_fresh_successes_and_disabled_presets(db)
         )
         assert [item["domain"] for item in dispatchable] == ["three.example"]
         assert count_unresolved(connection, task, "site_info", config) == 1
-        # A later failure inside the window never hides the earlier success.
+        # A later failure requires a new crawl, including failure with another model.
         publish(
             client,
             domain="two.example",
             request_id="other-4",
             run_id="other",
-            work_key=items["two.example"]["work_key"],
+            work_key="other-model" if changed_model else items["two.example"]["work_key"],
             successful=False,
             finished_at=started_at - timedelta(minutes=30),
         )
@@ -626,7 +627,8 @@ def test_remaining_excludes_own_results_fresh_successes_and_disabled_presets(db)
             for item in dispatchable_entries(
                 connection, rows, task=task, crawl_type="site_info", config=config
             )
-        ] == ["three.example"]
+        ] == ["three.example", "two.example"]
+        assert count_unresolved(connection, task, "site_info", config) == 2
         # A disabled preset is a skip, not work; pages are read with a cursor.
         client.execute(
             "INSERT INTO corpscout.website_site_info_requests SELECT * EXCEPT bucket REPLACE (false AS enabled, 2 AS revision) FROM corpscout.website_site_info_requests_current WHERE domain='three.example'"

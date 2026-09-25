@@ -168,6 +168,37 @@ def read_rows(client, sql: str, params: dict) -> list[dict]:
     return [dict(zip(names, value, strict=True)) for value in values]
 
 
+def fresh_crawl_results(
+    client,
+    crawl_type: str,
+    domains: tuple[str, ...],
+    *,
+    cutoff: datetime,
+    started: datetime,
+) -> set[tuple[str, str]]:
+    """Only the latest attempt per domain can satisfy the frozen freshness window."""
+    if not domains:
+        return set()
+    return set(
+        client.execute(
+            f"""SELECT domain, work_key FROM (
+                SELECT domain, work_key, successful
+                FROM {RESULTS_BY_TYPE[crawl_type]} FINAL
+                WHERE domain IN %(domains)s
+                  AND finished_at >= toDateTime64(%(cutoff)s, 6, 'UTC')
+                  AND finished_at <= toDateTime64(%(started)s, 6, 'UTC')
+                ORDER BY finished_at DESC, request_id DESC, attempt DESC
+                LIMIT 1 BY domain
+            ) WHERE successful""",
+            {
+                "domains": domains,
+                "cutoff": cutoff.strftime("%Y-%m-%d %H:%M:%S.%f"),
+                "started": started.strftime("%Y-%m-%d %H:%M:%S.%f"),
+            },
+        )
+    )
+
+
 def result_record(submission: dict, job: dict, result: dict) -> dict:
     if job["request_id"] != submission["request_id"]:
         raise ValueError("Crawler returned a different request identity")
@@ -448,11 +479,13 @@ def process_crawls(
                 if not rows:
                     break
                 domains = tuple(row["domain"] for row in rows)
-                successes = client.execute(
-                    f"SELECT domain, work_key FROM {table}_latest_success WHERE domain IN %(domains)s AND finished_at >= %(cutoff)s",
-                    {"domains": domains, "cutoff": cutoff},
+                fresh = fresh_crawl_results(
+                    client,
+                    crawl_type,
+                    domains,
+                    cutoff=cutoff,
+                    started=datetime.fromisoformat(execution["started_at"]),
                 )
-                fresh = set(successes)
                 # Do not repeat a domain in a retried/manual batch, including failed results.
                 existing = set(
                     row[0]

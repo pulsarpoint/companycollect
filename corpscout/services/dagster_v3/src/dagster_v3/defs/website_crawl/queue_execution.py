@@ -29,6 +29,7 @@ from dagster_v3.defs.website_crawl.results import (
     INPUTS_BY_TYPE,
     RESULTS_BY_TYPE,
     effective_payload,
+    fresh_crawl_results,
     read_rows,
     result_record,
 )
@@ -158,20 +159,16 @@ def remaining_crawl_entries(
 def fresh_work_keys(
     client, task: dict, crawl_type: str, pairs: list[tuple[str, str]]
 ) -> set:
-    """(domain, work_key) pairs with a success inside the frozen window (a later failure never hides it)."""
-    if not pairs:
-        return set()
-    return set(
-        client.execute(
-            f"""SELECT domain, work_key FROM {RESULTS_BY_TYPE[crawl_type]} FINAL
-            WHERE (domain, work_key) IN %(pairs)s
-              AND finished_at >= toDateTime64(%(cutoff)s, 6, 'UTC')
-              AND finished_at <= toDateTime64(%(started)s, 6, 'UTC')
-            GROUP BY domain, work_key
-            HAVING max(successful)""",
-            {**crawl_parameters(task, crawl_type), "pairs": tuple(pairs)},
-        )
-    )
+    """Latest domain outcomes are checked before matching the requested content settings."""
+    execution = task["config"]["execution"]
+    return fresh_crawl_results(
+        client,
+        crawl_type,
+        tuple(sorted({domain for domain, _ in pairs})),
+        cutoff=datetime.fromisoformat(execution["freshness_cutoff"]),
+        started=datetime.fromisoformat(execution["started_at"]),
+    ).intersection(pairs)
+
 
 
 def dispatchable_entries(

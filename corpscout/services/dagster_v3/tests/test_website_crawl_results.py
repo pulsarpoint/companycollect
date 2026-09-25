@@ -284,7 +284,7 @@ def test_trailing_fresh_inputs_are_counted_once(database, crawler, batch_size):
     assert len(saved) == 2
 
 
-def test_partial_does_not_satisfy_freshness_and_later_failure_does_not_hide_success(
+def test_new_failure_invalidates_freshness_but_preserves_earlier_saved_data(
     database, crawler
 ):
     client, _, _ = database
@@ -301,7 +301,7 @@ def test_partial_does_not_satisfy_freshness_and_later_failure_does_not_hide_succ
     assert run(database, domains=["a.example"], force_refresh=True).success
     assert len(saved) == 3
     assert run(database, domains=["a.example"]).success
-    assert len(saved) == 3
+    assert len(saved) == 4
     assert client.execute(
         "SELECT count() FROM corpscout.website_site_info_results_latest_success"
     ) == [(1,)]
