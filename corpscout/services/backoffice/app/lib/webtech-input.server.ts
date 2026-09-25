@@ -12,7 +12,6 @@ export interface WebtechInputRow {
   source_name: string;
   source_record_id: string;
   submitted_at: string;
-  bucket: number;
 }
 
 export async function listWebtechInputs(filters: WebtechInputFilters) {
@@ -24,7 +23,7 @@ export async function listWebtechInputs(filters: WebtechInputFilters) {
   const [rows, counts] = await Promise.all([
     chQuery<WebtechInputRow>(
       `SELECT task_id,input_id,root_domain,website_origin,page_url,source_name,source_record_id,
-        bucket,toString(submitted_at) AS submitted_at
+        toString(submitted_at) AS submitted_at
        FROM corpscout.webtech_scan_input WHERE ${where}
        ORDER BY submitted_at DESC,task_id,input_id LIMIT {limit:UInt32} OFFSET {offset:UInt64}`,
       params,

@@ -41,7 +41,10 @@ class ClickHouseInputQueue:
         expected = (
             ("input_id", "tuple(input_id)")
             if self.selection_task_id is None
-            else ("input_id, task_id", "tuple(input_id, task_id)")
+            # "task_id, input_id" is the task-partitioned queue contract
+            # (PARTITION BY task_id, ORDER BY (task_id, input_id)); the other
+            # two forms are the older single-table convention.
+            else ("input_id, task_id", "task_id, input_id", "tuple(input_id, task_id)")
         )
         if sorting_key not in expected:
             raise ValueError("input queue sorting key requires its selection task_id")

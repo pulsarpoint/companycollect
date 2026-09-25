@@ -50,10 +50,15 @@ The API contract is intentionally small:
 - `POST /v1/scans/{scan_id}/cancel`
 
 All `/v1` routes require `Authorization: Bearer $WEBTECH_API_TOKEN`. Dagster
-writes the candidate manifest to RustFS and submits its URI plus SHA-256. The
-service derives an idempotent scan ID from that content and its scanner settings,
-stores each terminal domain result before reusing its worker slot, emits one
-progress event per 20 stored results, and writes `final-manifest.json` last.
+writes the candidate manifest to RustFS and submits its URI plus SHA-256.
+The service derives an idempotent scan ID from that content and its scanner settings.
+Queue pages (candidates with an `input_id`) are stored once per execution at
+`scans/detector_version=…/crawl_id=…/pages/input_id=…/report.json`, so a later
+envelope of the same execution reuses every page already done. Common Crawl
+candidates keep per-scan result objects. Each progress event (one per 20 stored
+results) carries the stored result references of its window; the first event of a
+scan that reused stored pages carries those references. `final-manifest.json` is
+still written last and lists every result of the scan.
 
 The service writes lifecycle logs for scan acceptance, start, every 20-result
 progress window, periodic heartbeat, stalled progress, completion, failure, and
@@ -72,7 +77,15 @@ worker moves on. If a scan still makes no progress for 10 minutes, the service
 marks it `failed` and frees the slot.
 
 Only one scan can be active because one workstation owns the configured browser
-capacity. Dagster's asset step submits the scan and polls it with zero-wait
+capacity. A submit while another execution's scan is pending or running is
+rejected with `409 Conflict`. A submit for a different envelope of the *same*
+execution (same `crawl_id`, different scan ID) supersedes the active scan: the
+service cancels it, logs `Webtech scan superseded old=… new=… crawl_id=…`, and
+accepts the new envelope. Pages the superseded scan already stored are recovered
+from the execution's page objects and reported in the new scan's first event, so
+a resumed Dagster run never waits for an orphaned scan of its own execution.
+Resubmitting the identical envelope reattaches to its scan instead.
+Dagster's asset step submits the scan and polls it with zero-wait
 status requests every two seconds; after 15 minutes without progress it cancels
 the remote scan and fails the step so a run retry resubmits. If the process
 restarts or a scan failed, the resubmission reconstructs already completed

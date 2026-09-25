@@ -70,7 +70,7 @@ def database(server):
     client.execute("DROP TABLE IF EXISTS corpscout.webtech_scan_input")
     client.execute("DROP TABLE IF EXISTS corpscout.webtech_domain_scan_results")
     client.execute(
-        "CREATE TABLE corpscout.webtech_domain_scan_results (root_domain String,website_origin String,page_url String,detector_version String,scanned_at DateTime64(3,'UTC'),scan_id String,outcome String) ENGINE=ReplacingMergeTree ORDER BY (root_domain,website_origin,page_url,detector_version,scan_id)"
+        "CREATE TABLE corpscout.webtech_domain_scan_results (root_domain String,website_origin String,page_url String,detector_version String,scanned_at DateTime64(3,'UTC'),scan_id String,outcome String,crawl_id String DEFAULT '') ENGINE=ReplacingMergeTree ORDER BY (root_domain,website_origin,page_url,detector_version,scan_id)"
     )
     migration = (
         Path(__file__).parents[3]
@@ -79,6 +79,11 @@ def database(server):
     for statement in migration.read_text().split(";"):
         if statement.strip():
             client.execute(statement)
+    for name in ("000446_corpscout_webtech_queue_contract.up.sql",):
+        path = Path(__file__).parents[3] / "clickhouse/migrations" / name
+        for statement in path.read_text().split(";"):
+            if statement.strip():
+                client.execute(statement)
     return client, resource
 
 
@@ -101,7 +106,6 @@ def add(resource, processing, objects, *, submission_id=None, **config):
         run_id=str(uuid4()),
         clickhouse=resource,
         store=processing,
-        object_store=objects,
     )
 
 
@@ -200,7 +204,7 @@ def test_asset_appends_sources_and_keeps_recent_pages(database, store, objects):
         )
 
 
-def test_retry_after_committed_write_uses_manifest_not_changed_source(
+def test_retry_replaces_only_its_own_rows_from_the_current_source(
     database, store, objects, monkeypatch
 ):
     from dagster_v3.defs.webtech import input as module
@@ -213,6 +217,9 @@ def test_retry_after_committed_write_uses_manifest_not_changed_source(
     )
     client.execute(
         "INSERT INTO corpscout.webtech_test_source VALUES ('1','novelic.com','SE'),('2','example.org','DE')"
+    )
+    other = add(
+        resource, processing, objects, targets=["other.se"], source_name="manual"
     )
     submission_id = str(uuid4())
     config = dict(
@@ -236,13 +243,17 @@ def test_retry_after_committed_write_uses_manifest_not_changed_source(
         "INSERT INTO corpscout.webtech_test_source VALUES ('3','example.com','SE')"
     )
     result = add(resource, processing, objects, **config)
-    assert result["total"] == 1
-    assert client.execute(
-        "SELECT root_domain,source_record_id FROM corpscout.webtech_scan_input"
-    ) == [("novelic.com", "1")]
-    # A new import ID intentionally sees the newer source selection.
-    config.pop("submission_id")
-    assert add(resource, processing, objects, **config)["total"] == 2
+    # The retry reselects the source: its own rows are replaced, other submissions kept.
+    assert result["input_count"] == 2
+    assert sorted(
+        client.execute(
+            "SELECT root_domain, submission_id != '' FROM corpscout.webtech_scan_input"
+        )
+    ) == [("example.com", True), ("novelic.com", True), ("other.se", True)]
+    assert result["task_id"] == other["task_id"]
+    assert not [
+        key for (_, key) in objects.client().objects if key.startswith("queue-inputs/")
+    ]
 
 
 def test_se_selection_filters_latest_rows_and_deduplicates_roots(
@@ -360,3 +371,10 @@ def test_new_selection_options_preserve_old_submission_fingerprints(
         draft_queue.submission(processing, submission_id)["selection_fingerprint"]
         == expected
     )
+
+
+def test_entry_table_follows_the_queue_contract(database):
+    client, _ = database
+    assert client.execute(
+        "SELECT partition_key, sorting_key FROM system.tables WHERE database='corpscout' AND name='webtech_scan_input'"
+    ) == [("task_id", "task_id, input_id")]

@@ -93,7 +93,8 @@ class ScanJob:
             final_manifest_location=final_manifest_location,
             progress_batch_size=progress_batch_size,
             recovered_results={
-                (result.input_id or result.root_domain): result for result in manifest.results
+                (result.input_id or result.root_domain): result
+                for result in manifest.results
             },
         )
         job.status = "completed"
@@ -129,6 +130,14 @@ class ScanJob:
                 self._publish_progress_event()
             self._condition.notify_all()
 
+    async def publish_recovered(self) -> None:
+        """Report results reused from storage, so a new envelope still publishes them."""
+        async with self._condition:
+            if self.results and not self.events:
+                self._pending_event_results.extend(self.results.values())
+                self._publish_progress_event()
+                self._condition.notify_all()
+
     async def mark_completed(self, finished_at: datetime) -> None:
         async with self._condition:
             self.status = "completed"
@@ -162,18 +171,16 @@ class ScanJob:
                 try:
                     async with asyncio.timeout(wait_seconds):
                         await self._condition.wait_for(
-                            lambda: self._latest_event_sequence > after_event
-                            or self.status not in {"pending", "running"}
+                            lambda: (
+                                self._latest_event_sequence > after_event
+                                or self.status not in {"pending", "running"}
+                            )
                         )
                 except TimeoutError:
                     pass
             return ScanPollResponse(
                 scan=self.snapshot(),
-                events=[
-                    event
-                    for event in self.events
-                    if event.sequence > after_event
-                ],
+                events=[event for event in self.events if event.sequence > after_event],
             )
 
     def snapshot(self) -> ScanSnapshot:
@@ -201,9 +208,7 @@ class ScanJob:
             elapsed_seconds=round(elapsed_seconds, 3),
             progress_age_seconds=round(self._progress_age_seconds(), 3),
             domains_per_minute=round(
-                completed_count / elapsed_seconds * 60
-                if elapsed_seconds > 0
-                else 0.0,
+                completed_count / elapsed_seconds * 60 if elapsed_seconds > 0 else 0.0,
                 2,
             ),
             latest_event_sequence=self._latest_event_sequence,
@@ -226,16 +231,13 @@ class ScanJob:
             total_count=len(self.manifest.candidates),
             window_count=len(window),
             window_outcome_counts=dict(sorted(outcomes.items())),
-            window_technology_count=sum(
-                result.technology_count for result in window
-            ),
+            window_technology_count=sum(result.technology_count for result in window),
             elapsed_seconds=round(elapsed_seconds, 3),
             domains_per_minute=round(
-                completed_count / elapsed_seconds * 60
-                if elapsed_seconds > 0
-                else 0.0,
+                completed_count / elapsed_seconds * 60 if elapsed_seconds > 0 else 0.0,
                 2,
             ),
+            results=list(window),
         )
         self.events.append(event)
         LOGGER.info(
@@ -294,112 +296,130 @@ class ScanCoordinator:
         self._lock = asyncio.Lock()
 
     async def submit(self, request: ScanRequest) -> ScanSnapshot:
-        async with self._lock:
-            manifest = await asyncio.to_thread(self._load_manifest, request)
-            scan_id = self._scan_id(request)
-            existing = self.jobs.get(scan_id)
-            if existing is not None and existing.status in {"pending", "running"}:
-                snapshot = existing.snapshot()
-                LOGGER.info(
-                    "Webtech scan reattached scan_id=%s partition=%s "
-                    "status=%s completed=%s/%s progress_age_seconds=%.1f",
-                    scan_id,
-                    request.partition_key,
-                    snapshot.status,
-                    snapshot.completed_count,
-                    snapshot.total_count,
-                    snapshot.progress_age_seconds,
-                )
-                return existing.snapshot()
-            if existing is not None and existing.status == "completed":
-                LOGGER.info(
-                    "Webtech scan reused scan_id=%s partition=%s source=memory "
-                    "completed=%s/%s",
-                    scan_id,
-                    request.partition_key,
-                    existing.snapshot().completed_count,
-                    existing.snapshot().total_count,
-                )
-                return existing.snapshot()
-            if self.active_scan_id is not None:
-                active = self.jobs.get(self.active_scan_id)
-                if active is not None and active.status in {"pending", "running"}:
-                    raise ScanBusyError(
-                        f"scan {self.active_scan_id} is already running"
-                    )
-
-            result_prefix, final_location = self._scan_locations(
-                request=request,
-                scan_id=scan_id,
+        """Start or reattach a scan; a new envelope of the same execution supersedes the old."""
+        while True:
+            async with self._lock:
+                accepted = await self._submit_locked(request)
+            if isinstance(accepted, ScanSnapshot):
+                return accepted
+            superseded = accepted
+            # Cancel outside the lock: the cancelled run clears the active slot under it.
+            LOGGER.warning(
+                "Webtech scan superseded old=%s new=%s crawl_id=%s",
+                superseded.scan_id,
+                self._scan_id(request),
+                request.crawl_id,
             )
-            final_manifest = await asyncio.to_thread(
-                self._load_final_manifest,
-                final_location,
-            )
-            if final_manifest is not None:
-                if (
-                    final_manifest.scan_id != scan_id
-                    or final_manifest.crawl_id != request.crawl_id
-                    or final_manifest.partition_key != request.partition_key
-                    or final_manifest.detector_version != request.detector_version
-                    or final_manifest.candidate_manifest_uri
-                    != request.candidate_manifest_uri
-                    or final_manifest.candidate_manifest_sha256
-                    != request.candidate_manifest_sha256
-                ):
-                    raise ValueError("final manifest identity does not match the request")
-                job = ScanJob.from_final_manifest(
-                    final_manifest,
-                    request=request,
-                    candidate_manifest=manifest,
-                    result_prefix=result_prefix,
-                    final_manifest_location=final_location,
-                    progress_batch_size=self.settings.progress_batch_size,
-                )
-                self.jobs[scan_id] = job
-                LOGGER.info(
-                    "Webtech scan reused scan_id=%s partition=%s "
-                    "source=final_manifest completed=%s/%s uri=%s",
-                    scan_id,
-                    request.partition_key,
-                    len(job.results),
-                    len(manifest.candidates),
-                    final_location.uri,
-                )
-                return job.snapshot()
+            await self.cancel(superseded.scan_id)
 
-            recovered = await asyncio.to_thread(
-                self._load_recovered_results,
-                result_prefix,
+    async def _submit_locked(self, request: ScanRequest) -> ScanSnapshot | ScanJob:
+        """Return the accepted snapshot, or the active job of the same execution to cancel first."""
+        manifest = await asyncio.to_thread(self._load_manifest, request)
+        scan_id = self._scan_id(request)
+        existing = self.jobs.get(scan_id)
+        if existing is not None and existing.status in {"pending", "running"}:
+            snapshot = existing.snapshot()
+            LOGGER.info(
+                "Webtech scan reattached scan_id=%s partition=%s "
+                "status=%s completed=%s/%s progress_age_seconds=%.1f",
                 scan_id,
-                manifest,
+                request.partition_key,
+                snapshot.status,
+                snapshot.completed_count,
+                snapshot.total_count,
+                snapshot.progress_age_seconds,
             )
-            job = ScanJob(
-                scan_id=scan_id,
+            return existing.snapshot()
+        if existing is not None and existing.status == "completed":
+            LOGGER.info(
+                "Webtech scan reused scan_id=%s partition=%s source=memory "
+                "completed=%s/%s",
+                scan_id,
+                request.partition_key,
+                existing.snapshot().completed_count,
+                existing.snapshot().total_count,
+            )
+            return existing.snapshot()
+        if self.active_scan_id is not None:
+            active = self.jobs.get(self.active_scan_id)
+            if active is not None and active.status in {"pending", "running"}:
+                if active.request.crawl_id == request.crawl_id:
+                    return active
+                raise ScanBusyError(f"scan {self.active_scan_id} is already running")
+
+        result_prefix, final_location = self._scan_locations(
+            request=request,
+            scan_id=scan_id,
+        )
+        final_manifest = await asyncio.to_thread(
+            self._load_final_manifest,
+            final_location,
+        )
+        if final_manifest is not None:
+            if (
+                final_manifest.scan_id != scan_id
+                or final_manifest.crawl_id != request.crawl_id
+                or final_manifest.partition_key != request.partition_key
+                or final_manifest.detector_version != request.detector_version
+                or final_manifest.candidate_manifest_uri
+                != request.candidate_manifest_uri
+                or final_manifest.candidate_manifest_sha256
+                != request.candidate_manifest_sha256
+            ):
+                raise ValueError("final manifest identity does not match the request")
+            job = ScanJob.from_final_manifest(
+                final_manifest,
                 request=request,
-                manifest=manifest,
+                candidate_manifest=manifest,
                 result_prefix=result_prefix,
                 final_manifest_location=final_location,
                 progress_batch_size=self.settings.progress_batch_size,
-                recovered_results=recovered,
             )
             self.jobs[scan_id] = job
-            self.active_scan_id = scan_id
             LOGGER.info(
-                "Webtech scan accepted scan_id=%s crawl_id=%s partition=%s "
-                "total=%s recovered=%s manifest_uri=%s",
+                "Webtech scan reused scan_id=%s partition=%s "
+                "source=final_manifest completed=%s/%s uri=%s",
                 scan_id,
-                request.crawl_id,
                 request.partition_key,
+                len(job.results),
                 len(manifest.candidates),
-                len(recovered),
-                request.candidate_manifest_uri,
-            )
-            job.task = asyncio.create_task(
-                self._run(job),
-                name=f"webtech-scan-{scan_id}",
+                final_location.uri,
             )
             return job.snapshot()
+
+        recovered = await asyncio.to_thread(
+            self._load_recovered_results,
+            result_prefix,
+            scan_id,
+            manifest,
+            request,
+        )
+        job = ScanJob(
+            scan_id=scan_id,
+            request=request,
+            manifest=manifest,
+            result_prefix=result_prefix,
+            final_manifest_location=final_location,
+            progress_batch_size=self.settings.progress_batch_size,
+            recovered_results=recovered,
+        )
+        self.jobs[scan_id] = job
+        self.active_scan_id = scan_id
+        LOGGER.info(
+            "Webtech scan accepted scan_id=%s crawl_id=%s partition=%s "
+            "total=%s recovered=%s manifest_uri=%s",
+            scan_id,
+            request.crawl_id,
+            request.partition_key,
+            len(manifest.candidates),
+            len(recovered),
+            request.candidate_manifest_uri,
+        )
+        job.task = asyncio.create_task(
+            self._run(job),
+            name=f"webtech-scan-{scan_id}",
+        )
+        return job.snapshot()
 
     async def poll(
         self,
@@ -438,11 +458,14 @@ class ScanCoordinator:
 
     async def _run(self, job: ScanJob) -> None:
         await job.mark_running()
+        await job.publish_recovered()
         remaining_candidates = tuple(
             WebtechCandidate(
                 root_domain=candidate.root_domain,
                 harmonic_rank=candidate.harmonic_rank,
-                task_id=candidate.task_id, input_id=candidate.input_id, page_url=candidate.page_url,
+                task_id=candidate.task_id,
+                input_id=candidate.input_id,
+                page_url=candidate.page_url,
             )
             for candidate in job.manifest.candidates
             if (candidate.input_id or candidate.root_domain) not in job.results
@@ -468,13 +491,15 @@ class ScanCoordinator:
 
         async def persist_result(result: WebtechDomainResult) -> None:
             document = _domain_result_document(job, result)
-            location = S3Location(
-                bucket=job.result_prefix.bucket,
-                key=(
-                    f"{job.result_prefix.key}/"
-                    + (f"input_id={result.candidate.input_id}/report.json" if result.candidate.input_id else f"root_domain={result.candidate.root_domain}/report.json")
-                ),
-            )
+            if result.candidate.input_id:
+                location = self._execution_page_location(
+                    job.request, result.candidate.input_id
+                )
+            else:
+                location = S3Location(
+                    bucket=job.result_prefix.bucket,
+                    key=f"{job.result_prefix.key}/root_domain={result.candidate.root_domain}/report.json",
+                )
             stored = await asyncio.to_thread(
                 self.store.write_json,
                 location,
@@ -487,9 +512,7 @@ class ScanCoordinator:
                 outcome=result.outcome,
                 timeout_stage=result.timeout_stage,
                 technology_count=(
-                    len(result.report.technologies)
-                    if result.report is not None
-                    else 0
+                    len(result.report.technologies) if result.report is not None else 0
                 ),
                 duration_ms=result.duration_ms,
                 object_key=stored.location.key,
@@ -669,44 +692,47 @@ class ScanCoordinator:
         result_prefix: S3Location,
         scan_id: str,
         manifest: CandidateManifest,
+        request: ScanRequest,
     ) -> dict[str, StoredResultReference]:
-        candidates_by_domain = {
-            (candidate.input_id or candidate.root_domain): candidate for candidate in manifest.candidates
+        candidates = {
+            (candidate.input_id or candidate.root_domain): candidate
+            for candidate in manifest.candidates
         }
         recovered: dict[str, StoredResultReference] = {}
+        # Common Crawl scans keep their per-scan result objects.
         listing_prefix = S3Location(
-            bucket=result_prefix.bucket,
-            key=f"{result_prefix.key}/",
+            bucket=result_prefix.bucket, key=f"{result_prefix.key}/"
         )
         for key in self.store.list_keys(listing_prefix):
             if not key.endswith("/report.json"):
                 continue
-            location = S3Location(bucket=result_prefix.bucket, key=key)
-            body = self.store.read_bytes(location)
+            body = self.store.read_bytes(
+                S3Location(bucket=result_prefix.bucket, key=key)
+            )
             document = StoredDomainResultDocument.model_validate_json(body)
-            candidate = candidates_by_domain.get(document.candidate.input_id or document.candidate.root_domain)
+            identity = document.candidate.input_id or document.candidate.root_domain
             if (
                 document.scan_id != scan_id
-                or candidate is None
-                or candidate != document.candidate
+                or candidates.get(identity) != document.candidate
             ):
                 raise ValueError(f"stored result identity mismatch: {key}")
-            recovered[document.candidate.input_id or document.candidate.root_domain] = StoredResultReference(
-                root_domain=document.candidate.root_domain,
-                harmonic_rank=document.candidate.harmonic_rank,
-                input_id=document.candidate.input_id,
-                outcome=document.outcome,
-                timeout_stage=document.timeout_stage,
-                technology_count=(
-                    len(document.report.technologies)
-                    if document.report is not None
-                    else 0
-                ),
-                duration_ms=document.duration_ms,
-                object_key=key,
-                sha256=hashlib.sha256(body).hexdigest(),
-                size_bytes=len(body),
-            )
+            recovered[identity] = _stored_reference(document, key, body)
+        # Queue pages belong to the execution, whichever envelope scanned them.
+        for identity, candidate in candidates.items():
+            if not candidate.input_id or identity in recovered:
+                continue
+            location = self._execution_page_location(request, candidate.input_id)
+            if not self.store.exists(location):
+                continue
+            body = self.store.read_bytes(location)
+            document = StoredDomainResultDocument.model_validate_json(body)
+            if (
+                document.crawl_id != request.crawl_id
+                or document.detector_version != request.detector_version
+                or document.candidate != candidate
+            ):
+                raise ValueError(f"stored page identity mismatch: {location.key}")
+            recovered[identity] = _stored_reference(document, location.key, body)
         return recovered
 
     def _scan_id(self, request: ScanRequest) -> str:
@@ -743,6 +769,19 @@ class ScanCoordinator:
         )
         return result_prefix, final_location
 
+    def _execution_page_location(
+        self, request: ScanRequest, input_id: str
+    ) -> S3Location:
+        # One result per page per execution, shared by every envelope of that execution.
+        return self.store.child(
+            "scans",
+            f"detector_version={request.detector_version}",
+            f"crawl_id={request.crawl_id}",
+            "pages",
+            f"input_id={input_id}",
+            "report.json",
+        )
+
 
 def _domain_result_document(
     job: ScanJob,
@@ -771,6 +810,25 @@ def _domain_result_document(
         error_message=result.error_message,
         timeout_stage=result.timeout_stage,
         report=result.report,
+    )
+
+
+def _stored_reference(
+    document: StoredDomainResultDocument, key: str, body: bytes
+) -> StoredResultReference:
+    return StoredResultReference(
+        root_domain=document.candidate.root_domain,
+        harmonic_rank=document.candidate.harmonic_rank,
+        input_id=document.candidate.input_id,
+        outcome=document.outcome,
+        timeout_stage=document.timeout_stage,
+        technology_count=len(document.report.technologies)
+        if document.report is not None
+        else 0,
+        duration_ms=document.duration_ms,
+        object_key=key,
+        sha256=hashlib.sha256(body).hexdigest(),
+        size_bytes=len(body),
     )
 
 

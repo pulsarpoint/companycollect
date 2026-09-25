@@ -1,7 +1,6 @@
-"""Freeze/import races, saved freshness decisions and recoverable scan execution."""
+"""Freeze/import races, and remaining work, freshness, finish and purge derived from results."""
 
 import json
-from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
@@ -14,9 +13,8 @@ from dagster_v3.defs.common.processing import ProcessingStore
 from dagster_v3.defs.webtech.input import PROCESSOR_VERSION
 from dagster_v3.defs.webtech.execution import (
     start_execution,
-    prepare_execution,
-    read_plan_object,
-    record_bucket,
+    execution_crawl_id,
+    remaining_inputs,
     finish_execution,
     purge_completed_inputs,
 )
@@ -41,14 +39,6 @@ def start(processing, resource, task_id, **changes):
     settings.update(changes)
     with processing.selection_lock(task_id):
         return start_execution(store=processing, clickhouse=resource, **settings)
-
-
-def decisions(objects, plan):
-    return [
-        item
-        for batch in plan["buckets"]
-        for item in read_plan_object(objects, batch["key"], batch["sha256"])["items"]
-    ]
 
 
 def test_freeze_releases_default_draft_and_reuses_execution(database, store, objects):
@@ -155,341 +145,453 @@ def test_import_and_start_use_the_same_lock(database, store, objects):
         assert processing.task(task_id)["status"] == "draft"
 
 
-def test_freshness_is_prepared_per_page_and_reused_on_retry(database, store, objects):
+def publish(
+    client,
+    task,
+    rows,
+    *,
+    outcome="success",
+    scanned_at=None,
+    crawl_id=None,
+    detector_version=WEBTECH_DETECTOR_VERSION,
+    scan_id="scan-1",
+):
+    execution = task["config"]["execution"]
+    client.execute(
+        "INSERT INTO corpscout.webtech_domain_scan_results (crawl_id,root_domain,website_origin,page_url,detector_version,scanned_at,scan_id,outcome,task_id,input_id) VALUES",
+        [
+            (
+                crawl_id or execution_crawl_id(execution),
+                root,
+                origin,
+                page,
+                detector_version,
+                scanned_at or datetime.now(UTC),
+                scan_id,
+                outcome,
+                str(task["task_id"]),
+                identity,
+            )
+            for identity, root, origin, page in rows
+        ],
+    )
+
+
+def test_remaining_excludes_published_and_fresh_pages(database, store, objects):
+    client, resource = database
+    processing, _ = store
+    client.execute(
+        "INSERT INTO corpscout.webtech_domain_scan_results (root_domain,website_origin,page_url,detector_version,scanned_at,scan_id,outcome) VALUES",
+        [
+            (
+                "fresh.com",
+                "https://fresh.com",
+                "https://fresh.com/",
+                WEBTECH_DETECTOR_VERSION,
+                datetime.now(UTC) - timedelta(days=1),
+                "old",
+                "success",
+            ),
+            (
+                "failed.com",
+                "https://failed.com",
+                "https://failed.com/",
+                WEBTECH_DETECTOR_VERSION,
+                datetime.now(UTC) - timedelta(days=1),
+                "old",
+                "navigation_error",
+            ),
+        ],
+    )
+    task_id = add(
+        resource,
+        processing,
+        objects,
+        targets=["fresh.com", "failed.com", "a.com", "b.com"],
+    )["task_id"]
+    task = start(processing, resource, task_id)
+    with resource.get_connection() as connection:
+        first = remaining_inputs(connection, task, limit=10)
+    # Fresh successes are skipped; an earlier failure is retried.
+    assert sorted(row[1] for row in first) == ["a.com", "b.com", "failed.com"]
+    publish(client, task, first[:1])
+    with resource.get_connection() as connection:
+        assert remaining_inputs(connection, task, limit=10) == first[1:]
+        # The same answer on resume: results of this execution are after its start.
+        assert remaining_inputs(connection, task, limit=1) == first[1:2]
+        # Restricted to chosen entries, e.g. one envelope.
+        assert (
+            remaining_inputs(connection, task, limit=10, input_ids=[first[2][0]])
+            == first[2:3]
+        )
+        # An empty selection means no entries, not "no filter".
+        assert remaining_inputs(connection, task, limit=10, input_ids=[]) == []
+
+
+def test_force_rescan_includes_fresh_pages(database, store, objects):
+    client, resource = database
+    processing, _ = store
+    client.execute(
+        "INSERT INTO corpscout.webtech_domain_scan_results (root_domain,website_origin,page_url,detector_version,scanned_at,scan_id,outcome) VALUES",
+        [
+            (
+                "fresh.com",
+                "https://fresh.com",
+                "https://fresh.com/",
+                WEBTECH_DETECTOR_VERSION,
+                datetime.now(UTC) - timedelta(days=1),
+                "old",
+                "success",
+            )
+        ],
+    )
+    task_id = add(resource, processing, objects, targets=["fresh.com"])["task_id"]
+    task = start(processing, resource, task_id, force_rescan=True)
+    with resource.get_connection() as connection:
+        assert [row[1] for row in remaining_inputs(connection, task, limit=10)] == [
+            "fresh.com"
+        ]
+
+
+def test_remaining_freshness_semantics_across_crawls_and_detectors(
+    database, store, objects
+):
+    """Freshness only skips a page when its latest result — from any crawl, under
+    the current detector, inside [cutoff, started_at] — is a success. A later
+    failure, a result outside the window, a stale detector, or a result after
+    started_at all leave the page remaining, and finish refuses until every
+    remaining page has a result of this execution's own crawl."""
     client, resource = database
     processing, _ = store
     task_id = add(
         resource,
         processing,
         objects,
-        targets=[
-            "novelic.com",
-            "novelic.com/about",
-            "novelic.com/contact",
-            "other.com",
-        ],
+        targets=["a.com", "b.com", "c.com", "d.com", "e.com"],
     )["task_id"]
-    now = datetime.now(UTC) - timedelta(minutes=5)
-    client.execute(
-        "INSERT INTO corpscout.webtech_domain_scan_results (root_domain,website_origin,page_url,detector_version,scanned_at,scan_id,outcome) VALUES",
-        [
-            (
-                "novelic.com",
-                "https://novelic.com",
-                "https://novelic.com/",
-                WEBTECH_DETECTOR_VERSION,
-                now,
-                "recent",
-                "success",
-            ),
-            (
-                "novelic.com",
-                "https://novelic.com",
-                "https://novelic.com/about",
-                WEBTECH_DETECTOR_VERSION,
-                now - timedelta(days=60),
-                "old",
-                "success",
-            ),
-            (
-                "novelic.com",
-                "https://novelic.com",
-                "https://novelic.com/contact",
-                WEBTECH_DETECTOR_VERSION,
-                now - timedelta(hours=1),
-                "prior-success",
-                "success",
-            ),
-            (
-                "novelic.com",
-                "https://novelic.com",
-                "https://novelic.com/contact",
-                WEBTECH_DETECTOR_VERSION,
-                now,
-                "latest-failure",
-                "hard_timeout",
-            ),
-            (
-                "other.com",
-                "https://other.com",
-                "https://other.com/",
-                "different-detector",
-                now,
-                "different",
-                "success",
-            ),
-        ],
-    )
     task = start(processing, resource, task_id)
-    plan = prepare_execution(
-        store=processing, clickhouse=resource, object_store=objects, task=task
+    started_at = datetime.fromisoformat(task["config"]["execution"]["started_at"])
+    with resource.get_connection() as connection:
+        by_domain = {
+            row[1]: row for row in remaining_inputs(connection, task, limit=10)
+        }
+    assert sorted(by_domain) == ["a.com", "b.com", "c.com", "d.com", "e.com"]
+
+    # a: a later failure beats an earlier success (latest outcome wins) -> REMAINS.
+    publish(
+        client,
+        task,
+        [by_domain["a.com"]],
+        crawl_id="other-crawl",
+        outcome="success",
+        scanned_at=started_at - timedelta(hours=2),
+        scan_id="a-old",
     )
-    assert plan["skipped"] == 1
-    items = {row["page_url"]: row for row in decisions(objects, plan)}
-    assert items["https://novelic.com/"]["previous_result"]["scan_id"] == "recent"
-    assert items["https://novelic.com/contact"]["decision"] == "scan"
+    publish(
+        client,
+        task,
+        [by_domain["a.com"]],
+        crawl_id="other-crawl",
+        outcome="navigation_error",
+        scanned_at=started_at - timedelta(hours=1),
+        scan_id="a-new",
+    )
+    # b: a success from another crawl scanned AFTER this execution started -> REMAINS.
+    publish(
+        client,
+        task,
+        [by_domain["b.com"]],
+        crawl_id="other-crawl",
+        outcome="success",
+        scanned_at=started_at + timedelta(hours=1),
+        scan_id="b-1",
+    )
+    # c: a success inside the window from another crawl, but a stale detector -> REMAINS.
+    publish(
+        client,
+        task,
+        [by_domain["c.com"]],
+        crawl_id="other-crawl",
+        outcome="success",
+        scanned_at=started_at - timedelta(hours=1),
+        scan_id="c-1",
+        detector_version="stale-detector",
+    )
+    # d: a success from another crawl, older than the freshness cutoff -> REMAINS.
+    publish(
+        client,
+        task,
+        [by_domain["d.com"]],
+        crawl_id="other-crawl",
+        outcome="success",
+        scanned_at=started_at - timedelta(days=35),
+        scan_id="d-1",
+    )
+    # e: a fresh success inside the window, from another crawl, current detector -> NOT remaining.
+    publish(
+        client,
+        task,
+        [by_domain["e.com"]],
+        crawl_id="other-crawl",
+        outcome="success",
+        scanned_at=started_at - timedelta(hours=1),
+        scan_id="e-1",
+    )
+    with resource.get_connection() as connection:
+        remaining = remaining_inputs(connection, task, limit=10)
+    assert sorted(row[1] for row in remaining) == ["a.com", "b.com", "c.com", "d.com"]
+
+    # finish refuses while b has no result of this execution's own crawl, even
+    # though a, c and d now do and e is a fresh skip.
+    publish(client, task, [by_domain["a.com"]])
+    publish(client, task, [by_domain["c.com"]])
+    publish(client, task, [by_domain["d.com"]])
+    with (
+        processing.selection_lock(task_id),
+        pytest.raises(ValueError, match="published outcome"),
+    ):
+        finish_execution(processing, resource, task_id)
+    publish(client, task, [by_domain["b.com"]])
+    with processing.selection_lock(task_id):
+        finished = finish_execution(processing, resource, task_id)
     assert (
-        len(plan["buckets"]) == 2
-    )  # Bounded batches, even for many pages on one root.
-    assert processing.progress(task_id)["skipped"] == 1
-    assert processing.progress(task_id)["queued"] == 3
-    client.execute("TRUNCATE TABLE corpscout.webtech_domain_scan_results")
-    assert (
-        prepare_execution(
-            store=processing,
-            clickhouse=resource,
-            object_store=objects,
-            task=processing.task(task_id),
-        )
-        == plan
-    )
-    for batch in plan["buckets"]:
-        count = batch["total"] - batch["skipped"]
-        if count:
-            record_bucket(
-                processing,
-                task_id,
-                batch["bucket"],
-                {"scan_id": "test", "indexed": count, "succeeded": count, "failed": 0},
-            )
-    assert finish_execution(processing, task_id)["status"] == "completed"
-    assert processing.progress(task_id)["queued"] == 0
-    assert processing.progress(task_id)["remaining"] == 0
-    # Force can be chosen for a new execution of the same retained queue.
-    forced = start(
-        processing, resource, task_id, execution_id=str(uuid4()), force_rescan=True
-    )
-    assert forced["completed_at"] is None
-    forced_plan = prepare_execution(
-        store=processing, clickhouse=resource, object_store=objects, task=forced
-    )
-    assert forced_plan["skipped"] == 0
-    assert len(decisions(objects, forced_plan)) == 4
+        finished["succeeded_count"],
+        finished["terminal_failed_count"],
+        finished["skipped_count"],
+    ) == (4, 0, 1)
+
+    # f: force_rescan disables the freshness skip (e's fresh success no longer
+    # counts), but a page with THIS crawl's own result is still excluded.
+    next_task = add(resource, processing, objects, targets=["e.com", "f.com"])[
+        "task_id"
+    ]
+    forced = start(processing, resource, next_task, force_rescan=True)
+    with resource.get_connection() as connection:
+        forced_remaining = {
+            row[1]: row for row in remaining_inputs(connection, forced, limit=10)
+        }
+    assert sorted(forced_remaining) == ["e.com", "f.com"]
+    publish(client, forced, [forced_remaining["f.com"]])
+    with resource.get_connection() as connection:
+        assert [row[1] for row in remaining_inputs(connection, forced, limit=10)] == [
+            "e.com"
+        ]
 
 
-def test_incomplete_results_retain_inputs_but_published_errors_complete(
+def test_finish_counts_results_and_skips_then_purge_drops_the_partition(
     database, store, objects
 ):
     client, resource = database
     processing, _ = store
-    task_id = add(resource, processing, objects, targets=["novelic.com"])["task_id"]
-    task = start(processing, resource, task_id)
-    prepare_execution(
-        store=processing, clickhouse=resource, object_store=objects, task=task
-    )
-    with pytest.raises(ValueError, match="Not every input"):
-        finish_execution(processing, task_id)
-    with (
-        processing.selection_lock(task_id),
-        pytest.raises(ValueError, match="Only fully completed"),
-    ):
-        purge_completed_inputs(processing, resource, task_id)
-    assert client.execute("SELECT count() FROM corpscout.webtech_scan_input") == [(1,)]
-    record_bucket(
-        processing,
-        task_id,
-        0,
-        {"scan_id": "failed", "indexed": 1, "succeeded": 0, "failed": 1},
-    )
-    assert finish_execution(processing, task_id)["status"] == "completed"
-    assert processing.task(task_id)["completed_at"] is not None
-    assert processing.task(task_id)["terminal_failed_count"] == 1
-    with processing.selection_lock(task_id):
-        purge_completed_inputs(processing, resource, task_id)
-    assert processing.task(task_id)["inputs_purged_at"] is not None
-    assert client.execute("SELECT count() FROM corpscout.webtech_scan_input") == [(0,)]
-
-
-def test_preparation_retry_keeps_already_saved_decisions(
-    database, store, objects, monkeypatch
-):
-    from dagster_v3.defs.webtech import execution as module
-
-    client, resource = database
-    processing, _ = store
-    task_id = add(
-        resource, processing, objects, targets=["novelic.com", "example.com"]
-    )["task_id"]
-    task = start(processing, resource, task_id, batch_size=1)
-    original = module.write_plan_object
-
-    def interrupt(store, key, document):
-        if key.endswith("bucket-001.json"):
-            raise RuntimeError("crashed preparing second batch")
-        return original(store, key, document)
-
-    with monkeypatch.context() as patch:
-        patch.setattr(module, "write_plan_object", interrupt)
-        with pytest.raises(RuntimeError):
-            prepare_execution(
-                store=processing, clickhouse=resource, object_store=objects, task=task
-            )
-    saved = [
-        json.loads(value)
-        for (_, key), value in objects.client().objects.items()
-        if key.endswith("bucket-000.json")
-    ][0]
-    first = saved["items"][0]
     client.execute(
         "INSERT INTO corpscout.webtech_domain_scan_results (root_domain,website_origin,page_url,detector_version,scanned_at,scan_id,outcome) VALUES",
         [
             (
-                first["root_domain"],
-                first["page_url"].rstrip("/"),
-                first["page_url"],
+                "fresh.com",
+                "https://fresh.com",
+                "https://fresh.com/",
                 WEBTECH_DETECTOR_VERSION,
-                datetime.now(UTC) - timedelta(minutes=1),
-                "late-indexed",
+                datetime.now(UTC) - timedelta(days=1),
+                "old",
                 "success",
             )
         ],
     )
-    plan = prepare_execution(
-        store=processing, clickhouse=resource, object_store=objects, task=task
-    )
-    assert decisions(objects, plan)[0]["decision"] == "scan"
+    other = add(
+        resource, processing, objects, queue_scope="other", targets=["kept.com"]
+    )["task_id"]
+    task_id = add(
+        resource, processing, objects, targets=["fresh.com", "a.com", "b.com"]
+    )["task_id"]
+    task = start(processing, resource, task_id)
+    with resource.get_connection() as connection:
+        rows = remaining_inputs(connection, task, limit=10)
+    with (
+        processing.selection_lock(task_id),
+        pytest.raises(ValueError, match="published outcome"),
+    ):
+        finish_execution(processing, resource, task_id)
+    publish(client, task, rows[:1])
+    publish(client, task, rows[1:], outcome="navigation_error")
+    with processing.selection_lock(task_id):
+        finished = finish_execution(processing, resource, task_id)
+        assert (
+            finished["succeeded_count"],
+            finished["terminal_failed_count"],
+            finished["skipped_count"],
+        ) == (1, 1, 1)
+        purge_completed_inputs(processing, resource, task_id)
+        purge_completed_inputs(processing, resource, task_id)  # idempotent
+    assert client.execute(
+        "SELECT DISTINCT task_id FROM corpscout.webtech_scan_input"
+    ) == [(other,)]
+    assert processing.task(task_id)["inputs_purged_at"] is not None
 
 
-@pytest.mark.parametrize("failed_domain", [None, "example.com"])
-def test_results_asset_resumes_publication_then_clears_completed_inputs(
-    database, store, objects, monkeypatch, failed_domain
+class FakeScanner:
+    """Seams of the results asset: submit, monitor, publish and the final manifest."""
+
+    def __init__(self, client, objects, task_id, failed_domain=None):
+        self.client = client
+        self.objects = objects
+        self.task_id = task_id
+        self.failed_domain = failed_domain
+        self.envelopes: dict[str, list[dict]] = {}
+        self.submitted: list[str] = []
+        self.published: list[str] = []
+        self.insert_calls: list[int] = []  # batch size of every insert attempt
+        self.failing_inserts = 0  # the next N inserts are not acknowledged
+        self.missed_events: set[str] = set()  # pages only the final manifest lists
+        self.crash_after_pages: int | None = None  # the monitor dies once, mid-envelope
+
+    def reference(self, row):
+        from dagster_v3.defs.webtech.models import StoredResultReference
+
+        failed = row["root_domain"] == self.failed_domain
+        return StoredResultReference(
+            root_domain=row["root_domain"],
+            harmonic_rank=0,
+            input_id=row["input_id"],
+            outcome="navigation_error" if failed else "success",
+            timeout_stage=None,
+            technology_count=0,
+            duration_ms=1,
+            object_key=f"webtech/pages/{row['input_id']}",
+            sha256="0" * 64,
+            size_bytes=1,
+        )
+
+    def snapshot(self, manifest_uri, crawl_id, key, total, *, completed):
+        from dagster_v3.defs.webtech.models import RemoteScanSnapshot
+
+        now = datetime.now(UTC)
+        return RemoteScanSnapshot(
+            scan_id=key,
+            status="completed" if completed else "running",
+            crawl_id=crawl_id,
+            partition_key=key,
+            detector_version=WEBTECH_DETECTOR_VERSION,
+            candidate_manifest_uri=manifest_uri,
+            result_prefix_uri="s3://webtech/webtech/x",
+            final_manifest_uri="s3://webtech/webtech/x/final.json",
+            total_count=total,
+            completed_count=total if completed else 0,
+            outcome_counts={},
+            technology_count=0,
+            started_at=now,
+            finished_at=now if completed else None,
+            last_progress_at=now,
+            elapsed_seconds=1,
+            progress_age_seconds=0,
+            domains_per_minute=60,
+            latest_event_sequence=1 if completed else 0,
+            error_message="",
+        )
+
+    def submit(self, api, manifest):
+        del api
+        document = json.loads(self.objects.read_bytes(manifest.uri.split("/", 3)[3]))
+        self.envelopes[manifest.partition_key] = document["candidates"]
+        self.submitted.append(manifest.partition_key)
+        return self.snapshot(
+            manifest.uri,
+            manifest.crawl_id,
+            manifest.partition_key,
+            len(document["candidates"]),
+            completed=False,
+        )
+
+    def monitor(self, *, submission, on_results, on_poll, **kwargs):
+        del kwargs
+        candidates = self.envelopes[submission.scan_id]
+        for position, row in enumerate(candidates):
+            if (
+                self.crash_after_pages is not None
+                and position == self.crash_after_pages
+            ):
+                self.crash_after_pages = None
+                raise RuntimeError("Dagster step died mid-envelope")
+            if row["input_id"] not in self.missed_events:
+                on_results([self.reference(row)])
+            on_poll()
+        return self.snapshot(
+            submission.manifest.uri,
+            submission.manifest.crawl_id,
+            submission.scan_id,
+            len(candidates),
+            completed=True,
+        )
+
+    def final_manifest(self, *, reference, **kwargs):
+        del kwargs
+        rows = self.envelopes[reference.scan_id]
+        return type("Final", (), {"results": [self.reference(row) for row in rows]})()
+
+    def index(self, **kwargs):
+        references = kwargs["references"]
+        self.insert_calls.append(len(references))
+        if self.failing_inserts:
+            self.failing_inserts -= 1
+            raise RuntimeError("insert not acknowledged")
+        self.published.extend(item.input_id for item in references)
+        self.client.execute(
+            "INSERT INTO corpscout.webtech_domain_scan_results (crawl_id,root_domain,website_origin,page_url,detector_version,scanned_at,scan_id,outcome,task_id,input_id) VALUES",
+            [
+                (
+                    kwargs["crawl_id"],
+                    item.root_domain,
+                    f"https://{item.root_domain}",
+                    f"https://{item.root_domain}/",
+                    WEBTECH_DETECTOR_VERSION,
+                    datetime.now(UTC),
+                    "scan",
+                    item.outcome,
+                    self.task_id,
+                    item.input_id,
+                )
+                for item in references
+            ],
+        )
+        return len(references)
+
+
+def results_harness(
+    database, store, objects, monkeypatch, *, failed_domain=None, eager_flush=False
 ):
-    import hashlib
-    from urllib.parse import urlsplit
-
+    """Build the results asset around a FakeScanner; eager_flush publishes on every poll."""
     import dagster as dg
     from dagster_v3.defs.common.processing import ProcessingResource
+    from dagster_v3.defs.common.result_buffer import ResultBuffer
     from dagster_v3.defs.webtech import task_assets as module
     from dagster_v3.defs.webtech.client import WebtechApiResource
-    from dagster_v3.defs.webtech.models import RemoteScanSnapshot
     from dagster_v3.defs.webtech.storage import WebtechS3Destination
 
     client, resource = database
     processing, dsn = store
     task_id = add(
-        resource, processing, objects, targets=["novelic.com", "example.com"]
+        resource, processing, objects, targets=["novelic.com", "example.com", "a.com"]
     )["task_id"]
-    jobs = {}
-    submissions = []
-    indexed = []
-    lose_ack = True
-
-    def page_outcome(row):
-        return "navigation_error" if row["root_domain"] == failed_domain else "success"
-
-    def submit(api, manifest):
-        del api
-        scan_id = hashlib.sha256(manifest.uri.encode()).hexdigest()
-        submissions.append(scan_id)
-        if scan_id in jobs:
-            return jobs[scan_id][0]
-        candidate_document = json.loads(
-            objects.read_bytes(urlsplit(manifest.uri).path.lstrip("/"))
+    scanner = FakeScanner(client, objects, task_id, failed_domain)
+    monkeypatch.setattr(module, "submit_envelope", scanner.submit)
+    monkeypatch.setattr(module, "monitor_webtech_scan", scanner.monitor)
+    monkeypatch.setattr(module, "index_result_references", scanner.index)
+    monkeypatch.setattr(module, "read_final_manifest", scanner.final_manifest)
+    if eager_flush:
+        monkeypatch.setattr(
+            module,
+            "ResultBuffer",
+            lambda flush, **kwargs: ResultBuffer(flush, max_items=500, max_seconds=0.0),
         )
-        candidates = candidate_document["candidates"]
-        now = datetime.now(UTC)
-        key = f"webtech/results/{scan_id}/final.json"
-        snapshot = RemoteScanSnapshot(
-            scan_id=scan_id,
-            status="completed",
-            crawl_id=manifest.crawl_id,
-            partition_key=manifest.partition_key,
-            detector_version=WEBTECH_DETECTOR_VERSION,
-            candidate_manifest_uri=manifest.uri,
-            result_prefix_uri=f"s3://webtech/webtech/results/{scan_id}",
-            final_manifest_uri=f"s3://webtech/{key}",
-            total_count=len(candidates),
-            completed_count=len(candidates),
-            outcome_counts=dict(Counter(page_outcome(row) for row in candidates)),
-            technology_count=0,
-            started_at=now,
-            finished_at=now,
-            last_progress_at=now,
-            elapsed_seconds=1,
-            progress_age_seconds=0,
-            domains_per_minute=60,
-            latest_event_sequence=1,
-            error_message="",
-        )
-        objects.write_json(
-            key,
-            json.dumps(
-                {
-                    "schema_version": 1,
-                    "scan_id": scan_id,
-                    "crawl_id": manifest.crawl_id,
-                    "partition_key": manifest.partition_key,
-                    "detector_version": WEBTECH_DETECTOR_VERSION,
-                    "candidate_manifest_uri": manifest.uri,
-                    "candidate_manifest_sha256": manifest.sha256,
-                    "started_at": now.isoformat(),
-                    "finished_at": now.isoformat(),
-                    "elapsed_seconds": 1,
-                    "outcome_counts": snapshot.outcome_counts,
-                    "technology_count": 0,
-                    "scanner_settings": {},
-                    "results": [
-                        {
-                            "root_domain": row["root_domain"],
-                            "harmonic_rank": 0,
-                            "input_id": row["input_id"],
-                            "outcome": page_outcome(row),
-                            "timeout_stage": None,
-                            "technology_count": 0,
-                            "duration_ms": 1,
-                            "object_key": f"webtech/results/{scan_id}/{row['input_id']}.json",
-                            "sha256": "0" * 64,
-                            "size_bytes": 1,
-                        }
-                        for row in candidates
-                    ],
-                }
-            ),
-        )
-        jobs[scan_id] = (snapshot, candidates)
-        return snapshot
-
-    def publish(**kwargs):
-        nonlocal lose_ack
-        reference = kwargs["reference"]
-        snapshot, candidates = jobs[reference.scan_id]
-        indexed.append(reference.scan_id)
-        client.execute(
-            "INSERT INTO corpscout.webtech_domain_scan_results (root_domain,website_origin,page_url,detector_version,scanned_at,scan_id,outcome,task_id,input_id) VALUES",
-            [
-                (
-                    row["root_domain"],
-                    row["page_url"].rstrip("/"),
-                    row["page_url"],
-                    WEBTECH_DETECTOR_VERSION,
-                    snapshot.started_at,
-                    reference.scan_id,
-                    page_outcome(row),
-                    task_id,
-                    row["input_id"],
-                )
-                for row in candidates
-            ],
-        )
-        if lose_ack:
-            lose_ack = False
-            raise RuntimeError("lost result publication acknowledgement")
-        return len(candidates)
-
-    monkeypatch.setattr(WebtechApiResource, "submit", submit)
-    monkeypatch.setattr(
-        module,
-        "monitor_webtech_scan",
-        lambda **kwargs: jobs[kwargs["submission"].scan_id][0],
-    )
-    monkeypatch.setattr(module, "index_final_results", publish)
     results = module.build_webtech_task_asset(
         WebtechS3Destination(bucket="webtech", prefix="webtech")
     )
 
+    instance = dg.DagsterInstance.ephemeral()
+
     def run(**config):
         return dg.materialize(
             [results, dg.AssetSpec("webtech_scan_input")],
+            instance=instance,
             resources={
                 "clickhouse": resource,
                 "processing": ProcessingResource(postgres_url=dsn),
@@ -501,56 +603,108 @@ def test_results_asset_resumes_publication_then_clears_completed_inputs(
             run_config={
                 "ops": {
                     "webtech_scan_results": {
-                        "config": {"task_id": task_id, "batch_size": 1, **config}
+                        "config": {"task_id": task_id, "batch_size": 2, **config}
                     }
                 }
             },
+            raise_on_error=False,
         )
 
-    with pytest.raises(RuntimeError, match="lost result"):
-        run()
+    run.instance = instance
+    return task_id, scanner, run
+
+
+def assert_completed_once(database, store, objects, task_id, scanner, succeeded=3):
+    client, _ = database
+    processing, _ = store
+    assert sorted(scanner.published) == sorted(set(scanner.published))
+    assert len(scanner.published) == 3
+    task = processing.task(task_id)
+    assert task["status"] == "completed"
+    assert task["succeeded_count"] == succeeded
+    assert task["inputs_purged_at"] is not None
+    assert client.execute("SELECT count() FROM corpscout.webtech_scan_input") == [(0,)]
+    assert not [
+        key
+        for (_, key) in objects.client().objects
+        if key.startswith("queue-executions/")
+    ]
+
+
+@pytest.mark.parametrize("failed_domain", [None, "example.com"])
+def test_results_asset_publishes_continuously_resumes_and_clears(
+    database, store, objects, monkeypatch, failed_domain
+):
+    processing, _ = store
+    task_id, scanner, run = results_harness(
+        database, store, objects, monkeypatch, failed_domain=failed_domain
+    )
+    scanner.failing_inserts = 1
+
+    assert not run().success  # the end-of-envelope insert was not acknowledged
     execution_id = processing.task(task_id)["config"]["execution"]["execution_id"]
-    assert processing.task(task_id)["status"] == "ready"
-    assert processing.task(task_id)["completed_at"] is None
-    completed = run()
-    assert completed.success
-    metadata = completed.get_asset_materialization_events()[
-        0
-    ].event_specific_data.materialization.metadata
-    assert metadata["completion_status"].value == (
-        "completed_with_errors" if failed_domain else "completed"
+    assert run(execution_id=execution_id).success
+    # Envelopes are rebuilt from what remains; one insert per envelope, not per page.
+    assert scanner.insert_calls == [2, 2, 1]
+    assert_completed_once(
+        database, store, objects, task_id, scanner, 3 - int(failed_domain is not None)
     )
-    assert metadata["failed_pages"].value == int(failed_domain is not None)
-    assert (
-        processing.task(task_id)["config"]["execution"]["execution_id"] == execution_id
+
+
+def test_results_asset_survives_a_failed_insert_while_polling(
+    database, store, objects, monkeypatch
+):
+    task_id, scanner, run = results_harness(
+        database, store, objects, monkeypatch, eager_flush=True
     )
-    assert len(jobs) == 2 and len(indexed) == 3
-    assert indexed[0] == indexed[1]
-    assert client.execute(
-        "SELECT count() FROM corpscout.webtech_domain_scan_results FINAL"
-    ) == [(2,)]
-    assert processing.progress(task_id)["succeeded"] == 2 - int(
-        failed_domain is not None
-    )
-    assert processing.task(task_id)["status"] == "completed"
-    assert run().success  # Duplicate Start does not submit remote work again.
-    assert len(submissions) == 3
-    assert client.execute("SELECT count() FROM corpscout.webtech_scan_input") == [(0,)]
-    assert processing.task(task_id)["inputs_purged_at"] is not None
-    with pytest.raises(ValueError, match="Inputs were purged"):
-        run(execution_id=str(uuid4()))
-    # A deliberate rescan goes through a fresh queue, with prior results retained.
-    old_task = task_id
-    task_id = add(
-        resource, processing, objects, targets=["novelic.com", "example.com"]
-    )["task_id"]
-    assert task_id != old_task
+    scanner.failing_inserts = 1
+
+    result = run()
+    assert result.success
+    # The failed poll-time insert kept its page, and the next poll published it.
+    assert scanner.insert_calls == [1, 1, 1, 1]
+    messages = [entry.user_message for entry in run.instance.all_logs(result.run_id)]
+    assert any("Webtech result publish failed while polling" in m for m in messages)
+    assert_completed_once(database, store, objects, task_id, scanner)
+
+
+def test_results_asset_publishes_pages_only_the_final_manifest_lists(
+    database, store, objects, monkeypatch
+):
+    task_id, scanner, run = results_harness(database, store, objects, monkeypatch)
+    missed = sorted(
+        input_id
+        for (input_id,) in database[0].execute(
+            "SELECT input_id FROM corpscout.webtech_scan_input WHERE task_id=%(task)s",
+            {"task": task_id},
+        )
+    )[0]
+    scanner.missed_events = {missed}
+
     assert run().success
-    assert len(submissions) == 3 + int(
-        failed_domain is not None
-    )  # Retry errors; skip fresh successes.
-    assert processing.progress(task_id)["skipped"] == 2 - int(failed_domain is not None)
-    assert client.execute("SELECT count() FROM corpscout.webtech_scan_input") == [(0,)]
+    assert missed in scanner.published
+    # The envelope's events (1 page) and the reconciliation top-up (1 page), then envelope 2.
+    assert scanner.insert_calls == [1, 1, 1]
+    assert_completed_once(database, store, objects, task_id, scanner)
+
+
+def test_results_asset_resumes_with_a_new_envelope_after_a_partial_publish(
+    database, store, objects, monkeypatch
+):
+    processing, _ = store
+    task_id, scanner, run = results_harness(
+        database, store, objects, monkeypatch, eager_flush=True
+    )
+    scanner.crash_after_pages = 1
+
+    assert not run().success
+    assert len(scanner.published) == 1  # the first page was published before the crash
+    execution_id = processing.task(task_id)["config"]["execution"]["execution_id"]
+    assert run(execution_id=execution_id).success
+    # What remains differs from the first envelope, so the retry sends a new envelope.
+    assert len(scanner.submitted) == 2
+    assert scanner.submitted[1] != scanner.submitted[0]
+    assert_completed_once(database, store, objects, task_id, scanner)
 
 
 def test_addition_losing_freeze_race_moves_to_next_draft(
@@ -587,6 +741,10 @@ def test_import_retry_fences_orphaned_clickhouse_insert(
 
     client, resource = database
     processing, _ = store
+    # A sibling submission in the same draft must survive the retry untouched.
+    other = add(
+        resource, processing, objects, targets=["other.se"], source_name="manual"
+    )
     receipt_id = str(uuid4())
 
     def interrupt(*args, **kwargs):
@@ -604,36 +762,30 @@ def test_import_retry_fences_orphaned_clickhouse_insert(
             )
     receipt = draft_queue.submission(processing, receipt_id)
     task_id = str(receipt["task_id"])
-    row = next(
-        json.loads(body.splitlines()[0])
-        for (_, key), body in objects.client().objects.items()
-        if key.endswith(".jsonl")
-    )
+    assert task_id == other["task_id"]
+    identity, domain, origin, page = module.normalized_target("novelic.com")
     query_id = "webtech-submission:" + receipt_id
 
     def orphan():
         with resource.get_connection() as writer:
-            # The prior process's PostgreSQL lock is gone, but its insert is alive.
+            # The prior process's PostgreSQL lock is gone, but its insert is alive:
+            # a stable query under the retry's fencing query_id, still writing this
+            # submission's own row (task_id, submission_id).
             return writer.execute(
                 f"INSERT INTO {module.INPUT_RELATION} ({','.join(module.INPUT_COLUMNS)}) "
-                "SELECT %(task)s,%(identity)s,%(root)s,%(origin)s,%(page)s,%(source)s,%(record)s,%(run)s "
-                "FROM numbers(1) WHERE sleep(3)=0",
-                dict(
-                    zip(
-                        (
-                            "task",
-                            "identity",
-                            "root",
-                            "origin",
-                            "page",
-                            "source",
-                            "record",
-                            "run",
-                        ),
-                        row,
-                        strict=True,
-                    )
-                ),
+                "SELECT %(task)s,%(identity)s,%(root)s,%(origin)s,%(page)s,%(source)s,"
+                "%(record)s,%(run)s,%(submission)s FROM numbers(1) WHERE sleep(3)=0",
+                {
+                    "task": task_id,
+                    "identity": identity,
+                    "root": domain,
+                    "origin": origin,
+                    "page": page,
+                    "source": "manual",
+                    "record": "novelic.com",
+                    "run": str(uuid4()),
+                    "submission": receipt_id,
+                },
                 query_id=query_id,
             )
 
@@ -658,75 +810,13 @@ def test_import_retry_fences_orphaned_clickhouse_insert(
             ServerException, match="cancelled|cancel|QUERY_WAS_CANCELLED"
         ):
             future.result(timeout=10)
-    assert result["task_id"] == task_id and result["total"] == 1
-    assert client.execute("SELECT count() FROM corpscout.webtech_scan_input") == [(1,)]
-
-
-def test_cleanup_is_scoped_and_retries_lost_delete_ack(
-    database, store, objects, monkeypatch
-):
-    from contextlib import contextmanager
-    from dagster_clickhouse import ClickhouseResource
-
-    client, resource = database
-    processing, _ = store
-    receipt = add(resource, processing, objects, targets=["example.com"])
-    task_id = receipt["task_id"]
-    task = start(processing, resource, task_id)
-    prepare_execution(
-        store=processing, clickhouse=resource, object_store=objects, task=task
-    )
-    record_bucket(
-        processing,
-        task_id,
-        0,
-        {"scan_id": "saved", "indexed": 1, "succeeded": 1, "failed": 0},
-    )
-    finish_execution(processing, task_id)
-    next_task = add(resource, processing, objects, targets=["other.com"])["task_id"]
-    original = ClickhouseResource.get_connection
-
-    class LoseDeleteAck:
-        def __init__(self, connection):
-            self.connection = connection
-
-        def execute(self, query, *args, **kwargs):
-            result = self.connection.execute(query, *args, **kwargs)
-            if query.startswith("DELETE FROM"):
-                raise RuntimeError("lost delete acknowledgement")
-            return result
-
-    @contextmanager
-    def connection(self):
-        with original(self) as conn:
-            yield LoseDeleteAck(conn)
-
-    with processing.selection_lock(task_id):
-        with monkeypatch.context() as patch:
-            patch.setattr(ClickhouseResource, "get_connection", connection)
-            with pytest.raises(RuntimeError, match="lost delete"):
-                purge_completed_inputs(processing, resource, task_id)
-        assert processing.task(task_id)["inputs_purged_at"] is None
-        purge_completed_inputs(processing, resource, task_id)
-        purge_completed_inputs(processing, resource, task_id)
-    assert processing.task(task_id)["inputs_purged_at"] is not None
-    assert processing.task(task_id)["total"] == 1
-    assert client.execute(
-        "SELECT task_id,root_domain FROM corpscout.webtech_scan_input"
-    ) == [(next_task, "other.com")]
-    assert (
-        add(
-            resource,
-            processing,
-            objects,
-            submission_id=receipt["submission_id"],
-            targets=["example.com"],
-        )["task_id"]
-        == task_id
-    )
-    assert client.execute("SELECT count() FROM corpscout.webtech_scan_input") == [(1,)]
-    with (
-        processing.selection_lock(next_task),
-        pytest.raises(ValueError, match="Only fully completed"),
-    ):
-        purge_completed_inputs(processing, resource, next_task)
+    # The retry killed the orphaned query and deleted only its own rows before
+    # reselecting: exactly one row per submission, no duplicate, sibling intact.
+    assert result["task_id"] == task_id
+    assert result["input_count"] == 1
+    assert result["total"] == 2
+    assert sorted(
+        client.execute(
+            "SELECT root_domain, submission_id FROM corpscout.webtech_scan_input"
+        )
+    ) == sorted([("novelic.com", receipt_id), ("other.se", other["submission_id"])])
