@@ -17,7 +17,8 @@ IANA_SOURCES = {
     "iana_ipv6": "https://www.iana.org/assignments/ipv6-unicast-address-assignments/ipv6-unicast-address-assignments.csv",
 }
 # Each RIR publishes the file daily next to a .md5 (BSD "MD5 (name) = hex" or, for ARIN,
-# GNU "hex  name"). Only its available/reserved ipv4/ipv6 records are stored.
+# GNU "hex  name"). Only its available/reserved records and whole-block allocated/assigned
+# records (holder blocks) are stored.
 RIR_SOURCES = {
     "afrinic": "https://ftp.afrinic.net/pub/stats/afrinic/delegated-afrinic-extended-latest",
     "apnic": "https://ftp.apnic.net/stats/apnic/delegated-apnic-extended-latest",

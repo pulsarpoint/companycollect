@@ -35,7 +35,6 @@ IANA_STATUSES = frozenset({"ALLOCATED", "LEGACY", "RESERVED"})
 DELEGATION_STATUSES = frozenset({"allocated", "assigned", "available", "reserved"})
 # The statuses whose records are kept: space no holder has.
 SPECIAL_STATUSES = frozenset({"available", "reserved"})
-# Statuses of space a holder has; such a record is kept only when it is a holder block.
 RECORD_TYPES = ("asn", "ipv4", "ipv6")
 # A record can cover an entire IANA block only if one of its CIDRs is at most as long as the
 # longest prefix of an RIR-designated IANA block. Derived from the IANA files of 2026-09-25

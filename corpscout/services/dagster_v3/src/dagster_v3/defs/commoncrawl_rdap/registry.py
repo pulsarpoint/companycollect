@@ -32,7 +32,6 @@ from dagster_v3.defs.ip_registry.source import (
 )
 
 UNALLOCATED_STATUSES = ("available", "reserved")
-REGISTRY_CLASSES = ("reusable", "registry_level", "unallocated", "unknown")
 
 
 @dataclass(frozen=True)
