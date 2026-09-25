@@ -84,6 +84,11 @@ multiple sources, IPv4/IPv6, retry deduplication, preserved history, component
 fallback, null clearing, negative results, cached result age, deterministic
 ties, filtering, canonical IP validation, and repeated up/down execution.
 
+Migrations `000449` and `000450` add the IP registry special segments (IANA blocks, RIR
+available/reserved ranges) and make `rdap_network_trie` serve only registrations classified
+`reusable`; `ip_enrichment_results` reports `registry_level_responses` (registrations that answered
+only their queried address). See `docs/operations/ip-registry-reference-data.md`.
+
 ## Materializing the input asset
 
 Apply migration 000433 before using `ip_enrichment_input` (group `ip_enrichment`)

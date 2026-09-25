@@ -117,3 +117,22 @@ SELECT name, status, element_count, last_exception
 FROM system.dictionaries
 WHERE database = 'corpscout' AND name = 'rdap_network_trie';
 ```
+
+## Registry-level registrations (data-driven, 2026-09)
+
+Both writers of `rdap_networks` — this bucket worker and `ip_enrichment`'s `RdapEnricher` —
+classify every direct registration against the IP registry special segments
+(`defs/ip_registry`, `docs/operations/ip-registry-reference-data.md`) with
+`commoncrawl_rdap/registry.py::classify_registration` (one `REGISTRY_CONTEXT_SQL` round trip per
+RDAP miss) and insert its `rdap_network_registry_class` row between the network row and the
+segment rows. A `registry_level` (covers a whole RIR-designated IANA block that no holder block —
+an allocated/assigned RIR record wide enough to cover one, e.g. Comcast's `73.0.0.0/8` — also
+covers entirely) or `unallocated` (first address in available/reserved or IANA-reserved space)
+registration is stored, answers the queried address, and is never added to the in-run reuse set;
+`rdap_network_segments_current` (migration 000450) excludes such networks from
+`rdap_network_trie`, and the daily `rdap_network_registry_class` asset reclassifies everything
+from the current snapshots. While the reference data is incomplete the class is `unknown` and
+nothing is excluded; a classification query failing is fail-closed (it fails the lookup, in both
+writers) rather than silently skipped, and a registration that is not reusable is never cached
+per-IP either — see the operations doc's "Known costs" for what that means for repeat lookups of
+the same address.
