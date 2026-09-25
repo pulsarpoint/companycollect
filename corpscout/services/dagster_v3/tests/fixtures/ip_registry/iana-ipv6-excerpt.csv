@@ -1,0 +1,14 @@
+Prefix,Designation,Date,WHOIS,RDAP,Status,Note
+2001::/23,IANA,1999-07-01,whois.iana.org,,ALLOCATED,This range has been partially allocated. See [IPv6 Special-Purpose Address Space] for details.
+2001:200::/23,APNIC,1999-07-01,whois.apnic.net,https://rdap.apnic.net/,ALLOCATED,
+2001:600::/23,RIPE NCC,1999-07-01,whois.ripe.net,https://rdap.db.ripe.net/,ALLOCATED,
+2001:1200::/23,LACNIC,2002-11-01,whois.lacnic.net,https://rdap.lacnic.net/rdap/,ALLOCATED,
+2001:2000::/19,RIPE NCC,2019-03-12,whois.ripe.net,https://rdap.db.ripe.net/,ALLOCATED,"2001:2000::/20, 2001:3000::/21, and 2001:3800::/22 were allocated on 2004-05-04. The more recent allocation (2019-03-12) incorporates all these previous allocations."
+2001:4800::/23,ARIN,2004-08-24,whois.arin.net,https://rdap.arin.net/registryhttp://rdap.arin.net/registry,ALLOCATED,
+2600::/12,ARIN,2006-10-03,whois.arin.net,https://rdap.arin.net/registryhttp://rdap.arin.net/registry,ALLOCATED,"2600::/22, 2604::/22, 2608::/22 and 260c::/22 were allocated on 2005-04-19. The more 
+recent allocation (2006-10-03) incorporates all these previous allocations."
+2a00::/12,RIPE NCC,2006-10-03,whois.ripe.net,https://rdap.db.ripe.net/,ALLOCATED,"2a00::/21 was originally allocated on 2005-04-19. 2a01::/23 was allocated on 2005-07-14. 
+2a01::/16 (incorporating the 2a01::/23) was allocated on 2005-12-15. The more recent allocation 
+(2006-10-03) incorporates these previous allocations."
+2a10::/12,RIPE NCC,2019-06-05,whois.ripe.net,https://rdap.db.ripe.net/,ALLOCATED,
+2d00::/8,IANA,1999-07-01,,,RESERVED,

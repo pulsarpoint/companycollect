@@ -1,0 +1,15 @@
+2|ripencc|1790287199|11|19700101|20260924|+0200
+ripencc|*|ipv4|*|8|summary
+ripencc|*|asn|*|0|summary
+ripencc|*|ipv6|*|3|summary
+ripencc|SE|ipv4|2.0.0.0|131072|20100712|allocated|12a581c1-ea86-46af-9554-77e3b4ab3df5
+ripencc|SE|ipv4|2.2.0.0|65536|20100712|allocated|12a581c1-ea86-46af-9554-77e3b4ab3df5
+ripencc|FR|ipv4|2.3.0.0|65536|20100712|allocated|9a489e65-dd78-443e-96ab-e21e016b5113
+ripencc|PS|ipv4|1.178.112.0|4096|20071126|allocated|172ce676-8ded-4901-9812-793bd0b4ec77
+ripencc|DK|ipv4|195.85.96.0|1536|19970206|allocated|654e8153-9457-446b-bbe9-2db02b7ba0a8
+ripencc|UA|ipv4|31.131.128.0|3072|20110606|assigned|8c80cd90-d719-4bb9-a036-4922ec4bab03
+ripencc||ipv4|85.8.248.0|2048||available
+ripencc||ipv4|5.134.16.0|2048||reserved
+ripencc|NL|ipv6|2001:600::|29|19990826|allocated|6c4fb689-12a2-41cf-93d5-eb39bcfae759
+ripencc|CZ|ipv6|2001:678:1::|48|20061011|assigned|1c823545-5600-4e44-9ef9-0fb92b56c1cf
+ripencc|IE|ipv6|2a00:1450::|29|20091005|allocated|6e75048b-4b67-432d-97ad-6faaaf3ae0c4

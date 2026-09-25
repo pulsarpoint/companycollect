@@ -1,0 +1,12 @@
+2|afrinic|20260924|8|00000000|20260924|00000
+afrinic|*|asn|*|1|summary
+afrinic|*|ipv4|*|5|summary
+afrinic|*|ipv6|*|2|summary
+afrinic|ZA|asn|1228|1|19910301|allocated|F36B9F4B
+afrinic|ZZ|ipv4|102.192.0.0|524288||available|
+afrinic|ZZ|ipv4|41.57.112.0|2048||reserved|
+afrinic|TZ|ipv4|45.220.48.0|256|20170301|assigned|F3638C76
+afrinic|ZA|ipv4|196.4.163.0|768|19940128|assigned|F36B0DC0
+afrinic|ZA|ipv4|196.4.200.0|3072|19940211|assigned|F3677CA0
+afrinic|ZA|ipv6|2001:4200::|32|20051021|allocated|F36B9F4B
+afrinic|ZA|ipv6|2001:42d0::|40|20070621|assigned|F3634D22

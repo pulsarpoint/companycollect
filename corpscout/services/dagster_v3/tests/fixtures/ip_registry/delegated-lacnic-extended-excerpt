@@ -1,0 +1,11 @@
+2.3|lacnic|20260924|7|19870101|20260924|-0300
+lacnic|*|ipv4|*|3|summary
+lacnic|*|ipv6|*|4|summary
+lacnic|*|asn|*|0|summary
+lacnic|GT|ipv4|2.152.0.0|1024|20260714|allocated|71316
+lacnic|PA|ipv4|2.152.252.0|1024|20260826|assigned|75377
+lacnic||ipv4|45.68.105.0|256||reserved|
+lacnic|MX|ipv6|2001:1200::|32|20030110|allocated|259318
+lacnic|MX|ipv6|2001:1201::|44|20190404|assigned|27835
+lacnic||ipv6|2001:1201:20::|43||available
+lacnic||ipv6|2001:1201:40::|42||available
