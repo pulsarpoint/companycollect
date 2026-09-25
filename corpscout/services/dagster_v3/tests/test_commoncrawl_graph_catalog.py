@@ -124,6 +124,22 @@ def test_discovery_uses_coverage_and_only_heads_bulk_files(catalog_http):
     assert all(method == "HEAD" for method, path in hits if path.endswith(".gz"))
 
 
+def test_legacy_domain_paths_do_not_select_host_graph_files(catalog_http):
+    base, release, _, responses, hits = catalog_http
+    links = []
+    for kind in ("vertices", "edges", "ranks"):
+        path = f"/{release}/domaingraph/{kind}.txt.gz"
+        responses[path] = b"legacy domain file"
+        links.append(f'<a href="{base}{path}">domain</a>')
+        links.append(f'<a href="{base}/{release}/hostgraph/{kind}.txt.gz">host</a>')
+    responses[f"/{release}/index.html"] = "\n".join(links).encode()
+    files = discover_fixture(base)[0].files
+    assert len(files) == 3
+    assert all(file.availability == "available" for file in files)
+    assert all("/domaingraph/" in file.source_url for file in files)
+    assert not any("/hostgraph/" in path for _, path in hits)
+
+
 def test_missing_rank_link_does_not_hide_available_graph(catalog_http):
     base, release, _, responses, _ = catalog_http
     responses[f"/{release}/index.html"] = (

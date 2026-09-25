@@ -80,7 +80,10 @@ def verify_gzip(path: Path, kind: str) -> str:
         if kind == "ranks":
             header = stream.readline(4096).decode("utf-8").strip().split("\t")
             columns = [column.removeprefix("#") for column in header]
-            if columns == RANK_HEADER[:-1]:
+            if columns in (
+                RANK_HEADER[:-1],
+                ["hc_pos", "hc_val", "pr_pos", "pr_val", "host_rev"],
+            ):
                 schema = "domain-ranks-without-host-count-tsv-v1"
             elif columns != RANK_HEADER:
                 raise ValueError("Unsupported domain rank header")

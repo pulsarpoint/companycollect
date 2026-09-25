@@ -249,12 +249,16 @@ def test_truncated_gzip_and_unknown_header_never_enter_cache(rank_http, graph_ob
     assert set(objects.list_keys("domain/")) == before
 
 
+@pytest.mark.parametrize(
+    "harmonic_header", [b"#harmonicc_pos\t#harmonicc_val", b"#hc_pos\t#hc_val"]
+)
 def test_historical_rank_file_without_host_counts_keeps_null(
-    rank_http, graph_objects, rank_ch
+    rank_http, graph_objects, rank_ch, harmonic_header
 ):
     state, url = rank_http
     state["body"] = gzip.compress(
-        b"#harmonicc_pos\t#harmonicc_val\t#pr_pos\t#pr_val\t#host_rev\n1\t10\t2\t0.4\tcom.one\n2\t9\t1\t0.6\tcom.two\n"
+        harmonic_header
+        + b"\t#pr_pos\t#pr_val\t#host_rev\n1\t10\t2\t0.4\tcom.one\n2\t9\t1\t0.6\tcom.two\n"
     )
     artifact = cache_artifact(rank_source(state, url), graph_objects[0], LOG)
     assert cache_artifact(artifact.source, graph_objects[0], LOG) == artifact

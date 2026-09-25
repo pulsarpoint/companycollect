@@ -19,6 +19,11 @@ ARTIFACT_SUFFIXES = {
     "edges": "-domain-edges.txt.gz",
     "ranks": "-domain-ranks.txt.gz",
 }
+LEGACY_ARTIFACT_SUFFIXES = {
+    "nodes": "/domaingraph/vertices.txt.gz",
+    "edges": "/domaingraph/edges.txt.gz",
+    "ranks": "/domaingraph/ranks.txt.gz",
+}
 
 
 @dataclass(frozen=True)
@@ -153,7 +158,9 @@ def discover_releases(
             urls = {
                 trusted_release_url(urljoin(index_url, link), release, base_url)
                 for link in parser.links
-                if urlsplit(link).path.endswith(suffix)
+                if urlsplit(link).path.endswith(
+                    (suffix, LEGACY_ARTIFACT_SUFFIXES[kind])
+                )
             }
             if len(urls) > 1:
                 raise ValueError(f"Ambiguous {kind} downloads for {release}")
