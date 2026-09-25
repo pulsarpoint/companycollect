@@ -80,6 +80,27 @@ finish with needs_human and a short reason. No code, Markdown, or extra fields.
 """
 
 
+def completion_payload(
+    model: str, messages: list[dict], *, explicit_profile: bool
+) -> dict:
+    """Use provider defaults for a selected profile, including required reasoning."""
+    return {
+        "model": model,
+        **(
+            {}
+            if explicit_profile
+            else {"thinking": {"type": "disabled"}}
+            if model == "deepseek-flash"
+            else {"reasoning": {"effort": "low"}}
+        ),
+        "max_tokens": 1024
+        if not explicit_profile and model == "deepseek-flash"
+        else 4096,
+        "response_format": {"type": "json_object"},
+        "messages": messages,
+    }
+
+
 async def perform_action(
     cdp: CDPSession, action: Action, *, width: int, height: int
 ) -> None:
@@ -139,12 +160,14 @@ class ChallengeAgent:
         max_steps: int,
         timeout_seconds: int,
         model: str,
+        explicit_profile: bool = False,
     ):
         self.service, self.session, self.tab_name = service, session, tab_name
         self.page: Page = service.tab(session, tab_name).page
         self.generation = session.profile.generation
         self.origin = urlsplit(self.page.url)[:2]
         self.max_steps, self.timeout_seconds = max_steps, timeout_seconds
+        self.explicit_profile = explicit_profile
         self.directory = service.root / "challenge-runs" / uuid4().hex
         self.directory.mkdir(parents=True, mode=0o700)
         self.result = {
@@ -152,7 +175,11 @@ class ChallengeAgent:
             "sessionId": session.id,
             "tab": tab_name,
             "model": model,
-            "reasoningEffort": "none" if model == "deepseek-flash" else "low",
+            "reasoningEffort": None
+            if explicit_profile
+            else "none"
+            if model == "deepseek-flash"
+            else "low",
             "state": "running",
             "startedAt": datetime.now(UTC).isoformat(),
             "finishedAt": None,
@@ -253,18 +280,9 @@ class ChallengeAgent:
             self.save()
             response = await http.post(
                 "chat/completions",
-                json={
-                    "model": self.result["model"],
-                    **(
-                        {"thinking": {"type": "disabled"}}
-                        if self.result["model"] == "deepseek-flash"
-                        else {"reasoning": {"effort": "low"}}
-                    ),
-                    "max_tokens": 1024
-                    if self.result["model"] == "deepseek-flash"
-                    else 4096,
-                    "response_format": {"type": "json_object"},
-                    "messages": [
+                json=completion_payload(
+                    self.result["model"],
+                    [
                         {
                             "role": "system",
                             "content": SYSTEM + json.dumps(ACTION.json_schema()),
@@ -297,7 +315,8 @@ class ChallengeAgent:
                             ],
                         },
                     ],
-                },
+                    explicit_profile=self.explicit_profile,
+                ),
             )
             response.raise_for_status()
             document = response.json()
@@ -305,7 +324,14 @@ class ChallengeAgent:
                 self.result["usage"][key] += int(document.get("usage", {}).get(key, 0))
             if document["choices"][0]["finish_reason"] != "stop":
                 raise ValueError("Model response did not complete")
-            action = ACTION.validate_json(document["choices"][0]["message"]["content"])
+            content = document["choices"][0]["message"]["content"]
+            scheme, _, api_key = http.headers.get("Authorization", "").partition(" ")
+            if scheme.casefold() == "bearer" and api_key:
+                # Providers may echo credentials inside successful action JSON too.
+                content = json.dumps(json.loads(content)).replace(
+                    json.dumps(api_key)[1:-1], "[REDACTED]"
+                )
+            action = ACTION.validate_json(content)
             step["action"] = action.model_dump()
             if isinstance(action, TypeAction):
                 step["action"]["text"] = "[redacted]"

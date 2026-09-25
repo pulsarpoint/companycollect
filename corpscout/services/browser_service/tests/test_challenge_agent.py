@@ -44,9 +44,11 @@ class ChallengeAgentTests(unittest.IsolatedAsyncioTestCase):
             model="deepseek-flash",
         )
 
-    async def run_model(self, handler):
+    async def run_model(self, handler, headers=None):
         async with httpx.AsyncClient(
-            transport=httpx.MockTransport(handler), base_url="https://api.deepseek.com"
+            transport=httpx.MockTransport(handler),
+            base_url="https://api.deepseek.com",
+            headers=headers,
         ) as http:
             return await self.agent.run(http)
 
@@ -78,6 +80,25 @@ class ChallengeAgentTests(unittest.IsolatedAsyncioTestCase):
                 )
                 self.assertEqual(result["state"], "error")
                 self.cdp.send.assert_not_awaited()
+
+    async def test_escaped_credential_in_successful_action_is_redacted(self):
+        key = 'sk-private-"quoted"\\key'
+        result = await self.run_model(
+            lambda _: self.reply(
+                {
+                    "action": "finish",
+                    "outcome": "appears_clear",
+                    "reason": "Echo " + key,
+                }
+            ),
+            headers={"Authorization": "Bearer " + key},
+        )
+        self.assertEqual(result["reason"], "Echo [REDACTED]")
+        self.assertEqual(result["steps"][0]["action"]["reason"], "Echo [REDACTED]")
+        self.assertEqual(
+            json.loads((self.agent.directory / "result.json").read_text())["reason"],
+            "Echo [REDACTED]",
+        )
 
     async def test_no_click_when_url_changes_while_model_is_deciding(self):
         def model(_):

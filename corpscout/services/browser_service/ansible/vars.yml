@@ -35,3 +35,6 @@ browser_service_openrouter_api_key: "{{ lookup('ansible.builtin.env', 'OPENROUTE
 browser_service_crawl_proxy1: "{{ lookup('ansible.builtin.env', 'BROWSER_CRAWL_PROXY1') }}"
 browser_service_crawl_proxy2: "{{ lookup('ansible.builtin.env', 'BROWSER_CRAWL_PROXY2') }}"
 browser_service_crawl_proxy3: "{{ lookup('ansible.builtin.env', 'BROWSER_CRAWL_PROXY3') }}"
+
+# Same encryption key used by Backoffice for per-execution LLM profiles.
+browser_service_llm_encryption_key: "{{ lookup('ansible.builtin.env', 'BROWSER_LLM_ENCRYPTION_KEY') }}"

@@ -24,6 +24,7 @@
       tags: [build]
       block:
         - name: Refresh CloakBrowser to the latest compatible release
+          tags: [upgrade_browser]
           ansible.builtin.command:
             argv: [uv, lock, --upgrade-package, cloakbrowser]
             chdir: "{{ browser_service_source_dir }}"
@@ -99,6 +100,13 @@
           - browser_service_api_token | length >= 32
           - (browser_service_api_token | regex_search('[\x00-\x1f\x7f]')) is none
         fail_msg: Set browser_service_api_token in the ignored secrets.yml.
+      no_log: true
+
+    - name: Validate the shared Backoffice LLM encryption key
+      ansible.builtin.assert:
+        that:
+          - browser_service_llm_encryption_key is match('^[A-Fa-f0-9]{64}$')
+        fail_msg: Set browser_service_llm_encryption_key to the same 64-character hexadecimal key configured in Backoffice.
       no_log: true
 
     - name: Gather target platform information

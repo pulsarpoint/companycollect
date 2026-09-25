@@ -547,3 +547,20 @@ An execution's selected profile is frozen; choose a new execution to change its 
 The chosen LLM applies to crawl classification and extraction. CAPTCHA assistance keeps
 its separate model controls and service credentials. Legacy direct crawler requests without
 an `llm` profile remain supported for existing integrations.
+
+### Brave browser assistant
+
+Brave queue processing uses the same saved-LLM selector and encrypted credential envelope.
+The selected model controls the visual browser/CAPTCHA assistant; Brave Ask still supplies
+the search answer. Backoffice verifies the model through the browser service's
+`POST /v1/brave/llm/verify` before launching, using image input and the assistant's JSON
+action format. Unsupported image input, invalid action JSON, unavailable models and
+credential errors block the launch and leave the inputs queued.
+
+Configure `browser_service_llm_encryption_key` in the browser service's ignored Ansible
+secrets file to the same value as Backoffice `CRAWLER_LLM_ENCRYPTION_KEY`. The browser
+process receives it as `BROWSER_LLM_ENCRYPTION_KEY`; Dagster never receives the shared key.
+A stopped legacy Brave execution can adopt a selected profile once on resume, preserving
+its completed outcomes. That profile is then frozen for the execution, just like new runs.
+
+The company list's **Add to Brave queue** action prepares inputs only and links to the queue configuration, so it cannot start searches before an assistant model is selected and verified.

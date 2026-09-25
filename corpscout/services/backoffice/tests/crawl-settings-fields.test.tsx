@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CrawlSettingsFields } from "~/components/admin/crawl-settings-fields";
+import { LlmProfileField } from "~/components/admin/llm-profile-field";
 import { loader } from "~/routes/admin-crawl-llm-profiles";
 
 const mocks = vi.hoisted(() => ({fetcher: vi.fn(), listLlmProfiles: vi.fn()}));
@@ -23,6 +24,16 @@ beforeEach(() => {
 });
 
 describe("crawl LLM selection", () => {
+  it("shares the saved-model field with a caller-specific label and description", () => {
+    const html = renderToStaticMarkup(<MemoryRouter><LlmProfileField idPrefix="shared" label="Browser assistant LLM"
+      description="Verify image understanding before starting." /></MemoryRouter>);
+    expect(html).toContain("Browser assistant LLM");
+    expect(html).toContain("Verify image understanding before starting.");
+    expect(html).toContain('id="shared-llm-profile"');
+    expect(html).toMatch(/<select[^>]*name="llm_profile_id"[^>]*required=""/);
+    expect(html).toMatch(/<option[^>]*value=""[^>]*selected=""/);
+    expect(html).toContain("Saved model · openrouter · example/model");
+  });
   it("requires an explicit profile choice instead of accepting raw model fields", () => {
     const html = render();
     expect(html).toMatch(/<select[^>]*name="llm_profile_id"[^>]*required=""/);

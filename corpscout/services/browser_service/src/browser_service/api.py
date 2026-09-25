@@ -19,6 +19,8 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, HttpUrl, StrictBool
 
 from browser_service.brave import brave_router
@@ -48,6 +50,7 @@ def create_app(
     api_token: str | None,
     deepseek_api_key: str | None = None,
     openrouter_api_key: str | None = None,
+    llm_encryption_key: str | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -62,6 +65,20 @@ def create_app(
         version=version("corpscout-browser-service"),
         lifespan=lifespan,
     )
+
+    @app.exception_handler(RequestValidationError)
+    async def invalid_request(_, error: RequestValidationError) -> JSONResponse:
+        # Validation input may contain an accidentally submitted plaintext credential.
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": [
+                    {key: item[key] for key in ("loc", "msg", "type") if key in item}
+                    for item in error.errors()
+                ]
+            },
+        )
+
     tickets: dict[str, tuple[str, str, float]] = {}
 
     def authenticate(authorization: Annotated[str | None, Header()] = None) -> None:
@@ -80,6 +97,8 @@ def create_app(
             service,
             deepseek_api_key=deepseek_api_key,
             openrouter_api_key=openrouter_api_key,
+            llm_encryption_key=llm_encryption_key,
+            authenticated=bool(api_token),
         ),
         prefix="/v1/brave",
         dependencies=[Depends(authenticate)],

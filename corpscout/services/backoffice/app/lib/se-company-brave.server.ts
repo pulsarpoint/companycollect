@@ -40,7 +40,7 @@ export async function launchSeCompanyBraveAnalysis(
     input.select_all = true;
   }
   const run = await launchRun({
-    job: "company_brave_search_workflow",
+    job: "company_brave_search_input_job",
     runConfig: { ops: {
       company_brave_search_input: { config: input },
     } },
@@ -51,8 +51,8 @@ export async function launchSeCompanyBraveAnalysis(
       "corpscout/requested_by": requestedBy,
       "corpscout/country_iso2": "SE",
       "corpscout/company_area": "brave",
-      "corpscout/company_operation": "process",
+      "corpscout/company_operation": "initialize",
     },
   }, options);
-  return { ok: true as const, ...run, taskId, runUrl: dagsterRunUrl(run.runId, options.url) };
+  return { ok: true as const, ...run, taskId, queueUrl: `/admin/queues/brave?task=${encodeURIComponent(taskId)}&configure=1`, runUrl: dagsterRunUrl(run.runId, options.url) };
 }

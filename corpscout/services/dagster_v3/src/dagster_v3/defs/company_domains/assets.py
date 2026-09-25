@@ -12,13 +12,14 @@ from uuid import UUID, uuid5
 
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
-from pydantic import Field, field_validator
+from pydantic import ConfigDict, Field, field_validator
 
 from dagster_v3.defs.common.clickhouse_queue import (
     ClickHouseInputQueue,
     validate_relation,
 )
 from dagster_v3.defs.common.processing import ProcessingResource, render_query
+from dagster_v3.defs.common.encrypted_llm import EncryptedLLMConfig
 from dagster_v3.defs.company_domains.browser import (
     DEFAULT_BROWSER_API_URL,
     ROUTES,
@@ -40,7 +41,13 @@ EXECUTION_TAG = "brave/execution"
 
 
 class BraveSearchConfig(dg.Config):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
     task_id: str | None = None
+    llm: EncryptedLLMConfig | None = Field(
+        default=None,
+        description="Selected browser assistant profile with an encrypted API key. Omit only for legacy browser-service credentials.",
+    )
     execution_id: str | None = Field(
         default=None,
         description="Original Dagster run ID to resume, including a forced execution.",
@@ -111,8 +118,23 @@ def prepare_execution(
                 raise ValueError(
                     f"resume must keep {name} unchanged; start a new execution instead"
                 )
+        if config.llm is not None:
+            selected_llm = config.llm.model_dump()
+            saved_llm = execution.get("llm")
+            if saved_llm is None:
+                # Upgrade an interrupted legacy execution without replaying its saved outcomes.
+                execution["llm"] = selected_llm
+                context.instance.add_run_tags(
+                    execution_id, {EXECUTION_TAG: json.dumps(execution)}
+                )
+            elif config.llm.model_dump(exclude={"api_key_encrypted"}) != {
+                key: value for key, value in saved_llm.items() if key != "api_key_encrypted"
+            }:
+                raise ValueError(
+                    "resume must keep the selected LLM provider, endpoint and model unchanged; start a new execution instead"
+                )
         context.instance.add_run_tags(
-            context.run.run_id, {EXECUTION_TAG: original.tags[EXECUTION_TAG]}
+            context.run.run_id, {EXECUTION_TAG: json.dumps(execution)}
         )
         return execution
     if config.execution_id is not None:
@@ -165,6 +187,7 @@ def prepare_execution(
         "input_relation": task["source_info"]["relation"],
         "force": config.force,
         "rescan_old": config.rescan_old,
+        "llm": config.llm.model_dump() if config.llm is not None else None,
         **query,
     }
     tags = {EXECUTION_TAG: json.dumps(execution), "processing/task_id": task_id}
@@ -358,6 +381,7 @@ def company_brave_search_results(
                 companies(),
                 requests_per_route=config.requests_per_route,
                 on_result=save,
+                llm=execution.get("llm"),
             )
         ) as answers:
             for result in answers:

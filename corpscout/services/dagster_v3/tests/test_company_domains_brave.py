@@ -7,17 +7,26 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from types import SimpleNamespace
+from uuid import uuid4
 
 import dagster as dg
 import pytest
 
 from dagster_v3.defs.company_domains import browser as brave
+from dagster_v3.defs.company_domains import assets
 from dagster_v3.defs.company_domains.assets import (
     BraveSearchConfig,
     company_brave_search_results,
 )
 
 SERVICE = {"api_url": "http://127.0.0.1:1", "api_token": "fixture-secret"}
+LLM = {
+    "provider": "openrouter",
+    "base_url": "https://openrouter.ai/api/v1",
+    "model": "selected-model",
+    "api_key_encrypted": "v1." + "a" * 16 + "." + "b" * 32,
+}
 
 
 class BraveAPIFixture:
@@ -36,6 +45,9 @@ class BraveAPIFixture:
         self.capacity_failures = 0
         self.lost_response = False
         self.results = {}
+        self.verifications = []
+        self.verification_result = {"ok": True}
+        self.cancelled = set()
         fixture = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -62,6 +74,16 @@ class BraveAPIFixture:
                 payload = json.loads(
                     self.rfile.read(int(self.headers["Content-Length"]))
                 )
+                if self.path == "/v1/brave/llm/verify":
+                    fixture.verifications.append(payload)
+                    self.reply(200, fixture.verification_result)
+                    return
+                if self.path.endswith("/cancel"):
+                    identifier = self.path.split("/")[-2]
+                    fixture.cancelled.add(identifier)
+                    fixture.release_slow.set()
+                    self.reply(200, {"status": "error", "error_type": "Cancelled"})
+                    return
                 if fixture.capacity_failures:
                     fixture.capacity_failures -= 1
                     self.reply(503, {})
@@ -110,6 +132,8 @@ class BraveAPIFixture:
                         )
                     if fixture.responder:
                         result.update(fixture.responder(payload))
+                    if payload["request_id"] in fixture.cancelled:
+                        result.update(status="error", answer="", error_type="Cancelled")
                     fixture.results[payload["request_id"]] = result
                     if fixture.lost_response:
                         self.close_connection = True
@@ -340,3 +364,142 @@ def test_timeout_configuration_rejects_unbounded_or_reversed_limits():
     ):
         with pytest.raises(ValueError):
             BraveSearchConfig(**config)
+
+
+def test_selected_profile_is_verified_before_input_and_transported_unchanged(brave_api):
+    fixture = brave_api()
+    fixture.responder = lambda _: {}
+    claimed = []
+
+    def inputs():
+        assert fixture.verifications == [{"llm": LLM}]
+        claimed.append(True)
+        yield from companies(1)
+
+    resource = brave.BraveBrowserResource(
+        **fixture.config, challenge_agent_model="deepseek-flash"
+    )
+    results = list(resource.iter_answers(
+        inputs(), requests_per_route=1, on_result=lambda _: None, llm=LLM
+    ))
+    assert len(results) == 1 and claimed
+    assert fixture.payloads[0]["llm"] == LLM
+    assert "challenge_agent_model" not in fixture.payloads[0]
+    company = next(companies(1))
+    assert fixture.payloads[0]["request_id"] == brave.browser_request_id(company, LLM)
+    rotated = dict(LLM, api_key_encrypted="v1." + "c" * 16 + "." + "d" * 32)
+    assert brave.browser_request_id(company, rotated) == brave.browser_request_id(company, LLM)
+    assert brave.browser_request_id(company, dict(LLM, model="other")) != brave.browser_request_id(company, LLM)
+
+
+@pytest.mark.parametrize("response", [{"ok": False, "error": "Model has no endpoints"}, {}, []])
+def test_failed_verification_does_not_consume_or_submit_inputs(brave_api, response):
+    fixture = brave_api()
+    fixture.verification_result = response
+
+    def inputs():
+        pytest.fail("failed preflight must not consume queued companies")
+        yield
+
+    with pytest.raises(ValueError, match="No Brave searches|no Brave searches"):
+        list(brave.BraveBrowserResource(**fixture.config).iter_answers(
+            inputs(), requests_per_route=1, on_result=lambda _: None, llm=LLM
+        ))
+    assert fixture.queries == []
+
+
+def test_interrupted_consumer_cancels_only_active_requests_without_failed_outcomes(brave_api):
+    fixture = brave_api()
+    saved = []
+    with closing(brave.BraveBrowserResource(**fixture.config).iter_answers(
+        companies(4), requests_per_route=1, on_result=saved.append
+    )) as results:
+        next(results)
+    assert fixture.cancelled
+    assert fixture.cancelled.issubset({payload["request_id"] for payload in fixture.payloads})
+    assert all(result.status == "success" for result in saved)
+    assert not any(fixture.active.values())
+
+
+def test_resume_retries_only_cancelled_request_under_deterministic_suffix(brave_api):
+    fixture = brave_api()
+    fixture.responder = lambda _: {}
+    fixture.results["dagster-0"] = {
+        "request_id": "dagster-0", "query": "Find Company 0 AB", "route": "direct",
+        "status": "error", "error_type": "Cancelled",
+    }
+    [result] = list(brave.BraveBrowserResource(**fixture.config).iter_answers(
+        companies(1), requests_per_route=1, on_result=lambda _: None
+    ))
+    assert result.status == "success"
+    assert len(fixture.payloads) == 1
+    assert fixture.payloads[0]["request_id"] == "dagster-0-retry-1"
+    assert fixture.results["dagster-0"]["error_type"] == "Cancelled"
+
+
+def resume_context(execution, supplied):
+    original_id = execution["execution_id"]
+    resumed_id = str(uuid4())
+    original = SimpleNamespace(tags={assets.EXECUTION_TAG: json.dumps(execution)})
+    resumed = SimpleNamespace(tags={"processing/task_id": execution["task_id"]})
+    runs = {original_id: original, resumed_id: resumed}
+    instance = SimpleNamespace(
+        get_run_by_id=lambda run_id: runs[run_id],
+        add_run_tags=lambda run_id, tags: runs[run_id].tags.update(tags),
+    )
+    context = SimpleNamespace(
+        run=SimpleNamespace(
+            run_id=resumed_id, root_run_id=None,
+            run_config={"ops": {"company_brave_search_results": {"config": supplied}}},
+        ),
+        instance=instance,
+    )
+    return context, runs
+
+
+def test_legacy_execution_adopts_profile_once_and_resume_keeps_frozen_ciphertext():
+    execution = {"execution_id": str(uuid4()), "task_id": str(uuid4()), "query_type": "official_website"}
+    context, runs = resume_context(execution, {"llm": LLM})
+    result = assets.prepare_execution(
+        context, BraveSearchConfig(execution_id=execution["execution_id"], llm=LLM), None, None
+    )
+    assert result["llm"] == LLM
+    assert result["execution_id"] == execution["execution_id"]
+    assert json.loads(runs[execution["execution_id"]].tags[assets.EXECUTION_TAG])["llm"] == LLM
+
+    rotated = dict(LLM, api_key_encrypted="v1." + "c" * 16 + "." + "d" * 32)
+    context, runs = resume_context(result, {"llm": rotated})
+    resumed = assets.prepare_execution(
+        context, BraveSearchConfig(execution_id=execution["execution_id"], llm=rotated), None, None
+    )
+    assert resumed["llm"] == LLM
+    assert json.loads(runs[context.run.run_id].tags[assets.EXECUTION_TAG])["llm"] == LLM
+
+    context, _ = resume_context(result, {"llm": dict(LLM, model="changed")})
+    with pytest.raises(ValueError, match="selected LLM"):
+        assets.prepare_execution(
+            context, BraveSearchConfig(execution_id=execution["execution_id"], llm=dict(LLM, model="changed")), None, None
+        )
+
+
+def test_brave_rejects_plaintext_credentials_in_selected_profile_and_config():
+    with pytest.raises(ValueError):
+        BraveSearchConfig(llm=dict(LLM, api_key="never-persist"))
+    with pytest.raises(ValueError):
+        BraveSearchConfig(api_key="never-persist")
+    with pytest.raises(ValueError):
+        BraveSearchConfig(llm=dict(LLM, base_url="https://key:secret@example.test/v1"))
+
+
+def test_resume_recovers_completed_browser_response_with_new_worker_session(brave_api):
+    fixture = brave_api()
+    fixture.responder = lambda _: {}
+    resource = brave.BraveBrowserResource(**fixture.config)
+    first = list(resource.iter_answers(
+        companies(1), requests_per_route=1, on_result=lambda _: None
+    ))
+    resumed = list(resource.iter_answers(
+        companies(1), requests_per_route=1, on_result=lambda _: None
+    ))
+    assert len(fixture.payloads) == 1
+    assert resumed == first

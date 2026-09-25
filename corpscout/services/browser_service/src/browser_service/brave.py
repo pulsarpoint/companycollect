@@ -14,11 +14,17 @@ import httpx
 from fastapi import APIRouter, HTTPException
 from playwright.async_api import Error
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_serializer
 
 from browser_service.browser import BrowserSession
 from browser_service.capture import StrictModel
 from browser_service.challenge_agent import ChallengeAgent
+from browser_service.llm_profile import (
+    EncryptedLLMProfile,
+    LLMProfileError,
+    VerifyLLMRequest,
+    verify_llm,
+)
 from browser_service.runtime import ActiveBrowserSession, BrowserService
 from browser_service.session_store import BrowserSessionError
 
@@ -46,6 +52,14 @@ class BraveAskRequest(StrictModel):
     challenge_agent_model: Literal["deepseek-flash", "z-ai/glm-5.3-flash"] = (
         "deepseek-flash"
     )
+    llm: EncryptedLLMProfile | None = None
+
+    @model_serializer(mode="wrap")
+    def serialize(self, handler):
+        value = handler(self)
+        if self.llm is None:
+            value.pop("llm", None)
+        return value
 
     @field_validator("query")
     @classmethod
@@ -179,10 +193,15 @@ class BraveAsk:
                 "brave",
                 max_steps=12,
                 timeout_seconds=120,
-                model=self.request.challenge_agent_model,
+                model=self.request.llm.model
+                if self.request.llm
+                else self.request.challenge_agent_model,
+                explicit_profile=self.request.llm is not None,
             )
             async with httpx.AsyncClient(
-                base_url="https://api.deepseek.com/"
+                base_url=self.request.llm.base_url.rstrip("/") + "/"
+                if self.request.llm is not None
+                else "https://api.deepseek.com/"
                 if self.request.challenge_agent_model == "deepseek-flash"
                 else "https://openrouter.ai/api/v1/",
                 headers={"Authorization": f"Bearer {self.api_key}"},
@@ -390,12 +409,27 @@ def brave_router(
     *,
     deepseek_api_key: str | None,
     openrouter_api_key: str | None,
+    llm_encryption_key: str | None = None,
+    authenticated: bool = False,
 ) -> APIRouter:
     router = APIRouter()
     active: dict[str, ActiveBrowserSession | None] = {}
+    tasks: dict[str, asyncio.Task] = {}
+
+    @router.post("/llm/verify")
+    async def verify(payload: VerifyLLMRequest) -> dict:
+        if not authenticated:
+            raise HTTPException(
+                503, "Browser API authentication is required for LLM verification"
+            )
+        return await verify_llm(payload.llm, llm_encryption_key)
 
     @router.post("/ask")
     async def ask(payload: BraveAskRequest) -> dict:
+        if payload.llm is not None and not authenticated:
+            raise HTTPException(
+                503, "Browser API authentication is required for encrypted LLM profiles"
+            )
         directory = service.root / "brave-requests" / payload.request_id
         request_file, result_file = (
             directory / "request.json",
@@ -421,7 +455,22 @@ def brave_router(
             raise HTTPException(
                 410, "Brave request was interrupted; use a new request ID"
             )
+        try:
+            key = (
+                payload.llm.decrypt_api_key(llm_encryption_key)
+                if payload.llm
+                else (
+                    deepseek_api_key
+                    if payload.challenge_agent_model == "deepseek-flash"
+                    else openrouter_api_key
+                )
+            )
+        except LLMProfileError as error:
+            raise HTTPException(422, str(error)) from error
         active[payload.request_id] = None
+        task = asyncio.current_task()
+        if task is not None:
+            tasks[payload.request_id] = task
         session = None
         identifier = payload.session_id or uuid4().hex
         try:
@@ -435,13 +484,31 @@ def brave_router(
             active[payload.request_id] = session
             directory.mkdir(parents=True, mode=0o700)
             write_result(request_file, payload.model_dump())
-            key = (
-                deepseek_api_key
-                if payload.challenge_agent_model == "deepseek-flash"
-                else openrouter_api_key
-            )
             async with session.lock:
                 return await BraveAsk(service, session, payload, directory, key).run()
+        except asyncio.CancelledError:
+            if not result_file.exists():
+                directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+                write_result(request_file, payload.model_dump())
+                write_result(
+                    result_file,
+                    {
+                        "request_id": payload.request_id,
+                        "query": payload.query,
+                        "route": payload.route,
+                        "session_id": identifier,
+                        "execution_id": session.execution_id if session else None,
+                        "status": "error",
+                        "answer": "",
+                        "source_url": BRAVE_ORIGIN,
+                        "error_type": "Cancelled",
+                        "error_stage": "browser_capacity",
+                        "challenge_runs": [],
+                        "fetched_at": datetime.now(UTC).isoformat(),
+                        "elapsed_ms": 0,
+                    },
+                )
+            raise
         except BrowserSessionError as error:
             raise HTTPException(
                 error.status,
@@ -454,20 +521,33 @@ def brave_router(
                     await service.release(session.id, execution_id=session.execution_id)
             finally:
                 active.pop(payload.request_id, None)
+                tasks.pop(payload.request_id, None)
+
+    @router.post("/requests/{request_id}/cancel")
+    async def cancel(request_id: str) -> dict:
+        if not authenticated:
+            raise HTTPException(
+                503, "Browser API authentication is required to cancel Brave requests"
+            )
+        validate_request_id(request_id)
+        task = tasks.get(request_id)
+        if task is not None:
+            if not task.cancelling():
+                task.cancel()
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=30)
+            except asyncio.CancelledError:
+                # The targeted request's cancellation is expected; caller remains active.
+                if not task.cancelled():
+                    raise
+            except TimeoutError:
+                return {"request_id": request_id, "status": "cancelling"}
+        return await status(request_id)
 
     @router.get("/requests/{request_id}")
     async def status(request_id: str) -> dict:
         # Use the same identifier validation as submissions before touching disk.
-        if (
-            not request_id
-            or any(
-                c
-                not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
-                for c in request_id
-            )
-            or len(request_id) > 128
-        ):
-            raise HTTPException(422, "Invalid request ID")
+        validate_request_id(request_id)
         directory = service.root / "brave-requests" / request_id
         if (directory / "result.json").exists():
             return json.loads((directory / "result.json").read_text(encoding="utf-8"))
@@ -483,5 +563,17 @@ def brave_router(
         if (directory / "request.json").exists():
             return {"request_id": request_id, "status": "interrupted"}
         raise HTTPException(404, "Unknown Brave request")
+
+    def validate_request_id(request_id: str) -> None:
+        if (
+            not request_id
+            or any(
+                c
+                not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+                for c in request_id
+            )
+            or len(request_id) > 128
+        ):
+            raise HTTPException(422, "Invalid request ID")
 
     return router

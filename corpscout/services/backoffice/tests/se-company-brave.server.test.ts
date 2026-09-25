@@ -9,11 +9,11 @@ function options() {
 }
 
 describe("Swedish company Brave action", () => {
-  it("launches initialization and processing for the exact distinct selection, including IDs from other pages", async () => {
+  it("prepares the exact distinct selection without bypassing model selection and processing", async () => {
     const opts = options();
     const result = await launchSeCompanyBraveAnalysis({ mode: "ids", companyIds: ["5560004615", "5560160680", "5560004615"] }, "operator", opts);
     const execution = JSON.parse(String(opts.fetchImpl.mock.calls[0][1]?.body)).variables.executionParams;
-    expect(execution.selector.jobName).toBe("company_brave_search_workflow");
+    expect(execution.selector.jobName).toBe("company_brave_search_input_job");
     expect(execution.runConfigData.ops).toEqual({
       company_brave_search_input: { config: {
         task_id: result.taskId, source_relation: "corpscout.se_companies_serving",
@@ -22,6 +22,8 @@ describe("Swedish company Brave action", () => {
     });
     expect(execution.executionMetadata.tags).toContainEqual({ key: "processing/task_id", value: result.taskId });
     expect(execution.executionMetadata.tags).toContainEqual({ key: "corpscout/requested_by", value: "operator" });
+    expect(result.queueUrl).toBe(`/admin/queues/brave?task=${result.taskId}&configure=1`);
+    expect(execution.runConfigData.ops).not.toHaveProperty("company_brave_search_results");
     expect(result).toMatchObject({ ok: true, runId: "brave-run", runUrl: "http://dagster.test/runs/brave-run" });
   });
 

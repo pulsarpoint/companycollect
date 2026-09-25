@@ -205,6 +205,22 @@ to 3; 0 disables assistance. `deepseek-flash` uses `DEEPSEEK`;
 An agent's completion claim does not make the query successful: a nonempty
 answer must be copied from the requested Ask page.
 
+Backoffice-selected models supply an optional top-level `llm` object with
+`provider`, `base_url`, `model`, and `api_key_encrypted`. That profile overrides
+the legacy assistant model, endpoint, and environment credential. Provider
+reasoning defaults remain enabled. The credential uses the crawler's existing
+AES-256-GCM `v1.<nonce>.<ciphertext-and-tag>` envelope and authenticated metadata.
+Set `BROWSER_LLM_ENCRYPTION_KEY` to the same 64-character hexadecimal key as
+Backoffice's `CRAWLER_LLM_ENCRYPTION_KEY`. Only encrypted credentials are stored
+with requests; Dagster does not need the decryption key.
+
+Before submitting a batch, call authenticated `POST /v1/brave/llm/verify` with
+`{"llm": <encrypted-profile>}`. A single completion must inspect a harmless
+static image and return a valid browser action JSON. This checks image support
+as well as model availability, uses the assistant's actual request settings,
+and creates no browser session or evidence files. The check has a 30-second
+deadline and returns `{"ok": true}` or `{"ok": false, "error": "..."}`.
+
 The response contains `status` (`success`, `blocked`, `error`), `answer`,
 `source_url`, timestamps, duration, error stage/category, and `challenge_runs`.
 The page-load budget defaults to 60 seconds, answer generation to 180 seconds,
@@ -219,6 +235,13 @@ remain in `challenge-runs/`. `GET /v1/brave/requests/<request_id>` returns live
 progress or the saved result. `/v1/server` also exposes the active operation so
 Backoffice's browser assignments show answer generation or CAPTCHA assistance.
 These local diagnostics have no automatic retention policy yet.
+
+Authenticated `POST /v1/brave/requests/<request_id>/cancel` cancels only that
+request and waits for its browser cleanup. It returns the saved terminal result
+with `error_type: Cancelled`, or `status: cancelling` if cleanup takes more than
+30 seconds. Completed results stay intact, including cancellation evidence.
+Retry a cancelled request with a new request ID; replaying its original ID
+returns the saved cancellation result.
 
 Submitting the same request ID and payload returns the saved result. A duplicate
 in-flight request returns 409 with `Retry-After`; capacity exhaustion returns 503
@@ -267,3 +290,5 @@ instead of being mistaken for a closed browser.
 ```bash
 BROWSER_NAVIGATION_NATIVE_TEST=1 CLOAKBROWSER_AUTO_UPDATE=false uv run python -m unittest discover -s tests -p test_navigation.py
 ```
+
+For a deployment using the already validated lockfile, run `ansible-playbook site.yml --skip-tags upgrade_browser` from `ansible/`. The inventory uses the crawler host's Tailscale/SSH name.

@@ -1,4 +1,5 @@
 import { createCipheriv, randomBytes } from "node:crypto";
+import { browserFetch } from "~/lib/browser-service.server";
 import { crawlerFetch } from "~/lib/crawler.server";
 import { getLlmProfile } from "~/lib/llm-settings.server";
 
@@ -34,29 +35,39 @@ export function encryptCrawlLlm(profile: {provider: string; baseUrl: string; mod
     api_key_encrypted: `v1.${nonce.toString("base64url")}.${encrypted.toString("base64url")}`};
 }
 
-/** Resolve credentials on the server and verify the exact encrypted profile before launch. */
-export async function prepareCrawlSettings<T extends Record<string, unknown>>(settings: T) {
-  const {llm_profile_id: profileId, ...rest} = settings;
-  if (typeof profileId !== "string" || !profileId.trim()) throw new CrawlLlmError("Choose an LLM from LLM settings before starting the crawl.");
-  if (!process.env.CRAWLER_API_TOKEN?.trim()) throw new CrawlLlmError("Configure CRAWLER_API_TOKEN on Backoffice before verifying crawl models.");
+/** Verify the selected model through the service that will actually use it. */
+export async function verifySelectedLlm(profileId: unknown, target: "crawler" | "brave"): Promise<EncryptedCrawlLlm> {
+  if (typeof profileId !== "string" || !profileId.trim()) throw new CrawlLlmError("Choose an LLM from LLM settings before starting processing.");
+  const tokenName = target === "crawler" ? "CRAWLER_API_TOKEN" : "BROWSER_API_TOKEN";
+  const serviceName = target === "crawler" ? "crawler" : "Brave browser assistant";
+  if (!process.env[tokenName]?.trim()) throw new CrawlLlmError(`Configure ${tokenName} on Backoffice before verifying models.`);
   const profile = getLlmProfile(profileId);
   if (!profile) throw new CrawlLlmError("The selected LLM no longer exists. Choose another LLM.");
   const apiKey = process.env[profile.apiKeyEnvironmentVariable]?.trim() ?? "";
   const llm = encryptCrawlLlm(profile, apiKey, process.env.CRAWLER_LLM_ENCRYPTION_KEY ?? "");
   let result: unknown;
   try {
-    result = await (await crawlerFetch("/v1/llm/verify", {
-      method: "POST", headers: {"Content-Type": "application/json"},
+    const init: RequestInit = {
+      method: "POST", headers: {"Content-Type": "application/json"}, redirect: "error",
       body: JSON.stringify({llm}), signal: AbortSignal.timeout(35_000),
-    })).json();
+    };
+    const response = target === "crawler" ? await crawlerFetch("/v1/llm/verify", init)
+      : await browserFetch("/v1/brave/llm/verify", init);
+    result = await response.json();
   } catch {
-    throw new CrawlLlmError("Could not verify the selected LLM through the crawler. Check crawler connectivity, API authentication, and the shared encryption key before trying again.");
+    throw new CrawlLlmError(`Could not verify the selected LLM through the ${serviceName}. Check service connectivity, API authentication, and the shared encryption key before trying again.`);
   }
   if (typeof result !== "object" || result === null || !("ok" in result) || result.ok !== true) {
     const detail = typeof result === "object" && result !== null && "error" in result && typeof result.error === "string"
-      ? result.error.replaceAll(apiKey, "[redacted]").replaceAll(llm.api_key_encrypted, "[redacted]").slice(0, 500) : "The crawler did not confirm the model is working.";
+      ? result.error.replaceAll(apiKey, "[redacted]").replaceAll(llm.api_key_encrypted, "[redacted]").slice(0, 500) : "The service did not confirm the model is working.";
     throw new CrawlLlmError(`LLM verification failed: ${detail}`);
   }
-  return {...rest, api: profile.provider === "deepseek" || new URL(profile.baseUrl).hostname === "api.deepseek.com" ? "deepseek" : "openrouter",
-    model: profile.model, llm, crawler_config: {provider: null}};
+  return llm;
+}
+
+export async function prepareCrawlSettings<T extends Record<string, unknown>>(settings: T) {
+  const {llm_profile_id: profileId, ...rest} = settings;
+  const llm = await verifySelectedLlm(profileId, "crawler");
+  return {...rest, api: llm.provider === "deepseek" || new URL(llm.base_url).hostname === "api.deepseek.com" ? "deepseek" : "openrouter",
+    model: llm.model, llm, crawler_config: {provider: null}};
 }

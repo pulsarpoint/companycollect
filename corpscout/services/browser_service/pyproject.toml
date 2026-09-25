@@ -16,6 +16,7 @@ dependencies = [
     "uvicorn>=0.42,<1",
     "websockets>=15,<17",
     "python-dotenv>=1,<2",
+    "cryptography>=46,<51",
 ]
 
 [project.scripts]

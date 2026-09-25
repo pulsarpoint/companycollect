@@ -20,6 +20,7 @@ from dagster_clickhouse import ClickhouseResource
 from dlt.sources.helpers.requests import Session
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
+from dagster_v3.defs.common.encrypted_llm import EncryptedLLMConfig
 from dagster_v3.defs.common.processing import ProcessingResource
 from dagster_v3.defs.website_crawl.dispatch import (
     INPUTS_BY_TYPE,
@@ -52,49 +53,6 @@ FIXED_ON_RESUME = (
 )
 
 
-class CrawlLLMConfig(dg.Config):
-    """Opaque credentials supplied by Backoffice; only the crawler can decrypt them."""
-
-    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
-
-    provider: str = Field(min_length=1, max_length=100)
-    base_url: str = Field(min_length=1, max_length=2048)
-    model: str = Field(min_length=1, max_length=200)
-    api_key_encrypted: str = Field(
-        pattern=r"^v1\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{23,}$",
-        max_length=16384,
-        repr=False,
-    )
-
-    @model_validator(mode="after")
-    def validate_profile(self):
-        for value in (self.provider, self.model, self.base_url):
-            if value != value.strip() or any(
-                ord(char) < 32 or ord(char) == 127 for char in value
-            ):
-                raise ValueError(
-                    "LLM profile fields cannot contain control characters or whitespace padding"
-                )
-        try:
-            endpoint = urlsplit(self.base_url)
-            endpoint.port  # urlsplit defers invalid-port validation until access.
-        except ValueError:
-            raise ValueError("LLM base_url must have a valid URL and port") from None
-        if (
-            endpoint.scheme not in {"http", "https"}
-            or not endpoint.hostname
-            or any(char.isspace() for char in self.base_url)
-            or endpoint.username is not None
-            or endpoint.password is not None
-            or endpoint.query
-            or endpoint.fragment
-        ):
-            raise ValueError(
-                "LLM base_url must be an HTTP(S) endpoint without credentials, query or fragment"
-            )
-        return self
-
-
 class CrawlResultsConfig(dg.Config):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
@@ -122,7 +80,7 @@ class CrawlResultsConfig(dg.Config):
     challenge_agent_max_runs: int = Field(ge=3, le=1000)
     api: str = Field(pattern=r"^(deepseek|openrouter)$")
     model: str = Field(min_length=1, max_length=200)
-    llm: CrawlLLMConfig | None = Field(
+    llm: EncryptedLLMConfig | None = Field(
         default=None,
         description="Selected LLM profile with an encrypted API key. Omit only for the crawler's legacy environment configuration.",
     )
@@ -169,7 +127,7 @@ class CrawlResultsConfig(dg.Config):
         """Re-use the original ciphertext so retries send an identical request body."""
         llm = settings.get("llm")
         return self.model_copy(
-            update={"llm": CrawlLLMConfig(**llm) if llm is not None else None}
+            update={"llm": EncryptedLLMConfig(**llm) if llm is not None else None}
         )
 
     wait_timeout_seconds: float = Field(default=1800, gt=0, le=86400)

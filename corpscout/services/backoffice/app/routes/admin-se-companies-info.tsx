@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { data, useFetcher } from "react-router";
+import { data, Link, useFetcher } from "react-router";
 import type { Route } from "./+types/admin-se-companies-info";
 import { SeCompanyInfoTable } from "~/components/admin/se-company-info-table";
 import { Alert, AlertDescription } from "~/components/ui/alert";
@@ -66,7 +66,7 @@ export async function action({ request }: Route.ActionArgs) {
       process.env.BACKOFFICE_OPERATOR?.trim() || "backoffice",
     ));
   } catch (error) {
-    return data({ ok: false as const, error: error instanceof Error ? error.message : "Could not start Brave analysis." }, { status: 400 });
+    return data({ ok: false as const, error: error instanceof Error ? error.message : "Could not prepare the Brave queue." }, { status: 400 });
   }
 }
 
@@ -97,7 +97,7 @@ export default function AdminSeCompanyInfoTable({ loaderData }: Route.ComponentP
     {fetcher.data && !busy && <Alert variant={fetcher.data.ok ? "default" : "destructive"}>
       <AlertDescription>
         {fetcher.data.ok
-          ? <>Brave analysis submitted. {fetcher.data.runUrl && <a href={fetcher.data.runUrl} target="_blank" rel="noreferrer">View Dagster run</a>}.</>
+          ? <>Preparing the Brave queue. <Link to={fetcher.data.queueUrl}>Choose an assistant model and configure processing</Link>. {fetcher.data.runUrl && <a href={fetcher.data.runUrl} target="_blank" rel="noreferrer">View preparation in Dagster</a>}.</>
           : fetcher.data.error}
       </AlertDescription>
     </Alert>}
@@ -121,7 +121,7 @@ export default function AdminSeCompanyInfoTable({ loaderData }: Route.ComponentP
           submittedSelection.current = currentSelection;
           fetcher.submit(JSON.stringify({ action: "brave_analysis", selection: currentSelection }), { method: "post", encType: "application/json", action: "/admin/se/companies?index" });
         }}
-      >{busy ? "Sending to Brave…" : "Send for Brave analysis"}</Button>}
+      >{busy ? "Preparing Brave queue…" : "Add to Brave queue"}</Button>}
     />
     </div>
   );

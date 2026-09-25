@@ -3,11 +3,11 @@ import { QUEUE_TEMPLATES, parseQueueFilters } from "~/lib/queues";
 import { loadCrawlQueueCounts, loadQueueInputs, parseQueueConfig, startQueueProcessing } from "~/lib/queues.server";
 import { chQuery } from "~/lib/clickhouse.server";
 import { launchRun, listRuns } from "~/lib/dagster.server";
-import { CrawlLlmError, prepareCrawlSettings } from "~/lib/crawl-llm.server";
+import { CrawlLlmError, prepareCrawlSettings, verifySelectedLlm } from "~/lib/crawl-llm.server";
 
 vi.mock("~/lib/clickhouse.server", () => ({chQuery: vi.fn()}));
 vi.mock("~/lib/dagster.server", () => ({launchRun: vi.fn(), listRuns: vi.fn(), dagsterRunUrl: (id: string) => `http://dagster/runs/${id}`}));
-vi.mock("~/lib/crawl-llm.server", () => ({CrawlLlmError: class CrawlLlmError extends Error {}, prepareCrawlSettings: vi.fn()}));
+vi.mock("~/lib/crawl-llm.server", () => ({CrawlLlmError: class CrawlLlmError extends Error {}, prepareCrawlSettings: vi.fn(), verifySelectedLlm: vi.fn()}));
 const verifiedLlm = {provider: "Saved provider", base_url: "https://provider.example/v1", model: "selected/model", api_key_encrypted: "v1.test.encrypted-key"};
 const wireModelConfig = {api: "openrouter", model: "selected/model", llm: verifiedLlm, crawler_config: {provider: null}};
 const task = "11111111-1111-4111-8111-111111111111";
@@ -18,6 +18,7 @@ beforeEach(() => {
   vi.mocked(chQuery).mockResolvedValue([{total: "17"}]);
   vi.mocked(listRuns).mockResolvedValue([]);
   vi.mocked(launchRun).mockResolvedValue({runId: "launched", status: "QUEUED"});
+  vi.mocked(verifySelectedLlm).mockReset().mockResolvedValue(verifiedLlm);
   vi.mocked(prepareCrawlSettings).mockReset().mockImplementation(async ({llm_profile_id: _profileId, ...settings}) => ({...settings, ...wireModelConfig}));
 });
 
@@ -28,7 +29,7 @@ const crawlConfig = {challenge_agent_model: "deepseek-flash", challenge_agent_ma
 describe("queue processing", () => {
   it.each([
     ["webtech", "webtech_scan_results", "webtech_scan_results_job", QUEUE_TEMPLATES.webtech],
-    ["brave", "company_brave_search_results", "company_brave_search_job", QUEUE_TEMPLATES.brave],
+    ["brave", "company_brave_search_results", "company_brave_search_job", {...QUEUE_TEMPLATES.brave, llm_profile_id: "saved-model"}],
     ["ip-enrichment", "ip_enrichment_results", "ip_enrichment_results_job", QUEUE_TEMPLATES["ip-enrichment"]],
     ["crawler", "website_full_crawl_results", "website_full_crawl_results_job", crawlConfig],
   ])("launches only the %s results asset for the whole task", async (type, asset, job, config) => {
@@ -36,12 +37,14 @@ describe("queue processing", () => {
     const input = vi.mocked(launchRun).mock.calls[0][0];
     expect(input.job).toBe(job);
     expect(input.assetSelection).toEqual([asset]);
-    const expectedConfig = type === "crawler" ? {...Object.fromEntries(Object.entries(config).filter(([key]) => key !== "llm_profile_id")), ...wireModelConfig} : config;
+    const expectedConfig = type === "crawler" ? {...Object.fromEntries(Object.entries(config).filter(([key]) => key !== "llm_profile_id")), ...wireModelConfig} : type === "brave" ? {...Object.fromEntries(Object.entries(config).filter(([key]) => key !== "llm_profile_id")), llm: verifiedLlm} : config;
     expect(input.runConfig).toEqual({ops: {[String(asset)]: {config: {...expectedConfig as object, task_id: task}}}});
     if (type === "crawler") {
       expect(prepareCrawlSettings).toHaveBeenCalledWith({...config as object, task_id: task});
       expect(vi.mocked(prepareCrawlSettings).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(launchRun).mock.invocationCallOrder[0]);
     } else expect(prepareCrawlSettings).not.toHaveBeenCalled();
+    if (type === "brave") expect(verifySelectedLlm).toHaveBeenCalledWith("saved-model", "brave");
+    else expect(verifySelectedLlm).not.toHaveBeenCalled();
     expect(input.tags?.["processing/task_id"]).toBe(task);
     expect(chQuery).toHaveBeenCalledWith(expect.not.stringContaining("preview-only"), {task, crawlType: "full"});
   });
@@ -187,4 +190,39 @@ it("shows all crawler types on the default full-crawl queue, ordered by latest r
     expect.objectContaining({crawlType: "jobs", taskId: request, status: "FAILURE"}),
   ]);
   expect(chQuery).not.toHaveBeenCalled();
+});
+
+
+describe("Brave verified assistant launch", () => {
+  const config = () => ({...QUEUE_TEMPLATES.brave, llm_profile_id: "saved-model"});
+  it("rejects missing selection before accessing services or launching", async () => {
+    await expect(startQueueProcessing(filters("brave"), JSON.stringify({...config(), llm_profile_id: ""}), request, "operator")).rejects.toThrow("nonempty string");
+    const {llm_profile_id: _unused, ...withoutProfile} = config();
+    await expect(startQueueProcessing(filters("brave"), JSON.stringify(withoutProfile), request, "operator")).rejects.toThrow("Choose an LLM");
+    expect(listRuns).not.toHaveBeenCalled();
+    expect(verifySelectedLlm).not.toHaveBeenCalled();
+    expect(launchRun).not.toHaveBeenCalled();
+  });
+  it("retains the queue on failed vision preflight and permits a valid retry", async () => {
+    vi.mocked(verifySelectedLlm).mockRejectedValueOnce(new CrawlLlmError("LLM verification failed: image input unsupported"));
+    await expect(startQueueProcessing(filters("brave"), JSON.stringify(config()), request, "operator")).rejects.toThrow("image input unsupported");
+    expect(launchRun).not.toHaveBeenCalled();
+    await expect(startQueueProcessing(filters("brave"), JSON.stringify(config()), request, "operator")).resolves.toMatchObject({runId: "launched"});
+    const runtime = vi.mocked(launchRun).mock.calls[0][0].runConfig.ops as Record<string, {config: Record<string, unknown>}>;
+    expect(runtime.company_brave_search_results.config.llm).toEqual(verifiedLlm);
+    expect(runtime.company_brave_search_results.config).not.toHaveProperty("llm_profile_id");
+    expect(runtime.company_brave_search_results.config).not.toHaveProperty("crawler_config");
+  });
+  it("recovers launch acknowledgement without changing or rechecking its profile", async () => {
+    const serialized = JSON.stringify(config());
+    await startQueueProcessing(filters("brave"), serialized, request, "operator");
+    const tags = vi.mocked(launchRun).mock.calls[0][0].tags!;
+    vi.mocked(listRuns).mockResolvedValue([{runId: "launched", status: "SUCCESS", tags}] as never);
+    await expect(startQueueProcessing(filters("brave"), serialized, request, "operator")).resolves.toMatchObject({runId: "launched"});
+    expect(verifySelectedLlm).toHaveBeenCalledTimes(1);
+    expect(launchRun).toHaveBeenCalledTimes(1);
+  });
+  it.each(["api_key", "api_key_encrypted", "llm", "challenge_agent_model", "model", "base_url"])("rejects raw model/credential override %s", key => {
+    expect(() => parseQueueConfig(filters("brave"), JSON.stringify({...config(), [key]: "override"}))).toThrow("Unsupported processing parameter");
+  });
 });

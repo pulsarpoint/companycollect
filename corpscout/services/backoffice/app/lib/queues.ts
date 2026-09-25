@@ -19,6 +19,7 @@ export const ACTIVE_QUEUE_RUNS = ["QUEUED", "NOT_STARTED", "MANAGED", "STARTING"
 export const QUEUE_TEMPLATES: Record<Exclude<QueueType, "crawler">, Record<string, unknown>> = {
   webtech: { force_rescan: false, recent_days: 30 },
   brave: {
+    llm_profile_id: "",
     force: false, rescan_old: false, query_type: "official_website",
     query_template: "Find the official website of {company_name}.",
     requests_per_route: 1, input_batch_size: 100, answer_timeout_seconds: 60,

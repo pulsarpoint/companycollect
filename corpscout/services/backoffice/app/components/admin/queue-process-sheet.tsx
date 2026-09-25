@@ -3,6 +3,7 @@ import { useFetcher } from "react-router";
 import { PlayIcon } from "lucide-react";
 import { QUEUE_NUMBER_LIMITS, QUEUE_TEMPLATES, type QueueFilters } from "~/lib/queues";
 import { CrawlSettingsFields } from "~/components/admin/crawl-settings-fields";
+import { LlmProfileField } from "~/components/admin/llm-profile-field";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Button } from "~/components/ui/button";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "~/components/ui/field";
@@ -35,6 +36,7 @@ export function QueueProcessSheet({filters, total, asset, blockedReason, llmProf
   const done = fetcher.data?.ok === true ? fetcher.data : null;
   const error = busy ? null : localError ?? (fetcher.data?.ok === false ? fetcher.data.error : null);
   const defaults = filters.type === "crawler" ? null : QUEUE_TEMPLATES[filters.type];
+  const usesLlm = filters.type === "crawler" || filters.type === "brave";
 
   function readFields(form: HTMLFormElement) {
     const values = new FormData(form);
@@ -85,10 +87,11 @@ export function QueueProcessSheet({filters, total, asset, blockedReason, llmProf
               : "All enabled domains in this task are processed. Saved browser and proxy settings are preserved; recent successful results can be skipped."}</p>
             {manual ? <FieldGroup><Field><FieldLabel htmlFor="queue-json">Processing parameters (JSON)</FieldLabel>
               <Textarea id="queue-json" value={json} onChange={event => setJson(event.target.value)} className="min-h-80 font-mono" spellCheck={false} required />
-              <FieldDescription>{filters.type === "crawler" ? <>Use <code>llm_profile_id</code> for the selected saved LLM. Its configuration is resolved and checked before processing. API keys must not be included in this JSON.</> : "Only results-asset parameters. The task ID is fixed by your selection. Credentials belong in the service environment."}</FieldDescription>
+              <FieldDescription>{usesLlm ? <>Use <code>llm_profile_id</code> for the selected saved LLM. Its configuration is resolved and checked before processing. API keys must not be included in this JSON.</> : "Only results-asset parameters. The task ID is fixed by your selection. Credentials belong in the service environment."}</FieldDescription>
             </Field></FieldGroup> : <>
               {defaults ? <FieldGroup className="grid grid-cols-1 sm:grid-cols-2">
-                {Object.entries(defaults).map(([key, value]) => <Field key={key} className={key === "query_template" ? "sm:col-span-2" : undefined}>
+                {Object.entries(defaults).map(([key, value]) => key === "llm_profile_id" ? <LlmProfileField key={key} idPrefix="queue-brave" label="Browser assistant LLM" initialProfileId={llmProfileId}
+                  description="The selected LLM controls Brave's browser and CAPTCHA assistant. Before processing starts, it must pass an image and JSON response check. If the check fails, the task stays in the queue." /> : <Field key={key} className={key === "query_template" ? "sm:col-span-2" : undefined}>
                   <FieldLabel htmlFor={`queue-${key}`}>{LABELS[key] ?? key}</FieldLabel>
                   {typeof value === "boolean" ? <NativeSelect id={`queue-${key}`} name={key} defaultValue={String(value)}>
                     <NativeSelectOption value="false">No</NativeSelectOption><NativeSelectOption value="true">Yes</NativeSelectOption>
@@ -113,7 +116,7 @@ export function QueueProcessSheet({filters, total, asset, blockedReason, llmProf
           {error && <Alert variant="destructive"><AlertTitle>Could not start processing</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
         </div>
         <SheetFooter className="border-t">
-          {!done && <Button type="submit" disabled={busy || Boolean(blockedReason)}><PlayIcon data-icon="inline-start" />{busy ? filters.type === "crawler" ? "Checking LLM and starting…" : "Submitting…" : `Start processing ${total.toLocaleString()} ${total === 1 ? "input" : "inputs"}`}</Button>}
+          {!done && <Button type="submit" disabled={busy || Boolean(blockedReason)}><PlayIcon data-icon="inline-start" />{busy ? usesLlm ? "Checking LLM and starting…" : "Submitting…" : `Start processing ${total.toLocaleString()} ${total === 1 ? "input" : "inputs"}`}</Button>}
           <Button type="button" variant="outline" disabled={busy} onClick={onClose}>{done ? "Close" : "Cancel"}</Button>
         </SheetFooter>
       </form>

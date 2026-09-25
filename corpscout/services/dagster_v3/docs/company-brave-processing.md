@@ -48,10 +48,36 @@ filters require a new task ID. Failed initialization recovers only that task's
 unconfirmed rows; a zero-row selection is valid. Its separate `company_brave_input`
 pool allows selection preparation while another task is searching.
 
-Backoffice's **Send for Brave analysis** launches `company_brave_search_workflow`
+Backoffice's **Add to Brave queue** launches `company_brave_search_input_job`
 against `corpscout.se_companies_serving`. Query-based selections retain filters and
-exclusions without expanding all matching IDs in the backoffice. The initializer
-passes its task ID to the search asset via the `processing/task_id` run tag.
+exclusions without expanding all matching IDs in the backoffice. Its receipt links
+to the prepared queue, where the operator selects and verifies the browser assistant
+LLM before starting processing.
+
+## Browser assistant LLM
+
+Backoffice requires a saved LLM profile before starting Brave processing. The model
+controls the browser assistant; Brave Ask still supplies the search answer. Backoffice
+encrypts the selected profile's API key with the same envelope used for crawling,
+then verifies it through the browser service before launching Dagster.
+
+`company_brave_search_results.config.llm` carries `provider`, `base_url`, `model`,
+and `api_key_encrypted`. Dagster keeps that encrypted envelope in `brave/execution`
+and passes it to the browser service, which alone decrypts it. The shared
+`CRAWLER_LLM_ENCRYPTION_KEY` is configured on Backoffice and browser service, never
+on Dagster. Before consuming companies, Dagster verifies the frozen profile again
+through authenticated `POST /v1/brave/llm/verify` so queued runs cannot silently
+start using an unavailable model.
+
+A resumed execution retains its original provider, endpoint, model and encrypted
+credentials. A fresh encryption nonce does not change request identity. An execution
+created before LLM selection can adopt a selected profile once on resume, preserving
+all completed outcomes. Omitting `llm` remains available for legacy manual runs.
+
+Graceful termination stops queue admission and cancels only its active Brave browser
+request IDs. A cancelled request is retained as browser evidence without recording
+a completed company outcome. Resuming uses a deterministic retry suffix for those
+cancelled requests; acknowledged results are still skipped.
 
 ## Search and rescan rules
 

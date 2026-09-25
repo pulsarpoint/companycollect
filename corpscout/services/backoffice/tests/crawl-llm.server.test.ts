@@ -1,10 +1,11 @@
 import { createDecipheriv } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fixture from "./fixtures/crawl-llm-envelope.json";
-const mocks = vi.hoisted(() => ({getLlmProfile: vi.fn(), crawlerFetch: vi.fn()}));
+const mocks = vi.hoisted(() => ({getLlmProfile: vi.fn(), crawlerFetch: vi.fn(), browserFetch: vi.fn()}));
 vi.mock("~/lib/llm-settings.server", () => ({getLlmProfile: mocks.getLlmProfile}));
+vi.mock("~/lib/browser-service.server", () => ({browserFetch: mocks.browserFetch}));
 vi.mock("~/lib/crawler.server", () => ({crawlerFetch: mocks.crawlerFetch}));
-import { encryptCrawlLlm, prepareCrawlSettings, type EncryptedCrawlLlm } from "~/lib/crawl-llm.server";
+import { encryptCrawlLlm, prepareCrawlSettings, verifySelectedLlm, type EncryptedCrawlLlm } from "~/lib/crawl-llm.server";
 
 const profile = {profileId: "profile-1", provider: fixture.llm.provider, baseUrl: fixture.llm.base_url, model: fixture.llm.model, apiKeyEnvironmentVariable: "TEST_CRAWL_LLM_KEY"};
 function decrypt(llm: EncryptedCrawlLlm) {
@@ -17,11 +18,13 @@ function decrypt(llm: EncryptedCrawlLlm) {
 }
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubEnv("BROWSER_API_TOKEN", "test-only-browser-token");
   vi.stubEnv("CRAWLER_API_TOKEN", "test-only-crawler-token");
   vi.stubEnv("CRAWLER_LLM_ENCRYPTION_KEY", fixture.shared_key);
   vi.stubEnv("TEST_CRAWL_LLM_KEY", fixture.api_key);
   mocks.getLlmProfile.mockReturnValue(profile);
   mocks.crawlerFetch.mockResolvedValue(new Response(JSON.stringify({ok: true})));
+  mocks.browserFetch.mockResolvedValue(new Response(JSON.stringify({ok: true})));
 });
 afterEach(() => vi.unstubAllEnvs());
 
@@ -81,5 +84,28 @@ describe("crawl preflight", () => {
   it.each([{ok: "true"}, {}, null])("rejects unconfirmed verification %j", async (body) => {
     mocks.crawlerFetch.mockResolvedValue(new Response(JSON.stringify(body)));
     await expect(prepareCrawlSettings({llm_profile_id: "profile-1"})).rejects.toThrow("LLM verification failed");
+  });
+});
+
+
+describe("Brave assistant preflight", () => {
+  it("verifies encrypted credentials with the browser vision endpoint", async () => {
+    const llm = await verifySelectedLlm("profile-1", "brave");
+    expect(mocks.browserFetch).toHaveBeenCalledWith("/v1/brave/llm/verify", expect.objectContaining({method: "POST", redirect: "error", body: JSON.stringify({llm})}));
+    expect(mocks.crawlerFetch).not.toHaveBeenCalled();
+    expect(decrypt(llm)).toBe(fixture.api_key);
+  });
+  it("requires browser authentication independently of crawler authentication", async () => {
+    vi.stubEnv("BROWSER_API_TOKEN", "");
+    await expect(verifySelectedLlm("profile-1", "brave")).rejects.toThrow("BROWSER_API_TOKEN");
+    expect(mocks.browserFetch).not.toHaveBeenCalled();
+  });
+  it("rejects incompatible vision models with the reason and without secrets", async () => {
+    mocks.browserFetch.mockResolvedValue(new Response(JSON.stringify({ok: false, error: `Image input is unsupported: ${fixture.api_key}`})));
+    await expect(verifySelectedLlm("profile-1", "brave")).rejects.toThrow("Image input is unsupported: [redacted]");
+  });
+  it("fails closed on browser transport errors", async () => {
+    mocks.browserFetch.mockRejectedValue(new Error(fixture.api_key));
+    await expect(verifySelectedLlm("profile-1", "brave")).rejects.toThrow("Could not verify the selected LLM through the Brave browser assistant");
   });
 });

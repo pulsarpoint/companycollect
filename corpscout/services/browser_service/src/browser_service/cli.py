@@ -87,6 +87,7 @@ def main() -> None:
             api_token=token,
             deepseek_api_key=os.environ.get("DEEPSEEK"),
             openrouter_api_key=os.environ.get("OPENROUTER_API_KEY"),
+            llm_encryption_key=os.environ.get("BROWSER_LLM_ENCRYPTION_KEY"),
         ),
         host=host,
         port=int(os.environ.get("BROWSER_PORT", "8081")),
