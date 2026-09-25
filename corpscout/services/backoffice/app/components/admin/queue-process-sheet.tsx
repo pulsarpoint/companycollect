@@ -51,7 +51,7 @@ export function QueueProcessSheet({filters, total, asset, blockedReason, llmProf
     } else {
       for (const [key, raw] of values) {
         if (key === "execution_id") continue;
-        config[key] = key === "force_refresh" ? raw === "true"
+        config[key] = ["force_refresh", "full_crawl_all"].includes(key) ? raw === "true"
           : ["challenge_agent_max_runs", "max_pages", "max_model_calls", "max_in_flight", "refresh_interval_days"].includes(key) ? Number(raw) : String(raw);
       }
     }

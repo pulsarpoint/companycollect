@@ -712,3 +712,22 @@ integrations still use `DEEPSEEK` or `OPENROUTER_API_KEY`. Browser CAPTCHA assis
 separate legacy credentials on the browser service. These variables can be omitted on a
 deployment that exclusively uses encrypted profiles and does not need those legacy paths;
 they cannot be removed from a mixed deployment solely because Backoffice was migrated.
+
+### Company-only full crawls
+
+Full discovery classifies the first page before requesting sitemaps or following
+links. Online stores (including a company's own shop), news/media, forums and
+other content sites return `skip_crawling` by default. Their first-page description
+and the excluded site type remain in the result. Corporate sites presenting a
+company's business, services or manufacturing activities remain eligible.
+
+Set the request boolean `full_crawl_all: true` (CLI `--full-crawl-all`) to admit
+classified non-company sites too. It defaults to `false`. The result records the
+flag and `site_gate.overridden`, preserving the original classification. This flag
+does not override blocked pages, failed classification or `needs_review`.
+Basic `site_info` requests still describe all site types from one page.
+
+Backoffice exposes **Full crawl all** on full-crawl settings. Dagster forwards it,
+freezes it for the execution and includes it in freshness identity; changing it
+requires a new execution. Saved explicit pages in a full crawl also request the
+first-page eligibility check. Historical results are not rewritten.

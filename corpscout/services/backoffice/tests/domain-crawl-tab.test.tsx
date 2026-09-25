@@ -6,7 +6,7 @@ const archive = vi.hoisted(() => ({readCrawlArchive: vi.fn()}));
 vi.mock("~/lib/clickhouse.server", () => database);
 vi.mock("~/lib/crawl-results.server", () => archive);
 import DomainCrawl, {loader} from "~/routes/admin-se-domain-crawl";
-import { domainCrawlStatus } from "~/lib/domain-crawl-status";
+import { domainCrawlStatus, crawlFailureReason } from "~/lib/domain-crawl-status";
 import type { DomainCrawlResult } from "~/lib/domain-crawls.server";
 
 const saved = {type: "site_info", kind: "saved", request_id: "older", attempt: 1, state: "completed", crawl_status: "skip_crawling", successful: true,
@@ -198,4 +198,11 @@ it("shows a successful latest attempt as the last good result with parsed pages 
   expect(main).not.toContain("A newer attempt");
   expect(sidebar).not.toContain(">Failed<");
   expect(archive.readCrawlArchive).toHaveBeenCalledTimes(1);
+});
+
+
+it("explains the excluded site type without treating an explicit override as a failure", () => {
+  const crawl = {status: "skip_crawling", stop_reason: "not_company_website", site_gate: {reason: "Excluded primary site type: online_store"}};
+  expect(crawlFailureReason({crawl})).toContain("Excluded primary site type: online store");
+  expect(crawlFailureReason({crawl: {...crawl, status: "finished", stop_reason: "no_promising_candidates", site_gate: {...crawl.site_gate, overridden: true}}})).not.toContain("Excluded");
 });

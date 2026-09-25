@@ -35,19 +35,20 @@ or assign industry/NACE codes. Leave unsupported details out.
 
 continue_crawling: the page primarily represents a specific identifiable company
 or commercial brand and its products, services or corporate activities. Examples:
-a bank, engineering consultancy, manufacturer, branded SaaS product, or a company's
-own online store. A legal registered name is not required; a stated brand is enough.
+a bank, engineering consultancy, manufacturer, or branded SaaS product. A legal registered name is not required; a stated brand is enough.
 Having company news, a blog, careers or support sections does not disqualify an
 otherwise corporate/product/service site. An advertising agency or ad-tech vendor
 selling its own business services can qualify; this differs from a site primarily
 hosting advertisements, sponsored content or classified listings.
 
-skip_crawling: the primary destination is news/editorial content, entertainment,
+skip_crawling: the primary destination is an online shop/store (including a single
+company's own store), product shopping/catalog browsing with cart/checkout,
+news/editorial content, entertainment, blogs or other content publishing,
 a forum/community, general search engine, directory, multi-seller marketplace,
 classified-ad/advertising portal, parked domain, personal page or another site
 not primarily representing a specific company. A company name in the footer,
 copyright notice, 'About' link, paying advertisers, or an incorporated operator
-does NOT turn a news/search/content platform into a company website. A separate
+does NOT turn a shop/news/search/content platform into a company website. A separate
 publisher's corporate site presenting its business can qualify if THAT is the
 supplied page's primary purpose. Nonprofit/public-service portals should be skipped
 unless the page clearly represents a commercial company such as a state-owned bank.
@@ -60,6 +61,12 @@ For example: 'Search the web' with a corporate copyright is skip_crawling;
 'Latest world news' with publisher ownership is skip_crawling; 'Buy/sell anything:
 post an ad' is skip_crawling; 'Example Robotics: industrial robot design' is
 continue_crawling; 'Verify you are human' is needs_review, not proof of a content site.
+An online shop must use online_store, even when it names its incorporated owner.
+For example, a truck-accessories store with product categories, a shopping cart
+and Klarna payments is online_store and skip_crawling, even with a named company owner.
+A corporate manufacturer presenting capabilities and products without a primary
+shopping/checkout experience can qualify as company. Use content_site for primary
+content-publishing/reference sites not covered by a more specific excluded type.
 site_types describes the PRIMARY purpose, not incidental widgets/navigation.
 Never label a company's normal blog menu as a news_media site. Mixed/unknown
 primary purpose cannot receive continue_crawling.

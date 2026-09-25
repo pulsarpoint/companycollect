@@ -37,10 +37,10 @@ describe("queue processing", () => {
     const input = vi.mocked(launchRun).mock.calls[0][0];
     expect(input.job).toBe(job);
     expect(input.assetSelection).toEqual([asset]);
-    const expectedConfig = type === "crawler" ? {...Object.fromEntries(Object.entries(config).filter(([key]) => key !== "llm_profile_id")), ...wireModelConfig} : type === "brave" ? {...Object.fromEntries(Object.entries(config).filter(([key]) => key !== "llm_profile_id")), llm: verifiedLlm} : config;
+    const expectedConfig = type === "crawler" ? {...Object.fromEntries(Object.entries(config).filter(([key]) => key !== "llm_profile_id")), ...wireModelConfig, full_crawl_all: false} : type === "brave" ? {...Object.fromEntries(Object.entries(config).filter(([key]) => key !== "llm_profile_id")), llm: verifiedLlm} : config;
     expect(input.runConfig).toEqual({ops: {[String(asset)]: {config: {...expectedConfig as object, task_id: task}}}});
     if (type === "crawler") {
-      expect(prepareCrawlSettings).toHaveBeenCalledWith({...config as object, task_id: task});
+      expect(prepareCrawlSettings).toHaveBeenCalledWith({...config as object, task_id: task, full_crawl_all: false});
       expect(vi.mocked(prepareCrawlSettings).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(launchRun).mock.invocationCallOrder[0]);
     } else expect(prepareCrawlSettings).not.toHaveBeenCalled();
     if (type === "brave") expect(verifySelectedLlm).toHaveBeenCalledWith("saved-model", "brave");
@@ -241,4 +241,16 @@ it("preserves task status when source lookup fails", async () => {
   vi.mocked(listRuns).mockResolvedValue([{runId: "done", status: "FAILURE", startTime: 1000, tags: {"processing/task_id": task}}] as never);
   vi.mocked(chQuery).mockRejectedValueOnce(new Error("source storage offline"));
   expect(await loadQueueHistory(filters())).toEqual([expect.objectContaining({status: "FAILURE", sources: null, sourcesError: true})]);
+});
+
+it("defaults full crawl all off and transports an explicit boolean override", async () => {
+  expect(parseQueueConfig(filters("crawler"), JSON.stringify(crawlConfig))).toMatchObject({full_crawl_all: false});
+  await startQueueProcessing(filters("crawler"), JSON.stringify({...crawlConfig, full_crawl_all: true}), request, "operator");
+  expect(vi.mocked(launchRun).mock.calls[0][0].runConfig).toMatchObject({ops: {website_full_crawl_results: {config: {full_crawl_all: true}}}});
+});
+it.each(["true", "false", 1, 0])("rejects a nonboolean full crawl override: %j", full_crawl_all => {
+  expect(() => parseQueueConfig(filters("crawler"), JSON.stringify({...crawlConfig, full_crawl_all}))).toThrow();
+});
+it("does not enable full crawl all for jobs or basic info", () => {
+  expect(() => parseQueueConfig(filters("crawler", "jobs"), JSON.stringify({...crawlConfig, full_crawl_all: true}))).toThrow("full crawls only");
 });

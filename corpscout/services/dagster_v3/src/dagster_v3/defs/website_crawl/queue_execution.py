@@ -101,6 +101,8 @@ def start_crawl_execution(
     task = store.task(task_id)
     saved = task["config"].get("execution") if task is not None else None
     if saved is not None and config.execution_id in (None, saved["execution_id"]):
+        if "full_crawl_all" not in saved["profile"] and not profile["full_crawl_all"]:
+            profile.pop("full_crawl_all")
         saved_llm = saved["profile"].get("llm")
         if profile.get("llm") is not None and saved_llm is not None:
             # Fresh encryption changes the nonce, not the content profile. Compare

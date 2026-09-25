@@ -273,7 +273,15 @@ async def collect_pages(
                 ):
                     manifest["stop_reason"] = "site_info_complete"
                     break
-                if decision != "continue_crawling":
+                override = manifest["full_crawl_all"] and decision == "skip_crawling"
+                manifest["site_gate"]["overridden"] = override
+                if decision == "skip_crawling":
+                    manifest["site_gate"]["reason"] = "Excluded primary site type: " + ", ".join(profile.data["site_types"])
+                if override:
+                    manifest["site_gate"]["override_reason"] = "full_crawl_all"
+                # The override admits identified non-company sites, never failed,
+                # blocked or unsupported classifications (needs_review).
+                if decision != "continue_crawling" and not override:
                     manifest["status"] = decision
                     manifest["stop_reason"] = (
                         "not_company_website"
@@ -374,6 +382,7 @@ async def crawl_company(
     pages: Sequence[str] | None = None,
     instructions: str | None = None,
     site_info: bool = False,
+    full_crawl_all: bool = False,
     save_artifacts: bool = True,
     crawl: bool | Literal["full"] | None = None,
     config: ResearchConfig | None = None,
@@ -395,6 +404,8 @@ async def crawl_company(
     crawl="full" discovers all four areas with default limits of 100 pages and 30
     external pages. Explicit config limits override these defaults. Use pages or
     instructions separately for restricted/targeted collection.
+    full_crawl_all=True also admits classified shops/content sites; the default
+    admits company sites only. Uncertain or blocked sites still stop.
 
     site_info alone describes the input page and stops. Combine it with pages,
     instructions, or crawl=True to also crawl. With a page list it explicitly
@@ -404,6 +415,8 @@ async def crawl_company(
     removed when the run exits. The bundled JSON remains sufficient for analysis.
     """
     site_url = normalize_url(url)
+    if type(full_crawl_all) is not bool:
+        raise ValueError("full_crawl_all must be a boolean")
     if crawl is not None and not isinstance(crawl, bool) and crawl != "full":
         raise ValueError('crawl must be true, false, or "full"')
     if crawl == "full" and (pages is not None or instructions is not None):
@@ -427,6 +440,8 @@ async def crawl_company(
         raise ValueError(
             "crawl=False requires site_info=True without pages or instructions"
         )
+    if full_crawl_all and not crawl_requested:
+        raise ValueError("full_crawl_all requires deeper collection")
     settings = ResearchConfig.model_validate(
         (
             {"model": "deepseek-flash", "provider": None, "reasoning_effort": "high"}
@@ -524,6 +539,7 @@ async def crawl_company(
             },
             "site_info_requested": site_info,
             "crawl_requested": crawl_requested,
+            "full_crawl_all": full_crawl_all,
             "site_info": None,
             "started_at": utc_now(),
             "finished_at": None,
@@ -720,6 +736,7 @@ def main() -> None:
         default=None,
         help="Use --crawl full for all four collection areas (100 pages/30 external by default). Bare --crawl continues discovery with --site-info.",
     )
+    parser.add_argument("--full-crawl-all", action="store_true", help="Also crawl identified shops, news, forums and other non-company sites.")
     parser.add_argument(
         "--pages",
         "--page",
@@ -851,6 +868,7 @@ def main() -> None:
                             pages=args.pages,
                             instructions=instructions,
                             site_info=args.site_info,
+                            full_crawl_all=args.full_crawl_all,
                             save_artifacts=args.save_artifacts,
                             crawl=args.crawl,
                             config=config,

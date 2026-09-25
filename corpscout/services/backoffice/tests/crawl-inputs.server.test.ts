@@ -26,7 +26,7 @@ beforeEach(() => {
 describe("saved crawl starts", () => {
   it.each([["full", "website_full_crawl_results"], ["jobs", "website_jobs_crawl_results"], ["site_info", "website_site_info_results"]])("launches only the %s results job", async (type, asset) => {
     expect(await startSavedCrawls(submission(type, ["novelic.com", "novelic.com"]))).toMatchObject({count: 1, runId: "one"});
-    expect(dagster.launchRun).toHaveBeenCalledWith(expect.objectContaining({job: `${asset}_job`, runConfig: {ops: {[asset]: {config: {batch_id: "ad279a62-a14c-40a3-98ae-01c611dab1d1", domains: ["novelic.com"], batch_size: 1, force_refresh: false, max_in_flight: 3, refresh_interval_days: 30, challenge_agent_model: "deepseek-flash", challenge_agent_max_runs: 3, ...wireModelConfig, max_pages: 1, max_model_calls: 20, page_selection: type === "site_info" ? "basic_info" : "saved"}}}}}), {timeoutMs: 15_000});
+    expect(dagster.launchRun).toHaveBeenCalledWith(expect.objectContaining({job: `${asset}_job`, runConfig: {ops: {[asset]: {config: {batch_id: "ad279a62-a14c-40a3-98ae-01c611dab1d1", domains: ["novelic.com"], batch_size: 1, force_refresh: false, ...(type === "full" ? {full_crawl_all: false} : {}), max_in_flight: 3, refresh_interval_days: 30, challenge_agent_model: "deepseek-flash", challenge_agent_max_runs: 3, ...wireModelConfig, max_pages: 1, max_model_calls: 20, page_selection: type === "site_info" ? "basic_info" : "saved"}}}}}), {timeoutMs: 15_000});
     expect(llm.prepareCrawlSettings).toHaveBeenCalledWith(expect.objectContaining({llm_profile_id: "saved-model"}));
     expect(llm.prepareCrawlSettings.mock.invocationCallOrder[0]).toBeLessThan(dagster.launchRun.mock.invocationCallOrder[0]);
   });

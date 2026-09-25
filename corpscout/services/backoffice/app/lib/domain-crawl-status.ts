@@ -17,6 +17,7 @@ export function crawlFailureReason(payload: Record<string, unknown>) {
   const reasons = [
     ...resultObjects(usage.by_call).flatMap(call => [resultText(resultObject(call.provider_error).message, ""), resultText(call.error, "")]),
     ...resultObjects(crawl.errors).map(error => resultText(error.error ?? error.message, "")),
+    crawl.status === "skip_crawling" ? resultText(resultObject(crawl.site_gate).reason, "").replaceAll("_", " ") : "",
     resultText(crawl.stop_reason, "").replaceAll("_", " "),
   ].filter(Boolean);
   return [...new Set(reasons)].join(" · ");

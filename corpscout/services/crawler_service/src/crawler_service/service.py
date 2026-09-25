@@ -42,6 +42,7 @@ class CrawlRequest(StrictModel):
     pages: list[str] | None = Field(default=None, min_length=1, max_length=1000)
     instructions: str | None = Field(default=None, max_length=20000)
     site_info: bool = False
+    full_crawl_all: bool = Field(default=False, strict=True)
     save_artifacts: bool = True
     crawl: bool | Literal["full"] | None = None
     api: Literal["deepseek", "openrouter"] = "deepseek"
@@ -75,6 +76,8 @@ class CrawlRequest(StrictModel):
 
     @model_validator(mode="after")
     def crawl_options(self):
+        if self.full_crawl_all and (self.crawl is False or (self.site_info and self.crawl is None and self.pages is None and self.instructions is None)):
+            raise ValueError("full_crawl_all requires deeper collection, not site information alone")
         if self.crawl == "full" and (
             self.pages is not None or self.instructions is not None
         ):
@@ -673,6 +676,7 @@ class CrawlService:
                 pages=request.pages,
                 instructions=request.instructions,
                 site_info=request.site_info,
+                full_crawl_all=request.full_crawl_all,
                 save_artifacts=request.save_artifacts or human is not None,
                 crawl=request.crawl,
                 api=request.llm.api if request.llm is not None else request.api,
