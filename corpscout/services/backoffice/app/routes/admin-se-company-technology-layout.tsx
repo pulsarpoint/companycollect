@@ -24,18 +24,16 @@ import { getCompanyDomains } from "~/lib/queries.server";
 // Only `loader` and the component live here -- see
 // admin-se-company-layout.tsx for why.
 
-// The admin twin of company-technology-layout.tsx: the same domain selector
-// and section tabs over the same loader query, but on the admin base path and
-// without the public layout's 404s -- a reviewer needs the tab shell to
-// render even when no source has resolved a domain yet. The public file
-// stays byte-identical; only the shared helpers are reused.
+// Company context selects the domain; the technology sections use the same
+// tabs and views as the standalone domain page.
 
 export async function loader({ params, request }: Route.LoaderArgs) {
   const domains = await getCompanyDomains(getCountry("se")!, params.companyId);
   const requestedDomain = new URL(request.url).searchParams
     .get("domain")
     ?.trim()
-    .toLowerCase();
+    .toLowerCase()
+    .replace(/\.$/, "");
   const selectedDomain =
     domains.find((domain) => domain.domain === requestedDomain) ??
     domains.find((domain) => domain.is_primary === 1) ??
@@ -73,6 +71,10 @@ export default function AdminSwedenCompanyTechnologyLayout({
     next.delete("page");
     next.delete("exactPage");
     next.delete("segmentPage");
+    next.delete("request");
+    next.delete("attempt");
+    next.delete("result");
+    next.delete("site");
     const destination = location.pathname.startsWith(
       `${basePath}/ip-addresses/`,
     )
@@ -131,6 +133,7 @@ export default function AdminSwedenCompanyTechnologyLayout({
         section={section}
         search={domainSearch}
         mailSecurity
+        crawl
       />
 
       <Outlet />

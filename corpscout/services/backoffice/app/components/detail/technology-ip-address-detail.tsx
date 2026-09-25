@@ -105,11 +105,13 @@ function ConnectionPagination({
 
 function ConnectionsTable({
   connectionPage,
-  companyDomain,
+  contextDomain,
+  contextLabel,
   showAddress,
 }: {
   connectionPage: TechnologyIpDomainConnectionPage;
-  companyDomain: string | null;
+  contextDomain: string | null;
+  contextLabel: string;
   showAddress: boolean;
 }) {
   return (
@@ -145,8 +147,8 @@ function ConnectionsTable({
                   <span className="font-mono text-xs font-medium">
                     {connection.domain}
                   </span>
-                  {companyDomain && connection.domain === companyDomain ? (
-                    <Badge variant="secondary">This company</Badge>
+                  {contextDomain && connection.domain === contextDomain ? (
+                    <Badge variant="secondary">{contextLabel}</Badge>
                   ) : null}
                 </div>
               </TableCell>
@@ -211,10 +213,15 @@ function EmptyConnections({ children }: { children: React.ReactNode }) {
 export function TechnologyIpAddressDetail({
   detail,
   companyContext,
+  domainContext,
   backLink,
 }: {
   detail: TechnologyIpDetail;
   companyContext?: {
+    domain: string;
+    hostnames: string[];
+  };
+  domainContext?: {
     domain: string;
     hostnames: string[];
   };
@@ -224,6 +231,7 @@ export function TechnologyIpAddressDetail({
     relative?: "route" | "path";
   };
 }) {
+  const context = domainContext ?? companyContext;
   const location = [detail.address.cityName, detail.address.countryName]
     .filter(Boolean)
     .join(", ");
@@ -273,12 +281,12 @@ export function TechnologyIpAddressDetail({
                   {detail.address.ip}
                 </CardTitle>
               </div>
-              {companyContext ? (
+              {context ? (
                 <CardDescription className="mt-2">
-                  Resolved by {companyContext.hostnames.length} hostname
-                  {companyContext.hostnames.length === 1 ? "" : "s"} under{" "}
+                  Resolved by {context.hostnames.length} hostname
+                  {context.hostnames.length === 1 ? "" : "s"} under{" "}
                   <span className="font-mono text-foreground">
-                    {companyContext.domain}
+                    {context.domain}
                   </span>
                   .
                 </CardDescription>
@@ -324,7 +332,7 @@ export function TechnologyIpAddressDetail({
             </div>
             <div>
               <p className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
-                {companyContext ? "Company observation" : "DNS observation"}
+                {domainContext ? "Domain observation" : companyContext ? "Company observation" : "DNS observation"}
               </p>
               <p className="mt-2 text-sm tabular-nums">
                 {formatObservedAt(detail.address.firstSeen)}
@@ -365,7 +373,8 @@ export function TechnologyIpAddressDetail({
           {detail.exactConnections.connections.length ? (
             <ConnectionsTable
               connectionPage={detail.exactConnections}
-              companyDomain={companyContext?.domain ?? null}
+              contextDomain={context?.domain ?? null}
+              contextLabel={domainContext ? "This domain" : "This company"}
               showAddress={false}
             />
           ) : (
@@ -405,7 +414,8 @@ export function TechnologyIpAddressDetail({
             <>
               <ConnectionsTable
                 connectionPage={detail.segmentConnections}
-                companyDomain={companyContext?.domain ?? null}
+                contextDomain={context?.domain ?? null}
+                contextLabel={domainContext ? "This domain" : "This company"}
                 showAddress
               />
               <ConnectionPagination

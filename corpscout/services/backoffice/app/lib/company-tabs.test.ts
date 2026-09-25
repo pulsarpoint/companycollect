@@ -35,6 +35,7 @@ describe("company detail tabs", () => {
   });
 
   it("recognizes nested technology sections", () => {
+    expect(technologySectionFromPath("/admin/se/company/5594643297/technology/crawl")).toBe("crawl");
     expect(technologySectionFromPath("/company/se/5594643297/technology/web-technologies")).toBe("web-technologies");
     expect(technologySectionFromPath("/company/se/5594643297/technology")).toBe(
       "overview",

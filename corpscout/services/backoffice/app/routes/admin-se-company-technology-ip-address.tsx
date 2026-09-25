@@ -1,15 +1,12 @@
 import type { Route } from "./+types/admin-se-company-technology-ip-address";
-import { SeCompanyTechnologyEmpty } from "~/components/admin/se-company-technology-empty";
-import { TechnologyIpAddressDetail } from "~/components/detail/technology-ip-address-detail";
+import { DomainTechnologyIpView } from "~/components/detail/domain-technology-ip-view";
 import { getCountry } from "~/lib/countries";
 import { getCompanyTechnologyIpDetail } from "~/lib/queries.server";
 
 // Only `loader` and the component live here -- see
 // admin-se-company-layout.tsx for why.
 
-// The admin twin of company-technology-ip-address.tsx: same query, same
-// shared detail component with the same relative back link, but no 404 when
-// the address (or any domain at all) is unknown for this company.
+// The selected domain uses the same IP evidence view as its domain page.
 
 export async function loader({ params, request }: Route.LoaderArgs) {
   const url = new URL(request.url);
@@ -29,27 +26,13 @@ export default function AdminSwedenCompanyTechnologyIpAddress({
   loaderData,
   params,
 }: Route.ComponentProps) {
-  if (!loaderData) {
-    return (
-      <SeCompanyTechnologyEmpty
-        title="No evidence connects this IP address to the company"
-        description={`No historical A or AAAA record under this company's
-          domains resolves to ${params.address}, or no source has suggested a
-          domain for this company at all.`}
-      />
-    );
-  }
   return (
-    <TechnologyIpAddressDetail
+    <DomainTechnologyIpView
       detail={loaderData}
-      companyContext={{
-        domain: loaderData.companyDomain,
-        hostnames: loaderData.companyHostnames,
-      }}
+      address={params.address}
       backLink={{
         label: "All IP addresses",
-        to: `..?domain=${encodeURIComponent(loaderData.companyDomain)}`,
-        relative: "path",
+        to: `/admin/se/company/${params.companyId}/technology/ip-addresses${loaderData ? `?domain=${encodeURIComponent(loaderData.companyDomain)}` : ""}`,
       }}
     />
   );

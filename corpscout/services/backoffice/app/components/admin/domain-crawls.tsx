@@ -11,8 +11,8 @@ export function CrawlTime({value}: {value: string}) {
   }).format(new Date(value))} UTC</time>;
 }
 
-export function DomainCrawls({domain, type, attempts, selected, latest}: {
-  domain: string; type: string; attempts: DomainCrawlResult[]; selected: DomainCrawlResult | null; latest: DomainCrawlResult | null;
+export function DomainCrawls({domain, attemptHref, attempts, selected, latest}: {
+  domain: string; attemptHref: (attempt: DomainCrawlResult) => string; attempts: DomainCrawlResult[]; selected: DomainCrawlResult | null; latest: DomainCrawlResult | null;
 }) {
   return <aside className="flex min-w-0 flex-col gap-3 lg:border-l lg:pl-5" aria-label="Recent crawl attempts">
     <div><h3 className="text-lg font-semibold">Recent attempts</h3>
@@ -21,7 +21,7 @@ export function DomainCrawls({domain, type, attempts, selected, latest}: {
       const current = attempt.request_id === selected?.request_id && attempt.attempt === selected.attempt;
       const newest = attempt.request_id === latest?.request_id && attempt.attempt === latest.attempt;
       return <li key={`${attempt.request_id}:${attempt.attempt}`}>
-        <Link to={`?${new URLSearchParams({type, request: attempt.request_id, attempt: String(attempt.attempt)})}`}
+        <Link to={attemptHref(attempt)}
           aria-current={current ? "true" : undefined}
           className={cn("flex flex-col gap-2 rounded-md border p-3 text-sm hover:bg-muted/50 focus-visible:outline-2 focus-visible:outline-ring", current && "border-primary bg-muted/50")}>
           <div className="flex flex-wrap items-center gap-2"><Badge variant={attempt.successful ? "secondary" : "destructive"}>{attempt.successful ? "Successful" : domainCrawlStatus(attempt)}</Badge>{newest && <span className="text-xs text-muted-foreground">Latest attempt</span>}{current && <span className="text-xs">Viewing</span>}</div>

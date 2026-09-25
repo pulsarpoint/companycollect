@@ -1,5 +1,6 @@
 import { readCrawlArchive } from "~/lib/crawl-results.server";
 import { resultObject } from "~/lib/crawl-results";
+import { graphDomainError } from "~/lib/domain-graph";
 import { crawlFailureReason } from "~/lib/domain-crawl-status";
 import { chQuery } from "~/lib/clickhouse.server";
 import type { DomainCrawlType } from "~/lib/se-domain-selection";
@@ -94,4 +95,23 @@ export async function loadDomainCrawlDetails(
     latest: selected.latest ? withReason(selected.latest) : null,
     attempts: attempts.map(withReason),
     payload: archive?.payload ?? null, archiveError: archive?.error ?? null};
+}
+
+export async function loadDomainCrawlPage(domain: string, request: Request) {
+  if (!domain || graphDomainError(domain)) throw new Response("Not found", {status: 404});
+  const search = new URL(request.url).searchParams;
+  const type = search.get("type");
+  const requestId = search.get("request");
+  const attempt = search.get("attempt");
+  if (type !== null && !["site_info", "jobs", "full"].includes(type)) throw new Response("Unknown crawl type.", {status: 400});
+  if ((requestId !== null || attempt !== null) && (type === null || requestId === null || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(requestId)
+    || attempt === null || !/^[1-9]\d*$/.test(attempt) || Number(attempt) > 4294967295)) {
+    throw new Response("Select a crawl type, request and valid attempt number.", {status: 400});
+  }
+  try {
+    return {domain, details: await loadDomainCrawlDetails(domain, type, requestId ? {requestId, attempt: Number(attempt)} : null, search.get("result") === "latest"), error: null};
+  } catch (error) {
+    if (error instanceof Response) throw error;
+    return {domain, details: null, error: "Crawl results could not be loaded. Refresh crawl status to retry."};
+  }
 }

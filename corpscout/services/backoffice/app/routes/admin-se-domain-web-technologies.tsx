@@ -1,9 +1,7 @@
 import { data } from "react-router";
-import { AddDomainWebtechQueue } from "~/components/admin/add-domain-webtech-queue";
+import { DomainWebtechView } from "~/components/admin/domain-webtech-view";
 import { addDomainToWebtechQueue, WebtechQueueRequestError } from "~/lib/webtech-queue.server";
-import { seDomainHref } from "~/lib/se-domains-filters";
 import type { Route } from "./+types/admin-se-domain-web-technologies";
-import { WebtechSection } from "~/components/detail/webtech-section";
 import { getDomainWebtech } from "~/lib/webtech.server";
 
 export async function loader({ params }: Route.LoaderArgs) {
@@ -26,8 +24,5 @@ export async function action({request, params}: Route.ActionArgs) {
 export default function DomainWebTechnologies({
   loaderData,
 }: Route.ComponentProps) {
-  return <div className="flex flex-col gap-5">
-    <AddDomainWebtechQueue key={loaderData.domain} domain={loaderData.domain} actionPath={`${seDomainHref(loaderData.domain)}/web-technologies`} />
-    <WebtechSection data={loaderData} linkTechnologies />
-  </div>;
+  return <DomainWebtechView data={loaderData} />;
 }

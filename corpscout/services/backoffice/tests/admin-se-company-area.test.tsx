@@ -526,10 +526,7 @@ describe("technology area layout", () => {
 });
 
 describe("technology tab", () => {
-  // The index IS the public technology overview: the same shared sections the
-  // public /company/se/:id/technology index renders; the domain selector and
-  // the section tabs live in the parent layout.
-  it("renders the shared domains section", () => {
+  it("renders the selected domain overview with an explicit empty state", () => {
     const html = render(
       <AdminSwedenCompanyTechnology
         {...technologyProps({
@@ -541,10 +538,9 @@ describe("technology tab", () => {
       />,
       adminTechnologyBase,
     );
-    expect(html).toContain("Web presence");
+    expect(html).toContain("No technologies discovered yet");
     expect(html).toContain("beijerbygg.se");
-    expect(html).toContain(">Selected<");
-    expect(html).toContain(">wikidata<");
+    expect(html).not.toContain("Web presence");
   });
 
   it("renders the crawl-history section when the selected domain has detections", () => {
@@ -645,7 +641,7 @@ describe("technology sub-tabs", () => {
       `${adminTechnologyBase}/ip-addresses/193.235.32.10`,
     );
     expect(html).toContain(
-      "No evidence connects this IP address to the company",
+      "No DNS evidence for this IP address",
     );
   });
 

@@ -198,11 +198,10 @@ export default [
         route(":documentId/llm", "routes/admin-se-company-esef-llm.tsx"),
       ]),
       route("domains", "routes/admin-se-company-domains.tsx"),
-      // The whole public technology area, inside the admin panel: the same
-      // sub-tabs as /company/:country/:id/technology, nested the same way,
-      // on the admin base path and without the public 404-on-empty.
+      // Domain technology views with the company's associated-domain selector.
       route("technology", "routes/admin-se-company-technology-layout.tsx", [
         index("routes/admin-se-company-technology.tsx"),
+        route("crawl", "routes/admin-se-company-technology-crawl.tsx"),
         route("web-technologies", "routes/admin-se-company-technology-web-technologies.tsx"),
         route(
           "web-intelligence",

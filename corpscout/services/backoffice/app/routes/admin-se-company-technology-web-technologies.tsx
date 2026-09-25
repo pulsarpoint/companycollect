@@ -1,6 +1,6 @@
 import type { Route } from "./+types/admin-se-company-technology-web-technologies";
 import { SeCompanyTechnologyNoDomains } from "~/components/admin/se-company-technology-empty";
-import { WebtechSection } from "~/components/detail/webtech-section";
+import { DomainWebtechView } from "~/components/admin/domain-webtech-view";
 import { getCountry } from "~/lib/countries";
 import { getCompanyDomains } from "~/lib/queries.server";
 import { getDomainWebtech } from "~/lib/webtech.server";
@@ -8,8 +8,7 @@ import { getDomainWebtech } from "~/lib/webtech.server";
 // Only `loader` and the component live here -- see
 // admin-se-company-layout.tsx for why.
 
-// The admin twin of company-technology-web-technologies.tsx: same queries,
-// same shared section, but no 404 when no source resolved a domain.
+// Resolve the company's selected domain before showing the shared admin view.
 
 export async function loader({ params, request }: Route.LoaderArgs) {
   const domains = await getCompanyDomains(getCountry("se")!, params.companyId);
@@ -33,5 +32,5 @@ export default function AdminSwedenCompanyTechnologyWebTechnologies({
   if (!loaderData) {
     return <SeCompanyTechnologyNoDomains />;
   }
-  return <WebtechSection data={loaderData} linkTechnologies />;
+  return <DomainWebtechView data={loaderData} />;
 }
