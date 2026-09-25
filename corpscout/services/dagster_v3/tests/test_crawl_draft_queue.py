@@ -7,7 +7,11 @@ import dagster as dg
 import pytest
 
 from dagster_v3.defs.common.processing import ProcessingResource
-from dagster_v3.defs.website_crawl.input import INPUT_TABLES, TASK_DOMAINS
+from dagster_v3.defs.website_crawl.input import (
+    INPUT_TABLES,
+    TASK_DOMAINS,
+    task_processor,
+)
 from dagster_v3.defs.website_crawl.queue_input import (
     CrawlQueueInputConfig,
     load_crawl_draft,
@@ -264,3 +268,18 @@ def test_task_and_explicit_domains_are_exclusive():
 
     with pytest.raises(ValidationError, match="task_id"):
         CrawlResultsConfig(**SETTINGS, task_id=str(uuid4()), domains=["a.example"])
+
+
+def test_task_id_must_name_a_draft(db, crawler):  # noqa: F811
+    _, _, processing, _, _ = db
+    _, calls, _ = crawler
+    with pytest.raises(ValueError, match="unknown crawl task"):
+        run(db, str(uuid4()))
+    legacy = str(uuid4())
+    processing.prepare_selection(
+        legacy, processor=task_processor("site_info"), fingerprint="legacy"
+    )
+    assert processing.task(legacy)["queue_scope"] is None
+    with pytest.raises(ValueError, match="unknown crawl task"):
+        run(db, legacy)
+    assert calls == []

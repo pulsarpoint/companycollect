@@ -51,11 +51,11 @@ FIXED_ON_RESUME = (
 class CrawlResultsConfig(dg.Config):
     task_id: str | None = Field(
         default=None,
-        description="Crawl task prepared by the input asset. Defaults to the run's processing/task_id tag.",
+        description="Crawl draft to process (queue task created by website_crawl_input). Omit to process explicit domains or due inputs.",
     )
     execution_id: str | None = Field(
         default=None,
-        description="Original Dagster run ID to resume. Its task and content settings stay fixed.",
+        description="Original Dagster run ID to resume. Its content settings and freshness cutoff stay fixed.",
     )
     domains: list[str] = Field(default_factory=list, max_length=100)
     batch_id: str | None = Field(
@@ -98,7 +98,7 @@ class CrawlResultsConfig(dg.Config):
                 "set required model and limits using their explicit config fields"
             )
         if self.task_id is not None and self.domains:
-            raise ValueError("task_id processes its frozen selection; omit domains")
+            raise ValueError("task_id processes the whole draft; omit domains")
         return self
 
     wait_timeout_seconds: float = Field(default=1800, gt=0, le=86400)

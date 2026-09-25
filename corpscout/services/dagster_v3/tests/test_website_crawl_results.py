@@ -16,6 +16,7 @@ from dagster_v3.defs.common.processing import ProcessingResource
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.website_crawl.input import INPUT_TABLES
 from dagster_v3.defs.website_crawl.results import (
+    EXECUTION_TAG,
     RESULTS_BY_TYPE,
     SUBMISSIONS,
     CrawlResultsConfig,
@@ -146,7 +147,7 @@ def crawler(monkeypatch):
     thread.join()
 
 
-def run(database, asset=website_site_info_results, **config):
+def run(database, asset=website_site_info_results, *, instance=None, **config):
     _, resource, processing = database
     info = asset is website_site_info_results
     config = {
@@ -178,6 +179,8 @@ def run(database, asset=website_site_info_results, **config):
                 }
             }
         },
+        instance=instance,
+        raise_on_error=instance is None,
     )
 
 
@@ -389,3 +392,40 @@ def test_custom_page_instructions_reach_crawler(database, crawler):
     payload = next(iter(saved.values()))
     assert payload["instructions"] == "Find all financial documents"
     assert "crawl" not in payload
+
+
+def test_sweep_resume_keeps_content_settings_fixed(database, crawler):
+    client, _, _ = database
+    seed(client)
+    with dg.DagsterInstance.ephemeral() as instance:
+        first = run(database, instance=instance)
+        assert first.success
+        resumed = run(
+            database,
+            instance=instance,
+            execution_id=first.run_id,
+            model="another-model",
+        )
+        assert not resumed.success
+        assert "resume must keep model unchanged" in str(
+            resumed.get_step_failure_events()[0].event_specific_data.error
+        )
+        assert run(database, instance=instance, execution_id=first.run_id).success
+
+
+def test_resume_of_retired_task_execution_is_rejected(database, crawler):
+    client, _, _ = database
+    seed(client)
+    with dg.DagsterInstance.ephemeral() as instance:
+        first = run(database, instance=instance)
+        assert first.success
+        execution = json.loads(instance.get_run_by_id(first.run_id).tags[EXECUTION_TAG])
+        instance.add_run_tags(
+            first.run_id,
+            {EXECUTION_TAG: json.dumps({**execution, "task_id": str(uuid4())})},
+        )
+        resumed = run(database, instance=instance, execution_id=first.run_id)
+        assert not resumed.success
+        assert "execution_id belongs to a retired crawl task" in str(
+            resumed.get_step_failure_events()[0].event_specific_data.error
+        )

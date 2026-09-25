@@ -23,14 +23,14 @@ TASK_DOMAINS = "corpscout.website_crawl_task_domains"
 
 
 def task_processor(crawl_type: str) -> str:
-    """processing.tasks processor name; the results asset checks it matches its type."""
+    """processing.tasks processor name; the draft execution checks it matches its type."""
     return f"website-crawl-{crawl_type}-v1"
 
 
 class CrawlInputConfig(dg.Config):
     task_id: str | None = Field(
         default=None,
-        description="Selection task UUID. Defaults to the run's processing/task_id tag, then the run ID.",
+        description="Open crawl draft to add to. Omit to use or create the open draft for this queue scope and crawl type.",
     )
     source_relation: str | None = Field(
         default=None, description="Source ClickHouse database.table or view."

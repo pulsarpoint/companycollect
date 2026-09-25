@@ -13,7 +13,7 @@ from dagster_v3.defs.website_crawl.results import CrawlResultsConfig, process_cr
     kinds={"clickhouse"},
     deps=["website_crawl_input"],
     metadata={"dagster/table_name": "corpscout.website_full_crawl_results"},
-    description="Process a frozen crawl task (every enabled domain of task_id, resumable by execution_id) or a bounded batch of explicit or due inputs, and store completed crawler responses.",
+    description="Process a crawl draft (task_id) or a bounded batch of explicit or due inputs, and store completed crawler responses.",
     pool="website_crawl_results",
 )
 def website_full_crawl_results(
@@ -33,7 +33,7 @@ def website_full_crawl_results(
     kinds={"clickhouse"},
     deps=["website_crawl_input"],
     metadata={"dagster/table_name": "corpscout.website_jobs_crawl_results"},
-    description="Process a frozen crawl task (every enabled domain of task_id, resumable by execution_id) or a bounded batch of explicit or due inputs, and store completed crawler responses.",
+    description="Process a crawl draft (task_id) or a bounded batch of explicit or due inputs, and store completed crawler responses.",
     pool="website_crawl_results",
 )
 def website_jobs_crawl_results(
@@ -53,7 +53,7 @@ def website_jobs_crawl_results(
     kinds={"clickhouse"},
     deps=["website_crawl_input"],
     metadata={"dagster/table_name": "corpscout.website_site_info_results"},
-    description="Process a frozen crawl task (every enabled domain of task_id, resumable by execution_id) or a bounded batch of explicit or due inputs, and store completed crawler responses.",
+    description="Process a crawl draft (task_id) or a bounded batch of explicit or due inputs, and store completed crawler responses.",
     pool="website_crawl_results",
 )
 def website_site_info_results(
