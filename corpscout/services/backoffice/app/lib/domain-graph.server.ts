@@ -1,3 +1,7 @@
+import {
+  activeGraphRelease,
+  graphReleases,
+} from "~/lib/commoncrawl-graph.server";
 import { chQuery } from "~/lib/clickhouse.server";
 import { graphDomainError, type DomainGraphSearch } from "~/lib/domain-graph";
 import { clampPage, clampPageSize } from "~/lib/paging";
@@ -11,6 +15,28 @@ export interface DomainGraphImport {
 }
 
 export async function getDomainGraphImports(): Promise<DomainGraphImport[]> {
+  if (process.env.COMMONCRAWL_GRAPH_PG_URL) {
+    return (await graphReleases())
+      .filter(
+        (r) =>
+          r.selection === "full" &&
+          r.graph_status !== "retired" &&
+          r.status !== "succeeded",
+      )
+      .map((r) => ({
+        graph_release: r.graph_release,
+        label:
+          r.status === "failed"
+            ? "Import failed"
+            : r.status === "canceled"
+              ? "Import canceled"
+              : r.status === "queued"
+                ? "Queued"
+                : "Importing",
+        active: ["queued", "launching", "running"].includes(r.status ?? ""),
+        run_url: r.dagster_run_id ? dagsterRunUrl(r.dagster_run_id) : null,
+      }));
+  }
   const runs = await listRuns(
     { job: "commoncrawl_domain_graph_job", limit: 100 },
     { timeoutMs: 5000 },
@@ -99,13 +125,19 @@ const DIRECTION_FILTERS = {
   incoming: "incoming = 1 AND outgoing = 0",
 } as const;
 
-export function getDomainGraphReleases(): Promise<DomainGraphRelease[]> {
-  return chQuery<DomainGraphRelease>(`
+export async function getDomainGraphReleases(): Promise<DomainGraphRelease[]> {
+  const managed = Boolean(process.env.COMMONCRAWL_GRAPH_PG_URL);
+  const active = managed ? await activeGraphRelease() : null;
+  return chQuery<DomainGraphRelease>(
+    `
     SELECT graph_release, node_count, edge_count, published_at
     FROM corpscout.commoncrawl_domain_graph_snapshots FINAL
+    ${managed ? "WHERE graph_release = {active:String}" : ""}
     ORDER BY published_at DESC, graph_release DESC
     ${QUERY_SETTINGS}
-  `);
+  `,
+    { active: active ?? "" },
+  );
 }
 
 export async function searchDomainGraph(

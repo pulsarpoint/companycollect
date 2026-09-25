@@ -26,6 +26,7 @@ from dagster_v3.defs.clickhouse.resolved import (
     assert_clickhouse_tables_exist,
 )
 from dagster_v3.defs.common.resources import ObjectStoreResource
+from dagster_v3.defs.commoncrawl_domain_graph.store import GraphCatalogResource
 from dagster_v3.defs.technology_catalog import tables
 from dagster_v3.defs.technology_catalog.aliases import (
     build_alias_rows,
@@ -779,7 +780,7 @@ INNER JOIN (
     description=(
         "Weekly top-domains rollup: the ~500 highest harmonic-centrality "
         "crawled domains per technology (corpscout.technology_top_domains, "
-        "migration 000354; centrality from commoncrawl_domain_graph_signals). "
+        "migration 000354; centrality from the latest complete ranking release). "
         "A technology's full domain set runs to tens of millions -- ordering "
         "it live is infeasible."
     ),
@@ -797,6 +798,18 @@ def technology_top_domains_clickhouse(
     stage = f"`{RESOLVED_DATABASE}`.`_tmp_technology_top_domains_{uuid.uuid4().hex}`"
     computed_at = datetime.now(UTC).replace(tzinfo=None)
     with clickhouse.get_connection() as client:
+        ranking_release = None
+        if os.getenv("COMMONCRAWL_GRAPH_PG_URL"):
+            with GraphCatalogResource(
+                postgres_url=os.environ["COMMONCRAWL_GRAPH_PG_URL"]
+            ).get_store() as graph_store:
+                ranking_release = graph_store.latest_ranking_release(client)
+        rank_query = (
+            "SELECT root_domain,cc_harmonic_centrality,cc_harmonic_rank,loaded_at FROM corpscout.commoncrawl_domain_graph_ranks WHERE graph_release=%(release)s"
+            if ranking_release
+            else "SELECT root_domain,cc_harmonic_centrality,cc_harmonic_rank,resolved_at FROM corpscout.commoncrawl_domain_graph_signals"
+        )
+        context.add_output_metadata({"ranking_release": ranking_release or "legacy"})
         try:
             # The big merge below shares the server memory budget with
             # se_companies_serving's hourly refresh (~12 GiB peaks); pausing
@@ -822,9 +835,8 @@ def technology_top_domains_clickhouse(
 ) ENGINE = ReplacingMergeTree(resolved_at) ORDER BY root_domain"""
                 )
                 client.execute(
-                    f"""INSERT INTO {signals}
-SELECT root_domain, cc_harmonic_centrality, cc_harmonic_rank, resolved_at
-FROM `{RESOLVED_DATABASE}`.`commoncrawl_domain_graph_signals`""",
+                    f"INSERT INTO {signals} {rank_query}",
+                    {"release": ranking_release},
                     settings={"max_memory_usage": 8 * 1024**3},
                 )
                 client.execute(

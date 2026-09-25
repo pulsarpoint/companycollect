@@ -378,3 +378,20 @@ def test_entry_table_follows_the_queue_contract(database):
     assert client.execute(
         "SELECT partition_key, sorting_key FROM system.tables WHERE database='corpscout' AND name='webtech_scan_input'"
     ) == [("task_id", "task_id, input_id")]
+
+
+def test_ranking_inputs_require_one_release_and_support_rank_filter():
+    with pytest.raises(ValidationError, match="exactly one"):
+        WebtechInputConfig(
+            source_relation="corpscout.commoncrawl_domain_graph_ranks", select_all=True
+        )
+    sql, params = source_query(
+        WebtechInputConfig(
+            source_relation="corpscout.commoncrawl_domain_graph_ranks",
+            filters={"graph_release": ["cc-main-2026-jul-aug-sep"]},
+            harmonic_rank_limit=100,
+        )
+    )
+    assert "cc_harmonic_rank BETWEEN" in sql
+    assert params["filter_0"] == ("cc-main-2026-jul-aug-sep",)
+    assert params["rank_limit"] == 100

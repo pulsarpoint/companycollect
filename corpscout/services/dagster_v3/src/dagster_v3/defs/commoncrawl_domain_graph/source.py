@@ -9,7 +9,7 @@ BASE_URL = "https://data.commoncrawl.org/projects/hyperlinkgraph"
 
 
 def validate_graph_release(value: str) -> str:
-    if not re.fullmatch(r"cc-main-\d{4}-[a-z]{3}(?:-[a-z]{3}){0,2}", value):
+    if not re.fullmatch(r"cc-main-\d{4}(?:-\d{2})?-[a-z]+(?:-[a-z]+)*", value):
         raise ValueError(
             "Expected a Common Crawl release such as cc-main-2026-jun-jul-aug"
         )

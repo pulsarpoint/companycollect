@@ -8,6 +8,7 @@ from uuid import uuid4
 from clickhouse_driver import Client
 
 from dagster_v3.defs.commoncrawl_domain_graph.source import GraphSource
+from dagster_v3.defs.commoncrawl_domain_graph.download import CachedArtifact
 
 DATABASE = "corpscout"
 NODES = "commoncrawl_domain_graph_nodes"
@@ -93,6 +94,8 @@ def load_graph_file(
     kind: Literal["nodes", "edges"],
     run_id: str,
     log: logging.Logger,
+    cached: CachedArtifact | None = None,
+    require_cached: bool = False,
 ) -> tuple[int, bool]:
     table = NODES if kind == "nodes" else EDGES
     expected = source.nodes if kind == "nodes" else source.edges
@@ -117,10 +120,11 @@ def load_graph_file(
             f"Published {table} has {count} rows, expected {expected}; investigate before replacing it"
         )
 
+    if require_cached and cached is None:
+        raise ValueError("Missing verified graph cache; rematerialize the raw asset")
     suffix = uuid4().hex
     stage = f"{table}_stage_{suffix}"
     query_id = f"commoncrawl-domain-graph-{kind}-{suffix}"
-    client.execute(f"CREATE TABLE {DATABASE}.{stage} AS {DATABASE}.{table}")
     params = {"release": source.graph_release, "run_id": run_id}
     if kind == "nodes":
         params.update(url=source.vertices_url, etag=source.vertices_etag)
@@ -130,9 +134,22 @@ def load_graph_file(
         params.update(url=source.edges_url, etag=source.edges_etag)
         schema = "source_node_id UInt32, target_node_id UInt32"
         selection = "source_node_id,target_node_id"
+    reader = f"url(%(url)s,'TSV','{schema}','gzip',headers('If-Match'=%(etag)s))"
+    if cached is not None:
+        if (
+            cached.source.graph_release != source.graph_release
+            or cached.source.artifact_kind != kind
+            or cached.source.source_etag != params["etag"]
+            or cached.source.source_url != params["url"]
+            or cached.source.expected_rows != expected
+        ):
+            raise ValueError("Cached graph artifact does not match source")
+        params["key"] = cached.key
+        reader = f"s3(commoncrawl_graph_cache,filename=%(key)s,format='TSV',structure='{schema}',compression_method='gzip')"
     sql = f"""INSERT INTO {DATABASE}.{stage}
         SELECT %(release)s,{selection},%(etag)s,%(run_id)s
-        FROM url(%(url)s,'TSV','{schema}','gzip',headers('If-Match'=%(etag)s))"""
+        FROM {reader}"""
+    client.execute(f"CREATE TABLE {DATABASE}.{stage} AS {DATABASE}.{table}")
     try:
         log.info(
             "Loading %s from %s (%s expected rows)", table, params["url"], expected

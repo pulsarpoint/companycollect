@@ -1,0 +1,4 @@
+DROP TABLE commoncrawl_graph_state;
+DROP TABLE commoncrawl_graph_import_requests;
+DROP TABLE commoncrawl_graph_release_files;
+DROP TABLE commoncrawl_graph_releases;

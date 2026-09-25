@@ -32,12 +32,12 @@ ops:
   webtech_scan_input:
     config:
       task_id: "e9e51f8b-e76f-43e1-bfe0-c18349f8c0ab"
-      source_relation: "corpscout.commoncrawl_domain_graph_signals"
+      source_relation: "corpscout.commoncrawl_domain_graph_ranks"
       target_column: "root_domain"
       source_record_id_column: "root_domain"
-      source_final: true
+      source_final: false
       filters:
-        crawl_id: ["CC-MAIN-2026-apr-may-jun"]
+        graph_release: ["cc-main-2026-jul-aug-sep"]
         root_domain: ["novelic.com"]
 ```
 

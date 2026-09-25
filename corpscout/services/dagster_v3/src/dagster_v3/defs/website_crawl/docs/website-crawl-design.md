@@ -1,6 +1,6 @@
 # Website crawl input selection
 
-`website_crawl_input` (job `website_crawl_input_job`) selects website domains from an existing ClickHouse table or view, or from explicit targets, inserts missing recurring presets into the tables created by migration `000429` and appends the domains to the open crawl draft of the chosen `crawl_type` (`corpscout.website_crawl_task_domains`, migration `000447`). Processing is a separate step: see [crawler-draft-queue.md](../../../../../docs/operations/crawler-draft-queue.md) and [the processing guide](website-crawl-processing.md).
+`website_crawl_input` (job `website_crawl_input_job`) selects website domains from an existing ClickHouse table or view, or from explicit targets, inserts missing recurring presets into the tables created by migration `000429` and appends the domains to the open crawl draft of the chosen `crawl_type` (`corpscout.website_crawl_task_domains`, migration `000448`). Processing is a separate step: see [crawler-draft-queue.md](../../../../../docs/operations/crawler-draft-queue.md) and [the processing guide](website-crawl-processing.md).
 
 ## Selection configuration
 

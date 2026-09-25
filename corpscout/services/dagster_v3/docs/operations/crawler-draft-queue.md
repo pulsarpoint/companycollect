@@ -4,7 +4,7 @@ Backoffice **SE → Domains → Add to crawl queue** launches only `website_craw
 Choose full crawl, jobs, or basic site info. Each type has one open draft per `queue_scope`
 (default `workspace`). Multiple table selections and explicit URLs append to that draft.
 Duplicate domains are retained once; the first queued URL wins until processing finishes.
-Adding inputs never checks freshness or starts a crawl. Since ClickHouse migration 447 the
+Adding inputs never checks freshness or starts a crawl. Since ClickHouse migration 448 the
 draft follows the shared processing queue contract
 ([spec](../superpowers/specs/2026-09-24-shared-processing-queue-contract-design.md)), like Webtech.
 

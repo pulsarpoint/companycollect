@@ -85,10 +85,14 @@ def graph_http():
 
 
 @pytest.fixture(scope="module")
-def graph_ch():
+def graph_ch(tmp_path_factory):
     if shutil.which("docker") is None:
         pytest.skip("Docker is required for the ClickHouse integration test")
     name = "commoncrawl-graph-test-" + uuid4().hex[:12]
+    users = tmp_path_factory.mktemp("graph-clickhouse") / "named-collections.xml"
+    users.write_text(
+        "<clickhouse><users><test><named_collection_control>1</named_collection_control></test></users></clickhouse>"
+    )
     subprocess.run(
         [
             "docker",
@@ -97,6 +101,8 @@ def graph_ch():
             "--rm",
             "--name",
             name,
+            "-v",
+            f"{users}:/etc/clickhouse-server/users.d/named-collections.xml:ro",
             "--add-host",
             "host.docker.internal:host-gateway",
             "-p",
