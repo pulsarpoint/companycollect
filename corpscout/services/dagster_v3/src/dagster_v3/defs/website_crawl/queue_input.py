@@ -11,7 +11,6 @@ from pydantic import Field, field_validator
 
 from dagster_v3.defs.common import draft_queue
 from dagster_v3.defs.common.processing import ProcessingResource
-from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.website_crawl.input import (
     INPUT_TABLES,
     TASK_DOMAINS,
@@ -239,11 +238,4 @@ def website_crawl_input(
 website_crawl_input_job = dg.define_asset_job(
     "website_crawl_input_job", selection=dg.AssetSelection.assets(website_crawl_input)
 )
-defs = dg.Definitions(
-    assets=[website_crawl_input],
-    jobs=[website_crawl_input_job],
-    resources={
-        # Still declared by the results assets; removed with the S3 execution plan.
-        "crawler_queue_store": ObjectStoreResource(bucket="website-crawl-queues"),
-    },
-)
+defs = dg.Definitions(assets=[website_crawl_input], jobs=[website_crawl_input_job])

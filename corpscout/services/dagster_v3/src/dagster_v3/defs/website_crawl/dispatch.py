@@ -111,3 +111,29 @@ def send_crawl(http: Session, url: str, payload: dict, *, validate: bool) -> dic
             if monotonic() >= deadline:
                 raise RuntimeError("Crawler capacity unavailable; retry this batch ID")
         sleep(2)
+
+
+def fetch_crawl(http: Session, url: str, request_id: str) -> dict | None:
+    """The crawler's job for a request ID, or None when it has none."""
+    response = http.get(
+        f"{url.rstrip('/')}/v1/crawls/{request_id}",
+        timeout=(10, 30),
+        allow_redirects=False,
+    )
+    if response.status_code == 404:
+        return None
+    response.raise_for_status()
+    job = response.json()
+    if job.get("request_id") != request_id:
+        raise ValueError("Crawler returned a different request identity")
+    return job
+
+
+def fetch_result(http: Session, url: str, request_id: str) -> dict:
+    response = http.get(
+        f"{url.rstrip('/')}/v1/crawls/{request_id}/result",
+        timeout=(10, 60),
+        allow_redirects=False,
+    )
+    response.raise_for_status()
+    return response.json()

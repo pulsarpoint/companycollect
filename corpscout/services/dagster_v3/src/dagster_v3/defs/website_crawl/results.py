@@ -267,7 +267,6 @@ def process_crawls(
     clickhouse: ClickhouseResource,
     processing: ProcessingResource,
     crawl_type: Literal["full", "jobs", "site_info"],
-    crawler_queue_store=None,
 ) -> dg.MaterializeResult:
     if (crawl_type == "site_info") != (config.page_selection == "basic_info"):
         raise ValueError(
@@ -283,13 +282,7 @@ def process_crawls(
         from dagster_v3.defs.website_crawl.queue_execution import process_crawl_draft
 
         return process_crawl_draft(
-            context,
-            config,
-            clickhouse,
-            processing,
-            crawler_queue_store,
-            crawl_type,
-            config.task_id,
+            context, config, clickhouse, processing, crawl_type, config.task_id
         )
     table = RESULTS_BY_TYPE[crawl_type]
     input_table = INPUTS_BY_TYPE[crawl_type] + "_current"

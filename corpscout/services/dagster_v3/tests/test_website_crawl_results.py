@@ -13,7 +13,6 @@ import psycopg2
 import pytest
 
 from dagster_v3.defs.common.processing import ProcessingResource
-from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.website_crawl.input import INPUT_TABLES
 from dagster_v3.defs.website_crawl.results import (
     EXECUTION_TAG,
@@ -84,6 +83,8 @@ def crawler(monkeypatch):
 
         def do_GET(self):
             request_id = self.path.split("/")[3]
+            if request_id not in saved:
+                return self.reply(404, {"detail": "Unknown crawl request"})
             payload = saved[request_id]
             now = datetime.now(UTC).isoformat()
             status = "partial" if behavior["partial"] else "finished"
@@ -165,13 +166,7 @@ def run(database, asset=website_site_info_results, *, instance=None, **config):
             asset,
             dg.AssetSpec("website_crawl_input"),
         ],
-        resources={
-            "clickhouse": resource,
-            "processing": processing,
-            "crawler_queue_store": ObjectStoreResource(
-                endpoint_url="http://test", access_key="test", secret_key="test"
-            ),
-        },
+        resources={"clickhouse": resource, "processing": processing},
         run_config={
             "ops": {
                 asset.key.to_user_string(): {

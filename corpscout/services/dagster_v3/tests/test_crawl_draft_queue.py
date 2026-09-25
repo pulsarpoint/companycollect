@@ -31,7 +31,6 @@ from dagster_v3.defs.website_crawl.results_assets import website_site_info_resul
 from tests.test_processing_store import processing_postgres_url, store  # noqa: F401
 from tests.test_website_crawl_input_assets import server  # noqa: F401
 from tests.test_website_crawl_results import crawler as crawler
-from tests.test_webtech_input import objects  # noqa: F401
 
 SETTINGS = {
     "challenge_agent_model": "deepseek-flash",
@@ -46,7 +45,7 @@ SETTINGS = {
 
 
 @pytest.fixture
-def db(server, store, objects):  # noqa: F811
+def db(server, store):  # noqa: F811
     client, resource = server
     processing, dsn = store
     migrations = Path(__file__).parents[3] / "clickhouse/migrations"
@@ -64,11 +63,11 @@ def db(server, store, objects):  # noqa: F811
         "corpscout.website_site_info_results",
     ):
         client.execute(f"TRUNCATE TABLE {table}")
-    return client, resource, processing, ProcessingResource(postgres_url=dsn), objects
+    return client, resource, processing, ProcessingResource(postgres_url=dsn)
 
 
 def add(db, submission_id=None, **kwargs):  # noqa: F811
-    _, resource, processing, _, _ = db
+    _, resource, processing, _ = db
     return load_crawl_draft(
         CrawlQueueInputConfig(crawl_type="site_info", **kwargs),
         submission_id or str(uuid4()),
@@ -78,17 +77,13 @@ def add(db, submission_id=None, **kwargs):  # noqa: F811
 
 
 def run(db, task_id, **overrides):  # noqa: F811
-    _, resource, _, processing, object_store = db
+    _, resource, _, processing = db
     return dg.materialize(
         [
             website_site_info_results,
             dg.AssetSpec("website_crawl_input"),
         ],
-        resources={
-            "clickhouse": resource,
-            "processing": processing,
-            "crawler_queue_store": object_store,
-        },
+        resources={"clickhouse": resource, "processing": processing},
         run_config={
             "ops": {
                 "website_site_info_results": {
@@ -101,7 +96,7 @@ def run(db, task_id, **overrides):  # noqa: F811
 
 def start(db, task_id, **overrides):
     """Freeze the draft the way the results asset does, without crawling."""
-    _, resource, processing, _, _ = db
+    _, resource, processing, _ = db
     config = CrawlResultsConfig(**SETTINGS, **overrides)
     with processing.selection_lock(task_id), resource.get_connection() as client:
         task = start_crawl_execution(
@@ -135,7 +130,7 @@ def publish(client, *, domain, request_id, run_id, work_key, successful, finishe
 
 
 def test_append_dedup_source_manual_and_receipt_replay(db):
-    client, _, processing, _, _ = db
+    client, _, processing, _ = db
     client.execute("DROP TABLE IF EXISTS corpscout.crawl_queue_source")
     client.execute(
         "CREATE TABLE corpscout.crawl_queue_source (domain String, country String) ENGINE=MergeTree ORDER BY domain"
@@ -174,10 +169,10 @@ def test_append_dedup_source_manual_and_receipt_replay(db):
 
 
 @pytest.mark.parametrize("partial", [False, True])
-def test_completion_saves_outcomes_clears_only_its_queue_and_replay_does_not_scan(
+def test_completion_counts_results_drops_its_partition_and_replay_does_not_crawl(
     db, crawler, partial
-):  # noqa: F811
-    client, _, processing, _, _ = db
+):
+    client, _, processing, _ = db
     saved, calls, behavior = crawler
     behavior["partial"] = partial
     receipt = str(uuid4())
@@ -189,13 +184,33 @@ def test_completion_saves_outcomes_clears_only_its_queue_and_replay_does_not_sca
     assert metadata["completion_status"].value == (
         "completed_with_errors" if partial else "completed"
     )
+    assert metadata["stored_results"].value == 2
     assert len(saved) == 2
-    assert client.execute(f"SELECT count() FROM {TASK_DOMAINS}") == [(0,)]
+    assert [path for path, _ in calls] == ["/v1/crawls", "/v1/crawls"]
+    execution = processing.task(task)["config"]["execution"]
+    # Results carry this execution's request ids and run id; nothing else is stored.
     assert client.execute(
-        "SELECT count() FROM corpscout.website_site_info_results FINAL"
-    ) == [(2,)]
+        "SELECT domain, request_id, run_id FROM corpscout.website_site_info_results FINAL ORDER BY domain"
+    ) == [
+        (domain, saved_id, execution["execution_id"])
+        for domain, saved_id in sorted(
+            (payload["url"].removeprefix("https://").rstrip("/"), request_id)
+            for request_id, payload in saved.items()
+        )
+    ]
+    assert client.execute(
+        "SELECT count() FROM corpscout.website_crawl_submissions"
+    ) == [(0,)]
+    assert client.execute(
+        f"SELECT count() FROM {TASK_DOMAINS} WHERE task_id=%(task)s", {"task": task}
+    ) == [(0,)]
     record = processing.task(task)
     assert record["status"] == "completed" and record["inputs_purged_at"] is not None
+    assert (
+        record["succeeded_count"],
+        record["terminal_failed_count"],
+        record["skipped_count"],
+    ) == ((0, 2, 0) if partial else (2, 0, 0))
     next_task = add(db, targets=["three.example"])["task_id"]
     assert task != next_task
     before = list(calls)
@@ -205,28 +220,34 @@ def test_completion_saves_outcomes_clears_only_its_queue_and_replay_does_not_sca
     assert client.execute(f"SELECT domain FROM {TASK_DOMAINS}") == [("three.example",)]
 
 
-def test_timeout_keeps_inputs_and_resumes_saved_profile_with_new_draft(db, crawler):  # noqa: F811
-    client, _, processing, _, _ = db
-    saved, _, behavior = crawler
+def test_timeout_keeps_inputs_and_resume_polls_the_same_requests(db, crawler):
+    client, _, processing, _ = db
+    saved, calls, behavior = crawler
     task = add(db, targets=["one.example", "two.example"])["task_id"]
     behavior["pending"] = True
     with pytest.raises(TimeoutError):
         run(db, task, wait_timeout_seconds=0.05)
     assert client.execute(f"SELECT count() FROM {TASK_DOMAINS}") == [(2,)]
+    assert client.execute(
+        "SELECT count() FROM corpscout.website_site_info_results"
+    ) == [(0,)]
     submitted = dict(saved)
     later = add(db, targets=["next.example"])["task_id"]
     assert later != task
     with pytest.raises(ValueError, match="settings are frozen"):
         run(db, task, model="other")
     behavior["pending"] = False
-    assert run(db, task).success
-    assert saved == submitted
+    posts = len(calls)
+    assert run(db, task, max_in_flight=1).success  # transport settings may change
+    # The resume found both requests at the crawler and never sent them again.
+    assert saved == submitted and len(calls) == posts
+    assert processing.task(task)["status"] == "completed"
     assert processing.task(later)["status"] == "draft"
     assert client.execute(f"SELECT domain FROM {TASK_DOMAINS}") == [("next.example",)]
 
 
 def test_freshness_is_at_execution_and_force_can_override(db, crawler):  # noqa: F811
-    _, _, processing, _, _ = db
+    _, _, processing, _ = db
     saved, _, _ = crawler
     first = add(db, targets=["one.example"])["task_id"]
     assert run(db, first).success
@@ -245,7 +266,7 @@ def test_lost_import_ack_blocks_start_until_retried_from_the_current_source(
 ):
     from clickhouse_driver import Client
 
-    client, _, processing, _, _ = db
+    client, _, processing, _ = db
     client.execute("DROP TABLE IF EXISTS corpscout.crawl_retry_source")
     client.execute(
         "CREATE TABLE corpscout.crawl_retry_source (domain String) ENGINE=MergeTree ORDER BY domain"
@@ -285,7 +306,7 @@ def test_lost_import_ack_blocks_start_until_retried_from_the_current_source(
 def test_lost_cleanup_ack_does_not_repeat_crawls(db, crawler, monkeypatch):
     from clickhouse_driver import Client
 
-    _, _, processing, _, _ = db
+    _, _, processing, _ = db
     _, calls, _ = crawler
     task = add(db, targets=["one.example"])["task_id"]
     execute = Client.execute
@@ -294,7 +315,10 @@ def test_lost_cleanup_ack_does_not_repeat_crawls(db, crawler, monkeypatch):
     def lost_ack(self, query, *args, **kwargs):
         nonlocal interrupted
         value = execute(self, query, *args, **kwargs)
-        if query.startswith(f"DELETE FROM {TASK_DOMAINS}") and not interrupted:
+        if (
+            query.startswith(f"ALTER TABLE {TASK_DOMAINS} DROP PARTITION")
+            and not interrupted
+        ):
             interrupted = True
             raise ConnectionError("lost cleanup acknowledgement")
         return value
@@ -310,6 +334,33 @@ def test_lost_cleanup_ack_does_not_repeat_crawls(db, crawler, monkeypatch):
     assert processing.task(task)["inputs_purged_at"] is not None
 
 
+def test_window_bounds_in_flight_requests_and_batches_result_writes(
+    db, crawler, monkeypatch
+):
+    from clickhouse_driver import Client
+
+    client, _, processing, _ = db
+    saved, calls, _ = crawler
+    task = add(db, targets=[f"d{n}.example" for n in range(1, 6)])["task_id"]
+    execute = Client.execute
+    inserts = []
+
+    def counting(self, query, *args, **kwargs):
+        if query.startswith("INSERT INTO corpscout.website_site_info_results"):
+            inserts.append(len(args[0]))
+        return execute(self, query, *args, **kwargs)
+
+    monkeypatch.setattr(Client, "execute", counting)
+    assert run(db, task, max_in_flight=2).success
+    assert len(saved) == 5 and [path for path, _ in calls].count("/v1/crawls") == 5
+    # Two outstanding at a time; a window's outcomes are stored in one acknowledged insert.
+    assert inserts == [2, 2, 1]
+    assert client.execute(
+        "SELECT count() FROM corpscout.website_site_info_results FINAL"
+    ) == [(5,)]
+    assert processing.task(task)["succeeded_count"] == 5
+
+
 def test_task_and_explicit_domains_are_exclusive():
     from pydantic import ValidationError
 
@@ -318,7 +369,7 @@ def test_task_and_explicit_domains_are_exclusive():
 
 
 def test_task_id_must_name_a_draft(db, crawler):  # noqa: F811
-    _, _, processing, _, _ = db
+    _, _, processing, _ = db
     _, calls, _ = crawler
     with pytest.raises(ValueError, match="unknown crawl task"):
         run(db, str(uuid4()))
@@ -350,7 +401,7 @@ def test_entry_table_follows_the_queue_contract(db):
 def test_retry_replaces_only_its_own_rows(db, monkeypatch):
     from clickhouse_driver import Client
 
-    client, _, _, _, _ = db
+    client, _, _, _ = db
     other = add(db, targets=["kept.example"])
     submission = str(uuid4())
     execute = Client.execute
@@ -399,7 +450,7 @@ def test_request_id_matches_between_sql_and_python(db):
 
 
 def test_remaining_excludes_own_results_fresh_successes_and_disabled_presets(db):
-    client, resource, _, _, _ = db
+    client, resource, _, _ = db
     task_id = add(db, targets=["one.example", "two.example", "three.example"])[
         "task_id"
     ]
@@ -510,7 +561,7 @@ def test_remaining_excludes_own_results_fresh_successes_and_disabled_presets(db)
 
 
 def test_force_refresh_disables_only_the_freshness_skip(db):
-    client, resource, _, _, _ = db
+    client, resource, _, _ = db
     task_id = add(db, targets=["one.example"])["task_id"]
     task, config = start(db, task_id, force_refresh=True)
     started_at = datetime.fromisoformat(task["config"]["execution"]["started_at"])

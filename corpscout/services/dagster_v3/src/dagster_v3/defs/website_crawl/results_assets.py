@@ -4,7 +4,6 @@ import dagster as dg
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.common.processing import ProcessingResource
-from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.website_crawl.results import CrawlResultsConfig, process_crawls
 
 
@@ -21,11 +20,8 @@ def website_full_crawl_results(
     config: CrawlResultsConfig,
     clickhouse: ClickhouseResource,
     processing: ProcessingResource,
-    crawler_queue_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
-    return process_crawls(
-        context, config, clickhouse, processing, "full", crawler_queue_store
-    )
+    return process_crawls(context, config, clickhouse, processing, "full")
 
 
 @dg.asset(
@@ -41,11 +37,8 @@ def website_jobs_crawl_results(
     config: CrawlResultsConfig,
     clickhouse: ClickhouseResource,
     processing: ProcessingResource,
-    crawler_queue_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
-    return process_crawls(
-        context, config, clickhouse, processing, "jobs", crawler_queue_store
-    )
+    return process_crawls(context, config, clickhouse, processing, "jobs")
 
 
 @dg.asset(
@@ -61,11 +54,8 @@ def website_site_info_results(
     config: CrawlResultsConfig,
     clickhouse: ClickhouseResource,
     processing: ProcessingResource,
-    crawler_queue_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
-    return process_crawls(
-        context, config, clickhouse, processing, "site_info", crawler_queue_store
-    )
+    return process_crawls(context, config, clickhouse, processing, "site_info")
 
 
 defs = dg.Definitions(
