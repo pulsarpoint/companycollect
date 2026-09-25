@@ -1,3 +1,5 @@
+import { recentLlmRuns } from "~/lib/llm-runs.server";
+import { dagsterRunUrl } from "~/lib/dagster.server";
 import { redirect } from "react-router";
 import type { Route } from "./+types/admin-settings-llms";
 import { CrawlLlmError, verifySelectedLlm } from "~/lib/crawl-llm.server";
@@ -13,6 +15,7 @@ import {
   LlmSettingsValidationError,
   saveAndActivateLlmProfile,
   setLocalCodexEnabled,
+  setLlmProfileState,
 } from "~/lib/llm-settings.server";
 
 function formValue(form: FormData, name: string): string {
@@ -24,9 +27,10 @@ export async function loader({ request }: Route.LoaderArgs) {
   const searchParams = new URL(request.url).searchParams;
   const editingProfileId = searchParams.get("edit")?.trim() ?? "";
   return {
-    profiles: listLlmProfiles(),
+    profiles: await listLlmProfiles(true),
+    runs: (await recentLlmRuns()).map(run => ({...run, runUrl: run.runId ? dagsterRunUrl(run.runId) ?? undefined : undefined})),
     editingProfile:
-      editingProfileId === "" ? null : getLlmProfile(editingProfileId),
+      editingProfileId === "" ? null : await getLlmProfile(editingProfileId),
     saved: searchParams.get("saved") === "yes",
     localCodexEnabled: isLocalCodexEnabled(),
   };
@@ -38,7 +42,7 @@ export async function action({ request }: Route.ActionArgs) {
   if (intent === "test") {
     const profileId = formValue(form, "profile_id");
     try {
-      await verifySelectedLlm(profileId, "crawler");
+      await verifySelectedLlm(profileId, "crawler", true);
       return {
         testResult: {profileId, ok: true, message: "Connection successful. The saved model and API key returned a valid test response.", checkedAt: new Date().toISOString()},
         values: null, error: "",
@@ -64,8 +68,12 @@ export async function action({ request }: Route.ActionArgs) {
   } : null;
 
   try {
+    if (intent === "archive" || intent === "disable") {
+      await setLlmProfileState(formValue(form, "profile_id"), intent === "archive" ? "archived" : "disabled");
+      return redirect("/admin/settings/llms?saved=yes");
+    }
     if (intent === "activate") {
-      activateLlmProfile(formValue(form, "profile_id"));
+      await activateLlmProfile(formValue(form, "profile_id"));
       return redirect("/admin/settings/llms?saved=yes");
     }
     if (intent === "set_local_codex") {
@@ -73,7 +81,7 @@ export async function action({ request }: Route.ActionArgs) {
       return redirect("/admin/settings/llms?saved=yes");
     }
     if (values !== null) {
-      saveAndActivateLlmProfile({...values, apiKey: formValue(form, "api_key")});
+      await saveAndActivateLlmProfile({...values, apiKey: formValue(form, "api_key")});
       return redirect("/admin/settings/llms?saved=yes");
     }
     return { error: "Unknown LLM settings action.", values: null };
@@ -100,6 +108,7 @@ export default function AdminLlmSettings({
   return (
     <LlmSettingsWorkspace
       profiles={loaderData.profiles}
+      runs={loaderData.runs}
       editingProfile={loaderData.editingProfile}
       saved={loaderData.saved}
       localCodexEnabled={loaderData.localCodexEnabled}

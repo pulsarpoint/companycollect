@@ -119,7 +119,7 @@ def prepare_execution(
                     f"resume must keep {name} unchanged; start a new execution instead"
                 )
         if config.llm is not None:
-            selected_llm = config.llm.model_dump()
+            selected_llm = config.llm.model_dump(exclude_none=True)
             saved_llm = execution.get("llm")
             if saved_llm is None:
                 # Upgrade an interrupted legacy execution without replaying its saved outcomes.
@@ -127,7 +127,7 @@ def prepare_execution(
                 context.instance.add_run_tags(
                     execution_id, {EXECUTION_TAG: json.dumps(execution)}
                 )
-            elif config.llm.model_dump(exclude={"api_key_encrypted"}) != {
+            elif config.llm.model_dump(exclude={"api_key_encrypted"}, exclude_none=True) != {
                 key: value for key, value in saved_llm.items() if key != "api_key_encrypted"
             }:
                 raise ValueError(
@@ -187,7 +187,7 @@ def prepare_execution(
         "input_relation": task["source_info"]["relation"],
         "force": config.force,
         "rescan_old": config.rescan_old,
-        "llm": config.llm.model_dump() if config.llm is not None else None,
+        "llm": config.llm.model_dump(exclude_none=True) if config.llm is not None else None,
         **query,
     }
     tags = {EXECUTION_TAG: json.dumps(execution), "processing/task_id": task_id}

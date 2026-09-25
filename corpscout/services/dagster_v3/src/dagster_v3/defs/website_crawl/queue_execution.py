@@ -15,6 +15,8 @@ from time import monotonic, sleep
 import dagster as dg
 from dlt.sources.helpers.requests import Session
 
+from dagster_v3.defs.common.llm_control import finish_external_request
+
 from dagster_v3.defs.common import queue_execution
 from dagster_v3.defs.common.result_buffer import ResultBuffer
 from dagster_v3.defs.website_crawl.dispatch import (
@@ -301,6 +303,8 @@ def run_crawl_window(context, client, http, url, task, crawl_type, config) -> in
                 # The crawler lost its queue (restart): the same identity is sent again.
                 submit_crawl(http, url, item)
                 continue
+            if job["state"] in TERMINAL_STATES and config.llm and config.llm.profile_id:
+                finish_external_request("crawler", request_id, job["state"])
             if (
                 job["state"] not in TERMINAL_STATES
                 or job["s3_state"] == "pending"
@@ -459,7 +463,7 @@ def process_crawl_draft(context, config, clickhouse, processing, crawl_type, tas
         with Session(raise_for_status=False) as http:
             http.headers["Authorization"] = f"Bearer {token}"
             if config.llm is not None:
-                verify_crawl_llm(http, url, config.llm.model_dump())
+                verify_crawl_llm(http, url, config.llm.model_dump(exclude_none=True))
             stored = run_crawl_window(
                 context, client, http, url, task, crawl_type, config
             )

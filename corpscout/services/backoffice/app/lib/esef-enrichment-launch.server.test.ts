@@ -265,3 +265,5 @@ describe("launchEsefDocumentCompanyInformation", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
+
+vi.mock("~/lib/llm-runs.server", () => ({admitLlmRun: async () => null, acknowledgeLlmRun: async () => {}}));

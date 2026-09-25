@@ -13,13 +13,13 @@ export async function launchPeopleAction(
   if (!input.requestedBy.trim()) throw new Error("An operator identity is required.");
   let match: Record<string, unknown> | undefined;
   if (input.operation === "process") {
-    const profile = getLlmProfile(input.profileId, options.databasePath);
+    const profile = await getLlmProfile(input.profileId);
     if (!profile) throw new Error("Choose a saved LLM profile.");
     const prompt = getPeoplePrompt(input.promptId, options.databasePath);
     if (!prompt) throw new Error("Choose a saved People prompt.");
     if (prompt.revision !== input.promptRevision) throw new Error("The selected prompt changed. Reload to review its latest revision before launching.");
     match = {
-      ...encryptCrawlLlm(profile, getLlmProfileApiKey(profile.profileId, options.databasePath), process.env.CRAWLER_LLM_ENCRYPTION_KEY ?? ""),
+      ...encryptCrawlLlm(profile, await getLlmProfileApiKey(profile.profileId, profile.revision), process.env.CRAWLER_LLM_ENCRYPTION_KEY ?? ""),
       system_prompt: prompt.systemPrompt,
       prompt_version: `people:${prompt.promptId}:r${prompt.revision}`,
       temperature: 0,

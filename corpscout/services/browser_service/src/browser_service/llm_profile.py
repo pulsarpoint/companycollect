@@ -20,6 +20,8 @@ class LLMProfileError(ValueError):
 
 
 class EncryptedLLMProfile(StrictModel):
+    profile_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    profile_revision: int | None = Field(default=None, ge=1, exclude_if=lambda value: value is None)
     provider: str = Field(min_length=1, max_length=100)
     base_url: str = Field(max_length=2048)
     model: str = Field(min_length=1, max_length=500)
@@ -103,7 +105,7 @@ async def verify_llm(profile: EncryptedLLMProfile, encryption_key: str | None) -
     try:
         api_key = profile.decrypt_api_key(encryption_key)
     except LLMProfileError as error:
-        return {"ok": False, "error": str(error)}
+        return {"ok": False, "error": str(error), "failure_kind": "service"}
     messages = [
         {
             "role": "system",
@@ -156,6 +158,8 @@ async def verify_llm(profile: EncryptedLLMProfile, encryption_key: str | None) -
                     return {
                         "ok": False,
                         "error": reason.replace(api_key, "[REDACTED]")[:2000],
+                        "failure_kind": "configuration" if response.status_code in {401,403,404} else
+                            "transient" if response.status_code == 429 or response.status_code >= 500 else "capability",
                     }
                 document = response.json()
                 choice = document["choices"][0]
@@ -169,17 +173,20 @@ async def verify_llm(profile: EncryptedLLMProfile, encryption_key: str | None) -
                     return {"ok": True}
                 return {
                     "ok": False,
+                    "failure_kind": "capability",
                     "error": "The selected model did not correctly interpret the image and return the required browser action JSON",
                 }
     except TimeoutError:
         return {
             "ok": False,
+            "failure_kind": "transient",
             "error": "Browser LLM verification exceeded the 30 second deadline",
         }
     except Exception:
         # Provider errors and validation input can contain credentials or request bodies.
         return {
             "ok": False,
+            "failure_kind": "capability",
             "error": "Browser LLM verification failed: the selected model must accept images and return valid browser action JSON",
         }
 

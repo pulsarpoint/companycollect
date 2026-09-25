@@ -17,6 +17,7 @@ from typing import Any, TypeVar
 import dagster as dg
 from openai import OpenAI
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from dagster_v3.defs.common.llm_control import guarded_http_client
 from dagster_v3.defs.common.encrypted_llm import EncryptedLLMConfig
 
 DESCRIPTION_PROMPT_VERSION = "se-company-info-description-v3"
@@ -47,6 +48,8 @@ class LlmProfileConfig(dg.Config):
     provider: str = Field(default="deepseek", min_length=1, max_length=64)
     model: str = Field(default="deepseek-v4-flash", min_length=1, max_length=200)
     base_url: str = Field(default="https://api.deepseek.com", min_length=1, max_length=2_048)
+    profile_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    profile_revision: int | None = Field(default=None, ge=1, exclude_if=lambda value: value is None)
     api_key_encrypted: str | None = Field(default=None, repr=False, max_length=16384,
         pattern=r"^v1\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{23,}$")
     temperature: float = Field(default=0, ge=0, le=2)
@@ -89,6 +92,7 @@ def build_llm_client(
         api_key = EncryptedLLMConfig(
             provider=profile.provider, model=profile.model, base_url=profile.base_url,
             api_key_encrypted=profile.api_key_encrypted,
+            profile_id=profile.profile_id, profile_revision=profile.profile_revision,
         ).decrypt_api_key()
     else:
         variable = api_key_environment_variable or llm_api_key_variable(profile.provider)
@@ -98,7 +102,8 @@ def build_llm_client(
                 f"No API key for LLM provider {profile.provider!r}: set {variable} on the "
                 "Dagster host, or run with resolve_multi_source_with_llm: false")
     return OpenAI(base_url=profile.base_url.rstrip("/"), api_key=api_key,
-                  timeout=float(timeout_seconds), max_retries=2)
+                  timeout=float(timeout_seconds), max_retries=2,
+                  http_client=guarded_http_client(profile.model_dump() if profile.api_key_encrypted else None, float(timeout_seconds)))
 
 
 class DescriptionSuggestion(BaseModel):

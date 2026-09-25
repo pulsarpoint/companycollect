@@ -139,6 +139,7 @@ describe("admin ESEF action", () => {
       maxEvidenceChars: 70_000,
       timeoutSeconds: 240,
       llm: {
+        profileId: mocks.profiles[0].profileId, profileRevision: undefined,
         provider: "deepseek",
         model: "deepseek-v4-flash",
         baseUrl: "https://api.deepseek.com",

@@ -400,6 +400,7 @@ version = "0.8.0"
 source = { directory = "../browser_service" }
 dependencies = [
     { name = "cloakbrowser" },
+    { name = "cryptography" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "playwright" },
@@ -412,6 +413,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "cloakbrowser", specifier = ">=0.5.10" },
+    { name = "cryptography", specifier = ">=46,<51" },
     { name = "fastapi", specifier = ">=0.115,<1" },
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "playwright", specifier = ">=1.58,<2" },

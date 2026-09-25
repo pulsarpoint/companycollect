@@ -15,13 +15,13 @@ export async function launchDomainAction(
   const process = input.operation === "process";
   let verification: Record<string, unknown> | undefined;
   if (process && input.verifyDomains) {
-    const profile = getLlmProfile(input.profileId, options.databasePath);
+    const profile = await getLlmProfile(input.profileId);
     if (!profile) throw new Error("Choose a saved LLM profile.");
     const prompt = getDomainPrompt(input.promptId, options.databasePath);
     if (!prompt) throw new Error("Choose a saved Domain prompt.");
     if (prompt.revision !== input.promptRevision) throw new Error("The selected prompt changed. Reload to review its latest revision before launching.");
     verification = {
-      ...encryptCrawlLlm(profile, getLlmProfileApiKey(profile.profileId, options.databasePath), globalThis.process.env.CRAWLER_LLM_ENCRYPTION_KEY ?? ""),
+      ...encryptCrawlLlm(profile, await getLlmProfileApiKey(profile.profileId, profile.revision), globalThis.process.env.CRAWLER_LLM_ENCRYPTION_KEY ?? ""),
       system_prompt: prompt.systemPrompt, prompt_version: `domain:${prompt.promptId}:r${prompt.revision}`,
       temperature: 0, concurrency: 1,
     };

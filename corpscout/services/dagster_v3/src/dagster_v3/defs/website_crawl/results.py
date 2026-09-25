@@ -20,6 +20,8 @@ from dagster_clickhouse import ClickhouseResource
 from dlt.sources.helpers.requests import Session
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
+from dagster_v3.defs.common.llm_control import finish_external_request
+
 from dagster_v3.defs.common.encrypted_llm import EncryptedLLMConfig
 from dagster_v3.defs.common.processing import ProcessingResource
 from dagster_v3.defs.website_crawl.dispatch import (
@@ -171,7 +173,7 @@ def effective_payload(
         "max_model_calls": config.max_model_calls,
     }
     if config.llm is not None:
-        payload["llm"] = config.llm.model_dump()
+        payload["llm"] = config.llm.model_dump(exclude_none=True)
     if config.page_selection == "instructions":
         payload.pop("crawl", None)
         payload["instructions"] = config.instructions
@@ -189,7 +191,7 @@ def effective_payload(
     }
     if config.llm is not None:
         # Credential rotation/re-encryption does not alter requested content.
-        semantic["llm"] = config.llm.model_dump(exclude={"api_key_encrypted"})
+        semantic["llm"] = config.llm.model_dump(exclude={"api_key_encrypted"}, exclude_none=True)
     work_key = hashlib.sha256(
         json.dumps([crawl_type, semantic], sort_keys=True).encode()
     ).hexdigest()
@@ -408,8 +410,8 @@ def process_crawls(
             http.headers["Authorization"] = f"Bearer {token}"
             verified_llms: set[str] = set()
             if config.llm is not None:
-                verify_crawl_llm(http, url, config.llm.model_dump())
-                verified_llms.add(json.dumps(config.llm.model_dump(), sort_keys=True))
+                verify_crawl_llm(http, url, config.llm.model_dump(exclude_none=True))
+                verified_llms.add(json.dumps(config.llm.model_dump(exclude_none=True), sort_keys=True))
             params = {
                 "type": crawl_type,
                 "limit": config.batch_size * config.max_batches,
@@ -476,6 +478,8 @@ def process_crawls(
                                 raise ValueError(
                                     "Crawler returned a different request identity"
                                 )
+                            if job["state"] in {"completed", "failed", "cancelled"} and json.loads(item["request_json"]).get("llm", {}).get("profile_id"):
+                                finish_external_request("crawler", request_id, job["state"])
                             if (
                                 job["state"] not in {"completed", "failed", "cancelled"}
                                 or job["s3_state"] == "pending"

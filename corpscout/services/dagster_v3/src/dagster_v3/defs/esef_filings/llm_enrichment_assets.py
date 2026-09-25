@@ -27,6 +27,7 @@ from pydantic import ConfigDict, Field
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.common.resources import ObjectStoreResource
+from dagster_v3.defs.common.llm_control import guarded_http_client
 from dagster_v3.defs.common.encrypted_llm import EncryptedLLMConfig, redact_llm_error
 from dagster_v3.defs.esef_filings import tables
 from dagster_v3.defs.esef_filings.llm_enrichment import (
@@ -89,6 +90,8 @@ class EsefLlmEnrichmentConfig(dg.Config):
         max_length=128,
         pattern=r"^[A-Za-z_][A-Za-z0-9_]*$",
     )
+    profile_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    profile_revision: int | None = Field(default=None, ge=1, exclude_if=lambda value: value is None)
     api_key_encrypted: str | None = Field(default=None, repr=False, max_length=16384,
         pattern=r"^v1\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{23,}$")
     temperature: float = Field(default=0, ge=0, le=2)
@@ -121,6 +124,7 @@ def build_esef_llm_client(config: EsefLlmEnrichmentConfig) -> OpenAI:
         encrypted_profile=EncryptedLLMConfig(
             provider=config.provider, model=config.model, base_url=config.base_url,
             api_key_encrypted=config.api_key_encrypted,
+            profile_id=config.profile_id, profile_revision=config.profile_revision,
         ) if config.api_key_encrypted is not None else None,
     )
 
@@ -150,6 +154,7 @@ def _openai_client(
         api_key=api_key,
         timeout=float(timeout_seconds),
         max_retries=2,
+        http_client=guarded_http_client(encrypted_profile.model_dump() if encrypted_profile else None, float(timeout_seconds)),
     )
 
 

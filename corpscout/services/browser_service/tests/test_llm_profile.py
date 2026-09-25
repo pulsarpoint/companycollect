@@ -129,6 +129,14 @@ class ProfileApiTests(unittest.IsolatedAsyncioTestCase):
             headers={"Authorization": "Bearer service-token"} if authenticated else {},
         )
 
+    async def test_verification_distinguishes_permanent_and_transient_provider_failures(self):
+        from browser_service.llm_profile import verify_llm
+        for status, kind in [(401, "configuration"), (403, "configuration"), (404, "configuration"), (429, "transient"), (503, "transient"), (400, "capability")]:
+            with self.subTest(status=status), self.model_reply(status=status, error="Rejected " + API_KEY):
+                result = await verify_llm(EncryptedLLMProfile.model_validate(profile_payload()), KEY)
+                self.assertEqual(result["failure_kind"], kind)
+                self.assertNotIn(API_KEY, json.dumps(result))
+
     def model_reply(self, *, action=None, status=200, error=None):
         original = httpx.AsyncClient.send
 

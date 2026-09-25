@@ -2,7 +2,7 @@ import { createDecipheriv } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fixture from "./fixtures/crawl-llm-envelope.json";
 const mocks = vi.hoisted(() => ({getLlmProfile: vi.fn(), getLlmProfileApiKey: vi.fn(), crawlerFetch: vi.fn(), browserFetch: vi.fn()}));
-vi.mock("~/lib/llm-settings.server", async importOriginal => ({...await importOriginal<typeof import("~/lib/llm-settings.server")>(), getLlmProfile: mocks.getLlmProfile, getLlmProfileApiKey: mocks.getLlmProfileApiKey}));
+vi.mock("~/lib/llm-settings.server", async importOriginal => ({...await importOriginal<typeof import("~/lib/llm-settings.server")>(), getLlmProfile: mocks.getLlmProfile, getLlmProfileApiKey: mocks.getLlmProfileApiKey, recordLlmCheck: vi.fn()}));
 import { LlmSettingsValidationError } from "~/lib/llm-settings.server";
 vi.mock("~/lib/browser-service.server", () => ({browserFetch: mocks.browserFetch}));
 vi.mock("~/lib/crawler.server", () => ({crawlerFetch: mocks.crawlerFetch}));

@@ -535,3 +535,5 @@ it("filters queue task runs across jobs without a recent-runs cutoff", async () 
   await listRuns({limit: 1, tags: {"processing/task_id": "task"}, statuses: ["QUEUED", "STARTED"]}, {fetchImpl: impl, url: URL_OPTION});
   expect(calls[0].body.variables).toEqual({limit: 1, filter: {tags: [{key: "processing/task_id", value: "task"}], statuses: ["QUEUED", "STARTED"]}});
 });
+
+vi.mock("~/lib/llm-runs.server", () => ({admitLlmRun: async () => null, acknowledgeLlmRun: async () => {}}));

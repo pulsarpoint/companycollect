@@ -1,4 +1,5 @@
-import { Form, Link, useFetcher } from "react-router";
+import { useEffect } from "react";
+import { Form, Link, useFetcher, useRevalidator } from "react-router";
 import { BotIcon, KeyRoundIcon, PlusIcon } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
@@ -41,6 +42,8 @@ import {
   TabsList,
   TabsTrigger,
 } from "~/components/ui/tabs";
+import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose } from "~/components/ui/dialog";
+import type { recentLlmRuns } from "~/lib/llm-runs.server";
 import type { LlmProfile } from "~/lib/llm-settings.server";
 
 export interface LlmSettingsFormValues {
@@ -66,11 +69,11 @@ function ActiveLlmCard({ profile }: { profile: LlmProfile | null }) {
     <Card>
       <CardHeader>
         <div className="flex flex-wrap items-center gap-2">
-          <CardTitle>Active LLM</CardTitle>
+          <CardTitle>Default LLM</CardTitle>
           {profile ? <Badge>In use</Badge> : <Badge variant="destructive">Not configured</Badge>}
         </div>
         <CardDescription>
-          This profile will be used by backoffice LLM processing tasks.
+          This profile is selected by default for LLM processing tasks.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -116,7 +119,7 @@ function LlmProfileRow({ profile }: { profile: LlmProfile }) {
     values: null; error: string;
   }>();
   const testing = test.state !== "idle";
-  const result = test.data?.testResult.profileId === profile.profileId ? test.data.testResult : null;
+  const result = test.data?.testResult?.profileId === profile.profileId ? test.data.testResult : profile.lastCheck ? {...profile.lastCheck, profileId: profile.profileId} : null;
 
   return <>
     <TableRow>
@@ -129,7 +132,7 @@ function LlmProfileRow({ profile }: { profile: LlmProfile }) {
         </Badge>
       </TableCell>
       <TableCell>
-        {profile.isActive ? <Badge>Active</Badge> : <Badge variant="outline">Inactive</Badge>}
+        {profile.state === "disabled" ? <Badge variant="destructive">Disabled</Badge> : profile.isActive ? <Badge>Default</Badge> : <Badge variant="outline">Enabled</Badge>}
       </TableCell>
       <TableCell>
         <div className="flex justify-end gap-2">
@@ -137,18 +140,39 @@ function LlmProfileRow({ profile }: { profile: LlmProfile }) {
             <input type="hidden" name="intent" value="test" />
             <input type="hidden" name="profile_id" value={profile.profileId} />
             <Button type="submit" variant="outline" size="sm" disabled={testing}>
-              {testing ? "Testing…" : "Test"}
+              {testing ? "Testing…" : profile.state === "disabled" ? "Test and enable" : "Test"}
             </Button>
           </test.Form>
           <Button variant="outline" size="sm" nativeButton={false} disabled={testing}
             render={<Link to={`/admin/settings/llms?edit=${encodeURIComponent(profile.profileId)}`} />}>
             Edit
           </Button>
-          {!profile.isActive && <Form method="post">
+          {!profile.isActive && profile.state !== "disabled" && <Form method="post">
             <input type="hidden" name="intent" value="activate" />
             <input type="hidden" name="profile_id" value={profile.profileId} />
             <Button type="submit" variant="secondary" size="sm" disabled={testing}>Use this LLM</Button>
           </Form>}
+          {profile.state !== "disabled" && <Form method="post">
+            <input type="hidden" name="intent" value="disable" />
+            <input type="hidden" name="profile_id" value={profile.profileId} />
+            <Button type="submit" variant="outline" size="sm" disabled={testing}>Disable</Button>
+          </Form>}
+          <Dialog>
+            <DialogTrigger render={<Button variant="outline" size="sm" disabled={testing} />}>Remove</DialogTrigger>
+            <DialogContent>
+              <DialogHeader><DialogTitle>Remove {profile.name}?</DialogTitle>
+                <DialogDescription>This removes the model from configuration and requests cancellation of its active tasks. Completed results and task history are kept.</DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <DialogClose render={<Button variant="outline" />}>Keep model</DialogClose>
+                <Form method="post">
+                  <input type="hidden" name="intent" value="archive" />
+                  <input type="hidden" name="profile_id" value={profile.profileId} />
+                  <Button variant="destructive" type="submit">Remove and stop tasks</Button>
+                </Form>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
       </TableCell>
     </TableRow>
@@ -169,8 +193,7 @@ function LlmProfilesCard({ profiles }: { profiles: LlmProfile[] }) {
       <CardHeader>
         <CardTitle>Configured LLMs</CardTitle>
         <CardDescription>
-          Store several provider/model combinations and select one active
-          profile. Test checks the saved endpoint, model and API key with a short text request.
+          Store several provider/model combinations and select a default profile. Permanent credential or model failures disable the affected configuration and stop its tasks. Temporary errors leave the model enabled. Test checks the saved endpoint, model and API key with a short text request.
           Queue checks verify any additional vision or CAPTCHA capabilities before processing.
         </CardDescription>
       </CardHeader>
@@ -201,7 +224,7 @@ function LlmProfilesCard({ profiles }: { profiles: LlmProfile[] }) {
             </TableHeader>
             <TableBody>
               {profiles.map((profile) => (
-                <LlmProfileRow key={`${profile.profileId}:${profile.updatedAt}`} profile={profile} />
+                <LlmProfileRow key={`${profile.profileId}:${profile.revision}`} profile={profile} />
               ))}
             </TableBody>
           </Table>
@@ -382,6 +405,7 @@ export function LlmSettingsWorkspace({
   saved = false,
   localCodexEnabled = false,
   initialTab = "remote",
+  runs = [],
 }: {
   profiles: LlmProfile[];
   editingProfile: LlmProfile | null;
@@ -390,7 +414,15 @@ export function LlmSettingsWorkspace({
   saved?: boolean;
   localCodexEnabled?: boolean;
   initialTab?: "remote" | "local";
+  runs?: (Awaited<ReturnType<typeof recentLlmRuns>>[number] & {runUrl?: string})[];
 }) {
+  const revalidator = useRevalidator();
+  const pending = runs.some(run => run.pendingExternal > 0 || ['launching','queued','running'].includes(run.status));
+  useEffect(() => {
+    if (!pending) return;
+    const timer = setInterval(() => { if (revalidator.state === 'idle') void revalidator.revalidate(); }, 10_000);
+    return () => clearInterval(timer);
+  }, [pending, revalidator]);
   const activeProfile = profiles.find((profile) => profile.isActive) ?? null;
 
   return (
@@ -418,13 +450,27 @@ export function LlmSettingsWorkspace({
         <Alert>
           <AlertTitle>LLM settings saved</AlertTitle>
           <AlertDescription>
-            The selected profile is now the active backoffice LLM.
+            The model configuration was updated.
           </AlertDescription>
         </Alert>
       ) : null}
 
       <ActiveLlmCard profile={activeProfile} />
       <LlmProfilesCard profiles={profiles} />
+      <Card>
+        <CardHeader><CardTitle>Recent LLM tasks</CardTitle><CardDescription>The latest 30 launches using saved models. Stopping is confirmed by Dagster and the external service.</CardDescription></CardHeader>
+        <CardContent>
+          {runs.length === 0 ? <p>No tracked LLM tasks yet.</p> : <Table>
+            <TableHeader><TableRow><TableHead>Task</TableHead><TableHead>Model</TableHead><TableHead>Status</TableHead><TableHead>External requests</TableHead></TableRow></TableHeader>
+            <TableBody>{runs.map(run => <TableRow key={run.requestId}>
+              <TableCell>{run.runId ? <a href={run.runUrl} target="_blank" rel="noreferrer">{run.job}</a> : run.job}<p className="text-xs text-muted-foreground">{run.createdAt}</p></TableCell>
+              <TableCell>{run.models}</TableCell>
+              <TableCell className="whitespace-normal"><Badge variant="outline">{run.stopRequestedAt && (run.pendingExternal > 0 || !['succeeded','failed','canceled','launch_failed'].includes(run.status)) ? "Stopping" : run.status}</Badge><p>{run.stopReason ?? run.lastError}</p></TableCell>
+              <TableCell>{run.pendingExternal} awaiting confirmation</TableCell>
+            </TableRow>)}</TableBody>
+          </Table>}
+        </CardContent>
+      </Card>
       <Tabs defaultValue={initialTab}>
         <TabsList>
           <TabsTrigger value="remote">Remote</TabsTrigger>

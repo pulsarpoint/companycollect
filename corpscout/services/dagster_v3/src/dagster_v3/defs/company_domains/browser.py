@@ -1,5 +1,8 @@
 """Concurrent Brave Ask requests; browser execution belongs to browser-service."""
 
+from datetime import UTC, datetime
+from dagster_v3.defs.common.llm_control import check_admission, current_request_id, invalidate_revision, finish_external_request
+
 import hashlib
 import json
 from collections.abc import Callable, Iterator
@@ -102,6 +105,8 @@ class BraveBrowserResource(dg.ConfigurableResource):
 
     def verify_llm(self, llm: dict) -> None:
         """Verify the frozen assistant config before consuming any queued companies."""
+        check_admission(llm)
+        started_at = datetime.now(UTC)
         try:
             with Session(raise_for_status=False) as http:
                 response = http.post(
@@ -129,6 +134,7 @@ class BraveBrowserResource(dg.ConfigurableResource):
             raise ValueError(
                 "The browser service returned an invalid LLM verification response; no Brave searches were submitted."
             )
+        invalidate_revision(llm, "brave", started_at, result)
         if result.get("ok") is not True:
             reason = result.get("error")
             safe_reason = reason[:1000] if isinstance(reason, str) else "The model did not pass verification."
@@ -307,6 +313,7 @@ class BraveBrowserResource(dg.ConfigurableResource):
             raise ValueError("requests_per_route must be positive")
         if llm is not None:
             self.verify_llm(llm)
+        owner = current_request_id() if llm and llm.get("profile_id") else None
         worker_count = len(ROUTES) * requests_per_route
         events: Queue[BraveSearchResult | BaseException | None] = Queue(
             maxsize=worker_count
@@ -339,6 +346,7 @@ class BraveBrowserResource(dg.ConfigurableResource):
                         current = company
 
                         def track(request_id: str) -> None:
+                            check_admission(llm or {}, owner, service="brave", external_request_id=request_id)
                             with input_lock:
                                 active_requests[current.request_id] = request_id
 
@@ -348,6 +356,11 @@ class BraveBrowserResource(dg.ConfigurableResource):
                                 stopped=stopped, on_request=track,
                             )
                             on_result(result)
+                            if owner is not None:
+                                with input_lock:
+                                    completed_request = active_requests.get(current.request_id)
+                                if completed_request is not None:
+                                    finish_external_request("brave", completed_request)
                         finally:
                             with input_lock:
                                 active_requests.pop(current.request_id, None)

@@ -14,13 +14,13 @@ const profiles: LlmProfile[] = [
   {
     profileId: "first", name: "Primary model", provider: "openrouter",
     baseUrl: "https://openrouter.ai/api/v1", model: "example/primary",
-    isActive: true, apiKeyAvailable: true,
+    isActive: true, revision: 1, state: "enabled", disabledReason: null, lastCheck: null, apiKeyAvailable: true,
     createdAt: "2026-09-25T12:00:00.000Z", updatedAt: "2026-09-25T12:00:00.000Z",
   },
   {
     profileId: "second", name: "Other model", provider: "openrouter",
     baseUrl: "https://openrouter.ai/api/v1", model: "example/other",
-    isActive: false, apiKeyAvailable: false,
+    isActive: false, revision: 1, state: "enabled", disabledReason: null, lastCheck: null, apiKeyAvailable: false,
     createdAt: "2026-09-25T12:00:00.000Z", updatedAt: "2026-09-25T12:00:00.000Z",
   },
 ];

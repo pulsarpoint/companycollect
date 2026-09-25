@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { launchPeopleAction } from "~/lib/people-launch.server";
 import { getPeoplePrompt, listPeoplePrompts, savePeoplePrompt } from "~/lib/people-prompts.server";
-import { saveAndActivateLlmProfile } from "~/lib/llm-settings.server";
+vi.mock("~/lib/llm-settings.server", () => ({
+  getLlmProfile: async (id: string) => id === "test-profile" ? ({profileId: "test-profile",revision:1,state:"enabled",provider:"openrouter",model:"chosen/model",baseUrl:"https://openrouter.ai/api/v1"}) : null,
+  getLlmProfileApiKey: async () => "secret-must-not-travel",
+}));
+vi.mock("~/lib/llm-runs.server", () => ({admitLlmRun: async () => null, acknowledgeLlmRun: async () => {}}));
 
 let directory: string;
 let databasePath: string;
@@ -12,7 +16,7 @@ let input: Parameters<typeof launchPeopleAction>[0];
 beforeEach(() => {
   vi.stubEnv("CRAWLER_LLM_ENCRYPTION_KEY", "11".repeat(32));
   directory = mkdtempSync(join(tmpdir(), "people-launch-")); databasePath = join(directory, "settings.sqlite");
-  const profileId = saveAndActivateLlmProfile({ name: "Chosen LLM", provider: "openrouter", model: "chosen/model", baseUrl: "https://openrouter.ai/api/v1", apiKey: "secret-must-not-travel" }, databasePath);
+  const profileId = "test-profile";
   const [prompt] = listPeoplePrompts(databasePath);
   input = { operation: "process", profileId, promptId: prompt.promptId, promptRevision: prompt.revision, changedOnly: true, requestedBy: "operator" };
 });

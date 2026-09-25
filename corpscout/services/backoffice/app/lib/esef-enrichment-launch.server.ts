@@ -30,6 +30,8 @@ export interface EsefLlmRuntimeProfile {
   model: string;
   baseUrl: string;
   apiKeyEncrypted: string | null;
+  profileRevision?: number;
+  profileId?: string;
   temperature: number;
   promptVersion: string;
   concurrency: number;
@@ -117,7 +119,7 @@ export async function launchEsefDocumentCompanyInformation(
               base_url: input.llm.baseUrl.trim(),
               ...(input.refreshBehavior === "reprocess_existing_without_model" ? {}
                 : input.llm.apiKeyEncrypted !== null
-                  ? { api_key_encrypted: input.llm.apiKeyEncrypted }
+                  ? { api_key_encrypted: input.llm.apiKeyEncrypted, profile_id: input.llm.profileId, profile_revision: input.llm.profileRevision }
                   : { api_key_environment_variable: "LOCAL_CODEX_API_KEY" }),
               temperature: input.llm.temperature,
               prompt_version: input.llm.promptVersion.trim(),

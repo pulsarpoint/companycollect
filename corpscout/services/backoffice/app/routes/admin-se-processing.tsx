@@ -20,7 +20,7 @@ import { listDomainPrompts } from "~/lib/domain-prompts.server";
 
 export async function loader() {
   const snapshot = await loadCompanyProcessing();
-  const profiles = listLlmProfiles().map(({ profileId, name, provider, model, isActive }) => ({ profileId, name, provider, model, isActive }));
+  const profiles = (await listLlmProfiles()).map(({ profileId, name, provider, model, isActive }) => ({ profileId, name, provider, model, isActive }));
   return { snapshot, profiles, prompts: listPeoplePrompts(), domainPrompts: listDomainPrompts() };
 }
 
