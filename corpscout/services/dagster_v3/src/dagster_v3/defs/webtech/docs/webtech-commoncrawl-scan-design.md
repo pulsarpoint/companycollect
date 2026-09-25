@@ -6,6 +6,9 @@
 > [input selection guide](../../../../../docs/operations/webtech-scan-input.md)
 > and [queue lifecycle](../../../../../docs/operations/webtech-draft-queue.md).
 > Existing ClickHouse results and RustFS reports remain available.
+> Since 2026-09-25 the scanner no longer reads candidate manifests or writes
+> completion manifests: queue envelopes travel inline in the scan request and
+> only per-page reports are stored. The manifest sections below are history.
 
 
 **Status:** remote service deployed and end-to-end real-host smoke passed on

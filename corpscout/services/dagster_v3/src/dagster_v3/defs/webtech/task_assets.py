@@ -1,8 +1,6 @@
 """Process a frozen webtech task in envelopes until nothing remains."""
 
-import hashlib
 import json
-from collections.abc import Sequence
 from uuid import UUID
 
 import dagster as dg
@@ -25,15 +23,11 @@ from dagster_v3.defs.webtech.execution import (
 from dagster_v3.defs.webtech.input import INPUT_RELATION, PROCESSOR_VERSION
 from dagster_v3.defs.webtech.models import (
     WEBTECH_DETECTOR_VERSION,
-    FinalScanReference,
-    SubmittedScanReference,
     WebtechCandidate,
 )
 from dagster_v3.defs.webtech.storage import (
     WebtechS3Destination,
     index_result_references,
-    read_final_manifest,
-    write_candidate_manifest,
 )
 
 
@@ -60,15 +54,9 @@ class WebtechTaskConfig(dg.Config):
         return str(UUID(value))
 
 
-def envelope_partition_key(input_ids: Sequence[str]) -> str:
-    """Name an envelope by its entries only; nothing about it is stored."""
-    digest = hashlib.sha256("\n".join(sorted(input_ids)).encode()).hexdigest()[:24]
-    return f"envelope-{digest}"
-
-
-def submit_envelope(api: WebtechApiResource, manifest):
+def submit_envelope(api: WebtechApiResource, *, crawl_id: str, candidates):
     """Seam for tests; the scanner derives the scan ID from the envelope content."""
-    return api.submit(manifest)
+    return api.submit(crawl_id=crawl_id, candidates=candidates)
 
 
 def complete_task(
@@ -219,48 +207,22 @@ def build_webtech_task_asset(destination: WebtechS3Destination):
                     )
                     for identity, root, _origin, page in rows
                 )
-                manifest = write_candidate_manifest(
-                    object_store=webtech_object_store,
-                    destination=destination,
-                    crawl_id=crawl_id,
-                    partition_key=envelope_partition_key([row[0] for row in rows]),
-                    dagster_run_id=execution["execution_id"],
-                    candidates=candidates,
-                    schema_version=3,
+                snapshot = submit_envelope(
+                    webtech_api, crawl_id=crawl_id, candidates=candidates
                 )
-                snapshot = submit_envelope(webtech_api, manifest)
                 snapshot = monitor_webtech_scan(
-                    context=context,
-                    submission=SubmittedScanReference(
-                        scan_id=snapshot.scan_id,
-                        status=snapshot.status,
-                        manifest=manifest,
-                    ),
+                    context,
+                    scan_id=snapshot.scan_id,
+                    crawl_id=crawl_id,
+                    candidates=candidates,
                     webtech_api=webtech_api,
-                    webtech_object_store=webtech_object_store,
-                    destination=destination,
                     on_results=on_results,
                     on_poll=on_poll,
                 )
                 buffer.flush()
-                # Reconcile with the final manifest: it lists every result of the scan,
-                # including any whose event was missed. Re-publishing a page is idempotent.
-                final = read_final_manifest(
-                    object_store=webtech_object_store,
-                    destination=destination,
-                    reference=FinalScanReference(
-                        scan_id=snapshot.scan_id,
-                        crawl_id=snapshot.crawl_id,
-                        partition_key=snapshot.partition_key,
-                        detector_version=snapshot.detector_version,
-                        uri=snapshot.final_manifest_uri,
-                        total_count=snapshot.total_count,
-                        outcome_counts=snapshot.outcome_counts,
-                        technology_count=snapshot.technology_count,
-                        elapsed_seconds=snapshot.elapsed_seconds,
-                        domains_per_minute=snapshot.domains_per_minute,
-                    ),
-                )
+                # Reconcile: an event the monitor missed still left its page stored, and
+                # the completed scan replays every result from event 0. Re-publishing a
+                # page is idempotent.
                 envelope_ids = [row[0] for row in rows]
                 with clickhouse.get_connection() as client:
                     still = {
@@ -269,18 +231,27 @@ def build_webtech_task_asset(destination: WebtechS3Destination):
                             client, task, limit=len(rows), input_ids=envelope_ids
                         )
                     }
-                missing = [item for item in final.results if item.input_id in still]
-                if missing:
-                    buffer.add(missing)
-                    buffer.flush()
-                with clickhouse.get_connection() as client:
-                    unresolved = remaining_inputs(
-                        client, task, limit=len(rows), input_ids=envelope_ids
+                if still:
+                    replay = webtech_api.poll(
+                        snapshot.scan_id, after_event=0, wait_seconds=0
                     )
-                if unresolved:
-                    raise ValueError(
-                        f"Scanner completed an envelope without results for {len(unresolved)} pages"
-                    )
+                    missing = [
+                        item
+                        for event in replay.events
+                        for item in event.results
+                        if item.input_id in still
+                    ]
+                    if missing:
+                        buffer.add(missing)
+                        buffer.flush()
+                    with clickhouse.get_connection() as client:
+                        unresolved = remaining_inputs(
+                            client, task, limit=len(rows), input_ids=envelope_ids
+                        )
+                    if unresolved:
+                        raise ValueError(
+                            f"Scanner completed an envelope without results for {len(unresolved)} pages"
+                        )
                 context.log.info(
                     "Webtech task %s: envelope %s published, %s results so far",
                     config.task_id,

@@ -1,5 +1,4 @@
 import hashlib
-import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -11,14 +10,8 @@ from dagster_v3.defs.webtech.pages import page_identity
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.webtech.models import (
-    WEBTECH_DETECTOR_VERSION,
-    CandidateManifestDocument,
-    CandidateManifestReference,
-    FinalScanManifest,
-    FinalScanReference,
     StoredDomainResultDocument,
     StoredResultReference,
-    WebtechCandidate,
 )
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
@@ -83,176 +76,6 @@ def parse_webtech_s3_path(value: str) -> WebtechS3Destination:
     return WebtechS3Destination(bucket=parsed.netloc, prefix=prefix)
 
 
-def write_candidate_manifest(
-    *,
-    object_store: ObjectStoreResource,
-    destination: WebtechS3Destination,
-    crawl_id: str,
-    partition_key: str,
-    dagster_run_id: str,
-    candidates: tuple[WebtechCandidate, ...],
-    schema_version: int = 2,
-) -> CandidateManifestReference:
-    """Write or reuse the immutable handoff for one partition selection."""
-    object_store.ensure_bucket(destination.bucket)
-    object_key = "/".join(
-        (
-            destination.prefix,
-            "candidates",
-            f"detector_version={WEBTECH_DETECTOR_VERSION}",
-            f"crawl_id={crawl_id}",
-            f"partition_key={partition_key}",
-            f"dagster_run_id={dagster_run_id}",
-            "manifest.json",
-        )
-    )
-    existing_body: bytes | None = None
-    if object_store.exists(object_key, bucket=destination.bucket):
-        existing_body = object_store.read_bytes(
-            object_key,
-            bucket=destination.bucket,
-        )
-        existing = CandidateManifestDocument.model_validate_json(existing_body)
-        if (
-            existing.crawl_id != crawl_id
-            or existing.partition_key != partition_key
-            or existing.dagster_run_id != dagster_run_id
-            or tuple(existing.candidates) != candidates
-        ):
-            if schema_version == 3:
-                raise ValueError("Frozen Webtech task manifest changed; use a new task_id")
-            existing_body = None
-
-    if existing_body is None:
-        document = CandidateManifestDocument(
-            schema_version=schema_version,
-            crawl_id=crawl_id,
-            partition_key=partition_key,
-            detector_version=WEBTECH_DETECTOR_VERSION,
-            dagster_run_id=dagster_run_id,
-            generated_at=datetime.now(UTC),
-            candidates=list(candidates),
-        )
-        body = _json_bytes(document.model_dump(mode="json"))
-        object_store.write_json(
-            object_key,
-            body.decode("utf-8"),
-            bucket=destination.bucket,
-        )
-    else:
-        body = existing_body
-
-    return CandidateManifestReference(
-        crawl_id=crawl_id,
-        partition_key=partition_key,
-        detector_version=WEBTECH_DETECTOR_VERSION,
-        dagster_run_id=dagster_run_id,
-        uri=f"s3://{destination.bucket}/{object_key}",
-        sha256=hashlib.sha256(body).hexdigest(),
-        candidate_count=len(candidates),
-    )
-
-
-def read_final_manifest(
-    *,
-    object_store: ObjectStoreResource,
-    destination: WebtechS3Destination,
-    reference: FinalScanReference,
-) -> FinalScanManifest:
-    """Read and validate the completion marker returned by the remote API."""
-    bucket, key = _parse_allowed_uri(reference.uri, destination=destination)
-    manifest = FinalScanManifest.model_validate_json(
-        object_store.read_bytes(key, bucket=bucket)
-    )
-    if (
-        manifest.scan_id != reference.scan_id
-        or manifest.crawl_id != reference.crawl_id
-        or manifest.partition_key != reference.partition_key
-        or manifest.detector_version != reference.detector_version
-    ):
-        raise ValueError("final manifest identity does not match the Dagster output")
-    if len(manifest.results) != reference.total_count:
-        raise ValueError(
-            "final manifest result count does not match the remote snapshot"
-        )
-    return manifest
-
-
-def index_final_results(
-    *,
-    clickhouse: ClickhouseResource,
-    object_store: ObjectStoreResource,
-    destination: WebtechS3Destination,
-    reference: FinalScanReference,
-    dagster_run_id: str,
-) -> int:
-    """Validate all durable results, then insert their ClickHouse index rows."""
-    manifest = read_final_manifest(
-        object_store=object_store,
-        destination=destination,
-        reference=reference,
-    )
-    assert_clickhouse_tables_exist(
-        clickhouse,
-        database=WEBTECH_CLICKHOUSE_DATABASE,
-        tables=[
-            WEBTECH_RESULT_TABLE,
-            WEBTECH_TECHNOLOGY_TABLE,
-            "technology_catalog",
-            "technology_aliases",
-        ],
-    )
-    with clickhouse.get_connection() as client:
-        catalog = load_technology_catalog(client)
-    recorded_at = datetime.now(UTC)
-    rows = []
-    detections = []
-    seen_domains: set[str] = set()
-    for result_reference in manifest.results:
-        if (result_reference.input_id or result_reference.root_domain) in seen_domains:
-            raise ValueError(
-                f"duplicate result in final manifest: {result_reference.root_domain}"
-            )
-        seen_domains.add(result_reference.input_id or result_reference.root_domain)
-        body = object_store.read_bytes(
-            result_reference.object_key,
-            bucket=destination.bucket,
-        )
-        _validate_result_body(result_reference, body)
-        document = StoredDomainResultDocument.model_validate_json(body)
-        _validate_result_identity(
-            document,
-            result_reference=result_reference,
-            manifest=manifest,
-        )
-        detections.extend(
-            technology_rows(
-                document,
-                result_reference,
-                catalog,
-                bucket=destination.bucket,
-                run_id=dagster_run_id,
-                recorded_at=recorded_at,
-            )
-        )
-        rows.append(
-            _clickhouse_row(
-                document,
-                result_reference=result_reference,
-                dagster_run_id=dagster_run_id,
-                recorded_at=recorded_at,
-                result_bucket=destination.bucket,
-            )
-        )
-
-    if rows:
-        with clickhouse.get_connection() as client:
-            from dagster_v3.defs.webtech.writes import publish_scan_rows
-
-            publish_scan_rows(client, rows, detections)
-    return len(rows)
-
-
 def index_result_references(
     *,
     clickhouse: ClickhouseResource,
@@ -270,7 +93,12 @@ def index_result_references(
     assert_clickhouse_tables_exist(
         clickhouse,
         database=WEBTECH_CLICKHOUSE_DATABASE,
-        tables=[WEBTECH_RESULT_TABLE, WEBTECH_TECHNOLOGY_TABLE, "technology_catalog", "technology_aliases"],
+        tables=[
+            WEBTECH_RESULT_TABLE,
+            WEBTECH_TECHNOLOGY_TABLE,
+            "technology_catalog",
+            "technology_aliases",
+        ],
     )
     with clickhouse.get_connection() as client:
         catalog = load_technology_catalog(client)
@@ -281,15 +109,29 @@ def index_result_references(
         _validate_result_body(reference, body)
         stored = StoredDomainResultDocument.model_validate_json(body)
         _validate_execution_result_identity(
-            stored, reference=reference, crawl_id=crawl_id, detector_version=detector_version
+            stored,
+            reference=reference,
+            crawl_id=crawl_id,
+            detector_version=detector_version,
         )
         detections.extend(
-            technology_rows(stored, reference, catalog, bucket=destination.bucket,
-                            run_id=dagster_run_id, recorded_at=recorded_at)
+            technology_rows(
+                stored,
+                reference,
+                catalog,
+                bucket=destination.bucket,
+                run_id=dagster_run_id,
+                recorded_at=recorded_at,
+            )
         )
         rows.append(
-            _clickhouse_row(stored, result_reference=reference, dagster_run_id=dagster_run_id,
-                            recorded_at=recorded_at, result_bucket=destination.bucket)
+            _clickhouse_row(
+                stored,
+                result_reference=reference,
+                dagster_run_id=dagster_run_id,
+                recorded_at=recorded_at,
+                result_bucket=destination.bucket,
+            )
         )
     with clickhouse.get_connection() as client:
         from dagster_v3.defs.webtech.writes import publish_scan_rows
@@ -298,13 +140,17 @@ def index_result_references(
     return len(rows)
 
 
-def _unique_references(references: Sequence[StoredResultReference]) -> list[StoredResultReference]:
+def _unique_references(
+    references: Sequence[StoredResultReference],
+) -> list[StoredResultReference]:
     """Deduplicate references by input_id; identical duplicates collapse, differing ones raise."""
     seen: dict[str, StoredResultReference] = {}
     for reference in references:
         if reference.input_id in seen:
             if seen[reference.input_id] != reference:
-                raise ValueError(f"conflicting result references for input {reference.input_id}")
+                raise ValueError(
+                    f"conflicting result references for input {reference.input_id}"
+                )
         else:
             seen[reference.input_id] = reference
     return list(seen.values())
@@ -348,23 +194,6 @@ def _validate_result_body(
         raise ValueError(f"result size mismatch: {reference.object_key}")
     if hashlib.sha256(body).hexdigest() != reference.sha256:
         raise ValueError(f"result SHA-256 mismatch: {reference.object_key}")
-
-
-def _validate_result_identity(
-    document: StoredDomainResultDocument,
-    *,
-    result_reference: StoredResultReference,
-    manifest: FinalScanManifest,
-) -> None:
-    if (
-        document.scan_id != manifest.scan_id
-        or document.crawl_id != manifest.crawl_id
-        or document.partition_key != manifest.partition_key
-        or document.detector_version != manifest.detector_version
-        or document.candidate.harmonic_rank != result_reference.harmonic_rank
-        or not _matches_reference(document, result_reference)
-    ):
-        raise ValueError(f"result identity mismatch: {result_reference.object_key}")
 
 
 def _clickhouse_row(
@@ -423,28 +252,3 @@ def _extension_failure_stage(report: dict[str, object] | None) -> str:
     if not isinstance(failure_stage, str):
         raise ValueError("extension report failure_stage must be a string or null")
     return failure_stage
-
-
-def _parse_allowed_uri(
-    uri: str,
-    *,
-    destination: WebtechS3Destination,
-) -> tuple[str, str]:
-    parsed = urlsplit(uri)
-    key = parsed.path.strip("/")
-    if (
-        parsed.scheme != "s3"
-        or parsed.netloc != destination.bucket
-        or not key.startswith(f"{destination.prefix}/")
-    ):
-        raise ValueError("Webtech object is outside WEBTECH_S3_PATH")
-    return parsed.netloc, key
-
-
-def _json_bytes(document: dict[str, object]) -> bytes:
-    return json.dumps(
-        document,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")

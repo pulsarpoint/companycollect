@@ -1,6 +1,5 @@
 """Freeze/import races, and remaining work, freshness, finish and purge derived from results."""
 
-import json
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
@@ -436,7 +435,7 @@ def test_finish_counts_results_and_skips_then_purge_drops_the_partition(
 
 
 class FakeScanner:
-    """Seams of the results asset: submit, monitor, publish and the final manifest."""
+    """Seams of the results asset: submit, monitor, publish and the replay poll."""
 
     def __init__(self, client, objects, task_id, failed_domain=None):
         self.client = client
@@ -448,7 +447,9 @@ class FakeScanner:
         self.published: list[str] = []
         self.insert_calls: list[int] = []  # batch size of every insert attempt
         self.failing_inserts = 0  # the next N inserts are not acknowledged
-        self.missed_events: set[str] = set()  # pages only the final manifest lists
+        self.missed_events: set[str] = set()  # pages only a replay from event 0 reports
+        self.lost_pages: set[str] = set()  # pages not even the replay reports
+        self.replays: list[tuple[str, int]] = []
         self.crash_after_pages: int | None = None  # the monitor dies once, mid-envelope
 
     def reference(self, row):
@@ -468,7 +469,7 @@ class FakeScanner:
             size_bytes=1,
         )
 
-    def snapshot(self, manifest_uri, crawl_id, key, total, *, completed):
+    def snapshot(self, crawl_id, key, total, *, completed):
         from dagster_v3.defs.webtech.models import RemoteScanSnapshot
 
         now = datetime.now(UTC)
@@ -476,11 +477,7 @@ class FakeScanner:
             scan_id=key,
             status="completed" if completed else "running",
             crawl_id=crawl_id,
-            partition_key=key,
             detector_version=WEBTECH_DETECTOR_VERSION,
-            candidate_manifest_uri=manifest_uri,
-            result_prefix_uri="s3://webtech/webtech/x",
-            final_manifest_uri="s3://webtech/webtech/x/final.json",
             total_count=total,
             completed_count=total if completed else 0,
             outcome_counts={},
@@ -495,22 +492,17 @@ class FakeScanner:
             error_message="",
         )
 
-    def submit(self, api, manifest):
+    def submit(self, api, *, crawl_id, candidates):
         del api
-        document = json.loads(self.objects.read_bytes(manifest.uri.split("/", 3)[3]))
-        self.envelopes[manifest.partition_key] = document["candidates"]
-        self.submitted.append(manifest.partition_key)
-        return self.snapshot(
-            manifest.uri,
-            manifest.crawl_id,
-            manifest.partition_key,
-            len(document["candidates"]),
-            completed=False,
-        )
+        # Like the scanner, the scan ID depends on the envelope's pages only.
+        key = "scan-" + "-".join(sorted(item.input_id[:8] for item in candidates))
+        self.envelopes[key] = [item.model_dump() for item in candidates]
+        self.submitted.append(key)
+        return self.snapshot(crawl_id, key, len(candidates), completed=False)
 
-    def monitor(self, *, submission, on_results, on_poll, **kwargs):
-        del kwargs
-        candidates = self.envelopes[submission.scan_id]
+    def monitor(self, context, *, scan_id, crawl_id, on_results, on_poll, **kwargs):
+        del context, kwargs
+        candidates = self.envelopes[scan_id]
         for position, row in enumerate(candidates):
             if (
                 self.crash_after_pages is not None
@@ -521,18 +513,37 @@ class FakeScanner:
             if row["input_id"] not in self.missed_events:
                 on_results([self.reference(row)])
             on_poll()
-        return self.snapshot(
-            submission.manifest.uri,
-            submission.manifest.crawl_id,
-            submission.scan_id,
-            len(candidates),
-            completed=True,
+        return self.snapshot(crawl_id, scan_id, len(candidates), completed=True)
+
+    def poll(self, scan_id, *, after_event, wait_seconds):
+        """The completed scan replays every stored result from ``after_event``."""
+        from dagster_v3.defs.webtech.models import (
+            RemoteScanPollResponse,
+            RemoteScanProgressEvent,
         )
 
-    def final_manifest(self, *, reference, **kwargs):
-        del kwargs
-        rows = self.envelopes[reference.scan_id]
-        return type("Final", (), {"results": [self.reference(row) for row in rows]})()
+        del wait_seconds
+        self.replays.append((scan_id, after_event))
+        rows = [
+            row
+            for row in self.envelopes[scan_id]
+            if row["input_id"] not in self.lost_pages
+        ]
+        event = RemoteScanProgressEvent(
+            sequence=1,
+            completed_count=len(rows),
+            total_count=len(rows),
+            window_count=max(1, len(rows)),
+            window_outcome_counts={},
+            window_technology_count=0,
+            elapsed_seconds=1,
+            domains_per_minute=60,
+            results=[self.reference(row) for row in rows],
+        )
+        return RemoteScanPollResponse(
+            scan=self.snapshot("", scan_id, len(rows), completed=True),
+            events=[event],
+        )
 
     def index(self, **kwargs):
         references = kwargs["references"]
@@ -582,7 +593,11 @@ def results_harness(
     monkeypatch.setattr(module, "submit_envelope", scanner.submit)
     monkeypatch.setattr(module, "monitor_webtech_scan", scanner.monitor)
     monkeypatch.setattr(module, "index_result_references", scanner.index)
-    monkeypatch.setattr(module, "read_final_manifest", scanner.final_manifest)
+    monkeypatch.setattr(
+        WebtechApiResource,
+        "poll",
+        lambda self, scan_id, **kwargs: scanner.poll(scan_id, **kwargs),
+    )
     if eager_flush:
         monkeypatch.setattr(
             module,
@@ -675,24 +690,46 @@ def test_results_asset_survives_a_failed_insert_while_polling(
     assert_completed_once(database, store, objects, task_id, scanner)
 
 
-def test_results_asset_publishes_pages_only_the_final_manifest_lists(
-    database, store, objects, monkeypatch
-):
-    task_id, scanner, run = results_harness(database, store, objects, monkeypatch)
-    missed = sorted(
+def _first_input_id(database, task_id):
+    return sorted(
         input_id
         for (input_id,) in database[0].execute(
             "SELECT input_id FROM corpscout.webtech_scan_input WHERE task_id=%(task)s",
             {"task": task_id},
         )
     )[0]
+
+
+def test_results_asset_publishes_missed_pages_from_a_replay_of_the_scan(
+    database, store, objects, monkeypatch
+):
+    task_id, scanner, run = results_harness(database, store, objects, monkeypatch)
+    missed = _first_input_id(database, task_id)
     scanner.missed_events = {missed}
 
     assert run().success
     assert missed in scanner.published
-    # The envelope's events (1 page) and the reconciliation top-up (1 page), then envelope 2.
+    # The envelope's events (1 page) and the replay top-up (1 page), then envelope 2.
     assert scanner.insert_calls == [1, 1, 1]
+    # Only the envelope with a missed page is replayed, once, from event 0.
+    assert [after for _, after in scanner.replays] == [0]
     assert_completed_once(database, store, objects, task_id, scanner)
+
+
+def test_results_asset_fails_when_the_scan_has_no_result_for_a_page(
+    database, store, objects, monkeypatch
+):
+    task_id, scanner, run = results_harness(database, store, objects, monkeypatch)
+    lost = _first_input_id(database, task_id)
+    scanner.missed_events = {lost}
+    scanner.lost_pages = {lost}
+
+    result = run()
+    assert not result.success
+    (failure,) = result.get_step_failure_events()
+    error = failure.step_failure_data.error
+    assert "Scanner completed an envelope without results for 1 pages" in str(error)
+    assert lost not in scanner.published
 
 
 def test_results_asset_resumes_with_a_new_envelope_after_a_partial_publish(

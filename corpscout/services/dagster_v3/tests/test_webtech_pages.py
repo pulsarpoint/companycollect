@@ -73,7 +73,13 @@ def test_page_history_in_clickhouse():
     """
     result = subprocess.run(
         clickhouse_local_command(),
-        input=(ddl + (migrations / "000437_corpscout_webtech_page_current_lookup.up.sql").read_text()) + sql,
+        input=(
+            ddl
+            + (
+                migrations / "000437_corpscout_webtech_page_current_lookup.up.sql"
+            ).read_text()
+        )
+        + sql,
         text=True,
         capture_output=True,
         timeout=120,
@@ -128,11 +134,10 @@ def test_conflicting_reports_are_rejected_before_insert():
 def test_dual_write_failure_never_publishes_shadow_marker(monkeypatch):
     from tests.test_webtech_pilot import (
         FakeClickhouseClient,
-        FakeClickhouse,
+        index_stored,
         stored_scan,
         technology_report,
     )
-    from dagster_v3.defs.webtech.storage import index_final_results
 
     monkeypatch.setenv("WEBTECH_WRITE_MODE", "dual")
 
@@ -147,25 +152,13 @@ def test_dual_write_failure_never_publishes_shadow_marker(monkeypatch):
     client = Failing()
     store, destination, reference = stored_scan(technology_report())
     with pytest.raises(RuntimeError, match="injected"):
-        index_final_results(
-            clickhouse=FakeClickhouse(client),
-            object_store=store,
-            destination=destination,
-            reference=reference,
-            dagster_run_id="test",
-        )
+        index_stored(client, store, destination, reference, "test")
     inserts = [sql for sql, _ in client.calls if "INSERT INTO" in sql]
     assert len(inserts) == 2
     assert not any("scan_results_v2" in sql for sql in inserts)
     # Retry repeats the same identities, both destinations must acknowledge.
     healthy = FakeClickhouseClient()
-    index_final_results(
-        clickhouse=FakeClickhouse(healthy),
-        object_store=store,
-        destination=destination,
-        reference=reference,
-        dagster_run_id="retry",
-    )
+    index_stored(healthy, store, destination, reference, "retry")
     assert len([sql for sql, _ in healthy.calls if "INSERT INTO" in sql]) == 4
 
 
@@ -193,7 +186,13 @@ def test_current_partial_unpublished_legacy_and_late_scans():
     """
     result = subprocess.run(
         clickhouse_local_command(),
-        input=(ddl + (migrations / "000437_corpscout_webtech_page_current_lookup.up.sql").read_text()) + sql,
+        input=(
+            ddl
+            + (
+                migrations / "000437_corpscout_webtech_page_current_lookup.up.sql"
+            ).read_text()
+        )
+        + sql,
         text=True,
         capture_output=True,
         timeout=120,
@@ -258,7 +257,10 @@ def test_migration_has_every_writer_column():
             re.MULTILINE,
         )
         if table == "webtech_domain_scan_results_v2":
-            addition = (Path(__file__).resolve().parents[3] / "clickhouse/migrations/000438_corpscout_webtech_scan_input.up.sql").read_text()
+            addition = (
+                Path(__file__).resolve().parents[3]
+                / "clickhouse/migrations/000438_corpscout_webtech_scan_input.up.sql"
+            ).read_text()
             for column in ("task_id", "input_id"):
                 assert f"ADD COLUMN IF NOT EXISTS {column} String" in addition
             physical_columns.extend(["task_id", "input_id"])

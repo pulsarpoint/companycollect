@@ -1,26 +1,20 @@
 """Remote scan monitoring shared by queue executions."""
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 import dagster as dg
 
-from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.webtech.client import (
     UnknownRemoteScanError,
     WebtechApiResource,
     WebtechApiUnavailableError,
 )
 from dagster_v3.defs.webtech.models import (
-    FinalScanManifest,
-    FinalScanReference,
+    WEBTECH_DETECTOR_VERSION,
     RemoteScanSnapshot,
     StoredResultReference,
-    SubmittedScanReference,
-)
-from dagster_v3.defs.webtech.storage import (
-    WebtechS3Destination,
-    read_final_manifest,
+    WebtechCandidate,
 )
 
 WEBTECH_MONITOR_INTERVAL_SECONDS = 2
@@ -30,21 +24,23 @@ WEBTECH_STATUS_LOG_EVERY_POLLS = 30
 
 def monitor_webtech_scan(
     context: dg.AssetExecutionContext,
-    submission: SubmittedScanReference,
+    *,
+    scan_id: str,
+    crawl_id: str,
+    candidates: Sequence[WebtechCandidate],
     webtech_api: WebtechApiResource,
-    webtech_object_store: ObjectStoreResource,
-    destination: WebtechS3Destination,
     poll_interval_seconds: int = WEBTECH_MONITOR_INTERVAL_SECONDS,
     sleep: Callable[[float], None] = time.sleep,
     stall_timeout_seconds: float = WEBTECH_STALL_TIMEOUT_SECONDS,
     on_results: Callable[[list[StoredResultReference]], None] | None = None,
     on_poll: Callable[[], None] | None = None,
 ) -> RemoteScanSnapshot:
-    """Poll with short requests until one submitted remote scan is terminal.
+    """Poll with short requests until one submitted envelope's scan is terminal.
 
-    A running scan that reports no progress for ``stall_timeout_seconds`` is
-    cancelled remotely and the step fails, so a run retry resubmits it and the
-    scanner resumes from the results already stored in RustFS.
+    A scanner that lost the scan (restart) is sent the same envelope again and
+    recovers its stored pages. A running scan that reports no progress for
+    ``stall_timeout_seconds`` is cancelled remotely and the step fails, so a run
+    retry resubmits it and the scanner resumes from the pages stored in RustFS.
     """
     latest_event_sequence = 0
     last_logged_state: tuple[str, int, int] | None = None
@@ -52,7 +48,7 @@ def monitor_webtech_scan(
     while True:
         try:
             response = webtech_api.poll(
-                submission.scan_id,
+                scan_id,
                 after_event=latest_event_sequence,
                 wait_seconds=0,
             )
@@ -62,13 +58,13 @@ def monitor_webtech_scan(
                 latest_event_sequence = max(latest_event_sequence, event.sequence)
             snapshot = response.scan
         except UnknownRemoteScanError:
-            snapshot = webtech_api.submit(submission.manifest)
+            snapshot = webtech_api.submit(crawl_id=crawl_id, candidates=candidates)
             latest_event_sequence = 0  # a restarted scanner numbers events from 1 again
             context.log.warning(
                 "Webtech scanner lost in-memory state; resubmitted scan_id=%s "
-                "partition=%s status=%s completed=%s/%s",
+                "crawl_id=%s status=%s completed=%s/%s",
                 snapshot.scan_id,
-                snapshot.partition_key,
+                snapshot.crawl_id,
                 snapshot.status,
                 snapshot.completed_count,
                 snapshot.total_count,
@@ -76,10 +72,10 @@ def monitor_webtech_scan(
         except WebtechApiUnavailableError as error:
             context.log.warning(
                 "Webtech scanner status unavailable; retrying in %ss: "
-                "scan_id=%s partition=%s error=%s",
+                "scan_id=%s crawl_id=%s error=%s",
                 poll_interval_seconds,
-                submission.scan_id,
-                submission.manifest.partition_key,
+                scan_id,
+                crawl_id,
                 error,
             )
             if on_poll is not None:
@@ -87,7 +83,7 @@ def monitor_webtech_scan(
             sleep(poll_interval_seconds)
             continue
 
-        _validate_monitored_snapshot(submission, snapshot)
+        _validate_monitored_snapshot(snapshot, scan_id=scan_id, crawl_id=crawl_id)
         state = (
             snapshot.status,
             snapshot.completed_count,
@@ -99,12 +95,12 @@ def monitor_webtech_scan(
             or polls_since_log >= WEBTECH_STATUS_LOG_EVERY_POLLS
         ):
             context.log.info(
-                "Webtech scan status: scan_id=%s partition=%s status=%s "
+                "Webtech scan status: scan_id=%s crawl_id=%s status=%s "
                 "completed=%s/%s outcomes=%s technologies=%s "
                 "progress_age_seconds=%.1f elapsed_seconds=%.1f "
                 "rate_per_minute=%.2f",
                 snapshot.scan_id,
-                snapshot.partition_key,
+                snapshot.crawl_id,
                 snapshot.status,
                 snapshot.completed_count,
                 snapshot.total_count,
@@ -127,20 +123,6 @@ def monitor_webtech_scan(
                 stall_timeout_seconds=stall_timeout_seconds,
             )
         if snapshot.status == "completed":
-            reference = _final_reference(snapshot)
-            final_manifest = read_final_manifest(
-                object_store=webtech_object_store,
-                destination=destination,
-                reference=reference,
-            )
-            _validate_s3_manifest(submission, reference, final_manifest)
-            context.log.info(
-                "Webtech scan complete and RustFS manifest verified: "
-                "scan_id=%s partition=%s uri=%s",
-                snapshot.scan_id,
-                snapshot.partition_key,
-                snapshot.final_manifest_uri,
-            )
             return snapshot
         if snapshot.status in {"failed", "cancelled"}:
             raise RuntimeError(
@@ -162,10 +144,10 @@ def _abandon_stalled_scan(
     """Cancel a remote scan that stopped progressing, then fail this step."""
     context.log.warning(
         "Webtech scan stalled; cancelling remote scan so a retry can resume it: "
-        "scan_id=%s partition=%s completed=%s/%s progress_age_seconds=%.1f "
+        "scan_id=%s crawl_id=%s completed=%s/%s progress_age_seconds=%.1f "
         "limit_seconds=%.0f",
         snapshot.scan_id,
-        snapshot.partition_key,
+        snapshot.crawl_id,
         snapshot.completed_count,
         snapshot.total_count,
         snapshot.progress_age_seconds,
@@ -189,45 +171,11 @@ def _abandon_stalled_scan(
 
 
 def _validate_monitored_snapshot(
-    submission: SubmittedScanReference,
-    snapshot: RemoteScanSnapshot,
+    snapshot: RemoteScanSnapshot, *, scan_id: str, crawl_id: str
 ) -> None:
     if (
-        snapshot.scan_id != submission.scan_id
-        or snapshot.crawl_id != submission.manifest.crawl_id
-        or snapshot.partition_key != submission.manifest.partition_key
-        or snapshot.detector_version != submission.manifest.detector_version
-        or snapshot.candidate_manifest_uri != submission.manifest.uri
+        snapshot.scan_id != scan_id
+        or snapshot.crawl_id != crawl_id
+        or snapshot.detector_version != WEBTECH_DETECTOR_VERSION
     ):
         raise RuntimeError("Remote Webtech snapshot does not match its submission")
-
-
-def _final_reference(snapshot: RemoteScanSnapshot) -> FinalScanReference:
-    return FinalScanReference(
-        scan_id=snapshot.scan_id,
-        crawl_id=snapshot.crawl_id,
-        partition_key=snapshot.partition_key,
-        detector_version=snapshot.detector_version,
-        uri=snapshot.final_manifest_uri,
-        total_count=snapshot.total_count,
-        outcome_counts=snapshot.outcome_counts,
-        technology_count=snapshot.technology_count,
-        elapsed_seconds=snapshot.elapsed_seconds,
-        domains_per_minute=snapshot.domains_per_minute,
-    )
-
-
-def _validate_s3_manifest(
-    submission: SubmittedScanReference,
-    reference: FinalScanReference,
-    manifest: FinalScanManifest,
-) -> None:
-    if (
-        manifest.candidate_manifest_uri != submission.manifest.uri
-        or manifest.candidate_manifest_sha256 != submission.manifest.sha256
-        or manifest.outcome_counts != reference.outcome_counts
-        or manifest.technology_count != reference.technology_count
-    ):
-        raise RuntimeError(
-            "RustFS Webtech final manifest does not match the monitored submission"
-        )

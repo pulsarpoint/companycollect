@@ -79,9 +79,9 @@ store, as with Brave; bulk input rows live in ClickHouse. There is no per-bucket
 manifest and no 128-way root-domain hash-bucketing: remaining pages for an
 execution are read directly from `webtech_scan_input` and `webtech_domain_scan_results`
 and submitted to the scanner in batch-sized envelopes (default 5,000 pages), looping
-until nothing remains. Each envelope's object-store manifest is named
-`envelope-<hash>`, a deterministic digest of its own input IDs — it is transport
-only, not a durable index. The `crawl_id` result field holds a source-neutral
+until nothing remains. Each envelope's pages travel inline in the scan request;
+the envelope is transport only and is never stored — only per-page reports are
+written to the object store. The `crawl_id` result field holds a source-neutral
 `webtech-<execution_id>` label shared by every envelope of one execution, which is
 what lets a later envelope of the same execution resume/reuse pages the scanner
 already stored, and lets the scanner supersede an orphaned scan from an earlier

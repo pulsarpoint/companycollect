@@ -21,24 +21,20 @@ from dagster_v3.defs.webtech.client import (
 )
 from dagster_v3.defs.webtech.models import (
     WEBTECH_DETECTOR_VERSION,
-    CandidateManifestReference,
-    FinalScanReference,
     RemoteScanPollResponse,
     RemoteScanSnapshot,
-    SubmittedScanReference,
-    WebtechCandidate,
+    StoredResultReference,
 )
 from dagster_v3.defs.webtech.storage import (
     WEBTECH_RESULT_COLUMNS,
     WebtechS3Destination,
     _extension_failure_stage,
-    index_final_results,
-    parse_webtech_s3_path,
-    write_candidate_manifest,
+    index_result_references,
 )
 
-CRAWL_ID = "CC-MAIN-2026-apr-may-jun"
-PARTITION_KEY = "hash_000"
+CRAWL_ID = "webtech-8a1c3a52-7f0c-4d59-9e0e-2b1d3c4e5f60"
+TASK_ID = "5b2f7e1a-3c4d-4e5f-8a9b-0c1d2e3f4a5b"
+INPUT_ID = "e" * 64
 SCANNED_AT = datetime(2026, 8, 30, 10, 0, tzinfo=UTC)
 
 
@@ -163,21 +159,13 @@ def test_webtech_remote_asset_polls_until_complete_with_short_requests() -> None
         total_count=1,
     )
     api = FakeWebtechApi([running, completed])
-    object_store = FakeObjectStore()
-    _store_final_manifest(object_store, completed)
     sleeps: list[float] = []
-    submission = _submission("scan-one")
 
-    with dg.build_asset_context(
-        instance=instance,
-        partition_key=PARTITION_KEY,
-    ) as context:
+    with dg.build_asset_context(instance=instance) as context:
         snapshot = monitor_webtech_scan(
             context=context,
-            submission=submission,
+            **_submission("scan-one"),
             webtech_api=api,
-            webtech_object_store=object_store,
-            destination=WebtechS3Destination(bucket="webtech", prefix="webtech"),
             poll_interval_seconds=2,
             sleep=sleeps.append,
         )
@@ -187,62 +175,26 @@ def test_webtech_remote_asset_polls_until_complete_with_short_requests() -> None
     assert sleeps == [2]
 
 
-def test_webtech_remote_asset_requires_the_s3_manifest_before_completion() -> None:
-    instance = dg.DagsterInstance.ephemeral()
-    snapshot = _remote_snapshot(
-        "completed",
-        completed_count=1,
-        total_count=1,
-    )
-    submission = _submission("scan-completed")
-    with dg.build_asset_context(
-        instance=instance,
-        partition_key=PARTITION_KEY,
-    ) as context:
-        with pytest.raises(KeyError):
-            monitor_webtech_scan(
-                context=context,
-                submission=submission,
-                webtech_api=FakeWebtechApi(snapshot),
-                webtech_object_store=FakeObjectStore(),
-                destination=WebtechS3Destination(
-                    bucket="webtech",
-                    prefix="webtech",
-                ),
-                sleep=lambda _: None,
-            )
-
-
 def test_webtech_remote_asset_fails_when_remote_scan_fails() -> None:
     instance = dg.DagsterInstance.ephemeral()
-    submission = _submission("scan-failed")
     failed = _remote_snapshot(
         "failed",
         scan_id="scan-failed",
         completed_count=10,
     )
 
-    with dg.build_asset_context(
-        instance=instance,
-        partition_key=PARTITION_KEY,
-    ) as context:
+    with dg.build_asset_context(instance=instance) as context:
         with pytest.raises(RuntimeError, match="status=failed"):
             monitor_webtech_scan(
                 context=context,
-                submission=submission,
+                **_submission("scan-failed"),
                 webtech_api=FakeWebtechApi(failed),
-                webtech_object_store=FakeObjectStore(),
-                destination=WebtechS3Destination(
-                    bucket="webtech",
-                    prefix="webtech",
-                ),
                 sleep=lambda _: None,
             )
 
 
 def test_webtech_remote_asset_cancels_and_fails_a_stalled_scan() -> None:
     instance = dg.DagsterInstance.ephemeral()
-    submission = _submission("scan-stalled")
     stalled = _remote_snapshot(
         "running",
         scan_id="scan-stalled",
@@ -252,20 +204,12 @@ def test_webtech_remote_asset_cancels_and_fails_a_stalled_scan() -> None:
     )
     api = FakeWebtechApi(stalled)
 
-    with dg.build_asset_context(
-        instance=instance,
-        partition_key=PARTITION_KEY,
-    ) as context:
+    with dg.build_asset_context(instance=instance) as context:
         with pytest.raises(RuntimeError, match="stalled.*601s.*7688/7689"):
             monitor_webtech_scan(
                 context=context,
-                submission=submission,
+                **_submission("scan-stalled"),
                 webtech_api=api,
-                webtech_object_store=FakeObjectStore(),
-                destination=WebtechS3Destination(
-                    bucket="webtech",
-                    prefix="webtech",
-                ),
                 sleep=lambda _: None,
                 stall_timeout_seconds=600,
             )
@@ -278,7 +222,6 @@ def test_webtech_remote_asset_keeps_waiting_while_a_slow_scan_still_progresses()
     None
 ):
     instance = dg.DagsterInstance.ephemeral()
-    submission = _submission("scan-slow")
     slow = _remote_snapshot(
         "running",
         scan_id="scan-slow",
@@ -293,19 +236,12 @@ def test_webtech_remote_asset_keeps_waiting_while_a_slow_scan_still_progresses()
         total_count=1,
     )
     api = FakeWebtechApi([slow, completed])
-    object_store = FakeObjectStore()
-    _store_final_manifest(object_store, completed)
 
-    with dg.build_asset_context(
-        instance=instance,
-        partition_key=PARTITION_KEY,
-    ) as context:
+    with dg.build_asset_context(instance=instance) as context:
         snapshot = monitor_webtech_scan(
             context=context,
-            submission=submission,
+            **_submission("scan-slow"),
             webtech_api=api,
-            webtech_object_store=object_store,
-            destination=WebtechS3Destination(bucket="webtech", prefix="webtech"),
             sleep=lambda _: None,
             stall_timeout_seconds=600,
         )
@@ -320,7 +256,6 @@ def test_webtech_remote_asset_logs_status_only_on_change_or_periodically(
     monkeypatch.setattr(webtech_monitor, "WEBTECH_STATUS_LOG_EVERY_POLLS", 3)
     logger_name = "test_webtech_monitor"
     caplog.set_level(logging.INFO, logger=logger_name)
-    submission = _submission("scan-quiet")
     unchanged = _remote_snapshot(
         "running",
         scan_id="scan-quiet",
@@ -334,18 +269,14 @@ def test_webtech_remote_asset_logs_status_only_on_change_or_periodically(
         total_count=1,
     )
     api = FakeWebtechApi([unchanged] * 5 + [completed])
-    object_store = FakeObjectStore()
-    _store_final_manifest(object_store, completed)
     # Dagster's log manager does not propagate to caplog, so hand the monitor a
     # plain logger through the only context attribute it uses.
     context = SimpleNamespace(log=logging.getLogger(logger_name))
 
     monitor_webtech_scan(
         context=context,
-        submission=submission,
+        **_submission("scan-quiet"),
         webtech_api=api,
-        webtech_object_store=object_store,
-        destination=WebtechS3Destination(bucket="webtech", prefix="webtech"),
         sleep=lambda _: None,
     )
 
@@ -391,20 +322,21 @@ class FakeWebtechApi:
         return self.snapshots[0].model_copy(update={"status": "cancelled"})
 
 
-def _submission(scan_id: str) -> SubmittedScanReference:
-    return SubmittedScanReference(
-        scan_id=scan_id,
-        status="running",
-        manifest=CandidateManifestReference(
-            crawl_id=CRAWL_ID,
-            partition_key=PARTITION_KEY,
-            detector_version=WEBTECH_DETECTOR_VERSION,
-            dagster_run_id="manifest-run",
-            uri="s3://webtech/webtech/candidates/test.json",
-            sha256="ab" * 32,
-            candidate_count=1_000,
-        ),
-    )
+def _submission(scan_id: str) -> dict[str, object]:
+    return {"scan_id": scan_id, "crawl_id": CRAWL_ID, "candidates": ()}
+
+
+def test_webtech_monitor_rejects_a_snapshot_of_another_execution() -> None:
+    other = _remote_snapshot("running", scan_id="scan-one", completed_count=0)
+    other = other.model_copy(update={"crawl_id": "webtech-other"})
+    with dg.build_asset_context(instance=dg.DagsterInstance.ephemeral()) as context:
+        with pytest.raises(RuntimeError, match="does not match its submission"):
+            monitor_webtech_scan(
+                context,
+                **_submission("scan-one"),
+                webtech_api=FakeWebtechApi(other),
+                sleep=lambda _: None,
+            )
 
 
 def _remote_snapshot(
@@ -419,11 +351,7 @@ def _remote_snapshot(
         scan_id=scan_id or f"scan-{status}",
         status=status,
         crawl_id=CRAWL_ID,
-        partition_key=PARTITION_KEY,
         detector_version=WEBTECH_DETECTOR_VERSION,
-        candidate_manifest_uri="s3://webtech/webtech/candidates/test.json",
-        result_prefix_uri="s3://webtech/webtech/scans/test/results",
-        final_manifest_uri="s3://webtech/webtech/scans/test/final-manifest.json",
         total_count=total_count,
         completed_count=completed_count,
         outcome_counts={"success": completed_count},
@@ -439,95 +367,35 @@ def _remote_snapshot(
     )
 
 
-def _store_final_manifest(
-    object_store: FakeObjectStore,
-    snapshot: RemoteScanSnapshot,
-) -> None:
-    final_key = snapshot.final_manifest_uri.removeprefix("s3://webtech/")
-    result_key = "webtech/scans/test/results/root_domain=example.com/report.json"
-    object_store.objects[("webtech", final_key)] = _json_bytes(
-        {
-            "schema_version": 1,
-            "scan_id": snapshot.scan_id,
-            "crawl_id": snapshot.crawl_id,
-            "partition_key": snapshot.partition_key,
-            "detector_version": snapshot.detector_version,
-            "candidate_manifest_uri": snapshot.candidate_manifest_uri,
-            "candidate_manifest_sha256": "ab" * 32,
-            "started_at": SCANNED_AT.isoformat(),
-            "finished_at": SCANNED_AT.isoformat(),
-            "elapsed_seconds": snapshot.elapsed_seconds,
-            "outcome_counts": snapshot.outcome_counts,
-            "technology_count": snapshot.technology_count,
-            "scanner_settings": {"browser_count": 20},
-            "results": [
-                {
-                    "root_domain": "example.com",
-                    "harmonic_rank": 1,
-                    "outcome": "success",
-                    "timeout_stage": None,
-                    "technology_count": snapshot.technology_count,
-                    "duration_ms": 100,
-                    "object_key": result_key,
-                    "sha256": "cd" * 32,
-                    "size_bytes": 100,
-                }
-            ],
-        }
-    )
-
-
-def test_candidate_manifest_reuses_identical_durable_input() -> None:
-    object_store = FakeObjectStore()
-    destination = parse_webtech_s3_path("s3://webtech/webtech")
-    candidates = (
-        WebtechCandidate(root_domain="example.com", harmonic_rank=1),
-        WebtechCandidate(root_domain="example.org", harmonic_rank=2),
-    )
-
-    first = write_candidate_manifest(
-        object_store=object_store,
-        destination=destination,
-        crawl_id=CRAWL_ID,
-        partition_key=PARTITION_KEY,
-        dagster_run_id="dagster-run-1",
-        candidates=candidates,
-    )
-    second = write_candidate_manifest(
-        object_store=object_store,
-        destination=destination,
-        crawl_id=CRAWL_ID,
-        partition_key=PARTITION_KEY,
-        dagster_run_id="dagster-run-1",
-        candidates=candidates,
-    )
-
-    assert first == second
-    assert object_store.write_count == 1
-
-
 def stored_scan(report: dict[str, object] | None = None):
+    """One stored page report and the progress-event reference that names it."""
     technology_count = len(report["technologies"]) if report is not None else 0
     object_store = FakeObjectStore()
     destination = WebtechS3Destination(bucket="webtech", prefix="webtech")
     scan_id = "ab" * 16
     result_key = (
         "webtech/scans/detector_version=mywappalyzer-1.4.1/"
-        f"crawl_id={CRAWL_ID}/partition_key={PARTITION_KEY}/"
-        f"scan_id={scan_id}/results/root_domain=example.com/report.json"
+        f"crawl_id={CRAWL_ID}/pages/input_id={INPUT_ID}/report.json"
     )
     result_document = {
         "schema_version": 1,
         "scan_id": scan_id,
         "crawl_id": CRAWL_ID,
-        "partition_key": PARTITION_KEY,
+        "partition_key": "",
         "detector_version": WEBTECH_DETECTOR_VERSION,
-        "candidate": {"root_domain": "example.com", "harmonic_rank": 1},
+        "candidate": {
+            "root_domain": "example.com",
+            "harmonic_rank": 1,
+            "task_id": TASK_ID,
+            "input_id": INPUT_ID,
+            "page_url": "https://example.com/",
+        },
         "outcome": "hard_timeout",
-        "requested_url": "http://example.com",
+        # Queue pages never fall back to HTTP: the requested URL is the page URL.
+        "requested_url": "https://example.com/",
         "final_url": "",
         "final_hostname": "",
-        "http_fallback_used": True,
+        "http_fallback_used": False,
         "scanned_at": SCANNED_AT.isoformat(),
         "duration_ms": 500,
         "error_message": "domain exceeded 60 second deadline",
@@ -536,63 +404,40 @@ def stored_scan(report: dict[str, object] | None = None):
     }
     result_body = _json_bytes(result_document)
     object_store.objects[("webtech", result_key)] = result_body
-    result_sha = hashlib.sha256(result_body).hexdigest()
-    final_key = result_key.rsplit("/results/", maxsplit=1)[0] + "/final-manifest.json"
-    final_document = {
-        "schema_version": 1,
-        "scan_id": scan_id,
-        "crawl_id": CRAWL_ID,
-        "partition_key": PARTITION_KEY,
-        "detector_version": WEBTECH_DETECTOR_VERSION,
-        "candidate_manifest_uri": "s3://webtech/webtech/candidates/manifest.json",
-        "candidate_manifest_sha256": "cd" * 32,
-        "started_at": SCANNED_AT.isoformat(),
-        "finished_at": SCANNED_AT.isoformat(),
-        "elapsed_seconds": 0,
-        "outcome_counts": {"hard_timeout": 1},
-        "technology_count": technology_count,
-        "scanner_settings": {"browser_count": 20},
-        "results": [
-            {
-                "root_domain": "example.com",
-                "harmonic_rank": 1,
-                "outcome": "hard_timeout",
-                "timeout_stage": "wappalyzer_report",
-                "technology_count": technology_count,
-                "duration_ms": 500,
-                "object_key": result_key,
-                "sha256": result_sha,
-                "size_bytes": len(result_body),
-            }
-        ],
-    }
-    object_store.objects[("webtech", final_key)] = _json_bytes(final_document)
-    reference = FinalScanReference(
-        scan_id=scan_id,
-        crawl_id=CRAWL_ID,
-        partition_key=PARTITION_KEY,
-        detector_version=WEBTECH_DETECTOR_VERSION,
-        uri=f"s3://webtech/{final_key}",
-        total_count=1,
-        outcome_counts={"hard_timeout": 1},
+    reference = StoredResultReference(
+        root_domain="example.com",
+        harmonic_rank=1,
+        input_id=INPUT_ID,
+        outcome="hard_timeout",
+        timeout_stage="wappalyzer_report",
         technology_count=technology_count,
-        elapsed_seconds=0,
-        domains_per_minute=0,
+        duration_ms=500,
+        object_key=result_key,
+        sha256=hashlib.sha256(result_body).hexdigest(),
+        size_bytes=len(result_body),
     )
     return object_store, destination, reference
 
 
-def test_final_manifest_is_validated_before_clickhouse_index() -> None:
-    object_store, destination, reference = stored_scan()
-    scan_id = reference.scan_id
-    clickhouse_client = FakeClickhouseClient()
-
-    indexed = index_final_results(
+def index_stored(clickhouse_client, object_store, destination, reference, run_id):
+    return index_result_references(
         clickhouse=FakeClickhouse(clickhouse_client),
         object_store=object_store,
         destination=destination,
-        reference=reference,
-        dagster_run_id="dagster-run-1",
+        crawl_id=CRAWL_ID,
+        detector_version=WEBTECH_DETECTOR_VERSION,
+        references=[reference],
+        dagster_run_id=run_id,
+    )
+
+
+def test_stored_page_is_validated_before_clickhouse_index() -> None:
+    object_store, destination, reference = stored_scan()
+    scan_id = "ab" * 16
+    clickhouse_client = FakeClickhouseClient()
+
+    indexed = index_stored(
+        clickhouse_client, object_store, destination, reference, "dagster-run-1"
     )
 
     assert indexed == 1
@@ -664,16 +509,7 @@ def test_webtech_indexes_catalog_linked_detections_before_scan_metadata() -> Non
 
     store, destination, reference = stored_scan(technology_report())
     client = FakeClickhouseClient()
-    assert (
-        index_final_results(
-            clickhouse=FakeClickhouse(client),
-            object_store=store,
-            destination=destination,
-            reference=reference,
-            dagster_run_id="index-run",
-        )
-        == 1
-    )
+    assert index_stored(client, store, destination, reference, "index-run") == 1
     inserts = [(sql, rows) for sql, rows in client.calls if "INSERT INTO" in sql]
     assert len(inserts) == 2
     assert "webtech_domain_technologies" in inserts[0][0]
@@ -718,13 +554,7 @@ def test_webtech_rejects_invalid_detections_before_any_insert(failure: str) -> N
         store.objects[key] += b" "
     client = FakeClickhouseClient()
     with pytest.raises(ValueError):
-        index_final_results(
-            clickhouse=FakeClickhouse(client),
-            object_store=store,
-            destination=destination,
-            reference=reference,
-            dagster_run_id="index-run",
-        )
+        index_stored(client, store, destination, reference, "index-run")
     assert not any("INSERT INTO" in sql for sql, _ in client.calls)
 
 
@@ -740,13 +570,7 @@ def test_webtech_backfill_checks_identity_and_preserves_report_details(
 
     store, destination, reference = stored_scan(technology_report())
     client = FakeClickhouseClient()
-    index_final_results(
-        clickhouse=FakeClickhouse(client),
-        object_store=store,
-        destination=destination,
-        reference=reference,
-        dagster_run_id="index-run",
-    )
+    index_stored(client, store, destination, reference, "index-run")
     index = dict(zip(WEBTECH_RESULT_COLUMNS, client.calls[-1][1][0], strict=True))
     if legacy:
         object_key = (index["result_bucket"], index["result_object_key"])
@@ -840,23 +664,18 @@ def test_monitor_hands_over_event_results_and_resets_cursor_after_resubmit() -> 
                 raise step
             return step
 
-        def submit(self, manifest):
-            del manifest
-            trace.append("submit")
+        def submit(self, *, crawl_id, candidates):
+            trace.append(("submit", crawl_id, tuple(candidates)))
             return running
 
     api = ScriptedApi()
-    object_store = FakeObjectStore()
-    _store_final_manifest(object_store, completed)
     received: list[list[str]] = []
 
     with dg.build_asset_context(instance=dg.DagsterInstance.ephemeral()) as context:
         snapshot = monitor_webtech_scan(
             context=context,
-            submission=_submission("scan-one"),
+            **_submission("scan-one"),
             webtech_api=api,
-            webtech_object_store=object_store,
-            destination=WebtechS3Destination(bucket="webtech", prefix="webtech"),
             poll_interval_seconds=2,
             sleep=lambda seconds: trace.append(f"sleep {seconds}"),
             on_results=lambda refs: received.append([ref.input_id for ref in refs]),
@@ -867,4 +686,11 @@ def test_monitor_hands_over_event_results_and_resets_cursor_after_resubmit() -> 
     assert received == [["a" * 64], ["b" * 64], ["c" * 64]]
     # The cursor advances from event sequences and restarts at 0 after a resubmit.
     assert api.after_events == [0, 2, 0]
-    assert trace == ["on_poll", "sleep 2", "submit", "on_poll", "sleep 2"]
+    # The same envelope is resubmitted inline.
+    assert trace == [
+        "on_poll",
+        "sleep 2",
+        ("submit", CRAWL_ID, ()),
+        "on_poll",
+        "sleep 2",
+    ]

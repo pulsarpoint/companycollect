@@ -15,7 +15,6 @@ from dagster_v3.defs.webtech.storage import (
     _unique_references,
     _validate_execution_result_identity,
 )
-from dagster_v3.defs.webtech.task_assets import envelope_partition_key
 
 EVENT = {
     "sequence": 1,
@@ -159,9 +158,64 @@ def test_failed_flush_keeps_items_for_the_next_attempt():
     assert calls == [["a", "b"], ["a", "b"]]
 
 
-def test_envelope_key_depends_only_on_its_entries():
-    assert envelope_partition_key(["b" * 64, "a" * 64]) == envelope_partition_key(
-        ["a" * 64, "b" * 64]
+def test_submit_sends_the_envelope_inline(monkeypatch):
+    import requests
+
+    from dagster_v3.defs.webtech.client import WebtechApiResource
+    from dagster_v3.defs.webtech.models import WebtechCandidate
+
+    sent = {}
+
+    class Response:
+        ok = True
+        status_code = 202
+
+        def json(self):
+            return {
+                "scan_id": "s",
+                "status": "pending",
+                "crawl_id": sent["json"]["crawl_id"],
+                "detector_version": WEBTECH_DETECTOR_VERSION,
+                "total_count": 1,
+                "completed_count": 0,
+                "outcome_counts": {},
+                "technology_count": 0,
+                "started_at": None,
+                "finished_at": None,
+                "last_progress_at": None,
+                "elapsed_seconds": 0,
+                "progress_age_seconds": 0,
+                "domains_per_minute": 0,
+                "latest_event_sequence": 0,
+                "error_message": "",
+            }
+
+    def request(method, url, **kwargs):
+        sent.update(method=method, url=url, **kwargs)
+        return Response()
+
+    monkeypatch.setattr(requests, "request", request)
+    candidate = WebtechCandidate(
+        root_domain="novelic.com",
+        task_id="t",
+        input_id="a" * 64,
+        page_url="https://novelic.com/",
     )
-    assert envelope_partition_key(["a" * 64]) != envelope_partition_key(["b" * 64])
-    assert envelope_partition_key(["a" * 64]).startswith("envelope-")
+    api = WebtechApiResource(base_url="http://scanner.test/", api_token="token")
+    snapshot = api.submit(crawl_id="webtech-exec", candidates=[candidate])
+    assert snapshot.scan_id == "s"
+    assert (sent["method"], sent["url"]) == ("POST", "http://scanner.test/v1/scans")
+    assert sent["json"] == {
+        "schema_version": 2,
+        "crawl_id": "webtech-exec",
+        "detector_version": WEBTECH_DETECTOR_VERSION,
+        "candidates": [
+            {
+                "root_domain": "novelic.com",
+                "harmonic_rank": 0,
+                "task_id": "t",
+                "input_id": "a" * 64,
+                "page_url": "https://novelic.com/",
+            }
+        ],
+    }

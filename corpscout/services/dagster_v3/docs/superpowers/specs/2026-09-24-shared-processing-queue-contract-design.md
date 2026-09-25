@@ -104,6 +104,8 @@ Rejected alternatives:
 - Every request carries a stable identity derived from `execution_id` and `input_id`,
   so a resubmitted in-flight entry is recognised by the service instead of repeated.
 - After any crash the resume is the same loop: recompute `remaining`, continue.
+- Envelopes travel inline in the request; the service stores only per-entry results,
+  so there is no envelope manifest to write, recover from or clean up.
 
 ## Per-processor changes
 

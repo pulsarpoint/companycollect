@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from typing import Any
 
 import dagster as dg
@@ -5,9 +6,10 @@ import requests
 from pydantic import Field
 
 from dagster_v3.defs.webtech.models import (
-    CandidateManifestReference,
+    WEBTECH_DETECTOR_VERSION,
     RemoteScanPollResponse,
     RemoteScanSnapshot,
+    WebtechCandidate,
 )
 
 
@@ -25,14 +27,15 @@ class WebtechApiResource(dg.ConfigurableResource):
     base_url: str
     api_token: str = Field(repr=False)
 
-    def submit(self, manifest: CandidateManifestReference) -> RemoteScanSnapshot:
+    def submit(
+        self, *, crawl_id: str, candidates: Sequence[WebtechCandidate]
+    ) -> RemoteScanSnapshot:
+        """Send one envelope inline; the scanner derives the scan ID from its pages."""
         payload = {
-            "schema_version": 1,
-            "crawl_id": manifest.crawl_id,
-            "partition_key": manifest.partition_key,
-            "candidate_manifest_uri": manifest.uri,
-            "candidate_manifest_sha256": manifest.sha256,
-            "detector_version": manifest.detector_version,
+            "schema_version": 2,
+            "crawl_id": crawl_id,
+            "detector_version": WEBTECH_DETECTOR_VERSION,
+            "candidates": [candidate.model_dump() for candidate in candidates],
         }
         response = self._request(
             "POST",
@@ -83,9 +86,7 @@ class WebtechApiResource(dg.ConfigurableResource):
             response = requests.request(
                 method,
                 f"{self.base_url.rstrip('/')}{path}",
-                headers={
-                    "Authorization": f"Bearer {self.api_token}"
-                },
+                headers={"Authorization": f"Bearer {self.api_token}"},
                 timeout=timeout,
                 **kwargs,
             )
