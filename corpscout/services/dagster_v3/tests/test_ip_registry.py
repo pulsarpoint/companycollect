@@ -1,4 +1,4 @@
-"""IP registry reference data against a real ClickHouse: migrations 000449/000450, snapshots, trie, rule parity."""
+"""IP registry reference data against a real ClickHouse: migrations 000450/000451, snapshots, trie, rule parity."""
 
 import hashlib
 import re
@@ -23,17 +23,17 @@ from tests.test_ip_enrichment_input import server as server
 
 MIGRATIONS = Path(__file__).resolve().parents[3] / "clickhouse/migrations"
 FIXTURES = Path(__file__).parent / "fixtures" / "ip_registry"
-MIGRATION_449 = "000449_corpscout_ip_registry_reference_data"
-MIGRATION_450 = "000450_corpscout_rdap_trie_registry_class_exclusion"
+MIGRATION_450 = "000450_corpscout_ip_registry_reference_data"
+MIGRATION_451 = "000451_corpscout_rdap_trie_registry_class_exclusion"
 TEST_SOURCE = "HOST 'localhost' PORT 9000 USER 'test' PASSWORD 'test'"
 IANA_DATE = date(2026, 9, 19)
 SNAPSHOT_INSERT = f"INSERT INTO corpscout.{tables.SNAPSHOTS_TABLE} ({', '.join(tables.SNAPSHOT_COLUMNS)}) VALUES"
 IANA_INSERT = f"INSERT INTO corpscout.{tables.IANA_TABLE} ({', '.join(tables.IANA_COLUMNS)}) VALUES"
 SPECIAL_INSERT = f"INSERT INTO corpscout.{tables.SPECIAL_TABLE} ({', '.join(tables.SPECIAL_COLUMNS)}) VALUES"
 HOLDER_INSERT = f"INSERT INTO corpscout.{tables.HOLDER_TABLE} ({', '.join(tables.HOLDER_COLUMNS)}) VALUES"
-# The only tables migration 000449 may create: reference data stays limited to the IANA blocks,
+# The only tables migration 000450 may create: reference data stays limited to the IANA blocks,
 # the special segments and the whole-block holder records (never the full delegation list).
-TABLES_449 = {
+TABLES_450 = {
     tables.SNAPSHOTS_TABLE,
     tables.IANA_TABLE,
     tables.SPECIAL_TABLE,
@@ -77,12 +77,12 @@ def apply_migration(client, name: str, *, before: str | None = None) -> None:
 @pytest.fixture(scope="module")
 def registry_server(server):
     client, resource = server
-    # 000124 up to its dictionary (000450 recreates rdap_network_trie with the test source).
+    # 000124 up to its dictionary (000451 recreates rdap_network_trie with the test source).
     apply_migration(
         client, "000124_corpscout_rdap_networks.up.sql", before="CREATE DICTIONARY"
     )
-    apply_migration(client, f"{MIGRATION_449}.up.sql")
     apply_migration(client, f"{MIGRATION_450}.up.sql")
+    apply_migration(client, f"{MIGRATION_451}.up.sql")
     return client, resource
 
 
@@ -447,9 +447,9 @@ def table_columns(sql: str, table: str) -> tuple[str, ...]:
     return tuple(line.split()[0] for line in body.strip().splitlines())
 
 
-def test_migration_449_embeds_the_rule_and_reads_through_the_dictionary_user():
-    up = (MIGRATIONS / f"{MIGRATION_449}.up.sql").read_text()
-    down = (MIGRATIONS / f"{MIGRATION_449}.down.sql").read_text()
+def test_migration_450_embeds_the_rule_and_reads_through_the_dictionary_user():
+    up = (MIGRATIONS / f"{MIGRATION_450}.up.sql").read_text()
+    down = (MIGRATIONS / f"{MIGRATION_450}.down.sql").read_text()
     assert registry.REGISTRY_CLASS_SQL in up  # verbatim, whitespace included
     assert up.count("USER 'corpscout_rdap_dictionary'") == 1
     assert up.count("LIFETIME(MIN 3600 MAX 7200)") == 1
@@ -472,9 +472,9 @@ def test_migration_449_embeds_the_rule_and_reads_through_the_dictionary_user():
     # table for the full allocated/assigned delegation list.
     assert (
         set(re.findall(r"CREATE TABLE IF NOT EXISTS corpscout\.(\w+)", up))
-        == TABLES_449
+        == TABLES_450
     )
-    assert set(re.findall(r"DROP TABLE IF EXISTS corpscout\.(\w+)", down)) == TABLES_449
+    assert set(re.findall(r"DROP TABLE IF EXISTS corpscout\.(\w+)", down)) == TABLES_450
     assert table_columns(up, tables.SNAPSHOTS_TABLE) == tables.SNAPSHOT_COLUMNS
     assert table_columns(up, tables.IANA_TABLE) == tables.IANA_COLUMNS
     assert table_columns(up, tables.SPECIAL_TABLE) == tables.SPECIAL_COLUMNS
@@ -743,11 +743,11 @@ def test_per_miss_query_derived_view_and_python_rule_agree_on_every_case(clean):
     ) == [(len(CASES),)]
 
 
-def test_migration_450_serves_only_reusable_registrations_and_follows_reclassification(
+def test_migration_451_serves_only_reusable_registrations_and_follows_reclassification(
     clean,
 ):
     client, _ = clean
-    up = (MIGRATIONS / f"{MIGRATION_450}.up.sql").read_text()
+    up = (MIGRATIONS / f"{MIGRATION_451}.up.sql").read_text()
     assert (
         "WHERE registry_class != 'reusable'" in up
         and "USER 'corpscout_rdap_dictionary'" in up
@@ -760,7 +760,7 @@ def test_migration_450_serves_only_reusable_registrations_and_follows_reclassifi
     )
     stored = insert_case_networks(client, with_segments=True)
     reload_tries(client)
-    # Without class rows every lookup_result segment is served, exactly as before 000450.
+    # Without class rows every lookup_result segment is served, exactly as before 000451.
     assert trie_key(client, "101.1.2.3") == "apnic:101.0.0.0 - 101.255.255.255"
     seed_reference_data(client)
     client.execute(registry.REGISTRY_CLASS_REFRESH_SQL)

@@ -1,4 +1,4 @@
-"""Names, sources and column contracts of the IP registry reference data (migration 000449)."""
+"""Names, sources and column contracts of the IP registry reference data (migration 000450)."""
 
 DATABASE = "corpscout"
 SNAPSHOTS_TABLE = "ip_registry_snapshots"

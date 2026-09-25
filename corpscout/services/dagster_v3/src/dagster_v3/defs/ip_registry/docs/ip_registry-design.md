@@ -14,7 +14,7 @@ Records decisions, not code. Follows `docs/data-source-guidelines.md`; deviation
 - **Module**: `defs/ip_registry/` · no DuckDB file (see §3) · pool `ip_registry`
 - **ClickHouse tables**: `corpscout.ip_registry_snapshots`, `ip_registry_iana_blocks`,
   `ip_registry_special_segments`, `ip_registry_holder_blocks`, `rdap_network_registry_class`
-  (migration `000449`); trie exclusion in `000450`.
+  (migration `000450`); trie exclusion in `000451`.
 - **Datasets**:
   | dataset | url | format | size | cadence | auth? |
   |---|---|---|---|---|---|
@@ -151,12 +151,12 @@ Records decisions, not code. Follows `docs/data-source-guidelines.md`; deviation
 
 ## 10. Verification
 - Tests: `tests/test_ip_registry_source.py` (parsers including holder-block selection, the rule,
-  freshness), `tests/test_ip_registry.py` (migrations 449/450, snapshot switch, same-date
+  freshness), `tests/test_ip_registry.py` (migrations 450/451, snapshot switch, same-date
   republish/repair, new-date failure and retry, retention, the special trie, the holder
   exclusion, loaders with fixture HTTP, SQL/Python parity, trie exclusion), enricher/worker tests
   in `tests/test_ip_enrichment_results.py` and `tests/test_commoncrawl_rdap_assets.py`.
-- Live: migrate 449 → light_sync → run `ip_registry_refresh_job` → checks green → review the
-  excluded-network report → migrate 450 → reload `rdap_network_trie` → start the schedule
+- Live: migrate 450 → light_sync → run `ip_registry_refresh_job` → checks green → review the
+  excluded-network report → migrate 451 → reload `rdap_network_trie` → start the schedule
   (`docs/operations/ip-registry-reference-data.md`). Keep the gap between the first reference
-  load and applying 450 short: before 450, the RDAP trie (and an enricher's in-run cache, via
+  load and applying 451 short: before 451, the RDAP trie (and an enricher's in-run cache, via
   trie hits) can still serve registry-level or unallocated segments.

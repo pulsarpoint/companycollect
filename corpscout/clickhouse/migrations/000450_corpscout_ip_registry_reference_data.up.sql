@@ -196,7 +196,7 @@ SELECT (
 
 -- The classification of every cached RDAP registration, recomputed after each reference refresh
 -- and written for new registrations by the enrichers. Only reusable networks may feed
--- rdap_network_trie (migration 000450).
+-- rdap_network_trie (migration 000451).
 CREATE TABLE IF NOT EXISTS corpscout.rdap_network_registry_class
 (
     network_key          String,

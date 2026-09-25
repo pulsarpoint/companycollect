@@ -585,7 +585,7 @@ def test_registry_context_sql_excludes_holder_covered_blocks_and_defaults_ready(
     assert sql.startswith(
         "SELECT ifNull((SELECT ready FROM corpscout.ip_registry_ready), 0) AS ready,"
     )
-    # The holder exclusion lives once, in migration 000449's view (tests/test_ip_registry.py).
+    # The holder exclusion lives once, in migration 000450's view (tests/test_ip_registry.py).
     assert (
         "ifNull((SELECT count() FROM corpscout.ip_registry_iana_blocks_rule_current\n     WHERE unheld_rir_block = 1 AND"
         in sql

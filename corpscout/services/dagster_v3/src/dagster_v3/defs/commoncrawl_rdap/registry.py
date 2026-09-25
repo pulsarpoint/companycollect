@@ -10,7 +10,7 @@ lists as available or reserved, or in an IANA block that is reserved or not assi
 Two layers, each with a defined home:
 - The context (readiness, the count of such covered blocks, the IANA block and the special
   segment holding the first address) is computed in SQL only: REGISTRY_CONTEXT_SQL per RDAP
-  miss here, and the bulk view rdap_network_registry_class_derived that migration 000449
+  miss here, and the bulk view rdap_network_registry_class_derived that migration 000450
   defines over the same objects. Both count covered blocks from the view
   ip_registry_iana_blocks_rule_current, the one home of the holder exclusion.
   registry_context() is its pure-Python reference over parsed reference rows, used by tests.
@@ -72,11 +72,11 @@ class RegistryContext:
 # registration covers entirely without a holder block covering them entirely, the IANA block
 # and the special segment holding its first address. Parameters are IPv6 texts in the shared
 # key space (mapped_address). The holder exclusion lives once, in the view
-# ip_registry_iana_blocks_rule_current (unheld_rir_block, migration 000449), which the bulk
+# ip_registry_iana_blocks_rule_current (unheld_rir_block, migration 000450), which the bulk
 # view rdap_network_registry_class_derived reads too: an empty holder table excludes nothing.
 # The scalar subqueries are wrapped in ifNull: a scalar subquery is typed Nullable, and
 # clickhouse_driver cannot read a Nullable(Tuple) column (verified on 26.5).
-# Objects it reads (migration 000449): ip_registry_ready (ready UInt8),
+# Objects it reads (migration 000450): ip_registry_ready (ready UInt8),
 # ip_registry_iana_blocks_rule_current, ip_registry_iana_blocks_current (first_ip, last_ip
 # IPv6, designation, rir, status) and the special trie.
 REGISTRY_CONTEXT_SQL = """SELECT ifNull((SELECT ready FROM corpscout.ip_registry_ready), 0) AS ready,
@@ -89,7 +89,7 @@ REGISTRY_CONTEXT_SQL = """SELECT ifNull((SELECT ready FROM corpscout.ip_registry
 # The SQL twin of registry_class() over the aliases the derived view defines: ready,
 # covered_rir_blocks, iana (designation, rir, status), special (registry, status, first, last).
 # NULL ready/count/tuple elements read as not ready / 0 / '' so SQL agrees with Python on a
-# missing readiness row. Migration 000449 embeds this text verbatim.
+# missing readiness row. Migration 000450 embeds this text verbatim.
 REGISTRY_CLASS_SQL = """multiIf(
         NOT ifNull(ready, 0), 'unknown',
         ifNull(covered_rir_blocks, 0) > 0, 'registry_level',

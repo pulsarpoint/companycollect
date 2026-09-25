@@ -1,7 +1,7 @@
 CREATE DATABASE IF NOT EXISTS corpscout;
 
 -- Registrations classified registry_level or unallocated (rdap_network_registry_class, migration
--- 000449) answer only the IP that was queried. The trie source excludes their segments, so the
+-- 000450) answer only the IP that was queried. The trie source excludes their segments, so the
 -- poisoned entries stop being served and a reclassification after a reference refresh takes
 -- effect at the next dictionary reload without a code change. The exclusion sits in a subquery
 -- because ClickHouse resolves the argMax alias network_key inside an outer WHERE.

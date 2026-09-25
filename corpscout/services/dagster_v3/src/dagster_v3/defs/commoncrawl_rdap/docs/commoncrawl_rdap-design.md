@@ -129,7 +129,7 @@ segment rows. A `registry_level` (covers a whole RIR-designated IANA block that 
 an allocated/assigned RIR record wide enough to cover one, e.g. Comcast's `73.0.0.0/8` — also
 covers entirely) or `unallocated` (first address in available/reserved or IANA-reserved space)
 registration is stored, answers the queried address, and is never added to the in-run reuse set;
-`rdap_network_segments_current` (migration 000450) excludes such networks from
+`rdap_network_segments_current` (migration 000451) excludes such networks from
 `rdap_network_trie`, and the daily `rdap_network_registry_class` asset reclassifies everything
 from the current snapshots. While the reference data is incomplete the class is `unknown` and
 nothing is excluded; a classification query failing is fail-closed (it fails the lookup, in both

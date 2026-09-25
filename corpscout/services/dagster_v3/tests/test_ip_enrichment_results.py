@@ -100,10 +100,10 @@ def environment(server, store, tmp_path, monkeypatch):
         SOURCE(CLICKHOUSE(HOST 'localhost' PORT 9000 USER 'test' PASSWORD 'test'
             DB 'corpscout' TABLE 'rdap_network_segments_current'))
         LAYOUT(IP_TRIE()) LIFETIME(0)""")
-    # Reference data, classes and the class-aware trie view (000449/000450), idempotent.
-    apply_migration(client, "000449_corpscout_ip_registry_reference_data.up.sql")
+    # Reference data, classes and the class-aware trie view (000450/000451), idempotent.
+    apply_migration(client, "000450_corpscout_ip_registry_reference_data.up.sql")
     apply_migration(
-        client, "000450_corpscout_rdap_trie_registry_class_exclusion.up.sql"
+        client, "000451_corpscout_rdap_trie_registry_class_exclusion.up.sql"
     )
     for table in (
         "ip_enrichment_input",

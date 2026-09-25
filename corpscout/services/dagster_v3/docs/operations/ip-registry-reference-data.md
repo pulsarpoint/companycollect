@@ -6,7 +6,7 @@ statistics — together with a deliberate superset of `allocated`/`assigned` rec
 cover an entire IANA block (holder blocks, ruling R2: e.g. Comcast's `73.0.0.0/8`; no other
 allocated/assigned delegation is stored) — and classifies every cached RDAP
 registration (`corpscout.rdap_networks`) as `reusable`, `registry_level` or `unallocated`. Only
-reusable registrations feed `rdap_network_trie` (migration 000450), so an RDAP answer such as
+reusable registrations feed `rdap_network_trie` (migration 000451), so an RDAP answer such as
 `APNIC-AP` (103.0.0.0/8) is stored for the address that was queried and never served to other
 addresses.
 
@@ -70,11 +70,11 @@ classified, and `rdap_network_trie` keeps excluding whatever was last classified
 row at all (the enrichers skip persisting an `unknown` classification), so it is not excluded —
 the trie treats it as it would have before this feature existed.
 
-**Deploy order matters.** Migration `000450` is what makes the exclusion effective — before it,
+**Deploy order matters.** Migration `000451` is what makes the exclusion effective — before it,
 `rdap_network_trie` (and an enricher's in-run cache, via trie hits) can still serve
 registry-level or unallocated segments even after they are classified. Keep the time between the
-first reference load and applying 000450 short: 000449 → code → first load + checks green →
-review the excluded-network report → 000450.
+first reference load and applying 000451 short: 000450 → code → first load + checks green →
+review the excluded-network report → 000451.
 
 **Known costs.**
 - Each new direct RDAP registration costs one extra ClickHouse query (`REGISTRY_CONTEXT_SQL`,

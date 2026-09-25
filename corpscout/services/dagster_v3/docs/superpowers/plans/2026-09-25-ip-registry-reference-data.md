@@ -4,7 +4,7 @@
 
 **Goal:** Load only the special segments of the IP address space into ClickHouse — the IANA top-level blocks with their designation and status, and the `available`/`reserved` ranges of the five RIRs' delegated-extended files — refresh them daily from Dagster, classify every cached RDAP registration against them (reusable / registry_level / unallocated) with one rule written in SQL and in Python, and use that classification to keep registry-level and unallocated blocks such as `APNIC-AP` (103.0.0.0/8) out of `rdap_network_trie` and out of every enricher's reuse caches.
 
-**Architecture:** A new Dagster module `defs/ip_registry` downloads seven small public files daily (IANA ipv4/ipv6 CSVs, `delegated-{afrinic,apnic,arin,lacnic,ripencc}-extended-latest` + `.md5`), validates each whole file (checksum, version line, record and summary counts, not older than the current snapshot, no sharp shrink of the whole-file record count) and inserts only its special segments as a dated snapshot; a ledger row written last makes the snapshot current, and the loader then drops every partition of that source except the current and the previous snapshot. One small `IP_TRIE` dictionary (`ip_registry_special_trie`, ≈325k CIDRs, 48 MiB) answers "is address x in available/reserved space"; the ≈307 IANA rows are joined directly. The view `rdap_network_registry_class_derived` applies the rule to `rdap_networks_current`; the asset `rdap_network_registry_class` persists its output, and migration 000450 makes the trie's source view exclude every network whose class is not `reusable`, so existing poisoned entries stop being served and later reclassifications take effect at the next dictionary reload without code changes. `RdapEnricher` and the legacy bucket worker classify each new registration with the Python twin of the rule (one context query per RDAP miss), write its class row before its segments, and never put a non-reusable registration into their in-run caches. No allocated/assigned delegation is stored anywhere.
+**Architecture:** A new Dagster module `defs/ip_registry` downloads seven small public files daily (IANA ipv4/ipv6 CSVs, `delegated-{afrinic,apnic,arin,lacnic,ripencc}-extended-latest` + `.md5`), validates each whole file (checksum, version line, record and summary counts, not older than the current snapshot, no sharp shrink of the whole-file record count) and inserts only its special segments as a dated snapshot; a ledger row written last makes the snapshot current, and the loader then drops every partition of that source except the current and the previous snapshot. One small `IP_TRIE` dictionary (`ip_registry_special_trie`, ≈325k CIDRs, 48 MiB) answers "is address x in available/reserved space"; the ≈307 IANA rows are joined directly. The view `rdap_network_registry_class_derived` applies the rule to `rdap_networks_current`; the asset `rdap_network_registry_class` persists its output, and migration 000451 makes the trie's source view exclude every network whose class is not `reusable`, so existing poisoned entries stop being served and later reclassifications take effect at the next dictionary reload without code changes. `RdapEnricher` and the legacy bucket worker classify each new registration with the Python twin of the rule (one context query per RDAP miss), write its class row before its segments, and never put a non-reusable registration into their in-run caches. No allocated/assigned delegation is stored anywhere.
 
 **Tech Stack:** Python 3.14 (stdlib `ipaddress.summarize_address_range` for the range→CIDR cover), Dagster 1.13.9, ClickHouse 26.5 (clickhouse-driver 0.2.10: `IPv6`, `UInt128`, `Array(String)` columns), `dlt.sources.helpers.requests`, pytest against the disposable ClickHouse container of `tests/test_ip_enrichment_input.py::server`.
 
@@ -21,10 +21,10 @@ Resolved in this plan as: (a) load the IANA IPv4 address-space and IPv6 unicast-
 ## Global Constraints
 
 - Commands from `services/dagster_v3`: `uv run --frozen --no-sync pytest … -q -p no:cacheprovider`, `uv run --frozen --no-sync dg check defs`, `uv run --frozen --no-sync ruff format <touched files>` and `uv run --frozen --no-sync ruff check <touched files>` on touched Python files only. Tests that need ClickHouse import the module-scoped `server` fixture of `tests/test_ip_enrichment_input.py` (docker `clickhouse/clickhouse-server:26.5`, user `test`/`test`); never call IANA, the RIRs, RDAP servers or MaxMind from tests — fixtures only.
-- ClickHouse migrations: `clickhouse/migrations/`, each name appended to `EXPECTED_MIGRATIONS` in `tests/test_clickhouse_migrations.py`; up files start with `CREATE DATABASE IF NOT EXISTS corpscout;` and create with `IF NOT EXISTS`; down files drop with `IF EXISTS`; no `;` inside `--` comments; no `TRUNCATE TABLE` in an up file; only the `corpscout` database. Next free numbers on main and prod are **000449** and **000450** (`ls clickhouse/migrations | tail -2` shows 448; prod `SELECT max(version) FROM corpscout.schema_migrations WHERE dirty=0` = 448 on 2026-09-25); re-check at merge.
+- ClickHouse migrations: `clickhouse/migrations/`, each name appended to `EXPECTED_MIGRATIONS` in `tests/test_clickhouse_migrations.py`; up files start with `CREATE DATABASE IF NOT EXISTS corpscout;` and create with `IF NOT EXISTS`; down files drop with `IF EXISTS`; no `;` inside `--` comments; no `TRUNCATE TABLE` in an up file; only the `corpscout` database. Next free numbers on main and prod are **000450** and **000451** (`ls clickhouse/migrations | tail -2` shows 448; prod `SELECT max(version) FROM corpscout.schema_migrations WHERE dirty=0` = 448 on 2026-09-25); re-check at merge.
 - Dagster conventions (`dagster_v3/CLAUDE.md`): non-partitioned full refresh for whole-dataset-per-request sources, `dlt.sources.helpers.requests` for HTTP, refuse to replace on empty input, one concurrency pool for the module's chain, schedule STOPPED by default and started at instance level, at most three `kinds` per asset, no `from __future__ import annotations` in modules defining assets, `uv run dg check defs` before finishing, a design doc from `docs/source-design-doc-template.md`.
 - Commit by explicit path, never `git add -A` (the tree carries unrelated WIP such as `searcher/`). Conventional commits with trailer `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>`.
-- Do not restart `corpscout-dagster-dev`; deploy by `light_sync`. Task 6 requires the owner's go-ahead. The first reference load must be green (assets + checks) and its excluded-network report reviewed BEFORE migration 000450 makes the exclusion live (Task 6 applies 449 and 450 separately for that reason).
+- Do not restart `corpscout-dagster-dev`; deploy by `light_sync`. Task 6 requires the owner's go-ahead. The first reference load must be green (assets + checks) and its excluded-network report reviewed BEFORE migration 000451 makes the exclusion live (Task 6 applies 449 and 450 separately for that reason).
 - Keep the enricher/worker change minimal and independent of the queue-contract rewrite: no new segment role, no change to `rdap_network_segments`, `rdap_networks`, `rdap_ip_lookup_results` or `ip_enrichment_*` tables.
 
 ## Evidence gathered on 2026-09-25 (real files)
@@ -43,7 +43,7 @@ ClickHouse 26.5.7.64 facts verified with `docker run --rm -i clickhouse/clickhou
 - **`RANGE_HASHED` is out**: `CREATE DICTIONARY … RANGE(MIN range_first MAX range_last)` accepts `UInt128` bounds, but `dictGetOrDefault` refuses the lookup (`Illegal type UInt128 of fourth argument … must be convertible to Int64`). The special-segment lookup therefore stays an `IP_TRIE` over the CIDR cover of each range.
 - **The IANA rows need no dictionary**: "covers at least one entire RIR block" is a set operation, not a point lookup. In the bulk view it is `countIf(...)` over a `LEFT JOIN` of every network with every IANA row on a constant key (`ON n.one = b.one`, ≈15k × 307 rows, streamed) — a `CROSS JOIN` would drop every network while the reference table is empty, the left join keeps them and the rule says `unknown`; per RDAP miss it is a `count()` subquery over the ≈307 rows. `anyIf((designation, rir, status), …)` gives the block holding the first address and returns `('', '', '')` when none does. A scalar subquery `(SELECT (any(a), any(b), any(c)) FROM … WHERE …)` over an empty set returns `('', '', '')` typed `Nullable(Tuple)`, not NULL. (A constant array with `arrayFirst`/`arrayExists` was rejected: ClickHouse replicates a constant array per row of the block, so a 300k-element array would materialize gigabytes.)
 - `PARTITION BY (registry, snapshot_date)` with a `LowCardinality(String)` key works and `ALTER TABLE … DROP PARTITION ('apnic', '2026-09-24')` drops exactly that snapshot.
-- `verify4.sql` runs the complete revised schema (tables, ledger, views, trie, class table, derived view, the 000450 trie view) with the 22 registrations of Task 2's `CASES`: not ready → all 22 `unknown`; ready → 8 `registry_level`, 8 `reusable`, 6 `unallocated` exactly as expected; the per-miss context query gives `(1, 1, ('APNIC','apnic','ALLOCATED'), ('','',0,0))` for 103.0.0.0/8 and `('lacnic','reserved', …)` for 45.68.105.0/24; after persisting the classes the trie view serves only `apnic:FPT-VN` and `arin:GOOGLE`.
+- `verify4.sql` runs the complete revised schema (tables, ledger, views, trie, class table, derived view, the 000451 trie view) with the 22 registrations of Task 2's `CASES`: not ready → all 22 `unknown`; ready → 8 `registry_level`, 8 `reusable`, 6 `unallocated` exactly as expected; the per-miss context query gives `(1, 1, ('APNIC','apnic','ALLOCATED'), ('','',0,0))` for 103.0.0.0/8 and `('lacnic','reserved', …)` for 45.68.105.0/24; after persisting the classes the trie view serves only `apnic:FPT-VN` and `arin:GOOGLE`.
 - `trie_mem.sql`: an `IP_TRIE` over all 325,488 real special CIDRs (all unique) = **48.24 MiB, 0.29 s to load**; `45.68.105.9 → ('lacnic','reserved')`, `85.8.250.1 → ('ripencc','available')`, `103.35.64.49` and `8.8.8.8 → ('','')`.
 
 ## Design decisions (resolved)
@@ -67,8 +67,8 @@ ClickHouse 26.5.7.64 facts verified with `docker run --rm -i clickhouse/clickhou
 | `services/dagster_v3/src/dagster_v3/defs/ip_registry/assets.py` | create | download, validate, load, retention, classify, checks, job, daily schedule |
 | `services/dagster_v3/src/dagster_v3/defs/ip_registry/docs/ip_registry-design.md` | create | design doc (template) |
 | `services/dagster_v3/src/dagster_v3/defs/commoncrawl_rdap/registry.py` | create | the rule (Python + SQL text), context query, class row SQL |
-| `clickhouse/migrations/000449_corpscout_ip_registry_reference_data.{up,down}.sql` | create | ledger, IANA blocks, special segments, views, special trie, readiness, class table, derived view, grants |
-| `clickhouse/migrations/000450_corpscout_rdap_trie_registry_class_exclusion.{up,down}.sql` | create | trie source view excludes non-reusable networks |
+| `clickhouse/migrations/000450_corpscout_ip_registry_reference_data.{up,down}.sql` | create | ledger, IANA blocks, special segments, views, special trie, readiness, class table, derived view, grants |
+| `clickhouse/migrations/000451_corpscout_rdap_trie_registry_class_exclusion.{up,down}.sql` | create | trie source view excludes non-reusable networks |
 | `services/dagster_v3/src/dagster_v3/defs/ip_enrichment/enrichment.py` | modify | classify each new registration, class row before segments, no reuse of non-reusable |
 | `services/dagster_v3/src/dagster_v3/defs/ip_enrichment/results.py` | modify | storage assertion, `registry_level_responses` metadata |
 | `services/dagster_v3/src/dagster_v3/defs/commoncrawl_rdap/assets.py` | modify | same for the legacy bucket worker |
@@ -473,7 +473,7 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'dagster_v3.defs.ip_reg
 Create `services/dagster_v3/src/dagster_v3/defs/ip_registry/__init__.py` (empty) and `services/dagster_v3/src/dagster_v3/defs/ip_registry/tables.py`:
 
 ```python
-"""Names, sources and column contracts of the IP registry reference data (migration 000449)."""
+"""Names, sources and column contracts of the IP registry reference data (migration 000450)."""
 
 DATABASE = "corpscout"
 SNAPSHOTS_TABLE = "ip_registry_snapshots"
@@ -812,7 +812,7 @@ covers at least one entire IANA block designated to an RIR (registry level), and
 whose first address lies in space an RIR lists as available or reserved, or in an IANA block
 that is reserved or not assigned at all (unallocated). The rule is written twice on purpose:
 registry_class() for the enrichers and REGISTRY_CLASS_SQL for the view
-rdap_network_registry_class_derived that migration 000449 embeds verbatim;
+rdap_network_registry_class_derived that migration 000450 embeds verbatim;
 tests/test_ip_registry.py proves they agree on the same fixtures.
 """
 
@@ -866,7 +866,7 @@ REGISTRY_CONTEXT_SQL = """SELECT (SELECT ready FROM corpscout.ip_registry_ready)
 
 # The SQL twin of registry_class() over the aliases the derived view defines: ready,
 # covered_rir_blocks, iana (designation, rir, status), special (registry, status, first, last).
-# Migration 000449 embeds this text verbatim.
+# Migration 000450 embeds this text verbatim.
 REGISTRY_CLASS_SQL = """multiIf(
         NOT ready, 'unknown',
         covered_rir_blocks > 0, 'registry_level',
@@ -1009,25 +1009,25 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 
 ---
 
-### Task 2: Migrations 000449 (ledger, IANA blocks, special segments, special trie, readiness, class table) and 000450 (trie exclusion) with their ClickHouse tests
+### Task 2: Migrations 000450 (ledger, IANA blocks, special segments, special trie, readiness, class table) and 000451 (trie exclusion) with their ClickHouse tests
 
-000450 is written here with 000449 because the test fixture applies both; its exclusion is inert until `rdap_network_registry_class` holds rows, which on prod happens only after the first reference load (Task 6 applies it separately, after the load is reviewed).
+000451 is written here with 000450 because the test fixture applies both; its exclusion is inert until `rdap_network_registry_class` holds rows, which on prod happens only after the first reference load (Task 6 applies it separately, after the load is reviewed).
 
 **Files:**
-- Create: `clickhouse/migrations/000449_corpscout_ip_registry_reference_data.up.sql`, `…down.sql`
-- Create: `clickhouse/migrations/000450_corpscout_rdap_trie_registry_class_exclusion.up.sql`, `…down.sql`
+- Create: `clickhouse/migrations/000450_corpscout_ip_registry_reference_data.up.sql`, `…down.sql`
+- Create: `clickhouse/migrations/000451_corpscout_rdap_trie_registry_class_exclusion.up.sql`, `…down.sql`
 - Modify: `services/dagster_v3/tests/test_clickhouse_migrations.py:463` (`EXPECTED_MIGRATIONS`, after `"000448_corpscout_crawl_queue_contract",`)
 - Test: `services/dagster_v3/tests/test_ip_registry.py` (new; Task 3 appends to it)
 
 **Interfaces:**
 - Consumes: `REGISTRY_CLASS_SQL`, `classify_registration`, `REGISTRY_CLASS_INSERT_SQL`, `REGISTRY_CLASS_REFRESH_SQL` (Task 1), `tests.test_ip_enrichment_input.server`.
-- Produces (ClickHouse, 000449): tables `corpscout.ip_registry_snapshots`, `ip_registry_iana_blocks`, `ip_registry_special_segments`, `rdap_network_registry_class`; views `ip_registry_current_snapshots`, `ip_registry_iana_blocks_current`, `ip_registry_special_segments_current`, `ip_registry_special_trie_source`, `ip_registry_ready` (one row, `ready UInt8`), `rdap_network_registry_class_current`, `rdap_network_registry_class_derived`; dictionary `ip_registry_special_trie` (`IP_TRIE`, attributes `registry`, `status`, `segment_first`, `segment_last` as in Task 1's `REGISTRY_CONTEXT_SQL`).
-- Produces (ClickHouse, 000450): `corpscout.rdap_network_segments_current` rewritten to exclude networks whose current class is not `reusable`; `rdap_network_trie` recreated unchanged in name, columns and `USER 'corpscout_rdap_dictionary'` source (`_assert_rdap_storage_exists` in `commoncrawl_rdap/assets.py:787-826` checks that string).
+- Produces (ClickHouse, 000450): tables `corpscout.ip_registry_snapshots`, `ip_registry_iana_blocks`, `ip_registry_special_segments`, `rdap_network_registry_class`; views `ip_registry_current_snapshots`, `ip_registry_iana_blocks_current`, `ip_registry_special_segments_current`, `ip_registry_special_trie_source`, `ip_registry_ready` (one row, `ready UInt8`), `rdap_network_registry_class_current`, `rdap_network_registry_class_derived`; dictionary `ip_registry_special_trie` (`IP_TRIE`, attributes `registry`, `status`, `segment_first`, `segment_last` as in Task 1's `REGISTRY_CONTEXT_SQL`).
+- Produces (ClickHouse, 000451): `corpscout.rdap_network_segments_current` rewritten to exclude networks whose current class is not `reusable`; `rdap_network_trie` recreated unchanged in name, columns and `USER 'corpscout_rdap_dictionary'` source (`_assert_rdap_storage_exists` in `commoncrawl_rdap/assets.py:787-826` checks that string).
 - Produces (`tests/test_ip_registry.py`): `MIGRATIONS`, `FIXTURES`, `apply_migration(client, name, *, before=None)`, fixtures `registry_server` (module) and `clean` (function), `seed_reference_data(client)`, `reload_tries(client)`, `network_response(rir, handle, start, end, name)`, `CASES`, `insert_case_networks(client)`, `special_of(client, ip)`, `iana_of(client, ip)`.
 
 - [ ] **Step 1: Write the migrations**
 
-`clickhouse/migrations/000449_corpscout_ip_registry_reference_data.up.sql` (the derived view is the text verified in `scratchpad/ip/verify4.sql`; its `multiIf` is `REGISTRY_CLASS_SQL` verbatim):
+`clickhouse/migrations/000450_corpscout_ip_registry_reference_data.up.sql` (the derived view is the text verified in `scratchpad/ip/verify4.sql`; its `multiIf` is `REGISTRY_CLASS_SQL` verbatim):
 
 ```sql
 CREATE DATABASE IF NOT EXISTS corpscout;
@@ -1170,7 +1170,7 @@ SELECT (
 
 -- The classification of every cached RDAP registration, recomputed after each reference refresh
 -- and written for new registrations by the enrichers. Only reusable networks may feed
--- rdap_network_trie (migration 000450).
+-- rdap_network_trie (migration 000451).
 CREATE TABLE IF NOT EXISTS corpscout.rdap_network_registry_class
 (
     network_key          String,
@@ -1244,7 +1244,7 @@ FROM
 );
 ```
 
-`clickhouse/migrations/000449_corpscout_ip_registry_reference_data.down.sql`:
+`clickhouse/migrations/000450_corpscout_ip_registry_reference_data.down.sql`:
 
 ```sql
 CREATE DATABASE IF NOT EXISTS corpscout;
@@ -1270,13 +1270,13 @@ DROP VIEW IF EXISTS corpscout.ip_registry_current_snapshots;
 DROP TABLE IF EXISTS corpscout.ip_registry_snapshots;
 ```
 
-`clickhouse/migrations/000450_corpscout_rdap_trie_registry_class_exclusion.up.sql` (the dictionary block is the 000258 one; the view gains the subquery):
+`clickhouse/migrations/000451_corpscout_rdap_trie_registry_class_exclusion.up.sql` (the dictionary block is the 000258 one; the view gains the subquery):
 
 ```sql
 CREATE DATABASE IF NOT EXISTS corpscout;
 
 -- Registrations classified registry_level or unallocated (rdap_network_registry_class, migration
--- 000449) answer only the IP that was queried. The trie source excludes their segments, so the
+-- 000450) answer only the IP that was queried. The trie source excludes their segments, so the
 -- poisoned entries stop being served and a reclassification after a reference refresh takes
 -- effect at the next dictionary reload without a code change. The exclusion sits in a subquery
 -- because ClickHouse resolves the argMax alias network_key inside an outer WHERE.
@@ -1324,7 +1324,7 @@ LAYOUT(IP_TRIE())
 LIFETIME(MIN 300 MAX 600);
 ```
 
-`clickhouse/migrations/000450_corpscout_rdap_trie_registry_class_exclusion.down.sql` (restores the 000258 view):
+`clickhouse/migrations/000451_corpscout_rdap_trie_registry_class_exclusion.down.sql` (restores the 000258 view):
 
 ```sql
 CREATE DATABASE IF NOT EXISTS corpscout;
@@ -1366,8 +1366,8 @@ REVOKE SELECT ON corpscout.rdap_network_registry_class FROM corpscout_rdap_dicti
 In `services/dagster_v3/tests/test_clickhouse_migrations.py` append after line 463 (`"000448_corpscout_crawl_queue_contract",`):
 
 ```python
-    "000449_corpscout_ip_registry_reference_data",
-    "000450_corpscout_rdap_trie_registry_class_exclusion",
+    "000450_corpscout_ip_registry_reference_data",
+    "000451_corpscout_rdap_trie_registry_class_exclusion",
 ```
 
 Run: `uv run --frozen --no-sync pytest tests/test_clickhouse_migrations.py -q -p no:cacheprovider`
@@ -1378,7 +1378,7 @@ Expected: all pass (the files are explicit, create or drop objects, have down fi
 Create `services/dagster_v3/tests/test_ip_registry.py`:
 
 ```python
-"""IP registry reference data against a real ClickHouse: migration 000449, snapshots, trie, rule parity."""
+"""IP registry reference data against a real ClickHouse: migration 000450, snapshots, trie, rule parity."""
 
 import re
 from datetime import UTC, date, datetime
@@ -1395,8 +1395,8 @@ from tests.test_ip_enrichment_input import server as server
 
 MIGRATIONS = Path(__file__).resolve().parents[3] / "clickhouse/migrations"
 FIXTURES = Path(__file__).parent / "fixtures" / "ip_registry"
-MIGRATION_449 = "000449_corpscout_ip_registry_reference_data"
-MIGRATION_450 = "000450_corpscout_rdap_trie_registry_class_exclusion"
+MIGRATION_449 = "000450_corpscout_ip_registry_reference_data"
+MIGRATION_450 = "000451_corpscout_rdap_trie_registry_class_exclusion"
 TEST_SOURCE = "HOST 'localhost' PORT 9000 USER 'test' PASSWORD 'test'"
 IANA_DATE = date(2026, 9, 19)
 SNAPSHOT_INSERT = f"INSERT INTO corpscout.{tables.SNAPSHOTS_TABLE} ({', '.join(tables.SNAPSHOT_COLUMNS)}) VALUES"
@@ -1431,7 +1431,7 @@ def apply_migration(client, name: str, *, before: str | None = None) -> None:
 @pytest.fixture(scope="module")
 def registry_server(server):
     client, resource = server
-    # 000124 up to its dictionary (000450 recreates rdap_network_trie with the test source).
+    # 000124 up to its dictionary (000451 recreates rdap_network_trie with the test source).
     apply_migration(client, "000124_corpscout_rdap_networks.up.sql", before="CREATE DICTIONARY")
     apply_migration(client, f"{MIGRATION_449}.up.sql")
     apply_migration(client, f"{MIGRATION_450}.up.sql")
@@ -1693,7 +1693,7 @@ def test_migration_450_serves_only_reusable_registrations_and_follows_reclassifi
         client.execute(RDAP_SEGMENT_INSERT_SQL, [segment.clickhouse_values() for segment in normalized.segments])
         stored[normalized.network.network_key] = expected
     reload_tries(client)
-    # Without class rows every lookup_result segment is served, exactly as before 000450.
+    # Without class rows every lookup_result segment is served, exactly as before 000451.
     assert client.execute(
         "SELECT dictGetOrDefault('corpscout.rdap_network_trie', 'network_key', tuple(toIPv4('103.15.66.50')), '')"
     ) == [("apnic:103.0.0.0 - 103.255.255.255",)]
@@ -1725,8 +1725,8 @@ Run ruff format/check on `tests/test_ip_registry.py`.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add clickhouse/migrations/000449_corpscout_ip_registry_reference_data.up.sql clickhouse/migrations/000449_corpscout_ip_registry_reference_data.down.sql clickhouse/migrations/000450_corpscout_rdap_trie_registry_class_exclusion.up.sql clickhouse/migrations/000450_corpscout_rdap_trie_registry_class_exclusion.down.sql services/dagster_v3/tests/test_clickhouse_migrations.py services/dagster_v3/tests/test_ip_registry.py
-git commit -m "feat(clickhouse): IP registry special segments, their lookup trie and RDAP registration classes (000449, 000450)
+git add clickhouse/migrations/000450_corpscout_ip_registry_reference_data.up.sql clickhouse/migrations/000450_corpscout_ip_registry_reference_data.down.sql clickhouse/migrations/000451_corpscout_rdap_trie_registry_class_exclusion.up.sql clickhouse/migrations/000451_corpscout_rdap_trie_registry_class_exclusion.down.sql services/dagster_v3/tests/test_clickhouse_migrations.py services/dagster_v3/tests/test_ip_registry.py
+git commit -m "feat(clickhouse): IP registry special segments, their lookup trie and RDAP registration classes (000450, 000451)
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
@@ -2525,9 +2525,9 @@ def test_rdap_bucket_never_reuses_a_registry_level_registration() -> None:
 In `services/dagster_v3/tests/test_ip_enrichment_results.py` add to the imports `from tests.test_ip_registry import apply_migration, seed_reference_data` and replace the `for table in (…)` truncation loop of the `environment` fixture (lines 98-108, right after the `CREATE DICTIONARY` statement) with:
 
 ```python
-    # Reference data, classes and the class-aware trie view (000449/000450), idempotent.
-    apply_migration(client, "000449_corpscout_ip_registry_reference_data.up.sql")
-    apply_migration(client, "000450_corpscout_rdap_trie_registry_class_exclusion.up.sql")
+    # Reference data, classes and the class-aware trie view (000450/000451), idempotent.
+    apply_migration(client, "000450_corpscout_ip_registry_reference_data.up.sql")
+    apply_migration(client, "000451_corpscout_rdap_trie_registry_class_exclusion.up.sql")
     for table in (
         "ip_enrichment_input",
         "ip_enrichment_results",
@@ -2543,7 +2543,7 @@ In `services/dagster_v3/tests/test_ip_enrichment_results.py` add to the imports 
     client.execute("SYSTEM RELOAD DICTIONARY corpscout.ip_registry_special_trie")
 ```
 
-(The dictionary the fixture creates by hand is replaced by 000450's — same name, columns and test source. Every existing test now runs with the reference tables empty: `ready = 0`, every classification `unknown`, behaviour unchanged.) Append:
+(The dictionary the fixture creates by hand is replaced by 000451's — same name, columns and test source. Every existing test now runs with the reference tables empty: `ready = 0`, every classification `unknown`, behaviour unchanged.) Append:
 
 ```python
 def test_registry_level_registration_answers_only_the_queried_ip(environment, monkeypatch):
@@ -2614,7 +2614,7 @@ Replace `_persist` (lines 191-202) with:
             settings={"async_insert": 1, "wait_for_async_insert": 1},
         )
         if classification is not None and classification.registry_class != "unknown":
-            # The class row lands before the segments: the trie source (migration 000450)
+            # The class row lands before the segments: the trie source (migration 000451)
             # never sees a segment whose class it does not know.
             self.client.execute(
                 REGISTRY_CLASS_INSERT_SQL,
@@ -2646,7 +2646,7 @@ with:
 ```python
         # Coverage is durable before any exact-IP outcome refers to it. A registry-level or
         # unallocated registration is stored for this address only: the trie excludes it by
-        # class (migration 000450) and the in-run cache never holds it.
+        # class (migration 000451) and the in-run cache never holds it.
         classification = classify_registration(self.client, direct.network)
         self._persist(direct, classification)
         if classification.reusable:
@@ -2823,8 +2823,8 @@ Records decisions, not code. Follows `docs/data-source-guidelines.md`; deviation
   no contacts (§6–8 of the guidelines do not apply).
 - **Module**: `defs/ip_registry/` · no DuckDB file (see §3) · pool `ip_registry`
 - **ClickHouse tables**: `corpscout.ip_registry_snapshots`, `ip_registry_iana_blocks`,
-  `ip_registry_special_segments`, `rdap_network_registry_class` (migration `000449`); trie exclusion in
-  `000450`.
+  `ip_registry_special_segments`, `rdap_network_registry_class` (migration `000450`); trie exclusion in
+  `000451`.
 - **Datasets**:
   | dataset | url | format | size | cadence | auth? |
   |---|---|---|---|---|---|
@@ -2918,7 +2918,7 @@ Group `ip_registry` loads, daily, the special segments of the IP address space i
 IANA top-level blocks and the `available`/`reserved` ranges of the five RIRs' delegated-extended
 statistics (no allocated/assigned delegation is stored) — and classifies every cached RDAP
 registration (`corpscout.rdap_networks`) as `reusable`, `registry_level` or `unallocated`. Only
-reusable registrations feed `rdap_network_trie` (migration 000450), so an RDAP answer such as
+reusable registrations feed `rdap_network_trie` (migration 000451), so an RDAP answer such as
 `APNIC-AP` (103.0.0.0/8) is stored for the address that was queried and never served to other
 addresses.
 
@@ -2998,7 +2998,7 @@ RDAP miss) and insert its `rdap_network_registry_class` row between the network 
 segment rows. A `registry_level` (covers a whole RIR-designated IANA block) or `unallocated`
 (first address in available/reserved or IANA-reserved space) registration is stored, answers the
 queried address, and is never added to the in-run reuse set; `rdap_network_segments_current`
-(migration 000450) excludes such networks from `rdap_network_trie`, and the daily
+(migration 000451) excludes such networks from `rdap_network_trie`, and the daily
 `rdap_network_registry_class` asset reclassifies everything from the current snapshots. While the
 reference data is incomplete the class is `unknown` and nothing is excluded.
 ```
@@ -3006,7 +3006,7 @@ reference data is incomplete the class is `unknown` and nothing is excluded.
 Append to the "## Migration and validation" section of `services/dagster_v3/docs/ip-enrichment-schema.md`:
 
 ```markdown
-Migrations `000449` and `000450` add the IP registry special segments (IANA blocks, RIR
+Migrations `000450` and `000451` add the IP registry special segments (IANA blocks, RIR
 available/reserved ranges) and make `rdap_network_trie` serve only registrations classified
 `reusable`; `ip_enrichment_results` reports `registry_level_responses` (registrations that answered
 only their queried address). See `docs/operations/ip-registry-reference-data.md`.
@@ -3032,7 +3032,7 @@ Order matters: migration 449 → code → first load green → excluded-network 
 - [ ] **Step 1: Preconditions**
 
 - Tasks 1–5 merged on `main`; `git status --short` shows only unrelated WIP (`searcher/` etc.).
-- `ls clickhouse/migrations | tail -2` → `000450_corpscout_rdap_trie_registry_class_exclusion.{down,up}.sql` are the newest (renumber before merging if another workstream took 449/450 — the queue-contract plan then becomes 451/452).
+- `ls clickhouse/migrations | tail -2` → `000451_corpscout_rdap_trie_registry_class_exclusion.{down,up}.sql` are the newest (renumber before merging if another workstream took 449/450 — the queue-contract plan then becomes 451/452).
 - Prod ledger: `ssh companycollect 'sudo docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT version, dirty FROM corpscout.schema_migrations ORDER BY version DESC LIMIT 4"'` → the highest version with a `dirty=0` row is `448` and no higher version has only a `dirty=1` row.
 - No RDAP writer is running: in the Dagster UI the run lists of `ip_enrichment_results_job`, `ip_enrichment_workflow` and the partitioned `commoncrawl_ip_rdap_networks` asset show nothing `STARTED`/`QUEUED`/`STARTING` (the 48.6M run was terminated on 2026-09-25).
 - Not inside the Tuesday 01:05 Stockholm address-chain window.
@@ -3104,11 +3104,11 @@ Start `ip_registry_daily` on the Schedules page. Record in the hand-over to the 
 | Load only special segments: IANA IPv4/IPv6 blocks with designation/status (which RIR, legacy, reserved) | 1 (`parse_iana_csv`, `designation_rir`), 3 (`ip_registry_iana_blocks`) |
 | From the five delegated-extended files only `available`/`reserved` lines; never allocated/assigned | 1 (`parse_delegated` keeps `SPECIAL_STATUSES` only), 2 (`ip_registry_special_segments`, contract test asserts no delegation table), 3 |
 | Keep validation: MD5, version line, record/summary counts over the whole file, not older than current, shrink guard (decided: whole-file record counts) | 1, 3 (`load_delegated_source`, `refuse_shrink`) |
-| Dated load ledger; storage sized for the real counts; retention stated simply (current + previous snapshot, `DROP PARTITION`, no TTL) | 2 (000449), 3 (`drop_superseded_snapshots`), Design decision 1 |
+| Dated load ledger; storage sized for the real counts; retention stated simply (current + previous snapshot, `DROP PARTITION`, no TTL) | 2 (000450), 3 (`drop_superseded_snapshots`), Design decision 1 |
 | Rule: registry_level if N covers an entire RIR-designated IANA block; unallocated if the address is in available/reserved or IANA reserved/unassigned; else reusable; Python + SQL twin, parity test | 1 (`registry_class`, `REGISTRY_CLASS_SQL`), 2 (derived view, `test_python_rule_and_derived_view_agree_on_every_case`) |
 | Remove the "strictly wider than the delegation" branch, `merge_adjacent`, the delegation `IP_TRIE`; small lookup decided from verified ClickHouse behaviour (one `IP_TRIE` for special segments, plain join for IANA; `RANGE_HASHED` rejected with evidence) | Design decision 3, Evidence section, 2 |
 | Test cases: APNIC 103/8, 101/8, 102/8 AFRINIC, 113/8 → registry_level; NET6-2600-1 → registry_level; RIPE 2A00::/11 → registry_level; LACNIC UNALLOCATED → unallocated; FPT → reusable; Cloudflare /12 → reusable; Ford 19/8 → reusable (decided per IANA status LEGACY, non-RIR designation); 8.8.8.8 → reusable | 1 (pure rule cases), 2 (`CASES`, verified on 26.5 in `verify4.sql`) |
-| Persisted classification per cached network + trie exclusion migration (inert until first load) | 2 (000449 class table, 000450), 3 |
+| Persisted classification per cached network + trie exclusion migration (inert until first load) | 2 (000450 class table, 000451), 3 |
 | RdapEnricher / legacy worker never reuse non-reusable answers | 4 |
 | Docs | 5 |
 | Deploy with the "print excluded networks and served IPs" review before the exclusion goes live | 6 |
