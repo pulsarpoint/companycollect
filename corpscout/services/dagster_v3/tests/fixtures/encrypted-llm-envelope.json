@@ -1,0 +1,10 @@
+{
+  "shared_key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "api_key": "test-only-api-key-never-valid",
+  "llm": {
+    "provider": "test-profile",
+    "base_url": "https://openrouter.ai/api/v1",
+    "model": "test/model",
+    "api_key_encrypted": "v1.AAECAwQFBgcICQoL.9WHpaSuITGTj5qhjHpLJpTHhetutlVgw3rvrpDmIYI2ApqVxoy-aubHyNEOy"
+  }
+}

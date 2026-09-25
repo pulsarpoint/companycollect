@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { launchRun, dagsterRunUrl, type DagsterOptions } from "~/lib/dagster.server";
-import { getLlmProfile } from "~/lib/llm-settings.server";
+import { getLlmProfile, getLlmProfileApiKey } from "~/lib/llm-settings.server";
+import { encryptCrawlLlm } from "~/lib/crawl-llm.server";
 import { getPeoplePrompt } from "~/lib/people-prompts.server";
 import type { CompanyActionResult } from "~/lib/company-actions";
 
@@ -18,10 +19,7 @@ export async function launchPeopleAction(
     if (!prompt) throw new Error("Choose a saved People prompt.");
     if (prompt.revision !== input.promptRevision) throw new Error("The selected prompt changed. Reload to review its latest revision before launching.");
     match = {
-      provider: profile.provider,
-      model: profile.model,
-      base_url: profile.baseUrl,
-      api_key_environment_variable: profile.apiKeyEnvironmentVariable,
+      ...encryptCrawlLlm(profile, getLlmProfileApiKey(profile.profileId, options.databasePath), process.env.CRAWLER_LLM_ENCRYPTION_KEY ?? ""),
       system_prompt: prompt.systemPrompt,
       prompt_version: `people:${prompt.promptId}:r${prompt.revision}`,
       temperature: 0,

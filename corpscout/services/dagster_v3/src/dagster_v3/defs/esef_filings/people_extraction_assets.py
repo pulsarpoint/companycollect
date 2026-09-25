@@ -55,12 +55,13 @@ from dagster_v3.defs.esef_filings.llm_enrichment_assets import (
 )
 from dagster_v3.defs.esef_filings.publish import LINK_STATUS_REGISTER_VERIFIED
 from dagster_v3.defs.esef_filings.segment_assets import ESEF_DOCUMENT_BUCKET
+from dagster_v3.defs.common.encrypted_llm import EncryptedLLMConfig
 
 GROUP_NAME = "esef"
 
 
 class EsefPeopleExtractionConfig(dg.Config):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, hide_input_in_errors=True)
 
     # Deliberately no defaults: a bare "Materialize" from the Dagster UI must
     # fail run-config validation rather than silently spend on the default
@@ -78,6 +79,8 @@ class EsefPeopleExtractionConfig(dg.Config):
         max_length=128,
         pattern=r"^[A-Za-z_][A-Za-z0-9_]*$",
     )
+    api_key_encrypted: str | None = Field(default=None, repr=False, max_length=16384,
+        pattern=r"^v1\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{23,}$")
     temperature: float = Field(default=0, ge=0, le=2)
     prompt_version: str = Field(
         default=PEOPLE_PROMPT_VERSION,
@@ -455,6 +458,10 @@ def esef_document_people_extraction_clickhouse(
         base_url=config.base_url,
         api_key_environment_variable=config.api_key_environment_variable,
         timeout_seconds=config.timeout_seconds,
+        encrypted_profile=EncryptedLLMConfig(
+            provider=config.provider, model=config.model, base_url=config.base_url,
+            api_key_encrypted=config.api_key_encrypted,
+        ) if config.api_key_encrypted is not None else None,
     )
     metadata = run_esef_people_extraction(
         clickhouse=clickhouse,

@@ -1,13 +1,14 @@
 import { createDecipheriv } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fixture from "./fixtures/crawl-llm-envelope.json";
-const mocks = vi.hoisted(() => ({getLlmProfile: vi.fn(), crawlerFetch: vi.fn(), browserFetch: vi.fn()}));
-vi.mock("~/lib/llm-settings.server", () => ({getLlmProfile: mocks.getLlmProfile}));
+const mocks = vi.hoisted(() => ({getLlmProfile: vi.fn(), getLlmProfileApiKey: vi.fn(), crawlerFetch: vi.fn(), browserFetch: vi.fn()}));
+vi.mock("~/lib/llm-settings.server", async importOriginal => ({...await importOriginal<typeof import("~/lib/llm-settings.server")>(), getLlmProfile: mocks.getLlmProfile, getLlmProfileApiKey: mocks.getLlmProfileApiKey}));
+import { LlmSettingsValidationError } from "~/lib/llm-settings.server";
 vi.mock("~/lib/browser-service.server", () => ({browserFetch: mocks.browserFetch}));
 vi.mock("~/lib/crawler.server", () => ({crawlerFetch: mocks.crawlerFetch}));
 import { encryptCrawlLlm, prepareCrawlSettings, verifySelectedLlm, type EncryptedCrawlLlm } from "~/lib/crawl-llm.server";
 
-const profile = {profileId: "profile-1", provider: fixture.llm.provider, baseUrl: fixture.llm.base_url, model: fixture.llm.model, apiKeyEnvironmentVariable: "TEST_CRAWL_LLM_KEY"};
+const profile = {profileId: "profile-1", provider: fixture.llm.provider, baseUrl: fixture.llm.base_url, model: fixture.llm.model};
 function decrypt(llm: EncryptedCrawlLlm) {
   const [,nonce,encrypted] = llm.api_key_encrypted.split(".");
   const bytes = Buffer.from(encrypted, "base64url");
@@ -21,7 +22,7 @@ beforeEach(() => {
   vi.stubEnv("BROWSER_API_TOKEN", "test-only-browser-token");
   vi.stubEnv("CRAWLER_API_TOKEN", "test-only-crawler-token");
   vi.stubEnv("CRAWLER_LLM_ENCRYPTION_KEY", fixture.shared_key);
-  vi.stubEnv("TEST_CRAWL_LLM_KEY", fixture.api_key);
+  mocks.getLlmProfileApiKey.mockReturnValue(fixture.api_key);
   mocks.getLlmProfile.mockReturnValue(profile);
   mocks.crawlerFetch.mockResolvedValue(new Response(JSON.stringify({ok: true})));
   mocks.browserFetch.mockResolvedValue(new Response(JSON.stringify({ok: true})));
@@ -69,7 +70,7 @@ describe("crawl preflight", () => {
   it("rejects deleted profiles and missing server credentials before network access", async () => {
     mocks.getLlmProfile.mockReturnValueOnce(null);
     await expect(prepareCrawlSettings({llm_profile_id: "gone"})).rejects.toThrow("no longer exists");
-    vi.stubEnv("TEST_CRAWL_LLM_KEY", "");
+    mocks.getLlmProfileApiKey.mockImplementationOnce(() => { throw new LlmSettingsValidationError("API key is missing"); });
     await expect(prepareCrawlSettings({llm_profile_id: "profile-1"})).rejects.toThrow("API key is missing");
     expect(mocks.crawlerFetch).not.toHaveBeenCalled();
   });

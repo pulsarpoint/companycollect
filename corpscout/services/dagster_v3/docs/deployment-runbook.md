@@ -51,6 +51,16 @@ isolated loopback database described below. Anything secret (ClickHouse
 password, S3 keys, HF token, API keys) lives only in `.env` — never in code or
 migrations.
 
+Backoffice stores saved LLM API keys encrypted in its settings database. For
+People matching, company descriptions, domain verification, and ESEF enrichment,
+Backoffice sends encrypted credentials in run configuration and the Dagster worker
+decrypts them only when constructing its model client. Set the same 64-character
+hexadecimal `CRAWLER_LLM_ENCRYPTION_KEY` on Backoffice, Dagster, crawler, and browser
+service. Crawl and Brave assets only forward ciphertext; their destination services
+decrypt it. Provider keys remain optional on the Dagster host for legacy manual
+configurations. Local Codex retains its separate local worker credential. ESEF
+reprocessing of saved responses requires no model key and makes no model calls.
+
 Local `dg dev` metadata is deliberately isolated from the deployed server.
 `scripts/dagster-dev.sh` starts `docker-compose.local.yml`, whose PostgreSQL 17
 service listens only on `127.0.0.1:55432`, and overrides `DAGSTER_PG_URL` with

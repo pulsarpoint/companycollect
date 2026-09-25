@@ -64,8 +64,9 @@ then verifies it through the browser service before launching Dagster.
 `company_brave_search_results.config.llm` carries `provider`, `base_url`, `model`,
 and `api_key_encrypted`. Dagster keeps that encrypted envelope in `brave/execution`
 and passes it to the browser service, which alone decrypts it. The shared
-`CRAWLER_LLM_ENCRYPTION_KEY` is configured on Backoffice and browser service, never
-on Dagster. Before consuming companies, Dagster verifies the frozen profile again
+`CRAWLER_LLM_ENCRYPTION_KEY` is configured on Backoffice and browser service. Dagster
+also has it for direct People/Info/Domain/ESEF clients, but Brave assets only forward
+the ciphertext. Before consuming companies, Dagster verifies the frozen profile again
 through authenticated `POST /v1/brave/llm/verify` so queued runs cannot silently
 start using an unavailable model.
 

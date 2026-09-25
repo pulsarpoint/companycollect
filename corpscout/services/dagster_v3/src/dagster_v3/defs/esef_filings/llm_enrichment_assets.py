@@ -27,6 +27,7 @@ from pydantic import ConfigDict, Field
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.common.resources import ObjectStoreResource
+from dagster_v3.defs.common.encrypted_llm import EncryptedLLMConfig, redact_llm_error
 from dagster_v3.defs.esef_filings import tables
 from dagster_v3.defs.esef_filings.llm_enrichment import (
     ENRICHMENT_EVIDENCE_SEGMENTS,
@@ -69,7 +70,7 @@ _NON_SPECIFIC_PERSON_ROLES = frozenset(
 
 
 class EsefLlmEnrichmentConfig(dg.Config):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, hide_input_in_errors=True)
 
     # Deliberately no defaults: a bare "Materialize" from the Dagster UI must
     # fail run-config validation rather than silently spend on the default
@@ -88,6 +89,8 @@ class EsefLlmEnrichmentConfig(dg.Config):
         max_length=128,
         pattern=r"^[A-Za-z_][A-Za-z0-9_]*$",
     )
+    api_key_encrypted: str | None = Field(default=None, repr=False, max_length=16384,
+        pattern=r"^v1\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{23,}$")
     temperature: float = Field(default=0, ge=0, le=2)
     prompt_version: str = Field(
         default=PROMPT_VERSION,
@@ -115,6 +118,10 @@ def build_esef_llm_client(config: EsefLlmEnrichmentConfig) -> OpenAI:
         base_url=config.base_url,
         api_key_environment_variable=config.api_key_environment_variable,
         timeout_seconds=config.timeout_seconds,
+        encrypted_profile=EncryptedLLMConfig(
+            provider=config.provider, model=config.model, base_url=config.base_url,
+            api_key_encrypted=config.api_key_encrypted,
+        ) if config.api_key_encrypted is not None else None,
     )
 
 
@@ -123,6 +130,7 @@ def _openai_client(
     base_url: str,
     api_key_environment_variable: str,
     timeout_seconds: int,
+    encrypted_profile: EncryptedLLMConfig | None = None,
 ) -> OpenAI:
     """Build an OpenAI-compatible client while keeping credentials out of run config.
 
@@ -130,10 +138,13 @@ def _openai_client(
     extraction): the credential lookup and client construction do not depend on
     which pass is calling.
     """
-    variable = api_key_environment_variable
-    api_key = os.getenv(variable, "").strip()
-    if api_key == "":
-        raise ValueError(f"No ESEF LLM API key: set {variable} on the Dagster host")
+    if encrypted_profile is not None:
+        api_key = encrypted_profile.decrypt_api_key()
+    else:
+        variable = api_key_environment_variable
+        api_key = os.getenv(variable, "").strip()
+        if api_key == "":
+            raise ValueError(f"No ESEF LLM API key: set {variable} on the Dagster host")
     return OpenAI(
         base_url=base_url.rstrip("/"),
         api_key=api_key,
@@ -181,6 +192,7 @@ class _EnrichmentRequestOutcome:
     # The caught exception itself, so the failure log line can show the actual
     # cause (a bad key, an exhausted balance, ...) beside the failure kind.
     failure_exception: BaseException | None = None
+    failure_message: str | None = None
 
 
 @dataclass(frozen=True)
@@ -267,7 +279,7 @@ def run_esef_llm_enrichment(
     *,
     clickhouse: ClickhouseResource,
     object_store: Any,
-    client: OpenAI,
+    client: OpenAI | None,
     model: str,
     source_run_id: str,
     country_iso2s: Sequence[str],
@@ -511,13 +523,15 @@ def _enrichment_artifact_people(artifact: Mapping[str, Any]) -> list[object]:
 
 def _request_enrichments(
     *,
-    client: OpenAI,
+    client: OpenAI | None,
     work: Sequence[_PreparedEnrichment],
     concurrency: int,
     log_info: Callable[..., object] | None = None,
     request: Callable[..., object] = request_company_enrichment,
 ) -> Iterator[_EnrichmentRequestOutcome]:
     """Call the HTTP client with bounded parallelism and retain document order."""
+    if work and client is None:
+        raise ValueError("A configured LLM client is required before requesting new ESEF answers")
     call = partial(_request_prepared_enrichment, client=client, request=request)
     if concurrency == 1 or len(work) <= 1:
         for index, item in enumerate(work, start=1):
@@ -560,6 +574,7 @@ def _request_prepared_enrichment(
             result=None,
             failure_kind="rate_limited",
             failure_exception=exc,
+            failure_message=redact_llm_error(exc, client),
         )
     except OpenAIError as exc:
         return _EnrichmentRequestOutcome(
@@ -567,6 +582,7 @@ def _request_prepared_enrichment(
             result=None,
             failure_kind="http_error",
             failure_exception=exc,
+            failure_message=redact_llm_error(exc, client),
         )
     except EsefLlmResponseError as exc:
         return _EnrichmentRequestOutcome(
@@ -574,6 +590,7 @@ def _request_prepared_enrichment(
             result=None,
             failure_kind="invalid_response",
             failure_exception=exc,
+            failure_message=redact_llm_error(exc, client),
         )
     return _EnrichmentRequestOutcome(work=work, result=result)
 
@@ -696,7 +713,7 @@ def _prepare_pass_documents(
                 extraction_status="reused",
             )
             reused_count += 1
-        else:
+        elif not run.reprocess_existing_without_model:
             pending.append(work)
         if index == 1 or index % _PROGRESS_INTERVAL == 0 or index == len(documents):
             log_info(
@@ -827,7 +844,7 @@ def _process_pass_outcomes(
                 rate_limited_document_count += 1
             exc = outcome.failure_exception
             exc_type = type(exc).__name__ if exc is not None else "unknown"
-            exc_text = str(exc)[:300] if exc is not None else ""
+            exc_text = (outcome.failure_message if outcome.failure_message is not None else str(exc))[:300] if exc is not None else ""
             source_document_id = str(work.document["source_document_id"])
             raw_response = getattr(exc, "raw_response", None)
             invalid_response_key = None
@@ -1613,7 +1630,7 @@ def esef_document_company_information_clickhouse(
     metadata = run_esef_llm_enrichment(
         clickhouse=clickhouse,
         object_store=object_store,
-        client=build_esef_llm_client(config),
+        client=None if config.reprocess_existing_without_model else build_esef_llm_client(config),
         provider=config.provider,
         model=config.model,
         base_url=config.base_url,

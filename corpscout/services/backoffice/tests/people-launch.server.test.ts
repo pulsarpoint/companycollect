@@ -10,13 +10,13 @@ let directory: string;
 let databasePath: string;
 let input: Parameters<typeof launchPeopleAction>[0];
 beforeEach(() => {
+  vi.stubEnv("CRAWLER_LLM_ENCRYPTION_KEY", "11".repeat(32));
   directory = mkdtempSync(join(tmpdir(), "people-launch-")); databasePath = join(directory, "settings.sqlite");
-  const profileId = saveAndActivateLlmProfile({ name: "Chosen LLM", provider: "openrouter", model: "chosen/model", baseUrl: "https://openrouter.ai/api/v1", apiKeyEnvironmentVariable: "CUSTOM_LLM_KEY" }, databasePath);
+  const profileId = saveAndActivateLlmProfile({ name: "Chosen LLM", provider: "openrouter", model: "chosen/model", baseUrl: "https://openrouter.ai/api/v1", apiKey: "secret-must-not-travel" }, databasePath);
   const [prompt] = listPeoplePrompts(databasePath);
   input = { operation: "process", profileId, promptId: prompt.promptId, promptRevision: prompt.revision, changedOnly: true, requestedBy: "operator" };
-  process.env.CUSTOM_LLM_KEY = "secret-must-not-travel";
 });
-afterEach(() => { delete process.env.CUSTOM_LLM_KEY; rmSync(directory, { recursive: true, force: true }); });
+afterEach(() => { vi.unstubAllEnvs(); rmSync(directory, { recursive: true, force: true }); });
 
 function options() {
   const fetchImpl = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ data: { launchRun: {
@@ -39,7 +39,7 @@ describe("all-company People launches", () => {
     expect(Object.keys(ops)).toHaveLength(8);
     expect(ops.se_company_person_match_input.config.changed_only).toBe(true);
     expect(ops.se_company_person_match.config).toMatchObject({
-      model: "chosen/model", provider: "openrouter", api_key_environment_variable: "CUSTOM_LLM_KEY",
+      model: "chosen/model", provider: "openrouter", api_key_encrypted: expect.stringMatching(/^v1\./),
       system_prompt: prompt.systemPrompt, prompt_version: `people:${prompt.promptId}:r1`, changed_only: true,
     });
     expect(ops.se_company_person_suggestions_ratsit.config.execute).toBe(true);

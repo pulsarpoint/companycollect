@@ -11,13 +11,13 @@ let directory: string;
 let databasePath: string;
 let input: Parameters<typeof launchCompanyAction>[0];
 beforeEach(() => {
+  vi.stubEnv("CRAWLER_LLM_ENCRYPTION_KEY", "11".repeat(32));
   directory = mkdtempSync(join(tmpdir(), "company-actions-")); databasePath = join(directory, "settings.sqlite");
-  const profileId = saveAndActivateLlmProfile({ name: "Chosen LLM", provider: "openrouter", model: "chosen/model", baseUrl: "https://openrouter.ai/api/v1", apiKeyEnvironmentVariable: "CUSTOM_COMPANY_LLM_KEY" }, databasePath);
+  const profileId = saveAndActivateLlmProfile({ name: "Chosen LLM", provider: "openrouter", model: "chosen/model", baseUrl: "https://openrouter.ai/api/v1", apiKey: "secret-must-not-travel" }, databasePath);
   const [prompt] = listPeoplePrompts(databasePath);
   input = { area: "info", operation: "process", profileId, promptId: prompt.promptId, promptRevision: prompt.revision, changedOnly: true, llmMaxCompanies: 1234, requestedBy: "operator" };
-  process.env.CUSTOM_COMPANY_LLM_KEY = "secret-must-not-travel";
 });
-afterEach(() => { delete process.env.CUSTOM_COMPANY_LLM_KEY; rmSync(directory, { recursive: true, force: true }); });
+afterEach(() => { vi.unstubAllEnvs(); rmSync(directory, { recursive: true, force: true }); });
 
 function options() {
   const fetchImpl = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
@@ -85,8 +85,8 @@ describe("company action dispatch", () => {
     ["addresses", "process", "se_company_address_refresh_job", 7],
     ["people", "sync", "se_company_person_sync_job", 6],
     ["people", "process", "se_company_person_refresh_job", 8],
-    ["domains", "sync", "se_company_domain_sync_job", 3],
-    ["domains", "process", "se_company_domain_refresh_job", 5],
+    ["domains", "sync", "se_company_domain_sync_job", 4],
+    ["domains", "process", "se_company_domain_refresh_job", 6],
   ] as const)("launches %s / %s as one complete global job", async (area, operation, job, stepCount) => {
     const opts = options();
     expect(await launchCompanyAction({ ...input, area, operation }, opts)).toMatchObject({ ok: true, runId: "company-run" });
@@ -134,13 +134,13 @@ describe("company action dispatch", () => {
     expect(JSON.stringify(execution)).not.toContain("system_prompt");
   });
 
-  it("passes the chosen info model, credential name and explicit LLM cap", async () => {
+  it("passes the chosen info model, encrypted credential and explicit LLM cap", async () => {
     const opts = options();
     await launchCompanyAction(input, opts);
     const config = JSON.parse(String(opts.fetchImpl.mock.calls.find(([, init]) => JSON.parse(String(init?.body)).variables.executionParams)?.[1]?.body)).variables.executionParams.runConfigData.ops.se_basic_info_suggestions_llm.config;
     expect(config).toEqual({ execute: true, max_companies: 1234, llm: {
       provider: "openrouter", model: "chosen/model", base_url: "https://openrouter.ai/api/v1",
-      api_key_environment_variable: "CUSTOM_COMPANY_LLM_KEY", temperature: 0, max_tokens: 6000, concurrency: 1,
+      api_key_encrypted: expect.stringMatching(/^v1\./), temperature: 0, max_tokens: 6000, concurrency: 1,
     } });
   });
 

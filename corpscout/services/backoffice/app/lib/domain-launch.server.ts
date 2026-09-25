@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { launchRun, dagsterRunUrl, type DagsterOptions } from "~/lib/dagster.server";
-import { getLlmProfile } from "~/lib/llm-settings.server";
+import { getLlmProfile, getLlmProfileApiKey } from "~/lib/llm-settings.server";
+import { encryptCrawlLlm } from "~/lib/crawl-llm.server";
 import { getDomainPrompt } from "~/lib/domain-prompts.server";
 import type { CompanyActionResult } from "~/lib/company-actions";
 
@@ -20,8 +21,7 @@ export async function launchDomainAction(
     if (!prompt) throw new Error("Choose a saved Domain prompt.");
     if (prompt.revision !== input.promptRevision) throw new Error("The selected prompt changed. Reload to review its latest revision before launching.");
     verification = {
-      provider: profile.provider, model: profile.model, base_url: profile.baseUrl,
-      api_key_environment_variable: profile.apiKeyEnvironmentVariable,
+      ...encryptCrawlLlm(profile, getLlmProfileApiKey(profile.profileId, options.databasePath), globalThis.process.env.CRAWLER_LLM_ENCRYPTION_KEY ?? ""),
       system_prompt: prompt.systemPrompt, prompt_version: `domain:${prompt.promptId}:r${prompt.revision}`,
       temperature: 0, concurrency: 1,
     };

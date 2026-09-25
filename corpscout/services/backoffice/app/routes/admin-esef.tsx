@@ -24,16 +24,19 @@ import {
 import {
   isLocalCodexEnabled,
   listLlmProfiles,
+  getLlmProfileApiKey,
+  LlmSettingsValidationError,
   type LlmProfile,
 } from "~/lib/llm-settings.server";
 
+import { encryptCrawlLlm, CrawlLlmError } from "~/lib/crawl-llm.server";
+
 // Synthetic picker entry for the locally running codex agent. It is not a
 // stored profile: availability comes from the settings toggle plus the
-// LOCAL_CODEX_BASE_URL environment variable, and no API key applies (the
-// worker still needs an env-var NAME, so a placeholder is sent).
+// LOCAL_CODEX_BASE_URL environment variable. Its local worker credential
+// remains separate from saved vendor API keys.
 const LOCAL_CODEX_PROFILE_ID = "local_codex";
 const LOCAL_CODEX_MODEL = "codex";
-const LOCAL_CODEX_KEY_ENVIRONMENT_VARIABLE = "LOCAL_CODEX_API_KEY";
 
 function localCodexBaseUrl(): string {
   return process.env.LOCAL_CODEX_BASE_URL?.trim() ?? "";
@@ -147,7 +150,6 @@ function selectedProfile(
       provider: LOCAL_CODEX_PROFILE_ID,
       baseUrl,
       model: LOCAL_CODEX_MODEL,
-      apiKeyEnvironmentVariable: LOCAL_CODEX_KEY_ENVIRONMENT_VARIABLE,
       isActive: false,
       apiKeyAvailable: true,
       createdAt: now,
@@ -375,7 +377,8 @@ export async function action({
         provider: profile.provider,
         model: profile.model,
         baseUrl: profile.baseUrl,
-        apiKeyEnvironmentVariable: profile.apiKeyEnvironmentVariable,
+        apiKeyEncrypted: behavior === "reprocess_existing_without_model" || profile.profileId === LOCAL_CODEX_PROFILE_ID ? null
+          : encryptCrawlLlm(profile, getLlmProfileApiKey(profile.profileId), process.env.CRAWLER_LLM_ENCRYPTION_KEY ?? "").api_key_encrypted,
         temperature: boundedNumber(
           form,
           "temperature",
@@ -412,7 +415,7 @@ export async function action({
       },
     };
   } catch (error) {
-    if (error instanceof EsefActionValidationError)
+    if (error instanceof EsefActionValidationError || error instanceof LlmSettingsValidationError || error instanceof CrawlLlmError)
       return refused(error.message);
     if (error instanceof EsefLaunchBlockedError) {
       return refused(error.reasons.join(" "));

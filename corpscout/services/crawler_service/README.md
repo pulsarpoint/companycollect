@@ -697,8 +697,18 @@ checks one bounded JSON completion, without starting a crawl or writing artifact
 A crawl request can carry that same `llm` object; its endpoint, model and credentials
 then replace the service's default LLM routing, including old provider restrictions.
 
-Configure `CRAWLER_LLM_ENCRYPTION_KEY` as exactly 64 hexadecimal characters, shared only
-with Backoffice. The Ansible setting is `crawler_service_llm_encryption_key` in ignored
+Configure `CRAWLER_LLM_ENCRYPTION_KEY` as exactly 64 hexadecimal characters, matching
+Backoffice's master key and the browser service's `BROWSER_LLM_ENCRYPTION_KEY`.
+Backoffice stores provider keys encrypted in its settings database and supplies encrypted
+request profiles; the crawler does not need provider environment keys for those requests.
+The Ansible setting is `crawler_service_llm_encryption_key` in ignored
 `ansible/secrets.yml`. The AES-256-GCM envelope binds provider, base URL and model;
 credentials are decrypted only for the outbound model request. Do not rotate the key while
-old queued or resumable executions still need their encrypted credentials.
+old queued or resumable executions still need their encrypted credentials, or before
+the Backoffice database credentials have been re-encrypted as part of a planned rotation.
+
+Legacy requests without `llm`, the collection/research/page CLI tools, and existing manual
+integrations still use `DEEPSEEK` or `OPENROUTER_API_KEY`. Browser CAPTCHA assistance has
+separate legacy credentials on the browser service. These variables can be omitted on a
+deployment that exclusively uses encrypted profiles and does not need those legacy paths;
+they cannot be removed from a mixed deployment solely because Backoffice was migrated.

@@ -49,7 +49,6 @@ export interface LlmSettingsFormValues {
   provider: string;
   baseUrl: string;
   model: string;
-  apiKeyEnvironmentVariable: string;
 }
 
 function profileFormValues(profile: LlmProfile | null): LlmSettingsFormValues {
@@ -59,8 +58,6 @@ function profileFormValues(profile: LlmProfile | null): LlmSettingsFormValues {
     provider: profile?.provider ?? "",
     baseUrl: profile?.baseUrl ?? "",
     model: profile?.model ?? "",
-    apiKeyEnvironmentVariable:
-      profile?.apiKeyEnvironmentVariable ?? "",
   };
 }
 
@@ -94,13 +91,10 @@ function ActiveLlmCard({ profile }: { profile: LlmProfile | null }) {
             <div className="flex flex-col gap-1">
               <dt className="text-xs text-muted-foreground">API key</dt>
               <dd className="flex flex-wrap items-center gap-2">
-                <code className="text-xs">
-                  {profile.apiKeyEnvironmentVariable}
-                </code>
                 <Badge
                   variant={profile.apiKeyAvailable ? "secondary" : "destructive"}
                 >
-                  {profile.apiKeyAvailable ? "Available" : "Missing"}
+                  {profile.apiKeyAvailable ? "Saved" : "Missing"}
                 </Badge>
               </dd>
             </div>
@@ -146,7 +140,7 @@ function LlmProfilesCard({ profiles }: { profiles: LlmProfile[] }) {
                 <TableHead>Name</TableHead>
                 <TableHead>Provider</TableHead>
                 <TableHead>Model</TableHead>
-                <TableHead>Key environment variable</TableHead>
+                <TableHead>API key</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
@@ -160,21 +154,12 @@ function LlmProfilesCard({ profiles }: { profiles: LlmProfile[] }) {
                     <code className="text-xs">{profile.model}</code>
                   </TableCell>
                   <TableCell>
-                    <code className="text-xs">
-                      {profile.apiKeyEnvironmentVariable}
-                    </code>
+                    <Badge variant={profile.apiKeyAvailable ? "secondary" : "destructive"}>
+                      {profile.apiKeyAvailable ? "Key saved" : "Key missing"}
+                    </Badge>
                   </TableCell>
                   <TableCell>
-                    <div className="flex flex-wrap gap-2">
-                      {profile.isActive ? <Badge>Active</Badge> : null}
-                      <Badge
-                        variant={
-                          profile.apiKeyAvailable ? "secondary" : "destructive"
-                        }
-                      >
-                        {profile.apiKeyAvailable ? "Key available" : "Key missing"}
-                      </Badge>
-                    </div>
+                    {profile.isActive ? <Badge>Active</Badge> : <Badge variant="outline">Inactive</Badge>}
                   </TableCell>
                   <TableCell>
                     <div className="flex justify-end gap-2">
@@ -226,6 +211,7 @@ function LlmProfileForm({
 }) {
   const values = submittedValues ?? profileFormValues(editingProfile);
   const editing = values.profileId !== "";
+  const hasSavedKey = editingProfile?.profileId === values.profileId && editingProfile.apiKeyAvailable;
 
   return (
     <Card>
@@ -309,21 +295,22 @@ function LlmProfileForm({
               />
             </Field>
             <Field className="md:col-span-2" data-invalid={Boolean(error)}>
-              <FieldLabel htmlFor="llm-api-key-environment-variable">
-                API key environment variable
+              <FieldLabel htmlFor="llm-api-key">
+                API key
               </FieldLabel>
               <Input
-                id="llm-api-key-environment-variable"
-                name="api_key_environment_variable"
-                defaultValue={values.apiKeyEnvironmentVariable}
-                placeholder="DEEPSEEK_API_KEY"
+                id="llm-api-key"
+                name="api_key"
+                type="password"
+                placeholder={hasSavedKey ? "Leave blank to keep the saved key" : "Enter API key"}
                 aria-invalid={Boolean(error)}
-                autoComplete="off"
-                required
+                autoComplete="new-password"
+                required={!hasSavedKey}
               />
               <FieldDescription>
-                Only this variable name is stored. The application reads its
-                value from the process environment when an LLM task runs.
+                {hasSavedKey
+                  ? "Leave blank to keep the saved API key, or enter a replacement. Keys are encrypted before saving and are never shown."
+                  : "Enter the provider API key. It is encrypted before saving and is never shown."}
               </FieldDescription>
               <FieldError>{error}</FieldError>
             </Field>
@@ -409,10 +396,10 @@ export function LlmSettingsWorkspace({
 
       <Alert>
         <KeyRoundIcon />
-        <AlertTitle>API keys remain outside the settings database</AlertTitle>
+        <AlertTitle>API keys are encrypted in the settings database</AlertTitle>
         <AlertDescription>
-          This page stores an environment-variable name and reports whether it
-          is available. It never accepts, stores, or returns the secret value.
+          Enter a key when adding a profile. Saved keys are never shown;
+          leave the key field blank when editing to keep the current key.
         </AlertDescription>
       </Alert>
 

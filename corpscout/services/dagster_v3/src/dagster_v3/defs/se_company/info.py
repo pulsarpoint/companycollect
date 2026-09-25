@@ -17,6 +17,7 @@ from typing import Any, TypeVar
 import dagster as dg
 from openai import OpenAI
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from dagster_v3.defs.common.encrypted_llm import EncryptedLLMConfig
 
 DESCRIPTION_PROMPT_VERSION = "se-company-info-description-v3"
 # The observation cache: one row per (company, input_hash) model answer, kept across the
@@ -31,8 +32,9 @@ OBSERVATION_COLUMNS = ("suggestion_id", "company_id", "input_hash", "suggestion"
 class LlmProfileConfig(dg.Config):
     """The model this run may call, as run config -- never read from host env.
 
-    The host contributes exactly one thing: the API key, looked up by provider name
-    (``DEEPSEEK_API_KEY`` for provider ``deepseek``). Everything that decides what the
+    Saved profiles carry encrypted credentials, decrypted only when constructing a
+    direct client. Legacy manual profiles can still look up a provider key on the host.
+    Everything that decides what the
     call costs and what it says travels in the run config, so a run's own record shows
     which model wrote its descriptions and a caller can switch models without a
     deployment. ``prompt_version`` is part of the observation cache key, so changing it
@@ -40,9 +42,13 @@ class LlmProfileConfig(dg.Config):
     different prompt.
     """
 
+    model_config = ConfigDict(hide_input_in_errors=True)
+
     provider: str = Field(default="deepseek", min_length=1, max_length=64)
     model: str = Field(default="deepseek-v4-flash", min_length=1, max_length=200)
     base_url: str = Field(default="https://api.deepseek.com", min_length=1, max_length=2_048)
+    api_key_encrypted: str | None = Field(default=None, repr=False, max_length=16384,
+        pattern=r"^v1\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{23,}$")
     temperature: float = Field(default=0, ge=0, le=2)
     # deepseek-v4-flash is a reasoning model: reasoning_content counts against
     # max_tokens, and the answer carries two summaries.
@@ -79,12 +85,18 @@ def build_llm_client(
     Called before any page is touched, so a run configured for a provider whose key this
     host does not carry fails without having written a row or spent a call.
     """
-    variable = api_key_environment_variable or llm_api_key_variable(profile.provider)
-    api_key = os.getenv(variable, "").strip()
-    if not api_key:
-        raise ValueError(
-            f"No API key for LLM provider {profile.provider!r}: set {variable} on the "
-            "Dagster host, or run with resolve_multi_source_with_llm: false")
+    if profile.api_key_encrypted is not None:
+        api_key = EncryptedLLMConfig(
+            provider=profile.provider, model=profile.model, base_url=profile.base_url,
+            api_key_encrypted=profile.api_key_encrypted,
+        ).decrypt_api_key()
+    else:
+        variable = api_key_environment_variable or llm_api_key_variable(profile.provider)
+        api_key = os.getenv(variable, "").strip()
+        if not api_key:
+            raise ValueError(
+                f"No API key for LLM provider {profile.provider!r}: set {variable} on the "
+                "Dagster host, or run with resolve_multi_source_with_llm: false")
     return OpenAI(base_url=profile.base_url.rstrip("/"), api_key=api_key,
                   timeout=float(timeout_seconds), max_retries=2)
 

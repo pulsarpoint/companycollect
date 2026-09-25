@@ -1,7 +1,7 @@
 import { createCipheriv, randomBytes } from "node:crypto";
 import { browserFetch } from "~/lib/browser-service.server";
 import { crawlerFetch } from "~/lib/crawler.server";
-import { getLlmProfile } from "~/lib/llm-settings.server";
+import { getLlmProfile, getLlmProfileApiKey, LlmSettingsValidationError } from "~/lib/llm-settings.server";
 
 export class CrawlLlmError extends Error {}
 
@@ -43,7 +43,12 @@ export async function verifySelectedLlm(profileId: unknown, target: "crawler" | 
   if (!process.env[tokenName]?.trim()) throw new CrawlLlmError(`Configure ${tokenName} on Backoffice before verifying models.`);
   const profile = getLlmProfile(profileId);
   if (!profile) throw new CrawlLlmError("The selected LLM no longer exists. Choose another LLM.");
-  const apiKey = process.env[profile.apiKeyEnvironmentVariable]?.trim() ?? "";
+  let apiKey: string;
+  try { apiKey = getLlmProfileApiKey(profileId); }
+  catch (error) {
+    if (error instanceof LlmSettingsValidationError) throw new CrawlLlmError(error.message);
+    throw error;
+  }
   const llm = encryptCrawlLlm(profile, apiKey, process.env.CRAWLER_LLM_ENCRYPTION_KEY ?? "");
   let result: unknown;
   try {

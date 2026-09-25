@@ -518,6 +518,7 @@ def test_esef_runtime_profile_uses_only_host_api_key(
         "model": "stealth/ox-alpha",
         "base_url": "https://openrouter.ai/api/v1/",
         "api_key_environment_variable": "OPENROUTER_API",
+        "api_key_encrypted": None,
         "temperature": 0.25,
         "prompt_version": "esef-company-enrichment-v2",
         "concurrency": 3,
@@ -1397,3 +1398,19 @@ class _FakeClickHouse:
     @contextmanager
     def get_connection(self):
         yield self.client
+
+
+def test_saved_response_reprocessing_never_requests_missing_model_answers() -> None:
+    disclosure_rows, label_rows = _segment_artifact_clickhouse_rows()
+    clickhouse = _FakeClickHouse([
+        [_source_document_clickhouse_row()], disclosure_rows, label_rows,
+    ])
+    metadata = run_esef_llm_enrichment(
+        clickhouse=clickhouse, object_store=_FakeObjectStore({}), client=None,
+        model="deepseek-v4-flash", source_run_id="reprocess-without-model",
+        source_document_ids=["AAK-2024"], country_iso2s=[], company_ids=[],
+        max_documents=None, refresh_existing=False, max_evidence_chars=64_000,
+        log_info=lambda *_args: None, reprocess_existing_without_model=True,
+    )
+    assert metadata["attempted_document_count"] == 0
+    assert metadata["processed_document_count"] == 0

@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from dagster_v3.defs.common.encrypted_llm import redact_llm_error
 from dagster_v3.defs.se_company.domain.evidence import digest, json_text
 from dagster_v3.defs.se_company.info import LlmProfileConfig
 
@@ -121,7 +122,7 @@ def verify_domain(
             **({"extra_body": {"thinking": {"type": "disabled"}}} if profile.provider == "deepseek" else {}),
         )
     except Exception as exc:
-        row["error"] = str(exc)[:4_000]
+        row["error"] = redact_llm_error(exc, client)[:4_000]
         return row
     if response.usage is not None:
         row.update(prompt_tokens=response.usage.prompt_tokens or 0,

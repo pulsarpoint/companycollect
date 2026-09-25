@@ -34,6 +34,13 @@ export async function loader({ request }: Route.LoaderArgs) {
 export async function action({ request }: Route.ActionArgs) {
   const form = await request.formData();
   const intent = formValue(form, "intent");
+  const values: LlmSettingsFormValues | null = intent === "save" ? {
+    profileId: formValue(form, "profile_id"),
+    name: formValue(form, "name"),
+    provider: formValue(form, "provider"),
+    baseUrl: formValue(form, "base_url"),
+    model: formValue(form, "model"),
+  } : null;
 
   try {
     if (intent === "activate") {
@@ -44,40 +51,17 @@ export async function action({ request }: Route.ActionArgs) {
       setLocalCodexEnabled(formValue(form, "local_codex") === "on");
       return redirect("/admin/settings/llms?saved=yes");
     }
-    if (intent === "save") {
-      const values: LlmSettingsFormValues = {
-        profileId: formValue(form, "profile_id"),
-        name: formValue(form, "name"),
-        provider: formValue(form, "provider"),
-        baseUrl: formValue(form, "base_url"),
-        model: formValue(form, "model"),
-        apiKeyEnvironmentVariable: formValue(
-          form,
-          "api_key_environment_variable",
-        ),
-      };
-      saveAndActivateLlmProfile(values);
+    if (values !== null) {
+      saveAndActivateLlmProfile({...values, apiKey: formValue(form, "api_key")});
       return redirect("/admin/settings/llms?saved=yes");
     }
     return { error: "Unknown LLM settings action.", values: null };
   } catch (error) {
     if (error instanceof LlmSettingsValidationError) {
+      const apiKey = formValue(form, "api_key");
       return {
-        error: error.message,
-        values:
-          intent === "save"
-            ? {
-                profileId: formValue(form, "profile_id"),
-                name: formValue(form, "name"),
-                provider: formValue(form, "provider"),
-                baseUrl: formValue(form, "base_url"),
-                model: formValue(form, "model"),
-                apiKeyEnvironmentVariable: formValue(
-                  form,
-                  "api_key_environment_variable",
-                ),
-              }
-            : null,
+        error: apiKey ? error.message.replaceAll(apiKey, "[redacted]") : error.message,
+        values,
       };
     }
     throw error;

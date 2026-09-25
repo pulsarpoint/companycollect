@@ -1,14 +1,14 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getDomainPrompt, listDomainPrompts, saveDomainPrompt } from "~/lib/domain-prompts.server";
 import { listLlmProfiles, saveAndActivateLlmProfile } from "~/lib/llm-settings.server";
 
 let directory: string;
 let databasePath: string;
-beforeEach(() => { directory = mkdtempSync(join(tmpdir(), "domain-prompts-")); databasePath = join(directory, "settings.sqlite"); });
-afterEach(() => rmSync(directory, { recursive: true, force: true }));
+beforeEach(() => { vi.stubEnv("CRAWLER_LLM_ENCRYPTION_KEY", "ab".repeat(32)); directory = mkdtempSync(join(tmpdir(), "domain-prompts-")); databasePath = join(directory, "settings.sqlite"); });
+afterEach(() => { vi.unstubAllEnvs(); rmSync(directory, { recursive: true, force: true }); });
 
 describe("Domain prompts in the settings database", () => {
   it("seeds the domain verification prompt once and preserves edits", () => {
@@ -19,7 +19,7 @@ describe("Domain prompts in the settings database", () => {
     expect(getDomainPrompt("missing", databasePath)).toBeNull();
   });
   it("persists multiple named prompts alongside existing LLM settings", () => {
-    saveAndActivateLlmProfile({ name: "LLM", provider: "provider", model: "model", baseUrl: "https://example.com", apiKeyEnvironmentVariable: "API_KEY" }, databasePath);
+    saveAndActivateLlmProfile({ name: "LLM", provider: "provider", model: "model", baseUrl: "https://example.com", apiKey: "test-key" }, databasePath);
     const id = saveDomainPrompt({ name: " Careful matching ", systemPrompt: "Return pairs conservatively." }, databasePath);
     expect(getDomainPrompt(id, databasePath)).toMatchObject({ name: "Careful matching", revision: 1 });
     expect(listDomainPrompts(databasePath)).toHaveLength(2);

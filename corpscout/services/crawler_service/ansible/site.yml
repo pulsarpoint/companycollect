@@ -103,12 +103,11 @@
         that:
           - crawler_service_browser_api_url | length > 0
           - crawler_service_browser_api_token | length >= 32
-          - crawler_service_deepseek | length > 0
           - crawler_service_api_token | length >= 32
           - (crawler_service_deepseek | regex_search('[\x00-\x1f\x7f]')) is none
           - (crawler_service_openrouter | regex_search('[\x00-\x1f\x7f]')) is none
           - (crawler_service_api_token | regex_search('[\x00-\x1f\x7f]')) is none
-        fail_msg: Set DEEPSEEK and a 32-character CRAWL_API_TOKEN in secrets.yml or the controller environment.
+        fail_msg: Set the browser API token and a 32-character CRAWL_API_TOKEN in secrets.yml or the controller environment.
       no_log: true
 
     - name: Validate the shared Backoffice LLM encryption key

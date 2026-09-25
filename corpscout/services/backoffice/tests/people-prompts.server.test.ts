@@ -1,14 +1,14 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getPeoplePrompt, listPeoplePrompts, savePeoplePrompt } from "~/lib/people-prompts.server";
 import { listLlmProfiles, saveAndActivateLlmProfile } from "~/lib/llm-settings.server";
 
 let directory: string;
 let databasePath: string;
-beforeEach(() => { directory = mkdtempSync(join(tmpdir(), "people-prompts-")); databasePath = join(directory, "settings.sqlite"); });
-afterEach(() => rmSync(directory, { recursive: true, force: true }));
+beforeEach(() => { vi.stubEnv("CRAWLER_LLM_ENCRYPTION_KEY", "ab".repeat(32)); directory = mkdtempSync(join(tmpdir(), "people-prompts-")); databasePath = join(directory, "settings.sqlite"); });
+afterEach(() => { vi.unstubAllEnvs(); rmSync(directory, { recursive: true, force: true }); });
 
 describe("People prompts in the settings database", () => {
   it("seeds the current matcher prompt once and preserves edits", () => {
@@ -19,7 +19,7 @@ describe("People prompts in the settings database", () => {
     expect(getPeoplePrompt("missing", databasePath)).toBeNull();
   });
   it("persists multiple named prompts alongside existing LLM settings", () => {
-    saveAndActivateLlmProfile({ name: "LLM", provider: "provider", model: "model", baseUrl: "https://example.com", apiKeyEnvironmentVariable: "API_KEY" }, databasePath);
+    saveAndActivateLlmProfile({ name: "LLM", provider: "provider", model: "model", baseUrl: "https://example.com", apiKey: "test-key" }, databasePath);
     const id = savePeoplePrompt({ name: " Careful matching ", systemPrompt: "Return pairs conservatively." }, databasePath);
     expect(getPeoplePrompt(id, databasePath)).toMatchObject({ name: "Careful matching", revision: 1 });
     expect(listPeoplePrompts(databasePath)).toHaveLength(2);

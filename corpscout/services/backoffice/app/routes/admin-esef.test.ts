@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   loadOverview: vi.fn(),
   loadCountries: vi.fn(),
   localCodexEnabled: false,
+  getApiKey: vi.fn(),
   profiles: [
     {
       profileId: "profile-1",
@@ -12,7 +13,6 @@ const mocks = vi.hoisted(() => ({
       provider: "deepseek",
       baseUrl: "https://api.deepseek.com",
       model: "deepseek-v4-flash",
-      apiKeyEnvironmentVariable: "DEEPSEEK_API_KEY",
       isActive: true,
       apiKeyAvailable: false,
       createdAt: "2026-08-01T00:00:00.000Z",
@@ -38,8 +38,10 @@ vi.mock("~/lib/esef-countries.server", () => ({
   loadEsefCountryCodes: (...args: unknown[]) => mocks.loadCountries(...args),
 }));
 
-vi.mock("~/lib/llm-settings.server", () => ({
+vi.mock("~/lib/llm-settings.server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/lib/llm-settings.server")>()),
   listLlmProfiles: () => mocks.profiles,
+  getLlmProfileApiKey: (...args: unknown[]) => mocks.getApiKey(...args),
   isLocalCodexEnabled: () => mocks.localCodexEnabled,
 }));
 
@@ -80,6 +82,8 @@ const VALID_FIELDS = {
 };
 
 beforeEach(() => {
+  mocks.getApiKey.mockReset();
+  mocks.getApiKey.mockReturnValue("stored-key-for-test");
   mocks.launch.mockReset();
   mocks.launch.mockResolvedValue({
     runId: "esef-run-1",
@@ -94,6 +98,7 @@ beforeEach(() => {
     enrichment: { recentEnrichmentRuns: [] },
   });
   mocks.localCodexEnabled = false;
+  vi.stubEnv("CRAWLER_LLM_ENCRYPTION_KEY", "11".repeat(32));
   vi.stubEnv("BACKOFFICE_OPERATOR", "operator@example.com");
   vi.stubEnv("DAGSTER_UI_URL", "https://dagster.example");
 });
@@ -137,8 +142,7 @@ describe("admin ESEF action", () => {
         provider: "deepseek",
         model: "deepseek-v4-flash",
         baseUrl: "https://api.deepseek.com",
-        apiKeyEnvironmentVariable: "DEEPSEEK_API_KEY",
-        temperature: 0.2,
+        apiKeyEncrypted: expect.stringMatching(/^v1\./),          temperature: 0.2,
         promptVersion: "esef-company-enrichment-v2",
         concurrency: 4,
       },
@@ -157,7 +161,7 @@ describe("admin ESEF action", () => {
       provider: "local_codex",
       model: "codex",
       baseUrl: "http://graovic-mac:8787/v1",
-      apiKeyEnvironmentVariable: "LOCAL_CODEX_API_KEY",
+      apiKeyEncrypted: null,
     });
   });
 
@@ -308,4 +312,12 @@ describe("admin ESEF loader", () => {
       result.profiles.find((profile) => profile.profileId === "local_codex"),
     ).toBeUndefined();
   });
+});
+
+
+it("reprocesses saved ESEF responses without decrypting credentials", async () => {
+  const result = await post({ ...VALID_FIELDS, refresh_behavior: "reprocess_existing_without_model" });
+  expect(result.ok).toBe(true);
+  expect(mocks.getApiKey).not.toHaveBeenCalled();
+  expect(mocks.launch.mock.calls[0][0].llm.apiKeyEncrypted).toBeNull();
 });

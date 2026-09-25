@@ -529,24 +529,36 @@ No headless/headed slots are preallocated; each request selects its mode.
 ### Crawl LLM selection and encrypted credentials
 
 Queue processing and saved-input crawl starts require a profile from `/admin/settings/llms`.
-Backoffice resolves that profile's API-key environment variable and verifies the selected
+Backoffice decrypts that profile's API key from its settings database and verifies the selected
 endpoint/model through the authenticated crawler before launching Dagster. An unavailable
 model blocks the launch and returns its failure reason. Dagster verifies again before
 submitting domain work, including when resuming an execution with its frozen configuration.
 
 Set `CRAWLER_LLM_ENCRYPTION_KEY` to the same 64 hexadecimal characters (32 random bytes)
-in Backoffice and the crawler's `crawler_service_llm_encryption_key` Ansible secret.
+in Backoffice, the crawler's `crawler_service_llm_encryption_key` Ansible secret, and
+the browser's `browser_service_llm_encryption_key` Ansible secret.
 Generate once with `openssl rand -hex 32`; keep it in ignored environment/secrets files.
-Dagster must not receive this shared key. It carries only the selected provider, base URL,
-model and AES-256-GCM encrypted API key. The versioned envelope uses a fresh 12-byte nonce,
+Provider API keys are encrypted in the Backoffice SQLite settings database. The master
+key is the only LLM secret that Backoffice needs in its environment. Save or replace a
+provider key through `/admin/settings/llms`; forms and API responses never return it.
+Existing environment-backed profiles must be migrated into encrypted database records
+before removing their provider environment variables.
+Crawler and Brave jobs carry only the selected provider, base URL, model and
+AES-256-GCM encrypted API key through Dagster. Direct Dagster LLM consumers also need
+`CRAWLER_LLM_ENCRYPTION_KEY` to decrypt their selected profile at the outbound model-call
+boundary; the key belongs in deployment secrets, never in run configuration or tags.
+The versioned envelope uses a fresh 12-byte nonce,
 a 16-byte authentication tag, and authenticated provider/endpoint/model metadata.
 Changing metadata or the shared key invalidates old envelopes. Keep the shared key stable
-while queued or resumable executions exist; a coordinated rotation requires new executions.
+for the saved database credentials and queued or resumable executions. A coordinated
+rotation must re-encrypt saved credentials and replace pending execution envelopes.
 An execution's selected profile is frozen; choose a new execution to change its model or credentials.
 
 The chosen LLM applies to crawl classification and extraction. CAPTCHA assistance keeps
 its separate model controls and service credentials. Legacy direct crawler requests without
-an `llm` profile remain supported for existing integrations.
+an `llm` profile remain supported for existing integrations. Provider variables on the crawler
+and browser still serve those legacy integrations and manual CAPTCHA controls; migrating
+Backoffice profiles alone does not remove those dependencies.
 
 ### Brave browser assistant
 
@@ -559,7 +571,8 @@ credential errors block the launch and leave the inputs queued.
 
 Configure `browser_service_llm_encryption_key` in the browser service's ignored Ansible
 secrets file to the same value as Backoffice `CRAWLER_LLM_ENCRYPTION_KEY`. The browser
-process receives it as `BROWSER_LLM_ENCRYPTION_KEY`; Dagster never receives the shared key.
+process receives it as `BROWSER_LLM_ENCRYPTION_KEY`. Brave execution transports encrypted
+profiles through Dagster; decryption for its browser assistant happens in the browser service.
 A stopped legacy Brave execution can adopt a selected profile once on resume, preserving
 its completed outcomes. That profile is then frozen for the execution, just like new runs.
 

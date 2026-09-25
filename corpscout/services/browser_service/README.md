@@ -211,8 +211,12 @@ the legacy assistant model, endpoint, and environment credential. Provider
 reasoning defaults remain enabled. The credential uses the crawler's existing
 AES-256-GCM `v1.<nonce>.<ciphertext-and-tag>` envelope and authenticated metadata.
 Set `BROWSER_LLM_ENCRYPTION_KEY` to the same 64-character hexadecimal key as
-Backoffice's `CRAWLER_LLM_ENCRYPTION_KEY`. Only encrypted credentials are stored
-with requests; Dagster does not need the decryption key.
+Backoffice's and the crawler's `CRAWLER_LLM_ENCRYPTION_KEY`. Backoffice stores provider
+API keys encrypted in its settings database; only encrypted credentials are stored
+with browser requests. Dagster transports this profile without decrypting it.
+The local `.env.example` documents the browser master-key setting. Legacy `DEEPSEEK`
+and `OPENROUTER_API_KEY` variables are still needed for manual/crawler CAPTCHA controls
+and Brave requests without `llm`; selected-profile Brave runs do not use those variables.
 
 Before submitting a batch, call authenticated `POST /v1/brave/llm/verify` with
 `{"llm": <encrypted-profile>}`. A single completion must inspect a harmless

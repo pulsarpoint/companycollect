@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -13,7 +13,6 @@ export interface LlmProfile {
   provider: string;
   baseUrl: string;
   model: string;
-  apiKeyEnvironmentVariable: string;
   isActive: boolean;
   apiKeyAvailable: boolean;
   createdAt: string;
@@ -26,7 +25,7 @@ export interface SaveLlmProfileInput {
   provider: string;
   baseUrl: string;
   model: string;
-  apiKeyEnvironmentVariable: string;
+  apiKey?: string;
 }
 
 interface StoredLlmProfile {
@@ -35,7 +34,7 @@ interface StoredLlmProfile {
   provider: string;
   base_url: string;
   model: string;
-  api_key_environment_variable: string;
+  api_key_encrypted: string | null;
   is_active: number;
   created_at: string;
   updated_at: string;
@@ -61,9 +60,7 @@ function connectSettingsDatabase(databasePath: string): DatabaseSync {
       provider TEXT NOT NULL CHECK (trim(provider) != ''),
       base_url TEXT NOT NULL CHECK (trim(base_url) != ''),
       model TEXT NOT NULL CHECK (trim(model) != ''),
-      api_key_environment_variable TEXT NOT NULL CHECK (
-        trim(api_key_environment_variable) != ''
-      ),
+      api_key_encrypted TEXT,
       is_active INTEGER NOT NULL DEFAULT 0 CHECK (is_active IN (0, 1)),
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -77,7 +74,79 @@ function connectSettingsDatabase(databasePath: string): DatabaseSync {
       updated_at TEXT NOT NULL
     );
   `);
-  return database;
+  try {
+    // Existing profiles referenced process variables. Import each available key once,
+    // then remove the reference so all future reads use encrypted database storage.
+    const columns = database.prepare("PRAGMA table_info(llm_profile)").all();
+    if (columns.some(column => column.name === "api_key_environment_variable")) {
+      database.exec("BEGIN IMMEDIATE");
+      const currentColumns = database.prepare("PRAGMA table_info(llm_profile)").all();
+      if (currentColumns.some(column => column.name === "api_key_environment_variable")) {
+        database.exec("ALTER TABLE llm_profile ADD COLUMN api_key_encrypted TEXT");
+        const rows = database.prepare("SELECT profile_id, api_key_environment_variable FROM llm_profile").all();
+        const update = database.prepare("UPDATE llm_profile SET api_key_encrypted = ? WHERE profile_id = ?");
+        for (const row of rows) {
+          const apiKey = process.env[String(row.api_key_environment_variable)]?.trim();
+          update.run(apiKey ? encryptStoredApiKey(String(row.profile_id), apiKey) : null, row.profile_id);
+        }
+        database.exec("ALTER TABLE llm_profile DROP COLUMN api_key_environment_variable");
+      }
+      database.exec("COMMIT");
+    }
+    return database;
+  } catch (error) {
+    if (database.isTransaction) database.exec("ROLLBACK");
+    database.close();
+    throw error;
+  }
+}
+
+function encryptionKey(): Buffer {
+  const key = process.env.CRAWLER_LLM_ENCRYPTION_KEY ?? "";
+  if (!/^[a-fA-F0-9]{64}$/.test(key)) {
+    throw new LlmSettingsValidationError("Configure the same 64-character hexadecimal CRAWLER_LLM_ENCRYPTION_KEY in Backoffice and the crawler before saving or using API keys.");
+  }
+  return Buffer.from(key, "hex");
+}
+
+function encryptStoredApiKey(profileId: string, apiKey: string): string {
+  if (!apiKey || Buffer.byteLength(apiKey, "utf8") > 8192 || /[\x00-\x1f\x7f]/.test(apiKey)) {
+    throw new LlmSettingsValidationError("API key is required and must contain at most 8192 bytes without control characters.");
+  }
+  const nonce = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", encryptionKey(), nonce);
+  cipher.setAAD(Buffer.from(`corpscout-llm-profile:v1\0${profileId}`, "utf8"));
+  const encrypted = Buffer.concat([cipher.update(apiKey, "utf8"), cipher.final(), cipher.getAuthTag()]);
+  return `v1.${nonce.toString("base64url")}.${encrypted.toString("base64url")}`;
+}
+
+function decryptStoredApiKey(profileId: string, encrypted: string): string {
+  const key = encryptionKey();
+  try {
+    const parts = /^v1\.([A-Za-z0-9_-]{16})\.([A-Za-z0-9_-]+)$/.exec(encrypted);
+    if (!parts) throw new Error("Invalid envelope");
+    const data = Buffer.from(parts[2], "base64url");
+    if (data.length <= 16) throw new Error("Invalid ciphertext");
+    const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(parts[1], "base64url"));
+    decipher.setAAD(Buffer.from(`corpscout-llm-profile:v1\0${profileId}`, "utf8"));
+    decipher.setAuthTag(data.subarray(-16));
+    return Buffer.concat([decipher.update(data.subarray(0, -16)), decipher.final()]).toString("utf8");
+  } catch {
+    throw new LlmSettingsValidationError("The saved API key could not be decrypted. Restore the original encryption key or enter a replacement API key in LLM settings.");
+  }
+}
+
+/** Server-only credential access. Public profile responses never include key material. */
+export function getLlmProfileApiKey(profileId: string, databasePath = SETTINGS_DATABASE_PATH): string {
+  const database = connectSettingsDatabase(databasePath);
+  try {
+    const row = database.prepare("SELECT api_key_encrypted FROM llm_profile WHERE profile_id = ?").get(profileId) as {api_key_encrypted: string | null} | undefined;
+    if (!row) throw new LlmSettingsValidationError("LLM profile was not found.");
+    if (!row.api_key_encrypted) throw new LlmSettingsValidationError("The selected LLM API key is missing. Add it in LLM settings.");
+    return decryptStoredApiKey(profileId, row.api_key_encrypted);
+  } finally {
+    database.close();
+  }
 }
 
 const LOCAL_CODEX_SETTING_KEY = "local_codex_enabled";
@@ -131,6 +200,9 @@ function requiredValue(value: string, label: string, maximumLength: number): str
   if (cleanValue === "") {
     throw new LlmSettingsValidationError(`${label} is required.`);
   }
+  if (/[\x00-\x1f\x7f]/.test(cleanValue)) {
+    throw new LlmSettingsValidationError(`${label} must not contain control characters.`);
+  }
   if (cleanValue.length > maximumLength) {
     throw new LlmSettingsValidationError(
       `${label} must contain at most ${maximumLength} characters.`,
@@ -147,22 +219,12 @@ function validatedBaseUrl(value: string): string {
   } catch {
     throw new LlmSettingsValidationError("Base URL must be a valid URL.");
   }
-  if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+  if (!["http:", "https:"].includes(parsedUrl.protocol) || parsedUrl.username || parsedUrl.password || cleanValue.includes("?") || cleanValue.includes("#") || /\s/.test(cleanValue)) {
     throw new LlmSettingsValidationError(
-      "Base URL must use the http or https protocol.",
+      "Base URL must use HTTP(S) without credentials, query parameters, or fragments.",
     );
   }
   return cleanValue.replace(/\/+$/, "");
-}
-
-function validatedEnvironmentVariable(value: string): string {
-  const cleanValue = requiredValue(value, "API key environment variable", 128);
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(cleanValue)) {
-    throw new LlmSettingsValidationError(
-      "API key environment variable must be a valid environment variable name.",
-    );
-  }
-  return cleanValue;
 }
 
 function mapStoredProfile(row: StoredLlmProfile): LlmProfile {
@@ -172,11 +234,8 @@ function mapStoredProfile(row: StoredLlmProfile): LlmProfile {
     provider: row.provider,
     baseUrl: row.base_url,
     model: row.model,
-    apiKeyEnvironmentVariable: row.api_key_environment_variable,
     isActive: row.is_active === 1,
-    apiKeyAvailable: Boolean(
-      process.env[row.api_key_environment_variable]?.trim(),
-    ),
+    apiKeyAvailable: Boolean(row.api_key_encrypted),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -221,19 +280,21 @@ export function saveAndActivateLlmProfile(
 ): string {
   const profileId = input.profileId?.trim() || randomUUID();
   const name = requiredValue(input.name, "Name", 120);
-  const provider = requiredValue(input.provider, "Provider", 120);
+  const provider = requiredValue(input.provider, "Provider", 100);
   const baseUrl = validatedBaseUrl(input.baseUrl);
-  const model = requiredValue(input.model, "Model", 240);
-  const apiKeyEnvironmentVariable = validatedEnvironmentVariable(
-    input.apiKeyEnvironmentVariable,
-  );
+  const model = requiredValue(input.model, "Model", 200);
+  const apiKey = input.apiKey?.trim() ?? "";
   const database = connectSettingsDatabase(databasePath);
   const now = new Date().toISOString();
   try {
     database.exec("BEGIN IMMEDIATE");
     const existing = database
-      .prepare("SELECT created_at FROM llm_profile WHERE profile_id = ?")
-      .get(profileId) as unknown as { created_at: string } | undefined;
+      .prepare("SELECT created_at, api_key_encrypted FROM llm_profile WHERE profile_id = ?")
+      .get(profileId) as unknown as { created_at: string; api_key_encrypted: string | null } | undefined;
+    if (!apiKey && !existing?.api_key_encrypted) {
+      throw new LlmSettingsValidationError("API key is required.");
+    }
+    const encryptedApiKey = apiKey ? encryptStoredApiKey(profileId, apiKey) : existing!.api_key_encrypted;
     database.prepare("UPDATE llm_profile SET is_active = 0").run();
     database
       .prepare(
@@ -243,7 +304,7 @@ export function saveAndActivateLlmProfile(
           provider,
           base_url,
           model,
-          api_key_environment_variable,
+          api_key_encrypted,
           is_active,
           created_at,
           updated_at
@@ -253,7 +314,7 @@ export function saveAndActivateLlmProfile(
           provider = excluded.provider,
           base_url = excluded.base_url,
           model = excluded.model,
-          api_key_environment_variable = excluded.api_key_environment_variable,
+          api_key_encrypted = excluded.api_key_encrypted,
           is_active = 1,
           updated_at = excluded.updated_at`,
       )
@@ -263,14 +324,14 @@ export function saveAndActivateLlmProfile(
         provider,
         baseUrl,
         model,
-        apiKeyEnvironmentVariable,
+        encryptedApiKey,
         existing?.created_at ?? now,
         now,
       );
     database.exec("COMMIT");
     return profileId;
   } catch (error) {
-    database.exec("ROLLBACK");
+    if (database.isTransaction) database.exec("ROLLBACK");
     if (
       error instanceof Error &&
       error.message.includes("UNIQUE constraint failed: llm_profile.name")

@@ -29,7 +29,7 @@ export interface EsefLlmRuntimeProfile {
   provider: string;
   model: string;
   baseUrl: string;
-  apiKeyEnvironmentVariable: string;
+  apiKeyEncrypted: string | null;
   temperature: number;
   promptVersion: string;
   concurrency: number;
@@ -89,6 +89,12 @@ export async function launchEsefDocumentCompanyInformation(
     );
   }
 
+  if (input.llm.apiKeyEncrypted === null && input.llm.provider.trim() !== "local_codex" && input.refreshBehavior !== "reprocess_existing_without_model") {
+    throw new Error("The selected LLM profile needs a saved API key.");
+  }
+  if (input.llm.apiKeyEncrypted !== null && !/^v1\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{23,}$/.test(input.llm.apiKeyEncrypted)) {
+    throw new Error("The selected LLM encrypted credential is invalid.");
+  }
   await assertEsefLaunchAllowed(options);
   const requestId = randomUUID();
   const companyIds = normalizedIds(input.companyIds);
@@ -109,8 +115,10 @@ export async function launchEsefDocumentCompanyInformation(
               provider: input.llm.provider.trim(),
               model: input.llm.model.trim(),
               base_url: input.llm.baseUrl.trim(),
-              api_key_environment_variable:
-                input.llm.apiKeyEnvironmentVariable.trim(),
+              ...(input.refreshBehavior === "reprocess_existing_without_model" ? {}
+                : input.llm.apiKeyEncrypted !== null
+                  ? { api_key_encrypted: input.llm.apiKeyEncrypted }
+                  : { api_key_environment_variable: "LOCAL_CODEX_API_KEY" }),
               temperature: input.llm.temperature,
               prompt_version: input.llm.promptVersion.trim(),
               concurrency: input.llm.concurrency,

@@ -10,12 +10,13 @@ let directory: string;
 let databasePath: string;
 let input: Parameters<typeof launchDomainAction>[0];
 beforeEach(() => {
+  vi.stubEnv("CRAWLER_LLM_ENCRYPTION_KEY", "11".repeat(32));
   directory = mkdtempSync(join(tmpdir(), "domain-launch-")); databasePath = join(directory, "settings.sqlite");
-  const profileId = saveAndActivateLlmProfile({ name: "Verifier", provider: "openrouter", model: "chosen/model", baseUrl: "https://openrouter.ai/api/v1", apiKeyEnvironmentVariable: "DOMAIN_KEY" }, databasePath);
+  const profileId = saveAndActivateLlmProfile({ name: "Verifier", provider: "openrouter", model: "chosen/model", baseUrl: "https://openrouter.ai/api/v1", apiKey: "secret-must-not-travel" }, databasePath);
   const [prompt] = listDomainPrompts(databasePath);
   input = { operation: "process", profileId, promptId: prompt.promptId, promptRevision: prompt.revision, changedOnly: true, verifyDomains: true, requestedBy: "operator" };
 });
-afterEach(() => rmSync(directory, { recursive: true, force: true }));
+afterEach(() => { vi.unstubAllEnvs(); rmSync(directory, { recursive: true, force: true }); });
 
 function options() {
   return { url: "http://dagster:3000/graphql", databasePath, fetchImpl: vi.fn(async () => new Response(JSON.stringify({ data: { launchRun: { __typename: "LaunchRunSuccess", run: { runId: "domain-run", status: "QUEUED" } } } }))) };
@@ -34,7 +35,7 @@ describe("domain processing launch", () => {
     expect(execution.runConfigData.ops.se_company_domain_suggestions_brave.config).toEqual({ execute: true, page_size: 5_000 });
     expect(execution.runConfigData.ops.se_company_domain_verification.config).toMatchObject({
       changed_only: true,
-      verification: { provider: "openrouter", model: "chosen/model", api_key_environment_variable: "DOMAIN_KEY", system_prompt: listDomainPrompts(databasePath)[0].systemPrompt },
+      verification: { provider: "openrouter", model: "chosen/model", api_key_encrypted: expect.stringMatching(/^v1\./), system_prompt: listDomainPrompts(databasePath)[0].systemPrompt },
     });
     expect(execution.runConfigData.ops.se_company_domain_publish.config.verification)
       .toEqual(execution.runConfigData.ops.se_company_domain_verification.config.verification);

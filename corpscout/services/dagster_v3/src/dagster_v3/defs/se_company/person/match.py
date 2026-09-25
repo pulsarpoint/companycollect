@@ -8,8 +8,8 @@ activate together through the shared input_hash and matched_at join.
 
 Nothing here decides which persons publish: the fold does, and it reads only the pairs at or
 above `fold.MATCH_THRESHOLD`. Reviewer rows never reach the model -- a reviewer merges by
-hand -- and the API key is read from the host environment at call time by
-`se_company/info.py::build_llm_client`, never through run config.
+hand -- and saved-profile API keys are decrypted at client construction by
+`se_company/info.py::build_llm_client`, never stored in plaintext run config.
 """
 
 import hashlib
@@ -26,6 +26,7 @@ from typing import Any
 from openai import OpenAI, OpenAIError, RateLimitError
 from pydantic import Field, field_validator, model_validator
 
+from dagster_v3.defs.common.encrypted_llm import redact_llm_error
 from dagster_v3.defs.se_company.basic_info.extract import SCAN_QUERY_SETTINGS, scope_pages
 from dagster_v3.defs.se_company.common import normalized_se_company_ids
 from dagster_v3.defs.se_company.info import LlmProfileConfig, map_ordered
@@ -677,13 +678,13 @@ def run_match(
                     result = caller(request, company_id=company_id)
                 except RateLimitError as exc:
                     return _Outcome(company_id, candidates, hashed, None, 0, 0, "",
-                                    f"rate_limited: {exc}"[:ERROR_LIMIT])
+                                    f"rate_limited: {redact_llm_error(exc, llm_client)}"[:ERROR_LIMIT])
                 except OpenAIError as exc:
                     return _Outcome(company_id, candidates, hashed, None, 0, 0, "",
-                                    f"http_error: {exc}"[:ERROR_LIMIT])
+                                    f"http_error: {redact_llm_error(exc, llm_client)}"[:ERROR_LIMIT])
                 except ValueError as exc:
                     return _Outcome(company_id, candidates, hashed, None, 0, 0, "",
-                                    f"invalid_response: {exc}"[:ERROR_LIMIT])
+                                    f"invalid_response: {redact_llm_error(exc, llm_client)}"[:ERROR_LIMIT])
                 except Exception as exc:  # noqa: BLE001 -- one company, never the run
                     # Anything the three typed handlers did not name: a bug here, a driver
                     # raising its own class, a JSON library error. One company's state row
@@ -691,7 +692,7 @@ def run_match(
                     # and the next run re-sends it -- the cause is usually ours to fix, and a
                     # fix does not move the candidate hash that would otherwise free it.
                     return _Outcome(company_id, candidates, hashed, None, 0, 0, "",
-                                    f"unexpected: {type(exc).__name__}: {exc}"[:ERROR_LIMIT])
+                                    f"unexpected: {type(exc).__name__}: {redact_llm_error(exc, llm_client)}"[:ERROR_LIMIT])
                 # A truncated or empty answer is a paid call: its usage and its exact text are
                 # stored WITH the error, not thrown away with an exception.
                 unusable = ""
@@ -711,7 +712,7 @@ def run_match(
                 except ValueError as exc:
                     return _Outcome(company_id, candidates, hashed, None, result.prompt_tokens,
                                     result.completion_tokens, result.content,
-                                    f"invalid_response: {exc}"[:ERROR_LIMIT])
+                                    f"invalid_response: {redact_llm_error(exc, llm_client)}"[:ERROR_LIMIT])
                 return _Outcome(company_id, candidates, hashed, parsed, result.prompt_tokens,
                                 result.completion_tokens, result.content, "")
 

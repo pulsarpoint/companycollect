@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { dagsterRunUrl, launchRun, listRuns, type DagsterOptions } from "~/lib/dagster.server";
-import { getLlmProfile } from "~/lib/llm-settings.server";
+import { getLlmProfile, getLlmProfileApiKey } from "~/lib/llm-settings.server";
+import { encryptCrawlLlm } from "~/lib/crawl-llm.server";
 import { launchDomainAction } from "~/lib/domain-launch.server";
 import { launchPeopleAction } from "~/lib/people-launch.server";
 import { ACTIVE_COMPANY_RUN_STATUSES, COMPANY_ACTION_AREAS, type CompanyActionResult } from "~/lib/company-actions";
@@ -77,8 +78,7 @@ async function dispatchCompanyAction(
     ops.se_basic_info_suggestions_llm = { config: {
       execute: true, max_companies: input.llmMaxCompanies,
       llm: {
-        provider: profile.provider, model: profile.model, base_url: profile.baseUrl,
-        api_key_environment_variable: profile.apiKeyEnvironmentVariable,
+        ...encryptCrawlLlm(profile, getLlmProfileApiKey(profile.profileId, options.databasePath), process.env.CRAWLER_LLM_ENCRYPTION_KEY ?? ""),
         temperature: 0, max_tokens: 6_000, concurrency: 1,
       },
     } };

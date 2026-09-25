@@ -18,6 +18,7 @@ from dagster_clickhouse import ClickhouseResource
 from openai import OpenAI
 from pydantic import Field, field_validator
 
+from dagster_v3.defs.common.encrypted_llm import redact_llm_error
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.se_company.basic_info import tables
 from dagster_v3.defs.se_company.basic_info.assets import GROUP_NAME
@@ -361,7 +362,7 @@ def run_llm_extractor(
                     )
                 except Exception as exc:  # noqa: BLE001 -- one failed call must not lose the page
                     if log is not None:
-                        log("LLM call failed for %s: %s", context.company_id, exc)
+                        log("LLM call failed for %s: %s", context.company_id, redact_llm_error(exc, llm_client))
                     return context, None, False, input_hash, matching
                 return context, result, reused, input_hash, matching
 

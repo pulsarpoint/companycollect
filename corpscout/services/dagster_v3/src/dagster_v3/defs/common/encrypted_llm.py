@@ -1,13 +1,18 @@
-"""Validated opaque LLM credentials for crawler and browser service requests."""
+"""Encrypted credentials for LLM workers and service handoffs."""
 
+import base64
+import os
+import re
 from urllib.parse import urlsplit
 
 import dagster as dg
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from pydantic import ConfigDict, Field, model_validator
 
 
 class EncryptedLLMConfig(dg.Config):
-    """Opaque credentials supplied by Backoffice; only the destination service can decrypt them."""
+    """Credentials supplied by Backoffice, decrypted only by the worker making LLM calls."""
 
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
@@ -47,3 +52,29 @@ class EncryptedLLMConfig(dg.Config):
                 "LLM base_url must be an HTTP(S) endpoint without credentials, query or fragment"
             )
         return self
+
+    def decrypt_api_key(self) -> str:
+        """Decrypt only at a direct model client boundary, never in forwarding assets."""
+        key = os.getenv("CRAWLER_LLM_ENCRYPTION_KEY", "")
+        if re.fullmatch(r"[A-Fa-f0-9]{64}", key) is None:
+            raise ValueError("Configure the shared CRAWLER_LLM_ENCRYPTION_KEY on the Dagster worker before using saved LLM profiles")
+        _, nonce_part, ciphertext_part = self.api_key_encrypted.split(".")
+        try:
+            nonce, ciphertext = [
+                base64.urlsafe_b64decode(part + "=" * (-len(part) % 4))
+                for part in (nonce_part, ciphertext_part)
+            ]
+            aad = f"corpscout-crawler-llm:v1\0{self.provider}\0{self.base_url}\0{self.model}".encode()
+            api_key = AESGCM(bytes.fromhex(key)).decrypt(nonce, ciphertext, aad).decode("utf-8")
+        except (ValueError, InvalidTag):
+            raise ValueError("Encrypted LLM credential could not be authenticated; check the shared key and selected model configuration") from None
+        if not api_key.strip() or len(api_key.encode()) > 8192 or any(ord(char) < 32 or ord(char) == 127 for char in api_key):
+            raise ValueError("Decrypted LLM credential is empty or invalid")
+        return api_key
+
+
+def redact_llm_error(error: Exception, client: object) -> str:
+    """Provider errors may echo credentials; keep them out of saved errors and logs."""
+    message = str(error)
+    api_key = getattr(client, "api_key", None)
+    return message.replace(api_key, "[redacted]") if isinstance(api_key, str) and api_key else message
