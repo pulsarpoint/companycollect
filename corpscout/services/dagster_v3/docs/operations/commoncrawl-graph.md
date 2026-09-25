@@ -1,8 +1,30 @@
 # Common Crawl graph releases and ranking history
 
-Implementation status (2026-09-25): tasks 1–7 are implemented locally. Production
-migration, deployment, backfill, and schedule activation are task 8 and have **not**
-been performed. The running system and legacy rank table are unchanged.
+Rollout status (2026-09-25): PostgreSQL migration 000126 and ClickHouse migration
+000447 are applied. Dagster definitions are deployed through the Ansible hot-sync
+workflow, preserving the existing service supervisor and active runs. Discovery
+cataloged 54 releases: 53 domain releases with 159 available files and one host-only
+release. Bootstrap adopted `cc-main-2026-jun-jul-aug`, reused its existing nodes and
+edges, and published 119,722,885 matching ranking rows (3,099,580,037 bytes on disk).
+The active pointer is initialized. The legacy rank table is preserved.
+
+Daily discovery and the import-request sensor are running. Automatic imports and
+the cleanup schedule remain disabled until the newest-release rollout pilot below;
+historical backfill has not started. The local backoffice catalog connection is
+configured in its ignored `.env`, and its production build was smoke-tested against
+the live catalog and active graph. A remote backoffice host/URL is still unconfirmed.
+
+Successful discovery run: `a30c3ca2-3888-43c6-aa7b-f04ae56cee8b`.
+Bootstrap run: `80049715-8de5-42f1-a867-9007909a406c`.
+
+The deployed catalog uses the existing application `processing_worker` connection
+with SELECT/INSERT/UPDATE grants on the four catalog tables. Dagster downloads use
+`/opt/companycollect/corpscout/dagster_v3/data/commoncrawl_graph_tmp`. The named
+collection was provisioned using ClickHouse DDL with non-overridable URL and
+credentials, persisted in the existing server-managed collection storage. A test
+object written to `commoncrawl-graphs` was read successfully from ClickHouse and
+then removed. Preflight free space: Dagster 83 GiB, ClickHouse approximately
+2.2 TiB on `/opt/clickhouse`, RustFS data volume 962 GiB.
 
 ## Runtime configuration
 
@@ -17,8 +39,9 @@ been performed. The running system and legacy rank table are unchanged.
 The named collection must point to the same **commoncrawl-graphs** bucket that
 Dagster writes. Its endpoint must be reachable from the ClickHouse host; a URL
 reachable only from the Dagster host is insufficient. Configure `url`,
-`access_key_id`, and `secret_access_key` as non-overridable values in protected
-server configuration. The importer supplies `filename`, `format`, `structure`,
+`access_key_id`, and `secret_access_key` as non-overridable values using protected
+server configuration or administrator-managed named-collection DDL. Disable query
+logging when provisioning credentials through DDL. The importer supplies `filename`, `format`, `structure`,
 and `compression_method`; no credentials enter query text or run metadata.
 See [ClickHouse named collections](https://clickhouse.com/docs/operations/named-collections)
 for the XML configuration and S3 filename syntax.
@@ -61,8 +84,11 @@ continue. A request already handed to Dagster may finish after pause.
 Each raw file uses an immutable key derived from URL, ETag and compressed size.
 Downloads use bounded buffers, whole-stream retries, SHA-256 and complete gzip
 integrity checks. Cache objects become visible after upload completion. The exact
-five-column ranking format without host counts and the six-column format are
-supported; omitted host counts remain NULL. Other headers fail explicitly.
+five-column ranking format without host counts (including 2017's `hc_pos` and
+`hc_val` headers) and the six-column format are supported; omitted host counts
+remain NULL. Discovery recognizes the legacy `domaingraph/` paths separately from
+host graph paths and upgrades old official HTTP links to HTTPS. Other headers
+fail explicitly.
 
 Native ClickHouse readers load validated cached gzip into unique staging tables.
 Ranks publish with `REPLACE PARTITION`; a serving ranking partition is therefore
@@ -86,6 +112,10 @@ cannot remove its input during a long scan. Raw ranking files are currently reta
 as rebuildable cache; this implementation does not install a bucket lifecycle rule.
 
 ## Task 8: deployment and initial adoption
+
+Steps 1–5 are complete on the deployed Dagster instance. Step 6 is verified locally;
+remote backoffice deployment and steps 7–10 remain. The request sensor and daily
+discovery schedule are already started; automatic data imports remain paused.
 
 1. Read the existing migration ledgers and live graph/rank inventory before changing
    anything. PostgreSQL migration **000126** and ClickHouse migration **000447** are

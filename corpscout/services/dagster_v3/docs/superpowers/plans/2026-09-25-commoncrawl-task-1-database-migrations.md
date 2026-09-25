@@ -1,6 +1,6 @@
 # Common Crawl task 1 — database migrations
 
-Status: implemented and locally validated on 2026-09-25; not applied to production. Parent: [Common Crawl graph ingestion and ranking history](2026-09-25-commoncrawl-graph-ranking-history.md).
+Status: implemented, validated, and applied to production on 2026-09-25. PostgreSQL is at clean version 126 and ClickHouse at clean version 447. Parent: [Common Crawl graph ingestion and ranking history](2026-09-25-commoncrawl-graph-ranking-history.md).
 
 Delivered ClickHouse migration `000447_corpscout_commoncrawl_domain_graph_ranks` and PostgreSQL migration `000126_commoncrawl_graph_catalog`. PostgreSQL tables use the public schema with the names below. Integration tests exercise disposable PostgreSQL 17 and ClickHouse 26.5 servers. `tests/test_commoncrawl_graph_migrations.py` plus the existing ClickHouse migration suite passed (158 tests); `uv run dg check defs` and Ruff checks passed.
 

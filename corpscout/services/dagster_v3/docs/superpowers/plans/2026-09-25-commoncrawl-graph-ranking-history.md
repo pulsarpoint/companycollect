@@ -1,6 +1,6 @@
 # Common Crawl graph ingestion and ranking history
 
-Date: 2026-09-25. Status: tasks 1–7 implemented and locally validated; task 8 awaits rollout. No production ingestion or deployment performed.
+Date: 2026-09-25. Status: tasks 1–7 implemented and validated. Task 8 is underway: production migrations and Dagster deployment are complete, daily discovery and request dispatch are enabled, and the existing graph is adopted with 119,722,885 matching ranking rows. See the operational handoff below for remaining rollout work.
 
 ## Outcome and scope
 
@@ -198,7 +198,7 @@ Distinguish `not present in a loaded release`, `release not imported`, and `data
 
 ## Implementation tasks
 
-Tasks 1–7 are implemented in the checkout. Validation includes real HTTP → RustFS → ClickHouse imports, PostgreSQL request constraints and reconciliation, a complete nine-asset Dagster run and rerun with expired raw cache, graph activation/cleanup, chronological consumer tests, backoffice typecheck/build, and Dagster definition checks. The release panel was visually checked at desktop and 375-pixel mobile widths using fixture data. Task 8 has not changed production or started a bulk backfill; the deployment choice is pending.
+Tasks 1–7 are implemented. Validation includes real HTTP → RustFS → ClickHouse imports, PostgreSQL request constraints and reconciliation, a complete nine-asset Dagster run and rerun with expired raw cache, graph activation/cleanup, chronological consumer tests, backoffice typecheck/build, and Dagster definition checks. The release panel was visually checked at desktop and 375-pixel mobile widths using fixture data. Production discovery succeeded with 54 releases and 159 available files, including the legacy 2017 domain layouts and ranking headers. A temporary localhost production backoffice server returned HTTP 200 with the live release catalog. Its local catalog connection is configured. A remote backoffice host/URL is still unconfirmed; automatic bulk imports and historical backfill have not started.
 
 Operational handoff: [Common Crawl graph rollout](../../operations/commoncrawl-graph.md).
 
