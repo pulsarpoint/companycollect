@@ -25,6 +25,11 @@ from dagster_v3.defs.commoncrawl_rdap.rdap import (
     is_registry_catch_all,
     normalize_rdap_network,
 )
+from dagster_v3.defs.commoncrawl_rdap.registry import (
+    REGISTRY_CLASS_INSERT_SQL,
+    RegistryClassification,
+    classify_registration,
+)
 
 
 COMMONCRAWL_RDAP_POOL = "commoncrawl_rdap"
@@ -424,6 +429,7 @@ def _enrich_rdap_bucket(
             "retryable_errors": 0,
             "parent_lookup_failures": 0,
             "registry_catch_all_responses": 0,
+            "registry_level_networks": 0,
             "network_rows_written": 0,
             "segment_rows_written": 0,
             "lookup_rows_written": 0,
@@ -600,17 +606,28 @@ def _enrich_rdap_bucket(
                 counts["parent_networks"] += 1
                 rir_counts[parent.network.rir] += 1
 
+            classification = classify_registration(write_client, direct.network)
             network_rows, segment_rows = _insert_normalized_networks(
                 write_client,
                 normalized_networks,
                 written_network_keys=written_network_keys,
                 batch_size=config.insert_batch_size,
+                classification=classification,
             )
             counts["network_rows_written"] += network_rows
             counts["segment_rows_written"] += segment_rows
             counts["segments"] += segment_rows
-            for segment in direct.segments:
-                in_run_segments.add(segment.cidr)
+            if classification.reusable:
+                for segment in direct.segments:
+                    in_run_segments.add(segment.cidr)
+            else:
+                counts["registry_level_networks"] += 1
+                context.log.info(
+                    "RDAP registration %s is %s; it answers only %s",
+                    direct.network.network_key,
+                    classification.registry_class,
+                    address,
+                )
 
             lookup_rows.append(
                 _lookup_result(
@@ -653,7 +670,9 @@ def _insert_normalized_networks(
     *,
     written_network_keys: set[str],
     batch_size: int,
+    classification: RegistryClassification | None = None,
 ) -> tuple[int, int]:
+    """Insert networks, then the direct network's class row, then segments (the trie source order)."""
     new_networks = [
         normalized
         for normalized in normalized_networks
@@ -675,6 +694,20 @@ def _insert_normalized_networks(
         network_rows,
         batch_size=batch_size,
     )
+    direct = normalized_networks[0]
+    if (
+        classification is not None
+        and classification.registry_class != "unknown"
+        and new_networks[0].network.network_key == direct.network.network_key
+    ):
+        client.execute(
+            REGISTRY_CLASS_INSERT_SQL,
+            [
+                classification.clickhouse_values(
+                    direct.network.network_key, direct.network.fetched_at
+                )
+            ],
+        )
     _insert_rows_in_chunks(
         client,
         RDAP_SEGMENT_INSERT_SQL,
@@ -796,6 +829,9 @@ def _assert_rdap_storage_exists(clickhouse: ClickhouseResource) -> None:
             "rdap_network_segments_current",
             "rdap_ip_lookup_results",
             "rdap_ip_lookup_results_current",
+            "rdap_network_registry_class",
+            "rdap_network_registry_class_current",
+            "ip_registry_ready",
         ),
     )
     with clickhouse.get_connection() as client:

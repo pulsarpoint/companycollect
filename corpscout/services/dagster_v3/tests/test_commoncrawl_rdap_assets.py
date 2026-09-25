@@ -20,6 +20,7 @@ from dagster_v3.defs.commoncrawl_ip import (
     COMMONCRAWL_IP_PARTITIONS,
     commoncrawl_ip_bucket_index,
 )
+from dagster_v3.defs.commoncrawl_rdap import registry
 from dagster_v3.defs.commoncrawl_rdap.assets import (
     RDAP_CANDIDATES_SQL,
     RDAP_LOOKUP_COLUMNS,
@@ -75,9 +76,16 @@ class FakeRdapReadClient:
 class FakeRdapWriteClient:
     def __init__(self) -> None:
         self.inserts: list[tuple[str, list[tuple[object, ...]]]] = []
+        self.queries: list[tuple[str, object]] = []
+        # What REGISTRY_CONTEXT_SQL answers; empty means the reference data is not loaded.
+        self.context_rows: list[tuple[object, ...]] = []
 
-    def execute(self, query: str, rows=None) -> None:
+    def execute(self, query: str, rows=None):
+        if "ip_registry_iana_blocks_rule_current" in query:
+            self.queries.append((query, rows))
+            return list(self.context_rows)
         self.inserts.append((query, list(rows or [])))
+        return None
 
 
 class FakeRdapClickhouseResource:
@@ -298,6 +306,9 @@ def test_rdap_asset_rejects_the_pre_reader_dictionary_definition() -> None:
         ("rdap_network_segments_current",),
         ("rdap_ip_lookup_results",),
         ("rdap_ip_lookup_results_current",),
+        ("rdap_network_registry_class",),
+        ("rdap_network_registry_class_current",),
+        ("ip_registry_ready",),
     ]
     clickhouse = FakeStorageResource(
         [
@@ -556,14 +567,10 @@ def test_rdap_bucket_quarantines_a_registry_catch_all_response() -> None:
 
     assert result["registry_catch_all_responses"] == 1
     assert result["direct_networks"] == 0
-    assert [query for query, _rows in write_client.inserts] == [
-        RDAP_LOOKUP_INSERT_SQL
-    ]
+    assert [query for query, _rows in write_client.inserts] == [RDAP_LOOKUP_INSERT_SQL]
     lookup_row = write_client.inserts[0][1][0]
     assert lookup_row[RDAP_LOOKUP_COLUMNS.index("lookup_status")] == "unsupported"
-    assert lookup_row[RDAP_LOOKUP_COLUMNS.index("error_code")] == (
-        "registry_catch_all"
-    )
+    assert lookup_row[RDAP_LOOKUP_COLUMNS.index("error_code")] == ("registry_catch_all")
 
 
 def test_rdap_bucket_with_no_candidates_makes_no_remote_requests() -> None:
@@ -961,3 +968,68 @@ def _create_table_columns(sql: str, table: str) -> tuple[str, ...]:
         for line in column_block.splitlines()
         if line.strip() != "" and not line.lstrip().startswith("--")
     )
+
+
+def _apnic_block_response() -> RdapLookupResponse:
+    return RdapLookupResponse(
+        rir="apnic",
+        raw_response={
+            "objectClassName": "ip network",
+            "handle": "103.0.0.0 - 103.255.255.255",
+            "startAddress": "103.0.0.0",
+            "endAddress": "103.255.255.255",
+            "ipVersion": "v4",
+            "name": "APNIC-AP",
+            "type": "ALLOCATED PORTABLE",
+            "status": ["active"],
+        },
+    )
+
+
+def test_rdap_bucket_never_reuses_a_registry_level_registration() -> None:
+    read_client = FakeRdapReadClient([("103.35.64.49", 4), ("103.15.66.50", 4)])
+    write_client = FakeRdapWriteClient()
+    # The /8 answer covers IANA's 103/8 (designated to APNIC): registry level.
+    write_client.context_rows = [
+        (1, 1, ("APNIC", "apnic", "ALLOCATED"), ("", "", 0, 0))
+    ]
+    rdap_client = FakeRdapClient([_apnic_block_response(), _apnic_block_response()])
+    config = CommoncrawlRdapConfig(
+        candidate_scan_limit=10,
+        max_requests=5,
+        insert_batch_size=10,
+        request_delay_seconds=0,
+        parent_depth=0,
+        rate_limit_retry_seconds=3600,
+        transient_retry_seconds=900,
+    )
+    with dg.build_asset_context(partition_key="bucket_007") as context:
+        result = _enrich_rdap_bucket(
+            context=context,
+            clickhouse=FakeRdapClickhouseResource(read_client, write_client),
+            bucket_index=7,
+            config=config,
+            rdap_client=rdap_client,
+            queried_at=FETCHED_AT,
+            sleep=lambda _seconds: None,
+        )
+    # The second address of the block is looked up itself: the /8 answers only 103.35.64.49.
+    assert rdap_client.direct_queries == ["103.35.64.49", "103.15.66.50"]
+    assert result["in_run_trie_skips"] == 0 and result["registry_level_networks"] == 2
+    assert [query for query, _rows in write_client.queries] == [
+        registry.REGISTRY_CONTEXT_SQL
+    ] * 2
+    assert [query for query, _rows in write_client.inserts] == [
+        RDAP_NETWORK_INSERT_SQL,
+        registry.REGISTRY_CLASS_INSERT_SQL,
+        RDAP_SEGMENT_INSERT_SQL,
+        RDAP_LOOKUP_INSERT_SQL,
+    ]
+    [class_rows] = [
+        rows
+        for query, rows in write_client.inserts
+        if query == registry.REGISTRY_CLASS_INSERT_SQL
+    ]
+    assert class_rows[0][:2] == ("apnic:103.0.0.0 - 103.255.255.255", "registry_level")
+    assert class_rows[0][4:8] == (1, "APNIC", "apnic", "ALLOCATED")
+    assert class_rows[0][-1] == FETCHED_AT

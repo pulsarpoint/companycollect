@@ -23,6 +23,11 @@ from dagster_v3.defs.commoncrawl_rdap.assets import (
     RDAP_SEGMENT_INSERT_SQL,
 )
 from dagster_v3.defs.commoncrawl_rdap.client import RdapClient, RdapClientError
+from dagster_v3.defs.commoncrawl_rdap.registry import (
+    REGISTRY_CLASS_INSERT_SQL,
+    RegistryClassification,
+    classify_registration,
+)
 from dagster_v3.defs.commoncrawl_rdap.rdap import (
     NormalizedRdapNetwork,
     RdapLookupResponse,
@@ -173,6 +178,7 @@ class RdapEnricher:
         self.cache_hits = 0
         self.networks_written = 0
         self.parent_failures = 0
+        self.registry_level_responses = 0
         self.recent: OrderedDict[str, NormalizedRdapNetwork] = OrderedDict()
 
     def _request(self, address_or_url, *, rir=None):
@@ -188,12 +194,26 @@ class RdapEnricher:
             return self.rdap.lookup_up_url(address_or_url, rir=rir)
         return self.rdap.lookup_ip(address_or_url)
 
-    def _persist(self, normalized):
+    def _persist(
+        self, normalized, classification: RegistryClassification | None = None
+    ):
         self.client.execute(
             RDAP_NETWORK_INSERT_SQL,
             [normalized.network.clickhouse_values()],
             settings={"async_insert": 1, "wait_for_async_insert": 1},
         )
+        if classification is not None and classification.registry_class != "unknown":
+            # The class row lands before the segments: the trie source (migration 000450)
+            # never sees a segment whose class it does not know.
+            self.client.execute(
+                REGISTRY_CLASS_INSERT_SQL,
+                [
+                    classification.clickhouse_values(
+                        normalized.network.network_key, normalized.network.fetched_at
+                    )
+                ],
+                settings={"async_insert": 1, "wait_for_async_insert": 1},
+            )
         self.client.execute(
             RDAP_SEGMENT_INSERT_SQL,
             [segment.clickhouse_values() for segment in normalized.segments],
@@ -358,9 +378,21 @@ class RdapEnricher:
                     retry_after=retry_after,
                 ),
             )
-        # Coverage is durable before any exact-IP outcome refers to it.
-        self._persist(direct)
-        self._remember(direct)
+        # Coverage is durable before any exact-IP outcome refers to it. A registry-level or
+        # unallocated registration is stored for this address only: the trie excludes it by
+        # class (migration 000450) and the in-run cache never holds it.
+        classification = classify_registration(self.client, direct.network)
+        self._persist(direct, classification)
+        if classification.reusable:
+            self._remember(direct)
+        else:
+            self.registry_level_responses += 1
+            self.log.info(
+                "RDAP registration %s is %s; it answers only %s",
+                direct.network.network_key,
+                classification.registry_class,
+                ip,
+            )
         current = direct
         visited = {direct.network.network_key}
         for _ in range(self.config.parent_depth):

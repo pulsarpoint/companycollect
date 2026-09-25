@@ -159,6 +159,9 @@ def ip_enrichment_results(
                 "rdap_network_segments",
                 "rdap_network_segments_current",
                 "rdap_ip_lookup_results_current",
+                "rdap_network_registry_class",
+                "rdap_network_registry_class_current",
+                "ip_registry_ready",
             ),
         )
         counts = {
@@ -170,6 +173,7 @@ def ip_enrichment_results(
             "rdap_cache_hits": 0,
             "request_limit_reached": False,
             "parent_lookup_failures": 0,
+            "registry_level_responses": 0,
         }
         if info["total"]:
             city_path, asn_path = maxmind_geoip.database_paths()
@@ -256,6 +260,7 @@ def ip_enrichment_results(
                     rdap_requests=rdap.requests,
                     rdap_cache_hits=rdap.cache_hits,
                     parent_lookup_failures=rdap.parent_failures,
+                    registry_level_responses=rdap.registry_level_responses,
                 )
         counts["remaining"] = info["total"] - counts["written"] - counts["resumed"]
         metadata = {

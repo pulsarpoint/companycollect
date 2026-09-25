@@ -17,6 +17,7 @@ from tests.test_ip_enrichment_input import (
     materialize as prepare_input,
     server as server,
 )
+from tests.test_ip_registry import apply_migration, seed_reference_data
 from tests.test_processing_store import (
     processing_postgres_url as processing_postgres_url,
     store as store,
@@ -99,14 +100,25 @@ def environment(server, store, tmp_path, monkeypatch):
         SOURCE(CLICKHOUSE(HOST 'localhost' PORT 9000 USER 'test' PASSWORD 'test'
             DB 'corpscout' TABLE 'rdap_network_segments_current'))
         LAYOUT(IP_TRIE()) LIFETIME(0)""")
+    # Reference data, classes and the class-aware trie view (000449/000450), idempotent.
+    apply_migration(client, "000449_corpscout_ip_registry_reference_data.up.sql")
+    apply_migration(
+        client, "000450_corpscout_rdap_trie_registry_class_exclusion.up.sql"
+    )
     for table in (
         "ip_enrichment_input",
         "ip_enrichment_results",
         "rdap_networks",
         "rdap_network_segments",
         "rdap_ip_lookup_results",
+        "rdap_network_registry_class",
+        "ip_registry_snapshots",
+        "ip_registry_iana_blocks",
+        "ip_registry_special_segments",
+        "ip_registry_holder_blocks",
     ):
         client.execute(f"TRUNCATE TABLE corpscout.{table}")
+    client.execute("SYSTEM RELOAD DICTIONARY corpscout.ip_registry_special_trie")
     city, asn = Reader("City"), Reader("ASN")
     for kind in ("City", "ASN"):
         (tmp_path / f"GeoLite2-{kind}.mmdb").touch()
@@ -409,3 +421,57 @@ def test_workflow_freezes_and_processes_the_same_task(environment):
         {"task": task},
     ) == [("127.0.0.1",), ("8.8.8.8",), ("9.9.9.9",)]
     assert sorted(env.calls) == ["8.8.8.8", "9.9.9.9"]
+
+
+def test_registry_level_registration_answers_only_the_queried_ip(
+    environment, monkeypatch
+):
+    env = environment
+    seed_reference_data(env.client)
+    monkeypatch.setattr(
+        enrichment.RdapClient,
+        "lookup_ip",
+        lambda self, ip: (
+            env.calls.append(ip),
+            response(ip, start="103.0.0.0", end="103.255.255.255"),
+        )[1],
+    )
+    first = run(env, select(env, ["103.35.64.49"]))
+    assert first.success
+    assert (
+        first.asset_materializations_for_node("ip_enrichment_results")[0]
+        .metadata["registry_level_responses"]
+        .value
+        == 1
+    )
+    assert env.client.execute(
+        "SELECT rdap_lookup_status, rdap_matched_cidr, rdap_start_address FROM corpscout.ip_enrichment_current"
+    ) == [("found", "103.0.0.0/8", "103.0.0.0")]
+    assert env.client.execute(
+        "SELECT network_key, registry_class, covered_rir_blocks, iana_rir, special_status FROM corpscout.rdap_network_registry_class_current"
+    ) == [("arin:TEST-103.35.64.49", "registry_level", 1, "apnic", "")]
+    env.client.execute("SYSTEM RELOAD DICTIONARY corpscout.rdap_network_trie")
+    assert env.client.execute(
+        "SELECT count() FROM corpscout.rdap_network_segments_current"
+    ) == [(0,)]
+    # Another address of the block is looked up, not served from the /8 (neither trie nor in-run cache).
+    assert run(env, select(env, ["103.15.66.50", "103.15.66.51"]), batch_size=1).success
+    assert env.calls == ["103.35.64.49", "103.15.66.50", "103.15.66.51"]
+    # A holder registration is classified reusable and serves its neighbours as before.
+    monkeypatch.setattr(
+        enrichment.RdapClient,
+        "lookup_ip",
+        lambda self, ip: (
+            env.calls.append(ip),
+            response(ip, start="103.35.64.0", end="103.35.67.255"),
+        )[1],
+    )
+    assert run(env, select(env, ["103.35.64.1", "103.35.64.2"]), batch_size=1).success
+    assert env.calls == ["103.35.64.49", "103.15.66.50", "103.15.66.51", "103.35.64.1"]
+    assert env.client.execute(
+        "SELECT registry_class FROM corpscout.rdap_network_registry_class_current WHERE network_key = 'arin:TEST-103.35.64.1'"
+    ) == [("reusable",)]
+    env.client.execute("SYSTEM RELOAD DICTIONARY corpscout.rdap_network_trie")
+    assert env.client.execute(
+        "SELECT dictGetOrDefault('corpscout.rdap_network_trie', 'network_key', tuple(toIPv4('103.35.65.9')), '')"
+    ) == [("arin:TEST-103.35.64.1",)]
