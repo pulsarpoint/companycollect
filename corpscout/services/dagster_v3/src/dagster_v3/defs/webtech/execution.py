@@ -1,12 +1,11 @@
 """Freeze draft membership; derive remaining work and completion from results."""
 
 from collections.abc import Sequence
-from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from datetime import datetime
 
-from psycopg2.extras import Json
 from dagster_clickhouse import ClickhouseResource
 
+from dagster_v3.defs.common import queue_execution
 from dagster_v3.defs.common.clickhouse_queue import ClickHouseInputQueue
 from dagster_v3.defs.common.processing import ProcessingStore
 from dagster_v3.defs.webtech.input import INPUT_RELATION, PROCESSOR_VERSION
@@ -26,73 +25,31 @@ def start_execution(
     run_id: str,
 ) -> dict:
     """Called under the same session lock used by imports and result processing."""
-    task = store.task(task_id)
-    if (
-        task is None
-        or task["processor"] != PROCESSOR_VERSION
-        or task["queue_scope"] is None
-    ):
-        raise ValueError("Expected a Webtech draft queue")
     profile = {
         "force_rescan": force_rescan,
         "recent_days": recent_days,
         "detector_version": WEBTECH_DETECTOR_VERSION,
     }
-    saved = task["config"].get("execution")
-    identity = execution_id or (saved["execution_id"] if saved else str(uuid4()))
-    if saved is not None and identity == saved["execution_id"]:
-        # Envelope size is transport only. Older executions froze it; ignore it.
-        frozen = {k: v for k, v in saved["profile"].items() if k != "batch_size"}
-        if frozen != profile:
-            raise ValueError(
-                "Execution settings are frozen; resume with the same profile"
-            )
-        if task["status"] not in ("selected", "ready", "completed"):
-            raise ValueError("Execution is not resumable")
-        return task
-    if task["inputs_purged_at"] is not None:
-        raise ValueError("Inputs were purged; create a new draft")
-    if task["status"] != "draft" and not task["work_config"].get("finished"):
-        raise ValueError(
-            "Finish or resume the existing execution before starting another"
-        )
-    if task["status"] not in ("draft", "ready", "completed"):
-        raise ValueError("Queue cannot be started in this state")
-    with store.transaction() as cursor:
-        cursor.execute(
-            "SELECT count(*) AS pending FROM processing.input_submissions WHERE task_id=%s AND status NOT IN ('completed','cancelled')",
-            (task_id,),
-        )
-        if cursor.fetchone()["pending"]:
-            raise ValueError("Finish or retry all outstanding imports before Start")
-    snapshot = ClickHouseInputQueue(
-        clickhouse, INPUT_RELATION, selection_task_id=task_id
-    ).inspect()
-    if snapshot["total"] == 0:
-        raise ValueError("Cannot start an empty queue")
-    now = datetime.now(UTC)
-    execution = {
-        "execution_id": identity,
-        "profile": profile,
-        "dagster_run_id": run_id,
-        "started_at": now.isoformat(),
-        "freshness_cutoff": (now - timedelta(days=recent_days)).isoformat(),
-    }
-    with store.transaction() as cursor:
-        cursor.execute(
-            """UPDATE processing.tasks SET status='selected',frozen_at=coalesce(frozen_at,%s),
-            completed_at=NULL,source_info=%s,total=%s,config=%s,work_config='{}',ready_at=NULL,
-            admitted_count=0,succeeded_count=0,skipped_count=0,terminal_failed_count=0
-            WHERE task_id=%s RETURNING *""",
-            (
-                now,
-                Json(snapshot),
-                snapshot["total"],
-                Json({"execution": execution}),
-                task_id,
-            ),
-        )
-        return dict(cursor.fetchone())
+
+    def snapshot() -> tuple[dict, int]:
+        inspected = ClickHouseInputQueue(
+            clickhouse, INPUT_RELATION, selection_task_id=task_id
+        ).inspect()
+        return inspected, inspected["total"]
+
+    # Envelope size is transport only. Older executions froze it; ignore it.
+    return queue_execution.start_execution(
+        store,
+        task_id=task_id,
+        processor=PROCESSOR_VERSION,
+        profile=profile,
+        execution_id=execution_id,
+        freshness_days=recent_days,
+        run_id=run_id,
+        snapshot=snapshot,
+        transport_keys=("batch_size",),
+        label="Webtech",
+    )
 
 
 def execution_crawl_id(execution: dict) -> str:
@@ -165,10 +122,6 @@ def finish_execution(
     parameters = _parameters(task)
     with clickhouse.get_connection() as client:
         [(remaining,)] = client.execute("SELECT count()" + _REMAINING, parameters)
-        if remaining:
-            raise ValueError(
-                f"Not every input has a published outcome ({remaining} remaining)"
-            )
         [(succeeded, failed)] = client.execute(
             f"""SELECT countIf(outcome = 'success'), countIf(outcome != 'success') FROM (
                 SELECT input_id, argMax(outcome, tuple(scanned_at, scan_id)) AS outcome
@@ -178,46 +131,20 @@ def finish_execution(
                 GROUP BY input_id)""",
             parameters,
         )
-    skipped = task["total"] - succeeded - failed
-    with store.transaction() as cursor:
-        cursor.execute(
-            """UPDATE processing.tasks SET succeeded_count=%s, terminal_failed_count=%s,
-            skipped_count=%s, admitted_count=%s, status='completed',
-            work_config=work_config || '{"finished":true}'::jsonb,
-            completed_at=coalesce(completed_at, now())
-            WHERE task_id=%s RETURNING *""",
-            (succeeded, failed, skipped, task["total"], task_id),
-        )
-        return dict(cursor.fetchone())
+    return queue_execution.record_completion(
+        store, task_id=task_id, remaining=remaining, succeeded=succeeded, failed=failed
+    )
 
 
 def purge_completed_inputs(
     store: ProcessingStore, clickhouse: ClickhouseResource, task_id: str
 ) -> None:
     """Drop the completed task's partition. Results and task history remain."""
-    task = store.task(task_id)
-    if (
-        task is None
-        or task["processor"] != PROCESSOR_VERSION
-        or task["queue_scope"] is None
-        or task["status"] != "completed"
-        or not task["work_config"].get("finished")
-    ):
-        raise ValueError("Only fully completed Webtech tasks can clear their inputs")
-    if task["inputs_purged_at"] is not None:
-        return
-    with clickhouse.get_connection() as client:
-        client.execute(
-            f"ALTER TABLE {INPUT_RELATION} DROP PARTITION %(task)s", {"task": task_id}
-        )
-        [(left,)] = client.execute(
-            f"SELECT count() FROM {INPUT_RELATION} WHERE task_id=%(task)s",
-            {"task": task_id},
-        )
-        if left:
-            raise RuntimeError("Completed Webtech input cleanup is not yet visible")
-    with store.transaction() as cursor:
-        cursor.execute(
-            "UPDATE processing.tasks SET inputs_purged_at=coalesce(inputs_purged_at, now()) WHERE task_id=%s",
-            (task_id,),
-        )
+    queue_execution.purge_completed_inputs(
+        store,
+        clickhouse,
+        task_id=task_id,
+        processor=PROCESSOR_VERSION,
+        relation=INPUT_RELATION,
+        label="Webtech",
+    )
