@@ -263,6 +263,27 @@ def test_results_wait_for_crawls_and_store_sections(
     assert len(saved) == 2  # Model for CAPTCHA does not change content freshness.
 
 
+@pytest.mark.parametrize("batch_size", [1, 10])
+def test_trailing_fresh_inputs_are_counted_once(database, crawler, batch_size):
+    client, _, _ = database
+    saved, _, _ = crawler
+    seed(client)
+    assert run(database, domains=["a.example"]).success
+    # z is admitted first; a is a fresh input after the last admission.
+    result = run(
+        database,
+        domains=["z.example", "a.example"],
+        batch_size=batch_size,
+        max_batches=2,
+    )
+    assert result.success
+    [event] = result.get_asset_materialization_events()
+    metadata = event.event_specific_data.materialization.metadata
+    assert metadata["completed"].value == 1
+    assert metadata["fresh_skipped"].value == 1
+    assert len(saved) == 2
+
+
 def test_partial_does_not_satisfy_freshness_and_later_failure_does_not_hide_success(
     database, crawler
 ):

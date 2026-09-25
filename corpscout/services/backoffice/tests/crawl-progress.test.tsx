@@ -56,3 +56,36 @@ it("reports a status failure instead of presenting it as an empty history", asyn
   dagster.listRuns.mockRejectedValue(new Error("Dagster unavailable"));
   await expect(loadCrawlProgress("site_info")).rejects.toThrow("Dagster unavailable");
 });
+it("includes queue runs and reads their completion counts after inputs have been purged", async () => {
+  dagster.listRuns.mockResolvedValue([{...run, status: "SUCCESS", tags: {"processing/task_id": "task-one"}, runConfig: {}}]);
+  dagster.assetMaterializations.mockResolvedValue([{runId: run.runId, numbers: {succeeded_pages: 1, failed_pages: 1, skipped_recent: 3}}]);
+  const snapshot = await loadCrawlProgress("site_info");
+  expect(snapshot.runs[0]).toMatchObject({taskId: "task-one", selected: 5, successful: 1, unsuccessful: 1, skipped: 3});
+  const html = renderToStaticMarkup(<CrawlProgress snapshot={snapshot} />);
+  expect(html).toContain("Queue");
+  expect(html).toContain("Finished with errors");
+  expect(html).toContain("5 processed / 5 selected");
+});
+it("counts a resumed queue's original execution, taking the latest result per request", async () => {
+  dagster.listRuns.mockResolvedValue([{...run, runId: "retry", tags: {"processing/task_id": "task-one", "crawler/execution_id": run.runId}}]);
+  const snapshot = await loadCrawlProgress("site_info");
+  expect(snapshot.runs[0]).toMatchObject({runId: "retry", successful: 1, unsuccessful: 1});
+  expect(db.chQuery.mock.calls[0][1]).toEqual({runIds: [run.runId]});
+  expect(db.chQuery.mock.calls[0][0]).toContain("argMax(successful, tuple(finished_at, attempt))");
+  expect(db.chQuery.mock.calls[0][0]).toContain("GROUP BY run_id, request_id");
+});
+it("uses explicit queue execution config before the running job has written its tags", async () => {
+  dagster.listRuns.mockResolvedValue([{...run, runId: "retry", runConfig: {ops: {website_site_info_results: {config: {task_id: "task-one", execution_id: run.runId}}}}}]);
+  const snapshot = await loadCrawlProgress("site_info");
+  expect(snapshot.runs[0]).toMatchObject({taskId: "task-one", successful: 1, selected: null});
+});
+it("flags impossible historical totals instead of rendering a false completion percentage", async () => {
+  dagster.listRuns.mockResolvedValue([{...run, status: "SUCCESS"}]);
+  dagster.assetMaterializations.mockResolvedValue([{runId: run.runId, numbers: {completed: 1, unsuccessful: 1, fresh_skipped: 2}}]);
+  const snapshot = await loadCrawlProgress("site_info");
+  expect(snapshot.runs[0].countsWarning).toContain("Recorded counts exceed");
+  const html = renderToStaticMarkup(<CrawlProgress snapshot={snapshot} />);
+  expect(html).toContain("3 selected · Counts need review");
+  expect(html).not.toContain("4 processed");
+  expect(html).not.toContain('role="progressbar"');
+});

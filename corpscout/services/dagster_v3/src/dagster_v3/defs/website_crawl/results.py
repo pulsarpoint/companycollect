@@ -463,6 +463,7 @@ def process_crawls(
                 )
                 admitted = []
                 for row in rows:
+                    last = row
                     if row["domain"] in recovered_domains:
                         continue
                     payload, key = effective_payload(row, crawl_type, batch_id, config)
@@ -496,11 +497,8 @@ def process_crawls(
                     )
                     collect(admitted)
                     remaining -= len(admitted)
-                    # Continue after the last admitted input, not the unconsumed page.
-                    last_domain = admitted[-1]["domain"]
-                    last = next(row for row in rows if row["domain"] == last_domain)
-                else:
-                    last = rows[-1]
+                # Resume after the last inspected input, including trailing skips.
+                # Advancing only past the last admission counts those skips again.
                 params.update(
                     after_priority=last["priority"], after_domain=last["domain"]
                 )

@@ -8,6 +8,8 @@ export interface CrawlRunProgress {
   successful: number | null;
   unsuccessful: number | null;
   skipped: number | null;
+  taskId: string | null;
+  countsWarning: string | null;
 }
 
 export interface CrawlProgressSnapshot {
