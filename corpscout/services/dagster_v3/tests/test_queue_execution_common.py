@@ -110,3 +110,20 @@ def test_record_completion_refuses_remaining_and_derives_skips(store):  # noqa: 
         task["skipped_count"],
     ) == (1, 0, 1)
     assert task["admitted_count"] == 2 and task["work_config"] == {"finished": True}
+
+
+def test_completion_never_precedes_a_freeze_from_a_faster_clock(store):  # noqa: F811
+    # frozen_at comes from the Dagster host clock, completed_at from PostgreSQL's.
+    processing, _ = store
+    task_id = draft(processing)
+    start(processing, task_id)
+    with processing.transaction() as cursor:
+        cursor.execute(
+            "UPDATE processing.tasks SET frozen_at=now() + interval '1 minute' WHERE task_id=%s",
+            (task_id,),
+        )
+    task = queue_execution.record_completion(
+        processing, task_id=task_id, remaining=0, succeeded=2, failed=0
+    )
+    assert task["status"] == "completed"
+    assert task["completed_at"] >= task["frozen_at"]

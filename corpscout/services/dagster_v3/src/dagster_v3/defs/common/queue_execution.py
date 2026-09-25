@@ -115,7 +115,8 @@ def record_completion(
             """UPDATE processing.tasks SET succeeded_count=%s, terminal_failed_count=%s,
             skipped_count=%s, admitted_count=%s, status='completed',
             work_config=work_config || '{"finished":true}'::jsonb,
-            completed_at=coalesce(completed_at, now())
+            -- frozen_at comes from the Dagster host clock; never finish before it.
+            completed_at=coalesce(completed_at, greatest(frozen_at, now()))
             WHERE task_id=%s RETURNING *""",
             (succeeded, failed, skipped, task["total"], task_id),
         )
@@ -154,7 +155,7 @@ def purge_completed_inputs(
             raise RuntimeError(f"Completed {label} input cleanup is not yet visible")
     with store.transaction() as cursor:
         cursor.execute(
-            "UPDATE processing.tasks SET inputs_purged_at=coalesce(inputs_purged_at, now()) WHERE task_id=%s",
+            "UPDATE processing.tasks SET inputs_purged_at=coalesce(inputs_purged_at, greatest(completed_at, now())) WHERE task_id=%s",
             (task_id,),
         )
 
