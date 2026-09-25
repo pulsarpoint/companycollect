@@ -163,9 +163,14 @@ def run(database, asset=website_site_info_results, **config):
         [
             asset,
             dg.AssetSpec("website_crawl_input"),
-            dg.AssetSpec(asset.key.to_user_string().replace("_results", "_requests")),
         ],
-        resources={"clickhouse": resource, "processing": processing, "crawler_queue_store": ObjectStoreResource(endpoint_url="http://test", access_key="test", secret_key="test")},
+        resources={
+            "clickhouse": resource,
+            "processing": processing,
+            "crawler_queue_store": ObjectStoreResource(
+                endpoint_url="http://test", access_key="test", secret_key="test"
+            ),
+        },
         run_config={
             "ops": {
                 asset.key.to_user_string(): {

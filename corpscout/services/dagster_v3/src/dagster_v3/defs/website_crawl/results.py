@@ -1,8 +1,8 @@
 """Crawl processing with recoverable submissions and per-type result storage.
 
-A run processes either a frozen crawl task (the Brave-style path: every domain the
-input asset selected for that task_id, in batches, resumable by execution_id) or,
-without a task, a bounded batch of explicit or due inputs.
+A run with ``task_id`` processes a crawl draft (see ``queue_execution``). Without a
+task it processes a bounded batch of explicit or due inputs from the request tables,
+recovering pending receipts first.
 """
 
 import hashlib
@@ -25,7 +25,6 @@ from dagster_v3.defs.website_crawl.dispatch import (
     crawl_payload,
     send_crawl,
 )
-from dagster_v3.defs.website_crawl.input import TASK_DOMAINS, TASK_TAG, task_processor
 
 RESULTS_BY_TYPE = {
     "full": "corpscout.website_full_crawl_results",
@@ -218,29 +217,21 @@ def result_record(submission: dict, job: dict, result: dict) -> dict:
 def resolve_execution(
     context: dg.AssetExecutionContext,
     config: CrawlResultsConfig,
-    processing: ProcessingResource,
     crawl_type: str,
 ) -> dict:
-    """Keep one execution's task, content settings and freshness cutoff fixed across retries."""
+    """Keep one execution's content settings and freshness cutoff fixed across retries."""
     execution_id = config.execution_id or context.run.root_run_id or context.run.run_id
     original = context.instance.get_run_by_id(execution_id)
     if original is None:
         raise ValueError("execution_id must identify the original Dagster run")
-    current = context.instance.get_run_by_id(context.run.run_id)
-    tagged_task = current.tags.get(TASK_TAG) if current is not None else None
-    if config.task_id and tagged_task and config.task_id != tagged_task:
-        raise ValueError("task_id differs from the crawl task prepared in this run")
     settings = {name: getattr(config, name) for name in FIXED_ON_RESUME}
     if EXECUTION_TAG in original.tags:
         execution = json.loads(original.tags[EXECUTION_TAG])
         if execution["crawl_type"] != crawl_type:
             raise ValueError("execution_id belongs to a different crawl type")
-        requested = config.task_id or tagged_task
-        if requested is not None and requested != execution["task_id"]:
-            raise ValueError("execution_id belongs to a different crawl task")
-        if execution["task_id"] is not None and config.domains:
+        if execution.get("task_id") is not None:
             raise ValueError(
-                "a task execution processes its frozen selection; omit domains"
+                "execution_id belongs to a retired crawl task; add its domains to a draft instead"
             )
         changed = [
             name
@@ -257,35 +248,13 @@ def resolve_execution(
         return execution
     if config.execution_id is not None:
         raise ValueError("the original run has no saved crawl execution to resume")
-    task_id = config.task_id or tagged_task
-    total = None
-    if task_id is not None:
-        if config.domains:
-            raise ValueError("task_id processes its frozen selection; omit domains")
-        with processing.get_store() as store:
-            task = store.task(task_id)
-            if task is None or task["processor"] != task_processor(crawl_type):
-                raise ValueError(
-                    f"unknown crawl task for {crawl_type}: prepare it with the input asset"
-                )
-            if task["status"] not in {"selected", "ready"}:
-                raise ValueError("the crawl task is not ready")
-            if task["status"] == "selected":
-                task = store.activate_selection(
-                    task_id, config=settings, work_config={}
-                )
-        total = task["total"]
     execution = {
         "execution_id": execution_id,
-        "task_id": task_id,
         "crawl_type": crawl_type,
         "started_at": datetime.now(UTC).isoformat(),
-        "total": total,
         "settings": settings,
     }
     tags = {EXECUTION_TAG: json.dumps(execution, sort_keys=True)}
-    if task_id is not None:
-        tags[TASK_TAG] = task_id
     context.instance.add_run_tags(execution_id, tags)
     if execution_id != context.run.run_id:
         context.instance.add_run_tags(context.run.run_id, tags)
@@ -304,30 +273,27 @@ def process_crawls(
         raise ValueError(
             "basic_info page selection is required only for the basic-info results asset"
         )
-    if config.task_id and context.run.tags.get(TASK_TAG) not in (None, config.task_id):
-        raise ValueError("task_id differs from the task tagged on this run")
-    requested_task = config.task_id or context.run.tags.get(TASK_TAG)
-    if requested_task is not None:
+    if config.task_id is not None:
         with processing.get_store() as store:
-            task = store.task(requested_task)
-        if task is not None and task["queue_scope"] is not None:
-            from dagster_v3.defs.website_crawl.queue_execution import (
-                process_crawl_draft,
+            task = store.task(config.task_id)
+        if task is None or task["queue_scope"] is None:
+            raise ValueError(
+                f"unknown crawl task for {crawl_type}: add domains with website_crawl_input first"
             )
+        from dagster_v3.defs.website_crawl.queue_execution import process_crawl_draft
 
-            return process_crawl_draft(
-                context,
-                config,
-                clickhouse,
-                processing,
-                crawler_queue_store,
-                crawl_type,
-                requested_task,
-            )
+        return process_crawl_draft(
+            context,
+            config,
+            clickhouse,
+            processing,
+            crawler_queue_store,
+            crawl_type,
+            config.task_id,
+        )
     table = RESULTS_BY_TYPE[crawl_type]
     input_table = INPUTS_BY_TYPE[crawl_type] + "_current"
-    execution = resolve_execution(context, config, processing, crawl_type)
-    task_id = execution["task_id"]
+    execution = resolve_execution(context, config, crawl_type)
     batch_id = config.batch_id or execution["execution_id"]
     # Freshness is judged against the execution's start, so a resume sees the same cutoff.
     cutoff = datetime.fromisoformat(execution["started_at"]) - timedelta(
@@ -365,13 +331,15 @@ def process_crawls(
                     "A processor for this crawl type is already running; retry after it finishes"
                 )
         try:
-            relations = (table, table + "_latest_success", input_table, SUBMISSIONS)
-            if task_id is not None:
-                relations += (TASK_DOMAINS,)
-            for relation in relations:
+            for relation in (
+                table,
+                table + "_latest_success",
+                input_table,
+                SUBMISSIONS,
+            ):
                 if client.execute(f"EXISTS TABLE {relation}") != [(1,)]:
                     raise ValueError(
-                        f"Apply ClickHouse migrations 000430/000431 before processing: {relation}"
+                        f"Apply ClickHouse migration 000430 before processing: {relation}"
                     )
             http.headers["Authorization"] = f"Bearer {token}"
             params = {
@@ -390,14 +358,6 @@ def process_crawls(
                     raise ValueError(
                         "Some selected inputs no longer exist; refresh the list"
                     )
-            if task_id is not None:
-                # The whole frozen selection is this execution's scope, not batch_size * max_batches.
-                params["task_id"] = task_id
-                params["limit"] = max(execution["total"], 1)
-                selected = f""" AND domain IN (SELECT domain FROM {TASK_DOMAINS} FINAL
-                    WHERE task_id=%(task_id)s AND crawl_type=%(type)s)"""
-                metadata["task_id"] = task_id
-                metadata["selected_domains"] = execution["total"]
             if config.bucket is not None:
                 params["bucket"] = config.bucket
                 selected += " AND toUInt16(cityHash64(domain) % 256) = %(bucket)s"

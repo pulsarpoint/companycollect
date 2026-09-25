@@ -17,7 +17,17 @@ from tests.test_processing_store import processing_postgres_url, store  # noqa: 
 from tests.test_website_crawl_input_assets import server  # noqa: F401
 from tests.test_website_crawl_results import crawler as crawler
 from tests.test_webtech_input import objects  # noqa: F401
-from tests.test_website_crawl_tasks import SETTINGS
+
+SETTINGS = {
+    "challenge_agent_model": "deepseek-flash",
+    "challenge_agent_max_runs": 3,
+    "api": "deepseek",
+    "model": "deepseek-flash",
+    "max_pages": 1,
+    "max_model_calls": 20,
+    "page_selection": "basic_info",
+    "poll_interval_seconds": 0.01,
+}
 
 
 @pytest.fixture
@@ -59,7 +69,6 @@ def run(db, task_id, **overrides):  # noqa: F811
     return dg.materialize(
         [
             website_site_info_results,
-            dg.AssetSpec("website_site_info_requests"),
             dg.AssetSpec("website_crawl_input"),
         ],
         resources={
@@ -185,11 +194,16 @@ def test_freshness_is_at_execution_and_force_can_override(db, crawler):  # noqa:
     assert len(saved) == 2
 
 
-def test_lost_import_ack_replays_snapshot_and_blocks_start_until_repaired(db, crawler, monkeypatch):
+def test_lost_import_ack_replays_snapshot_and_blocks_start_until_repaired(
+    db, crawler, monkeypatch
+):
     from clickhouse_driver import Client
+
     client, _, processing, _, _ = db
     client.execute("DROP TABLE IF EXISTS corpscout.crawl_retry_source")
-    client.execute("CREATE TABLE corpscout.crawl_retry_source (domain String) ENGINE=MergeTree ORDER BY domain")
+    client.execute(
+        "CREATE TABLE corpscout.crawl_retry_source (domain String) ENGINE=MergeTree ORDER BY domain"
+    )
     client.execute("INSERT INTO corpscout.crawl_retry_source VALUES ('one.example')")
     execute = Client.execute
     interrupted = False
@@ -218,6 +232,7 @@ def test_lost_import_ack_replays_snapshot_and_blocks_start_until_repaired(db, cr
 
 def test_lost_cleanup_ack_does_not_repeat_crawls(db, crawler, monkeypatch):
     from clickhouse_driver import Client
+
     _, _, processing, _, _ = db
     _, calls, _ = crawler
     task = add(db, targets=["one.example"])["task_id"]
@@ -241,3 +256,11 @@ def test_lost_cleanup_ack_does_not_repeat_crawls(db, crawler, monkeypatch):
     assert run(db, task).success
     assert calls == before
     assert processing.task(task)["inputs_purged_at"] is not None
+
+
+def test_task_and_explicit_domains_are_exclusive():
+    from pydantic import ValidationError
+    from dagster_v3.defs.website_crawl.results import CrawlResultsConfig
+
+    with pytest.raises(ValidationError, match="task_id"):
+        CrawlResultsConfig(**SETTINGS, task_id=str(uuid4()), domains=["a.example"])
