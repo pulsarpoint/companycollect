@@ -150,6 +150,12 @@ is unchanged. NOVELIC retained 16/16 listed jobs while runtime fell from 8m41s t
 187/187 eligibility decisions with 82.59% fewer output tokens. See
 [the benchmark and its limits](COMPACT_SELECTOR_RESULTS_20260917.md).
 
+Basic info (`--site-info` alone) always describes the first page, including news,
+community and other non-company websites. A verified description finishes with
+`status: finished` and `stop_reason: site_info_complete`. The classification's
+`crawl_decision` still records eligibility for deeper crawling; it does not skip
+basic info. Fetch, model and evidence failures remain unsuccessful.
+
 Version 0.21.0 adds `--site-info`: a few factual sentences describing the company's
 activities, products and services, or a non-company site's purpose and content.
 Alone it reads only the input page and stops; combine it with `--pages`,

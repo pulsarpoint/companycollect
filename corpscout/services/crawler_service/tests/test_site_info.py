@@ -43,7 +43,7 @@ class SiteInfoTests(unittest.IsolatedAsyncioTestCase):
         install_browser_api(self)
 
     async def run_case(
-        self, *, document=None, html=HTML, status=200, redirect=None, **options
+        self, *, document=None, html=HTML, status=200, redirect=None, model_status=200, **options
     ):
         requested, tasks, web_requests = [], [], []
         pages = {
@@ -62,6 +62,8 @@ class SiteInfoTests(unittest.IsolatedAsyncioTestCase):
             if request.url.host != "api.deepseek.com":
                 web_requests.append(str(request.url))
                 return httpx.Response(404)
+            if model_status != 200:
+                return httpx.Response(model_status, json={"error": {"message": "Model unavailable"}})
             prompt = json.loads(request.content)["messages"][1]["content"]
             data = json.loads(prompt.split("INPUT DATA:\n")[1])
             if data.get("task") == "site_classification":
@@ -139,7 +141,7 @@ class SiteInfoTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result["site_info"]["scope"], "first_page_only")
 
-    async def test_skipped_sites_always_return_the_same_brief_shape(self):
+    async def test_news_site_basic_info_finishes_but_deeper_crawl_is_skipped(self):
         company, *_ = await self.run_case(site_info=True)
         for flag in (False, True):
             with self.subTest(site_info=flag):
@@ -148,7 +150,14 @@ class SiteInfoTests(unittest.IsolatedAsyncioTestCase):
                     document=classification(),
                     html="<h1>Latest world news</h1><p>Example Media</p>",
                 )
-                self.assertEqual(result["status"], "skip_crawling")
+                self.assertEqual(
+                    result["status"], "finished" if flag else "skip_crawling"
+                )
+                self.assertEqual(
+                    result["stop_reason"],
+                    "site_info_complete" if flag else "not_company_website",
+                )
+                self.assertEqual(result["site_gate"]["decision"], "skip_crawling")
                 self.assertEqual(set(result["site_info"]), set(company["site_info"]))
                 self.assertEqual(result["site_info"]["site_types"], ["news_media"])
                 self.assertEqual(
@@ -158,6 +167,29 @@ class SiteInfoTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(requested, [SITE])
                 self.assertEqual(tasks, ["site_classification"])
                 self.assertEqual(web, [])
+
+    async def test_uncertain_deeper_crawl_eligibility_does_not_block_basic_info(self):
+        result, requested, tasks, web = await self.run_case(
+            site_info=True,
+            document=classification(crawl_decision="needs_review", site_types=["mixed"]),
+            html="<h1>Latest world news</h1><p>Example Media</p>",
+        )
+        self.assertEqual(result["status"], "finished")
+        self.assertEqual(result["stop_reason"], "site_info_complete")
+        self.assertEqual(result["site_info"]["evidence_status"], "source_matched")
+        self.assertEqual(result["site_info"]["crawl_decision"], "needs_review")
+        self.assertEqual(requested, [SITE])
+        self.assertEqual(tasks, ["site_classification"])
+        self.assertEqual(web, [])
+
+    async def test_basic_info_model_failure_is_not_a_successful_description(self):
+        result, requested, _, web = await self.run_case(site_info=True, model_status=404)
+        self.assertEqual(result["status"], "needs_review")
+        self.assertEqual(result["stop_reason"], "model_unavailable")
+        self.assertTrue(result["errors"])
+        self.assertEqual(result["usage"]["successful_responses"], 0)
+        self.assertEqual(requested, [SITE])
+        self.assertEqual(web, [])
 
     async def test_info_can_accompany_lists_instructions_and_general_discovery(self):
         for options in (

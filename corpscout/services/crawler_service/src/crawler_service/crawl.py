@@ -265,6 +265,14 @@ async def collect_pages(
                 }
                 if manifest["site_info_requested"] or decision != "continue_crawling":
                     manifest["site_info"] = site_information(profile, page.source_url)
+                # A one-page description is complete for any identified site type.
+                # The classification decision only gates deeper collection.
+                if (
+                    not manifest["crawl_requested"]
+                    and profile.evidence_status == "source_matched"
+                ):
+                    manifest["stop_reason"] = "site_info_complete"
+                    break
                 if decision != "continue_crawling":
                     manifest["status"] = decision
                     manifest["stop_reason"] = (
@@ -272,9 +280,6 @@ async def collect_pages(
                         if decision == "skip_crawling"
                         else "site_eligibility_uncertain"
                     )
-                    break
-                if not manifest["crawl_requested"]:
-                    manifest["stop_reason"] = "site_info_complete"
                     break
                 queue.site_profile = profile.data
                 if not requested:
@@ -619,7 +624,10 @@ async def crawl_company(
             if llm is not None:
                 manifest["usage"] = llm.usage()
             if (
-                manifest["stop_reason"] != "human_assistance_timeout"
+                manifest["stop_reason"] not in {
+                    "human_assistance_timeout",
+                    "site_info_complete",
+                }
                 and (not requested or site_info)
                 and manifest["site_gate"]["decision"]
                 not in {
