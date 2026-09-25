@@ -61,14 +61,15 @@ same request with that ID resumes that import; reusing it with another task or
 different selection is rejected. A completed receipt is an idempotent no-op.
 An intentional new import, even with the same filters, uses a new submission ID.
 
-The adapter snapshots the normalized source selection in object storage before
-copying it into ClickHouse. The receipt records its immutable manifest URI.
-Source changes after that snapshot cannot change an import retry. A crash before
-the manifest is finalized may restart selection; no input writes are allowed
-before it is finalized. Source associations for overlapping inputs remain in
-those manifests; the shared task input is deduplicated by processor identity.
-Different payloads for the same identity must be reported as conflicts rather
-than silently replacing the existing input (for example two company names).
+Imports stream the normalized source selection straight into the processor's
+ClickHouse entry table; nothing is stored in object storage. Each row carries
+its `submission_id`. Retrying a failed import stops its stable ClickHouse
+query, deletes only that submission's rows and selects from the source again
+with the saved filters, so a retry reflects the source as it is at retry time.
+Overlapping submissions are deduplicated by processor identity; retry failed
+imports before Start. Different payloads for the same identity must be reported
+as conflicts rather than silently replacing the existing input (for example two
+company names).
 
 `input_count` counts distinct contributions of that submission, including inputs
 already contributed by another submission. It must not be summed to obtain the
@@ -126,7 +127,7 @@ Inputs are retained regardless of previous processing. Source pages may filter
 and display last attempt, last success and in-progress work; execution preparation
 evaluates freshness at the appropriate page/company/IP identity using its saved
 cutoff and settings. Skipped inputs remain part of the total and get a recorded
-reason/result reference. The Webtech draft adapter retains recent pages during loading and records execution-time decisions in a durable plan. This behavior belongs to the adapter, not migration 124.
+reason/result reference. Freshness skips are evaluated at execution time by a query bounded by the execution's frozen start time and are never stored; the remaining work is always the frozen entries minus this execution's results. This behavior belongs to the adapter, not migration 124.
 
 ## Completion and cleanup
 
