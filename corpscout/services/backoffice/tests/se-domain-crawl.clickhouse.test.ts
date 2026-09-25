@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { createClient, ClickHouseLogLevel, type ClickHouseClient } from "@clickhouse/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadCrawlInputs } from "~/lib/crawl-inputs.server";
+import { loadDomainCrawls } from "~/lib/domain-crawls.server";
 
 // Opt-in integration suite: starts its own database, never uses .env credentials.
 describe.skipIf(process.env.VITEST_CLICKHOUSE_DOCKER !== "1")("SE crawl input inserts in ClickHouse", () => {
@@ -30,6 +31,8 @@ describe.skipIf(process.env.VITEST_CLICKHOUSE_DOCKER !== "1")("SE crawl input in
     }
     const migration = readFileSync(new URL("../../../clickhouse/migrations/000429_corpscout_website_crawl_requests.up.sql", import.meta.url), "utf8");
     for (const query of migration.split(";").filter((statement) => statement.trim())) await client.command({ query });
+    const resultsMigration = readFileSync(new URL("../../../clickhouse/migrations/000430_corpscout_website_crawl_type_results.up.sql", import.meta.url), "utf8");
+    for (const query of resultsMigration.split(";").filter((statement) => statement.trim())) await client.command({ query });
     await client.command({ query: `CREATE TABLE corpscout.se_company_domain (
       company_id String, root_domain String, website_url String DEFAULT '', website_host String DEFAULT '',
       association String, is_primary UInt8 DEFAULT 0, confidence Float64, sources Array(String),
@@ -53,6 +56,29 @@ describe.skipIf(process.env.VITEST_CLICKHOUSE_DOCKER !== "1")("SE crawl input in
   });
   beforeEach(async () => {
     for (const table of targets) await client.command({ query: `TRUNCATE TABLE corpscout.${table}` });
+    for (const table of ["website_site_info_results", "website_full_crawl_results", "website_jobs_crawl_results"]) {
+      await client.command({query: `TRUNCATE TABLE corpscout.${table}`});
+    }
+  });
+
+  it("separates the latest attempt from retained data, preserves timestamp precision and scopes to the exact domain", async () => {
+    const base = {domain: "shared.example", website_url: "https://shared.example", request_id: "saved", attempt: 1,
+      state: "completed", crawl_status: "finished", successful: true, finished_at: "2026-09-20 10:00:00.000000",
+      error: "", s3_path: "crawls/saved/result.json.gz", s3_state: "uploaded"};
+    await client.insert({table: "corpscout.website_site_info_results", format: "JSONEachRow", values: [
+      base,
+      {...base, request_id: "z-earlier", state: "failed", crawl_status: "failed", successful: false, finished_at: "2026-09-25 10:00:00.100000"},
+      {...base, request_id: "a-latest", state: "failed", crawl_status: "failed", successful: false, finished_at: "2026-09-25 10:00:00.900000"},
+      {...base, domain: "other.example", request_id: "unrelated", finished_at: "2026-09-26 10:00:00.000000"},
+    ]});
+    await client.insert({table: "corpscout.website_jobs_crawl_results", format: "JSONEachRow", values: [{...base, crawl_status: "skip_crawling"}]});
+    const rows = await loadDomainCrawls("shared.example");
+    expect(rows[0].latest?.request_id).toBe("a-latest");
+    expect(rows[0].saved?.request_id).toBe("saved");
+    expect(rows[0].latest?.finished_at).toBe("2026-09-25T10:00:00Z");
+    expect(rows[1].saved?.crawl_status).toBe("skip_crawling");
+    expect(rows[2]).toMatchObject({type: "full", latest: null, saved: null});
+    expect((await loadDomainCrawls("' OR 1=1 --")).every(row => row.latest === null && row.saved === null)).toBe(true);
   });
 
   it("reads current input counts, priority, disabled revisions and bounded filtered pages", async () => {

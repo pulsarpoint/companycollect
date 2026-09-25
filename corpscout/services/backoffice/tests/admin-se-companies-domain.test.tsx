@@ -3,6 +3,7 @@ import { createMemoryRouter, RouterProvider } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DomainGraphRelease, DomainGraphResult } from "~/lib/domain-graph.server";
 import type { SeDomainRow } from "~/lib/se-domains-list.server";
+import type { DomainCrawlResult } from "~/lib/domain-crawls.server";
 
 const graph = vi.hoisted(() => ({
   getDomainGraphReleases: vi.fn(),
@@ -14,6 +15,8 @@ const domains = vi.hoisted(() => ({
 }));
 vi.mock("~/lib/domain-graph.server", () => graph);
 vi.mock("~/lib/se-domains-list.server", () => domains);
+const crawls = vi.hoisted(() => ({loadDomainCrawls: vi.fn()}));
+vi.mock("~/lib/domain-crawls.server", () => crawls);
 const { default: AdminSeCompaniesDomain, loader } = await import(
   "~/routes/admin-se-companies-domain"
 );
@@ -86,6 +89,11 @@ function renderPage(loaderData: Awaited<ReturnType<typeof loader>>, query = ""):
 }
 
 beforeEach(() => {
+  crawls.loadDomainCrawls.mockReset().mockResolvedValue([
+    {type: "site_info", label: "Basic info", latest: null, saved: null},
+    {type: "jobs", label: "Jobs", latest: null, saved: null},
+    {type: "full", label: "Full crawl", latest: null, saved: null},
+  ]);
   graph.getDomainGraphReleases.mockReset().mockResolvedValue([release]);
   graph.searchDomainGraph.mockReset().mockResolvedValue(result);
   domains.loadSeDomainCompanies.mockReset().mockResolvedValue([COMPANY, OTHER]);
@@ -139,6 +147,57 @@ describe("domain detail loader", () => {
 });
 
 describe("domain detail page", () => {
+  it("shows all crawl types without claiming an uncrawled domain failed", async () => {
+    const html = renderPage(await get());
+    expect(crawls.loadDomainCrawls).toHaveBeenCalledWith("example.se");
+    expect(html).toContain("Crawl data");
+    expect(html).toContain("Basic info");
+    expect(html).toContain("Full crawl");
+    expect(html.match(/Not crawled/g)).toHaveLength(3);
+    expect(html).toContain('/admin/crawls?domain=example.se&amp;input_domain=example.se');
+  });
+
+  it("keeps previous data visible beside the latest failed attempt", async () => {
+    const saved: DomainCrawlResult = {request_id: "original", attempt: 1, state: "completed", crawl_status: "finished", successful: true,
+      finished_at: "2026-09-20T10:00:00Z", error: "", s3_path: "crawls/original/result.json.gz", s3_state: "uploaded"};
+    const latest = {...saved, request_id: "retry", successful: false, state: "failed", crawl_status: "failed", error: "Fetch timed out",
+      finished_at: "2026-09-25T11:00:00Z", s3_path: "crawls/retry/result.json.gz"};
+    crawls.loadDomainCrawls.mockResolvedValue([{type: "site_info", label: "Basic info", latest, saved}]);
+    const html = renderPage(await get());
+    expect(html).toContain("Crawled data available");
+    expect(html).toContain("From an earlier attempt");
+    expect(html).toContain(">Failed<");
+    expect(html).toContain("Fetch timed out");
+    expect(html).toContain('dateTime="2026-09-25T11:00:00Z"');
+    expect(html).toContain('/admin/crawls/results?path=crawls%2Foriginal%2Fresult.json.gz');
+    expect(html).toContain('/admin/crawls/results?path=crawls%2Fretry%2Fresult.json.gz');
+  });
+
+  it("describes a successful classification skip without calling it crawled", async () => {
+    const result = {request_id: "skip", attempt: 1, state: "completed", crawl_status: "skip_crawling", successful: true,
+      finished_at: "2026-09-25T10:00:00Z", error: "", s3_path: "", s3_state: "not_configured"};
+    crawls.loadDomainCrawls.mockResolvedValue([{type: "site_info", label: "Basic info", latest: result, saved: result}]);
+    const html = renderPage(await get());
+    expect(html).toContain("Classification only");
+    expect(html).toContain("Skipped by classification");
+    expect(html).not.toContain("Crawled data available");
+    expect(html).not.toContain("/admin/crawls/results?");
+  });
+
+  it("shows unavailable status instead of no history when the query fails", async () => {
+    crawls.loadDomainCrawls.mockRejectedValue(new Error("private connection failure"));
+    const html = renderPage(await get());
+    expect(html).toContain("Crawl status unavailable");
+    expect(html).not.toContain("Not crawled");
+    expect(html).not.toContain("private connection failure");
+    expect(html).toContain("Example AB");
+  });
+
+  it("does not query crawl history on technology child routes", async () => {
+    await get("/web-technologies");
+    expect(crawls.loadDomainCrawls).not.toHaveBeenCalled();
+  });
+
   it("lists every company behind the domain, linked to its Domains tab", async () => {
     const html = renderPage(await get());
     expect(html).toContain(">example.se<");
