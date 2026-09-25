@@ -149,6 +149,22 @@ def purge_completed_inputs(
     if task["inputs_purged_at"] is not None:
         return
     with clickhouse.get_connection() as client:
+        # Preserve membership before deleting the only record of fresh/skipped inputs.
+        # INSERT SELECT stays inside ClickHouse; retries deduplicate on read.
+        if relation == "corpscout.webtech_scan_input":
+            source_selection = "SELECT 'webtech', task_id, root_domain, page_url, source_name"
+        elif relation == "corpscout.website_crawl_task_domains":
+            source_selection = "SELECT crawl_type, task_id, domain, website_url, source_name"
+        else:
+            source_selection = None
+        if source_selection is not None:
+            client.execute(
+                "INSERT INTO corpscout.queue_task_sources "
+                "(task_type, task_id, domain, website_url, source_name) "
+                f"{source_selection} FROM {relation} WHERE task_id=%(task)s",
+                {"task": task_id},
+                settings={"async_insert": 0},
+            )
         client.execute(
             f"ALTER TABLE {relation} DROP PARTITION %(task)s", {"task": task_id}
         )

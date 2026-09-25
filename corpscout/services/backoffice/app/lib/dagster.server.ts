@@ -14,6 +14,7 @@
  * shown in the Dagster UI and kept in the run database forever.
  */
 import "dotenv/config";
+import { admitLlmRun, acknowledgeLlmRun } from "./llm-runs.server";
 
 import type {
   BackofficeAssetGroupQuery,
@@ -290,6 +291,7 @@ export async function launchRun(
   input: LaunchRunInput,
   options: DagsterOptions = {},
 ): Promise<{ runId: string; status: string }> {
+  const tracked = await admitLlmRun(input.job, input.runConfig, input.tags);
   const variables: BackofficeLaunchRunMutationVariables = {
     executionParams: {
       selector: {
@@ -307,7 +309,7 @@ export async function launchRun(
       runConfigData: input.runConfig,
       mode: "default",
       executionMetadata: {
-        tags: Object.entries(input.tags ?? {}).map(([key, value]) => ({
+        tags: Object.entries({...input.tags, ...(tracked ? {'llm/request_id': tracked.requestId} : {})}).map(([key, value]) => ({
           key,
           value,
         })),
@@ -319,6 +321,7 @@ export async function launchRun(
     BackofficeLaunchRunMutationVariables
   >(BACKOFFICE_LAUNCH_RUN_MUTATION, variables, options);
   if (data.launchRun.__typename === "RunConfigValidationInvalid") {
+    if (tracked) await acknowledgeLlmRun(tracked.requestId, "launch_failed");
     throw new DagsterRunConfigValidationError(
       input.job,
       data.launchRun.errors.map(({ message, path, reason }) => ({
@@ -329,9 +332,11 @@ export async function launchRun(
     );
   }
   if (data.launchRun.__typename !== "LaunchRunSuccess") {
+    if (tracked && data.launchRun.__typename !== "PythonError") await acknowledgeLlmRun(tracked.requestId, "launch_failed");
     throw unionError(data.launchRun, `Launching ${input.job}`);
   }
   const run = data.launchRun.run;
+  if (tracked) await acknowledgeLlmRun(tracked.requestId, "queued", run.runId);
   return { runId: run.runId, status: run.status };
 }
 

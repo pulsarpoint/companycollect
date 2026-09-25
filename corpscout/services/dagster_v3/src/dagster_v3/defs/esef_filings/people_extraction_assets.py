@@ -79,6 +79,8 @@ class EsefPeopleExtractionConfig(dg.Config):
         max_length=128,
         pattern=r"^[A-Za-z_][A-Za-z0-9_]*$",
     )
+    profile_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    profile_revision: int | None = Field(default=None, ge=1, exclude_if=lambda value: value is None)
     api_key_encrypted: str | None = Field(default=None, repr=False, max_length=16384,
         pattern=r"^v1\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{23,}$")
     temperature: float = Field(default=0, ge=0, le=2)
@@ -461,6 +463,7 @@ def esef_document_people_extraction_clickhouse(
         encrypted_profile=EncryptedLLMConfig(
             provider=config.provider, model=config.model, base_url=config.base_url,
             api_key_encrypted=config.api_key_encrypted,
+            profile_id=config.profile_id, profile_revision=config.profile_revision,
         ) if config.api_key_encrypted is not None else None,
     )
     metadata = run_esef_people_extraction(

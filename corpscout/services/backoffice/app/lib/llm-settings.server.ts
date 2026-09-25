@@ -2,6 +2,7 @@ import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from "node:
 import { mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { llmControl, llmTransaction, stopLlmRuns } from "./llm-control.server";
 
 export const SETTINGS_DATABASE_PATH =
   process.env.BACKOFFICE_SETTINGS_DATABASE_PATH?.trim() ||
@@ -14,6 +15,10 @@ export interface LlmProfile {
   baseUrl: string;
   model: string;
   isActive: boolean;
+  revision: number;
+  state: "enabled" | "disabled" | "archived";
+  disabledReason: string | null;
+  lastCheck: {ok: boolean; message: string; target: string; checkedAt: string; failureKind: string | null} | null;
   apiKeyAvailable: boolean;
   createdAt: string;
   updatedAt: string;
@@ -26,18 +31,6 @@ export interface SaveLlmProfileInput {
   baseUrl: string;
   model: string;
   apiKey?: string;
-}
-
-interface StoredLlmProfile {
-  profile_id: string;
-  name: string;
-  provider: string;
-  base_url: string;
-  model: string;
-  api_key_encrypted: string | null;
-  is_active: number;
-  created_at: string;
-  updated_at: string;
 }
 
 export class LlmSettingsValidationError extends Error {
@@ -53,52 +46,10 @@ function connectSettingsDatabase(databasePath: string): DatabaseSync {
   const database = new DatabaseSync(absolutePath);
   database.exec("PRAGMA busy_timeout = 5000");
   database.exec("PRAGMA journal_mode = WAL");
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS llm_profile (
-      profile_id TEXT PRIMARY KEY,
-      name TEXT NOT NULL UNIQUE CHECK (trim(name) != ''),
-      provider TEXT NOT NULL CHECK (trim(provider) != ''),
-      base_url TEXT NOT NULL CHECK (trim(base_url) != ''),
-      model TEXT NOT NULL CHECK (trim(model) != ''),
-      api_key_encrypted TEXT,
-      is_active INTEGER NOT NULL DEFAULT 0 CHECK (is_active IN (0, 1)),
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-    CREATE UNIQUE INDEX IF NOT EXISTS llm_profile_single_active
-      ON llm_profile(is_active)
-      WHERE is_active = 1;
-    CREATE TABLE IF NOT EXISTS local_llm_setting (
-      setting_key TEXT PRIMARY KEY,
-      setting_value TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-  `);
-  try {
-    // Existing profiles referenced process variables. Import each available key once,
-    // then remove the reference so all future reads use encrypted database storage.
-    const columns = database.prepare("PRAGMA table_info(llm_profile)").all();
-    if (columns.some(column => column.name === "api_key_environment_variable")) {
-      database.exec("BEGIN IMMEDIATE");
-      const currentColumns = database.prepare("PRAGMA table_info(llm_profile)").all();
-      if (currentColumns.some(column => column.name === "api_key_environment_variable")) {
-        database.exec("ALTER TABLE llm_profile ADD COLUMN api_key_encrypted TEXT");
-        const rows = database.prepare("SELECT profile_id, api_key_environment_variable FROM llm_profile").all();
-        const update = database.prepare("UPDATE llm_profile SET api_key_encrypted = ? WHERE profile_id = ?");
-        for (const row of rows) {
-          const apiKey = process.env[String(row.api_key_environment_variable)]?.trim();
-          update.run(apiKey ? encryptStoredApiKey(String(row.profile_id), apiKey) : null, row.profile_id);
-        }
-        database.exec("ALTER TABLE llm_profile DROP COLUMN api_key_environment_variable");
-      }
-      database.exec("COMMIT");
-    }
-    return database;
-  } catch (error) {
-    if (database.isTransaction) database.exec("ROLLBACK");
-    database.close();
-    throw error;
-  }
+  database.exec(`CREATE TABLE IF NOT EXISTS local_llm_setting (
+    setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL, updated_at TEXT NOT NULL
+  )`);
+  return database;
 }
 
 function encryptionKey(): Buffer {
@@ -136,17 +87,13 @@ function decryptStoredApiKey(profileId: string, encrypted: string): string {
   }
 }
 
-/** Server-only credential access. Public profile responses never include key material. */
-export function getLlmProfileApiKey(profileId: string, databasePath = SETTINGS_DATABASE_PATH): string {
-  const database = connectSettingsDatabase(databasePath);
-  try {
-    const row = database.prepare("SELECT api_key_encrypted FROM llm_profile WHERE profile_id = ?").get(profileId) as {api_key_encrypted: string | null} | undefined;
-    if (!row) throw new LlmSettingsValidationError("LLM profile was not found.");
-    if (!row.api_key_encrypted) throw new LlmSettingsValidationError("The selected LLM API key is missing. Add it in LLM settings.");
-    return decryptStoredApiKey(profileId, row.api_key_encrypted);
-  } finally {
-    database.close();
-  }
+/** Server-only access to the exact immutable revision selected by the caller. */
+export async function getLlmProfileApiKey(profileId: string, revision?: number): Promise<string> {
+  const {rows} = await llmControl().query(`SELECT r.api_key_encrypted FROM processing.llm_profiles p
+    JOIN processing.llm_profile_revisions r ON r.profile_id=p.profile_id AND r.revision=coalesce($2,p.current_revision)
+    WHERE p.profile_id=$1 AND p.state <> 'archived'`, [profileId, revision ?? null]);
+  if (!rows[0]?.api_key_encrypted) throw new LlmSettingsValidationError("The selected LLM API key is missing or the profile was removed.");
+  return decryptStoredApiKey(profileId, rows[0].api_key_encrypted);
 }
 
 const LOCAL_CODEX_SETTING_KEY = "local_codex_enabled";
@@ -227,153 +174,131 @@ function validatedBaseUrl(value: string): string {
   return cleanValue.replace(/\/+$/, "");
 }
 
-function mapStoredProfile(row: StoredLlmProfile): LlmProfile {
-  return {
-    profileId: row.profile_id,
-    name: row.name,
-    provider: row.provider,
-    baseUrl: row.base_url,
-    model: row.model,
-    isActive: row.is_active === 1,
-    apiKeyAvailable: Boolean(row.api_key_encrypted),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
+const PROFILE_QUERY = `SELECT p.profile_id AS "profileId", p.name, p.current_revision AS revision,
+  p.state, p.disabled_reason AS "disabledReason", p.is_default AS "isActive",
+  r.provider, r.base_url AS "baseUrl", r.model,
+  (r.api_key_encrypted IS NOT NULL) AS "apiKeyAvailable", p.created_at::text AS "createdAt", p.updated_at::text AS "updatedAt",
+  (SELECT jsonb_build_object('ok',c.ok,'message',c.message,'target',c.target,'checkedAt',c.finished_at,
+    'failureKind',c.failure_kind) FROM processing.llm_checks c WHERE c.profile_id=p.profile_id
+    AND c.revision=p.current_revision ORDER BY c.started_at DESC LIMIT 1) AS "lastCheck"
+  FROM processing.llm_profiles p JOIN processing.llm_profile_revisions r
+    ON r.profile_id=p.profile_id AND r.revision=p.current_revision`;
+
+export async function listLlmProfiles(includeDisabled = false): Promise<LlmProfile[]> {
+  const {rows} = await llmControl().query(PROFILE_QUERY + ` WHERE p.state <> 'archived'
+    AND ($1 OR p.state='enabled') ORDER BY p.is_default DESC, lower(p.name),p.profile_id`, [includeDisabled]);
+  return rows;
 }
 
-export function listLlmProfiles(
-  databasePath = SETTINGS_DATABASE_PATH,
-): LlmProfile[] {
-  const database = connectSettingsDatabase(databasePath);
-  try {
-    const rows = database
-      .prepare(
-        `SELECT *
-         FROM llm_profile
-         ORDER BY is_active DESC, name COLLATE NOCASE, profile_id`,
-      )
-      .all() as unknown as StoredLlmProfile[];
-    return rows.map(mapStoredProfile);
-  } finally {
-    database.close();
-  }
+export async function getLlmProfile(profileId: string): Promise<LlmProfile | null> {
+  if (!/^[0-9a-f-]{36}$/i.test(profileId)) return null;
+  const {rows} = await llmControl().query(PROFILE_QUERY + " WHERE p.profile_id=$1 AND p.state <> 'archived'", [profileId]);
+  return rows[0] ?? null;
 }
 
-export function getLlmProfile(
-  profileId: string,
-  databasePath = SETTINGS_DATABASE_PATH,
-): LlmProfile | null {
-  const database = connectSettingsDatabase(databasePath);
-  try {
-    const row = database
-      .prepare("SELECT * FROM llm_profile WHERE profile_id = ?")
-      .get(profileId) as unknown as StoredLlmProfile | undefined;
-    return row ? mapStoredProfile(row) : null;
-  } finally {
-    database.close();
-  }
-}
-
-export function saveAndActivateLlmProfile(
-  input: SaveLlmProfileInput,
-  databasePath = SETTINGS_DATABASE_PATH,
-): string {
+export async function saveAndActivateLlmProfile(input: SaveLlmProfileInput): Promise<string> {
   const profileId = input.profileId?.trim() || randomUUID();
   const name = requiredValue(input.name, "Name", 120);
   const provider = requiredValue(input.provider, "Provider", 100);
   const baseUrl = validatedBaseUrl(input.baseUrl);
   const model = requiredValue(input.model, "Model", 200);
   const apiKey = input.apiKey?.trim() ?? "";
-  const database = connectSettingsDatabase(databasePath);
-  const now = new Date().toISOString();
   try {
-    database.exec("BEGIN IMMEDIATE");
-    const existing = database
-      .prepare("SELECT created_at, api_key_encrypted FROM llm_profile WHERE profile_id = ?")
-      .get(profileId) as unknown as { created_at: string; api_key_encrypted: string | null } | undefined;
-    if (!apiKey && !existing?.api_key_encrypted) {
-      throw new LlmSettingsValidationError("API key is required.");
-    }
-    const encryptedApiKey = apiKey ? encryptStoredApiKey(profileId, apiKey) : existing!.api_key_encrypted;
-    database.prepare("UPDATE llm_profile SET is_active = 0").run();
-    database
-      .prepare(
-        `INSERT INTO llm_profile (
-          profile_id,
-          name,
-          provider,
-          base_url,
-          model,
-          api_key_encrypted,
-          is_active,
-          created_at,
-          updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
-        ON CONFLICT (profile_id) DO UPDATE SET
-          name = excluded.name,
-          provider = excluded.provider,
-          base_url = excluded.base_url,
-          model = excluded.model,
-          api_key_encrypted = excluded.api_key_encrypted,
-          is_active = 1,
-          updated_at = excluded.updated_at`,
-      )
-      .run(
-        profileId,
-        name,
-        provider,
-        baseUrl,
-        model,
-        encryptedApiKey,
-        existing?.created_at ?? now,
-        now,
-      );
-    database.exec("COMMIT");
-    return profileId;
+    return await llmTransaction(async client => {
+      // Serialize changes to the singleton default and profile admission locks.
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended('llm_catalog',0))");
+      const {rows: [existing]} = await client.query(`SELECT p.*,r.api_key_encrypted FROM processing.llm_profiles p
+        JOIN processing.llm_profile_revisions r ON r.profile_id=p.profile_id AND r.revision=p.current_revision
+        WHERE p.profile_id=$1 FOR UPDATE OF p`, [profileId]);
+      if (input.profileId && (!existing || existing.state === 'archived')) throw new LlmSettingsValidationError("LLM profile was not found.");
+      if (!apiKey && !existing?.api_key_encrypted) throw new LlmSettingsValidationError("API key is required.");
+      const encrypted = apiKey ? encryptStoredApiKey(profileId, apiKey) : existing.api_key_encrypted;
+      const revision = (existing?.current_revision ?? 0) + 1;
+      await client.query("UPDATE processing.llm_profiles SET is_default=false WHERE is_default");
+      await client.query(`INSERT INTO processing.llm_profiles (profile_id,name,current_revision,is_default)
+        VALUES ($1,$2,$3,true) ON CONFLICT (profile_id) DO UPDATE SET name=$2,current_revision=$3,
+        state='enabled',is_default=true,disabled_reason=NULL,updated_at=now()`, [profileId,name,revision]);
+      await client.query(`INSERT INTO processing.llm_profile_revisions
+        (profile_id,revision,provider,base_url,model,api_key_encrypted) VALUES ($1,$2,$3,$4,$5,$6)`,
+        [profileId,revision,provider,baseUrl,model,encrypted]);
+      return profileId;
+    });
   } catch (error) {
-    if (database.isTransaction) database.exec("ROLLBACK");
-    if (
-      error instanceof Error &&
-      error.message.includes("UNIQUE constraint failed: llm_profile.name")
-    ) {
-      throw new LlmSettingsValidationError(
-        "An LLM profile with this name already exists.",
-      );
-    }
+    if (error && typeof error === 'object' && 'code' in error && error.code === '23505')
+      throw new LlmSettingsValidationError("An LLM profile with this name already exists.");
     throw error;
-  } finally {
-    database.close();
   }
 }
 
-export function activateLlmProfile(
-  profileId: string,
-  databasePath = SETTINGS_DATABASE_PATH,
-): void {
-  const cleanProfileId = profileId.trim();
-  if (cleanProfileId === "") {
-    throw new LlmSettingsValidationError("LLM profile is required.");
-  }
-  const database = connectSettingsDatabase(databasePath);
-  try {
-    const existing = database
-      .prepare("SELECT profile_id FROM llm_profile WHERE profile_id = ?")
-      .get(cleanProfileId);
-    if (!existing) {
-      throw new LlmSettingsValidationError("LLM profile was not found.");
+export async function activateLlmProfile(profileId: string): Promise<void> {
+  await llmTransaction(async client => {
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('llm_catalog',0))");
+    const {rows: [profile]} = await client.query("SELECT state FROM processing.llm_profiles WHERE profile_id=$1 FOR UPDATE", [profileId]);
+    if (profile?.state !== 'enabled') throw new LlmSettingsValidationError("Test and enable this model before making it the default.");
+    await client.query("UPDATE processing.llm_profiles SET is_default=false WHERE is_default");
+    await client.query("UPDATE processing.llm_profiles SET is_default=true,updated_at=now() WHERE profile_id=$1", [profileId]);
+  });
+}
+
+export async function setLlmProfileState(profileId: string, state: 'disabled' | 'archived'): Promise<void> {
+  await llmTransaction(async client => {
+    await client.query("SELECT profile_id FROM processing.llm_profiles WHERE profile_id=$1 FOR UPDATE", [profileId]);
+    const reason = state === 'archived' ? 'Model removed from configuration.' : 'Model disabled by an operator.';
+    await client.query(`UPDATE processing.llm_profiles SET state=$2,is_default=false,disabled_reason=$3,updated_at=now()
+      WHERE profile_id=$1 AND state <> 'archived'`, [profileId,state,reason]);
+    await stopLlmRuns(client, profileId, reason);
+  });
+}
+
+export type LlmFailureKind = 'configuration' | 'transient' | 'capability' | 'service';
+export async function recordLlmCheck(profile: LlmProfile, target: 'crawler' | 'brave', startedAt: string,
+  ok: boolean, message: string, failureKind: LlmFailureKind | null, enable = false) {
+  await llmTransaction(async client => {
+    const {rows: [current]} = await client.query("SELECT * FROM processing.llm_profiles WHERE profile_id=$1 FOR UPDATE", [profile.profileId]);
+    if (!current || current.state === 'archived') return;
+    const check = await client.query(`INSERT INTO processing.llm_checks (profile_id,revision,target,started_at,ok,message,failure_kind)
+      VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (profile_id,revision,target) DO UPDATE SET
+      started_at=excluded.started_at,finished_at=now(),ok=excluded.ok,message=excluded.message,failure_kind=excluded.failure_kind
+      WHERE processing.llm_checks.started_at < excluded.started_at RETURNING profile_id`,
+      [profile.profileId,profile.revision,target,startedAt,ok,message,failureKind]);
+    if (!check.rowCount) return;
+    // Tests for different capabilities share one credential health decision.
+    const newer = await client.query(`SELECT 1 FROM processing.llm_checks WHERE profile_id=$1 AND revision=$2
+      AND started_at > $3 AND (ok OR failure_kind='configuration') LIMIT 1`, [profile.profileId,profile.revision,startedAt]);
+    if (newer.rowCount) return;
+    // An obsolete configuration can still have active runs, but cannot disable its replacement.
+    if (!ok && failureKind === 'configuration') {
+      await client.query(`UPDATE processing.llm_profile_revisions SET invalidated_at=now(),invalid_reason=$3
+        WHERE profile_id=$1 AND revision=$2`, [profile.profileId,profile.revision,message]);
+      if (current.current_revision === profile.revision) await client.query(`UPDATE processing.llm_profiles SET
+        state='disabled',is_default=false,disabled_reason=$2,updated_at=now() WHERE profile_id=$1`, [profile.profileId,message]);
+      await stopLlmRuns(client,profile.profileId,message,profile.revision);
+    } else if (ok && enable && current.current_revision === profile.revision && new Date(current.updated_at) <= new Date(startedAt)) {
+      await client.query(`UPDATE processing.llm_profile_revisions SET invalidated_at=NULL,invalid_reason=NULL
+        WHERE profile_id=$1 AND revision=$2`, [profile.profileId,profile.revision]);
+      await client.query(`UPDATE processing.llm_profiles SET state='enabled',disabled_reason=NULL,updated_at=now()
+        WHERE profile_id=$1`, [profile.profileId]);
     }
-    database.exec("BEGIN IMMEDIATE");
-    database.prepare("UPDATE llm_profile SET is_active = 0").run();
-    database
-      .prepare(
-        "UPDATE llm_profile SET is_active = 1, updated_at = ? WHERE profile_id = ?",
-      )
-      .run(new Date().toISOString(), cleanProfileId);
-    database.exec("COMMIT");
-  } catch (error) {
-    if (database.isTransaction) database.exec("ROLLBACK");
-    throw error;
-  } finally {
-    database.close();
-  }
+  });
+}
+
+/** Explicit, idempotent upgrade. SQLite remains only for local settings and prompts. */
+export async function importLegacyLlmProfiles(databasePath = SETTINGS_DATABASE_PATH): Promise<number> {
+  const database = new DatabaseSync(resolve(databasePath), {readOnly: true});
+  try {
+    const rows = database.prepare('SELECT * FROM llm_profile').all();
+    return await llmTransaction(async client => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended('llm_catalog',0))");
+      if ((await client.query('SELECT source FROM processing.llm_catalog_imports WHERE source=$1', [resolve(databasePath)])).rowCount) return 0;
+      for (const row of rows) {
+        if (row.api_key_encrypted) decryptStoredApiKey(String(row.profile_id), String(row.api_key_encrypted));
+        await client.query(`INSERT INTO processing.llm_profiles (profile_id,name,current_revision,is_default,created_at,updated_at)
+          VALUES ($1,$2,1,$3,$4,$5)`, [row.profile_id,row.name,row.is_active === 1,row.created_at,row.updated_at]);
+        await client.query(`INSERT INTO processing.llm_profile_revisions (profile_id,revision,provider,base_url,model,api_key_encrypted,created_at)
+          VALUES ($1,1,$2,$3,$4,$5,$6)`, [row.profile_id,row.provider,row.base_url,row.model,row.api_key_encrypted,row.created_at]);
+      }
+      await client.query('INSERT INTO processing.llm_catalog_imports (source,profile_count) VALUES ($1,$2)', [resolve(databasePath),rows.length]);
+      return rows.length;
+    });
+  } finally { database.close(); }
 }

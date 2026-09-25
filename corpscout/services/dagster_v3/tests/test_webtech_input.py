@@ -79,7 +79,7 @@ def database(server):
     for statement in migration.read_text().split(";"):
         if statement.strip():
             client.execute(statement)
-    for name in ("000446_corpscout_webtech_queue_contract.up.sql",):
+    for name in ("000446_corpscout_webtech_queue_contract.up.sql", "000449_corpscout_queue_task_sources.up.sql"):
         path = Path(__file__).parents[3] / "clickhouse/migrations" / name
         for statement in path.read_text().split(";"):
             if statement.strip():

@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getPeoplePrompt, listPeoplePrompts, savePeoplePrompt } from "~/lib/people-prompts.server";
-import { listLlmProfiles, saveAndActivateLlmProfile } from "~/lib/llm-settings.server";
 
 let directory: string;
 let databasePath: string;
@@ -18,12 +17,10 @@ describe("People prompts in the settings database", () => {
     expect(listPeoplePrompts(databasePath)).toEqual([expect.objectContaining({ revision: 2, systemPrompt: "Edited prompt" })]);
     expect(getPeoplePrompt("missing", databasePath)).toBeNull();
   });
-  it("persists multiple named prompts alongside existing LLM settings", () => {
-    saveAndActivateLlmProfile({ name: "LLM", provider: "provider", model: "model", baseUrl: "https://example.com", apiKey: "test-key" }, databasePath);
+  it("persists multiple named prompts without changing existing prompts", () => {
     const id = savePeoplePrompt({ name: " Careful matching ", systemPrompt: "Return pairs conservatively." }, databasePath);
     expect(getPeoplePrompt(id, databasePath)).toMatchObject({ name: "Careful matching", revision: 1 });
     expect(listPeoplePrompts(databasePath)).toHaveLength(2);
-    expect(listLlmProfiles(databasePath)).toHaveLength(1);
   });
   it("refuses stale edits without overwriting the saved revision", () => {
     const [seed] = listPeoplePrompts(databasePath);

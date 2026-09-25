@@ -1,9 +1,9 @@
 import { listLlmProfiles } from "~/lib/llm-settings.server";
 
-export function loader() {
+export async function loader() {
   try {
     return {
-      profiles: listLlmProfiles().map(({profileId, name, provider, model, apiKeyAvailable}) => ({profileId, name, provider, model, apiKeyAvailable})),
+      profiles: (await listLlmProfiles()).map(({profileId, name, provider, model, apiKeyAvailable}) => ({profileId, name, provider, model, apiKeyAvailable})),
       error: null,
     };
   } catch {

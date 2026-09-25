@@ -19,6 +19,8 @@ class LLMProfileError(ValueError):
 
 
 class EncryptedLLMProfile(StrictModel):
+    profile_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    profile_revision: int | None = Field(default=None, ge=1, exclude_if=lambda value: value is None)
     provider: str = Field(max_length=100)
     base_url: str = Field(max_length=2048)
     model: str = Field(max_length=500)
@@ -117,7 +119,7 @@ async def verify_llm(profile: EncryptedLLMProfile, environment: dict[str, str]) 
     try:
         api_key = profile.decrypt_api_key(environment)
     except LLMProfileError as error:
-        return {"ok": False, "error": str(error)}
+        return {"ok": False, "error": str(error), "failure_kind": "service"}
     config = profile.crawl_config(None).model_copy(
         update={
             "model_timeout_seconds": 30.0,
@@ -157,8 +159,12 @@ async def verify_llm(profile: EncryptedLLMProfile, environment: dict[str, str]) 
         error_message = (
             "LLM verification failed while contacting the configured endpoint"
         )
+    status = None
     if llm is not None and llm.calls:
+        status = llm.calls[-1].get("http_status")
         provider_error = llm.calls[-1].get("provider_error", {}).get("message")
         if isinstance(provider_error, str) and provider_error:
             error_message += ": " + provider_error
-    return {"ok": False, "error": error_message.replace(api_key, "[REDACTED]")[:2000]}
+    return {"ok": False, "error": error_message.replace(api_key, "[REDACTED]")[:2000],
+            "failure_kind": "configuration" if status in {401,403,404} else
+                "transient" if status is None or status == 429 or status >= 500 else "capability"}

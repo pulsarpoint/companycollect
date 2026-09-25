@@ -1,13 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { action } from "~/routes/admin-settings-llms";
 import { LlmSettingsValidationError } from "~/lib/llm-settings.server";
+import { CrawlLlmError } from "~/lib/crawl-llm.server";
 
-const settings = vi.hoisted(() => ({save: vi.fn(), activate: vi.fn(), local: vi.fn()}));
+const settings = vi.hoisted(() => ({save: vi.fn(), activate: vi.fn(), local: vi.fn(), verify: vi.fn(), state: vi.fn()}));
+vi.mock("~/lib/crawl-llm.server", () => ({
+  CrawlLlmError: class extends Error {}, verifySelectedLlm: settings.verify,
+}));
 vi.mock("~/lib/llm-settings.server", () => ({
   LlmSettingsValidationError: class extends Error {},
   saveAndActivateLlmProfile: settings.save,
   activateLlmProfile: settings.activate,
   setLocalCodexEnabled: settings.local,
+  setLlmProfileState: settings.state,
   isLocalCodexEnabled: vi.fn(), listLlmProfiles: vi.fn(), getLlmProfile: vi.fn(),
 }));
 
@@ -62,4 +67,48 @@ describe("LLM settings key handling", () => {
     await submit({api_key: "", api_key_environment_variable: "PRIVATE_ENVIRONMENT_NAME"});
     expect(settings.save).toHaveBeenCalledWith({...metadata, apiKey: ""});
   });
+});
+
+
+describe("saved LLM configuration tests", () => {
+  it("tests the saved profile without activation, saving or returning credentials", async () => {
+    settings.verify.mockResolvedValue({provider: "Provider", model: "model", base_url: "https://provider.example/v1", api_key_encrypted: "encrypted-private-credential"});
+    const response = await submit({intent: "test", profile_id: "saved-profile", api_key: "untrusted-override", model: "untrusted-model"});
+    expect(settings.verify).toHaveBeenCalledExactlyOnceWith("saved-profile", "crawler", true);
+    expect(settings.save).not.toHaveBeenCalled();
+    expect(settings.activate).not.toHaveBeenCalled();
+    expect(settings.local).not.toHaveBeenCalled();
+    expect(response).toEqual({testResult: {
+      profileId: "saved-profile", ok: true, message: expect.stringContaining("Connection successful"), checkedAt: expect.any(String),
+    }, values: null, error: ""});
+    expect(JSON.stringify(response)).not.toContain("encrypted-private-credential");
+    expect(JSON.stringify(response)).not.toContain("untrusted-override");
+  });
+
+  it.each([
+    new CrawlLlmError("LLM verification failed: Model provider rejected the request (HTTP 401)."),
+    new LlmSettingsValidationError("The selected LLM API key is missing. Add it in LLM settings."),
+    new CrawlLlmError("Could not verify the selected LLM through the crawler."),
+  ])("shows a safe verification failure beside the tested profile", async error => {
+    settings.verify.mockRejectedValue(error);
+    expect(await submit({intent: "test", profile_id: "saved-profile"})).toEqual({testResult: {
+      profileId: "saved-profile", ok: false, message: error.message, checkedAt: expect.any(String),
+    }, values: null, error: ""});
+    expect(settings.activate).not.toHaveBeenCalled();
+  });
+
+  it("does not expose unexpected errors or raw provider credentials", async () => {
+    settings.verify.mockRejectedValue(new Error("private-test-api-key encrypted-private-credential"));
+    const response = await submit({intent: "test", profile_id: "saved-profile"});
+    expect(response).toMatchObject({testResult: {profileId: "saved-profile", ok: false, message: "Could not test this model. Try again or check the service connection."}});
+    expect(JSON.stringify(response)).not.toContain("private-test-api-key");
+  });
+});
+
+
+it.each([['archive','archived'],['disable','disabled']] as const)('%s requests the matching lifecycle transition',async (intent,state) => {
+  const response = await submit({intent,profile_id:'saved-profile'});
+  expect(settings.state).toHaveBeenCalledExactlyOnceWith('saved-profile',state);
+  expect(response).toBeInstanceOf(Response);
+  expect(settings.save).not.toHaveBeenCalled();
 });

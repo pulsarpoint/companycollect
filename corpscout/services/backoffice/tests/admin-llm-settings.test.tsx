@@ -13,7 +13,7 @@ import type { LlmProfile } from "~/lib/llm-settings.server";
 const profile: LlmProfile = {
   profileId: "profile-1", name: "DeepSeek production", provider: "DeepSeek",
   baseUrl: "https://api.deepseek.com", model: "deepseek-v4-flash",
-  isActive: true, apiKeyAvailable: true,
+  isActive: true, revision: 1, state: "enabled", disabledReason: null, lastCheck: null, apiKeyAvailable: true,
   createdAt: "2026-08-20T12:00:00.000Z", updatedAt: "2026-08-20T12:00:00.000Z",
 };
 

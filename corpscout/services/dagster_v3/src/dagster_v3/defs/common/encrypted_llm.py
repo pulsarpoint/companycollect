@@ -16,6 +16,8 @@ class EncryptedLLMConfig(dg.Config):
 
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
+    profile_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    profile_revision: int | None = Field(default=None, ge=1, exclude_if=lambda value: value is None)
     provider: str = Field(min_length=1, max_length=100)
     base_url: str = Field(min_length=1, max_length=2048)
     model: str = Field(min_length=1, max_length=200)

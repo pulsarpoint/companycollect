@@ -541,6 +541,10 @@ Generate once with `openssl rand -hex 32`; keep it in ignored environment/secret
 Provider API keys are encrypted in the Backoffice SQLite settings database. The master
 key is the only LLM secret that Backoffice needs in its environment. Save or replace a
 provider key through `/admin/settings/llms`; forms and API responses never return it.
+Each saved profile has a **Test** button. It uses the stored credentials for a bounded
+text-response check through the crawler and reports success or a safe failure reason
+in that row. Testing does not activate a profile or launch a processing job. Queue
+preflight still verifies the capabilities required by the selected workflow.
 Existing environment-backed profiles must be migrated into encrypted database records
 before removing their provider environment variables.
 Crawler and Brave jobs carry only the selected provider, base URL, model and

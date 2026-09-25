@@ -150,7 +150,7 @@ function selectedProfile(
       provider: LOCAL_CODEX_PROFILE_ID,
       baseUrl,
       model: LOCAL_CODEX_MODEL,
-      isActive: false,
+      isActive: false, revision: 1, state: "enabled", disabledReason: null, lastCheck: null,
       apiKeyAvailable: true,
       createdAt: now,
       updatedAt: now,
@@ -267,7 +267,7 @@ function refused(error: string): EsefLaunchActionResult {
 }
 
 export async function loader(_: Route.LoaderArgs) {
-  const profiles = listLlmProfiles();
+  const profiles = await listLlmProfiles();
   const countryDataPromise = loadEsefCountryCodes().then(
     (countries) => ({ countries, countryError: "" }),
     () => ({
@@ -326,7 +326,7 @@ export async function action({
     }
 
     const profile = selectedProfile(
-      listLlmProfiles(),
+      await listLlmProfiles(),
       formValue(form, "profile_id"),
     );
     const sourceDocumentIds = identifiers(
@@ -374,11 +374,13 @@ export async function action({
         600,
       ),
       llm: {
+        profileId: profile.profileId,
         provider: profile.provider,
         model: profile.model,
         baseUrl: profile.baseUrl,
+        profileRevision: "revision" in profile ? profile.revision : undefined,
         apiKeyEncrypted: behavior === "reprocess_existing_without_model" || profile.profileId === LOCAL_CODEX_PROFILE_ID ? null
-          : encryptCrawlLlm(profile, getLlmProfileApiKey(profile.profileId), process.env.CRAWLER_LLM_ENCRYPTION_KEY ?? "").api_key_encrypted,
+          : encryptCrawlLlm(profile, await getLlmProfileApiKey(profile.profileId, profile.revision), process.env.CRAWLER_LLM_ENCRYPTION_KEY ?? "").api_key_encrypted,
         temperature: boundedNumber(
           form,
           "temperature",

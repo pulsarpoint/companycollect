@@ -432,6 +432,11 @@ def test_finish_counts_results_and_skips_then_purge_drops_the_partition(
         "SELECT DISTINCT task_id FROM corpscout.webtech_scan_input"
     ) == [(other,)]
     assert processing.task(task_id)["inputs_purged_at"] is not None
+    # The fresh/skipped page has no result in this execution, but remains in history.
+    assert client.execute(
+        "SELECT count() FROM corpscout.queue_task_sources FINAL WHERE task_id=%(task)s",
+        {"task": task_id},
+    ) == [(3,)]
 
 
 class FakeScanner:

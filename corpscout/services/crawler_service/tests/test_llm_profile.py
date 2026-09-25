@@ -174,6 +174,14 @@ class ProfileServiceTests(unittest.IsolatedAsyncioTestCase):
 
         return patch.object(httpx.AsyncClient, "send", handle)
 
+    async def test_verification_distinguishes_permanent_and_transient_provider_failures(self):
+        from crawler_service.llm_profile import verify_llm
+        for status, kind in [(401, "configuration"), (403, "configuration"), (404, "configuration"), (429, "transient"), (503, "transient"), (400, "capability")]:
+            with self.subTest(status=status), self.llm_response(status=status):
+                result = await verify_llm(EncryptedLLMProfile.model_validate(profile_payload()), {"CRAWLER_LLM_ENCRYPTION_KEY": KEY})
+                self.assertEqual(result["failure_kind"], kind)
+                self.assertNotIn(API_KEY, json.dumps(result))
+
     async def test_verify_requires_auth_and_never_creates_a_job_or_artifact(self):
         async with self.app.router.lifespan_context(self.app):
             before = sorted(self.root.rglob("*"))

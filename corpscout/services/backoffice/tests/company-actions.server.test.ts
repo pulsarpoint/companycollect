@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { launchCompanyAction } from "~/lib/company-actions.server";
 import { listPeoplePrompts } from "~/lib/people-prompts.server";
-import { saveAndActivateLlmProfile } from "~/lib/llm-settings.server";
+vi.mock("~/lib/llm-settings.server", () => ({
+  getLlmProfile: async (id: string) => id === "test-profile" ? ({profileId: "test-profile",revision:1,state:"enabled",provider:"openrouter",model:"chosen/model",baseUrl:"https://openrouter.ai/api/v1"}) : null,
+  getLlmProfileApiKey: async () => "secret-must-not-travel",
+}));
+vi.mock("~/lib/llm-runs.server", () => ({admitLlmRun: async () => null, acknowledgeLlmRun: async () => {}}));
 import { ACTIVE_COMPANY_RUN_STATUSES } from "~/lib/company-actions";
 
 let directory: string;
@@ -13,7 +17,7 @@ let input: Parameters<typeof launchCompanyAction>[0];
 beforeEach(() => {
   vi.stubEnv("CRAWLER_LLM_ENCRYPTION_KEY", "11".repeat(32));
   directory = mkdtempSync(join(tmpdir(), "company-actions-")); databasePath = join(directory, "settings.sqlite");
-  const profileId = saveAndActivateLlmProfile({ name: "Chosen LLM", provider: "openrouter", model: "chosen/model", baseUrl: "https://openrouter.ai/api/v1", apiKey: "secret-must-not-travel" }, databasePath);
+  const profileId = "test-profile";
   const [prompt] = listPeoplePrompts(databasePath);
   input = { area: "info", operation: "process", profileId, promptId: prompt.promptId, promptRevision: prompt.revision, changedOnly: true, llmMaxCompanies: 1234, requestedBy: "operator" };
 });
@@ -139,7 +143,7 @@ describe("company action dispatch", () => {
     await launchCompanyAction(input, opts);
     const config = JSON.parse(String(opts.fetchImpl.mock.calls.find(([, init]) => JSON.parse(String(init?.body)).variables.executionParams)?.[1]?.body)).variables.executionParams.runConfigData.ops.se_basic_info_suggestions_llm.config;
     expect(config).toEqual({ execute: true, max_companies: 1234, llm: {
-      provider: "openrouter", model: "chosen/model", base_url: "https://openrouter.ai/api/v1",
+      profile_id: "test-profile", profile_revision: 1, provider: "openrouter", model: "chosen/model", base_url: "https://openrouter.ai/api/v1",
       api_key_encrypted: expect.stringMatching(/^v1\./), temperature: 0, max_tokens: 6000, concurrency: 1,
     } });
   });

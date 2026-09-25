@@ -155,8 +155,8 @@ it("keeps task history independent of queue inputs and shows the latest retry st
     {runId: "failed", status: "FAILURE", startTime: 900, tags: {"processing/task_id": task}},
     {runId: "unrelated", status: "SUCCESS", tags: {}},
   ] as never);
-  expect(await loadQueueHistory(filters())).toEqual([{taskId: task, status: "SUCCESS", runUrl: "http://dagster/runs/completed", startedAt: "1970-01-01T00:16:40.000Z", outcome: null, failedPages: null, skippedPages: null, crawlType: null}]);
-  expect(chQuery).not.toHaveBeenCalled();
+  expect(await loadQueueHistory(filters())).toEqual([{taskId: task, status: "SUCCESS", runUrl: "http://dagster/runs/completed", startedAt: "1970-01-01T00:16:40.000Z", outcome: null, failedPages: null, skippedPages: null, crawlType: null, sources: null, sourcesError: false}]);
+  expect(chQuery).toHaveBeenCalledWith(expect.stringContaining("queue_task_sources"), expect.objectContaining({tasks: [task, task]}));
 });
 
 it("distinguishes completed website errors from a failed pipeline run", async () => {
@@ -189,7 +189,7 @@ it("shows all crawler types on the default full-crawl queue, ordered by latest r
     expect.objectContaining({crawlType: "site_info", taskId: task, outcome: "completed_with_errors", failedPages: 1, skippedPages: 2, runUrl: "http://dagster/runs/new"}),
     expect.objectContaining({crawlType: "jobs", taskId: request, status: "FAILURE"}),
   ]);
-  expect(chQuery).not.toHaveBeenCalled();
+  expect(chQuery).toHaveBeenCalledWith(expect.stringContaining("website_site_info_results"), expect.objectContaining({kinds: ["jobs", "site_info", "site_info"]}));
 });
 
 
@@ -225,4 +225,20 @@ describe("Brave verified assistant launch", () => {
   it.each(["api_key", "api_key_encrypted", "llm", "challenge_agent_model", "model", "base_url"])("rejects raw model/credential override %s", key => {
     expect(() => parseQueueConfig(filters("brave"), JSON.stringify({...config(), [key]: "override"}))).toThrow("Unsupported processing parameter");
   });
+});
+
+
+it("keeps completed source websites when queue inputs have been removed", async () => {
+  const {loadQueueHistory} = await import("~/lib/queues.server");
+  const sources = {task_type: "webtech", task_id: task, total: "2", complete: 1, preview: [["100.se", "https://100.se/"], ["example.com", "https://example.com/jobs"]]};
+  vi.mocked(listRuns).mockResolvedValue([{runId: "done", status: "SUCCESS", startTime: 1000, tags: {"processing/task_id": task}}] as never);
+  vi.mocked(chQuery).mockResolvedValue([sources]);
+  expect(await loadQueueHistory(filters())).toEqual([expect.objectContaining({sources, sourcesError: false})]);
+});
+
+it("preserves task status when source lookup fails", async () => {
+  const {loadQueueHistory} = await import("~/lib/queues.server");
+  vi.mocked(listRuns).mockResolvedValue([{runId: "done", status: "FAILURE", startTime: 1000, tags: {"processing/task_id": task}}] as never);
+  vi.mocked(chQuery).mockRejectedValueOnce(new Error("source storage offline"));
+  expect(await loadQueueHistory(filters())).toEqual([expect.objectContaining({status: "FAILURE", sources: null, sourcesError: true})]);
 });

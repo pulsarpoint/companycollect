@@ -1,11 +1,13 @@
 import { createCipheriv, randomBytes } from "node:crypto";
 import { browserFetch } from "~/lib/browser-service.server";
 import { crawlerFetch } from "~/lib/crawler.server";
-import { getLlmProfile, getLlmProfileApiKey, LlmSettingsValidationError } from "~/lib/llm-settings.server";
+import { getLlmProfile, getLlmProfileApiKey, LlmSettingsValidationError, recordLlmCheck, type LlmFailureKind } from "~/lib/llm-settings.server";
 
 export class CrawlLlmError extends Error {}
 
 export type EncryptedCrawlLlm = {
+  profile_id?: string;
+  profile_revision?: number;
   provider: string;
   base_url: string;
   model: string;
@@ -13,7 +15,7 @@ export type EncryptedCrawlLlm = {
 };
 
 /** Encrypt for the crawler; Dagster carries this envelope without the shared key. */
-export function encryptCrawlLlm(profile: {provider: string; baseUrl: string; model: string}, apiKey: string, sharedKey: string): EncryptedCrawlLlm {
+export function encryptCrawlLlm(profile: {profileId?: string; revision?: number; provider: string; baseUrl: string; model: string}, apiKey: string, sharedKey: string): EncryptedCrawlLlm {
   if (!/^[a-fA-F0-9]{64}$/.test(sharedKey)) {
     throw new CrawlLlmError("Configure the same 64-character hexadecimal CRAWLER_LLM_ENCRYPTION_KEY in Backoffice and the crawler.");
   }
@@ -31,20 +33,22 @@ export function encryptCrawlLlm(profile: {provider: string; baseUrl: string; mod
   const cipher = createCipheriv("aes-256-gcm", Buffer.from(sharedKey, "hex"), nonce);
   cipher.setAAD(Buffer.from(`corpscout-crawler-llm:v1\0${profile.provider}\0${profile.baseUrl}\0${profile.model}`, "utf8"));
   const encrypted = Buffer.concat([cipher.update(apiKey, "utf8"), cipher.final(), cipher.getAuthTag()]);
-  return {provider: profile.provider, base_url: profile.baseUrl, model: profile.model,
+  return {...(profile.profileId && profile.revision ? {profile_id: profile.profileId, profile_revision: profile.revision} : {}), provider: profile.provider, base_url: profile.baseUrl, model: profile.model,
     api_key_encrypted: `v1.${nonce.toString("base64url")}.${encrypted.toString("base64url")}`};
 }
 
 /** Verify the selected model through the service that will actually use it. */
-export async function verifySelectedLlm(profileId: unknown, target: "crawler" | "brave"): Promise<EncryptedCrawlLlm> {
+export async function verifySelectedLlm(profileId: unknown, target: "crawler" | "brave", enable = false): Promise<EncryptedCrawlLlm> {
   if (typeof profileId !== "string" || !profileId.trim()) throw new CrawlLlmError("Choose an LLM from LLM settings before starting processing.");
   const tokenName = target === "crawler" ? "CRAWLER_API_TOKEN" : "BROWSER_API_TOKEN";
   const serviceName = target === "crawler" ? "crawler" : "Brave browser assistant";
   if (!process.env[tokenName]?.trim()) throw new CrawlLlmError(`Configure ${tokenName} on Backoffice before verifying models.`);
-  const profile = getLlmProfile(profileId);
+  const profile = await getLlmProfile(profileId);
   if (!profile) throw new CrawlLlmError("The selected LLM no longer exists. Choose another LLM.");
+  if (profile.state === 'disabled' && !enable) throw new CrawlLlmError("This model is disabled. Test and enable it in LLM settings first.");
+  const startedAt = new Date().toISOString();
   let apiKey: string;
-  try { apiKey = getLlmProfileApiKey(profileId); }
+  try { apiKey = await getLlmProfileApiKey(profileId, profile.revision); }
   catch (error) {
     if (error instanceof LlmSettingsValidationError) throw new CrawlLlmError(error.message);
     throw error;
@@ -58,15 +62,22 @@ export async function verifySelectedLlm(profileId: unknown, target: "crawler" | 
     };
     const response = target === "crawler" ? await crawlerFetch("/v1/llm/verify", init)
       : await browserFetch("/v1/brave/llm/verify", init);
+    if (!response.ok) throw new Error("Verification service unavailable");
     result = await response.json();
   } catch {
+    await recordLlmCheck(profile, target, startedAt, false, "Verification service could not be reached or authenticated.", 'service');
     throw new CrawlLlmError(`Could not verify the selected LLM through the ${serviceName}. Check service connectivity, API authentication, and the shared encryption key before trying again.`);
   }
   if (typeof result !== "object" || result === null || !("ok" in result) || result.ok !== true) {
     const detail = typeof result === "object" && result !== null && "error" in result && typeof result.error === "string"
       ? result.error.replaceAll(apiKey, "[redacted]").replaceAll(llm.api_key_encrypted, "[redacted]").slice(0, 500) : "The service did not confirm the model is working.";
-    throw new CrawlLlmError(`LLM verification failed: ${detail}`);
+    const kind = typeof result === 'object' && result !== null && 'failure_kind' in result
+      && ['configuration','transient','capability','service'].includes(String(result.failure_kind))
+      ? result.failure_kind as LlmFailureKind : 'service';
+    await recordLlmCheck(profile, target, startedAt, false, detail, kind);
+    throw new CrawlLlmError(`LLM verification failed: ${detail}${kind === 'configuration' ? ' Model disabled; dependent tasks are being stopped.' : ''}`);
   }
+  await recordLlmCheck(profile, target, startedAt, true, "Configuration verified successfully.", null, enable);
   return llm;
 }
 

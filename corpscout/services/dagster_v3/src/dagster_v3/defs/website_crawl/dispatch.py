@@ -1,5 +1,8 @@
 """Validated request payloads and idempotent submission to the crawler HTTP API."""
 
+from datetime import UTC, datetime
+from dagster_v3.defs.common.llm_control import check_admission, current_request_id, invalidate_revision
+
 import hashlib
 import json
 from time import monotonic, sleep
@@ -119,6 +122,8 @@ RETRY_SECONDS = 120
 
 def verify_crawl_llm(http: Session, url: str, llm: dict) -> None:
     """Check the frozen profile immediately before admitting any domain work."""
+    check_admission(llm)
+    started_at = datetime.now(UTC)
     try:
         response = http.post(
             url.rstrip("/") + "/v1/llm/verify",
@@ -144,6 +149,7 @@ def verify_crawl_llm(http: Session, url: str, llm: dict) -> None:
         raise ValueError(
             "The crawler returned an invalid LLM verification response; no new domains were submitted."
         )
+    invalidate_revision(llm, "crawler", started_at, result)
     if result.get("ok") is not True:
         reason = result.get("error")
         safe_reason = (
@@ -158,9 +164,13 @@ def verify_crawl_llm(http: Session, url: str, llm: dict) -> None:
 
 def send_crawl(http: Session, url: str, payload: dict, *, validate: bool) -> dict:
     """Retry ambiguous POSTs with the same durable crawler request ID."""
+    llm = payload.get("llm") or {}
+    owner = current_request_id() if llm.get("profile_id") and not validate else None
     deadline = monotonic() + RETRY_SECONDS
     path = "/v1/crawls/validate" if validate else "/v1/crawls"
     while True:
+        check_admission(llm, owner, service="crawler" if not validate else None,
+                        external_request_id=payload["request_id"])
         try:
             response = http.post(
                 url.rstrip("/") + path,

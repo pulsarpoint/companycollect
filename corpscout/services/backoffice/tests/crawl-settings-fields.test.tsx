@@ -75,15 +75,15 @@ describe("crawl LLM selection", () => {
 });
 
 describe("crawl LLM profile resource", () => {
-  it("exposes only selection metadata, even if stored profiles contain credentials or environment names", () => {
+  it("exposes only selection metadata, even if stored profiles contain credentials or environment names", async () => {
     mocks.listLlmProfiles.mockReturnValue(profiles.map(profile => ({...profile, apiKey: "do-not-send-this", apiKeyEnvironmentVariable: "SECRET_MODEL_KEY", baseUrl: "https://provider.invalid/v1", isActive: true})));
-    expect(loader()).toEqual({profiles, error: null});
-    expect(JSON.stringify(loader())).not.toContain("SECRET_MODEL_KEY");
-    expect(JSON.stringify(loader())).not.toContain("do-not-send-this");
+    expect(await loader()).toEqual({profiles, error: null});
+    expect(JSON.stringify(await loader())).not.toContain("SECRET_MODEL_KEY");
+    expect(JSON.stringify(await loader())).not.toContain("do-not-send-this");
   });
 
-  it("returns a recoverable error without exposing database details", () => {
+  it("returns a recoverable error without exposing database details", async () => {
     mocks.listLlmProfiles.mockImplementation(() => { throw new Error("private database path"); });
-    expect(loader()).toEqual({profiles: [], error: "Could not load saved LLMs. Reload the list to try again."});
+    expect(await loader()).toEqual({profiles: [], error: "Could not load saved LLMs. Reload the list to try again."});
   });
 });

@@ -135,3 +135,24 @@ def test_explicit_execution_id_only_resumes(store):  # noqa: F811
     with pytest.raises(ValueError, match="No saved execution to resume"):
         start(processing, task_id, execution_id=str(uuid4()))
     assert processing.task(task_id)["status"] == "draft"
+
+
+@pytest.mark.parametrize("relation", ["corpscout.webtech_scan_input", "corpscout.website_crawl_task_domains"])
+def test_source_archive_failure_never_deletes_queue_inputs(relation):
+    from unittest.mock import MagicMock
+
+    processing = MagicMock()
+    processing.task.return_value = {
+        "processor": PROCESSOR, "queue_scope": "workspace", "status": "completed",
+        "work_config": {"finished": True}, "inputs_purged_at": None,
+    }
+    clickhouse = MagicMock()
+    client = clickhouse.get_connection.return_value.__enter__.return_value
+    client.execute.side_effect = RuntimeError("archive unavailable")
+    with pytest.raises(RuntimeError, match="archive unavailable"):
+        queue_execution.purge_completed_inputs(
+            processing, clickhouse, task_id="task", processor=PROCESSOR, relation=relation
+        )
+    assert client.execute.call_count == 1
+    assert client.execute.call_args.args[0].startswith("INSERT INTO corpscout.queue_task_sources")
+    processing.transaction.assert_not_called()

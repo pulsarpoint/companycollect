@@ -70,7 +70,7 @@ async function dispatchCompanyAction(
     if (fullProcessing) ops.se_address_geocodes_warm = { config: { chunk_size: 150_000, limit: 0 } };
   }
   if (info && fullProcessing) {
-    const profile = getLlmProfile(input.profileId, options.databasePath);
+    const profile = await getLlmProfile(input.profileId);
     if (!profile) throw new Error("Choose a saved LLM profile.");
     if (!Number.isInteger(input.llmMaxCompanies) || input.llmMaxCompanies < 1 || input.llmMaxCompanies > 1_000_000) {
       throw new Error("The description processing limit must be between 1 and 1,000,000 companies.");
@@ -78,7 +78,7 @@ async function dispatchCompanyAction(
     ops.se_basic_info_suggestions_llm = { config: {
       execute: true, max_companies: input.llmMaxCompanies,
       llm: {
-        ...encryptCrawlLlm(profile, getLlmProfileApiKey(profile.profileId, options.databasePath), process.env.CRAWLER_LLM_ENCRYPTION_KEY ?? ""),
+        ...encryptCrawlLlm(profile, await getLlmProfileApiKey(profile.profileId, profile.revision), process.env.CRAWLER_LLM_ENCRYPTION_KEY ?? ""),
         temperature: 0, max_tokens: 6_000, concurrency: 1,
       },
     } };
