@@ -1,5 +1,6 @@
 """Draft import, immutable execution and cleanup against disposable PG/ClickHouse."""
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -8,15 +9,24 @@ import pytest
 
 from dagster_v3.defs.common import draft_queue
 from dagster_v3.defs.common.processing import ProcessingResource
+from dagster_v3.defs.website_crawl.dispatch import crawl_payload
 from dagster_v3.defs.website_crawl.input import (
     INPUT_TABLES,
     TASK_DOMAINS,
     task_processor,
 )
+from dagster_v3.defs.website_crawl.queue_execution import (
+    REQUEST_ID_SQL,
+    count_unresolved,
+    dispatchable_entries,
+    remaining_crawl_entries,
+    start_crawl_execution,
+)
 from dagster_v3.defs.website_crawl.queue_input import (
     CrawlQueueInputConfig,
     load_crawl_draft,
 )
+from dagster_v3.defs.website_crawl.results import CrawlResultsConfig
 from dagster_v3.defs.website_crawl.results_assets import website_site_info_results
 from tests.test_processing_store import processing_postgres_url, store  # noqa: F401
 from tests.test_website_crawl_input_assets import server  # noqa: F401
@@ -86,6 +96,41 @@ def run(db, task_id, **overrides):  # noqa: F811
                 }
             }
         },
+    )
+
+
+def start(db, task_id, **overrides):
+    """Freeze the draft the way the results asset does, without crawling."""
+    _, resource, processing, _, _ = db
+    config = CrawlResultsConfig(**SETTINGS, **overrides)
+    with processing.selection_lock(task_id), resource.get_connection() as client:
+        task = start_crawl_execution(
+            processing, client, task_id, "site_info", config, str(uuid4())
+        )
+    return task, config
+
+
+def publish(client, *, domain, request_id, run_id, work_key, successful, finished_at):
+    client.execute(
+        "INSERT INTO corpscout.website_site_info_results (domain,website_url,request_id,attempt,input_revision,work_key,run_id,state,crawl_status,successful,finished_at,error,s3_path,s3_state) VALUES",
+        [
+            (
+                domain,
+                f"https://{domain}/",
+                request_id,
+                1,
+                1,
+                work_key,
+                run_id,
+                "completed",
+                "finished",
+                successful,
+                finished_at,
+                "",
+                "",
+                "uploaded",
+            )
+        ],
     )
 
 
@@ -267,7 +312,6 @@ def test_lost_cleanup_ack_does_not_repeat_crawls(db, crawler, monkeypatch):
 
 def test_task_and_explicit_domains_are_exclusive():
     from pydantic import ValidationError
-    from dagster_v3.defs.website_crawl.results import CrawlResultsConfig
 
     with pytest.raises(ValidationError, match="task_id"):
         CrawlResultsConfig(**SETTINGS, task_id=str(uuid4()), domains=["a.example"])
@@ -329,3 +373,175 @@ def test_retry_replaces_only_its_own_rows(db, monkeypatch):
     assert client.execute(
         f"SELECT domain, submission_id FROM {TASK_DOMAINS} ORDER BY domain"
     ) == [("kept.example", other["submission_id"]), ("mine.example", submission)]
+
+
+def test_request_id_matches_between_sql_and_python(db):
+    client, *_ = db
+    execution = str(uuid4())
+    [(from_sql,)] = client.execute(
+        f"SELECT {REQUEST_ID_SQL} FROM (SELECT 'one.example' AS domain)",
+        {"exec": execution, "type": "site_info"},
+    )
+    row = {
+        "preset_version": 1,
+        "proxy_route": "direct",
+        "config_json": "{}",
+        "domain": "one.example",
+        "website_url": "https://one.example/",
+        "save_artifacts": True,
+        "headless": True,
+        "page_mode": "discover",
+        "pages": [],
+        "instructions": "",
+    }
+    assert crawl_payload(row, "site_info", execution)["request_id"] == from_sql
+    assert from_sql.startswith("dagster-crawl-") and len(from_sql) == 14 + 64
+
+
+def test_remaining_excludes_own_results_fresh_successes_and_disabled_presets(db):
+    client, resource, _, _, _ = db
+    task_id = add(db, targets=["one.example", "two.example", "three.example"])[
+        "task_id"
+    ]
+    task, config = start(db, task_id)
+    execution = task["config"]["execution"]
+    started_at = datetime.fromisoformat(execution["started_at"])
+    with resource.get_connection() as connection:
+        rows = remaining_crawl_entries(connection, task, "site_info")
+        items = {
+            item["domain"]: item
+            for item in dispatchable_entries(
+                connection, rows, task=task, crawl_type="site_info", config=config
+            )
+        }
+    assert sorted(items) == ["one.example", "three.example", "two.example"]
+    assert all(item["run_id"] == execution["execution_id"] for item in items.values())
+    assert all(
+        item["request_id"].startswith("dagster-crawl-") for item in items.values()
+    )
+    # one: this execution's own result, even a failure, leaves the remaining set.
+    publish(
+        client,
+        domain="one.example",
+        request_id=items["one.example"]["request_id"],
+        run_id=execution["execution_id"],
+        work_key=items["one.example"]["work_key"],
+        successful=False,
+        finished_at=datetime.now(UTC),
+    )
+    # two: an older failure then a success inside the frozen window -> fresh.
+    publish(
+        client,
+        domain="two.example",
+        request_id="other-1",
+        run_id="other",
+        work_key=items["two.example"]["work_key"],
+        successful=False,
+        finished_at=started_at - timedelta(hours=2),
+    )
+    publish(
+        client,
+        domain="two.example",
+        request_id="other-2",
+        run_id="other",
+        work_key=items["two.example"]["work_key"],
+        successful=True,
+        finished_at=started_at - timedelta(hours=1),
+    )
+    # three: a success after the execution started never counts as fresh.
+    publish(
+        client,
+        domain="three.example",
+        request_id="other-3",
+        run_id="other",
+        work_key=items["three.example"]["work_key"],
+        successful=True,
+        finished_at=started_at + timedelta(hours=1),
+    )
+    with resource.get_connection() as connection:
+        rows = remaining_crawl_entries(connection, task, "site_info")
+        assert [row["domain"] for row in rows] == ["three.example", "two.example"]
+        dispatchable = dispatchable_entries(
+            connection, rows, task=task, crawl_type="site_info", config=config
+        )
+        assert [item["domain"] for item in dispatchable] == ["three.example"]
+        assert count_unresolved(connection, task, "site_info", config) == 1
+        # A later failure inside the window never hides the earlier success.
+        publish(
+            client,
+            domain="two.example",
+            request_id="other-4",
+            run_id="other",
+            work_key=items["two.example"]["work_key"],
+            successful=False,
+            finished_at=started_at - timedelta(minutes=30),
+        )
+        rows = remaining_crawl_entries(connection, task, "site_info")
+        assert [
+            item["domain"]
+            for item in dispatchable_entries(
+                connection, rows, task=task, crawl_type="site_info", config=config
+            )
+        ] == ["three.example"]
+        # A disabled preset is a skip, not work; pages are read with a cursor.
+        client.execute(
+            "INSERT INTO corpscout.website_site_info_requests SELECT * EXCEPT bucket REPLACE (false AS enabled, 2 AS revision) FROM corpscout.website_site_info_requests_current WHERE domain='three.example'"
+        )
+        assert [
+            row["domain"]
+            for row in remaining_crawl_entries(
+                connection, task, "site_info", after="three.example", limit=1
+            )
+        ] == ["two.example"]
+        publish(
+            client,
+            domain="two.example",
+            request_id=items["two.example"]["request_id"],
+            run_id=execution["execution_id"],
+            work_key=items["two.example"]["work_key"],
+            successful=True,
+            finished_at=datetime.now(UTC),
+        )
+        assert [
+            row["domain"]
+            for row in remaining_crawl_entries(connection, task, "site_info")
+        ] == ["three.example"]
+        assert count_unresolved(connection, task, "site_info", config) == 0
+
+
+def test_force_refresh_disables_only_the_freshness_skip(db):
+    client, resource, _, _, _ = db
+    task_id = add(db, targets=["one.example"])["task_id"]
+    task, config = start(db, task_id, force_refresh=True)
+    started_at = datetime.fromisoformat(task["config"]["execution"]["started_at"])
+    with resource.get_connection() as connection:
+        rows = remaining_crawl_entries(connection, task, "site_info")
+        [item] = dispatchable_entries(
+            connection, rows, task=task, crawl_type="site_info", config=config
+        )
+    publish(
+        client,
+        domain="one.example",
+        request_id="other-1",
+        run_id="other",
+        work_key=item["work_key"],
+        successful=True,
+        finished_at=started_at - timedelta(hours=1),
+    )
+    with resource.get_connection() as connection:
+        rows = remaining_crawl_entries(connection, task, "site_info")
+        assert (
+            len(
+                dispatchable_entries(
+                    connection, rows, task=task, crawl_type="site_info", config=config
+                )
+            )
+            == 1
+        )
+        unforced = CrawlResultsConfig(**SETTINGS)
+        assert (
+            dispatchable_entries(
+                connection, rows, task=task, crawl_type="site_info", config=unforced
+            )
+            == []
+        )

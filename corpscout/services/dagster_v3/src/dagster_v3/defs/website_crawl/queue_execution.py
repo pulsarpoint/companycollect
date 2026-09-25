@@ -42,6 +42,136 @@ def read_document(objects, reference):
     return json.loads(body)
 
 
+# The request identity, computed where the entries live. The Python twin is
+# dispatch.crawl_payload(row, crawl_type, execution_id)["request_id"].
+REQUEST_ID_SQL = "concat('dagster-crawl-', lower(hex(SHA256(concat(%(exec)s, ':', %(type)s, ':', domain)))))"
+
+
+def _clickhouse_time(value: str) -> str:
+    return datetime.fromisoformat(value).strftime("%Y-%m-%d %H:%M:%S.%f")
+
+
+def crawl_parameters(task: dict, crawl_type: str) -> dict:
+    execution = task["config"]["execution"]
+    return {
+        "task": str(task["task_id"]),
+        "type": crawl_type,
+        "exec": execution["execution_id"],
+        "cutoff": _clickhouse_time(execution["freshness_cutoff"]),
+        "started": _clickhouse_time(execution["started_at"]),
+    }
+
+
+def remaining_crawl_entries(
+    client, task: dict, crawl_type: str, *, after: str = "", limit: int = 500
+) -> list[dict]:
+    """Frozen entries after ``after`` (by domain) without a result of this execution.
+
+    Each row carries the current preset so the caller can build the payload and
+    decide skips; the preset columns are named explicitly to avoid clashing with
+    the entry's own domain and URL.
+    """
+    return read_rows(
+        client,
+        f"""SELECT q.domain AS domain, q.website_url AS selected_url, q.request_id AS request_id,
+            p.website_url AS preset_url, p.enabled AS enabled, p.revision AS revision,
+            p.page_mode AS page_mode, p.pages AS pages, p.instructions AS instructions,
+            p.headless AS headless, p.proxy_route AS proxy_route,
+            p.save_artifacts AS save_artifacts, p.preset_version AS preset_version,
+            p.config_json AS config_json
+        FROM (
+            SELECT domain, website_url, {REQUEST_ID_SQL} AS request_id
+            FROM {TASK_DOMAINS}
+            WHERE task_id=%(task)s AND crawl_type=%(type)s AND domain > %(after)s
+        ) AS q
+        LEFT JOIN {INPUTS_BY_TYPE[crawl_type]}_current AS p ON q.domain = p.domain
+        WHERE q.request_id NOT IN (
+            SELECT request_id FROM {RESULTS_BY_TYPE[crawl_type]} WHERE run_id = %(exec)s)
+        ORDER BY q.domain LIMIT %(limit)s""",
+        {**crawl_parameters(task, crawl_type), "after": after, "limit": limit},
+    )
+
+
+def fresh_work_keys(
+    client, task: dict, crawl_type: str, pairs: list[tuple[str, str]]
+) -> set:
+    """(domain, work_key) pairs with a success inside the frozen window (a later failure never hides it)."""
+    if not pairs:
+        return set()
+    return set(
+        client.execute(
+            f"""SELECT domain, work_key FROM {RESULTS_BY_TYPE[crawl_type]} FINAL
+            WHERE (domain, work_key) IN %(pairs)s
+              AND finished_at >= toDateTime64(%(cutoff)s, 6, 'UTC')
+              AND finished_at <= toDateTime64(%(started)s, 6, 'UTC')
+            GROUP BY domain, work_key
+            HAVING max(successful)""",
+            {**crawl_parameters(task, crawl_type), "pairs": tuple(pairs)},
+        )
+    )
+
+
+def dispatchable_entries(
+    client, rows: list[dict], *, task: dict, crawl_type: str, config
+) -> list[dict]:
+    """Requests to send for a page of remaining entries; disabled and fresh ones are skips."""
+    execution = task["config"]["execution"]
+    items = []
+    for row in rows:
+        if not row["revision"]:
+            raise ValueError("A queued domain has no crawl preset")
+        # Copy so a caller can re-decide the same page (e.g. with a different
+        # config) without this call's pops corrupting its rows.
+        row = dict(row)
+        selected_url, preset_url = row.pop("selected_url"), row.pop("preset_url")
+        if not row["enabled"]:
+            continue
+        row["website_url"] = selected_url or preset_url
+        payload, work_key = effective_payload(
+            row, crawl_type, execution["execution_id"], config
+        )
+        if payload["request_id"] != row["request_id"]:
+            raise ValueError("Request identity differs between ClickHouse and Python")
+        items.append(
+            {
+                "crawl_type": crawl_type,
+                "domain": row["domain"],
+                "request_id": row["request_id"],
+                "input_revision": row["revision"],
+                "work_key": work_key,
+                "run_id": execution["execution_id"],
+                "request_json": json.dumps(payload, sort_keys=True),
+            }
+        )
+    fresh = (
+        set()
+        if config.force_refresh
+        else fresh_work_keys(
+            client,
+            task,
+            crawl_type,
+            [(item["domain"], item["work_key"]) for item in items],
+        )
+    )
+    return [item for item in items if (item["domain"], item["work_key"]) not in fresh]
+
+
+def count_unresolved(client, task: dict, crawl_type: str, config) -> int:
+    """Remaining entries that are neither disabled nor fresh; finish refuses while any exist."""
+    unresolved = 0
+    after = ""
+    while True:
+        rows = remaining_crawl_entries(client, task, crawl_type, after=after)
+        if not rows:
+            return unresolved
+        after = rows[-1]["domain"]
+        unresolved += len(
+            dispatchable_entries(
+                client, rows, task=task, crawl_type=crawl_type, config=config
+            )
+        )
+
+
 def start_crawl_execution(store, client, task_id, crawl_type, config, run_id):
     task = store.task(task_id)
     if (
