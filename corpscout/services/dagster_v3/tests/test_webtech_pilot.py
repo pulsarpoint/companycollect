@@ -9,23 +9,12 @@ from typing import Any
 import dagster as dg
 import pytest
 import requests
-from pydantic import ValidationError
 
 from dagster_v3.components.webtech_scanner_component import (
     WebtechScannerComponent,
 )
-from dagster_v3.defs.webtech import assets as webtech_assets
-from dagster_v3.defs.webtech.assets import (
-    WEBTECH_DOMAIN_LIMIT,
-    WEBTECH_PARTITION_COUNT,
-    WEBTECH_PARTITION_KEYS,
-    WEBTECH_PARTITIONS,
-    WebtechCandidateConfig,
-    _latest_candidate_manifest,
-    _latest_final_reference,
-    load_webtech_candidates,
-    monitor_webtech_scan,
-)
+from dagster_v3.defs.webtech import monitor as webtech_monitor
+from dagster_v3.defs.webtech.monitor import monitor_webtech_scan
 from dagster_v3.defs.webtech.client import (
     WebtechApiResource,
     WebtechApiUnavailableError,
@@ -119,42 +108,17 @@ def test_webtech_component_builds_polling_scan_definitions() -> None:
             asset_keys.add(asset.key.to_user_string())
         else:
             asset_keys.update(key.to_user_string() for key in asset.keys)
-    assert asset_keys == {
-        "commoncrawl_webtech_candidates_manifest",
-        "commoncrawl_webtech_remote_scan",
-        "commoncrawl_webtech_results_clickhouse",
-        "webtech_scan_results",
-    }
+    assert asset_keys == {"webtech_scan_results"}
     assert not definitions.sensors
-    assert {job.name for job in definitions.jobs or []} == {
-        "commoncrawl_webtech_finalize_job",
-        "commoncrawl_webtech_scan_job",
-        "webtech_scan_results_job",
-    }
+    assert {job.name for job in definitions.jobs or []} == {"webtech_scan_results_job"}
     api_resource = (definitions.resources or {})["webtech_api"]
     assert api_resource.model_dump()["api_token"] == "WEBTECH_API_TOKEN"
-    assert WEBTECH_PARTITIONS.get_partition_keys() == WEBTECH_PARTITION_KEYS
-    assert len(WEBTECH_PARTITION_KEYS) == 128
-    assert WEBTECH_PARTITION_KEYS[0] == "hash_000"
-    assert WEBTECH_PARTITION_KEYS[-1] == "hash_127"
 
-    assets_by_key = {
-        next(iter(asset.keys)).to_user_string(): asset
-        for asset in definitions.assets or []
-        if isinstance(asset, dg.AssetsDefinition)
+    results = next(iter(definitions.assets))
+    assert results.partitions_def is None
+    assert results.asset_deps[dg.AssetKey("webtech_scan_results")] == {
+        dg.AssetKey("webtech_scan_input")
     }
-    assert [
-        (input_definition.name, input_definition.dagster_type.key)
-        for input_definition in assets_by_key[
-            "commoncrawl_webtech_remote_scan"
-        ].node_def.input_defs
-    ] == [("commoncrawl_webtech_candidates_manifest", "Nothing")]
-    assert [
-        (input_definition.name, input_definition.dagster_type.key)
-        for input_definition in assets_by_key[
-            "commoncrawl_webtech_results_clickhouse"
-        ].node_def.input_defs
-    ] == [("commoncrawl_webtech_remote_scan", "Nothing")]
 
 
 def test_webtech_api_resource_survives_dagster_process_reconstruction() -> None:
@@ -182,34 +146,6 @@ def test_webtech_api_transport_failure_is_retryable(monkeypatch) -> None:
 
     with pytest.raises(WebtechApiUnavailableError, match="scanner poll timed out"):
         resource.poll("scan-1", after_event=12)
-
-
-def test_candidate_reference_is_reconstructed_without_local_output() -> None:
-    instance = dg.DagsterInstance.ephemeral()
-    instance.report_runless_asset_event(
-        dg.AssetMaterialization(
-            asset_key="commoncrawl_webtech_candidates_manifest",
-            partition=PARTITION_KEY,
-            metadata={
-                "crawl_id": CRAWL_ID,
-                "partition_key": PARTITION_KEY,
-                "detector_version": WEBTECH_DETECTOR_VERSION,
-                "dagster_run_id": "candidate-run",
-                "manifest_uri": "s3://webtech/webtech/candidates/test.json",
-                "manifest_sha256": "ab" * 32,
-                "candidate_count": 1_000,
-            },
-        )
-    )
-
-    reference = _latest_candidate_manifest(
-        instance,
-        partition_key=PARTITION_KEY,
-    )
-
-    assert reference is not None
-    assert reference.dagster_run_id == "candidate-run"
-    assert reference.candidate_count == 1_000
 
 
 def test_webtech_remote_asset_polls_until_complete_with_short_requests() -> None:
@@ -381,7 +317,7 @@ def test_webtech_remote_asset_keeps_waiting_while_a_slow_scan_still_progresses()
 def test_webtech_remote_asset_logs_status_only_on_change_or_periodically(
     caplog, monkeypatch
 ) -> None:
-    monkeypatch.setattr(webtech_assets, "WEBTECH_STATUS_LOG_EVERY_POLLS", 3)
+    monkeypatch.setattr(webtech_monitor, "WEBTECH_STATUS_LOG_EVERY_POLLS", 3)
     logger_name = "test_webtech_monitor"
     caplog.set_level(logging.INFO, logger=logger_name)
     submission = _submission("scan-quiet")
@@ -423,35 +359,6 @@ def test_webtech_remote_asset_logs_status_only_on_change_or_periodically(
     assert "status=running completed=0/1" in status_lines[0]
     assert "status=running completed=0/1" in status_lines[1]
     assert "status=completed completed=1/1" in status_lines[2]
-
-
-def test_legacy_remote_scan_metadata_can_be_indexed_without_local_output() -> None:
-    instance = dg.DagsterInstance.ephemeral()
-    instance.report_runless_asset_event(
-        dg.AssetMaterialization(
-            asset_key="commoncrawl_webtech_remote_scan",
-            partition=PARTITION_KEY,
-            metadata={
-                "scan_id": "legacy-scan",
-                "crawl_id": CRAWL_ID,
-                "partition_key": PARTITION_KEY,
-                "completed_count": 1_000,
-                "outcome_counts": {"success": 1_000},
-                "technology_count": 3_000,
-                "elapsed_seconds": 120.0,
-                "domains_per_minute": 500.0,
-                "final_manifest_uri": (
-                    "s3://webtech/webtech/scans/legacy/final-manifest.json"
-                ),
-            },
-        )
-    )
-
-    reference = _latest_final_reference(instance, partition_key=PARTITION_KEY)
-
-    assert reference is not None
-    assert reference.detector_version == WEBTECH_DETECTOR_VERSION
-    assert reference.total_count == 1_000
 
 
 class FakeWebtechApi:
@@ -568,73 +475,6 @@ def _store_final_manifest(
             ],
         }
     )
-
-
-def test_candidate_config_uses_fixed_top_million_partition_universe() -> None:
-    config = WebtechCandidateConfig()
-
-    assert config.crawl_id == CRAWL_ID
-    assert config.force_rescan is False
-    assert WEBTECH_DOMAIN_LIMIT == 1_000_000
-    assert WEBTECH_PARTITION_COUNT == 128
-    with pytest.raises(ValidationError, match="valid Common Crawl ID"):
-        WebtechCandidateConfig(crawl_id="latest")
-
-
-def test_candidate_query_hashes_top_million_and_skips_recent_scans() -> None:
-    client = FakeClickhouseClient(rows=[("example.com", 1), ("example.org", 2)])
-
-    candidates = load_webtech_candidates(
-        FakeClickhouse(client),
-        partition_key=PARTITION_KEY,
-        crawl_id=CRAWL_ID,
-        force_rescan=False,
-    )
-
-    assert candidates == (
-        WebtechCandidate(root_domain="example.com", harmonic_rank=1),
-        WebtechCandidate(root_domain="example.org", harmonic_rank=2),
-    )
-    query, parameters = client.calls[-1]
-    assert "cc_harmonic_rank BETWEEN 1 AND %(harmonic_rank_limit)s" in query
-    assert (
-        "modulo( cityHash64(lower(root_domain)), %(partition_count)s ) "
-        "= %(partition_index)s"
-    ) in " ".join(query.split())
-    assert "scanned_at >= now('UTC') - INTERVAL 1 MONTH" in query
-    assert "outcome = 'success'" not in query
-    assert parameters == {
-        "crawl_id": CRAWL_ID,
-        "detector_version": WEBTECH_DETECTOR_VERSION,
-        "harmonic_rank_limit": 1_000_000,
-        "partition_count": 128,
-        "partition_index": 0,
-    }
-
-
-def test_force_rescan_keeps_partitioning_but_omits_freshness_filter() -> None:
-    client = FakeClickhouseClient()
-
-    load_webtech_candidates(
-        FakeClickhouse(client),
-        partition_key="hash_127",
-        crawl_id=CRAWL_ID,
-        force_rescan=True,
-    )
-
-    query, parameters = client.calls[-1]
-    assert "scanned_at" not in query
-    assert parameters["partition_index"] == 127
-
-
-def test_candidate_query_rejects_unknown_partition() -> None:
-    with pytest.raises(ValueError, match="Invalid Webtech partition"):
-        load_webtech_candidates(
-            FakeClickhouse(FakeClickhouseClient()),
-            partition_key="hash_128",
-            crawl_id=CRAWL_ID,
-            force_rescan=False,
-        )
 
 
 def test_candidate_manifest_reuses_identical_durable_input() -> None:

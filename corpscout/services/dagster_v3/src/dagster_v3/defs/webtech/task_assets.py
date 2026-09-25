@@ -13,7 +13,7 @@ from dagster_v3.defs.common.clickhouse_queue import ClickHouseInputQueue
 from dagster_v3.defs.common.processing import ProcessingResource, ProcessingStore
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.common.result_buffer import ResultBuffer
-from dagster_v3.defs.webtech.assets import monitor_webtech_scan
+from dagster_v3.defs.webtech.monitor import monitor_webtech_scan
 from dagster_v3.defs.webtech.client import WebtechApiResource
 from dagster_v3.defs.webtech.execution import (
     execution_crawl_id,

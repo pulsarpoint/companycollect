@@ -253,7 +253,6 @@ def publish_web_inventory(
 SOURCE_DEPS = [
     dg.AssetKey("domains"),
     *(dg.AssetKey(["corpscout", table]) for table, _ in COMMONCRAWL_URLS),
-    dg.AssetKey("commoncrawl_webtech_results_clickhouse"),
     dg.AssetKey("webtech_scan_results"),
 ]
 

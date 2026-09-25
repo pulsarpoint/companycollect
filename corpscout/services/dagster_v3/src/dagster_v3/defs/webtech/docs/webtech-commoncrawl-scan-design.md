@@ -1,5 +1,13 @@
 # Common Crawl web-technology scan
 
+> Historical design: the partitioned Common Crawl Webtech assets and jobs were
+> retired on 2026-09-25. For new scans, load Common Crawl selections through
+> `webtech_scan_input`, then run `webtech_scan_results`. See the current
+> [input selection guide](../../../../../docs/operations/webtech-scan-input.md)
+> and [queue lifecycle](../../../../../docs/operations/webtech-draft-queue.md).
+> Existing ClickHouse results and RustFS reports remain available.
+
+
 **Status:** remote service deployed and end-to-end real-host smoke passed on
 2026-08-30. Production candidate selection covers the harmonic top one million
 through 128 static hash partitions.
