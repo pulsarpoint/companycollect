@@ -1,6 +1,6 @@
 # Shared processing queue contract
 
-Status: agreed with the owner on 2026-09-24. Not implemented yet.
+Status: agreed 2026-09-24. Webtech implemented 2026-09-25 (plan 2026-09-24-webtech-queue-contract); crawl, Brave and IP enrichment pending.
 
 ## Problem
 
