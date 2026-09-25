@@ -163,6 +163,16 @@ def test_untrusted_download_link_is_rejected_before_request(catalog_http):
     assert not any(method == "HEAD" for method, _ in hits)
 
 
+def test_legacy_official_http_links_are_upgraded_to_https():
+    release = "cc-main-2018-jan"
+    url = f"http://data.commoncrawl.org/projects/hyperlinkgraph/{release}/domain/{release}-domain-ranks.txt.gz"
+    assert trusted_release_url(url, release) == url.replace("http:", "https:", 1)
+    with pytest.raises(ValueError, match="outside"):
+        trusted_release_url(
+            url.replace("data.commoncrawl.org", "untrusted.invalid"), release
+        )
+
+
 def test_empty_or_duplicate_catalog_fails(catalog_http):
     base, _, entry, responses, _ = catalog_http
     for entries in ([], [entry, entry]):

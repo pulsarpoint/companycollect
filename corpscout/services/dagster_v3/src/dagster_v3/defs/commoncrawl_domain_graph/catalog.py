@@ -57,6 +57,13 @@ def trusted_release_url(url: str, release: str, base_url: str = BASE_URL) -> str
     """Source HTML may select files only within the requested official release."""
     parsed = urlsplit(url)
     base = urlsplit(base_url)
+    # Older official indexes still publish HTTP links. Fetch the same path over TLS.
+    if (
+        parsed.scheme == "http"
+        and base.scheme == "https"
+        and parsed.netloc == base.netloc
+    ):
+        parsed = parsed._replace(scheme="https")
     prefix = base.path.rstrip("/") + "/" + release + "/"
     if (
         (parsed.scheme, parsed.netloc) != (base.scheme, base.netloc)
@@ -67,7 +74,7 @@ def trusted_release_url(url: str, release: str, base_url: str = BASE_URL) -> str
         or parsed.fragment
     ):
         raise ValueError(f"Graph URL is outside the selected release: {url}")
-    return url
+    return parsed.geturl()
 
 
 def crawl_coverage(
