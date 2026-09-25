@@ -1,4 +1,4 @@
-import { Form, Link } from "react-router";
+import { Form, Link, useFetcher } from "react-router";
 import { BotIcon, KeyRoundIcon, PlusIcon } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
@@ -110,6 +110,59 @@ function ActiveLlmCard({ profile }: { profile: LlmProfile | null }) {
   );
 }
 
+function LlmProfileRow({ profile }: { profile: LlmProfile }) {
+  const test = useFetcher<{
+    testResult: {profileId: string; ok: boolean; message: string; checkedAt: string};
+    values: null; error: string;
+  }>();
+  const testing = test.state !== "idle";
+  const result = test.data?.testResult.profileId === profile.profileId ? test.data.testResult : null;
+
+  return <>
+    <TableRow>
+      <TableCell className="font-medium">{profile.name}</TableCell>
+      <TableCell>{profile.provider}</TableCell>
+      <TableCell><code className="text-xs">{profile.model}</code></TableCell>
+      <TableCell>
+        <Badge variant={profile.apiKeyAvailable ? "secondary" : "destructive"}>
+          {profile.apiKeyAvailable ? "Key saved" : "Key missing"}
+        </Badge>
+      </TableCell>
+      <TableCell>
+        {profile.isActive ? <Badge>Active</Badge> : <Badge variant="outline">Inactive</Badge>}
+      </TableCell>
+      <TableCell>
+        <div className="flex justify-end gap-2">
+          <test.Form method="post" action="/admin/settings/llms" aria-label={`Test ${profile.name}`}>
+            <input type="hidden" name="intent" value="test" />
+            <input type="hidden" name="profile_id" value={profile.profileId} />
+            <Button type="submit" variant="outline" size="sm" disabled={testing}>
+              {testing ? "Testing…" : "Test"}
+            </Button>
+          </test.Form>
+          <Button variant="outline" size="sm" nativeButton={false} disabled={testing}
+            render={<Link to={`/admin/settings/llms?edit=${encodeURIComponent(profile.profileId)}`} />}>
+            Edit
+          </Button>
+          {!profile.isActive && <Form method="post">
+            <input type="hidden" name="intent" value="activate" />
+            <input type="hidden" name="profile_id" value={profile.profileId} />
+            <Button type="submit" variant="secondary" size="sm" disabled={testing}>Use this LLM</Button>
+          </Form>}
+        </div>
+      </TableCell>
+    </TableRow>
+    {(testing || result) && <TableRow><TableCell colSpan={6} className="whitespace-normal">
+      <div role="status" aria-live="polite" aria-atomic="true" className="flex flex-wrap items-center gap-2">
+        {testing ? <span>Testing the saved configuration for {profile.name}…</span> : result && <>
+          <Badge variant={result.ok ? "secondary" : "destructive"}>{result.ok ? "Test passed" : "Test failed"}</Badge>
+          <span className="min-w-0 [overflow-wrap:anywhere]">{result.message}</span>
+        </>}
+      </div>
+    </TableCell></TableRow>}
+  </>;
+}
+
 function LlmProfilesCard({ profiles }: { profiles: LlmProfile[] }) {
   return (
     <Card>
@@ -117,7 +170,8 @@ function LlmProfilesCard({ profiles }: { profiles: LlmProfile[] }) {
         <CardTitle>Configured LLMs</CardTitle>
         <CardDescription>
           Store several provider/model combinations and select one active
-          profile.
+          profile. Test checks the saved endpoint, model and API key with a short text request.
+          Queue checks verify any additional vision or CAPTCHA capabilities before processing.
         </CardDescription>
       </CardHeader>
       <CardContent className="px-0">
@@ -147,50 +201,7 @@ function LlmProfilesCard({ profiles }: { profiles: LlmProfile[] }) {
             </TableHeader>
             <TableBody>
               {profiles.map((profile) => (
-                <TableRow key={profile.profileId}>
-                  <TableCell className="font-medium">{profile.name}</TableCell>
-                  <TableCell>{profile.provider}</TableCell>
-                  <TableCell>
-                    <code className="text-xs">{profile.model}</code>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={profile.apiKeyAvailable ? "secondary" : "destructive"}>
-                      {profile.apiKeyAvailable ? "Key saved" : "Key missing"}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    {profile.isActive ? <Badge>Active</Badge> : <Badge variant="outline">Inactive</Badge>}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex justify-end gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        nativeButton={false}
-                        render={
-                          <Link
-                            to={`/admin/settings/llms?edit=${encodeURIComponent(profile.profileId)}`}
-                          />
-                        }
-                      >
-                        Edit
-                      </Button>
-                      {!profile.isActive ? (
-                        <Form method="post">
-                          <input type="hidden" name="intent" value="activate" />
-                          <input
-                            type="hidden"
-                            name="profile_id"
-                            value={profile.profileId}
-                          />
-                          <Button type="submit" variant="secondary" size="sm">
-                            Use this LLM
-                          </Button>
-                        </Form>
-                      ) : null}
-                    </div>
-                  </TableCell>
-                </TableRow>
+                <LlmProfileRow key={`${profile.profileId}:${profile.updatedAt}`} profile={profile} />
               ))}
             </TableBody>
           </Table>

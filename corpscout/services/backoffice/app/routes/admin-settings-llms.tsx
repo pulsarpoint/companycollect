@@ -1,5 +1,6 @@
 import { redirect } from "react-router";
 import type { Route } from "./+types/admin-settings-llms";
+import { CrawlLlmError, verifySelectedLlm } from "~/lib/crawl-llm.server";
 import {
   LlmSettingsWorkspace,
   type LlmSettingsFormValues,
@@ -34,6 +35,26 @@ export async function loader({ request }: Route.LoaderArgs) {
 export async function action({ request }: Route.ActionArgs) {
   const form = await request.formData();
   const intent = formValue(form, "intent");
+  if (intent === "test") {
+    const profileId = formValue(form, "profile_id");
+    try {
+      await verifySelectedLlm(profileId, "crawler");
+      return {
+        testResult: {profileId, ok: true, message: "Connection successful. The saved model and API key returned a valid test response.", checkedAt: new Date().toISOString()},
+        values: null, error: "",
+      };
+    } catch (error) {
+      return {
+        testResult: {
+          profileId, ok: false,
+          message: error instanceof CrawlLlmError || error instanceof LlmSettingsValidationError
+            ? error.message : "Could not test this model. Try again or check the service connection.",
+          checkedAt: new Date().toISOString(),
+        },
+        values: null, error: "",
+      };
+    }
+  }
   const values: LlmSettingsFormValues | null = intent === "save" ? {
     profileId: formValue(form, "profile_id"),
     name: formValue(form, "name"),
