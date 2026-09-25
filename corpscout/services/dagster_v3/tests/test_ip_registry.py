@@ -1,10 +1,12 @@
 """IP registry reference data against a real ClickHouse: migrations 000449/000450, snapshots, trie, rule parity."""
 
+import hashlib
 import re
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from ipaddress import IPv6Address
 from pathlib import Path
 
+import dagster as dg
 import pytest
 
 from dagster_v3.defs.commoncrawl_rdap import registry
@@ -16,7 +18,7 @@ from dagster_v3.defs.commoncrawl_rdap.rdap import (
     RdapLookupResponse,
     normalize_rdap_network,
 )
-from dagster_v3.defs.ip_registry import source, tables
+from dagster_v3.defs.ip_registry import assets, source, tables
 from tests.test_ip_enrichment_input import server as server
 
 MIGRATIONS = Path(__file__).resolve().parents[3] / "clickhouse/migrations"
@@ -834,3 +836,384 @@ def test_migration_450_serves_only_reusable_registrations_and_follows_reclassifi
     ) == [("registry_level", 1)]
     assert COMCAST not in served_keys(client)
     assert trie_key(client, "73.1.2.3") == ""
+
+
+# --- The ip_registry Dagster module: loaders, retention, classification, checks -------------
+
+IANA_LAST_MODIFIED = "Sat, 19 Sep 2026 00:44:20 GMT"
+# The freshness checks run on this clock so the fixture dates (2026-09-24/25) stay fresh.
+CHECK_NOW = datetime(2026, 9, 25, 12, tzinfo=UTC)
+RIPENCC_EXCERPT = FIXTURES / "delegated-ripencc-extended-excerpt"
+
+
+def fixture_http(monkeypatch, *, tamper=None, iana_last_modified=IANA_LAST_MODIFIED):
+    """Serve the fixture excerpts (and matching .md5 files) instead of the internet."""
+    bodies = {}
+    for source_name, url in tables.IANA_SOURCES.items():
+        bodies[url] = (
+            (FIXTURES / f"{source_name.replace('_', '-')}-excerpt.csv").read_bytes(),
+            {"Last-Modified": iana_last_modified},
+        )
+    for registry_name, url in tables.RIR_SOURCES.items():
+        body = (FIXTURES / f"delegated-{registry_name}-extended-excerpt").read_bytes()
+        digest = hashlib.md5(body).hexdigest()
+        md5 = (
+            f"{digest}  delegated-arin-extended-20260925\n"
+            if registry_name == "arin"
+            else f"MD5 (delegated-{registry_name}-extended-latest) = {digest}\n"
+        )
+        bodies[url] = (body, {})
+        bodies[url + ".md5"] = (md5.encode(), {})
+    bodies.update(tamper or {})
+    calls = []
+
+    def fetch(url):
+        calls.append(url)
+        return bodies[url]
+
+    monkeypatch.setattr(assets, "fetch", fetch)
+    monkeypatch.setattr(assets, "freshness_now", lambda: CHECK_NOW)
+    monkeypatch.setattr(assets, "IANA_MIN_ROWS", {"iana_ipv4": 23, "iana_ipv6": 10})
+    return calls
+
+
+def dated_ripencc(day: bytes, body: bytes | None = None) -> dict:
+    """A tamper dict serving the RIPE excerpt with another end date and a matching .md5."""
+    body = RIPENCC_EXCERPT.read_bytes() if body is None else body
+    dated = body.replace(b"|20260924|+0200", b"|" + day + b"|+0200", 1)
+    url = tables.RIR_SOURCES["ripencc"]
+    return {
+        url: (dated, {}),
+        url + ".md5": (f"MD5 (x) = {hashlib.md5(dated).hexdigest()}\n".encode(), {}),
+    }
+
+
+def refresh(resource, **config):
+    return dg.materialize(
+        [
+            assets.ip_registry_iana_blocks,
+            *assets.special_segment_assets,
+            assets.rdap_network_registry_class,
+            *assets.checks,
+        ],
+        resources={"clickhouse": resource},
+        run_config=(
+            {
+                "ops": {
+                    asset.op.name: {"config": config}
+                    for asset in assets.special_segment_assets
+                }
+            }
+            if config
+            else None
+        ),
+        raise_on_error=False,
+    )
+
+
+def test_refresh_loads_every_source_classifies_and_passes_the_checks(
+    clean, monkeypatch
+):
+    client, resource = clean
+    stored = insert_case_networks(client)
+    calls = fixture_http(monkeypatch)
+    result = refresh(resource)
+    assert result.success
+    assert sorted(calls) == sorted(
+        [
+            *tables.IANA_SOURCES.values(),
+            *tables.RIR_SOURCES.values(),
+            *(url + ".md5" for url in tables.RIR_SOURCES.values()),
+        ]
+    )
+    assert client.execute(
+        "SELECT source, snapshot_date, records_ipv4, records_ipv6, segments_ipv4, segments_ipv6, holders_ipv4, holders_ipv6 FROM corpscout.ip_registry_snapshots FINAL ORDER BY source"
+    ) == [
+        ("afrinic", date(2026, 9, 24), 5, 2, 2, 0, 0, 0),
+        ("apnic", date(2026, 9, 25), 7, 2, 2, 0, 1, 0),
+        ("arin", date(2026, 9, 25), 6, 3, 1, 0, 3, 0),
+        ("iana_ipv4", IANA_DATE, 27, 0, 27, 0, 0, 0),
+        ("iana_ipv6", IANA_DATE, 0, 10, 0, 10, 0, 0),
+        ("lacnic", date(2026, 9, 24), 3, 4, 1, 2, 0, 0),
+        ("ripencc", date(2026, 9, 24), 9, 4, 2, 0, 1, 1),
+    ]
+    assert client.execute(
+        "SELECT serial FROM corpscout.ip_registry_snapshots FINAL WHERE source = 'arin'"
+    ) == [("1790341220831",)]
+    assert client.execute(
+        "SELECT count() FROM corpscout.ip_registry_special_segments_current"
+    ) == [(10,)]
+    # Only special and holder rows are stored, never the other allocated/assigned records.
+    assert client.execute(
+        "SELECT count() FROM corpscout.ip_registry_special_segments"
+    ) == [(10,)]
+    assert client.execute(
+        "SELECT registry, start_address, status FROM corpscout.ip_registry_holder_blocks_current ORDER BY registry, start_address"
+    ) == [
+        ("apnic", "133.0.0.0", "allocated"),
+        ("arin", "19.0.0.0", "allocated"),
+        ("arin", "7.0.0.0", "allocated"),
+        ("arin", "73.0.0.0", "allocated"),
+        ("ripencc", "25.0.0.0", "assigned"),
+        ("ripencc", "2a00::", "allocated"),
+    ]
+    assert special_of(client, "45.68.105.9")[:2] == ("lacnic", "reserved")
+    assert dict(
+        client.execute(
+            "SELECT network_key, registry_class FROM corpscout.rdap_network_registry_class_current"
+        )
+    ) == {key: expected for key, (_, expected) in stored.items()}
+    materialization = result.asset_materializations_for_node(
+        "rdap_network_registry_class"
+    )[0].metadata
+    assert materialization["networks_registry_level"].value == 8
+    assert materialization["networks_total"].value == len(CASES)
+    evaluations = result.get_asset_check_evaluations()
+    assert len(evaluations) == 7
+    assert all(evaluation.passed for evaluation in evaluations)
+    assert {evaluation.check_name for evaluation in evaluations} == {
+        "snapshot_fresh",
+        "classification_complete",
+    }
+    loaded = result.asset_materializations_for_node(
+        "ip_registry_special_segments_ripencc"
+    )[0].metadata
+    assert (
+        loaded["loaded"].value,
+        loaded["records_ipv4"].value,
+        loaded["segments_ipv4"].value,
+        loaded["holders_ipv4"].value,
+        loaded["holders_ipv6"].value,
+        loaded["md5"].value,
+    ) == (True, 9, 2, 1, 1, hashlib.md5(RIPENCC_EXCERPT.read_bytes()).hexdigest())
+
+
+def test_identical_snapshot_is_verified_not_reloaded(clean, monkeypatch):
+    client, resource = clean
+    fixture_http(monkeypatch)
+    assert refresh(resource).success
+    [(rows_before, verified_before)] = client.execute(
+        "SELECT count(), max(verified_at) FROM corpscout.ip_registry_snapshots FINAL"
+    )
+    stored_before = [
+        client.execute(f"SELECT count(), max(loaded_at) FROM corpscout.{table}")
+        for table in (tables.IANA_TABLE, tables.SPECIAL_TABLE, tables.HOLDER_TABLE)
+    ]
+    again = refresh(resource)
+    assert again.success
+    assert (
+        again.asset_materializations_for_node("ip_registry_special_segments_apnic")[0]
+        .metadata["loaded"]
+        .value
+        is False
+    )
+    assert (
+        again.asset_materializations_for_node("ip_registry_iana_blocks")[0]
+        .metadata["iana_ipv4_loaded"]
+        .value
+        is False
+    )
+    [(rows_after, verified_after)] = client.execute(
+        "SELECT count(), max(verified_at) FROM corpscout.ip_registry_snapshots FINAL"
+    )
+    assert (rows_after, rows_before) == (7, 7) and verified_after > verified_before
+    assert [
+        client.execute(f"SELECT count(), max(loaded_at) FROM corpscout.{table}")
+        for table in (tables.IANA_TABLE, tables.SPECIAL_TABLE, tables.HOLDER_TABLE)
+    ] == stored_before
+
+
+def test_a_republished_same_date_file_replaces_its_snapshot(clean, monkeypatch):
+    """ReplacingMergeTree keeps rows a re-published file removed unless the partition is dropped."""
+    client, resource = clean
+    fixture_http(monkeypatch)
+    assert refresh(resource).success
+    # Same end date, different content: RIPE allocated the available 85.8.248.0/21, and the
+    # 2a00::/22 record shrank to a /24 (no longer a holder block). IANA re-published the IPv4
+    # file under the same Last-Modified without the 240/8 row.
+    changed = (
+        RIPENCC_EXCERPT.read_bytes()
+        .replace(
+            b"ripencc||ipv4|85.8.248.0|2048||available\n",
+            b"ripencc|SE|ipv4|85.8.248.0|2048|20260924|allocated|x\n",
+        )
+        .replace(b"ripencc|DE|ipv6|2a00::|22|", b"ripencc|DE|ipv6|2a00::|24|")
+    )
+    iana_ipv4 = (FIXTURES / "iana-ipv4-excerpt.csv").read_bytes()
+    iana_lines = iana_ipv4.splitlines(keepends=True)
+    dropped_line = next(line for line in iana_lines if line.startswith(b"240/8"))
+    iana_url = tables.IANA_SOURCES["iana_ipv4"]
+    fixture_http(
+        monkeypatch,
+        tamper={
+            **dated_ripencc(b"20260924", changed),
+            iana_url: (
+                iana_ipv4.replace(dropped_line, b""),
+                {"Last-Modified": IANA_LAST_MODIFIED},
+            ),
+        },
+    )
+    result = refresh(resource)
+    assert result.success
+    ripencc = result.asset_materializations_for_node(
+        "ip_registry_special_segments_ripencc"
+    )[0].metadata
+    assert (ripencc["loaded"].value, ripencc["dropped_snapshots"].value) == (True, 0)
+    assert client.execute(
+        "SELECT snapshot_date, checksum, segments_ipv4, holders_ipv4, holders_ipv6 FROM corpscout.ip_registry_snapshots FINAL WHERE source = 'ripencc'"
+    ) == [(date(2026, 9, 24), hashlib.md5(changed).hexdigest(), 1, 1, 0)]
+    assert client.execute(
+        "SELECT start_address FROM corpscout.ip_registry_special_segments FINAL WHERE registry = 'ripencc'"
+    ) == [("5.134.16.0",)]
+    assert client.execute(
+        "SELECT start_address FROM corpscout.ip_registry_holder_blocks FINAL WHERE registry = 'ripencc'"
+    ) == [("25.0.0.0",)]
+    assert special_of(client, "85.8.250.1") == ("", "", 0, 0)
+    assert client.execute(
+        "SELECT count() FROM corpscout.ip_registry_iana_blocks FINAL WHERE source = 'iana_ipv4'"
+    ) == [(26,)]
+    assert iana_of(client, "240.0.0.1") == ("", "", "")
+
+
+def test_bad_checksum_older_file_and_shrinking_snapshot_are_refused(clean, monkeypatch):
+    client, resource = clean
+    ripencc = tables.RIR_SOURCES["ripencc"]
+    body = RIPENCC_EXCERPT.read_bytes()
+    fixture_http(
+        monkeypatch,
+        tamper={
+            ripencc + ".md5": (
+                b"MD5 (delegated-ripencc-extended-latest) = " + b"0" * 32 + b"\n",
+                {},
+            )
+        },
+    )
+    result = refresh(resource)
+    assert not result.success
+    assert client.execute(
+        "SELECT count() FROM corpscout.ip_registry_snapshots FINAL WHERE source = 'ripencc'"
+    ) == [(0,)]
+    for table in (tables.SPECIAL_TABLE, tables.HOLDER_TABLE):
+        assert client.execute(
+            f"SELECT count() FROM corpscout.{table} WHERE registry = 'ripencc'"
+        ) == [(0,)]
+    # The other six loaded.
+    assert client.execute(
+        "SELECT count() FROM corpscout.ip_registry_snapshots FINAL"
+    ) == [(6,)]
+    assert client.execute("SELECT ready FROM corpscout.ip_registry_ready") == [(0,)]
+    fixture_http(monkeypatch)
+    assert refresh(resource).success
+    # A file dated before the current snapshot is refused.
+    fixture_http(monkeypatch, tamper=dated_ripencc(b"20260923"))
+    assert not refresh(resource).success
+    # A newer file that lost four of its nine IPv4 records (allocated ones: the special rows
+    # are untouched, the guard watches the whole file) is refused unless allow_shrink is set.
+    shrunk = (
+        body.replace(b"2|ripencc|1790287199|13|", b"2|ripencc|1790373599|9|", 1)
+        .replace(b"ripencc|*|ipv4|*|9|summary", b"ripencc|*|ipv4|*|5|summary", 1)
+        .replace(
+            b"ripencc|SE|ipv4|2.0.0.0|131072|20100712|allocated|12a581c1-ea86-46af-9554-77e3b4ab3df5\n",
+            b"",
+        )
+        .replace(
+            b"ripencc|SE|ipv4|2.2.0.0|65536|20100712|allocated|12a581c1-ea86-46af-9554-77e3b4ab3df5\n",
+            b"",
+        )
+        .replace(
+            b"ripencc|FR|ipv4|2.3.0.0|65536|20100712|allocated|9a489e65-dd78-443e-96ab-e21e016b5113\n",
+            b"",
+        )
+        .replace(
+            b"ripencc|PS|ipv4|1.178.112.0|4096|20071126|allocated|172ce676-8ded-4901-9812-793bd0b4ec77\n",
+            b"",
+        )
+    )
+    fixture_http(monkeypatch, tamper=dated_ripencc(b"20260925", shrunk))
+    assert not refresh(resource).success
+    assert client.execute(
+        "SELECT snapshot_date FROM corpscout.ip_registry_current_snapshots WHERE source = 'ripencc'"
+    ) == [(date(2026, 9, 24),)]
+    fixture_http(monkeypatch, tamper=dated_ripencc(b"20260925", shrunk))
+    assert refresh(resource, allow_shrink=True).success
+    assert client.execute(
+        "SELECT snapshot_date, records_ipv4, segments_ipv4 FROM corpscout.ip_registry_snapshots FINAL WHERE source = 'ripencc' ORDER BY snapshot_date DESC LIMIT 1"
+    ) == [(date(2026, 9, 25), 5, 2)]
+
+
+def test_loader_keeps_only_the_current_and_previous_snapshot(clean, monkeypatch):
+    client, resource = clean
+    for day in (b"20260924", b"20260925", b"20260926"):
+        fixture_http(monkeypatch, tamper=dated_ripencc(day))
+        result = refresh(resource)
+        assert result.success
+    # The ledger keeps every load.
+    assert client.execute(
+        "SELECT snapshot_date FROM corpscout.ip_registry_snapshots FINAL WHERE source = 'ripencc' ORDER BY snapshot_date"
+    ) == [(date(2026, 9, 24),), (date(2026, 9, 25),), (date(2026, 9, 26),)]
+    # Rows: current + previous only, in both RIR data tables.
+    for table in (tables.SPECIAL_TABLE, tables.HOLDER_TABLE):
+        assert client.execute(
+            f"SELECT DISTINCT snapshot_date FROM corpscout.{table} WHERE registry = 'ripencc' ORDER BY snapshot_date"
+        ) == [(date(2026, 9, 25),), (date(2026, 9, 26),)]
+    assert client.execute(
+        "SELECT count() FROM corpscout.ip_registry_special_segments_current WHERE registry = 'ripencc'"
+    ) == [(2,)]
+    assert client.execute(
+        "SELECT count() FROM corpscout.ip_registry_holder_blocks_current WHERE registry = 'ripencc'"
+    ) == [(2,)]
+    assert (
+        result.asset_materializations_for_node("ip_registry_special_segments_ripencc")[
+            0
+        ]
+        .metadata["dropped_snapshots"]
+        .value
+        == 1
+    )
+    # An untouched source keeps its one snapshot.
+    assert client.execute(
+        "SELECT count() FROM corpscout.ip_registry_special_segments WHERE registry = 'apnic'"
+    ) == [(2,)]
+
+
+def test_freshness_check_flags_missing_stale_and_unverified_sources():
+    now = datetime(2026, 9, 25, 12, tzinfo=UTC)
+    fresh = now - timedelta(hours=6)
+    rows = [
+        ("ripencc", date(2026, 9, 24), fresh),
+        ("apnic", date(2026, 9, 20), fresh),  # stale RIR snapshot
+        ("arin", date(2026, 9, 25), now - timedelta(days=3)),  # not re-verified
+        ("iana_ipv4", date(2026, 3, 1), fresh),  # IANA: an old snapshot is fine
+    ]
+    passed = assets.snapshot_freshness(("ripencc",), rows, now)
+    assert passed.passed
+    assert passed.metadata["ripencc_snapshot_date"].value == "2026-09-24"
+    assert assets.snapshot_freshness(("iana_ipv4",), rows, now).passed
+    stale = assets.snapshot_freshness(("apnic",), rows, now)
+    assert not stale.passed
+    assert "apnic: snapshot 2026-09-20 is stale" in stale.description
+    unverified = assets.snapshot_freshness(("arin",), rows, now)
+    assert not unverified.passed
+    assert "arin: last verified 2026-09-22" in unverified.description
+    missing = assets.snapshot_freshness(("lacnic",), rows, now)
+    assert not missing.passed and "lacnic: no snapshot" in missing.description
+
+
+def test_definitions_expose_the_daily_job_stopped_by_default():
+    assert assets.ip_registry_daily.cron_schedule == "5 6 * * *"
+    assert assets.ip_registry_daily.default_status == dg.DefaultScheduleStatus.STOPPED
+    assert assets.ip_registry_daily.job_name == "ip_registry_refresh_job"
+    names = {
+        asset.key.to_user_string()
+        for asset in [
+            assets.ip_registry_iana_blocks,
+            *assets.special_segment_assets,
+            assets.rdap_network_registry_class,
+        ]
+    }
+    assert names == {
+        "ip_registry_iana_blocks",
+        "rdap_network_registry_class",
+        *(f"ip_registry_special_segments_{r}" for r in tables.RIR_SOURCES),
+    }
+    assert len(assets.checks) == 7
