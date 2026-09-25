@@ -459,6 +459,7 @@ EXPECTED_MIGRATIONS = (
     "000444_corpscout_webtech_queue_cleanup_capacity",
     "000445_corpscout_crawl_draft_queue",
     "000446_corpscout_webtech_queue_contract",
+    "000447_corpscout_crawl_queue_contract",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}

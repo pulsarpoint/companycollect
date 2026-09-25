@@ -209,13 +209,13 @@ def load_crawl_draft(config, submission_id, store, clickhouse, objects):
                                 f"""INSERT INTO {TASK_DOMAINS} (task_id,crawl_type,domain,website_url,source_name,submission_id)
                                 SELECT %(task)s,%(type)s,s.domain,s.website_url,%(source)s,%(submission)s
                                 FROM ({source_sql}) AS s LEFT ANTI JOIN
-                                (SELECT domain FROM {TASK_DOMAINS} FINAL WHERE task_id=%(task)s) AS e ON s.domain=e.domain""",
+                                (SELECT domain FROM {TASK_DOMAINS} WHERE task_id=%(task)s) AS e ON s.domain=e.domain""",
                                 params,
                                 query_id=query_id,
                                 settings={"async_insert": 0},
                             )
                     [(total,)] = client.execute(
-                        f"SELECT count() FROM {TASK_DOMAINS} FINAL WHERE task_id=%(task)s",
+                        f"SELECT count() FROM {TASK_DOMAINS} WHERE task_id=%(task)s",
                         {"task": task_id},
                     )
                     if total > 1_000_000:

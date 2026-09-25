@@ -33,6 +33,7 @@ MIGRATIONS = (
     "000429_corpscout_website_crawl_requests.up.sql",
     "000431_corpscout_website_crawl_task_domains.up.sql",
     "000445_corpscout_crawl_draft_queue.up.sql",
+    "000447_corpscout_crawl_queue_contract.up.sql",
 )
 
 

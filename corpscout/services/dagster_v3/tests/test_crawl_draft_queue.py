@@ -39,14 +39,13 @@ def db(server, store, objects):  # noqa: F811
     client, resource = server
     processing, dsn = store
     migrations = Path(__file__).parents[3] / "clickhouse/migrations"
-    for name in (
-        "000430_corpscout_website_crawl_type_results",
-        "000431_corpscout_website_crawl_task_domains",
-        "000445_corpscout_crawl_draft_queue",
+    for statement in (
+        (migrations / "000430_corpscout_website_crawl_type_results.up.sql")
+        .read_text()
+        .split(";")
     ):
-        for statement in (migrations / f"{name}.up.sql").read_text().split(";"):
-            if statement.strip():
-                client.execute(statement)
+        if statement.strip():
+            client.execute(statement)
     for table in (
         *INPUT_TABLES,
         TASK_DOMAINS,
@@ -120,9 +119,11 @@ def test_append_dedup_source_manual_and_receipt_replay(db):
         filters={"country": ["SE"]},
     )
     assert replay["input_count"] == 2
-    assert client.execute(
-        f"SELECT domain FROM {TASK_DOMAINS} FINAL ORDER BY domain"
-    ) == [("one.example",), ("three.example",), ("two.example",)]
+    assert client.execute(f"SELECT domain FROM {TASK_DOMAINS} ORDER BY domain") == [
+        ("one.example",),
+        ("three.example",),
+        ("two.example",),
+    ]
     with pytest.raises(ValueError, match="different selection"):
         add(db, submission, targets=["other.example"])
 
@@ -144,7 +145,7 @@ def test_completion_saves_outcomes_clears_only_its_queue_and_replay_does_not_sca
         "completed_with_errors" if partial else "completed"
     )
     assert len(saved) == 2
-    assert client.execute(f"SELECT count() FROM {TASK_DOMAINS} FINAL") == [(0,)]
+    assert client.execute(f"SELECT count() FROM {TASK_DOMAINS}") == [(0,)]
     assert client.execute(
         "SELECT count() FROM corpscout.website_site_info_results FINAL"
     ) == [(2,)]
@@ -156,9 +157,7 @@ def test_completion_saves_outcomes_clears_only_its_queue_and_replay_does_not_sca
     assert run(db, task).success
     assert calls == before
     assert add(db, receipt, targets=["one.example", "two.example"])["task_id"] == task
-    assert client.execute(f"SELECT domain FROM {TASK_DOMAINS} FINAL") == [
-        ("three.example",)
-    ]
+    assert client.execute(f"SELECT domain FROM {TASK_DOMAINS}") == [("three.example",)]
 
 
 def test_timeout_keeps_inputs_and_resumes_saved_profile_with_new_draft(db, crawler):  # noqa: F811
@@ -168,7 +167,7 @@ def test_timeout_keeps_inputs_and_resumes_saved_profile_with_new_draft(db, crawl
     behavior["pending"] = True
     with pytest.raises(TimeoutError):
         run(db, task, wait_timeout_seconds=0.05)
-    assert client.execute(f"SELECT count() FROM {TASK_DOMAINS} FINAL") == [(2,)]
+    assert client.execute(f"SELECT count() FROM {TASK_DOMAINS}") == [(2,)]
     submitted = dict(saved)
     later = add(db, targets=["next.example"])["task_id"]
     assert later != task
@@ -178,9 +177,7 @@ def test_timeout_keeps_inputs_and_resumes_saved_profile_with_new_draft(db, crawl
     assert run(db, task).success
     assert saved == submitted
     assert processing.task(later)["status"] == "draft"
-    assert client.execute(f"SELECT domain FROM {TASK_DOMAINS} FINAL") == [
-        ("next.example",)
-    ]
+    assert client.execute(f"SELECT domain FROM {TASK_DOMAINS}") == [("next.example",)]
 
 
 def test_freshness_is_at_execution_and_force_can_override(db, crawler):  # noqa: F811
@@ -225,7 +222,7 @@ def test_lost_import_ack_replays_snapshot_and_blocks_start_until_repaired(
     config = {"source_relation": "corpscout.crawl_retry_source", "select_all": True}
     with pytest.raises(ConnectionError, match="acknowledgement"):
         add(db, submission, **config)
-    [(task,)] = client.execute(f"SELECT task_id FROM {TASK_DOMAINS} FINAL")
+    [(task,)] = client.execute(f"SELECT task_id FROM {TASK_DOMAINS}")
     with pytest.raises(ValueError, match="outstanding imports"):
         run(db, task)
     client.execute("INSERT INTO corpscout.crawl_retry_source VALUES ('later.example')")
@@ -283,3 +280,18 @@ def test_task_id_must_name_a_draft(db, crawler):  # noqa: F811
     with pytest.raises(ValueError, match="unknown crawl task"):
         run(db, legacy)
     assert calls == []
+
+
+def test_entry_table_follows_the_queue_contract(db):
+    from clickhouse_driver.errors import ServerException
+
+    client, *_ = db
+    assert client.execute(
+        "SELECT engine, partition_key, sorting_key FROM system.tables WHERE database='corpscout' AND name='website_crawl_task_domains'"
+    ) == [("MergeTree", "task_id", "task_id, domain")]
+    # Every new row names its submission; the retry delete relies on it.
+    with pytest.raises(ServerException, match="valid_task"):
+        client.execute(
+            f"INSERT INTO {TASK_DOMAINS} (task_id,crawl_type,domain,website_url,source_name) VALUES",
+            [("task", "full", "a.example", "https://a.example/", "manual")],
+        )

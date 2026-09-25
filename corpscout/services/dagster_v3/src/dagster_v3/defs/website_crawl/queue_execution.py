@@ -89,7 +89,7 @@ def start_crawl_execution(store, client, task_id, crawl_type, config, run_id):
         if cursor.fetchone()["pending"]:
             raise ValueError("Finish or retry outstanding imports before Start")
     [(total,)] = client.execute(
-        f"SELECT count() FROM {TASK_DOMAINS} FINAL WHERE task_id=%(task)s AND crawl_type=%(type)s",
+        f"SELECT count() FROM {TASK_DOMAINS} WHERE task_id=%(task)s AND crawl_type=%(type)s",
         {"task": task_id, "type": crawl_type},
     )
     if total == 0 or total != task["total"]:
@@ -133,7 +133,7 @@ def prepare_crawl_execution(store, client, objects, task, crawl_type, config):
         rows = read_rows(
             client,
             f"""SELECT q.domain AS domain,q.website_url AS selected_url,p.*
-            FROM (SELECT * FROM {TASK_DOMAINS} FINAL WHERE task_id=%(task)s AND crawl_type=%(type)s AND domain>%(after)s ORDER BY domain LIMIT 500) AS q
+            FROM (SELECT * FROM {TASK_DOMAINS} WHERE task_id=%(task)s AND crawl_type=%(type)s AND domain>%(after)s ORDER BY domain LIMIT 500) AS q
             LEFT JOIN {INPUTS_BY_TYPE[crawl_type]}_current AS p ON q.domain=p.domain ORDER BY q.domain""",
             {"task": task_id, "type": crawl_type, "after": after},
         )
@@ -312,7 +312,7 @@ def finish_crawl_execution(context, store, client, task_id):
             settings={"lightweight_deletes_sync": 2},
         )
         if client.execute(
-            f"SELECT count() FROM {TASK_DOMAINS} FINAL WHERE task_id=%(task)s",
+            f"SELECT count() FROM {TASK_DOMAINS} WHERE task_id=%(task)s",
             {"task": task_id},
         ) != [(0,)]:
             raise ValueError("Crawl queue cleanup incomplete; resume to finish cleanup")
