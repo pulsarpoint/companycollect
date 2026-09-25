@@ -1,7 +1,8 @@
 # Crawl normalization for company enrichment
 
 Status: approved, 2026-09-25. Database contracts are implemented and deployed in migration 000452 (nine tables and 19 views).
-Parser/assets, incremental processing and offline job extraction are subsequent tasks.
+The deterministic parser and table assets are implemented in `normalization/`.
+Automatic scheduling/backfill and offline text-job extraction are subsequent tasks.
 
 ## Existing source boundary
 
@@ -211,3 +212,68 @@ First live validation should normalize only the named 2525.se attempt and
 representative 100.se success/failure attempts, compare normalized counts against
 the archives, and confirm that the last usable data survives a newer failure.
 Enable ongoing automation only after that bounded validation succeeds.
+
+## Running the deterministic assets
+
+Launch `website_crawl_normalized_job` in Dagster. It selects only the nine
+normalization assets, not the upstream crawling jobs. All outputs belong to
+`website_crawl_normalized`; selecting one output requires the full coordinated
+operation because the scan row publishes all detail tables together.
+
+```yaml
+ops:
+  website_crawl_normalized:
+    config:
+      domains: ["100.se", "2525.se"]
+      crawl_types: ["full", "jobs", "site_info"]
+      batch_size: 10
+```
+
+The default batch size is 25, capped at 100. Optional `request_id` and `attempt`
+select an exact saved attempt. `force: true` reparses already normalized data and
+requires explicit domains or a request ID. Normal runs anti-join the result
+catalog against the published parser version and source ingestion timestamp, so
+a second run skips unchanged attempts. No sensor is enabled in this step.
+
+The existing ClickHouse `company_crawl_results` named collection is rooted at
+`crawls/company-crawls/`. Each read binds an exact relative request/attempt key;
+no bucket listing or wildcard scan occurs. Uploaded-but-unreadable objects fail
+the run. Terminal attempts without an uploaded archive can publish their saved
+catalog sections and failure diagnostics; a later catalog revision makes them
+eligible again. Archived HTML and provider configuration are never copied into
+the normalized tables.
+
+The operation holds the `website_crawl_normalization` pool and a PostgreSQL
+session advisory lock, then stages one bounded attempt at a time in an in-memory
+DuckDB database with explicit types. The existing ClickHouse append exporter
+loads details before scans. Counts are verified under the new UUID, including
+zero-row outputs. An interruption before scan publication leaves only invisible
+detail rows; retrying uses a new UUID. Unpublished rows are retained for diagnosis;
+cleanup of abandoned UUIDs can be added separately if their size becomes material.
+
+Materialization metadata reports **rows written in this run**, attempt count and
+parser version. A zero-row materialization on an unchanged batch does not mean
+the historical table was emptied. Failed-crawl diagnostics remain distinct from
+normalization failures: an unreadable or unsupported archive is not published as
+an empty successful parse.
+
+Structured jobs come from supported JSON-LD `JobPosting` entities and accepted
+legacy job findings. Unstructured careers pages are not interpreted in this
+operation. `structured_jobs_status` distinguishes completed structured parsing
+from unavailable/partial evidence; zero jobs is not a company-wide hiring claim.
+
+### Deployed validation, 2026-09-25
+
+[Initial materialization](http://dagster:3000/runs/df4436b0-b398-4abc-b062-8569ab9c1a3a)
+succeeded for five saved attempts (40 pages) from 100.se and 2525.se. Native
+published counts matched archive replay: five profiles, 20 activity occurrences,
+394 contact occurrences, 2,394 structured properties and 783 links. No identifier
+or structured vacancy records were present in these samples. Counts are source
+occurrences across pages and attempts, not unique companies or contacts.
+
+[Repeat materialization](http://dagster:3000/runs/fd6f85e9-2e37-469a-9128-ed132d28bc90)
+succeeded with zero rows/attempts written. The scan table remained at five rows,
+revision 1. The latest 100.se status remained `needs_review`, while its usable
+basic-info selector retained the earlier `skip_crawling` result. The regression
+suite passed 88 tests, including interrupted publication against disposable
+ClickHouse and the complete migration-owned native schema contract.
