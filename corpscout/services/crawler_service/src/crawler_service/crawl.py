@@ -377,8 +377,9 @@ async def crawl_company(
     save_artifacts: bool = True,
     crawl: bool | Literal["full"] | None = None,
     config: ResearchConfig | None = None,
-    api: Literal["deepseek", "openrouter"] = "deepseek",
+    api: str = "deepseek",
     api_key: str | None = None,
+    base_url: str | None = None,
     human: HumanSession | None = None,
     search: BraveSearch | None = None,
     browser_client: BrowserLeaseClient | None = None,
@@ -562,7 +563,9 @@ async def crawl_company(
                 if needs_model:
                     model_http = await stack.enter_async_context(
                         httpx.AsyncClient(
-                            base_url="https://api.deepseek.com/"
+                            base_url=(base_url.rstrip("/") + "/")
+                            if base_url is not None
+                            else "https://api.deepseek.com/"
                             if api == "deepseek"
                             else "https://openrouter.ai/api/v1/"
                         )
@@ -624,7 +627,8 @@ async def crawl_company(
             if llm is not None:
                 manifest["usage"] = llm.usage()
             if (
-                manifest["stop_reason"] not in {
+                manifest["stop_reason"]
+                not in {
                     "human_assistance_timeout",
                     "site_info_complete",
                 }

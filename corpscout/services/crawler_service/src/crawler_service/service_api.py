@@ -17,9 +17,11 @@ from fastapi import (
     Request,
     Response,
 )
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from crawler_service.llm_profile import LLMProfileError, VerifyLLMRequest, verify_llm
 from crawler_service.service import (
     TERMINAL_STATES,
     AgentModel,
@@ -55,6 +57,21 @@ def create_app(
 
     app = FastAPI(title="Crawler Service", version="1.0", lifespan=lifespan)
 
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(
+        _request: Request, error: RequestValidationError
+    ) -> JSONResponse:
+        # Invalid payloads can contain a plaintext key; never echo input in API errors.
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": [
+                    {"type": item["type"], "loc": item["loc"], "msg": item["msg"]}
+                    for item in error.errors()
+                ]
+            },
+        )
+
     def authenticate(authorization: Annotated[str | None, Header()] = None) -> None:
         if api_token is None:
             return
@@ -83,6 +100,8 @@ def create_app(
             job = service.submit(request, source="rest")
         except RequestConflict as error:
             raise HTTPException(409, str(error)) from error
+        except LLMProfileError as error:
+            raise HTTPException(422, str(error)) from error
         except ServiceUnavailable as error:
             raise HTTPException(
                 503, str(error), headers={"Retry-After": "5"}
@@ -93,9 +112,22 @@ def create_app(
     @app.post("/v1/crawls/validate", dependencies=[Depends(authenticate)])
     async def validate(request: CrawlRequest) -> dict:
         """Normalize a publisher's payload without enqueueing or opening a browser."""
+        if request.llm is not None:
+            try:
+                request.llm.decrypt_api_key(service.environment)
+            except LLMProfileError as error:
+                raise HTTPException(422, str(error)) from error
         return request.model_dump(exclude_unset=True) | {
             "request_id": request.request_id
         }
+
+    @app.post("/v1/llm/verify", dependencies=[Depends(authenticate)])
+    async def verify_model(request: VerifyLLMRequest) -> dict:
+        if api_token is None:
+            raise HTTPException(
+                503, "Configure crawler API authentication to verify LLM profiles"
+            )
+        return await verify_llm(request.llm, service.environment)
 
     @app.get("/v1/crawls/status", dependencies=[Depends(authenticate)])
     async def statuses(
@@ -166,6 +198,8 @@ def create_app(
             )
         except RequestConflict as error:
             raise HTTPException(409, str(error)) from error
+        except LLMProfileError as error:
+            raise HTTPException(422, str(error)) from error
         except ServiceUnavailable as error:
             raise HTTPException(503, str(error)) from error
 

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { CrawlLlmError, prepareCrawlSettings } from "~/lib/crawl-llm.server";
 import { chQuery } from "~/lib/clickhouse.server";
 import { dagsterRunUrl, launchRun, listRuns } from "~/lib/dagster.server";
 import { objectSettings, parseCrawlSettings } from "~/lib/crawl-settings.server";
@@ -116,7 +117,7 @@ const EXTRA_FIELDS = {
   webtech: ["execution_id", "force_rescan", "recent_days"],
   brave: ["execution_id", "query_type", "query_template", "force", "rescan_old", "requests_per_route", "input_batch_size", "answer_timeout_seconds", "progress_log_every", "progress_log_interval_seconds"],
   "ip-enrichment": ["execution_id", "batch_size", "max_requests", "request_delay_seconds", "parent_depth", "rdap_cache_days", "force_rdap", "rate_limit_retry_seconds", "transient_retry_seconds"],
-  crawler: ["execution_id", "max_in_flight", "refresh_interval_days", "force_refresh", "challenge_agent_model", "challenge_agent_max_runs", "api", "model", "max_pages", "max_model_calls", "page_selection", "instructions", "wait_timeout_seconds", "poll_interval_seconds"],
+  crawler: ["execution_id", "max_in_flight", "refresh_interval_days", "force_refresh", "challenge_agent_model", "challenge_agent_max_runs", "llm_profile_id", "max_pages", "max_model_calls", "page_selection", "instructions", "wait_timeout_seconds", "poll_interval_seconds"],
 } as const;
 
 export function parseQueueConfig(filters: QueueFilters, serialized: string) {
@@ -182,8 +183,16 @@ export async function startQueueProcessing(filters: QueueFilters, serialized: st
     const rows = await chQuery<{total: string}>(`SELECT toString(count()) AS total FROM ${def.from}
       WHERE ${def.where} AND toString(task_id) = {task:String}`, {task: filters.task, crawlType: filters.crawlType});
     if (!Number(rows[0]?.total ?? 0)) throw new QueueRequestError("This task has no inputs in the selected queue.");
+    let runtimeConfig: Record<string, unknown> = config;
+    if (filters.type === "crawler") {
+      try { runtimeConfig = await prepareCrawlSettings(config); }
+      catch (error) {
+        if (error instanceof CrawlLlmError) throw new QueueRequestError(error.message);
+        throw error;
+      }
+    }
     const run = await launchRun({job: def.job, assetSelection: [def.asset],
-      runConfig: {ops: {[def.asset]: {config}}},
+      runConfig: {ops: {[def.asset]: {config: runtimeConfig}}},
       tags: {"processing/task_id": filters.task, "backoffice/queue_request_id": requestId,
         "backoffice/queue_config": fingerprint, "corpscout/requested_by": requestedBy, "backoffice/action": "process-queue"},
     });

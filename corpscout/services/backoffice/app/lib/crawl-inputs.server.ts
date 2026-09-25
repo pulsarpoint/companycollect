@@ -1,3 +1,4 @@
+import { prepareCrawlSettings } from "~/lib/crawl-llm.server";
 import { chQuery } from "~/lib/clickhouse.server";
 import type { CrawlInputsSnapshot, CrawlInputRow, CrawlInputStats } from "~/lib/crawl-inputs";
 import { DOMAIN_CRAWL_TYPES, type DomainCrawlType } from "~/lib/se-domain-selection";
@@ -54,7 +55,7 @@ export async function startSavedCrawls(form: FormData) {
   if (rows.length !== selected.length) throw new Error("Some selected inputs no longer exist. Refresh the list.");
   if (rows.some((row) => !row.enabled)) throw new Error("Some selected inputs are disabled. Refresh the list.");
   const asset = type === "site_info" ? "website_site_info_results" : `website_${type}_crawl_results`;
-  const settings = parseCrawlSettings(formSettings(form), type as DomainCrawlType);
+  const settings = await prepareCrawlSettings(parseCrawlSettings(formSettings(form), type as DomainCrawlType));
   const run = await launchRun({
     job: `${asset}_job`,
     runConfig: {ops: {[asset]: {config: {batch_id: batchId, domains: selected, batch_size: selected.length, ...settings}}}},

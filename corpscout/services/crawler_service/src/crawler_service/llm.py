@@ -80,9 +80,9 @@ class ModelClient:
         client: httpx.AsyncClient,
         api_key: str,
         config: ResearchConfig,
-        output_dir: Path,
+        output_dir: Path | None,
         *,
-        api: Literal["openrouter", "deepseek"] = "openrouter",
+        api: str = "openrouter",
         json_mode: Literal["json_schema", "json_object"] | None = None,
     ):
         self.client, self.api_key, self.config, self.output_dir = (
@@ -92,7 +92,13 @@ class ModelClient:
             output_dir,
         )
         self.api = api
-        self.api_name = "DeepSeek" if api == "deepseek" else "OpenRouter"
+        self.api_name = (
+            "DeepSeek"
+            if api == "deepseek"
+            else "OpenRouter"
+            if api == "openrouter"
+            else "LLM"
+        )
         self.json_mode = json_mode or (
             "json_object" if api == "deepseek" else "json_schema"
         )
@@ -102,6 +108,16 @@ class ModelClient:
         self.semaphore = asyncio.Semaphore(config.extraction_concurrency)
         self.consecutive_errors = 0
         self.unavailable = False
+
+    def record_call(
+        self, record: dict, request: dict, response: dict | None = None
+    ) -> None:
+        if self.output_dir is not None:
+            write_json(
+                self.output_dir / "calls" / f"{record['call_id']:05}.json",
+                {**record, "request": request}
+                | ({"response": response} if response is not None else {}),
+            )
 
     @property
     def remaining(self) -> int:
@@ -241,25 +257,27 @@ class ModelClient:
                     },
                 }
             if self.api == "deepseek":
-                request["thinking"] = {
-                    "type": "disabled"
-                    if self.config.reasoning_effort == "none"
-                    else "enabled"
-                }
-                request["reasoning_effort"] = self.config.reasoning_effort
+                if self.config.reasoning_effort is not None:
+                    request["thinking"] = {
+                        "type": "disabled"
+                        if self.config.reasoning_effort == "none"
+                        else "enabled"
+                    }
+                    request["reasoning_effort"] = self.config.reasoning_effort
                 if self.config.reasoning_effort == "none":
                     request["temperature"] = 0
-            else:
-                request["temperature"] = 0
-                request["reasoning"] = (
-                    {"enabled": False}
-                    if self.config.reasoning_effort == "none"
-                    else {
-                        "enabled": True,
-                        "exclude": True,
-                        "effort": self.config.reasoning_effort,
-                    }
-                )
+            elif self.api == "openrouter":
+                if self.config.reasoning_effort is not None:
+                    request["temperature"] = 0
+                    request["reasoning"] = (
+                        {"enabled": False}
+                        if self.config.reasoning_effort == "none"
+                        else {
+                            "enabled": True,
+                            "exclude": True,
+                            "effort": self.config.reasoning_effort,
+                        }
+                    )
                 request["provider"] = {
                     **(
                         {"only": [self.config.provider]}
@@ -269,6 +287,8 @@ class ModelClient:
                     "allow_fallbacks": self.config.provider is None,
                     "require_parameters": True,
                 }
+            elif self.config.reasoning_effort is not None:
+                request["temperature"] = 0
             if catalog is not None:
                 request["tools"] = [
                     SEARCH_TECHNOLOGIES_TOOL,
@@ -294,10 +314,7 @@ class ModelClient:
                             "api": self.api,
                         }
                         self.calls.append(record)
-                        target = (
-                            self.output_dir / "calls" / f"{record['call_id']:05}.json"
-                        )
-                        write_json(target, {**record, "request": request})
+                        self.record_call(record, request)
                         retry_delay = min(2**attempt, 10)
                         try:
                             response = await self.client.post(
@@ -309,7 +326,7 @@ class ModelClient:
                         except httpx.HTTPError as error:
                             last_error = f"{type(error).__name__}: {self.api_name} transport failed"
                             record["error"] = last_error
-                            write_json(target, {**record, "request": request})
+                            self.record_call(record, request)
                         else:
                             record["http_status"] = response.status_code
                             record["elapsed_seconds"] = round(
@@ -321,7 +338,11 @@ class ModelClient:
                                 )
                                 record["error"] = last_error
                                 try:
-                                    error_payload = response.json()
+                                    error_payload = json.loads(
+                                        json.dumps(response.json()).replace(
+                                            json.dumps(self.api_key)[1:-1], "[REDACTED]"
+                                        )
+                                    )
                                 except ValueError:
                                     error_payload = None
                                 if isinstance(error_payload, dict) and isinstance(
@@ -344,7 +365,7 @@ class ModelClient:
                                         else 30
                                     )
                                     record["retry_delay_seconds"] = retry_delay
-                                write_json(target, {**record, "request": request})
+                                self.record_call(record, request)
                                 if response.status_code not in {
                                     408,
                                     429,
@@ -361,11 +382,11 @@ class ModelClient:
                                 except ValueError:
                                     last_error = f"{self.api_name} returned a non-JSON HTTP response"
                                     record["error"] = last_error
-                                    write_json(target, {**record, "request": request})
+                                    self.record_call(record, request)
                                 else:
                                     payload = json.loads(
                                         json.dumps(payload).replace(
-                                            self.api_key, "[REDACTED]"
+                                            json.dumps(self.api_key)[1:-1], "[REDACTED]"
                                         )
                                     )
                                     if not isinstance(payload, dict):
@@ -393,14 +414,7 @@ class ModelClient:
                                     record["finish_reason"] = finish
                                     document = None
                                     if finish == "tool_calls" and catalog is not None:
-                                        write_json(
-                                            target,
-                                            {
-                                                **record,
-                                                "request": request,
-                                                "response": payload,
-                                            },
-                                        )
+                                        self.record_call(record, request, payload)
                                         self.consecutive_errors = 0
                                         return ModelReply(
                                             None, None, None, message=message
@@ -418,14 +432,7 @@ class ModelClient:
                                             record["error"] = (
                                                 "Invalid JSON model output"
                                             )
-                                    write_json(
-                                        target,
-                                        {
-                                            **record,
-                                            "request": request,
-                                            "response": payload,
-                                        },
-                                    )
+                                    self.record_call(record, request, payload)
                                     if "error" in record:
                                         self.consecutive_errors += 1
                                         if self.consecutive_errors >= 3:
@@ -446,10 +453,7 @@ class ModelClient:
                         error=last_error,
                         elapsed_seconds=round(time.monotonic() - started, 3),
                     )
-                    write_json(
-                        self.output_dir / "calls" / f"{record['call_id']:05}.json",
-                        {**record, "request": request},
-                    )
+                    self.record_call(record, request)
             self.consecutive_errors += 1
             if self.consecutive_errors >= 3:
                 self.unavailable = True

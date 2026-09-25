@@ -27,10 +27,8 @@ export function parseCrawlSettings(read: SettingReader, type: DomainCrawlType) {
   const agentModel = read("challenge_agent_model") ?? "";
   if (!["deepseek-flash", "z-ai/glm-5.3-flash"].includes(agentModel)) throw new Error("Choose a CAPTCHA model.");
   const agentRuns = requiredInteger(read, "challenge_agent_max_runs", 3, 1000);
-  const api = read("api") ?? "";
-  if (!["deepseek", "openrouter"].includes(api)) throw new Error("Choose the crawl model API.");
-  const model = (read("model") ?? "").trim();
-  if (!model || model.length > 200) throw new Error("Enter the crawl model.");
+  const profileId = (read("llm_profile_id") ?? "").trim();
+  if (!profileId || profileId.length > 200) throw new Error("Choose an LLM from LLM settings before starting the crawl.");
   const maxPages = requiredInteger(read, "max_pages", 1, 500);
   const maxModelCalls = requiredInteger(read, "max_model_calls", 1, 1000);
   const pageSelection = read("page_selection") ?? "";
@@ -48,7 +46,7 @@ export function parseCrawlSettings(read: SettingReader, type: DomainCrawlType) {
   const refreshDays = read("refresh_interval_days") === null ? 30 : requiredInteger(read, "refresh_interval_days", 1, 3650);
   return {
     force_refresh: forceRefresh === "true",
-    challenge_agent_model: agentModel, challenge_agent_max_runs: agentRuns, api, model,
+    challenge_agent_model: agentModel, challenge_agent_max_runs: agentRuns, llm_profile_id: profileId,
     max_pages: maxPages, max_model_calls: maxModelCalls, page_selection: pageSelection,
     max_in_flight: maxInFlight, refresh_interval_days: refreshDays,
     ...(pageSelection === "instructions" ? { instructions } : {}),

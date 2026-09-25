@@ -20,6 +20,7 @@ dependencies = [
     "tldextract>=5,<6",
     "phonenumbers>=9,<10",
     "trafilatura>=2.2,<3",
+    "cryptography>=46,<51",
 ]
 
 [project.optional-dependencies]

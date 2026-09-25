@@ -111,6 +111,13 @@
         fail_msg: Set DEEPSEEK and a 32-character CRAWL_API_TOKEN in secrets.yml or the controller environment.
       no_log: true
 
+    - name: Validate the shared Backoffice LLM encryption key
+      ansible.builtin.assert:
+        that:
+          - crawler_service_llm_encryption_key is match('^[A-Fa-f0-9]{64}$')
+        fail_msg: Set crawler_service_llm_encryption_key to the same 64-character hexadecimal key configured in Backoffice.
+      no_log: true
+
     - name: Gather target platform information
       ansible.builtin.setup:
         gather_subset: [min]

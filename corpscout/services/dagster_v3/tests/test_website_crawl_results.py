@@ -27,6 +27,7 @@ from dagster_v3.defs.website_crawl.results_assets import (
 )
 from tests.test_processing_store import processing_postgres_url  # noqa: F401
 from tests.test_website_crawl_input_assets import server  # noqa: F401
+from tests.test_website_crawl_llm import LLM, ROTATED_LLM
 
 ASSETS = (
     website_full_crawl_results,
@@ -70,6 +71,7 @@ def crawler(monkeypatch):
         "result": None,
         # Answer this many /result GETs 409 ("not ready") before serving it.
         "result_not_ready": 0,
+        "llm_error": None,
     }
     forgotten = set()
 
@@ -84,6 +86,13 @@ def crawler(monkeypatch):
             assert self.headers["Authorization"] == "Bearer test-token"
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             calls.append((self.path, body))
+            if self.path == "/v1/llm/verify":
+                return self.reply(
+                    200,
+                    {"ok": False, "error": behavior["llm_error"]}
+                    if behavior["llm_error"] is not None
+                    else {"ok": True},
+                )
             if behavior["reject"]:
                 return self.reply(422, {"detail": "invalid config"})
             if self.path == "/v1/crawls":
@@ -347,6 +356,23 @@ def test_validation_precedes_receipt_and_crawl_submission(database, crawler):
     assert client.execute(f"SELECT count() FROM {SUBMISSIONS}") == [(0,)]
 
 
+def test_sweep_recovery_verifies_the_pending_receipts_actual_llm(database, crawler):
+    client, _, _ = database
+    saved, calls, behavior = crawler
+    seed(client)
+    behavior["pending"] = True
+    with pytest.raises(TimeoutError):
+        run(database, domains=["a.example"], llm=LLM, wait_timeout_seconds=0.01)
+    original = dict(saved)
+    behavior["pending"] = False
+    calls.clear()
+    # A fresh manual sweep still recovers the durable receipt's encrypted profile,
+    # including when this run does not itself supply an LLM override.
+    assert run(database, domains=["a.example"]).success
+    assert calls[0] == ("/v1/llm/verify", {"llm": LLM})
+    assert saved == original
+
+
 def test_same_batch_replay_is_idempotent_and_semantic_change_is_due(database, crawler):
     client, _, _ = database
     saved, _, _ = crawler
@@ -462,6 +488,39 @@ def test_sweep_resume_keeps_content_settings_fixed(database, crawler):
             resumed.get_step_failure_events()[0].event_specific_data.error
         )
         assert run(database, instance=instance, execution_id=first.run_id).success
+
+
+def test_sweep_llm_preflight_and_resume_reuse_frozen_envelope(database, crawler):
+    client, _, _ = database
+    saved, calls, behavior = crawler
+    seed(client)
+    with dg.DagsterInstance.ephemeral() as instance:
+        behavior["llm_error"] = "The model is unavailable."
+        first = run(database, instance=instance, llm=LLM)
+        assert not first.success
+        assert not saved
+        assert client.execute(f"SELECT count() FROM {SUBMISSIONS}") == [(0,)]
+        assert calls == [("/v1/llm/verify", {"llm": LLM})]
+        behavior["llm_error"] = None
+        resumed = run(
+            database, instance=instance, execution_id=first.run_id, llm=ROTATED_LLM
+        )
+        assert resumed.success
+        assert all(payload["llm"] == LLM for payload in saved.values())
+        assert [body for path, body in calls if path == "/v1/llm/verify"] == [
+            {"llm": LLM},
+            {"llm": LLM},
+        ]
+        changed = run(
+            database,
+            instance=instance,
+            execution_id=first.run_id,
+            llm={**LLM, "base_url": "https://other.example/v1"},
+        )
+        assert not changed.success
+        assert "resume must keep llm unchanged" in str(
+            changed.get_step_failure_events()[0].event_specific_data.error
+        )
 
 
 def test_resume_of_retired_task_execution_is_rejected(database, crawler):

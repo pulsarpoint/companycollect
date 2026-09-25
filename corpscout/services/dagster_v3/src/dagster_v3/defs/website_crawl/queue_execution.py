@@ -22,6 +22,7 @@ from dagster_v3.defs.website_crawl.dispatch import (
     fetch_crawl,
     fetch_result,
     send_crawl,
+    verify_crawl_llm,
 )
 from dagster_v3.defs.website_crawl.input import TASK_DOMAINS, task_processor
 from dagster_v3.defs.website_crawl.results import (
@@ -91,11 +92,24 @@ def start_crawl_execution(
             "total": total,
         }, total
 
+    profile = config.model_dump(exclude=NOT_FROZEN)
+    if profile["llm"] is None:
+        # Existing executions without an LLM envelope stay resumable.
+        profile.pop("llm")
+    task = store.task(task_id)
+    saved = task["config"].get("execution") if task is not None else None
+    if saved is not None and config.execution_id in (None, saved["execution_id"]):
+        saved_llm = saved["profile"].get("llm")
+        if profile.get("llm") is not None and saved_llm is not None:
+            # Fresh encryption changes the nonce, not the content profile. Compare
+            # all other fields and continue using the originally frozen ciphertext.
+            profile["llm"]["api_key_encrypted"] = saved_llm["api_key_encrypted"]
+
     return queue_execution.start_execution(
         store,
         task_id=task_id,
         processor=task_processor(crawl_type),
-        profile=config.model_dump(exclude=NOT_FROZEN),
+        profile=profile,
         execution_id=config.execution_id,
         freshness_days=config.refresh_interval_days,
         run_id=run_id,
@@ -168,7 +182,6 @@ def fresh_work_keys(
         cutoff=datetime.fromisoformat(execution["freshness_cutoff"]),
         started=datetime.fromisoformat(execution["started_at"]),
     ).intersection(pairs)
-
 
 
 def dispatchable_entries(
@@ -419,6 +432,7 @@ def process_crawl_draft(context, config, clickhouse, processing, crawl_type, tas
             default_execution_id=context.run.root_run_id or context.run.run_id,
         )
         execution = task["config"]["execution"]
+        config = config.with_frozen_llm(execution["profile"])
         context.instance.add_run_tags(
             context.run.run_id,
             {
@@ -444,6 +458,8 @@ def process_crawl_draft(context, config, clickhouse, processing, crawl_type, tas
             raise ValueError("Configure CRAWLER_API_TOKEN on the Dagster host")
         with Session(raise_for_status=False) as http:
             http.headers["Authorization"] = f"Bearer {token}"
+            if config.llm is not None:
+                verify_crawl_llm(http, url, config.llm.model_dump())
             stored = run_crawl_window(
                 context, client, http, url, task, crawl_type, config
             )

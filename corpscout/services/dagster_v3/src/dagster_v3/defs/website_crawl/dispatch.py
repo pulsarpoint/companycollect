@@ -17,6 +17,32 @@ JOBS_INSTRUCTIONS = (
 )
 
 
+def reject_crawl_credentials(value: object) -> None:
+    """Credentials must use the encrypted LLM envelope, never research overrides."""
+    if isinstance(value, dict):
+        for name, child in value.items():
+            normalized = str(name).lower().replace("_", "").replace("-", "")
+            if normalized in {
+                "apikey",
+                "apikeyencrypted",
+                "authorization",
+                "password",
+                "secret",
+                "token",
+                "accesstoken",
+                "bearertoken",
+                "credentials",
+                "llm",
+            } or normalized.endswith("apikey"):
+                raise ValueError(
+                    "crawl overrides cannot contain credentials; use llm.api_key_encrypted"
+                )
+            reject_crawl_credentials(child)
+    elif isinstance(value, list):
+        for child in value:
+            reject_crawl_credentials(child)
+
+
 def crawl_payload(row: dict, crawl_type: str, batch_id: str) -> dict:
     """Refuse proposed input features the current crawler cannot yet represent."""
     if row["preset_version"] != 1:
@@ -26,6 +52,7 @@ def crawl_payload(row: dict, crawl_type: str, batch_id: str) -> dict:
     overrides = json.loads(row["config_json"])
     if not isinstance(overrides, dict):
         raise ValueError("config_json must be an object")
+    reject_crawl_credentials(overrides)
     forbidden = {
         "refresh_interval_days",
         "headless",
@@ -88,6 +115,45 @@ class CrawlRequestConflict(ValueError):
 # Statuses worth retrying with the same request: capacity and gateway failures.
 TRANSIENT_STATUSES = (429, 500, 502, 503, 504)
 RETRY_SECONDS = 120
+
+
+def verify_crawl_llm(http: Session, url: str, llm: dict) -> None:
+    """Check the frozen profile immediately before admitting any domain work."""
+    try:
+        response = http.post(
+            url.rstrip("/") + "/v1/llm/verify",
+            json={"llm": llm},
+            timeout=(10, 40),
+            allow_redirects=False,
+        )
+    except RequestException:
+        raise ValueError(
+            "The crawler could not verify the selected LLM; no new domains were submitted. Retry after checking the crawler connection."
+        ) from None
+    if response.status_code != 200:
+        raise ValueError(
+            f"The crawler rejected LLM verification with HTTP {response.status_code}; no new domains were submitted. Check the shared key and selected LLM configuration."
+        )
+    try:
+        result = response.json()
+    except ValueError:
+        raise ValueError(
+            "The crawler returned an invalid LLM verification response; no new domains were submitted."
+        ) from None
+    if not isinstance(result, dict):
+        raise ValueError(
+            "The crawler returned an invalid LLM verification response; no new domains were submitted."
+        )
+    if result.get("ok") is not True:
+        reason = result.get("error")
+        safe_reason = (
+            reason[:1000]
+            if isinstance(reason, str)
+            else "The model did not pass verification."
+        )
+        raise ValueError(
+            f"Selected LLM verification failed: {safe_reason} No new domains were submitted."
+        )
 
 
 def send_crawl(http: Session, url: str, payload: dict, *, validate: bool) -> dict:

@@ -12,18 +12,21 @@ import re
 from datetime import UTC, datetime, timedelta
 from time import monotonic, sleep
 from typing import Literal
+from urllib.parse import urlsplit
 from uuid import UUID
 
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
 from dlt.sources.helpers.requests import Session
-from pydantic import Field, field_validator, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from dagster_v3.defs.common.processing import ProcessingResource
 from dagster_v3.defs.website_crawl.dispatch import (
     INPUTS_BY_TYPE,
     crawl_payload,
+    reject_crawl_credentials,
     send_crawl,
+    verify_crawl_llm,
 )
 
 RESULTS_BY_TYPE = {
@@ -38,6 +41,7 @@ EXECUTION_TAG = "website_crawl/execution"
 FIXED_ON_RESUME = (
     "api",
     "model",
+    "llm",
     "max_pages",
     "max_model_calls",
     "page_selection",
@@ -48,7 +52,52 @@ FIXED_ON_RESUME = (
 )
 
 
+class CrawlLLMConfig(dg.Config):
+    """Opaque credentials supplied by Backoffice; only the crawler can decrypt them."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    provider: str = Field(min_length=1, max_length=100)
+    base_url: str = Field(min_length=1, max_length=2048)
+    model: str = Field(min_length=1, max_length=200)
+    api_key_encrypted: str = Field(
+        pattern=r"^v1\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{23,}$",
+        max_length=16384,
+        repr=False,
+    )
+
+    @model_validator(mode="after")
+    def validate_profile(self):
+        for value in (self.provider, self.model, self.base_url):
+            if value != value.strip() or any(
+                ord(char) < 32 or ord(char) == 127 for char in value
+            ):
+                raise ValueError(
+                    "LLM profile fields cannot contain control characters or whitespace padding"
+                )
+        try:
+            endpoint = urlsplit(self.base_url)
+            endpoint.port  # urlsplit defers invalid-port validation until access.
+        except ValueError:
+            raise ValueError("LLM base_url must have a valid URL and port") from None
+        if (
+            endpoint.scheme not in {"http", "https"}
+            or not endpoint.hostname
+            or any(char.isspace() for char in self.base_url)
+            or endpoint.username is not None
+            or endpoint.password is not None
+            or endpoint.query
+            or endpoint.fragment
+        ):
+            raise ValueError(
+                "LLM base_url must be an HTTP(S) endpoint without credentials, query or fragment"
+            )
+        return self
+
+
 class CrawlResultsConfig(dg.Config):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
     task_id: str | None = Field(
         default=None,
         description="Crawl draft to process (queue task created by website_crawl_input). Omit to process explicit domains or due inputs.",
@@ -73,6 +122,10 @@ class CrawlResultsConfig(dg.Config):
     challenge_agent_max_runs: int = Field(ge=3, le=1000)
     api: str = Field(pattern=r"^(deepseek|openrouter)$")
     model: str = Field(min_length=1, max_length=200)
+    llm: CrawlLLMConfig | None = Field(
+        default=None,
+        description="Selected LLM profile with an encrypted API key. Omit only for the crawler's legacy environment configuration.",
+    )
     max_pages: int = Field(ge=1, le=500)
     max_model_calls: int = Field(ge=1, le=1000)
     page_selection: Literal["saved", "instructions", "basic_info"]
@@ -86,6 +139,17 @@ class CrawlResultsConfig(dg.Config):
     def validate_options(self):
         if not self.model.strip():
             raise ValueError("model must not be blank")
+        if self.llm is not None:
+            if self.llm.model != self.model:
+                raise ValueError("llm.model must match model")
+            if self.api != (
+                "deepseek"
+                if self.llm.provider == "deepseek"
+                or urlsplit(self.llm.base_url).hostname == "api.deepseek.com"
+                else "openrouter"
+            ):
+                raise ValueError("api must match the selected LLM provider")
+        reject_crawl_credentials(self.crawler_config)
         if self.page_selection == "instructions":
             if self.instructions is None or not self.instructions.strip():
                 raise ValueError("custom page selection requires instructions")
@@ -100,6 +164,13 @@ class CrawlResultsConfig(dg.Config):
         if self.task_id is not None and self.domains:
             raise ValueError("task_id processes the whole draft; omit domains")
         return self
+
+    def with_frozen_llm(self, settings: dict) -> "CrawlResultsConfig":
+        """Re-use the original ciphertext so retries send an identical request body."""
+        llm = settings.get("llm")
+        return self.model_copy(
+            update={"llm": CrawlLLMConfig(**llm) if llm is not None else None}
+        )
 
     wait_timeout_seconds: float = Field(default=1800, gt=0, le=86400)
     poll_interval_seconds: float = Field(default=2, gt=0, le=30)
@@ -141,6 +212,8 @@ def effective_payload(
         "max_pages": config.max_pages,
         "max_model_calls": config.max_model_calls,
     }
+    if config.llm is not None:
+        payload["llm"] = config.llm.model_dump()
     if config.page_selection == "instructions":
         payload.pop("crawl", None)
         payload["instructions"] = config.instructions
@@ -156,6 +229,9 @@ def effective_payload(
             "challenge_agent_max_runs",
         }
     }
+    if config.llm is not None:
+        # Credential rotation/re-encryption does not alter requested content.
+        semantic["llm"] = config.llm.model_dump(exclude={"api_key_encrypted"})
     work_key = hashlib.sha256(
         json.dumps([crawl_type, semantic], sort_keys=True).encode()
     ).hexdigest()
@@ -255,7 +331,7 @@ def resolve_execution(
     original = context.instance.get_run_by_id(execution_id)
     if original is None:
         raise ValueError("execution_id must identify the original Dagster run")
-    settings = {name: getattr(config, name) for name in FIXED_ON_RESUME}
+    settings = config.model_dump(include=set(FIXED_ON_RESUME))
     if EXECUTION_TAG in original.tags:
         execution = json.loads(original.tags[EXECUTION_TAG])
         if execution["crawl_type"] != crawl_type:
@@ -264,10 +340,15 @@ def resolve_execution(
             raise ValueError(
                 "execution_id belongs to a retired crawl task; add its domains to a draft instead"
             )
+        # Only ciphertext may differ. Keep the original envelope for every resumed
+        # request, while still refusing changes to the provider, endpoint or model.
+        saved_llm = execution["settings"].get("llm")
+        if settings["llm"] is not None and saved_llm is not None:
+            settings["llm"]["api_key_encrypted"] = saved_llm["api_key_encrypted"]
         changed = [
             name
             for name in FIXED_ON_RESUME
-            if settings[name] != execution["settings"][name]
+            if settings[name] != execution["settings"].get(name)
         ]
         if changed:
             raise ValueError(
@@ -318,6 +399,7 @@ def process_crawls(
     table = RESULTS_BY_TYPE[crawl_type]
     input_table = INPUTS_BY_TYPE[crawl_type] + "_current"
     execution = resolve_execution(context, config, crawl_type)
+    config = config.with_frozen_llm(execution["settings"])
     batch_id = config.batch_id or execution["execution_id"]
     # Freshness is judged against the execution's start, so a resume sees the same cutoff.
     cutoff = datetime.fromisoformat(execution["started_at"]) - timedelta(
@@ -366,6 +448,10 @@ def process_crawls(
                         f"Apply ClickHouse migration 000430 before processing: {relation}"
                     )
             http.headers["Authorization"] = f"Bearer {token}"
+            verified_llms: set[str] = set()
+            if config.llm is not None:
+                verify_crawl_llm(http, url, config.llm.model_dump())
+                verified_llms.add(json.dumps(config.llm.model_dump(), sort_keys=True))
             params = {
                 "type": crawl_type,
                 "limit": config.batch_size * config.max_batches,
@@ -394,6 +480,16 @@ def process_crawls(
                 + " ORDER BY submitted_at, domain LIMIT %(limit)s",
                 params,
             )
+            for item in pending:
+                pending_llm = json.loads(item["request_json"]).get("llm")
+                if pending_llm is None:
+                    continue
+                identity = json.dumps(pending_llm, sort_keys=True)
+                if identity not in verified_llms:
+                    # Recovery can adopt receipts from an earlier execution with
+                    # another model/key. Verify the envelope that will be re-sent.
+                    verify_crawl_llm(http, url, pending_llm)
+                    verified_llms.add(identity)
             metadata["recovered"] = len(pending)
             # Pending receipts are resumed before admitting new work. Their payload is
             # immutable even if the input row or this run's overrides have changed.

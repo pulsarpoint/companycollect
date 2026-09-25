@@ -36,10 +36,10 @@ export function SeDomainCrawlSheet({open, selectedCount, busy, error, onClose, o
             </NativeSelect></Field>
           <CrawlSettingsFields key={type} type={type} idPrefix="send" />
           <p className="text-xs text-muted-foreground">Existing inputs keep their saved browser mode, proxy route and artifact settings. Disabled inputs are skipped. Recent successful results are skipped unless you force a new crawl.</p>
-          {error && <Alert variant="destructive"><AlertTitle>Could not send for crawl</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
+          {!busy && error && <Alert variant="destructive"><AlertTitle>Could not send for crawl</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
         </div>
         <SheetFooter className="border-t">
-          <Button type="submit" disabled={busy || selectedCount === 0}><PlayIcon data-icon="inline-start" />{busy ? "Sending…" : `Crawl ${selectedCount.toLocaleString()} ${noun}`}</Button>
+          <Button type="submit" disabled={busy || selectedCount === 0}><PlayIcon data-icon="inline-start" />{busy ? "Checking LLM and starting…" : `Crawl ${selectedCount.toLocaleString()} ${noun}`}</Button>
           <Button type="button" variant="outline" disabled={busy} onClick={onClose}>Cancel</Button>
         </SheetFooter>
       </form>

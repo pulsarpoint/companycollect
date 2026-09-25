@@ -525,3 +525,25 @@ and profile retention. All settings are stored in SQLite and override startup CL
 values. **Use startup settings** removes the override. Defaults are six browsers,
 120 seconds idle and seven days retention. Reducing capacity lets active work finish.
 No headless/headed slots are preallocated; each request selects its mode.
+
+### Crawl LLM selection and encrypted credentials
+
+Queue processing and saved-input crawl starts require a profile from `/admin/settings/llms`.
+Backoffice resolves that profile's API-key environment variable and verifies the selected
+endpoint/model through the authenticated crawler before launching Dagster. An unavailable
+model blocks the launch and returns its failure reason. Dagster verifies again before
+submitting domain work, including when resuming an execution with its frozen configuration.
+
+Set `CRAWLER_LLM_ENCRYPTION_KEY` to the same 64 hexadecimal characters (32 random bytes)
+in Backoffice and the crawler's `crawler_service_llm_encryption_key` Ansible secret.
+Generate once with `openssl rand -hex 32`; keep it in ignored environment/secrets files.
+Dagster must not receive this shared key. It carries only the selected provider, base URL,
+model and AES-256-GCM encrypted API key. The versioned envelope uses a fresh 12-byte nonce,
+a 16-byte authentication tag, and authenticated provider/endpoint/model metadata.
+Changing metadata or the shared key invalidates old envelopes. Keep the shared key stable
+while queued or resumable executions exist; a coordinated rotation requires new executions.
+An execution's selected profile is frozen; choose a new execution to change its model or credentials.
+
+The chosen LLM applies to crawl classification and extraction. CAPTCHA assistance keeps
+its separate model controls and service credentials. Legacy direct crawler requests without
+an `llm` profile remain supported for existing integrations.

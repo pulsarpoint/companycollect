@@ -47,3 +47,4 @@ crawler_service_s3_session_token: "{{ lookup('ansible.builtin.env', 'AWS_SESSION
 crawler_service_deepseek: "{{ lookup('ansible.builtin.env', 'DEEPSEEK') }}"
 crawler_service_openrouter: "{{ lookup('ansible.builtin.env', 'OPENROUTER_API_KEY') }}"
 crawler_service_api_token: "{{ lookup('ansible.builtin.env', 'CRAWL_API_TOKEN') }}"
+crawler_service_llm_encryption_key: "{{ lookup('ansible.builtin.env', 'CRAWLER_LLM_ENCRYPTION_KEY') }}"

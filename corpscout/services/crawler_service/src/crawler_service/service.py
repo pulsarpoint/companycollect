@@ -19,6 +19,7 @@ from crawler_service.crawl import crawl_company
 from crawler_service.crawl_history import CrawlHistory
 from crawler_service.discovery import crawlable_url, normalize_url
 from crawler_service.human_control import HumanSession
+from crawler_service.llm_profile import EncryptedLLMProfile, LLMProfileError
 from crawler_service.models import ResearchConfig, StrictModel
 from crawler_service.storage import utc_now, write_json
 
@@ -45,6 +46,9 @@ class CrawlRequest(StrictModel):
     crawl: bool | Literal["full"] | None = None
     api: Literal["deepseek", "openrouter"] = "deepseek"
     config: ResearchConfig | None = None
+    llm: EncryptedLLMProfile | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     challenge_agent_max_runs: AgentRunBudget | None = None
     challenge_agent_model: AgentModel = "deepseek-flash"
     interactive: bool = False
@@ -366,9 +370,12 @@ class CrawlService:
             or request.instructions is not None
             or request.site_info
         )
-        key_name = "DEEPSEEK" if request.api == "deepseek" else "OPENROUTER_API_KEY"
-        if needs_model and not self.environment.get(key_name):
-            raise ServiceUnavailable(f"Configure {key_name} on the service")
+        if request.llm is not None:
+            request.llm.decrypt_api_key(self.environment)
+        else:
+            key_name = "DEEPSEEK" if request.api == "deepseek" else "OPENROUTER_API_KEY"
+            if needs_model and not self.environment.get(key_name):
+                raise ServiceUnavailable(f"Configure {key_name} on the service")
         job = CrawlJob(
             request_id=request.request_id,
             state="queued",
@@ -584,6 +591,14 @@ class CrawlService:
         attempt: Path,
         human: HumanSession | None,
     ) -> dict:
+        # Authenticate again before leasing a browser, including recovered/retried jobs.
+        api_key = (
+            request.llm.decrypt_api_key(self.environment)
+            if request.llm is not None
+            else self.environment.get(
+                "DEEPSEEK" if request.api == "deepseek" else "OPENROUTER_API_KEY"
+            )
+        )
         async with AsyncExitStack() as stack:
             search = self.search
             browser_client = None
@@ -660,11 +675,12 @@ class CrawlService:
                 site_info=request.site_info,
                 save_artifacts=request.save_artifacts or human is not None,
                 crawl=request.crawl,
-                api=request.api,
-                config=request.config,
-                api_key=self.environment.get(
-                    "DEEPSEEK" if request.api == "deepseek" else "OPENROUTER_API_KEY"
-                ),
+                api=request.llm.api if request.llm is not None else request.api,
+                config=request.llm.crawl_config(request.config)
+                if request.llm is not None
+                else request.config,
+                api_key=api_key,
+                base_url=request.llm.base_url if request.llm is not None else None,
                 **({"human": human} if human is not None else {}),
                 **(
                     {"browser_client": browser_client}
@@ -778,7 +794,11 @@ class CrawlService:
                 "Crawl job %s failed (%s)", job.request_id, type(error).__name__
             )
             job.state = "failed"
-            job.error = f"Crawl execution failed ({type(error).__name__})"
+            job.error = (
+                str(error)
+                if isinstance(error, LLMProfileError)
+                else f"Crawl execution failed ({type(error).__name__})"
+            )
             error_file = attempt / "error.json"
             write_json(
                 error_file,

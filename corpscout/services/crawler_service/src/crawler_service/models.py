@@ -781,7 +781,7 @@ class ResearchConfig(StrictModel):
 
     model: str = "deepseek/deepseek-v4-flash-0731"
     provider: str | None = "baidu/fp8"
-    reasoning_effort: Literal["none", "low", "medium", "high"] = "low"
+    reasoning_effort: Literal["none", "low", "medium", "high"] | None = "low"
     max_pages: int = Field(default=20, ge=1, le=500)
     max_external_pages: int = Field(default=3, ge=0)
     max_source_domains: int = Field(default=3, ge=0, le=20)

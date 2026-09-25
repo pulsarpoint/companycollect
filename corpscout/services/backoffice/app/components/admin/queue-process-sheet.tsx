@@ -23,8 +23,8 @@ const LABELS: Record<string, string> = {
   rate_limit_retry_seconds: "Rate limit retry delay (seconds)", transient_retry_seconds: "Transient error retry delay (seconds)",
 };
 
-export function QueueProcessSheet({filters, total, asset, blockedReason, onClose}: {
-  filters: QueueFilters; total: number; asset: string; blockedReason?: string | null; onClose: () => void;
+export function QueueProcessSheet({filters, total, asset, blockedReason, llmProfileId, onClose}: {
+  filters: QueueFilters; total: number; asset: string; blockedReason?: string | null; llmProfileId?: string; onClose: () => void;
 }) {
   const fetcher = useFetcher<LaunchResult>();
   const [requestId] = useState(() => crypto.randomUUID());
@@ -33,7 +33,7 @@ export function QueueProcessSheet({filters, total, asset, blockedReason, onClose
   const [localError, setLocalError] = useState<string | null>(null);
   const busy = fetcher.state !== "idle";
   const done = fetcher.data?.ok === true ? fetcher.data : null;
-  const error = localError ?? (fetcher.data?.ok === false ? fetcher.data.error : null);
+  const error = busy ? null : localError ?? (fetcher.data?.ok === false ? fetcher.data.error : null);
   const defaults = filters.type === "crawler" ? null : QUEUE_TEMPLATES[filters.type];
 
   function readFields(form: HTMLFormElement) {
@@ -85,7 +85,7 @@ export function QueueProcessSheet({filters, total, asset, blockedReason, onClose
               : "All enabled domains in this task are processed. Saved browser and proxy settings are preserved; recent successful results can be skipped."}</p>
             {manual ? <FieldGroup><Field><FieldLabel htmlFor="queue-json">Processing parameters (JSON)</FieldLabel>
               <Textarea id="queue-json" value={json} onChange={event => setJson(event.target.value)} className="min-h-80 font-mono" spellCheck={false} required />
-              <FieldDescription>Only results-asset parameters. The task ID is fixed by your selection. Credentials belong in the service environment.</FieldDescription>
+              <FieldDescription>{filters.type === "crawler" ? <>Use <code>llm_profile_id</code> for the selected saved LLM. Its configuration is resolved and checked before processing. API keys must not be included in this JSON.</> : "Only results-asset parameters. The task ID is fixed by your selection. Credentials belong in the service environment."}</FieldDescription>
             </Field></FieldGroup> : <>
               {defaults ? <FieldGroup className="grid grid-cols-1 sm:grid-cols-2">
                 {Object.entries(defaults).map(([key, value]) => <Field key={key} className={key === "query_template" ? "sm:col-span-2" : undefined}>
@@ -97,14 +97,14 @@ export function QueueProcessSheet({filters, total, asset, blockedReason, onClose
                     defaultValue={value === null ? "" : String(value)} step={key === "request_delay_seconds" ? "any" : 1} required={value !== null}
                     placeholder={key === "max_requests" ? "Unlimited" : undefined} />}
                 </Field>)}
-              </FieldGroup> : <CrawlSettingsFields type={filters.crawlType} idPrefix="queue-crawl" />}
+              </FieldGroup> : <CrawlSettingsFields type={filters.crawlType} idPrefix="queue-crawl" initialProfileId={llmProfileId} />}
               <FieldGroup><Field><FieldLabel htmlFor="queue-execution">Execution ID (optional)</FieldLabel>
                 <Input id="queue-execution" name="execution_id" placeholder="Use the original execution ID to resume" />
                 <FieldDescription>{(filters.type === "webtech" || filters.type === "crawler") ? "For draft queues, leave empty to start or resume the saved execution. Pipeline failures retain their inputs. Fully processed tasks, including saved website errors, clear their inputs; add pages to a new queue to scan them again. Legacy tasks keep their existing execution rules." : "Leave empty for a new execution. To resume, use the original results run ID and its original settings."}</FieldDescription>
               </Field></FieldGroup>
               <Button type="button" variant="outline" onClick={event => {
                 const form = event.currentTarget.form;
-                if (form) { setJson(JSON.stringify(readFields(form), null, 2)); setManual(true); }
+                if (form && form.reportValidity()) { setJson(JSON.stringify(readFields(form), null, 2)); setManual(true); }
               }}>Edit all parameters as JSON</Button>
             </>}
             <p className="text-xs text-muted-foreground">Results asset: <code>{asset}</code>. {(filters.type === "webtech" || filters.type === "crawler") ? "Inputs are removed when every page has a saved outcome or is skipped as recent. Website errors remain in results and history. Pipeline failures keep inputs for recovery. Use the processing profile to control this execution." : "Existing input rows are retained for retries."}</p>
@@ -113,7 +113,7 @@ export function QueueProcessSheet({filters, total, asset, blockedReason, onClose
           {error && <Alert variant="destructive"><AlertTitle>Could not start processing</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
         </div>
         <SheetFooter className="border-t">
-          {!done && <Button type="submit" disabled={busy || Boolean(blockedReason)}><PlayIcon data-icon="inline-start" />{busy ? "Submitting…" : `Start processing ${total.toLocaleString()} ${total === 1 ? "input" : "inputs"}`}</Button>}
+          {!done && <Button type="submit" disabled={busy || Boolean(blockedReason)}><PlayIcon data-icon="inline-start" />{busy ? filters.type === "crawler" ? "Checking LLM and starting…" : "Submitting…" : `Start processing ${total.toLocaleString()} ${total === 1 ? "input" : "inputs"}`}</Button>}
           <Button type="button" variant="outline" disabled={busy} onClick={onClose}>{done ? "Close" : "Cancel"}</Button>
         </SheetFooter>
       </form>

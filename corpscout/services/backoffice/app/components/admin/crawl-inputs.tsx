@@ -117,11 +117,11 @@ function CrawlActivationSheet({type, domains, onClose}: {type: DomainCrawlType; 
           <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 pb-4">
             <details className="text-sm"><summary className="cursor-pointer">Selected domains ({domains?.length ?? 0})</summary><p className="mt-2 break-words text-muted-foreground">{domains?.join(", ")}</p></details>
             <CrawlSettingsFields type={type} idPrefix="input" />
-            <p className="text-xs text-muted-foreground">Browser mode, proxy route, and artifact storage use each input’s saved settings. Model identifiers must be supported by the selected API.</p>
-            {fetcher.data?.error && <Alert variant="destructive"><AlertTitle>Could not start the batch</AlertTitle><AlertDescription>{fetcher.data.error}</AlertDescription></Alert>}
+            <p className="text-xs text-muted-foreground">Browser mode, proxy route, and artifact storage use each input’s saved settings.</p>
+            {!busy && fetcher.data?.error && <Alert variant="destructive"><AlertTitle>Could not start the batch</AlertTitle><AlertDescription>{fetcher.data.error}</AlertDescription></Alert>}
           </div>
           <SheetFooter className="border-t">
-            <Button type="submit" disabled={busy || !domains?.length}><PlayIcon data-icon="inline-start" />{busy ? "Starting…" : `Start ${domains?.length ?? 0} ${domains?.length === 1 ? "crawl" : "crawls"}`}</Button>
+            <Button type="submit" disabled={busy || !domains?.length}><PlayIcon data-icon="inline-start" />{busy ? "Checking LLM and starting…" : `Start ${domains?.length ?? 0} ${domains?.length === 1 ? "crawl" : "crawls"}`}</Button>
             <Button type="button" variant="outline" disabled={busy} onClick={onClose}>Cancel</Button>
           </SheetFooter>
         </form>

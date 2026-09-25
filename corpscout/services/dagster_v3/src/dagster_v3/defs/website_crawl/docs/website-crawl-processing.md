@@ -51,7 +51,29 @@ limit. Supported CAPTCHA models are `deepseek-flash` and `z-ai/glm-5.3-flash`, w
 3–1000 runs. Model API is `deepseek` or `openrouter`; use that API's model identifier.
 `crawler_config` accepts additional validated ResearchConfig fields, including provider,
 reasoning effort, timeouts, source/search limits and output-token limit. Required model
-and limit fields cannot be overridden inside it. Credentials remain on the service.
+and limit fields cannot be overridden inside it. Plaintext credentials are rejected
+in execution overrides and saved preset JSON.
+
+Backoffice supplies an `llm` object containing `provider`, `base_url`, `model` and
+`api_key_encrypted`. Its model must match the explicit `model` above. Use `api:
+deepseek` for the DeepSeek provider or `api.deepseek.com` endpoint; other compatible
+endpoints use `api: openrouter`. The encrypted key is an opaque
+`v1.<base64url nonce>.<base64url ciphertext and tag>` envelope. Dagster forwards it
+unchanged and has neither the shared encryption key nor any decryption capability.
+Direct manual runs may omit `llm` to use the crawler's environment configuration.
+
+Before submitting any domain, Dagster asks the authenticated crawler
+`POST /v1/llm/verify` to check the actual frozen LLM profile. A failed verification
+fails the run with a reason and leaves inputs unprocessed. This repeats Backoffice's
+initial check because a queued run may start later. Recovery also checks profiles
+belonging to older pending request snapshots before re-sending them.
+
+The full encrypted envelope is frozen in the existing execution profile. A resume
+may supply freshly encrypted credentials, but continues using the original envelope
+so crawler request bodies remain identical. Provider, endpoint and model changes
+require a new execution. Those public profile fields affect the content work key;
+the encrypted key and its random nonce do not. Rotating credentials therefore does
+not invalidate an otherwise fresh, successful crawl.
 
 `domains` can be omitted to process due inputs across the table. Selection is bounded
 by `batch_size * max_batches`, ordered by priority descending then domain. `bucket`

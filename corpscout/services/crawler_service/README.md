@@ -688,3 +688,17 @@ record IDs. Unknown or truncated IDs are rejected rather than guessed.
 Native HTML, source neighborhoods, original claims, corrections, source reviews,
 proposal reviews and overview exclusions remain inspectable. Proposal metadata is an
 LLM-reviewed draft for administrator approval, not independently verified catalog data.
+
+### Encrypted per-crawl LLM profiles
+
+`POST /v1/llm/verify` accepts `{ "llm": { "provider": "…", "base_url": "…", "model": "…", "api_key_encrypted": "v1.…" } }`
+with the same bearer authentication as crawl submissions. It decrypts the credential and
+checks one bounded JSON completion, without starting a crawl or writing artifacts.
+A crawl request can carry that same `llm` object; its endpoint, model and credentials
+then replace the service's default LLM routing, including old provider restrictions.
+
+Configure `CRAWLER_LLM_ENCRYPTION_KEY` as exactly 64 hexadecimal characters, shared only
+with Backoffice. The Ansible setting is `crawler_service_llm_encryption_key` in ignored
+`ansible/secrets.yml`. The AES-256-GCM envelope binds provider, base URL and model;
+credentials are decrypted only for the outbound model request. Do not rotate the key while
+old queued or resumable executions still need their encrypted credentials.

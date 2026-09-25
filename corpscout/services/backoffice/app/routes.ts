@@ -162,6 +162,7 @@ export default [
     route("technology-proposals/:proposalId", "routes/admin-technology-proposal.tsx"),
     route("technologies/:slug", "routes/admin-technology-detail.tsx"),
     route("crawls", "routes/admin-crawls.tsx"),
+    route("crawls/llm-profiles", "routes/admin-crawl-llm-profiles.ts"),
     route("crawls/results", "routes/admin-crawl-result.tsx"),
     route("crawls/result.json", "routes/admin-crawl-result-json.ts"),
     route("browsers", "routes/admin-crawler-servers.tsx"),

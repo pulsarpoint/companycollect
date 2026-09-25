@@ -3,9 +3,13 @@ import { QUEUE_TEMPLATES, parseQueueFilters } from "~/lib/queues";
 import { loadCrawlQueueCounts, loadQueueInputs, parseQueueConfig, startQueueProcessing } from "~/lib/queues.server";
 import { chQuery } from "~/lib/clickhouse.server";
 import { launchRun, listRuns } from "~/lib/dagster.server";
+import { CrawlLlmError, prepareCrawlSettings } from "~/lib/crawl-llm.server";
 
 vi.mock("~/lib/clickhouse.server", () => ({chQuery: vi.fn()}));
 vi.mock("~/lib/dagster.server", () => ({launchRun: vi.fn(), listRuns: vi.fn(), dagsterRunUrl: (id: string) => `http://dagster/runs/${id}`}));
+vi.mock("~/lib/crawl-llm.server", () => ({CrawlLlmError: class CrawlLlmError extends Error {}, prepareCrawlSettings: vi.fn()}));
+const verifiedLlm = {provider: "Saved provider", base_url: "https://provider.example/v1", model: "selected/model", api_key_encrypted: "v1.test.encrypted-key"};
+const wireModelConfig = {api: "openrouter", model: "selected/model", llm: verifiedLlm, crawler_config: {provider: null}};
 const task = "11111111-1111-4111-8111-111111111111";
 const request = "22222222-2222-4222-8222-222222222222";
 const filters = (type = "webtech", crawlType = "full") => parseQueueFilters(type, new URLSearchParams({task, crawlType, search: "preview-only"}));
@@ -14,10 +18,11 @@ beforeEach(() => {
   vi.mocked(chQuery).mockResolvedValue([{total: "17"}]);
   vi.mocked(listRuns).mockResolvedValue([]);
   vi.mocked(launchRun).mockResolvedValue({runId: "launched", status: "QUEUED"});
+  vi.mocked(prepareCrawlSettings).mockReset().mockImplementation(async ({llm_profile_id: _profileId, ...settings}) => ({...settings, ...wireModelConfig}));
 });
 
 const crawlConfig = {challenge_agent_model: "deepseek-flash", challenge_agent_max_runs: 3,
-  api: "deepseek", model: "deepseek-flash", max_pages: 20, max_model_calls: 20,
+  llm_profile_id: "saved-model", max_pages: 20, max_model_calls: 20,
   page_selection: "saved", max_in_flight: 3, refresh_interval_days: 30, force_refresh: false};
 
 describe("queue processing", () => {
@@ -31,7 +36,12 @@ describe("queue processing", () => {
     const input = vi.mocked(launchRun).mock.calls[0][0];
     expect(input.job).toBe(job);
     expect(input.assetSelection).toEqual([asset]);
-    expect(input.runConfig).toEqual({ops: {[String(asset)]: {config: {...config as object, task_id: task}}}});
+    const expectedConfig = type === "crawler" ? {...Object.fromEntries(Object.entries(config).filter(([key]) => key !== "llm_profile_id")), ...wireModelConfig} : config;
+    expect(input.runConfig).toEqual({ops: {[String(asset)]: {config: {...expectedConfig as object, task_id: task}}}});
+    if (type === "crawler") {
+      expect(prepareCrawlSettings).toHaveBeenCalledWith({...config as object, task_id: task});
+      expect(vi.mocked(prepareCrawlSettings).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(launchRun).mock.invocationCallOrder[0]);
+    } else expect(prepareCrawlSettings).not.toHaveBeenCalled();
     expect(input.tags?.["processing/task_id"]).toBe(task);
     expect(chQuery).toHaveBeenCalledWith(expect.not.stringContaining("preview-only"), {task, crawlType: "full"});
   });
@@ -62,6 +72,38 @@ describe("queue processing", () => {
     expect(receipt.runId).toBe("launched");
     expect(launchRun).toHaveBeenCalledTimes(1);
     await expect(startQueueProcessing(filters(), '{"force_rescan":true}', request, "operator")).rejects.toThrow("different parameters");
+  });
+  it("recovers a crawler launch without verifying again or changing the encrypted configuration", async () => {
+    const serialized = JSON.stringify(crawlConfig);
+    await startQueueProcessing(filters("crawler"), serialized, request, "operator");
+    const tags = vi.mocked(launchRun).mock.calls[0][0].tags!;
+    vi.mocked(listRuns).mockResolvedValue([{runId: "launched", status: "SUCCESS", tags}] as never);
+    vi.mocked(prepareCrawlSettings).mockRejectedValueOnce(new CrawlLlmError("The provider is now unavailable"));
+    expect(await startQueueProcessing(filters("crawler"), serialized, request, "operator")).toMatchObject({runId: "launched", status: "SUCCESS"});
+    expect(prepareCrawlSettings).toHaveBeenCalledTimes(1);
+    expect(launchRun).toHaveBeenCalledTimes(1);
+    await expect(startQueueProcessing(filters("crawler"), JSON.stringify({...crawlConfig, llm_profile_id: "another-model"}), request, "operator")).rejects.toThrow("different parameters");
+    expect(prepareCrawlSettings).toHaveBeenCalledTimes(1);
+  });
+  it("blocks launch when LLM verification fails and permits a verified retry", async () => {
+    vi.mocked(prepareCrawlSettings).mockRejectedValueOnce(new CrawlLlmError("LLM verification failed: model unavailable"));
+    await expect(startQueueProcessing(filters("crawler"), JSON.stringify(crawlConfig), request, "operator")).rejects.toThrow("LLM verification failed: model unavailable");
+    expect(launchRun).not.toHaveBeenCalled();
+    await expect(startQueueProcessing(filters("crawler"), JSON.stringify(crawlConfig), request, "operator")).resolves.toMatchObject({runId: "launched"});
+    expect(prepareCrawlSettings).toHaveBeenCalledTimes(2);
+    expect(launchRun).toHaveBeenCalledTimes(1);
+  });
+  it("requires a saved LLM selection before making any external call", async () => {
+    const {llm_profile_id: _profileId, ...config} = crawlConfig;
+    await expect(startQueueProcessing(filters("crawler"), JSON.stringify(config), request, "operator")).rejects.toThrow("Choose an LLM");
+    expect(prepareCrawlSettings).not.toHaveBeenCalled();
+    expect(chQuery).not.toHaveBeenCalled();
+    expect(listRuns).not.toHaveBeenCalled();
+    expect(launchRun).not.toHaveBeenCalled();
+  });
+  it.each(["api", "model", "api_key", "api_key_encrypted", "llm"])("rejects client-supplied model or credential override %s", key => {
+    expect(() => parseQueueConfig(filters("crawler"), JSON.stringify({...crawlConfig, [key]: "override"}))).toThrow(`Unsupported processing parameter: ${key}`);
+    expect(prepareCrawlSettings).not.toHaveBeenCalled();
   });
   it("serializes simultaneous clicks before checking active runs", async () => {
     let launched = false;

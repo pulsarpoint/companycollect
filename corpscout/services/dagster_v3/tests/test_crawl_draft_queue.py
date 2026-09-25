@@ -31,6 +31,7 @@ from dagster_v3.defs.website_crawl.results_assets import website_site_info_resul
 from tests.test_processing_store import processing_postgres_url, store  # noqa: F401
 from tests.test_website_crawl_input_assets import server  # noqa: F401
 from tests.test_website_crawl_results import crawler as crawler
+from tests.test_website_crawl_llm import LLM, ROTATED_LLM
 
 SETTINGS = {
     "challenge_agent_model": "deepseek-flash",
@@ -243,6 +244,73 @@ def test_timeout_keeps_inputs_and_resume_polls_the_same_requests(db, crawler):
     assert processing.task(task)["status"] == "completed"
     assert processing.task(later)["status"] == "draft"
     assert client.execute(f"SELECT domain FROM {TASK_DOMAINS}") == [("next.example",)]
+
+
+def test_llm_resume_verifies_frozen_credentials_and_reattaches_identical_requests(
+    db, crawler
+):
+    client, _, processing, _ = db
+    saved, calls, behavior = crawler
+    task_id = add(db, targets=["one.example", "two.example"])["task_id"]
+    behavior["pending"] = True
+    with pytest.raises(TimeoutError):
+        run(db, task_id, llm=LLM, wait_timeout_seconds=0.05)
+    originals = dict(saved)
+    assert all(payload["llm"] == LLM for payload in originals.values())
+    assert calls[0] == ("/v1/llm/verify", {"llm": LLM})
+    with pytest.raises(ValueError, match="settings are frozen"):
+        run(db, task_id, llm={**LLM, "base_url": "https://other.example/v1"})
+    behavior["pending"] = False
+    # A fresh nonce or rotated key must not change bodies belonging to this execution.
+    assert run(db, task_id, llm=ROTATED_LLM).success
+    assert saved == originals
+    assert [body for path, body in calls if path == "/v1/llm/verify"] == [
+        {"llm": LLM},
+        {"llm": LLM},
+    ]
+    assert processing.task(task_id)["config"]["execution"]["profile"]["llm"] == LLM
+    assert client.execute(
+        "SELECT count() FROM corpscout.website_site_info_results"
+    ) == [(2,)]
+
+
+def test_llm_preflight_failure_preserves_inputs_and_does_not_submit_domains(
+    db, crawler
+):
+    client, _, processing, _ = db
+    saved, calls, behavior = crawler
+    task_id = add(db, targets=["one.example"])["task_id"]
+    behavior["llm_error"] = "The model is no longer available (HTTP 404)."
+    with pytest.raises(ValueError, match="model is no longer available"):
+        run(db, task_id, llm=LLM)
+    assert not saved
+    assert calls == [("/v1/llm/verify", {"llm": LLM})]
+    assert client.execute(f"SELECT domain FROM {TASK_DOMAINS}") == [("one.example",)]
+    assert client.execute(
+        "SELECT count() FROM corpscout.website_site_info_results"
+    ) == [(0,)]
+    assert processing.task(task_id)["status"] == "selected"
+    # Even when Backoffice verifies a newly rotated credential, the crawler must
+    # also verify the original profile this execution will actually send.
+    with pytest.raises(ValueError, match="model is no longer available"):
+        run(db, task_id, llm=ROTATED_LLM)
+    assert calls[-1] == ("/v1/llm/verify", {"llm": LLM})
+    assert not saved
+
+
+def test_new_execution_verifies_new_credentials_but_keeps_fresh_content(db, crawler):
+    _, _, processing, _ = db
+    saved, calls, _ = crawler
+    first = add(db, targets=["one.example"])["task_id"]
+    assert run(db, first, llm=LLM).success
+    second = add(db, targets=["one.example"])["task_id"]
+    assert run(db, second, llm=ROTATED_LLM).success
+    assert len(saved) == 1
+    assert calls[-1] == ("/v1/llm/verify", {"llm": ROTATED_LLM})
+    assert processing.task(second)["skipped_count"] == 1
+    before = list(calls)
+    assert run(db, second, llm=LLM).success  # Completed replay does not verify again.
+    assert calls == before
 
 
 def test_freshness_is_at_execution_and_force_can_override(db, crawler):  # noqa: F811
@@ -543,7 +611,9 @@ def test_request_id_matches_between_sql_and_python(db):
 
 
 @pytest.mark.parametrize("changed_model", [False, True])
-def test_remaining_excludes_own_results_fresh_successes_and_disabled_presets(db, changed_model):
+def test_remaining_excludes_own_results_fresh_successes_and_disabled_presets(
+    db, changed_model
+):
     client, resource, _, _ = db
     task_id = add(db, targets=["one.example", "two.example", "three.example"])[
         "task_id"
@@ -617,7 +687,9 @@ def test_remaining_excludes_own_results_fresh_successes_and_disabled_presets(db,
             domain="two.example",
             request_id="other-4",
             run_id="other",
-            work_key="other-model" if changed_model else items["two.example"]["work_key"],
+            work_key="other-model"
+            if changed_model
+            else items["two.example"]["work_key"],
             successful=False,
             finished_at=started_at - timedelta(minutes=30),
         )
