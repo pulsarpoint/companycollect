@@ -11,8 +11,9 @@ Two layers, each with a defined home:
 - The context (readiness, the count of such covered blocks, the IANA block and the special
   segment holding the first address) is computed in SQL only: REGISTRY_CONTEXT_SQL per RDAP
   miss here, and the bulk view rdap_network_registry_class_derived that migration 000449
-  (Task 2) defines over the same tables. registry_context() is its pure-Python reference over
-  parsed reference rows, used by tests.
+  defines over the same objects. Both count covered blocks from the view
+  ip_registry_iana_blocks_rule_current, the one home of the holder exclusion.
+  registry_context() is its pure-Python reference over parsed reference rows, used by tests.
 - The final classification from a context is twinned: registry_class() in Python and
   REGISTRY_CLASS_SQL, which the derived view embeds verbatim; tests/test_ip_registry.py
   proves they agree on the same fixtures.
@@ -70,21 +71,19 @@ class RegistryContext:
 # One round trip per RDAP miss: readiness, how many RIR-designated IANA blocks the
 # registration covers entirely without a holder block covering them entirely, the IANA block
 # and the special segment holding its first address. Parameters are IPv6 texts in the shared
-# key space (mapped_address). The holder exclusion is a NOT IN over a CROSS JOIN of the IANA
-# blocks (~307 rows) with the holder blocks (~100 rows): an empty holder table excludes
-# nothing. Tables it expects (Task 2): ip_registry_ready (ready UInt8),
-# ip_registry_iana_blocks_current (first_ip, last_ip IPv6, designation, rir, status) and
-# ip_registry_holder_blocks_current (first_ip, last_ip IPv6), plus the special trie.
+# key space (mapped_address). The holder exclusion lives once, in the view
+# ip_registry_iana_blocks_rule_current (unheld_rir_block, migration 000449), which the bulk
+# view rdap_network_registry_class_derived reads too: an empty holder table excludes nothing.
+# The scalar subqueries are wrapped in ifNull: a scalar subquery is typed Nullable, and
+# clickhouse_driver cannot read a Nullable(Tuple) column (verified on 26.5).
+# Objects it reads (migration 000449): ip_registry_ready (ready UInt8),
+# ip_registry_iana_blocks_rule_current, ip_registry_iana_blocks_current (first_ip, last_ip
+# IPv6, designation, rir, status) and the special trie.
 REGISTRY_CONTEXT_SQL = """SELECT ifNull((SELECT ready FROM corpscout.ip_registry_ready), 0) AS ready,
-    (SELECT count() FROM corpscout.ip_registry_iana_blocks_current
-     WHERE rir != '' AND toUInt128(first_ip) >= toUInt128(toIPv6(%(first)s)) AND toUInt128(last_ip) <= toUInt128(toIPv6(%(last)s))
-       AND (toUInt128(first_ip), toUInt128(last_ip)) NOT IN (
-           SELECT toUInt128(b.first_ip), toUInt128(b.last_ip)
-           FROM corpscout.ip_registry_iana_blocks_current AS b
-           CROSS JOIN corpscout.ip_registry_holder_blocks_current AS h
-           WHERE toUInt128(h.first_ip) <= toUInt128(b.first_ip) AND toUInt128(h.last_ip) >= toUInt128(b.last_ip))) AS covered_rir_blocks,
-    (SELECT (any(designation), any(rir), any(status)) FROM corpscout.ip_registry_iana_blocks_current
-     WHERE toUInt128(first_ip) <= toUInt128(toIPv6(%(first)s)) AND toUInt128(last_ip) >= toUInt128(toIPv6(%(first)s))) AS iana,
+    ifNull((SELECT count() FROM corpscout.ip_registry_iana_blocks_rule_current
+     WHERE unheld_rir_block = 1 AND toUInt128(first_ip) >= toUInt128(toIPv6(%(first)s)) AND toUInt128(last_ip) <= toUInt128(toIPv6(%(last)s))), 0) AS covered_rir_blocks,
+    ifNull((SELECT (any(designation), any(rir), any(status)) FROM corpscout.ip_registry_iana_blocks_current
+     WHERE toUInt128(first_ip) <= toUInt128(toIPv6(%(first)s)) AND toUInt128(last_ip) >= toUInt128(toIPv6(%(first)s))), ('', '', '')) AS iana,
     dictGetOrDefault('corpscout.ip_registry_special_trie', ('registry', 'status', 'segment_first', 'segment_last'), tuple(toIPv6(%(first)s)), ('', '', toUInt128(0), toUInt128(0))) AS special"""
 
 # The SQL twin of registry_class() over the aliases the derived view defines: ready,

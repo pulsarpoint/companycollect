@@ -38,6 +38,8 @@ SNAPSHOT_COLUMNS = (
     "records_ipv6",
     "segments_ipv4",
     "segments_ipv6",
+    "holders_ipv4",
+    "holders_ipv6",
     "source_url",
 )
 IANA_COLUMNS = (

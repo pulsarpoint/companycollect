@@ -461,6 +461,8 @@ EXPECTED_MIGRATIONS = (
     "000446_corpscout_webtech_queue_contract",
     "000447_corpscout_commoncrawl_domain_graph_ranks",
     "000448_corpscout_crawl_queue_contract",
+    "000449_corpscout_ip_registry_reference_data",
+    "000450_corpscout_rdap_trie_registry_class_exclusion",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
