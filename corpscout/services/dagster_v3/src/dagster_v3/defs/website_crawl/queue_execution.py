@@ -17,7 +17,12 @@ from dlt.sources.helpers.requests import Session
 
 from dagster_v3.defs.common import queue_execution
 from dagster_v3.defs.common.result_buffer import ResultBuffer
-from dagster_v3.defs.website_crawl.dispatch import fetch_crawl, fetch_result, send_crawl
+from dagster_v3.defs.website_crawl.dispatch import (
+    CrawlRequestConflict,
+    fetch_crawl,
+    fetch_result,
+    send_crawl,
+)
 from dagster_v3.defs.website_crawl.input import TASK_DOMAINS, task_processor
 from dagster_v3.defs.website_crawl.results import (
     DEFAULT_CRAWLER_API_URL,
@@ -43,6 +48,23 @@ NOT_FROZEN = {
 }
 PAGE_SIZE = 500
 TERMINAL_STATES = {"completed", "failed", "cancelled"}
+
+
+def submit_crawl(http, url, item: dict) -> None:
+    """Send (or re-send) a request; the crawler keeps one job per identical payload.
+
+    Re-sending a request the crawler already holds returns that job, so a resume
+    reattaches without creating duplicate work. A conflict means the payload built
+    from the current preset differs from the one sent earlier in this execution:
+    storing the old crawl under the new preset's work key would misattribute it.
+    """
+    try:
+        send_crawl(http, url, json.loads(item["request_json"]), validate=False)
+    except CrawlRequestConflict:
+        raise ValueError(
+            f"preset for {item['domain']} changed after its crawl was requested in "
+            "this execution; revert the preset or crawl it in a new draft"
+        ) from None
 
 
 def start_crawl_execution(
@@ -267,11 +289,18 @@ def run_crawl_window(context, client, http, url, task, crawl_type, config) -> in
             job = fetch_crawl(http, url, request_id)
             if job is None:
                 # The crawler lost its queue (restart): the same identity is sent again.
-                send_crawl(http, url, json.loads(item["request_json"]), validate=False)
+                submit_crawl(http, url, item)
                 continue
-            if job["state"] not in TERMINAL_STATES or job["s3_state"] == "pending":
+            if (
+                job["state"] not in TERMINAL_STATES
+                or job["s3_state"] == "pending"
+                or not job.get("finished_at")
+            ):
                 continue
-            record = result_record(item, job, fetch_result(http, url, request_id))
+            result = fetch_result(http, url, request_id)
+            if result is None:  # terminal, but the result is not stored yet
+                continue
+            record = result_record(item, job, result)
             buffered.add(request_id)
             flush_while_polling(lambda: buffer.add([record]))
             progressed = True
@@ -307,12 +336,9 @@ def run_crawl_window(context, client, http, url, task, crawl_type, config) -> in
                 item = ready.popleft()
                 if item["request_id"] in window or item["request_id"] in buffered:
                     continue
-                # A request the crawler already knows (an earlier run of this execution)
-                # is polled, not sent again; a changed payload would conflict there.
-                if fetch_crawl(http, url, item["request_id"]) is None:
-                    send_crawl(
-                        http, url, json.loads(item["request_json"]), validate=False
-                    )
+                # Always sent: a request an earlier run of this execution already sent
+                # reattaches to its job, and a changed payload is refused there.
+                submit_crawl(http, url, item)
                 window[item["request_id"]] = item
                 dispatched += 1
                 last_progress = monotonic()

@@ -231,16 +231,15 @@ def test_timeout_keeps_inputs_and_resume_polls_the_same_requests(db, crawler):
     assert client.execute(
         "SELECT count() FROM corpscout.website_site_info_results"
     ) == [(0,)]
-    submitted = dict(saved)
+    submitted, created = dict(saved), list(behavior["created"])
     later = add(db, targets=["next.example"])["task_id"]
     assert later != task
     with pytest.raises(ValueError, match="settings are frozen"):
         run(db, task, model="other")
     behavior["pending"] = False
-    posts = len(calls)
     assert run(db, task, max_in_flight=1).success  # transport settings may change
-    # The resume found both requests at the crawler and never sent them again.
-    assert saved == submitted and len(calls) == posts
+    # The resume re-sent the same requests and reattached: no duplicate crawl work.
+    assert saved == submitted and behavior["created"] == created
     assert processing.task(task)["status"] == "completed"
     assert processing.task(later)["status"] == "draft"
     assert client.execute(f"SELECT domain FROM {TASK_DOMAINS}") == [("next.example",)]
@@ -359,6 +358,100 @@ def test_window_bounds_in_flight_requests_and_batches_result_writes(
         "SELECT count() FROM corpscout.website_site_info_results FINAL"
     ) == [(5,)]
     assert processing.task(task)["succeeded_count"] == 5
+
+
+def test_preset_changed_after_its_request_refuses_the_resume(db, crawler):
+    client, _, processing, _ = db
+    _, _, behavior = crawler
+    task = add(db, targets=["one.example"])["task_id"]
+    behavior["pending"] = True
+    with pytest.raises(TimeoutError):
+        run(db, task, wait_timeout_seconds=0.05)
+    client.execute(
+        "INSERT INTO corpscout.website_site_info_requests SELECT * EXCEPT bucket REPLACE (NOT save_artifacts AS save_artifacts, 2 AS revision) FROM corpscout.website_site_info_requests_current WHERE domain='one.example'"
+    )
+    behavior["pending"] = False
+    with pytest.raises(ValueError, match="preset for one.example changed after"):
+        run(db, task)
+    # The old crawl is never stored under the new preset; the entry stays queued.
+    assert len(behavior["created"]) == 1
+    assert client.execute(
+        "SELECT count() FROM corpscout.website_site_info_results"
+    ) == [(0,)]
+    assert client.execute(f"SELECT count() FROM {TASK_DOMAINS}") == [(1,)]
+    assert processing.task(task)["status"] == "selected"
+
+
+def test_request_lost_by_the_crawler_is_sent_again(db, crawler):
+    client, _, processing, _ = db
+    saved, calls, behavior = crawler
+    behavior["forget"] = True
+    task = add(db, targets=["one.example"])["task_id"]
+    assert run(db, task).success
+    [request_id] = saved
+    # Polling found no job (a crawler restart) and re-sent the same identity.
+    assert behavior["created"] == [request_id, request_id]
+    assert [path for path, _ in calls] == ["/v1/crawls", "/v1/crawls"]
+    assert client.execute(
+        "SELECT request_id FROM corpscout.website_site_info_results FINAL"
+    ) == [(request_id,)]
+    assert processing.task(task)["succeeded_count"] == 1
+
+
+def test_failed_job_without_a_crawl_object_is_a_failed_outcome(db, crawler):
+    client, _, processing, _ = db
+    _, _, behavior = crawler
+    behavior["state"] = "failed"
+    behavior["result"] = {"error": "browser crashed"}
+    task = add(db, targets=["one.example"])["task_id"]
+    result = run(db, task)
+    metadata = result.asset_materializations_for_node("website_site_info_results")[
+        0
+    ].metadata
+    assert metadata["completion_status"].value == "completed_with_errors"
+    assert metadata["failed_pages"].value == 1
+    assert client.execute(
+        "SELECT state, successful FROM corpscout.website_site_info_results FINAL"
+    ) == [("failed", False)]
+    record = processing.task(task)
+    assert (record["succeeded_count"], record["terminal_failed_count"]) == (0, 1)
+
+
+def test_result_not_ready_yet_is_polled_again(db, crawler):
+    _, _, processing, _ = db
+    _, _, behavior = crawler
+    behavior["result_not_ready"] = 2
+    task = add(db, targets=["one.example"])["task_id"]
+    assert run(db, task).success
+    assert behavior["result_not_ready"] == 0
+    assert processing.task(task)["succeeded_count"] == 1
+
+
+def test_failed_flush_while_polling_keeps_outcomes_for_the_next_flush(
+    db, crawler, monkeypatch
+):
+    from clickhouse_driver import Client
+
+    client, _, processing, _ = db
+    task = add(db, targets=["one.example", "two.example"])["task_id"]
+    execute = Client.execute
+    attempts = []
+
+    def flaky(self, query, *args, **kwargs):
+        if query.startswith("INSERT INTO corpscout.website_site_info_results"):
+            attempts.append(len(args[0]))
+            if len(attempts) == 1:
+                raise ConnectionError("insert not acknowledged")
+        return execute(self, query, *args, **kwargs)
+
+    monkeypatch.setattr(Client, "execute", flaky)
+    assert run(db, task).success
+    # The failed insert kept both rows; the next flush stored the same batch.
+    assert attempts == [2, 2]
+    assert client.execute(
+        "SELECT count() FROM corpscout.website_site_info_results FINAL"
+    ) == [(2,)]
+    assert processing.task(task)["succeeded_count"] == 2
 
 
 def test_task_and_explicit_domains_are_exclusive():

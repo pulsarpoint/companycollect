@@ -59,7 +59,19 @@ def crawler(monkeypatch):
         "reject": False,
         "partial": False,
         "s3_pending": False,
+        # Request ids in the order the crawler created their job; an identical
+        # re-POST returns the existing job and creates nothing.
+        "created": [],
+        # Answer the first status GET of each request 404 and drop its job,
+        # like a crawler that lost its queue in a restart.
+        "forget": False,
+        # Terminal job state and result body overrides (e.g. a failed crawl).
+        "state": None,
+        "result": None,
+        # Answer this many /result GETs 409 ("not ready") before serving it.
+        "result_not_ready": 0,
     }
+    forgotten = set()
 
     class Handler(BaseHTTPRequestHandler):
         def reply(self, code, body):
@@ -75,7 +87,15 @@ def crawler(monkeypatch):
             if behavior["reject"]:
                 return self.reply(422, {"detail": "invalid config"})
             if self.path == "/v1/crawls":
-                assert saved.setdefault(body["request_id"], body) == body
+                known = saved.get(body["request_id"])
+                if known is not None and known != body:
+                    return self.reply(
+                        409,
+                        {"detail": "request_id already belongs to a different request"},
+                    )
+                if known is None:
+                    saved[body["request_id"]] = body
+                    behavior["created"].append(body["request_id"])
             self.reply(
                 202 if self.path == "/v1/crawls" else 200,
                 {"request_id": body["request_id"], "state": "queued"},
@@ -83,12 +103,25 @@ def crawler(monkeypatch):
 
         def do_GET(self):
             request_id = self.path.split("/")[3]
+            if (
+                behavior["forget"]
+                and request_id in saved
+                and request_id not in forgotten
+                and not self.path.endswith("/result")
+            ):
+                forgotten.add(request_id)
+                del saved[request_id]
             if request_id not in saved:
                 return self.reply(404, {"detail": "Unknown crawl request"})
             payload = saved[request_id]
             now = datetime.now(UTC).isoformat()
             status = "partial" if behavior["partial"] else "finished"
             if self.path.endswith("/result"):
+                if behavior["result_not_ready"]:
+                    behavior["result_not_ready"] -= 1
+                    return self.reply(409, {"detail": "Crawl result is not ready"})
+                if behavior["result"] is not None:
+                    return self.reply(200, behavior["result"])
                 return self.reply(
                     200,
                     {
@@ -120,7 +153,9 @@ def crawler(monkeypatch):
                 {
                     "request_id": request_id,
                     "attempt": 1,
-                    "state": "running" if behavior["pending"] else "completed",
+                    "state": "running"
+                    if behavior["pending"]
+                    else behavior["state"] or "completed",
                     "started_at": now,
                     "finished_at": now,
                     "error": None,
