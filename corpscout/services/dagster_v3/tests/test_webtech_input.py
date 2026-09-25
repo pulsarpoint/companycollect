@@ -218,6 +218,7 @@ def test_table_selection_streams_multiple_batches_and_replays_without_duplicates
         "INSERT INTO corpscout.webtech_stream_source "
         "SELECT concat('https://example.com/page/', toString(number)) FROM numbers(10001)"
     )
+    client.execute("INSERT INTO corpscout.webtech_stream_source VALUES ('http:'), ('')")
     config = dict(
         submission_id=str(uuid4()),
         source_relation="corpscout.webtech_stream_source",
@@ -226,12 +227,34 @@ def test_table_selection_streams_multiple_batches_and_replays_without_duplicates
     )
     result = add(resource, processing, objects, **config)
     assert result["input_count"] == result["total"] == 10001
+    assert result["invalid_source_rows"] == 2
     assert processing.task(result["task_id"])["status"] == "draft"
-    assert add(resource, processing, objects, **config) == result
+    replay = add(resource, processing, objects, **config)
+    assert replay["task_id"] == result["task_id"]
+    assert replay["input_count"] == replay["total"] == 10001
     assert client.execute(
         "SELECT count(), uniqExact(input_id), uniqExact(page_url) "
         "FROM corpscout.webtech_scan_input"
     ) == [(10001, 10001, 10001)]
+
+
+@pytest.mark.parametrize("source_relation", [None, "corpscout.webtech_invalid_source"])
+def test_invalid_targets_cannot_complete_an_empty_import(database, store, objects, source_relation):
+    client, resource = database
+    processing, _ = store
+    if source_relation:
+        client.execute("DROP TABLE IF EXISTS corpscout.webtech_invalid_source")
+        client.execute(
+            "CREATE TABLE corpscout.webtech_invalid_source (root_domain String) "
+            "ENGINE=MergeTree ORDER BY root_domain"
+        )
+        client.execute("INSERT INTO corpscout.webtech_invalid_source VALUES ('http:')")
+        config = dict(source_relation=source_relation, select_all=True)
+    else:
+        config = dict(targets=["http:"])
+    with pytest.raises(ValueError, match="no valid website targets|registrable domain"):
+        add(resource, processing, objects, **config)
+    assert client.execute("SELECT count() FROM corpscout.webtech_scan_input") == [(0,)]
 
 
 def test_retry_replaces_only_its_own_rows_from_the_current_source(

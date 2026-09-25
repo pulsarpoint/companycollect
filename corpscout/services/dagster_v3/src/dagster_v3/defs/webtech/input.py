@@ -339,9 +339,16 @@ def load_draft(
                         config.source_name or config.source_relation or "manual"
                     )
                     seen: set[str] = set()
+                    invalid_source_rows = 0
                     batch = []
                     for value, record_id in source:
-                        identity, domain, origin, page = normalized_target(value)
+                        try:
+                            identity, domain, origin, page = normalized_target(value)
+                        except ValueError:
+                            if config.source_relation is None:
+                                raise
+                            invalid_source_rows += 1
+                            continue
                         if identity in seen:
                             continue
                         seen.add(identity)
@@ -371,6 +378,13 @@ def load_draft(
                         insert_input_batch(
                             client, batch, task_id=task_id, query_id=query_id
                         )
+                    if invalid_source_rows:
+                        dg.get_dagster_logger().warning(
+                            "Skipped %d source rows with invalid website targets",
+                            invalid_source_rows,
+                        )
+                        if not seen:
+                            raise ValueError("Selected source contains no valid website targets")
                 total = ClickHouseInputQueue(
                     clickhouse, INPUT_RELATION, selection_task_id=task_id
                 ).inspect()["total"]
@@ -385,6 +399,7 @@ def load_draft(
                     "task_id": task_id,
                     "submission_id": submission_id,
                     "input_count": len(seen),
+                    "invalid_source_rows": invalid_source_rows,
                     "total": total,
                 }
             except BaseException:
