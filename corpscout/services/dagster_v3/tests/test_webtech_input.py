@@ -204,6 +204,36 @@ def test_asset_appends_sources_and_keeps_recent_pages(database, store, objects):
         )
 
 
+def test_table_selection_streams_multiple_batches_and_replays_without_duplicates(
+    database, store, objects
+):
+    client, resource = database
+    processing, _ = store
+    client.execute("DROP TABLE IF EXISTS corpscout.webtech_stream_source")
+    client.execute(
+        "CREATE TABLE corpscout.webtech_stream_source (url String) "
+        "ENGINE=MergeTree ORDER BY url"
+    )
+    client.execute(
+        "INSERT INTO corpscout.webtech_stream_source "
+        "SELECT concat('https://example.com/page/', toString(number)) FROM numbers(10001)"
+    )
+    config = dict(
+        submission_id=str(uuid4()),
+        source_relation="corpscout.webtech_stream_source",
+        target_column="url",
+        select_all=True,
+    )
+    result = add(resource, processing, objects, **config)
+    assert result["input_count"] == result["total"] == 10001
+    assert processing.task(result["task_id"])["status"] == "draft"
+    assert add(resource, processing, objects, **config) == result
+    assert client.execute(
+        "SELECT count(), uniqExact(input_id), uniqExact(page_url) "
+        "FROM corpscout.webtech_scan_input"
+    ) == [(10001, 10001, 10001)]
+
+
 def test_retry_replaces_only_its_own_rows_from_the_current_source(
     database, store, objects, monkeypatch
 ):
