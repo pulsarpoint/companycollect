@@ -13,8 +13,6 @@ from models import WebtechCandidate, WebtechDomainResult
 from s3_store import RustfsStore, S3Location
 from scanner import scan_webtech_candidates
 from service_models import (
-    CandidateManifest,
-    FinalScanManifest,
     ScanPollResponse,
     ScanProgressEvent,
     ScanRequest,
@@ -48,17 +46,11 @@ class ScanJob:
         *,
         scan_id: str,
         request: ScanRequest,
-        manifest: CandidateManifest,
-        result_prefix: S3Location,
-        final_manifest_location: S3Location,
         progress_batch_size: int,
         recovered_results: dict[str, StoredResultReference] | None = None,
     ) -> None:
         self.scan_id = scan_id
         self.request = request
-        self.manifest = manifest
-        self.result_prefix = result_prefix
-        self.final_manifest_location = final_manifest_location
         self.progress_batch_size = progress_batch_size
         self.results = recovered_results or {}
         self.status: ScanStatus = "pending"
@@ -74,35 +66,6 @@ class ScanJob:
         self._last_progress_at: datetime | None = None
         self._last_progress_monotonic: float | None = None
 
-    @classmethod
-    def from_final_manifest(
-        cls,
-        manifest: FinalScanManifest,
-        *,
-        request: ScanRequest,
-        candidate_manifest: CandidateManifest,
-        result_prefix: S3Location,
-        final_manifest_location: S3Location,
-        progress_batch_size: int,
-    ) -> "ScanJob":
-        job = cls(
-            scan_id=manifest.scan_id,
-            request=request,
-            manifest=candidate_manifest,
-            result_prefix=result_prefix,
-            final_manifest_location=final_manifest_location,
-            progress_batch_size=progress_batch_size,
-            recovered_results={
-                (result.input_id or result.root_domain): result
-                for result in manifest.results
-            },
-        )
-        job.status = "completed"
-        job.started_at = manifest.started_at
-        job.finished_at = manifest.finished_at
-        job._last_progress_at = manifest.finished_at
-        return job
-
     async def mark_running(self) -> None:
         async with self._condition:
             self.status = "running"
@@ -116,7 +79,7 @@ class ScanJob:
 
     async def record_result(self, result: StoredResultReference) -> None:
         async with self._condition:
-            self.results[result.input_id or result.root_domain] = result
+            self.results[result.input_id] = result
             self._pending_event_results.append(result)
             self._last_progress_at = datetime.now(UTC)
             self._last_progress_monotonic = time.monotonic()
@@ -191,12 +154,8 @@ class ScanJob:
             scan_id=self.scan_id,
             status=self.status,
             crawl_id=self.request.crawl_id,
-            partition_key=self.request.partition_key,
             detector_version=self.request.detector_version,
-            candidate_manifest_uri=self.request.candidate_manifest_uri,
-            result_prefix_uri=self.result_prefix.uri,
-            final_manifest_uri=self.final_manifest_location.uri,
-            total_count=len(self.manifest.candidates),
+            total_count=len(self.request.candidates),
             completed_count=completed_count,
             outcome_counts=dict(sorted(outcomes.items())),
             technology_count=sum(
@@ -228,7 +187,7 @@ class ScanJob:
         event = ScanProgressEvent(
             sequence=self._latest_event_sequence + 1,
             completed_count=completed_count,
-            total_count=len(self.manifest.candidates),
+            total_count=len(self.request.candidates),
             window_count=len(window),
             window_outcome_counts=dict(sorted(outcomes.items())),
             window_technology_count=sum(result.technology_count for result in window),
@@ -241,11 +200,11 @@ class ScanJob:
         )
         self.events.append(event)
         LOGGER.info(
-            "Webtech scan progress scan_id=%s partition=%s completed=%s/%s "
+            "Webtech scan progress scan_id=%s crawl_id=%s completed=%s/%s "
             "batch=%s outcomes=%s technologies=%s elapsed_seconds=%.1f "
             "rate_per_minute=%.2f sequence=%s",
             self.scan_id,
-            self.request.partition_key,
+            self.request.crawl_id,
             event.completed_count,
             event.total_count,
             event.window_count,
@@ -314,32 +273,35 @@ class ScanCoordinator:
 
     async def _submit_locked(self, request: ScanRequest) -> ScanSnapshot | ScanJob:
         """Return the accepted snapshot, or the active job of the same execution to cancel first."""
-        manifest = await asyncio.to_thread(self._load_manifest, request)
+        if len(request.candidates) > self.settings.max_candidates:
+            raise ValueError(
+                f"scan request exceeds limit {self.settings.max_candidates}"
+            )
         scan_id = self._scan_id(request)
         existing = self.jobs.get(scan_id)
         if existing is not None and existing.status in {"pending", "running"}:
             snapshot = existing.snapshot()
             LOGGER.info(
-                "Webtech scan reattached scan_id=%s partition=%s "
+                "Webtech scan reattached scan_id=%s crawl_id=%s "
                 "status=%s completed=%s/%s progress_age_seconds=%.1f",
                 scan_id,
-                request.partition_key,
+                request.crawl_id,
                 snapshot.status,
                 snapshot.completed_count,
                 snapshot.total_count,
                 snapshot.progress_age_seconds,
             )
-            return existing.snapshot()
+            return snapshot
         if existing is not None and existing.status == "completed":
+            snapshot = existing.snapshot()
             LOGGER.info(
-                "Webtech scan reused scan_id=%s partition=%s source=memory "
-                "completed=%s/%s",
+                "Webtech scan reused scan_id=%s crawl_id=%s completed=%s/%s",
                 scan_id,
-                request.partition_key,
-                existing.snapshot().completed_count,
-                existing.snapshot().total_count,
+                request.crawl_id,
+                snapshot.completed_count,
+                snapshot.total_count,
             )
-            return existing.snapshot()
+            return snapshot
         if self.active_scan_id is not None:
             active = self.jobs.get(self.active_scan_id)
             if active is not None and active.status in {"pending", "running"}:
@@ -347,73 +309,21 @@ class ScanCoordinator:
                     return active
                 raise ScanBusyError(f"scan {self.active_scan_id} is already running")
 
-        result_prefix, final_location = self._scan_locations(
-            request=request,
-            scan_id=scan_id,
-        )
-        final_manifest = await asyncio.to_thread(
-            self._load_final_manifest,
-            final_location,
-        )
-        if final_manifest is not None:
-            if (
-                final_manifest.scan_id != scan_id
-                or final_manifest.crawl_id != request.crawl_id
-                or final_manifest.partition_key != request.partition_key
-                or final_manifest.detector_version != request.detector_version
-                or final_manifest.candidate_manifest_uri
-                != request.candidate_manifest_uri
-                or final_manifest.candidate_manifest_sha256
-                != request.candidate_manifest_sha256
-            ):
-                raise ValueError("final manifest identity does not match the request")
-            job = ScanJob.from_final_manifest(
-                final_manifest,
-                request=request,
-                candidate_manifest=manifest,
-                result_prefix=result_prefix,
-                final_manifest_location=final_location,
-                progress_batch_size=self.settings.progress_batch_size,
-            )
-            self.jobs[scan_id] = job
-            LOGGER.info(
-                "Webtech scan reused scan_id=%s partition=%s "
-                "source=final_manifest completed=%s/%s uri=%s",
-                scan_id,
-                request.partition_key,
-                len(job.results),
-                len(manifest.candidates),
-                final_location.uri,
-            )
-            return job.snapshot()
-
-        recovered = await asyncio.to_thread(
-            self._load_recovered_results,
-            result_prefix,
-            scan_id,
-            manifest,
-            request,
-        )
+        recovered = await asyncio.to_thread(self._load_recovered_results, request)
         job = ScanJob(
             scan_id=scan_id,
             request=request,
-            manifest=manifest,
-            result_prefix=result_prefix,
-            final_manifest_location=final_location,
             progress_batch_size=self.settings.progress_batch_size,
             recovered_results=recovered,
         )
         self.jobs[scan_id] = job
         self.active_scan_id = scan_id
         LOGGER.info(
-            "Webtech scan accepted scan_id=%s crawl_id=%s partition=%s "
-            "total=%s recovered=%s manifest_uri=%s",
+            "Webtech scan accepted scan_id=%s crawl_id=%s total=%s recovered=%s",
             scan_id,
             request.crawl_id,
-            request.partition_key,
-            len(manifest.candidates),
+            len(request.candidates),
             len(recovered),
-            request.candidate_manifest_uri,
         )
         job.task = asyncio.create_task(
             self._run(job),
@@ -467,16 +377,16 @@ class ScanCoordinator:
                 input_id=candidate.input_id,
                 page_url=candidate.page_url,
             )
-            for candidate in job.manifest.candidates
-            if (candidate.input_id or candidate.root_domain) not in job.results
+            for candidate in job.request.candidates
+            if candidate.input_id not in job.results
         )
         LOGGER.info(
-            "Webtech scan started scan_id=%s partition=%s total=%s recovered=%s "
+            "Webtech scan started scan_id=%s crawl_id=%s total=%s recovered=%s "
             "remaining=%s browsers=%s pages_per_browser=%s "
             "domain_timeout_seconds=%s domains_per_context=%s",
             job.scan_id,
-            job.request.partition_key,
-            len(job.manifest.candidates),
+            job.request.crawl_id,
+            len(job.request.candidates),
             len(job.results),
             len(remaining_candidates),
             self.settings.browser_count,
@@ -491,15 +401,9 @@ class ScanCoordinator:
 
         async def persist_result(result: WebtechDomainResult) -> None:
             document = _domain_result_document(job, result)
-            if result.candidate.input_id:
-                location = self._execution_page_location(
-                    job.request, result.candidate.input_id
-                )
-            else:
-                location = S3Location(
-                    bucket=job.result_prefix.bucket,
-                    key=f"{job.result_prefix.key}/root_domain={result.candidate.root_domain}/report.json",
-                )
+            location = self._execution_page_location(
+                job.request, result.candidate.input_id
+            )
             stored = await asyncio.to_thread(
                 self.store.write_json,
                 location,
@@ -528,68 +432,56 @@ class ScanCoordinator:
                     settings=self.settings.scanner_settings(),
                     progress_callback=persist_result,
                 )
-            if len(job.results) != len(job.manifest.candidates):
+            if len(job.results) != len(job.request.candidates):
                 raise RuntimeError(
                     "scanner finished without storing every candidate: "
-                    f"stored={len(job.results)} total={len(job.manifest.candidates)}"
+                    f"stored={len(job.results)} total={len(job.request.candidates)}"
                 )
             await job.flush_progress_event()
-            finished_at = datetime.now(UTC)
-            final_manifest = _final_manifest(
-                job,
-                settings=self.settings,
-                finished_at=finished_at,
-            )
-            await asyncio.to_thread(
-                self.store.write_json,
-                job.final_manifest_location,
-                final_manifest,
-            )
-            await job.mark_completed(finished_at)
+            await job.mark_completed(datetime.now(UTC))
             snapshot = job.snapshot()
             LOGGER.info(
-                "Webtech scan completed scan_id=%s partition=%s completed=%s/%s "
+                "Webtech scan completed scan_id=%s crawl_id=%s completed=%s/%s "
                 "outcomes=%s technologies=%s elapsed_seconds=%.1f "
-                "rate_per_minute=%.2f final_manifest_uri=%s",
+                "rate_per_minute=%.2f",
                 job.scan_id,
-                job.request.partition_key,
+                job.request.crawl_id,
                 snapshot.completed_count,
                 snapshot.total_count,
                 snapshot.outcome_counts,
                 snapshot.technology_count,
                 snapshot.elapsed_seconds,
                 snapshot.domains_per_minute,
-                snapshot.final_manifest_uri,
             )
         except asyncio.CancelledError:
             if job.stall_reason is not None:
                 await job.mark_failed(job.stall_reason)
                 LOGGER.error(
-                    "Webtech scan failed scan_id=%s partition=%s completed=%s/%s "
+                    "Webtech scan failed scan_id=%s crawl_id=%s completed=%s/%s "
                     "error=%s",
                     job.scan_id,
-                    job.request.partition_key,
+                    job.request.crawl_id,
                     len(job.results),
-                    len(job.manifest.candidates),
+                    len(job.request.candidates),
                     job.stall_reason,
                 )
                 return
             await job.mark_cancelled()
             LOGGER.warning(
-                "Webtech scan cancelled scan_id=%s partition=%s completed=%s/%s",
+                "Webtech scan cancelled scan_id=%s crawl_id=%s completed=%s/%s",
                 job.scan_id,
-                job.request.partition_key,
+                job.request.crawl_id,
                 len(job.results),
-                len(job.manifest.candidates),
+                len(job.request.candidates),
             )
             raise
         except Exception as error:
             LOGGER.exception(
-                "Webtech scan failed scan_id=%s partition=%s completed=%s/%s",
+                "Webtech scan failed scan_id=%s crawl_id=%s completed=%s/%s",
                 job.scan_id,
-                job.request.partition_key,
+                job.request.crawl_id,
                 len(job.results),
-                len(job.manifest.candidates),
+                len(job.request.candidates),
             )
             await job.mark_failed(str(error) or type(error).__name__)
         finally:
@@ -610,11 +502,11 @@ class ScanCoordinator:
                 return
             if snapshot.progress_age_seconds >= SCAN_STALLED_AFTER_SECONDS:
                 LOGGER.warning(
-                    "Webtech scan stalled scan_id=%s partition=%s "
+                    "Webtech scan stalled scan_id=%s crawl_id=%s "
                     "completed=%s/%s progress_age_seconds=%.1f "
                     "elapsed_seconds=%.1f rate_per_minute=%.2f",
                     snapshot.scan_id,
-                    snapshot.partition_key,
+                    snapshot.crawl_id,
                     snapshot.completed_count,
                     snapshot.total_count,
                     snapshot.progress_age_seconds,
@@ -623,11 +515,11 @@ class ScanCoordinator:
                 )
                 continue
             LOGGER.info(
-                "Webtech scan heartbeat scan_id=%s partition=%s "
+                "Webtech scan heartbeat scan_id=%s crawl_id=%s "
                 "completed=%s/%s progress_age_seconds=%.1f "
                 "elapsed_seconds=%.1f rate_per_minute=%.2f",
                 snapshot.scan_id,
-                snapshot.partition_key,
+                snapshot.crawl_id,
                 snapshot.completed_count,
                 snapshot.total_count,
                 snapshot.progress_age_seconds,
@@ -648,10 +540,10 @@ class ScanCoordinator:
             f"with {remaining} domains remaining"
         )
         LOGGER.error(
-            "Webtech scan stalled beyond limit; failing scan_id=%s partition=%s "
+            "Webtech scan stalled beyond limit; failing scan_id=%s crawl_id=%s "
             "completed=%s/%s progress_age_seconds=%.1f limit_seconds=%.0f",
             snapshot.scan_id,
-            snapshot.partition_key,
+            snapshot.crawl_id,
             snapshot.completed_count,
             snapshot.total_count,
             snapshot.progress_age_seconds,
@@ -660,67 +552,12 @@ class ScanCoordinator:
         if job.task is not None and not job.task.done():
             job.task.cancel()
 
-    def _load_manifest(self, request: ScanRequest) -> CandidateManifest:
-        location = self.store.parse_allowed_uri(request.candidate_manifest_uri)
-        body = self.store.read_bytes(location)
-        digest = hashlib.sha256(body).hexdigest()
-        if digest != request.candidate_manifest_sha256:
-            raise ValueError("candidate manifest SHA-256 does not match the request")
-        manifest = CandidateManifest.model_validate_json(body)
-        if (
-            manifest.crawl_id != request.crawl_id
-            or manifest.partition_key != request.partition_key
-            or manifest.detector_version != request.detector_version
-        ):
-            raise ValueError("candidate manifest identity does not match the request")
-        if len(manifest.candidates) > self.settings.max_candidates:
-            raise ValueError(
-                f"candidate manifest exceeds limit {self.settings.max_candidates}"
-            )
-        return manifest
-
-    def _load_final_manifest(
-        self,
-        location: S3Location,
-    ) -> FinalScanManifest | None:
-        if not self.store.exists(location):
-            return None
-        return FinalScanManifest.model_validate_json(self.store.read_bytes(location))
-
     def _load_recovered_results(
-        self,
-        result_prefix: S3Location,
-        scan_id: str,
-        manifest: CandidateManifest,
-        request: ScanRequest,
+        self, request: ScanRequest
     ) -> dict[str, StoredResultReference]:
-        candidates = {
-            (candidate.input_id or candidate.root_domain): candidate
-            for candidate in manifest.candidates
-        }
+        """Recover pages this execution already stored, whichever envelope scanned them."""
         recovered: dict[str, StoredResultReference] = {}
-        # Common Crawl scans keep their per-scan result objects.
-        listing_prefix = S3Location(
-            bucket=result_prefix.bucket, key=f"{result_prefix.key}/"
-        )
-        for key in self.store.list_keys(listing_prefix):
-            if not key.endswith("/report.json"):
-                continue
-            body = self.store.read_bytes(
-                S3Location(bucket=result_prefix.bucket, key=key)
-            )
-            document = StoredDomainResultDocument.model_validate_json(body)
-            identity = document.candidate.input_id or document.candidate.root_domain
-            if (
-                document.scan_id != scan_id
-                or candidates.get(identity) != document.candidate
-            ):
-                raise ValueError(f"stored result identity mismatch: {key}")
-            recovered[identity] = _stored_reference(document, key, body)
-        # Queue pages belong to the execution, whichever envelope scanned them.
-        for identity, candidate in candidates.items():
-            if not candidate.input_id or identity in recovered:
-                continue
+        for candidate in request.candidates:
             location = self._execution_page_location(request, candidate.input_id)
             if not self.store.exists(location):
                 continue
@@ -732,42 +569,20 @@ class ScanCoordinator:
                 or document.candidate != candidate
             ):
                 raise ValueError(f"stored page identity mismatch: {location.key}")
-            recovered[identity] = _stored_reference(document, location.key, body)
+            recovered[candidate.input_id] = _stored_reference(
+                document, location.key, body
+            )
         return recovered
 
     def _scan_id(self, request: ScanRequest) -> str:
         identity = {
-            "candidate_manifest_sha256": request.candidate_manifest_sha256,
             "crawl_id": request.crawl_id,
             "detector_version": request.detector_version,
-            "partition_key": request.partition_key,
+            "input_ids": sorted(candidate.input_id for candidate in request.candidates),
             "scanner_settings": self.settings.public_scanner_settings(),
         }
         body = json.dumps(identity, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(body.encode("utf-8")).hexdigest()[:32]
-
-    def _scan_locations(
-        self,
-        *,
-        request: ScanRequest,
-        scan_id: str,
-    ) -> tuple[S3Location, S3Location]:
-        scan_prefix = self.store.child(
-            "scans",
-            f"detector_version={request.detector_version}",
-            f"crawl_id={request.crawl_id}",
-            f"partition_key={request.partition_key}",
-            f"scan_id={scan_id}",
-        )
-        result_prefix = S3Location(
-            bucket=scan_prefix.bucket,
-            key=f"{scan_prefix.key}/results",
-        )
-        final_location = S3Location(
-            bucket=scan_prefix.bucket,
-            key=f"{scan_prefix.key}/final-manifest.json",
-        )
-        return result_prefix, final_location
 
     def _execution_page_location(
         self, request: ScanRequest, input_id: str
@@ -791,7 +606,8 @@ def _domain_result_document(
         schema_version=1,
         scan_id=job.scan_id,
         crawl_id=job.request.crawl_id,
-        partition_key=job.request.partition_key,
+        # Envelopes are not stored, so pages carry no envelope label.
+        partition_key="",
         detector_version=job.request.detector_version,
         candidate={
             "root_domain": result.candidate.root_domain,
@@ -829,38 +645,4 @@ def _stored_reference(
         object_key=key,
         sha256=hashlib.sha256(body).hexdigest(),
         size_bytes=len(body),
-    )
-
-
-def _final_manifest(
-    job: ScanJob,
-    *,
-    settings: WebtechServiceSettings,
-    finished_at: datetime,
-) -> FinalScanManifest:
-    if job.started_at is None:
-        raise RuntimeError("cannot finalize a scan that never started")
-    ordered_results = sorted(
-        job.results.values(),
-        key=lambda result: (result.harmonic_rank, result.root_domain),
-    )
-    outcomes = Counter(result.outcome for result in ordered_results)
-    return FinalScanManifest(
-        schema_version=1,
-        scan_id=job.scan_id,
-        crawl_id=job.request.crawl_id,
-        partition_key=job.request.partition_key,
-        detector_version=job.request.detector_version,
-        candidate_manifest_uri=job.request.candidate_manifest_uri,
-        candidate_manifest_sha256=job.request.candidate_manifest_sha256,
-        started_at=job.started_at,
-        finished_at=finished_at,
-        elapsed_seconds=max(
-            0.0,
-            (finished_at - job.started_at).total_seconds(),
-        ),
-        outcome_counts=dict(sorted(outcomes.items())),
-        technology_count=sum(result.technology_count for result in ordered_results),
-        scanner_settings=settings.public_scanner_settings(),
-        results=ordered_results,
     )

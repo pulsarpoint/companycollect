@@ -108,18 +108,6 @@ class RustfsStore:
                 return False
             raise
 
-    def list_keys(self, prefix: S3Location) -> tuple[str, ...]:
-        self._validate_location(prefix)
-        paginator = self._client.get_paginator("list_objects_v2")
-        return tuple(
-            item["Key"]
-            for page in paginator.paginate(
-                Bucket=prefix.bucket,
-                Prefix=prefix.key,
-            )
-            for item in page.get("Contents", [])
-        )
-
     def child(self, *parts: str) -> S3Location:
         key = "/".join(
             part.strip("/")
@@ -128,18 +116,12 @@ class RustfsStore:
         )
         return S3Location(bucket=self.base_location.bucket, key=key)
 
-    def parse_allowed_uri(self, uri: str) -> S3Location:
-        location = parse_s3_uri(uri)
-        self._validate_location(location)
-        return location
-
     def _validate_location(self, location: S3Location) -> None:
         if location.bucket != self.base_location.bucket:
             raise ValueError("S3 object must use the configured Webtech bucket")
         base_prefix = self.base_location.key.rstrip("/")
         if base_prefix and not (
-            location.key == base_prefix
-            or location.key.startswith(f"{base_prefix}/")
+            location.key == base_prefix or location.key.startswith(f"{base_prefix}/")
         ):
             raise ValueError("S3 object is outside WEBTECH_S3_PATH")
 

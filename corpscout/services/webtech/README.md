@@ -50,15 +50,31 @@ The API contract is intentionally small:
 - `POST /v1/scans/{scan_id}/cancel`
 
 All `/v1` routes require `Authorization: Bearer $WEBTECH_API_TOKEN`. Dagster
-writes the candidate manifest to RustFS and submits its URI plus SHA-256.
-The service derives an idempotent scan ID from that content and its scanner settings.
-Queue pages (candidates with an `input_id`) are stored once per execution at
+sends each envelope inline in the `POST /v1/scans` body:
+
+```json
+{
+  "schema_version": 2,
+  "crawl_id": "webtech-<execution uuid>",
+  "detector_version": "mywappalyzer-1.4.1",
+  "candidates": [
+    {"root_domain": "example.com", "harmonic_rank": 0, "task_id": "<task uuid>",
+     "input_id": "<64 lowercase hex>", "page_url": "https://example.com/"}
+  ]
+}
+```
+
+A request holds pages of one task (canonical task UUID), each with a 64-hex
+`input_id` and an HTTP(S) `page_url` without credentials on `root_domain` or one
+of its subdomains; input IDs are unique and the count is capped by
+`WEBTECH_MAX_CANDIDATES`. The service derives an idempotent scan ID from the
+crawl ID, detector version, sorted input IDs, and its scanner settings.
+The only objects it writes are per-page reports, stored once per execution at
 `scans/detector_version=…/crawl_id=…/pages/input_id=…/report.json`, so a later
-envelope of the same execution reuses every page already done. Common Crawl
-candidates keep per-scan result objects. Each progress event (one per 20 stored
+envelope of the same execution reuses every page already done. There are no
+candidate or completion manifests. Each progress event (one per 20 stored
 results) carries the stored result references of its window; the first event of a
-scan that reused stored pages carries those references. `final-manifest.json` is
-still written last and lists every result of the scan.
+scan that reused stored pages carries those references.
 
 The service writes lifecycle logs for scan acceptance, start, every 20-result
 progress window, periodic heartbeat, stalled progress, completion, failure, and
@@ -89,7 +105,7 @@ Dagster's asset step submits the scan and polls it with zero-wait
 status requests every two seconds; after 15 minutes without progress it cancels
 the remote scan and fails the step so a run retry resubmits. If the process
 restarts or a scan failed, the resubmission reconstructs already completed
-domains from RustFS and scans only the missing ones. There is no service
+pages from their RustFS reports and scans only the missing ones. There is no service
 database, message queue, or intermediate batch checkpoint.
 
 The checked-in user systemd unit is `deploy/webtech.service`. It runs 20 fresh,
@@ -243,9 +259,7 @@ terminable worker boundary.
 
 ### Queue execution identities
 
-Schema 3 queue manifests keep `candidate.task_id` as the input queue identity.
-For draft queues, `crawl_id = webtech-<execution_id>` and the manifest's
-`dagster_run_id` carries that stable execution ID so retries reuse the same scan
-namespace. The actual retry's Dagster run ID is recorded by the orchestration
-layer. Legacy task manifests may use `webtech-<task_id>` instead. All candidates
-must belong to one task; input hashes and page/domain validation still apply.
+`candidate.task_id` is the input queue identity and `crawl_id =
+webtech-<execution_id>` is the stable execution namespace, so retries and later
+envelopes of the same execution share stored pages. The actual retry's Dagster
+run ID is recorded by the orchestration layer.
