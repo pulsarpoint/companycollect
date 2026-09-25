@@ -110,7 +110,7 @@ it("keeps task history independent of queue inputs and shows the latest retry st
     {runId: "failed", status: "FAILURE", startTime: 900, tags: {"processing/task_id": task}},
     {runId: "unrelated", status: "SUCCESS", tags: {}},
   ] as never);
-  expect(await loadQueueHistory(filters())).toEqual([{taskId: task, status: "SUCCESS", runUrl: "http://dagster/runs/completed", startedAt: "1970-01-01T00:16:40.000Z", outcome: null, failedPages: null}]);
+  expect(await loadQueueHistory(filters())).toEqual([{taskId: task, status: "SUCCESS", runUrl: "http://dagster/runs/completed", startedAt: "1970-01-01T00:16:40.000Z", outcome: null, failedPages: null, skippedPages: null, crawlType: null}]);
   expect(chQuery).not.toHaveBeenCalled();
 });
 
@@ -127,4 +127,22 @@ it("counts crawler queue entries per crawl type, zero for empty queues", async (
   vi.mocked(chQuery).mockResolvedValue([{crawl_type: "site_info", total: "4"}, {crawl_type: "jobs", total: "1200"}]);
   expect(await loadCrawlQueueCounts()).toEqual({full: 0, jobs: 1200, site_info: 4});
   expect(vi.mocked(chQuery).mock.calls.at(-1)?.[0]).toContain("FROM corpscout.website_crawl_task_domains GROUP BY crawl_type");
+});
+
+
+it("shows all crawler types on the default full-crawl queue, ordered by latest run", async () => {
+  const {loadQueueHistory} = await import("~/lib/queues.server");
+  vi.mocked(listRuns).mockImplementation(async ({job}) => job === "website_site_info_results_job" ? [
+    {runId: "new", status: "SUCCESS", startTime: 3000, tags: {"processing/task_id": task, "crawler/outcome": "completed_with_errors", "crawler/failed_pages": "1", "crawler/skipped_pages": "2"}},
+    {runId: "old", status: "FAILURE", startTime: 1000, tags: {"processing/task_id": task}},
+  ] as never : job === "website_jobs_crawl_results_job" ? [
+    {runId: "jobs", status: "FAILURE", startTime: 2000, tags: {"processing/task_id": request}},
+  ] as never : []);
+  const history = await loadQueueHistory(filters("crawler"));
+  expect(listRuns).toHaveBeenCalledTimes(3);
+  expect(history).toEqual([
+    expect.objectContaining({crawlType: "site_info", taskId: task, outcome: "completed_with_errors", failedPages: 1, skippedPages: 2, runUrl: "http://dagster/runs/new"}),
+    expect.objectContaining({crawlType: "jobs", taskId: request, status: "FAILURE"}),
+  ]);
+  expect(chQuery).not.toHaveBeenCalled();
 });

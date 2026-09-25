@@ -3,7 +3,7 @@ import { chQuery } from "~/lib/clickhouse.server";
 import { dagsterRunUrl, launchRun, listRuns } from "~/lib/dagster.server";
 import { objectSettings, parseCrawlSettings } from "~/lib/crawl-settings.server";
 import { assertWebtechAvailable } from "~/lib/webtech-maintenance.server";
-import { ACTIVE_QUEUE_RUNS, QUEUE_NUMBER_LIMITS, QUEUE_PAGE_SIZE, QUEUE_UUID, type CrawlQueueType, type QueueFilters } from "~/lib/queues";
+import { CRAWL_QUEUES, ACTIVE_QUEUE_RUNS, QUEUE_NUMBER_LIMITS, QUEUE_PAGE_SIZE, QUEUE_UUID, type CrawlQueueType, type QueueFilters } from "~/lib/queues";
 
 export class QueueRequestError extends Error {}
 
@@ -91,18 +91,24 @@ export async function loadQueueRuns(task: string) {
 
 /** Run history survives removal of completed ClickHouse input rows. */
 export async function loadQueueHistory(filters: QueueFilters) {
-  const runs = await listRuns({job: queueDefinition(filters).job, limit: 50});
-  const latest = new Map<string, {taskId: string; status: string; runUrl: string | null; startedAt: string | null; outcome: string | null; failedPages: number | null}>();
-  for (const run of runs) {
+  const selections = filters.type === "crawler" ? CRAWL_QUEUES.map(queue => ({...filters, crawlType: queue.id})) : [filters];
+  const groups = await Promise.all(selections.map(async selection => ({
+    crawlType: filters.type === "crawler" ? selection.crawlType : null,
+    runs: await listRuns({job: queueDefinition(selection).job, limit: 50}),
+  })));
+  const latest = new Map<string, {taskId: string; status: string; runUrl: string | null; startedAt: string | null; outcome: string | null; failedPages: number | null; skippedPages: number | null; crawlType: CrawlQueueType | null}>();
+  for (const {runs, crawlType} of groups) for (const run of runs) {
     const taskId = run.tags["processing/task_id"];
-    if (!taskId || !QUEUE_UUID.test(taskId) || latest.has(taskId)) continue;
+    if (!taskId || !QUEUE_UUID.test(taskId) || latest.has(`${crawlType}:${taskId}`)) continue;
     const prefix = filters.type === "crawler" ? "crawler" : "webtech";
     const outcome = run.status === "SUCCESS" && ["completed", "completed_with_errors"].includes(run.tags[`${prefix}/outcome`]) ? run.tags[`${prefix}/outcome`] : null;
-    latest.set(taskId, {taskId, status: run.status, runUrl: dagsterRunUrl(run.runId), outcome,
+    latest.set(`${crawlType}:${taskId}`, {taskId, crawlType, status: run.status, runUrl: dagsterRunUrl(run.runId), outcome,
       failedPages: outcome && /^\d+$/.test(run.tags[`${prefix}/failed_pages`] ?? "") ? Number(run.tags[`${prefix}/failed_pages`]) : null,
+      skippedPages: outcome && /^\d+$/.test(run.tags[`${prefix}/skipped_pages`] ?? "") ? Number(run.tags[`${prefix}/skipped_pages`]) : null,
       startedAt: run.startTime == null ? null : new Date(run.startTime * 1000).toISOString()});
   }
-  return [...latest.values()];
+  return [...latest.values()].sort((a, b) =>
+    (b.startedAt ? Date.parse(b.startedAt) : Infinity) - (a.startedAt ? Date.parse(a.startedAt) : Infinity)).slice(0, 50);
 }
 
 const EXTRA_FIELDS = {

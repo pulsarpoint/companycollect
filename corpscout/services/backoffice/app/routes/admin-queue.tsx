@@ -137,14 +137,14 @@ export default function AdminQueue({loaderData}: Route.ComponentProps) {
     </section>
     <section className="flex flex-col gap-3" aria-label="Task history">
       <h2 className="text-lg font-semibold">Recent task history</h2>
-      <p className="text-sm text-muted-foreground">Latest processing run for each task. Completed inputs are removed from Webtech and Crawler queues; results and history remain available.</p>
+      <p className="text-sm text-muted-foreground">Latest processing run for each task{filters.type === "crawler" ? " across all crawl types" : ""}. Completed inputs are removed from Webtech and Crawler queues; results and history remain available.</p>
       {historyError && <Alert variant="destructive"><AlertDescription>{historyError}</AlertDescription></Alert>}
-      <Table><TableHeader><TableRow><TableHead>Started (UTC)</TableHead><TableHead>Task</TableHead><TableHead>Latest run status</TableHead><TableHead>Details</TableHead></TableRow></TableHeader>
-        <TableBody>{history.map(task => <TableRow key={task.taskId}>
+      <Table><TableHeader><TableRow><TableHead>Started (UTC)</TableHead><TableHead>Task</TableHead>{filters.type === "crawler" && <TableHead>Crawl type</TableHead>}<TableHead>Processing status</TableHead><TableHead>Details</TableHead></TableRow></TableHeader>
+        <TableBody>{history.map(task => <TableRow key={`${task.crawlType}:${task.taskId}`}>
           <TableCell>{task.startedAt ? task.startedAt.replace("T", " ").replace(/\.\d+Z$/, "") : "Not started"}</TableCell>
-          <TableCell className="font-mono text-xs">{task.taskId}</TableCell><TableCell><Badge variant="outline">{task.outcome === "completed_with_errors" ? "Completed with errors" : task.status}</Badge>{task.failedPages != null && task.failedPages > 0 && <p className="text-xs text-muted-foreground">{task.failedPages} {filters.type === "crawler" ? "crawl errors" : "page errors"} · results saved</p>}</TableCell>
+          <TableCell className="font-mono text-xs">{task.taskId}</TableCell>{filters.type === "crawler" && <TableCell>{CRAWL_QUEUES.find(queue => queue.id === task.crawlType)?.label}</TableCell>}<TableCell><Badge variant="outline">{task.outcome === "completed_with_errors" ? "Completed with errors" : task.outcome === "completed" ? "Completed" : task.status}</Badge>{task.failedPages != null && task.failedPages > 0 && <p className="text-xs text-muted-foreground">{task.failedPages} {filters.type === "crawler" ? "crawl errors" : "page errors"} · results saved</p>}{task.skippedPages != null && task.skippedPages > 0 && <p className="text-xs text-muted-foreground">{task.skippedPages} {task.skippedPages === 1 ? "input skipped" : "inputs skipped"}</p>}</TableCell>
           <TableCell>{task.runUrl && <a className="underline" href={task.runUrl} target="_blank" rel="noreferrer">View in Dagster</a>}</TableCell>
-        </TableRow>)}{!history.length && !historyError && <TableRow><TableCell colSpan={4}>No processing runs yet.</TableCell></TableRow>}</TableBody>
+        </TableRow>)}{!history.length && !historyError && <TableRow><TableCell colSpan={filters.type === "crawler" ? 5 : 4}>No processing runs yet.</TableCell></TableRow>}</TableBody>
       </Table>
     </section>
     {filters.task && searchParams.get("configure") === "1" && <QueueProcessSheet key={identity} filters={filters} total={inputs.selectedTotal} asset={inputs.asset} blockedReason={processingBlocked} onClose={() => configureProcessing(false)} />}
