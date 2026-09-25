@@ -1,4 +1,4 @@
-"""Draft task and import receipts; bulk inputs stay in processor-owned storage."""
+"""Draft task and import receipts; bulk inputs live in the processor's ClickHouse table."""
 
 from uuid import uuid4
 
@@ -103,14 +103,6 @@ def prepare_submission(
                 (submission_id,),
             )
         return receipt
-
-
-def save_manifest(store: ProcessingStore, submission_id: str, uri: str) -> None:
-    with store.transaction() as cursor:
-        cursor.execute(
-            "UPDATE processing.input_submissions SET manifest_uri=%s WHERE submission_id=%s AND status='preparing' AND manifest_uri IS NULL",
-            (uri, submission_id),
-        )
 
 
 def finish_submission(

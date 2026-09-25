@@ -24,7 +24,6 @@ from dagster_v3.defs.website_crawl.queue_input import (
 from dagster_v3.defs.website_crawl.se_domains import SeDomainFilters
 from tests.clickhouse_local import CLICKHOUSE_IMAGE, clickhouse_local_command
 from tests.test_processing_store import processing_postgres_url, store  # noqa: F401
-from tests.test_webtech_input import objects  # noqa: F401
 
 CRAWL_TYPES = ("full", "jobs", "site_info")
 TARGETS = dict(zip(CRAWL_TYPES, INPUT_TABLES, strict=True))
@@ -118,7 +117,7 @@ def server() -> Iterator[tuple[Client, ClickhouseResource]]:
 
 
 @pytest.fixture
-def database(server, store, objects):  # noqa: F811
+def database(server, store):  # noqa: F811
     client, resource = server
     processing, _ = store
     for table in (*INPUT_TABLES, TASK_DOMAINS):
@@ -127,12 +126,12 @@ def database(server, store, objects):  # noqa: F811
     client.execute("""CREATE TABLE corpscout.crawl_test_source (
         company_id String, website Nullable(String), country String, active UInt8, version UInt64
     ) ENGINE = ReplacingMergeTree(version) ORDER BY company_id""")
-    return client, resource, processing, objects
+    return client, resource, processing
 
 
 def add(database, crawl_type="full", **selection):
     """Import a source selection into the open draft of ``crawl_type``."""
-    _, resource, processing, object_store = database
+    _, resource, processing = database
     config = CrawlQueueInputConfig(
         crawl_type=crawl_type,
         **{
@@ -142,7 +141,7 @@ def add(database, crawl_type="full", **selection):
             **selection,
         },
     )
-    return load_crawl_draft(config, str(uuid4()), processing, resource, object_store)
+    return load_crawl_draft(config, str(uuid4()), processing, resource)
 
 
 @pytest.mark.parametrize("crawl_type", CRAWL_TYPES)

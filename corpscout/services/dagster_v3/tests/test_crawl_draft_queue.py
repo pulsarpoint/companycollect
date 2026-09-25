@@ -6,6 +6,7 @@ from uuid import uuid4
 import dagster as dg
 import pytest
 
+from dagster_v3.defs.common import draft_queue
 from dagster_v3.defs.common.processing import ProcessingResource
 from dagster_v3.defs.website_crawl.input import (
     INPUT_TABLES,
@@ -57,13 +58,12 @@ def db(server, store, objects):  # noqa: F811
 
 
 def add(db, submission_id=None, **kwargs):  # noqa: F811
-    _, resource, processing, _, object_store = db
+    _, resource, processing, _, _ = db
     return load_crawl_draft(
         CrawlQueueInputConfig(crawl_type="site_info", **kwargs),
         submission_id or str(uuid4()),
         processing,
         resource,
-        object_store,
     )
 
 
@@ -195,7 +195,7 @@ def test_freshness_is_at_execution_and_force_can_override(db, crawler):  # noqa:
     assert len(saved) == 2
 
 
-def test_lost_import_ack_replays_snapshot_and_blocks_start_until_repaired(
+def test_lost_import_ack_blocks_start_until_retried_from_the_current_source(
     db, crawler, monkeypatch
 ):
     from clickhouse_driver import Client
@@ -222,11 +222,17 @@ def test_lost_import_ack_replays_snapshot_and_blocks_start_until_repaired(
     config = {"source_relation": "corpscout.crawl_retry_source", "select_all": True}
     with pytest.raises(ConnectionError, match="acknowledgement"):
         add(db, submission, **config)
-    [(task,)] = client.execute(f"SELECT task_id FROM {TASK_DOMAINS}")
+    [(task,)] = client.execute(f"SELECT DISTINCT task_id FROM {TASK_DOMAINS}")
     with pytest.raises(ValueError, match="outstanding imports"):
         run(db, task)
     client.execute("INSERT INTO corpscout.crawl_retry_source VALUES ('later.example')")
-    assert add(db, submission, **config)["total"] == 1
+    # No manifest freezes the first attempt: the retry reselects the current source.
+    result = add(db, submission, **config)
+    assert (result["total"], result["input_count"]) == (2, 2)
+    assert client.execute(
+        f"SELECT domain, submission_id FROM {TASK_DOMAINS} ORDER BY domain"
+    ) == [("later.example", submission), ("one.example", submission)]
+    assert draft_queue.submission(processing, submission)["manifest_uri"] is None
     assert processing.task(task)["status"] == "draft"
     assert run(db, task).success
 
@@ -295,3 +301,31 @@ def test_entry_table_follows_the_queue_contract(db):
             f"INSERT INTO {TASK_DOMAINS} (task_id,crawl_type,domain,website_url,source_name) VALUES",
             [("task", "full", "a.example", "https://a.example/", "manual")],
         )
+
+
+def test_retry_replaces_only_its_own_rows(db, monkeypatch):
+    from clickhouse_driver import Client
+
+    client, _, _, _, _ = db
+    other = add(db, targets=["kept.example"])
+    submission = str(uuid4())
+    execute = Client.execute
+    interrupted = False
+
+    def lost_ack(self, query, *args, **kwargs):
+        nonlocal interrupted
+        value = execute(self, query, *args, **kwargs)
+        if query.startswith(f"INSERT INTO {TASK_DOMAINS}") and not interrupted:
+            interrupted = True
+            raise ConnectionError("lost insert acknowledgement")
+        return value
+
+    monkeypatch.setattr(Client, "execute", lost_ack)
+    with pytest.raises(ConnectionError):
+        add(db, submission, targets=["mine.example"])
+    result = add(db, submission, targets=["mine.example"])
+    assert result["task_id"] == other["task_id"] and result["total"] == 2
+    # The retry deleted and re-inserted its own row; the sibling's row is untouched.
+    assert client.execute(
+        f"SELECT domain, submission_id FROM {TASK_DOMAINS} ORDER BY domain"
+    ) == [("kept.example", other["submission_id"]), ("mine.example", submission)]
