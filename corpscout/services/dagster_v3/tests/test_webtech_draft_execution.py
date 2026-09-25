@@ -33,7 +33,6 @@ def start(processing, resource, task_id, **changes):
         execution_id=None,
         force_rescan=False,
         recent_days=30,
-        batch_size=2,
         run_id=str(uuid4()),
     )
     settings.update(changes)
@@ -56,6 +55,15 @@ def test_freeze_releases_default_draft_and_reuses_execution(database, store, obj
         start(processing, resource, task_id, force_rescan=True)
     with pytest.raises(ValueError, match="existing execution"):
         start(processing, resource, task_id, execution_id=str(uuid4()))
+    # Envelope size is transport only; executions frozen before it left the
+    # profile still resume.
+    with processing.transaction() as cursor:
+        cursor.execute(
+            """UPDATE processing.tasks SET config=jsonb_set(config,
+            '{execution,profile,batch_size}','5000') WHERE task_id=%s""",
+            (task_id,),
+        )
+    assert start(processing, resource, task_id)["status"] == "selected"
     with pytest.raises(ValueError, match="open draft"):
         add(resource, processing, objects, task_id=task_id, targets=["other.com"])
     # A completed import retry remains attached to the frozen task.
@@ -139,7 +147,6 @@ def test_import_and_start_use_the_same_lock(database, store, objects):
                         execution_id=None,
                         force_rescan=False,
                         recent_days=30,
-                        batch_size=2,
                         run_id="run",
                     )
         assert processing.task(task_id)["status"] == "draft"

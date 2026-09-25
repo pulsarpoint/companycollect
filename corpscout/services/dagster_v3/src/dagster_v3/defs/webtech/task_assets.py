@@ -43,7 +43,10 @@ class WebtechTaskConfig(dg.Config):
     force_rescan: bool = False
     recent_days: int = Field(default=30, ge=1, le=3650)
     batch_size: int = Field(
-        default=5000, ge=1, le=10000, description="Pages per scanner envelope."
+        default=5000,
+        ge=1,
+        le=10000,
+        description="Pages per scanner envelope. Transport only; may change between resumes.",
     )
 
     @field_validator("execution_id")
@@ -129,7 +132,6 @@ def build_webtech_task_asset(destination: WebtechS3Destination):
                 execution_id=config.execution_id,
                 force_rescan=config.force_rescan,
                 recent_days=config.recent_days,
-                batch_size=config.batch_size,
                 run_id=context.run.run_id,
             )
             execution = task["config"]["execution"]
@@ -204,9 +206,7 @@ def build_webtech_task_asset(destination: WebtechS3Destination):
             envelopes = 0
             while True:
                 with clickhouse.get_connection() as client:
-                    rows = remaining_inputs(
-                        client, task, limit=execution["profile"]["batch_size"]
-                    )
+                    rows = remaining_inputs(client, task, limit=config.batch_size)
                 if not rows:
                     break
                 envelopes += 1

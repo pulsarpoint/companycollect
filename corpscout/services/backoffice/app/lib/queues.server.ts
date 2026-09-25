@@ -97,7 +97,8 @@ export async function loadQueueHistory(filters: QueueFilters) {
 }
 
 const EXTRA_FIELDS = {
-  webtech: ["execution_id", "force_rescan", "recent_days", "batch_size"],
+  // Envelope size stays a Dagster default: it is transport only, not a processing choice.
+  webtech: ["execution_id", "force_rescan", "recent_days"],
   brave: ["execution_id", "query_type", "query_template", "force", "rescan_old", "requests_per_route", "input_batch_size", "answer_timeout_seconds", "progress_log_every", "progress_log_interval_seconds"],
   "ip-enrichment": ["execution_id", "batch_size", "max_requests", "request_delay_seconds", "parent_depth", "rdap_cache_days", "force_rdap", "rate_limit_retry_seconds", "transient_retry_seconds"],
   crawler: ["execution_id", "batch_size", "max_in_flight", "refresh_interval_days", "force_refresh", "challenge_agent_model", "challenge_agent_max_runs", "api", "model", "max_pages", "max_model_calls", "page_selection", "instructions", "wait_timeout_seconds", "poll_interval_seconds"],

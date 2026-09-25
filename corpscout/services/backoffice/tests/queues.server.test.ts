@@ -91,7 +91,7 @@ describe("queue processing", () => {
   });
 });
 
-it.each([{batch_size: 0}, {recent_days: 3651}, {force_rescan: "true"}, {batch_size: 1.5}, {execution_id: "invalid"}])("rejects invalid parameters before launching: %j", async config => {
+it.each([{batch_size: 5000}, {recent_days: 3651}, {force_rescan: "true"}, {recent_days: 1.5}, {execution_id: "invalid"}])("rejects invalid parameters before launching: %j", async config => {
   await expect(startQueueProcessing(filters(), JSON.stringify(config), request, "operator")).rejects.toThrow();
   expect(launchRun).not.toHaveBeenCalled();
 });

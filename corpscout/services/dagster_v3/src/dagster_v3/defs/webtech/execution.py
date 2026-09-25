@@ -23,7 +23,6 @@ def start_execution(
     execution_id: str | None,
     force_rescan: bool,
     recent_days: int,
-    batch_size: int,
     run_id: str,
 ) -> dict:
     """Called under the same session lock used by imports and result processing."""
@@ -37,13 +36,14 @@ def start_execution(
     profile = {
         "force_rescan": force_rescan,
         "recent_days": recent_days,
-        "batch_size": batch_size,
         "detector_version": WEBTECH_DETECTOR_VERSION,
     }
     saved = task["config"].get("execution")
     identity = execution_id or (saved["execution_id"] if saved else str(uuid4()))
     if saved is not None and identity == saved["execution_id"]:
-        if saved["profile"] != profile:
+        # Envelope size is transport only. Older executions froze it; ignore it.
+        frozen = {k: v for k, v in saved["profile"].items() if k != "batch_size"}
+        if frozen != profile:
             raise ValueError(
                 "Execution settings are frozen; resume with the same profile"
             )
