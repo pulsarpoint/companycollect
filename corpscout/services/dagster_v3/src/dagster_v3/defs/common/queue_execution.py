@@ -149,6 +149,19 @@ def purge_completed_inputs(
     if task["inputs_purged_at"] is not None:
         return
     with clickhouse.get_connection() as client:
+        if relation == "corpscout.company_brave_queue_input":
+            columns = ("task_id,input_id,country_code,company_id,company_name,source_name,"
+                       "source_record_id,source_run_id,submission_id,submitted_at")
+            client.execute(
+                f"INSERT INTO corpscout.company_brave_task_sources ({columns}) "
+                f"SELECT {columns} FROM {relation} WHERE task_id=%(task)s",
+                {"task": task_id}, settings={"async_insert": 0})
+            [(missing,)] = client.execute(
+                f"SELECT count() FROM {relation} WHERE task_id=%(task)s AND "
+                f"({columns}) NOT IN (SELECT {columns} FROM corpscout.company_brave_task_sources FINAL WHERE task_id=%(task)s)",
+                {"task": task_id})
+            if missing:
+                raise RuntimeError("Brave company history is incomplete; retaining input partition")
         # Preserve membership before deleting the only record of fresh/skipped inputs.
         # INSERT SELECT stays inside ClickHouse; retries deduplicate on read.
         if relation == "corpscout.webtech_scan_input":

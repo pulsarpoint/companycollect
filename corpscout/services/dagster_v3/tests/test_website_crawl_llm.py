@@ -146,3 +146,35 @@ def test_deepseek_endpoint_uses_deepseek_api_with_a_custom_provider_label():
     )
     payload, _ = effective_payload(ROW, "site_info", "batch", config)
     assert payload["api"] == "deepseek"
+
+
+def test_full_crawl_all_defaults_off_reaches_service_and_changes_freshness_key():
+    settings = {**SETTINGS, "page_selection": "saved", "max_pages": 20}
+    normal, key = effective_payload(ROW, "full", "batch", CrawlResultsConfig(**settings))
+    override, override_key = effective_payload(ROW, "full", "batch", CrawlResultsConfig(**settings, full_crawl_all=True))
+    assert normal["full_crawl_all"] is False
+    assert override["full_crawl_all"] is True
+    assert key != override_key
+    assert normal["request_id"] == override["request_id"]  # changes require a new execution
+
+
+def test_full_crawl_saved_pages_still_request_first_page_classification():
+    row = {**ROW, "page_mode": "explicit", "pages": ["https://example.com/products"]}
+    config = CrawlResultsConfig(**{**SETTINGS, "page_selection": "saved", "max_pages": 20})
+    payload, _ = effective_payload(row, "full", "batch", config)
+    assert payload["site_info"] is True
+    assert payload["full_crawl_all"] is False
+    assert payload["pages"] == row["pages"]
+
+
+@pytest.mark.parametrize("crawl_type", ["jobs", "site_info"])
+def test_full_crawl_all_is_not_a_basic_info_or_jobs_option(crawl_type):
+    config = CrawlResultsConfig(**{**SETTINGS, "page_selection": "basic_info" if crawl_type == "site_info" else "saved", "full_crawl_all": True})
+    with pytest.raises(ValueError, match="only supported for full"):
+        effective_payload(ROW, crawl_type, "batch", config)
+
+
+@pytest.mark.parametrize("value", ["true", "false", 1, 0])
+def test_full_crawl_all_rejects_non_booleans(value):
+    with pytest.raises(ValidationError):
+        CrawlResultsConfig(**SETTINGS, full_crawl_all=value)

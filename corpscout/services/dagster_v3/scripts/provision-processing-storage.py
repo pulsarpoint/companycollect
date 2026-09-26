@@ -168,6 +168,9 @@ def main():
             "GRANT SELECT, INSERT ON corpscout.company_brave_search_results TO processing_publisher"
         )
         client.execute(
+            "GRANT SELECT ON corpscout.company_brave_queue_input TO processing_publisher"
+        )
+        client.execute(
             "GRANT SELECT ON corpscout.company_brave_search_results_latest TO processing_publisher"
         )
         client.execute(

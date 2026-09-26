@@ -110,12 +110,12 @@ describe("buildInfoListFilter", () => {
     // its sort use, so the tick a row shows and the rows a filter returns can
     // never disagree.
     for (const datatype of PROFILE_DATATYPES) {
-      expect(buildInfoListFilter({ datatypes: [datatype.key] })).toEqual({
+      expect(buildInfoListFilter({ datatypes: {[datatype.key]: "has"} })).toEqual({
         where: [`${DATATYPE_PRESENCE_EXPR[datatype.key]} = 1`],
         params: {},
       });
     }
-    expect(buildInfoListFilter({ datatypes: ["has_people"] })).toEqual({
+    expect(buildInfoListFilter({ datatypes: {has_people: "has" as const} })).toEqual({
       where: ["i.has_people = 1"],
       params: {},
     });
@@ -123,23 +123,20 @@ describe("buildInfoListFilter", () => {
 
   it("ANDs several selected datatypes: the reviewer asks for companies with ALL of them", () => {
     expect(
-      buildInfoListFilter({ datatypes: ["has_address", "has_people", "has_job_ads"] }),
+      buildInfoListFilter({ datatypes: {has_address: "has" as const, has_people: "has" as const, has_job_ads: "has" as const} }),
     ).toEqual({
       where: ["i.has_address = 1", "i.has_people = 1", "i.has_job_ads = 1"],
       params: {},
     });
   });
 
-  it("adds nothing for an empty datatype array, and drops a key the catalog does not name", () => {
-    expect(buildInfoListFilter({ datatypes: [] })).toEqual({ where: [], params: {} });
+  it("adds nothing for empty availability filters, and drops a key the catalog does not name", () => {
+    expect(buildInfoListFilter({ datatypes: {} })).toEqual({ where: [], params: {} });
     // Same key-names-a-predicate rule as `source`: an unknown value finds no
     // expression, so nothing from the URL ever reaches SQL as text.
-    expect(
-      buildInfoListFilter({ datatypes: ["has_description", "bogus", "1=1) OR ("] }),
-    ).toEqual({ where: [], params: {} });
-    expect(
-      buildInfoListFilter({ datatypes: ["bogus", "has_domains"] }),
-    ).toEqual({ where: ["i.has_domains = 1"], params: {} });
+    const unknown = {has_description: "has", bogus: "has", "1=1) OR (": "missing"} as unknown as import("~/lib/se-company-info-filters").DataAvailability;
+    expect(buildInfoListFilter({datatypes: unknown})).toEqual({where: [], params: {}});
+    expect(buildInfoListFilter({datatypes: {...unknown, has_domains: "has"}})).toEqual({where: ["i.has_domains = 1"], params: {}});
   });
 
   it("treats the select's 'any' sentinel and a blank as absent on every data-driven filter", () => {
@@ -184,7 +181,7 @@ describe("buildInfoListFilter", () => {
       legalForm: "AB",
       description: "yes",
       source: "wikidata",
-      datatypes: ["has_financial", "has_domains"],
+      datatypes: {has_financial: "has" as const, has_domains: "has" as const},
     });
     expect(where).toEqual([
       "i.company_id = {companyId:String}",
@@ -573,4 +570,15 @@ describe("discrete filter options", () => {
       legalForms: [],
     });
   });
+});
+
+
+it("filters financial data present and domains absent together in lists and counts", async () => {
+  const filters = {datatypes: {has_financial: "has" as const, has_domains: "missing" as const}};
+  expect(buildInfoListFilter(filters)).toEqual({where: ["i.has_financial = 1", "i.has_domains = 0"], params: {}});
+  clickhouse.query.mockReset().mockResolvedValue([]);
+  await listSeCompanyInfoPage({...filters, page: 1, pageSize: 50});
+  await loadSeCompanyInfoCounts(filters);
+  expect(clickhouse.query).toHaveBeenCalledTimes(2);
+  for (const [sql] of clickhouse.query.mock.calls) expect(sql).toContain("i.has_financial = 1 AND i.has_domains = 0");
 });

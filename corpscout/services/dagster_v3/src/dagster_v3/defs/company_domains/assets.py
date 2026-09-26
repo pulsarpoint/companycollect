@@ -20,6 +20,8 @@ from dagster_v3.defs.common.clickhouse_queue import (
 )
 from dagster_v3.defs.common.processing import ProcessingResource, render_query
 from dagster_v3.defs.common.encrypted_llm import EncryptedLLMConfig
+from dagster_v3.defs.company_domains.queue_execution import run_draft
+from dagster_v3.defs.company_domains.queue_tables import PROCESSOR as DRAFT_PROCESSOR
 from dagster_v3.defs.company_domains.browser import (
     DEFAULT_BROWSER_API_URL,
     ROUTES,
@@ -59,12 +61,17 @@ class BraveSearchConfig(dg.Config):
     query_template: str = Field(
         default="Find the official website of {company_name}.", min_length=1
     )
+    search_id: str | None = None
+    search_name: str | None = Field(default=None, min_length=1, max_length=120)
+    search_revision: int | None = Field(default=None, ge=1)
     force: bool = Field(
         default=False, description="Search again regardless of previous outcomes."
     )
     rescan_old: bool = Field(
         default=False, description="Rescan completed searches older than 30 days."
     )
+    force_rescan: bool = False
+    recent_days: int = Field(default=30, ge=1, le=3650)
     requests_per_route: int = Field(default=1, ge=1, le=8)
     input_batch_size: int = Field(default=100, ge=4, le=10_000)
     answer_timeout_seconds: int = Field(default=60, ge=1, le=600)
@@ -76,7 +83,7 @@ class BraveSearchConfig(dg.Config):
     def named_relation(cls, value: str | None) -> str | None:
         return validate_relation(value) if value is not None else None
 
-    @field_validator("task_id", "execution_id")
+    @field_validator("task_id", "execution_id", "search_id")
     @classmethod
     def stable_task_id(cls, value: str | None) -> str | None:
         return str(UUID(value)) if value is not None else None
@@ -151,7 +158,7 @@ def prepare_execution(
         if task is None:
             if config.input_relation is None:
                 raise ValueError(
-                    "initialize company_brave_search_input or supply a prepared input_relation"
+                    "add companies through company_brave_queue_input or supply a prepared input_relation"
                 )
             source = ClickHouseInputQueue(clickhouse, config.input_relation)
             store.register(
@@ -198,17 +205,16 @@ def prepare_execution(
 
 
 @dg.asset(
-    deps=["company_brave_search_input"],
+    deps=["company_brave_queue_input"],
     group_name="brave_domain_search",
     kinds={"python", "browser", "clickhouse"},
     pool="company_domains_brave",
     tags={"source": "brave", "country": "SE"},
     metadata={"dagster/table_name": RESULT_TABLE},
-    description="Search selected Swedish companies and save completed answers or errors directly "
-    "in company_brave_search_results. Existing outcomes are skipped unless force=true, or "
-    "rescan_old=true and the latest outcome is older than 30 days. Successful answers feed "
-    "se_company_brave_search_results_latest_success. Resume with execution_id; saved outcomes are never searched twice "
-    "within that execution, including forced executions.",
+    description="Search Swedish company drafts and save every answer or search error in ClickHouse. "
+    "Drafts freeze the selected query and LLM, skip recent successes unless force_rescan=true, "
+    "and preserve company history before clearing completed inputs. Resume a draft by task_id; "
+    "retired legacy inputs must be submitted as a new draft.",
 )
 def company_brave_search_results(
     context: dg.AssetExecutionContext,
@@ -220,7 +226,22 @@ def company_brave_search_results(
 ) -> dg.MaterializeResult:
     if config.input_batch_size < len(ROUTES) * config.requests_per_route:
         raise ValueError("input_batch_size must cover all configured request slots")
+    task_id = config.task_id or context.run.tags.get("processing/task_id")
+    if task_id is not None:
+        with processing.get_store() as store:
+            task = store.task(task_id)
+        if task is not None and task["processor"] == DRAFT_PROCESSOR:
+            return run_draft(context, config, clickhouse, processing_clickhouse,
+                             company_brave_browser, processing, task_id)
     execution = prepare_execution(context, config, clickhouse, processing)
+    if config.mode == "process":
+        with processing.get_store() as store:
+            task = store.task(execution["task_id"])
+        if (execution["input_relation"] == "corpscout.company_brave_search_input"
+                or (task is not None and task["status"] == "cancelled")):
+            raise ValueError(
+                "These Brave inputs have been retired; add companies to a new queue in Backoffice"
+            )
     execution_id = execution["execution_id"]
     outcome_counts_sql = (
         f"SELECT countIf(status='success'),countIf(status='error') FROM {RESULT_TABLE} FINAL "

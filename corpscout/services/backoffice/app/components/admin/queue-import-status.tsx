@@ -5,8 +5,8 @@ type ImportProgress = {ok: true; runId: string; status: string; finished: boolea
 
 export interface QueueImportReceipt {runId: string; status: string; runUrl: string | null}
 
-export type ImportQueue = "webtech" | "crawler" | "ip-enrichment";
-const LABELS: Record<ImportQueue, string> = {webtech: "Webtech", crawler: "Crawler", "ip-enrichment": "IP enrichment"};
+export type ImportQueue = "webtech" | "crawler" | "brave" | "ip-enrichment";
+const LABELS: Record<ImportQueue, string> = {webtech: "Webtech", crawler: "Crawler", brave: "Brave", "ip-enrichment": "IP enrichment"};
 
 export function useQueueSubmission(receipt: QueueImportReceipt | null, queue: ImportQueue = "webtech") {
   const progress = useFetcher<ImportProgress>();
@@ -19,14 +19,15 @@ export function useQueueSubmission(receipt: QueueImportReceipt | null, queue: Im
   return {state, error: progress.data?.ok === false ? progress.data.error : null};
 }
 
-export function QueueImportStatus({receipt, state, fallbackSearch = "", crawlType, queue}: {
+export function QueueImportStatus({receipt, state, fallbackSearch = "", crawlType, queue, type}: {
   receipt: QueueImportReceipt;
   state: ReturnType<typeof useQueueSubmission>["state"];
   fallbackSearch?: string;
   crawlType?: string;
   queue?: ImportQueue;
+  type?: "brave";
 }) {
-  const target: ImportQueue = queue ?? (crawlType ? "crawler" : "webtech");
+  const target: ImportQueue = queue ?? type ?? (crawlType ? "crawler" : "webtech");
   const label = LABELS[target];
   const completed = state?.status === "SUCCESS";
   const failed = state?.status === "FAILURE" || state?.status === "CANCELED";

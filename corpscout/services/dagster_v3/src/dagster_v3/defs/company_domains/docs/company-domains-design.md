@@ -1,6 +1,6 @@
 # Company domains: Brave answer collection
 
-> Historical initial design. The current assets are `company_brave_search_input`
+> Historical initial design. The current assets are `company_brave_queue_input`
 > and `company_brave_search_results`, in group `brave_domain_search`. See the
 > [current processing guide](../../../../../docs/company-brave-processing.md)
 > for configuration, PostgreSQL progress and S3 response history.

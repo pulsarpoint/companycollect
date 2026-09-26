@@ -4,6 +4,7 @@ import { PlayIcon } from "lucide-react";
 import { QUEUE_NUMBER_LIMITS, QUEUE_TEMPLATES, isDraftQueue, type QueueFilters } from "~/lib/queues";
 import { CrawlSettingsFields } from "~/components/admin/crawl-settings-fields";
 import { LlmProfileField } from "~/components/admin/llm-profile-field";
+import { BraveSearchField } from "~/components/admin/brave-search-field";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Button } from "~/components/ui/button";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "~/components/ui/field";
@@ -16,7 +17,7 @@ type LaunchResult = { ok: false; error: string } | { ok: true; runId: string; st
 
 const LABELS: Record<string, string> = {
   force_rescan: "Force rescan", recent_days: "Freshness window (days)", batch_size: "Input batch size",
-  force: "Force new search", rescan_old: "Rescan results older than 30 days", query_type: "Query type",
+  query_type: "Query type",
   query_template: "Search prompt template", requests_per_route: "Concurrent requests per route",
   input_batch_size: "Input batch size", answer_timeout_seconds: "Answer timeout (seconds)",
   force_rdap: "Force RDAP lookup", rdap_cache_days: "RDAP cache window (days)", parent_depth: "RDAP parent depth",
@@ -51,7 +52,7 @@ export function QueueProcessSheet({filters, total, asset, blockedReason, llmProf
     } else {
       for (const [key, raw] of values) {
         if (key === "execution_id") continue;
-        config[key] = key === "force_refresh" ? raw === "true"
+        config[key] = ["force_refresh", "full_crawl_all"].includes(key) ? raw === "true"
           : ["challenge_agent_max_runs", "max_pages", "max_model_calls", "max_in_flight", "refresh_interval_days"].includes(key) ? Number(raw) : String(raw);
       }
     }
@@ -82,15 +83,14 @@ export function QueueProcessSheet({filters, total, asset, blockedReason, llmProf
           </AlertDescription></Alert> : <>
             <p className="text-sm text-muted-foreground">{filters.type === "ip-enrichment"
               ? "A draft freezes when the results asset begins. GeoIP, ASN and RDAP are saved per address in acknowledged batches; cached RDAP coverage is judged against the frozen start time and the cache window. Leave the RDAP request budget empty to process the whole task; a reached budget keeps the task resumable. RIPE and APNIC are asked without personal data (RIPE REST search, APNIC whois -r); per-registry budgets are a Dagster launchpad setting."
-              : isDraftQueue(filters.type)
-              ? "Freshness is checked when execution is prepared. Recent inputs remain in the queue and are counted as skipped. A draft freezes when the results asset begins."
-              : "Searches use the saved company inputs. Freshness and force options are evaluated during processing."}</p>
+              : "Freshness is checked when execution is prepared. Recent inputs remain in the queue and are counted as skipped. A draft freezes when the results asset begins."}</p>
             {manual ? <FieldGroup><Field><FieldLabel htmlFor="queue-json">Processing parameters (JSON)</FieldLabel>
               <Textarea id="queue-json" value={json} onChange={event => setJson(event.target.value)} className="min-h-80 font-mono" spellCheck={false} required />
               <FieldDescription>{usesLlm ? <>Use <code>llm_profile_id</code> for the selected saved LLM. Its configuration is resolved and checked before processing. API keys must not be included in this JSON.</> : "Only results-asset parameters. The task ID is fixed by your selection. Credentials belong in the service environment."}</FieldDescription>
+              {filters.type === "brave" && <FieldDescription>Keep <code>brave_search_id</code> and <code>brave_search_revision</code> from the selected search. Questions are managed in Brave searches settings.</FieldDescription>}
             </Field></FieldGroup> : <>
               {defaults ? <FieldGroup className="grid grid-cols-1 sm:grid-cols-2">
-                {Object.entries(defaults).map(([key, value]) => key === "llm_profile_id" ? <LlmProfileField key={key} idPrefix="queue-brave" label="Browser assistant LLM" initialProfileId={llmProfileId}
+                {Object.entries(defaults).map(([key, value]) => key === "brave_search_revision" ? null : key === "brave_search_id" ? <BraveSearchField key={key} taskId={filters.task} /> : key === "llm_profile_id" ? <LlmProfileField key={key} idPrefix="queue-brave" label="Browser assistant LLM" initialProfileId={llmProfileId}
                   description="The selected LLM controls Brave's browser and CAPTCHA assistant. Before processing starts, it must pass an image and JSON response check. If the check fails, the task stays in the queue." /> : <Field key={key} className={key === "query_template" ? "sm:col-span-2" : undefined}>
                   <FieldLabel htmlFor={`queue-${key}`}>{LABELS[key] ?? key}</FieldLabel>
                   {typeof value === "boolean" ? <NativeSelect id={`queue-${key}`} name={key} defaultValue={String(value)}>
@@ -103,14 +103,14 @@ export function QueueProcessSheet({filters, total, asset, blockedReason, llmProf
               </FieldGroup> : <CrawlSettingsFields type={filters.crawlType} idPrefix="queue-crawl" initialProfileId={llmProfileId} />}
               <FieldGroup><Field><FieldLabel htmlFor="queue-execution">Execution ID (optional)</FieldLabel>
                 <Input id="queue-execution" name="execution_id" placeholder="Use the original execution ID to resume" />
-                <FieldDescription>{isDraftQueue(filters.type) ? "For draft queues, leave empty to start or resume the saved execution. Pipeline failures retain their inputs. Fully processed tasks, including saved website errors, clear their inputs; add pages to a new queue to scan them again. Legacy tasks keep their existing execution rules." : "Leave empty for a new execution. To resume, use the original results run ID and its original settings."}</FieldDescription>
+                <FieldDescription>{isDraftQueue(filters.type) ? "For draft queues, leave empty to start or resume the saved execution. Pipeline failures retain their inputs. Fully processed tasks, including saved errors, clear their inputs; add inputs to a new queue to scan them again." : "Leave empty for a new execution. To resume, use the original results run ID and its original settings."}</FieldDescription>
               </Field></FieldGroup>
               <Button type="button" variant="outline" onClick={event => {
                 const form = event.currentTarget.form;
                 if (form && form.reportValidity()) { setJson(JSON.stringify(readFields(form), null, 2)); setManual(true); }
               }}>Edit all parameters as JSON</Button>
             </>}
-            <p className="text-xs text-muted-foreground">Results asset: <code>{asset}</code>. {isDraftQueue(filters.type) ? "Inputs are removed when every entry has a saved outcome or is skipped as recent. Lookup errors remain in results and history. Pipeline failures keep inputs for recovery. Use the processing profile to control this execution." : "Existing input rows are retained for retries."}</p>
+            <p className="text-xs text-muted-foreground">Results asset: <code>{asset}</code>. {isDraftQueue(filters.type) ? "Inputs are removed when every input has a saved outcome or is skipped as recent. Individual errors remain in results and history. Pipeline failures keep inputs for recovery. Use the processing profile to control this execution." : "Existing input rows are retained for retries."}</p>
           </>}
           {!done && blockedReason && <Alert><AlertTitle>Processing unavailable</AlertTitle><AlertDescription>{blockedReason}</AlertDescription></Alert>}
           {error && <Alert variant="destructive"><AlertTitle>Could not start processing</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}

@@ -109,6 +109,7 @@ const GENERAL_NAVIGATION = [
 ] as const;
 
 const SETTINGS_NAVIGATION = [
+  { title: "Brave searches", to: "/admin/settings/brave-searches", icon: TagsIcon },
   {
     title: "People prompts",
     to: "/admin/settings/people-prompts",

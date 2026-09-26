@@ -42,10 +42,13 @@ export function parseCrawlSettings(read: SettingReader, type: DomainCrawlType) {
   }
   const forceRefresh = read("force_refresh") ?? "false";
   if (!["true", "false"].includes(forceRefresh)) throw new Error("Invalid refresh option.");
+  const fullCrawlAll = read("full_crawl_all") ?? "false";
+  if (!["true", "false"].includes(fullCrawlAll) || (type !== "full" && fullCrawlAll === "true")) throw new Error("Full crawl all is a boolean option for full crawls only.");
   const maxInFlight = read("max_in_flight") === null ? 3 : requiredInteger(read, "max_in_flight", 1, 20);
   const refreshDays = read("refresh_interval_days") === null ? 30 : requiredInteger(read, "refresh_interval_days", 1, 3650);
   return {
     force_refresh: forceRefresh === "true",
+    ...(type === "full" ? {full_crawl_all: fullCrawlAll === "true"} : {}),
     challenge_agent_model: agentModel, challenge_agent_max_runs: agentRuns, llm_profile_id: profileId,
     max_pages: maxPages, max_model_calls: maxModelCalls, page_selection: pageSelection,
     max_in_flight: maxInFlight, refresh_interval_days: refreshDays,

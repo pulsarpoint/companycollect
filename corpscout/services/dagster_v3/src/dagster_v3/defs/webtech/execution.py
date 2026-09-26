@@ -99,7 +99,16 @@ def remaining_inputs(
 ) -> list[tuple[str, str, str, str]]:
     if input_ids is not None and not input_ids:
         return []
-    only = " AND input_id IN %(ids)s " if input_ids is not None else " "
+    only = " "
+    external_tables = []
+    if input_ids is not None:
+        only = " AND input_id IN (SELECT input_id FROM envelope_ids) "
+        # Send IDs as native data so a full envelope cannot exceed SQL text limits.
+        external_tables = [{
+            "name": "envelope_ids",
+            "structure": [("input_id", "String")],
+            "data": [(identity,) for identity in input_ids],
+        }]
     return [
         tuple(row)
         for row in client.execute(
@@ -107,7 +116,8 @@ def remaining_inputs(
             + _REMAINING
             + only
             + "ORDER BY input_id LIMIT %(limit)s",
-            {**_parameters(task), "limit": limit, "ids": tuple(input_ids or ())},
+            {**_parameters(task), "limit": limit},
+            external_tables=external_tables,
         )
     ]
 

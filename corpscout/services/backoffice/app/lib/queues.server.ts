@@ -1,3 +1,5 @@
+import { loadBraveSourceSummaries } from "~/lib/brave-queue-history.server";
+import { BraveSearchError, resolveBraveSearch } from "~/lib/brave-searches.server";
 import { loadQueueSourceSummaries, type QueueHistoryReference, type QueueSourceSummary } from "~/lib/queue-history.server";
 import { createHash } from "node:crypto";
 import { CrawlLlmError, prepareCrawlSettings, verifySelectedLlm } from "~/lib/crawl-llm.server";
@@ -17,9 +19,9 @@ function queueDefinition(filters: QueueFilters) {
       source: "source_name", record: "source_record_id", time: "toString(submitted_at)", id: "input_id",
     };
     case "brave": return {
-      table: "corpscout.company_brave_search_input", asset: "company_brave_search_results", job: "company_brave_search_job",
-      from: "corpscout.company_brave_search_input", where: "1", target: "company_name",
-      detail: "concat(country_code, ':', company_id)", source: "country_code", record: "company_id", time: "''", id: "input_id",
+      table: "corpscout.company_brave_queue_input", asset: "company_brave_search_results", job: "company_brave_search_job",
+      from: "corpscout.company_brave_queue_input", where: "1", target: "company_name",
+      detail: "concat(country_code, ':', company_id)", source: "source_name", record: "source_record_id", time: "toString(submitted_at)", id: "input_id",
     };
     case "ip-enrichment": return {
       table: "corpscout.ip_enrichment_input", asset: "ip_enrichment_results", job: "ip_enrichment_results_job",
@@ -50,7 +52,7 @@ export async function loadQueueInputs(filters: QueueFilters) {
   const matches = filters.search ? `(positionCaseInsensitiveUTF8(${def.target}, {search:String}) > 0
     OR positionCaseInsensitiveUTF8(${def.detail}, {search:String}) > 0)` : "1";
   const searchWhere = `${taskWhere} AND ${matches}`;
-  const inputOrder = filters.type === "brave" ? "input_id, task_id" : "task_id, input_id";
+  const inputOrder = "task_id, input_id";
   const [tasks, overview, counts, rows] = await Promise.all([
     chQuery<QueueTask>(`SELECT toString(task_id) AS task_id, toString(count()) AS total, max(${def.time}) AS submitted_at
       FROM ${def.from} WHERE ${def.where} AND toString(task_id) != '' GROUP BY task_id
@@ -99,7 +101,7 @@ export async function loadQueueHistory(filters: QueueFilters) {
     runs: await listRuns({job: queueDefinition(selection).job, limit: 50}),
   })));
   const references: QueueHistoryReference[] = [];
-  const OUTCOME_TAGS: Record<QueueFilters["type"], string | null> = {webtech: "webtech", crawler: "crawler", "ip-enrichment": "ip_enrichment", brave: null};
+  const OUTCOME_TAGS: Record<QueueFilters["type"], string | null> = {webtech: "webtech", crawler: "crawler", "ip-enrichment": "ip_enrichment", brave: "brave"};
   const latest = new Map<string, {taskId: string; status: string; runUrl: string | null; startedAt: string | null; outcome: string | null; failedPages: number | null; skippedPages: number | null; crawlType: CrawlQueueType | null}>();
   for (const {runs, crawlType} of groups) for (const run of runs) {
     const taskId = run.tags["processing/task_id"];
@@ -121,16 +123,20 @@ export async function loadQueueHistory(filters: QueueFilters) {
     try { sources = await loadQueueSourceSummaries(filters.type, references.filter(ref => history.some(task => task.taskId === ref.taskId && task.crawlType === ref.crawlType))); }
     catch { sourcesError = true; }
   }
+  if (filters.type === "brave") {
+    try { sources = await loadBraveSourceSummaries(history.map(task => task.taskId)); }
+    catch { sourcesError = true; }
+  }
   return history.map(task => ({...task, sourcesError,
-    sources: sources.find(source => source.task_id === task.taskId && source.task_type === (task.crawlType ?? "webtech")) ?? null}));
+    sources: sources.find(source => source.task_id === task.taskId && source.task_type === (task.crawlType ?? (filters.type === "brave" ? "brave" : "webtech"))) ?? null}));
 }
 
 const EXTRA_FIELDS = {
   // Envelope size stays a Dagster default: it is transport only, not a processing choice.
   webtech: ["execution_id", "force_rescan", "recent_days"],
-  brave: ["execution_id", "llm_profile_id", "query_type", "query_template", "force", "rescan_old", "requests_per_route", "input_batch_size", "answer_timeout_seconds", "progress_log_every", "progress_log_interval_seconds"],
+  brave: ["execution_id", "llm_profile_id", "brave_search_id", "brave_search_revision", "force_rescan", "recent_days", "requests_per_route", "input_batch_size", "answer_timeout_seconds", "progress_log_every", "progress_log_interval_seconds"],
   "ip-enrichment": ["execution_id", "batch_size", "max_requests", "request_delay_seconds", "parent_depth", "rdap_cache_days", "force_rdap", "rate_limit_retry_seconds", "transient_retry_seconds"],
-  crawler: ["execution_id", "max_in_flight", "refresh_interval_days", "force_refresh", "challenge_agent_model", "challenge_agent_max_runs", "llm_profile_id", "max_pages", "max_model_calls", "page_selection", "instructions", "wait_timeout_seconds", "poll_interval_seconds"],
+  crawler: ["execution_id", "full_crawl_all", "max_in_flight", "refresh_interval_days", "force_refresh", "challenge_agent_model", "challenge_agent_max_runs", "llm_profile_id", "max_pages", "max_model_calls", "page_selection", "instructions", "wait_timeout_seconds", "poll_interval_seconds"],
 } as const;
 
 export function parseQueueConfig(filters: QueueFilters, serialized: string): Record<string, unknown> & {task_id: string} {
@@ -150,9 +156,13 @@ export function parseQueueConfig(filters: QueueFilters, serialized: string): Rec
     challenge_agent_max_runs: [3, 1000], max_pages: [1, 500], max_model_calls: [1, 1000],
     wait_timeout_seconds: [Number.MIN_VALUE, 86400, true], poll_interval_seconds: [Number.MIN_VALUE, 30, true],
   } : QUEUE_NUMBER_LIMITS[filters.type];
-  const booleanFields = ["force_rescan", "force", "rescan_old", "force_rdap", "force_refresh"];
+  const booleanFields = ["full_crawl_all", "force_rescan", "force_rdap", "force_refresh"];
   for (const [key, entry] of Object.entries(config)) {
     if (entry === null && ["execution_id", "instructions", "max_requests"].includes(key)) continue;
+    if (key === "brave_search_revision") {
+      if (typeof entry !== "number" || !Number.isSafeInteger(entry) || entry < 0) throw new QueueRequestError("Invalid Brave search version.");
+      continue;
+    }
     if (key in numeric) {
       const [min, max, fractional] = numeric[key as keyof typeof numeric] as [number, number, boolean?];
       if (typeof entry !== "number" || !Number.isFinite(entry) || (!fractional && !Number.isSafeInteger(entry)) || entry < min || entry > max) throw new QueueRequestError(`${key} must be ${fractional ? "a number" : "an integer"} between ${min} and ${max}.`);
@@ -162,6 +172,10 @@ export function parseQueueConfig(filters: QueueFilters, serialized: string): Rec
   }
   if (filters.type === "brave" && (typeof config.llm_profile_id !== "string" || !config.llm_profile_id.trim() || config.llm_profile_id.length > 200)) {
     throw new QueueRequestError("Choose an LLM from LLM settings before starting Brave processing.");
+  }
+  if (filters.type === "brave" && (typeof config.brave_search_id !== "string" || (config.brave_search_id !== "saved" && !QUEUE_UUID.test(config.brave_search_id))
+      || typeof config.brave_search_revision !== "number" || !Number.isSafeInteger(config.brave_search_revision) || config.brave_search_revision < (config.brave_search_id === "saved" ? 0 : 1))) {
+    throw new QueueRequestError("Choose a saved Brave search before starting processing.");
   }
   if (filters.type === "crawler") {
     try { Object.assign(config, parseCrawlSettings(objectSettings(config), filters.crawlType)); }
@@ -204,12 +218,13 @@ export async function startQueueProcessing(filters: QueueFilters, serialized: st
       try {
         if (filters.type === "crawler") runtimeConfig = await prepareCrawlSettings(config);
         else {
-          const {llm_profile_id: profileId, ...settings} = config;
-          runtimeConfig = {...settings, llm: await verifySelectedLlm(profileId, "brave")};
+          const {llm_profile_id: profileId, brave_search_id: searchId, brave_search_revision: revision, ...settings} = config;
+          const search = await resolveBraveSearch(filters.task, searchId as string, revision as number);
+          runtimeConfig = {...settings, ...search, llm: await verifySelectedLlm(profileId, "brave")};
         }
       }
       catch (error) {
-        if (error instanceof CrawlLlmError) throw new QueueRequestError(error.message);
+        if (error instanceof CrawlLlmError || error instanceof BraveSearchError) throw new QueueRequestError(error.message);
         throw error;
       }
     }

@@ -60,10 +60,17 @@ export function parseSeCompanySelection(value: unknown): SeCompanySelection {
     throw new Error("Invalid company filter value.");
   }
   const datatypes = Object.getOwnPropertyDescriptor(query, "datatypes")?.value;
-  if (!Array.isArray(datatypes) || datatypes.some((key) => !PROFILE_DATATYPES.some((datatype) => datatype.key === key))) {
+  if (typeof datatypes !== "object" || datatypes === null || Array.isArray(datatypes)
+      || Object.entries(datatypes).some(([key, presence]) =>
+        !PROFILE_DATATYPES.some(datatype => datatype.key === key)
+        || (presence !== "has" && presence !== "missing"))) {
     throw new Error("Invalid company datatype filter.");
   }
-  filters.datatypes = PROFILE_DATATYPES.filter((datatype) => datatypes.includes(datatype.key)).map((datatype) => datatype.key);
+  filters.datatypes = {};
+  for (const {key} of PROFILE_DATATYPES) {
+    const presence = Object.getOwnPropertyDescriptor(datatypes, key)?.value;
+    if (presence !== undefined) filters.datatypes[key] = presence;
+  }
   return { mode: "query", query: filters, excludedCompanyIds: companyIds(value.excludedCompanyIds) };
 }
 

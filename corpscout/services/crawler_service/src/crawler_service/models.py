@@ -637,6 +637,8 @@ class SiteClassification(StrictModel):
     site_types: list[
         Literal[
             "company",
+            "online_store",
+            "content_site",
             "news_media",
             "entertainment",
             "forum_community",
@@ -684,6 +686,8 @@ class SiteClassification(StrictModel):
                     "Continuing requires an identifiable company/brand and a company site"
                 )
             if set(self.site_types) & {
+                "online_store",
+                "content_site",
                 "news_media",
                 "entertainment",
                 "forum_community",
@@ -697,7 +701,7 @@ class SiteClassification(StrictModel):
                 "mixed",
             }:
                 raise ValueError(
-                    "Content/search/advertising or unclear primary purposes must not continue company crawling"
+                    "Shop/content/search/advertising or unclear primary purposes must not continue company crawling"
                 )
         return self
 

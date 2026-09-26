@@ -19,6 +19,7 @@ import {
   PROFILE_DATATYPES,
   PROFILE_SOURCES,
   type ProfileDatatypeKey,
+  type DataAvailability,
   type ProfileSourceValue,
 } from "~/lib/se-company-info-filters";
 
@@ -177,12 +178,8 @@ export interface SeCompanyInfoListFilters {
    * register in ANY datatype", which is exactly what the column's letters say.
    */
   source?: string;
-  /**
-   * Keys of DATATYPE_PRESENCE_EXPR -- companies that have ALL of them (one
-   * `= 1` predicate each, ANDed like every other filter). Plain `string[]`
-   * for the same reason `entity` is; anything else in the array is absent.
-   */
-  datatypes?: readonly string[];
+  /** Presence/absence conditions, ANDed with every other company filter. */
+  datatypes?: DataAvailability;
 }
 
 export interface SeCompanyInfoListQuery extends SeCompanyInfoListFilters {
@@ -406,15 +403,10 @@ export function buildInfoListFilter(
   if (source !== null && Object.hasOwn(PROFILE_SOURCE_PREDICATES, source)) {
     where.push(PROFILE_SOURCE_PREDICATES[source as ProfileSourceValue]);
   }
-  // AND semantics on purpose: each selected datatype is its own `= 1`
-  // predicate, joined by the shared `where.join(" AND ")` -- the reviewer who
-  // ticks Address and People asks for companies that have BOTH. Same
-  // key-names-a-predicate rule as `source`: a value not in the catalog record
-  // finds no expression and adds nothing, so nothing from the URL ever
-  // reaches SQL as text (no params needed).
-  for (const datatype of filters.datatypes ?? []) {
-    if (Object.hasOwn(DATATYPE_PRESENCE_EXPR, datatype)) {
-      where.push(`${DATATYPE_PRESENCE_EXPR[datatype as ProfileDatatypeKey]} = 1`);
+  for (const {key} of PROFILE_DATATYPES) {
+    const presence = filters.datatypes?.[key];
+    if (presence === "has" || presence === "missing") {
+      where.push(`${DATATYPE_PRESENCE_EXPR[key]} = ${presence === "has" ? 1 : 0}`);
     }
   }
   return { where, params };

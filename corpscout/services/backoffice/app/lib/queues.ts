@@ -17,16 +17,16 @@ export const QUEUE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9
 export const ACTIVE_QUEUE_RUNS = ["QUEUED", "NOT_STARTED", "MANAGED", "STARTING", "STARTED", "CANCELING"] as const;
 
 /** Queues on the shared processing queue contract: one open draft per scope, freeze at Start, partition purge. */
-export const DRAFT_QUEUES: readonly QueueType[] = ["webtech", "crawler", "ip-enrichment"];
+export const DRAFT_QUEUES: readonly QueueType[] = ["webtech", "brave", "crawler", "ip-enrichment"];
 export function isDraftQueue(type: QueueType) { return DRAFT_QUEUES.includes(type); }
 
 export const QUEUE_TEMPLATES: Record<Exclude<QueueType, "crawler">, Record<string, unknown>> = {
   webtech: { force_rescan: false, recent_days: 30 },
   brave: {
+    brave_search_id: "", brave_search_revision: 0,
     llm_profile_id: "",
-    force: false, rescan_old: false, query_type: "official_website",
-    query_template: "Find the official website of {company_name}.",
-    requests_per_route: 1, input_batch_size: 100, answer_timeout_seconds: 60,
+    force_rescan: false, recent_days: 30,
+
   },
   "ip-enrichment": {
     force_rdap: false, rdap_cache_days: 30, parent_depth: 1,
@@ -38,7 +38,7 @@ export const QUEUE_TEMPLATES: Record<Exclude<QueueType, "crawler">, Record<strin
 /** Limits mirror the deployed results assets and are shared by form and action validation. */
 export const QUEUE_NUMBER_LIMITS: Record<Exclude<QueueType, "crawler">, Record<string, [number, number, boolean?]>> = {
   webtech: { recent_days: [1, 3650] },
-  brave: { requests_per_route: [1, 8], input_batch_size: [4, 10000], answer_timeout_seconds: [1, 600], progress_log_every: [1, 100000], progress_log_interval_seconds: [1, 3600] },
+  brave: { recent_days: [1, 3650], requests_per_route: [1, 8], input_batch_size: [4, 10000], answer_timeout_seconds: [1, 600], progress_log_every: [1, 100000], progress_log_interval_seconds: [1, 3600] },
   "ip-enrichment": { batch_size: [1, 10000], max_requests: [1, Number.MAX_SAFE_INTEGER], request_delay_seconds: [0, 60, true], parent_depth: [0, 5], rdap_cache_days: [1, Number.MAX_SAFE_INTEGER], rate_limit_retry_seconds: [1, Number.MAX_SAFE_INTEGER], transient_retry_seconds: [1, Number.MAX_SAFE_INTEGER] },
 };
 

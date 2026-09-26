@@ -8,6 +8,10 @@ import { CrawlLlmError, prepareCrawlSettings, verifySelectedLlm } from "~/lib/cr
 vi.mock("~/lib/clickhouse.server", () => ({chQuery: vi.fn()}));
 vi.mock("~/lib/dagster.server", () => ({launchRun: vi.fn(), listRuns: vi.fn(), dagsterRunUrl: (id: string) => `http://dagster/runs/${id}`}));
 vi.mock("~/lib/crawl-llm.server", () => ({CrawlLlmError: class CrawlLlmError extends Error {}, prepareCrawlSettings: vi.fn(), verifySelectedLlm: vi.fn()}));
+import { BraveSearchError, resolveBraveSearch } from "~/lib/brave-searches.server";
+vi.mock("~/lib/brave-searches.server", () => ({BraveSearchError: class BraveSearchError extends Error {}, resolveBraveSearch: vi.fn()}));
+const search = {search_id: "54d90187-85d5-45dc-9603-cd7c4a7d31d1", search_name: "Official website", search_revision: 1, query_type: "official_website", query_template: "Find the official website of {company_name}."};
+const braveConfig = {...QUEUE_TEMPLATES.brave, brave_search_id: search.search_id, brave_search_revision: 1, llm_profile_id: "saved-model"};
 const verifiedLlm = {provider: "Saved provider", base_url: "https://provider.example/v1", model: "selected/model", api_key_encrypted: "v1.test.encrypted-key"};
 const wireModelConfig = {api: "openrouter", model: "selected/model", llm: verifiedLlm, crawler_config: {provider: null}};
 const task = "11111111-1111-4111-8111-111111111111";
@@ -15,6 +19,7 @@ const request = "22222222-2222-4222-8222-222222222222";
 const filters = (type = "webtech", crawlType = "full") => parseQueueFilters(type, new URLSearchParams({task, crawlType, search: "preview-only"}));
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(resolveBraveSearch).mockReset().mockResolvedValue(search);
   vi.mocked(chQuery).mockResolvedValue([{total: "17"}]);
   vi.mocked(listRuns).mockResolvedValue([]);
   vi.mocked(launchRun).mockResolvedValue({runId: "launched", status: "QUEUED"});
@@ -29,7 +34,7 @@ const crawlConfig = {challenge_agent_model: "deepseek-flash", challenge_agent_ma
 describe("queue processing", () => {
   it.each([
     ["webtech", "webtech_scan_results", "webtech_scan_results_job", QUEUE_TEMPLATES.webtech],
-    ["brave", "company_brave_search_results", "company_brave_search_job", {...QUEUE_TEMPLATES.brave, llm_profile_id: "saved-model"}],
+    ["brave", "company_brave_search_results", "company_brave_search_job", braveConfig],
     ["ip-enrichment", "ip_enrichment_results", "ip_enrichment_results_job", QUEUE_TEMPLATES["ip-enrichment"]],
     ["crawler", "website_full_crawl_results", "website_full_crawl_results_job", crawlConfig],
   ])("launches only the %s results asset for the whole task", async (type, asset, job, config) => {
@@ -37,10 +42,10 @@ describe("queue processing", () => {
     const input = vi.mocked(launchRun).mock.calls[0][0];
     expect(input.job).toBe(job);
     expect(input.assetSelection).toEqual([asset]);
-    const expectedConfig = type === "crawler" ? {...Object.fromEntries(Object.entries(config).filter(([key]) => key !== "llm_profile_id")), ...wireModelConfig} : type === "brave" ? {...Object.fromEntries(Object.entries(config).filter(([key]) => key !== "llm_profile_id")), llm: verifiedLlm} : config;
+    const expectedConfig = type === "crawler" ? {...Object.fromEntries(Object.entries(config).filter(([key]) => key !== "llm_profile_id")), ...wireModelConfig, full_crawl_all: false} : type === "brave" ? {...Object.fromEntries(Object.entries(config).filter(([key]) => !["llm_profile_id", "brave_search_id", "brave_search_revision"].includes(key))), ...search, llm: verifiedLlm} : config;
     expect(input.runConfig).toEqual({ops: {[String(asset)]: {config: {...expectedConfig as object, task_id: task}}}});
     if (type === "crawler") {
-      expect(prepareCrawlSettings).toHaveBeenCalledWith({...config as object, task_id: task});
+      expect(prepareCrawlSettings).toHaveBeenCalledWith({...config as object, task_id: task, full_crawl_all: false});
       expect(vi.mocked(prepareCrawlSettings).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(launchRun).mock.invocationCallOrder[0]);
     } else expect(prepareCrawlSettings).not.toHaveBeenCalled();
     if (type === "brave") expect(verifySelectedLlm).toHaveBeenCalledWith("saved-model", "brave");
@@ -194,7 +199,21 @@ it("shows all crawler types on the default full-crawl queue, ordered by latest r
 
 
 describe("Brave verified assistant launch", () => {
-  const config = () => ({...QUEUE_TEMPLATES.brave, llm_profile_id: "saved-model"});
+  const config = () => (braveConfig);
+  it("requires a saved search and rejects raw question overrides", async () => {
+    for (const key of ["query_type", "query_template", "search_id", "search_revision", "search_name"]) {
+      expect(() => parseQueueConfig(filters("brave"), JSON.stringify({...config(), [key]: "override"}))).toThrow("Unsupported processing parameter");
+    }
+    const {brave_search_id: _unused, ...missingSearch} = config();
+    await expect(startQueueProcessing(filters("brave"), JSON.stringify(missingSearch), request, "operator")).rejects.toThrow("Choose a saved Brave search");
+    expect(launchRun).not.toHaveBeenCalled();
+  });
+  it("blocks stale search choices before checking the LLM or launching", async () => {
+    vi.mocked(resolveBraveSearch).mockRejectedValueOnce(new BraveSearchError("This search has changed"));
+    await expect(startQueueProcessing(filters("brave"), JSON.stringify(config()), request, "operator")).rejects.toThrow("search has changed");
+    expect(verifySelectedLlm).not.toHaveBeenCalled();
+    expect(launchRun).not.toHaveBeenCalled();
+  });
   it("rejects missing selection before accessing services or launching", async () => {
     await expect(startQueueProcessing(filters("brave"), JSON.stringify({...config(), llm_profile_id: ""}), request, "operator")).rejects.toThrow("nonempty string");
     const {llm_profile_id: _unused, ...withoutProfile} = config();
@@ -252,4 +271,42 @@ it("reads the IP enrichment entry table in sort-key order without FINAL and maps
   const {loadQueueHistory} = await import("~/lib/queues.server");
   vi.mocked(listRuns).mockResolvedValue([{runId: "saved", status: "SUCCESS", startTime: null, tags: {"processing/task_id": task, "ip_enrichment/outcome": "completed_with_errors", "ip_enrichment/failed_pages": "3"}}] as never);
   expect(await loadQueueHistory(filters("ip-enrichment"))).toEqual([expect.objectContaining({outcome: "completed_with_errors", failedPages: 3})]);
+});
+
+it("defaults full crawl all off and transports an explicit boolean override", async () => {
+  expect(parseQueueConfig(filters("crawler"), JSON.stringify(crawlConfig))).toMatchObject({full_crawl_all: false});
+  await startQueueProcessing(filters("crawler"), JSON.stringify({...crawlConfig, full_crawl_all: true}), request, "operator");
+  expect(vi.mocked(launchRun).mock.calls[0][0].runConfig).toMatchObject({ops: {website_full_crawl_results: {config: {full_crawl_all: true}}}});
+});
+it.each(["true", "false", 1, 0])("rejects a nonboolean full crawl override: %j", full_crawl_all => {
+  expect(() => parseQueueConfig(filters("crawler"), JSON.stringify({...crawlConfig, full_crawl_all}))).toThrow();
+});
+it("does not enable full crawl all for jobs or basic info", () => {
+  expect(() => parseQueueConfig(filters("crawler", "jobs"), JSON.stringify({...crawlConfig, full_crawl_all: true}))).toThrow("full crawls only");
+});
+
+it("reads only the current Brave queue, including links to retired tasks", async () => {
+  vi.mocked(chQuery).mockReset().mockResolvedValueOnce([]).mockResolvedValueOnce([{total: "0", tasks: "0"}])
+    .mockResolvedValueOnce([{total: "0", matching: "0"}]).mockResolvedValueOnce([]);
+  const result = await loadQueueInputs(filters("brave"));
+  expect(result).toMatchObject({tasks: [], totalInputs: 0, selectedTotal: 0});
+  expect(vi.mocked(chQuery).mock.calls).toHaveLength(4);
+  for (const [sql] of vi.mocked(chQuery).mock.calls) {
+    expect(sql).toContain("company_brave_queue_input");
+    expect(sql).not.toContain("company_brave_search_input");
+  }
+});
+
+it.each(["force", "rescan_old"])("rejects retired Brave processing option %s", name => {
+  expect(() => parseQueueConfig(filters("brave"), JSON.stringify({[name]: true}))).toThrow();
+});
+
+it("reads Brave completion counts and retained companies after the input queue is cleared", async () => {
+  const {loadQueueHistory} = await import("~/lib/queues.server");
+  vi.mocked(listRuns).mockResolvedValue([{runId: "saved", status: "SUCCESS", startTime: 1000, tags: {
+    "processing/task_id": task, "brave/outcome": "completed_with_errors", "brave/failed_pages": "2", "brave/skipped_pages": "3",
+  }}] as never);
+  vi.mocked(chQuery).mockResolvedValue([{task_id: task, task_type: "brave", total: "10", complete: 1, preview: [["Company", "SE:123"]]}]);
+  expect(await loadQueueHistory(filters("brave"))).toEqual([expect.objectContaining({failedPages: 2, skippedPages: 3,
+    outcome: "completed_with_errors", sources: expect.objectContaining({total: "10"})})]);
 });

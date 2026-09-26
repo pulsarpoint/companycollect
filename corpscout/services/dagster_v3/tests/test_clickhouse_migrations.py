@@ -464,6 +464,10 @@ EXPECTED_MIGRATIONS = (
     "000449_corpscout_queue_task_sources",
     "000450_corpscout_ip_registry_reference_data",
     "000451_corpscout_rdap_trie_registry_class_exclusion",
+    "000452_corpscout_website_crawl_normalized",
+    "000453_corpscout_brave_draft_queue",
+    "000454_corpscout_retire_brave_legacy_input",
+    "000455_corpscout_brave_search_versions",
     "000456_corpscout_ip_enrichment_queue_contract",
 )
 

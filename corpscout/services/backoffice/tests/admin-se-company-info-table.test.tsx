@@ -703,7 +703,7 @@ describe("SeCompanyInfoTable filter sheet", () => {
     // the same one-chip-one-count rule every other filter follows.
     const withDatatypes = {
       ...APPLIED_FILTERS,
-      datatypes: ["has_address", "has_people"] as const,
+      datatypes: {has_address: "has" as const, has_people: "has" as const},
     };
     expect(infoFilterChips(withDatatypes)).toHaveLength(9);
     expect(render({ filters: withDatatypes })).toContain(">9<");
@@ -714,11 +714,11 @@ describe("SeCompanyInfoTable filter sheet", () => {
     expect(html).toContain("Status active");
     expect(html).toContain("Legal form AB-ORGFO");
     expect(html).toContain("Entity Legal (10-digit)");
-    expect(html).toContain("Description yes");
+    expect(html).toContain("Has Description");
     // The source chip reads as the source's NAME, not its URL value.
     expect(html).toContain("Source ESEF");
     expect(html).toContain('aria-label="Remove filter Source ESEF"');
-    expect(html).toContain('aria-label="Remove filter Description yes"');
+    expect(html).toContain('aria-label="Remove filter Has Description"');
 
     // The chip's link is the same URL minus that one param -- with the sort and
     // page size kept, and `page` deliberately dropped.
@@ -780,10 +780,10 @@ describe("SeCompanyInfoFilterFields", () => {
     expect(html).toContain('type="hidden" name="dir" value="asc"');
     // A Base UI select's trigger is a button whose only text is the current
     // value, so the visible <Label> above it names nothing to a screen reader.
-    for (const label of ["Company id", "Name", "Status", "Legal form", "Entity", "Description",
-                         "Source"]) {
+    for (const label of ["Company id", "Name", "Status", "Legal form", "Entity", "Source"]) {
       expect(html).toContain(`aria-label="${label}"`);
     }
+    expect(html).toContain('aria-labelledby="availability-yes"');
   });
 
   it("shows an empty data-driven value as the \"(none)\" option, which travels in the URL as \"none\"", () => {
@@ -819,30 +819,23 @@ describe("SeCompanyInfoFilterFields", () => {
     ).toBe("(none)");
   });
 
-  it("offers a \"Has data\" checkbox per catalog datatype, saying selections must ALL be present", () => {
+  it("offers explicit Any / Has / Missing controls for every data type", () => {
     const html = renderFields();
-    expect(html).toContain("Has data");
-    // AND semantics are the whole point of the group, so it says so in words.
-    expect(html).toContain("Only companies that have ALL selected data.");
-    // One checkbox per catalog entry, every one submitting the SAME `datatype`
-    // name with its own key as the value -- the plain GET form then emits one
-    // repeated `?datatype=` param per ticked box.
-    for (const datatype of PROFILE_DATATYPES) {
-      expect(html).toContain(`name="datatype" value="${datatype.key}"`);
-      expect(html).toContain(`aria-label="Has ${datatype.label}"`);
-      expect(html).toContain(datatype.label);
+    expect(html).toContain("Data availability");
+    expect(html).toContain("Companies must match all conditions.");
+    for (const {key} of PROFILE_DATATYPES) {
+      const label = profileDatatypeLabel(key);
+      expect(html).toContain(`aria-label="Any ${label}"`);
+      expect(html).toContain(`aria-label="${key === "is_publicly_traded" ? "Yes" : "Has"} ${label}"`);
+      expect(html).toContain(`aria-label="${key === "is_publicly_traded" ? "No" : "Missing"} ${label}"`);
     }
   });
 
-  it("renders a selected datatype's checkbox checked, and an unselected one not", () => {
-    const html = renderFields({
-      ...EMPTY_INFO_FILTERS,
-      datatypes: ["has_address", "has_job_ads"],
-    });
-    expect(html).toContain('name="datatype" checked="" value="has_address"');
-    expect(html).toContain('name="datatype" checked="" value="has_job_ads"');
-    expect(html).toContain('name="datatype" value="has_people"');
-    expect(html).not.toContain('checked="" value="has_people"');
+  it("submits each selected presence or absence condition once", () => {
+    const html = renderFields({...EMPTY_INFO_FILTERS, datatypes: {has_financial: "has", has_domains: "missing"}});
+    expect(html).toContain('name="datatype" value="has_financial"');
+    expect(html).toContain('name="datatype" value="has_domains:missing"');
+    expect(html).not.toContain('name="datatype" value="has_people"');
   });
 
   it("selects \"Any\" for an unset filter and the applied value otherwise", () => {
@@ -963,15 +956,15 @@ describe("parseInfoFilters", () => {
   });
 
   it("reads repeated ?datatype= params, normalized to the catalog's order", () => {
-    // The URL's order is whatever the reviewer clicked last; the parsed array
+    // The URL's order is whatever the reviewer clicked last; the parsed record
     // is always the catalog's, so the chips and the SQL are deterministic.
     const filters = parseInfoFilters(
       at("?datatype=has_job_ads&datatype=has_address&datatype=has_people"),
     );
-    expect(filters.datatypes).toEqual(["has_address", "has_people", "has_job_ads"]);
+    expect(filters.datatypes).toEqual({has_address: "has", has_people: "has", has_job_ads: "has"});
     expect(filters).toEqual({
       ...EMPTY_INFO_FILTERS,
-      datatypes: ["has_address", "has_people", "has_job_ads"],
+      datatypes: {has_address: "has" as const, has_people: "has" as const, has_job_ads: "has" as const},
     });
     // Round trip: the parsed filters rebuild repeated params, in that order.
     const search = infoListSearch(filters, {
@@ -989,22 +982,22 @@ describe("parseInfoFilters", () => {
   it("tolerates a comma-joined single ?datatype= param, and dedupes", () => {
     expect(
       parseInfoFilters(at("?datatype=has_domains,has_address, has_domains")).datatypes,
-    ).toEqual(["has_address", "has_domains"]);
+    ).toEqual({has_address: "has", has_domains: "has"});
     expect(
       parseInfoFilters(at("?datatype=has_people&datatype=has_people")).datatypes,
-    ).toEqual(["has_people"]);
+    ).toEqual({has_people: "has"});
   });
 
   it("silently drops a ?datatype= value the catalog does not name", () => {
     // The module's convention: applied filters only. `has_description` is the
     // description filter's flag, not a catalog datatype -- it drops too.
-    expect(parseInfoFilters(at("?datatype=bogus")).datatypes).toEqual([]);
+    expect(parseInfoFilters(at("?datatype=bogus")).datatypes).toEqual({});
     expect(parseInfoFilters(at("?datatype=bogus")).description).toBe("");
     expect(infoFilterChips(parseInfoFilters(at("?datatype=bogus")))).toEqual([]);
     expect(
       parseInfoFilters(at("?datatype=has_description&datatype=has_financial")).datatypes,
-    ).toEqual(["has_financial"]);
-    expect(parseInfoFilters(at("?datatype=")).datatypes).toEqual([]);
+    ).toEqual({has_financial: "has"});
+    expect(parseInfoFilters(at("?datatype=")).datatypes).toEqual({});
   });
 
   it("summarises each selected datatype as its own removable chip, named from the catalog", () => {
@@ -1026,11 +1019,11 @@ describe("parseInfoFilters", () => {
     // Every catalog datatype chips with its own label, one lookup for both
     // the sheet and the chip.
     for (const datatype of PROFILE_DATATYPES) {
-      expect(profileDatatypeLabel(datatype.key)).toBe(datatype.label);
+      expect(profileDatatypeLabel(datatype.key)).toBe("filterLabel" in datatype ? datatype.filterLabel : datatype.label);
       expect(
-        infoFilterChips({ ...EMPTY_INFO_FILTERS, datatypes: [datatype.key] }),
+        infoFilterChips({ ...EMPTY_INFO_FILTERS, datatypes: {[datatype.key]: "has"} }),
       ).toEqual([
-        { param: datatypeChipParam(datatype.key), label: `Has ${datatype.label}` },
+        { param: datatypeChipParam(datatype.key), label: datatype.key === "is_publicly_traded" ? "Publicly traded: Yes" : `Has ${profileDatatypeLabel(datatype.key)}` },
       ]);
     }
   });
@@ -1059,5 +1052,32 @@ describe("parseInfoFilters", () => {
     });
     expect(parseListView(at("?page=0&pageSize=1")).page).toBe(1);
     expect(parseListView(at("?page=0&pageSize=1")).pageSize).toBe(10);
+  });
+});
+
+
+describe("mixed data availability filters", () => {
+  const at = (search: string) => new URL(`http://localhost/admin/se/companies${search}`);
+  const view = {sort: "legal_name", dir: "desc" as const, pageSize: 100};
+
+  it("round trips absence alongside presence, with one removable chip per field", () => {
+    const filters = parseInfoFilters(at("?datatype=has_financial&datatype=has_domains:missing&description=no"));
+    expect(filters.datatypes).toEqual({has_financial: "has", has_domains: "missing"});
+    expect(infoFilterChips(filters)).toEqual([
+      {param: "description", label: "Missing Description"},
+      {param: "datatype:has_financial", label: "Has Financial data"},
+      {param: "datatype:has_domains", label: "Missing Associated domains"},
+    ]);
+    expect(parseInfoFilters(at(infoListSearch(filters, view)))).toEqual(filters);
+    const removed = parseInfoFilters(at(infoListSearch(filters, view, "datatype:has_domains")));
+    expect(removed.datatypes).toEqual({has_financial: "has"});
+    expect(removed.description).toBe("no");
+    expect(infoListSearch(filters, view)).toContain("pageSize=100");
+  });
+
+  it("normalizes repeated choices to one state and ignores malformed presence values", () => {
+    expect(parseInfoFilters(at("?datatype=has_domains&datatype=has_domains:missing")).datatypes).toEqual({has_domains: "missing"});
+    expect(parseInfoFilters(at("?datatype=has_domains:missing&datatype=has_domains:any")).datatypes).toEqual({});
+    expect(parseInfoFilters(at("?datatype=has_domains:no&datatype=has_financial:missing:extra")).datatypes).toEqual({});
   });
 });

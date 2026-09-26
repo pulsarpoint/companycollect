@@ -234,6 +234,31 @@ def test_remaining_excludes_published_and_fresh_pages(database, store, objects):
         assert remaining_inputs(connection, task, limit=10, input_ids=[]) == []
 
 
+def test_large_envelope_reconciliation_excludes_published_and_unselected_pages(
+    database, store, objects
+):
+    client, resource = database
+    processing, _ = store
+    task_id = add(
+        resource,
+        processing,
+        objects,
+        targets=[f"https://example.com/page/{index}" for index in range(10001)],
+    )["task_id"]
+    task = start(processing, resource, task_id)
+    rows = remaining_inputs(client, task, limit=10001)
+    envelope = rows[:10000]
+    publish(client, task, envelope[:1])
+    assert remaining_inputs(
+        client, task, limit=10001, input_ids=[row[0] for row in envelope]
+    ) == envelope[1:]
+    publish(client, task, envelope[1:])
+    assert remaining_inputs(
+        client, task, limit=10001, input_ids=[row[0] for row in envelope]
+    ) == []
+    assert remaining_inputs(client, task, limit=10001) == rows[10000:]
+
+
 def test_force_rescan_includes_fresh_pages(database, store, objects):
     client, resource = database
     processing, _ = store

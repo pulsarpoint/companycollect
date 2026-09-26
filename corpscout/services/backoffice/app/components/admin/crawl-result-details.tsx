@@ -27,6 +27,7 @@ export function CrawlResultDetails({payload}: {payload: Record<string, unknown>}
   const sections = Object.entries(observations).filter(([key]) => !["schema_version", "html_sha256", "text"].includes(key));
   const summary = {website: crawl.site_url ?? crawl.input_url, mode: crawl.mode,
     started_at: crawl.started_at ?? payload.started_at, finished_at: crawl.finished_at ?? payload.finished_at,
+    ...(typeof crawl.full_crawl_all === "boolean" ? {full_crawl_all: crawl.full_crawl_all, classification_override: resultObject(crawl.site_gate).overridden ?? false} : {}),
     stop_reason: crawl.stop_reason, collected_pages: documents.length || pages.length,
     model_calls: usage.calls, input_tokens: usage.prompt_tokens, output_tokens: usage.completion_tokens};
   const classification = crawl.site_info ?? resultObject(crawl.site_gate).profile;

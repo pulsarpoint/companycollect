@@ -51,6 +51,7 @@ FIXED_ON_RESUME = (
     "instructions",
     "crawler_config",
     "force_refresh",
+    "full_crawl_all",
     "refresh_interval_days",
 )
 
@@ -76,6 +77,7 @@ class CrawlResultsConfig(dg.Config):
     bucket: int | None = Field(default=None, ge=0, le=255)
     refresh_interval_days: int = Field(default=30, ge=1, le=3650)
     force_refresh: bool = False
+    full_crawl_all: bool = Field(default=False, strict=True, description="Override the company-only gate for full crawls, including shops and content sites.")
     challenge_agent_model: str = Field(
         pattern=r"^(deepseek-flash|z-ai/glm-5[.]3-flash)$"
     )
@@ -162,7 +164,14 @@ def effective_payload(
         raise ValueError(
             "basic_info page selection is required only for the basic-info results asset"
         )
+    if config.full_crawl_all and crawl_type != "full":
+        raise ValueError("full_crawl_all is only supported for full crawls")
     payload = crawl_payload(row, crawl_type, batch_id)
+    if crawl_type == "full":
+        payload["full_crawl_all"] = config.full_crawl_all
+        # Explicit saved pages must not bypass the full-crawl eligibility gate.
+        if "pages" in payload:
+            payload["site_info"] = True
     for name in ("challenge_agent_model", "challenge_agent_max_runs", "api"):
         payload[name] = getattr(config, name)
     payload["config"] = {
@@ -308,7 +317,7 @@ def resolve_execution(
         changed = [
             name
             for name in FIXED_ON_RESUME
-            if settings[name] != execution["settings"].get(name)
+            if settings[name] != execution["settings"].get(name, False if name == "full_crawl_all" else None)
         ]
         if changed:
             raise ValueError(

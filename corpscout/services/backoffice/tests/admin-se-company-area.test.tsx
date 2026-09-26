@@ -1180,7 +1180,7 @@ describe("the Sources strip every tab opens with", () => {
 });
 
 describe("tab labels", () => {
-  it("is exactly Info, Address, People, Financial, ESEF, Domains, Technology, Contracts, Jobs, Listed, in that order", () => {
+  it("places Brave result history beside Domains in the company tabs", () => {
     expect(SE_COMPANY_TABS.map((tab) => tab.label)).toEqual([
       "Info",
       "Address",
@@ -1188,6 +1188,7 @@ describe("tab labels", () => {
       "Financial",
       "ESEF",
       "Domains",
+      "Brave",
       "Technology",
       "Contracts",
       "Jobs",

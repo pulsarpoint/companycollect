@@ -134,15 +134,16 @@ export function profileSourceLabel(value: string): string {
  */
 export const PROFILE_DATATYPES = [
   { key: "has_address", label: "Address" },
-  { key: "has_financial", label: "Financial" },
+  { key: "has_financial", label: "Financial", filterLabel: "Financial data" },
   { key: "has_people", label: "People" },
-  { key: "has_domains", label: "Domains" },
+  { key: "has_domains", label: "Domains", filterLabel: "Associated domains" },
   { key: "is_publicly_traded", label: "Publicly traded" },
-  { key: "has_government_contracts", label: "Gov. contracts" },
+  { key: "has_government_contracts", label: "Gov. contracts", filterLabel: "Government contracts" },
   { key: "has_job_ads", label: "Job ads" },
 ] as const;
 
 export type ProfileDatatypeKey = (typeof PROFILE_DATATYPES)[number]["key"];
+export type DataAvailability = Partial<Record<ProfileDatatypeKey, "has" | "missing">>;
 
 const PROFILE_DATATYPE_BY_KEY = new Map<string, (typeof PROFILE_DATATYPES)[number]>(
   PROFILE_DATATYPES.map((datatype) => [datatype.key, datatype]),
@@ -151,11 +152,12 @@ const PROFILE_DATATYPE_BY_KEY = new Map<string, (typeof PROFILE_DATATYPES)[numbe
 /**
  * The catalog's name for a datatype KEY ("has_job_ads" -> "Job ads"), falling
  * back to the key itself for one it does not name -- the same contract as
- * `profileSourceLabel`, and for the same reason: the sheet's checkboxes and
+ * `profileSourceLabel`, and for the same reason: the sheet's availability controls and
  * the applied-filter chips must spell a datatype one way, not two.
  */
 export function profileDatatypeLabel(key: string): string {
-  return PROFILE_DATATYPE_BY_KEY.get(key)?.label ?? key;
+  const datatype = PROFILE_DATATYPE_BY_KEY.get(key);
+  return datatype && "filterLabel" in datatype ? datatype.filterLabel : datatype?.label ?? key;
 }
 
 /**
@@ -184,12 +186,8 @@ export interface SeCompanyInfoTableFilters {
   description: string;
   /** "" | one of PROFILE_SOURCE_VALUES -- companies that HAVE that source. */
   source: string;
-  /**
-   * PROFILE_DATATYPES keys, deduped and in the catalog's order -- companies
-   * that have ALL of them (each travels as a repeated `?datatype=` param, each
-   * becomes one ANDed `= 1` predicate). Empty means no datatype filter.
-   */
-  datatypes: readonly ProfileDatatypeKey[];
+  /** One presence or absence condition per datatype; omitted keys mean Any. */
+  datatypes: DataAvailability;
 }
 
 export const EMPTY_INFO_FILTERS: SeCompanyInfoTableFilters = {
@@ -200,7 +198,7 @@ export const EMPTY_INFO_FILTERS: SeCompanyInfoTableFilters = {
   entity: "",
   description: "",
   source: "",
-  datatypes: [],
+  datatypes: {},
 };
 
 export interface SeCompanyInfoCorrectionsTableFilters {
@@ -255,13 +253,13 @@ export function infoFilterChips(
     chips.push(chip("entity", `Entity ${ENTITY_LABELS[filters.entity] ?? filters.entity}`));
   }
   if (filters.description) {
-    chips.push(chip("description", `Description ${filters.description}`));
+    chips.push(chip("description", `${filters.description === "yes" ? "Has" : "Missing"} Description`));
   }
-  // One chip per selected datatype (they AND together, and each is removable
-  // on its own), in the catalog order the parse already normalized to. The
-  // param token carries the key so removing one keeps the rest.
-  for (const key of filters.datatypes) {
-    chips.push(chip(datatypeChipParam(key), `Has ${profileDatatypeLabel(key)}`));
+  for (const {key} of PROFILE_DATATYPES) {
+    const presence = filters.datatypes[key];
+    if (presence) chips.push(chip(datatypeChipParam(key), key === "is_publicly_traded"
+      ? `Publicly traded: ${presence === "has" ? "Yes" : "No"}`
+      : `${presence === "has" ? "Has" : "Missing"} ${profileDatatypeLabel(key)}`));
   }
   if (filters.source) {
     // Named, not spelled: the chip says "Source Wikidata", not "wikidata".
@@ -322,8 +320,8 @@ export function infoListSearch(
       ["legalForm", filters.legalForm],
       ["entity", filters.entity],
       ["description", filters.description],
-      ...filters.datatypes.map(
-        (key): SearchEntry => ["datatype", key, datatypeChipParam(key)],
+      ...PROFILE_DATATYPES.filter(({key}) => filters.datatypes[key]).map(
+        ({key}): SearchEntry => ["datatype", filters.datatypes[key] === "missing" ? `${key}:missing` : key, datatypeChipParam(key)],
       ),
       ["source", filters.source],
     ],
@@ -430,26 +428,23 @@ const ENTITY_VALUES = ["legal", "sole"] as const;
  * the URL whitelist are one list rather than two that can drift. */
 export const YES_NO_VALUES = ["yes", "no"] as const;
 
-/**
- * The `?datatype=` params as APPLIED: repeated params (what the sheet's
- * checkboxes submit), with a comma-joined single param tolerated (what a
- * hand-edited URL tends to spell). Filtering the CATALOG by what arrived --
- * rather than the arrivals by the catalog -- does the whole contract in one
- * pass: unknown values silently drop (the module's convention: applied
- * filters only), duplicates collapse, and the result is always in the
- * catalog's order, so the chips and the SQL are deterministic no matter how
- * the URL ordered them.
- */
-function datatypeValues(url: URL): ProfileDatatypeKey[] {
-  const requested = new Set(
-    url.searchParams
-      .getAll("datatype")
-      .flatMap((value) => value.split(","))
-      .map((value) => value.trim()),
-  );
-  return PROFILE_DATATYPES.filter((datatype) => requested.has(datatype.key)).map(
-    (datatype) => datatype.key,
-  );
+/** Existing datatype=key links mean Has; datatype=key:missing means Missing.
+ * Normalize in catalog order. A repeated field uses its last valid choice. */
+function datatypeValues(url: URL): DataAvailability {
+  const choices = new Map<string, "has" | "missing" | "any">();
+  for (const token of url.searchParams.getAll("datatype").flatMap(value => value.split(","))) {
+    const [key, presence = "has", extra] = token.trim().split(":");
+    if (PROFILE_DATATYPE_BY_KEY.has(key) && extra === undefined
+        && (presence === "has" || presence === "missing" || presence === "any")) {
+      choices.set(key, presence);
+    }
+  }
+  const filters: DataAvailability = {};
+  for (const {key} of PROFILE_DATATYPES) {
+    const presence = choices.get(key);
+    if (presence === "has" || presence === "missing") filters[key] = presence;
+  }
+  return filters;
 }
 
 export function parseInfoFilters(url: URL): SeCompanyInfoTableFilters {

@@ -28,9 +28,9 @@ const profiles = [
 ];
 const task = "85fa92ee-12ad-4c01-ad1c-508f5c83b925";
 
-function render(type: QueueType = "brave", state = "idle", llmProfileId?: string) {
+function render(type: QueueType = "brave", state = "idle", llmProfileId?: string, frozen: object | null = null) {
   mocks.fetcher.mockReturnValueOnce({state, data: undefined, submit: mocks.submit})
-    .mockReturnValue({state: "idle", data: {profiles, error: null}, load: vi.fn()});
+    .mockReturnValue({state: "idle", data: {profiles, searches: [{searchId: task, name: "Official website", revision: 1, queryTemplate: "Find {company_name}"}], frozen, error: null}, load: vi.fn()});
   return renderToStaticMarkup(<MemoryRouter><QueueProcessSheet
     filters={parseQueueFilters(type, new URLSearchParams({task}))} total={4} asset="results"
     llmProfileId={llmProfileId} onClose={vi.fn()} /></MemoryRouter>);
@@ -40,14 +40,25 @@ beforeEach(() => { vi.resetAllMocks(); mocks.onSubmit = undefined; });
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("Brave queue LLM selection", () => {
+  it("shows the original question as read-only when resuming", () => {
+    const html = render("brave", "idle", "123", {search_name: "Original search", search_revision: 3, query_template: "Find jobs at {company_name}", query_type: "jobs"});
+    expect(html).toContain("Original search · version 3");
+    expect(html).toContain("Find jobs at Example AB");
+    expect(html).toMatch(/<input[^>]*name="brave_search_id"[^>]*value="saved"/);
+    expect(html).toMatch(/<input[^>]*name="brave_search_revision"[^>]*value="3"/);
+    expect(html).not.toMatch(/<select[^>]*name="brave_search_id"/);
+  });
   it("requires an initially empty saved-model choice before the other processing options", () => {
     const html = render();
     expect(html).toContain("Browser assistant LLM");
+    expect(html).toContain("Manage Brave searches");
+    expect(html).toMatch(/<select[^>]*name="brave_search_id"[^>]*required=""/);
+    expect(html).toContain("Official website · version 1");
     expect(html).toContain("browser and CAPTCHA assistant");
     expect(html).toContain("image and JSON response check");
     expect(html).toMatch(/<select[^>]*name="llm_profile_id"[^>]*required=""/);
     expect(html).toMatch(/<option[^>]*value=""[^>]*selected=""/);
-    expect(html.indexOf('name="llm_profile_id"')).toBeLessThan(html.indexOf('name="force"'));
+    expect(html.indexOf('name="llm_profile_id"')).toBeLessThan(html.indexOf('name="force_rescan"'));
     expect(html).toMatch(/<option[^>]*value="missing-key"[^>]*disabled=""/);
     for (const field of ["api", "model", "api_key", "api_key_encrypted"]) expect(html).not.toContain(`name="${field}"`);
   });
@@ -68,7 +79,7 @@ describe("Brave queue LLM selection", () => {
     const form = new OriginalFormData();
     for (const [key, value] of Object.entries(QUEUE_TEMPLATES.brave)) form.set(key, String(value));
     form.set("llm_profile_id", "123");
-    form.set("force", "true");
+    form.set("force_rescan", "true");
     form.set("execution_id", task);
     vi.stubGlobal("FormData", class extends OriginalFormData {
       constructor(source: FormData) { super(); source.forEach((value, key) => this.append(key, value)); }
@@ -78,7 +89,7 @@ describe("Brave queue LLM selection", () => {
     const [payload, options] = mocks.submit.mock.calls[0];
     expect(options).toEqual({method: "post", action: "/admin/queues/brave"});
     const config = JSON.parse(payload.config);
-    expect(config).toEqual({...QUEUE_TEMPLATES.brave, llm_profile_id: "123", force: true, execution_id: task});
+    expect(config).toEqual({...QUEUE_TEMPLATES.brave, llm_profile_id: "123", force_rescan: true, execution_id: task});
     for (const field of ["api", "model", "api_key", "api_key_encrypted", "llm"]) expect(config).not.toHaveProperty(field);
   });
 

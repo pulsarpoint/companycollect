@@ -37,7 +37,7 @@ describe("materializing a company selection", () => {
   it("applies all current list filters and exclusions as SQL parameters", async () => {
     const query = {
       companyId: A, name: "Alpha' OR 1=1 --", status: "none", legalForm: "49",
-      entity: "legal", description: "no", source: "esef", datatypes: PROFILE_DATATYPES.map((datatype) => datatype.key),
+      entity: "legal", description: "no", source: "esef", datatypes: Object.fromEntries(PROFILE_DATATYPES.map((datatype) => [datatype.key, "has" as const])),
     };
     await resolveSeCompanySelection({ ...all, query, excludedCompanyIds: [B, B] });
     const [sql, params] = clickhouse.stream.mock.calls[0];
@@ -94,6 +94,11 @@ describe("bulk selection validation", () => {
     { ...all, query: { ...EMPTY_INFO_FILTERS, name: "  Alpha  " } },
     { ...all, query: { ...EMPTY_INFO_FILTERS, datatypes: "has_people" } },
     { ...all, query: { ...EMPTY_INFO_FILTERS, datatypes: ["unknown"] } },
+    { ...all, query: { ...EMPTY_INFO_FILTERS, datatypes: {has_domains: "any"} } },
+    { ...all, query: { ...EMPTY_INFO_FILTERS, datatypes: {has_domains: false} } },
+    { ...all, query: { ...EMPTY_INFO_FILTERS, datatypes: {has_domains: ["has", "missing"]} } },
+    { ...all, query: { ...EMPTY_INFO_FILTERS, datatypes: {unknown: "missing"} } },
+    { ...all, query: { ...EMPTY_INFO_FILTERS, datatypes: null } },
   ])("rejects malformed selections without querying: %j", async (selection) => {
     await expect(resolveSeCompanySelection(selection)).rejects.toThrow();
     expect(clickhouse.stream).not.toHaveBeenCalled();
@@ -106,4 +111,14 @@ describe("bulk selection validation", () => {
       expect(() => parseSeCompanySelection({ ...all, query })).toThrow();
     }
   });
+});
+
+
+it("preserves missing-data conditions and exclusions for all matching companies", async () => {
+  const query = parseInfoFilters(new URL("http://localhost/admin/se/companies?datatype=has_financial&datatype=has_domains:missing"));
+  await resolveSeCompanySelection({...all, query, excludedCompanyIds: [A]});
+  const [sql, params] = clickhouse.stream.mock.calls[0];
+  expect(sql).toContain("i.has_financial = 1 AND i.has_domains = 0");
+  expect(params.excludedCompanyIds).toEqual([A]);
+  expect(sql).not.toMatch(/\b(LIMIT|OFFSET)\b/);
 });

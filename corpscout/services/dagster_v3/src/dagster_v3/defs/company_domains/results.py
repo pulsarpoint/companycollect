@@ -33,6 +33,9 @@ RESULT_COLUMNS = (
     "input_id",
     "attempt",
     "processor_version",
+    "search_id",
+    "search_revision",
+    "search_name",
 )
 INSERT_SETTINGS = {"async_insert": 1, "wait_for_async_insert": 1}
 
@@ -83,6 +86,9 @@ def result_record(
     query_type: str,
     source_run_id: str,
     processor_version: str,
+    search_id: str = "",
+    search_revision: int = 0,
+    search_name: str = "",
 ) -> dict:
     if result.status == "success" and not result.answer.strip():
         raise ValueError("cannot save an empty successful Brave response")
@@ -109,6 +115,9 @@ def result_record(
         "input_id": values["input_id"],
         "attempt": 1,
         "processor_version": processor_version,
+        "search_id": search_id,
+        "search_revision": search_revision,
+        "search_name": search_name,
     }
 
 

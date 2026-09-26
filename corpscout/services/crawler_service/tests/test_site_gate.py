@@ -252,6 +252,8 @@ class SiteClassificationTests(unittest.TestCase):
 
     def test_excluded_primary_types_cannot_continue_despite_company_owner(self):
         for site_type in (
+            "online_store",
+            "content_site",
             "news_media",
             "entertainment",
             "forum_community",

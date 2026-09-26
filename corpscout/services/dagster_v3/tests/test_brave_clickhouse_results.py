@@ -79,6 +79,9 @@ def record(
         "input_id": company,
         "attempt": 1,
         "processor_version": "brave-v2",
+        "search_id": "",
+        "search_revision": 0,
+        "search_name": "",
     }
 
 
@@ -386,3 +389,24 @@ def test_cutover_imports_archived_and_unpublished_results_without_losing_diagnos
             (unpublished,),
         )
         assert cursor.fetchone()["retained"] is True
+
+
+def test_retired_task_cannot_resume_saved_execution_but_can_publish(store, clickhouse, brave_api):
+    queue, dsn = store
+    client, resource = clickhouse
+    inputs(client, 1)
+    fixture = brave_api()
+    fixture.responder = lambda _: {}
+    task = str(uuid4())
+    with dg.DagsterInstance.ephemeral() as instance:
+        original = materialize(resource, dsn, fixture, instance, task_id=task,
+                               input_relation="corpscout.brave_test_input")
+        assert original.success
+        with queue.transaction() as cursor:
+            cursor.execute("UPDATE processing.tasks SET status='cancelled' WHERE task_id=%s", (task,))
+        client.execute("DROP TABLE corpscout.brave_test_input")
+        resumed = materialize(resource, dsn, fixture, instance, execution_id=original.run_id)
+        assert not resumed.success
+        assert "inputs have been retired" in resumed.failure_data_for_node("company_brave_search_results").error.to_string()
+        assert materialize(resource, dsn, fixture, instance, execution_id=original.run_id, mode="publish").success
+        assert len(fixture.queries) == 1

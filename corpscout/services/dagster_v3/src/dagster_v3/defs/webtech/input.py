@@ -184,8 +184,15 @@ def insert_input_batch(
     unique = {row[1]: row for row in rows}
     existing = client.execute(
         f"SELECT input_id,root_domain,website_origin,page_url FROM {INPUT_RELATION} "
-        "WHERE task_id=%(task)s AND input_id IN %(ids)s",
-        {"task": task_id, "ids": tuple(unique)},
+        "WHERE task_id=%(task)s AND input_id IN (SELECT input_id FROM batch_ids)",
+        {"task": task_id},
+        external_tables=[
+            {
+                "name": "batch_ids",
+                "structure": [("input_id", "String")],
+                "data": [(identity,) for identity in unique],
+            }
+        ],
     )
     for identity, root, origin, page in existing:
         if tuple(unique[identity][2:5]) != (root, origin, page):
@@ -302,7 +309,12 @@ def load_draft(
                 fingerprint=fingerprint,
             )
             try:
-                with clickhouse.get_connection() as client:
+                # Streaming reads keep their connection busy until fully consumed.
+                # Use a separate client for writes while source batches are arriving.
+                with (
+                    clickhouse.get_connection() as client,
+                    clickhouse.get_connection() as source_client,
+                ):
                     query_id = "webtech-submission:" + submission_id
                     client.execute(
                         "KILL QUERY WHERE query_id=%(id)s SYNC", {"id": query_id}
@@ -314,7 +326,7 @@ def load_draft(
                         settings={"lightweight_deletes_sync": 2},
                     )
                     source = (
-                        client.execute_iter(
+                        source_client.execute_iter(
                             *source_query(config), settings={"max_block_size": 5000}
                         )
                         if config.source_relation
@@ -327,9 +339,16 @@ def load_draft(
                         config.source_name or config.source_relation or "manual"
                     )
                     seen: set[str] = set()
+                    invalid_source_rows = 0
                     batch = []
                     for value, record_id in source:
-                        identity, domain, origin, page = normalized_target(value)
+                        try:
+                            identity, domain, origin, page = normalized_target(value)
+                        except ValueError:
+                            if config.source_relation is None:
+                                raise
+                            invalid_source_rows += 1
+                            continue
                         if identity in seen:
                             continue
                         seen.add(identity)
@@ -359,6 +378,13 @@ def load_draft(
                         insert_input_batch(
                             client, batch, task_id=task_id, query_id=query_id
                         )
+                    if invalid_source_rows:
+                        dg.get_dagster_logger().warning(
+                            "Skipped %d source rows with invalid website targets",
+                            invalid_source_rows,
+                        )
+                        if not seen:
+                            raise ValueError("Selected source contains no valid website targets")
                 total = ClickHouseInputQueue(
                     clickhouse, INPUT_RELATION, selection_task_id=task_id
                 ).inspect()["total"]
@@ -373,6 +399,7 @@ def load_draft(
                     "task_id": task_id,
                     "submission_id": submission_id,
                     "input_count": len(seen),
+                    "invalid_source_rows": invalid_source_rows,
                     "total": total,
                 }
             except BaseException:

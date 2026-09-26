@@ -171,6 +171,7 @@ def clickhouse(store, tmp_path, archive_s3):
             "000411_corpscout_company_processing_input.up.sql",
             "000412_corpscout_company_brave_search_input.up.sql",
             "000428_corpscout_brave_search_outcomes.up.sql",
+            "000455_corpscout_brave_search_versions.up.sql",
         ):
             for statement in MIGRATION.with_name(migration).read_text().split(";"):
                 if statement.strip():
@@ -233,57 +234,30 @@ def test_import_survives_partial_insert_and_lost_acknowledgment(
     assert publish_results(queue, client, task, batch_size=100) == 0
 
 
-def test_materialization_pages_renders_processes_and_resumes_without_searching(
-    store, clickhouse, monkeypatch, brave_api
-):
-    queue, dsn = store
+def test_retired_brave_inputs_cannot_start_new_searches(store, clickhouse, brave_api):
+    _, dsn = store
     client, resource = clickhouse
     fixture = brave_api()
-    fixture.release_slow.set()
     client.execute(
         "INSERT INTO corpscout.company_brave_search_input VALUES",
-        [(str(i), str(i), f"Company {i} AB", "SE") for i in range(8)],
+        [("1", "1", "Company AB", "SE")],
     )
-    task = str(uuid4())
-    config = {
-        "task_id": task,
-        "input_relation": "corpscout.company_brave_search_input",
-        "input_batch_size": 4,
-        "query_type": "website",
-        "query_template": "Find {company_name}",
-    }
-    resources = {
-        "clickhouse": resource,
-        "processing_clickhouse": resource,
-        "processing": ProcessingResource(postgres_url=dsn),
-        "company_brave_browser": brave.BraveBrowserResource(**fixture.config),
-    }
-    result = dg.materialize(
-        [company_brave_search_results],
-        resources=resources,
-        run_config={"ops": {"company_brave_search_results": {"config": config}}},
-    )
-    assert result.success
-    assert client.execute("SELECT count() FROM corpscout.company_brave_search_results FINAL") == [(8,)]
-    with queue.transaction() as cursor:
-        cursor.execute("SELECT count(*) FROM processing.items")
-        assert cursor.fetchone()["count"] == 0
-    assert client.execute(
-        "SELECT count() FROM corpscout.se_company_brave_search_results_latest_success FINAL"
-    ) == [(8,)]
-
-    def unexpected_launch(**kwargs):
-        pytest.fail("resume repeated a saved Brave search")
-
-    monkeypatch.setattr(brave, "Session", unexpected_launch)
-    result = dg.materialize(
-        [company_brave_search_results],
-        resources=resources,
-        run_config={"ops": {"company_brave_search_results": {"config": {"task_id": task}}}},
-    )
-    assert result.success
-    assert queue.progress(task)["total"] == 8
-
+    with pytest.raises(ValueError, match="inputs have been retired"):
+        dg.materialize(
+            [company_brave_search_results],
+            resources={
+                "clickhouse": resource,
+                "processing_clickhouse": resource,
+                "processing": ProcessingResource(postgres_url=dsn),
+                "company_brave_browser": brave.BraveBrowserResource(**fixture.config),
+            },
+            run_config={"ops": {"company_brave_search_results": {"config": {
+                "task_id": str(uuid4()),
+                "input_relation": "corpscout.company_brave_search_input",
+            }}}},
+        )
+    assert fixture.queries == []
+    assert client.execute("SELECT count() FROM corpscout.company_brave_search_results") == [(0,)]
 
 
 

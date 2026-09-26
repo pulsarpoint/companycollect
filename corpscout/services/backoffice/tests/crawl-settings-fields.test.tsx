@@ -87,3 +87,11 @@ describe("crawl LLM profile resource", () => {
     expect(await loader()).toEqual({profiles: [], error: "Could not load saved LLMs. Reload the list to try again."});
   });
 });
+
+it("shows a default-off full crawl all control only for full crawls", () => {
+  const full = renderToStaticMarkup(<MemoryRouter><CrawlSettingsFields type="full" idPrefix="full-test" /></MemoryRouter>);
+  expect(full).toContain('name="full_crawl_all"');
+  expect(full).toMatch(/<option[^>]*value="false"[^>]*selected=""[^>]*>No · company websites only/);
+  expect(full).toContain("include shops and content sites");
+  expect(render()).not.toContain('name="full_crawl_all"');
+});

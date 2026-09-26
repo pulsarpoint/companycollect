@@ -82,7 +82,7 @@ export function SeCompanyHeader({
       )}
 
       <Tabs value={tab}>
-        <TabsList variant="line">
+        <TabsList variant="line" className="max-w-full overflow-x-auto">
           {SE_COMPANY_TABS.map((entry) => (
             <TabsTrigger
               key={entry.value}
