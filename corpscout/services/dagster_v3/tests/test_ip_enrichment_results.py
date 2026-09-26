@@ -1,5 +1,7 @@
 """Task-scoped enrichment with real storage and controlled external lookup responses."""
 
+import json
+import threading
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -436,8 +438,9 @@ def test_errors_are_published_outcomes_and_backoff_holds_until_forced(
 
     def unavailable(self, ip):
         attempts.append(ip)
+        # A retryable error that is not a rate limit (a rate-limited address is deferred).
         raise RdapClientError(
-            "rate limit", code="rate_limited", retryable=True, status_code=429
+            "unavailable", code="remote_server", retryable=True, status_code=503
         )
 
     monkeypatch.setattr(RdapClient, "lookup_ip", unavailable)
@@ -449,7 +452,7 @@ def test_errors_are_published_outcomes_and_backoff_holds_until_forced(
     assert env.client.execute("""SELECT city_lookup_status, asn_lookup_status, rdap_lookup_status,
         country_iso_code, rdap_error_code, rdap_retry_after > rdap_checked_at
         FROM corpscout.ip_enrichment_current""") == [
-        ("found", "found", "retryable_error", "US", "rate_limited", 1)
+        ("found", "found", "retryable_error", "US", "remote_server", 1)
     ]
     record = task_row(env, task)
     assert (
@@ -924,13 +927,25 @@ def test_failed_bootstrap_pauses_the_run_instead_of_storing_errors(
     ) == [("found", 2)]
 
 
-def resolver(env, *, started_at=None, cache_days=30, clock=None, sleep=None, **config):
+def resolver(
+    env,
+    *,
+    started_at=None,
+    cache_days=30,
+    clock=None,
+    sleep=None,
+    proxies=None,
+    concurrent=True,
+    **config,
+):
     started = started_at or datetime.now(UTC)
     settings = IpEnrichmentResultsConfig(
-        task_id=str(uuid4()),
-        request_delay_seconds=0,
-        rdap_cache_days=cache_days,
-        **config,
+        **{
+            "task_id": str(uuid4()),
+            "request_delay_seconds": 0,
+            "rdap_cache_days": cache_days,
+            **config,
+        }
     )
     return RdapEnricher(
         env.client,
@@ -943,6 +958,8 @@ def resolver(env, *, started_at=None, cache_days=30, clock=None, sleep=None, **c
         cache_cutoff=started - timedelta(days=cache_days),
         clock=clock,
         sleep=sleep,
+        proxies=proxies,
+        concurrent=concurrent,
     )
 
 
@@ -1075,15 +1092,15 @@ def test_negative_markers_are_honoured_by_the_frozen_start(environment, monkeypa
     env = environment
     started = datetime.now(UTC)
 
-    def limited(self, ip):
+    def unavailable(self, ip):
         env.calls.append(ip)
         raise RdapClientError(
-            "rate limit", code="rate_limited", retryable=True, status_code=429
+            "unavailable", code="remote_server", retryable=True, status_code=503
         )
 
-    monkeypatch.setattr(RdapClient, "lookup_ip", limited)
+    monkeypatch.setattr(RdapClient, "lookup_ip", unavailable)
     first = resolver(
-        env, started_at=started, rate_limit_retry_seconds=3600
+        env, started_at=started, transient_retry_seconds=3600
     ).resolve_page(page(env, "8.8.8.8"))
     assert first["8.8.8.8"]["rdap_lookup_status"] == "retryable_error"
     assert env.calls == ["8.8.8.8"]
@@ -1091,7 +1108,7 @@ def test_negative_markers_are_honoured_by_the_frozen_start(environment, monkeypa
     again = resolver(env, started_at=started + timedelta(minutes=5)).resolve_page(
         page(env, "8.8.8.8")
     )
-    assert again["8.8.8.8"]["rdap_error_code"] == "rate_limited" and env.calls == [
+    assert again["8.8.8.8"]["rdap_error_code"] == "remote_server" and env.calls == [
         "8.8.8.8"
     ]
     # An execution that starts after retry_after asks again; force_rdap always asks.
@@ -1702,11 +1719,12 @@ def test_registry_budget_defers_misses_and_frees_after_the_window(environment):
     resolved = enricher.resolve_page(
         page(env, "8.8.8.8", "8.8.4.4", "1.1.1.1", "5.1.1.1")
     )
-    assert env.calls == [
+    # The third ARIN miss is deferred, RIPE is not budgeted; ARIN's lane keeps page order
+    # (the lanes themselves run concurrently).
+    assert [ip for ip in env.calls if not ip.startswith("5.")] == [
         "8.8.8.8",
         "8.8.4.4",
-        "5.1.1.1",
-    ]  # the third ARIN miss is deferred, RIPE is not budgeted
+    ] and sorted(env.calls) == ["5.1.1.1", "8.8.4.4", "8.8.8.8"]
     assert "1.1.1.1" not in resolved and not enricher.budget_reached
     assert enricher.deferred == {"arin": 1} and enricher.deferrals_by_registry == {
         "arin": 1
@@ -1810,9 +1828,10 @@ def ripe_rdap_body(ip, persons=2):
 class HttpAnswer:
     """What whoisit's http_request returns: status, headers, JSON body."""
 
-    def __init__(self, status, *, location=None, body=None):
+    def __init__(self, status, *, location=None, body=None, headers=None):
         self.status_code = status
         self.headers = {"Location": location} if location else {}
+        self.headers.update(headers or {})
         self._body = body
         self.text = ""
 
@@ -1979,25 +1998,28 @@ def test_rate_limited_registry_is_paused_and_its_misses_deferred(
     monkeypatch.setattr(RdapClient, "lookup_ip", limited)
     enricher = resolver(env, clock=lambda: clock["now"])
     resolved = enricher.resolve_page(page(env, "8.8.8.8", "1.1.1.1", "5.1.1.1"))
-    assert resolved["8.8.8.8"]["rdap_error_code"] == "rate_limited"
-    assert "1.1.1.1" not in resolved  # deferred: no result, no marker
-    assert resolved["5.1.1.1"]["rdap_lookup_status"] == "found"  # RIPE is not paused
-    assert env.calls == ["8.8.8.8", "5.1.1.1"]
-    assert enricher.deferred == {"arin": 1} and enricher.pauses_by_registry == {
+    # The rate-limited address is deferred like the rest of ARIN's lane: no result, no
+    # marker; RIPE's lane is not paused.
+    assert "8.8.8.8" not in resolved and "1.1.1.1" not in resolved
+    assert resolved["5.1.1.1"]["rdap_lookup_status"] == "found"
+    assert sorted(env.calls) == ["5.1.1.1", "8.8.8.8"]
+    assert enricher.deferred == {"arin": 2} and enricher.pauses_by_registry == {
         "arin": 1
     }
+    assert enricher.pauses_by_endpoint == {"arin:direct": 1}
     assert env.client.execute(
         "SELECT ip FROM corpscout.rdap_ip_lookup_results_current ORDER BY ip"
-    ) == [("5.1.1.1",), ("8.8.8.8",)]
-    assert enricher.seconds_until_budget_frees() == pytest.approx(3600)
-    clock["now"] += 3600
+    ) == [("5.1.1.1",)]
+    assert enricher.seconds_until_budget_frees() == pytest.approx(300)
+    clock["now"] += 300
     monkeypatch.setattr(RdapClient, "lookup_ip", lambda self, ip: response(ip))
     enricher.reset_pass()
-    assert (
-        enricher.resolve_page(page(env, "1.1.1.1"))["1.1.1.1"]["rdap_lookup_status"]
-        == "found"
-    )
-    # RIPE REST 403 (a source-address block) pauses RIPE for at least 15 minutes.
+    again = enricher.resolve_page(page(env, "8.8.8.8", "1.1.1.1"))
+    assert {ip: r["rdap_lookup_status"] for ip, r in again.items()} == {
+        "8.8.8.8": "found",
+        "1.1.1.1": "found",
+    }
+    # RIPE REST 403 (a source-address block) pauses RIPE's endpoint the same way.
     monkeypatch.setattr(
         RipeRestClient,
         "lookup_ip",
@@ -2008,9 +2030,9 @@ def test_rate_limited_registry_is_paused_and_its_misses_deferred(
         ),
     )
     blocked = enricher.resolve_page(page(env, "5.2.2.2", "5.3.3.3"))
-    assert blocked["5.2.2.2"]["rdap_lookup_status"] == "retryable_error"
-    assert "5.3.3.3" not in blocked and enricher.deferred == {"ripe": 1}
-    assert enricher.seconds_until_budget_frees() == pytest.approx(900)
+    assert blocked == {} and enricher.deferred == {"ripe": 2}
+    assert enricher.pauses_by_endpoint == {"arin:direct": 1, "ripe:direct": 1}
+    assert enricher.seconds_until_budget_frees() == pytest.approx(300)
 
 
 def test_bootstrap_failure_pauses_every_miss_with_back_off(environment, monkeypatch):
@@ -2070,7 +2092,7 @@ def test_budget_keys_are_registry_names_and_the_cache_keeps_a_page(environment):
     # Unbudgeted registries keep no send times.
     enricher = resolver(environment, registry_daily_budgets={"arin": 3})
     enricher.seed_registry_usage([("ripe", 5.0), ("arin", 5.0)])
-    assert set(enricher._sent) == {"arin"}
+    assert set(enricher._sent) == {"arin:direct"}
 
 
 def arin_rdap_body(ip, *, up=None):
@@ -2368,3 +2390,564 @@ def test_maxmind_aliases_6to4_and_ipv4_mapped_to_the_ipv4_record():
         assert geo("2002:59a0:1470::1") == linkoping
         assert geo("::ffff:89.160.20.112") == linkoping
         assert geo(TEREDO)[:2] == ("private", "not_global")
+
+
+# --- Task 11: per-registry request lanes, endpoint pauses, opt-in proxies ------------------
+
+PROXY_A = "http://user:s3cret@proxy-a.example:3128"
+PROXY_B = "https://user:s3cret@proxy-b.example:3129"
+
+
+def proxy_of(client):
+    """The proxy URL an RdapClient's session goes through (None when direct)."""
+    return client._session.proxies.get("https")
+
+
+def test_lanes_fetch_registries_concurrently_and_only_the_caller_uses_clickhouse(
+    environment, monkeypatch
+):
+    env = environment
+    # Each registry's stub waits until all three are in flight: sequential lanes would
+    # break the barrier (timeout), concurrent lanes pass it together.
+    barrier = threading.Barrier(3, timeout=20)
+    threads = {}
+
+    def in_flight(ip):
+        threads[ip] = threading.current_thread().name
+        barrier.wait()
+        env.calls.append(ip)
+
+    monkeypatch.setattr(
+        RdapClient, "lookup_ip", lambda self, ip: (in_flight(ip), response(ip))[1]
+    )
+    monkeypatch.setattr(
+        RipeRestClient,
+        "lookup_ip",
+        lambda self, ip: (
+            in_flight(ip),
+            RdapLookupResponse(
+                rir="ripe", raw_response=ripe_rest.rdap_shape(rest_object(ip))
+            ),
+        )[1],
+    )
+    monkeypatch.setattr(
+        ApnicWhoisClient, "query", lambda self, ip: (in_flight(ip), apnic_answer(ip))[1]
+    )
+    callers = []
+    execute = Client.execute
+    monkeypatch.setattr(
+        Client,
+        "execute",
+        lambda self, query, *a, **k: (
+            callers.append(threading.current_thread() is threading.main_thread()),
+            execute(self, query, *a, **k),
+        )[1],
+    )
+    enricher = resolver(env)
+    resolved = enricher.resolve_page(page(env, "8.8.8.8", "5.1.1.1", "202.1.1.1"))
+    assert {ip: r["rdap_rir"] for ip, r in resolved.items()} == {
+        "8.8.8.8": "arin",
+        "5.1.1.1": "ripe",
+        "202.1.1.1": "apnic",
+    }
+    assert sorted(env.calls) == ["202.1.1.1", "5.1.1.1", "8.8.8.8"]
+    assert all(name.startswith("rdap-lane") for name in threads.values())
+    assert callers and all(callers)  # ClickHouse only on the calling thread
+    assert enricher.requests_by_endpoint == {
+        "arin:direct": 1,
+        "ripe:direct": 1,
+        "apnic:direct": 1,
+    }
+
+
+def test_a_paused_arin_endpoint_is_deferred_and_resolved_in_a_later_pass(
+    environment, monkeypatch
+):
+    env = environment
+    clock = {"now": 0.0}
+    slept = []
+
+    def fake_sleep(seconds):
+        slept.append(seconds)
+        clock["now"] += seconds
+
+    monkeypatch.setattr(enrichment, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(enrichment, "sleep", fake_sleep)
+    limits = iter([True])
+
+    def arin(self, ip):
+        env.calls.append(ip)
+        if next(limits, False):
+            raise RdapClientError(
+                "rate limit", code="rate_limited", retryable=True, status_code=429
+            )
+        return response(ip)
+
+    monkeypatch.setattr(RdapClient, "lookup_ip", arin)
+    task = select(env, ["8.8.8.8", "1.1.1.1", "5.1.1.1", "202.1.1.1"])
+    result = run(env, task)
+    assert result.success
+    metadata = outcome(result)
+    assert metadata["completion_status"] == "completed" and metadata["written"] == 4
+    # Pass 1: RIPE and APNIC resolved, ARIN paused and both its misses deferred; pass 2
+    # found only ARIN (still paused): the run waited 300 s, then pass 3 resolved it.
+    assert metadata["pauses_by_endpoint"] == {"arin:direct": 1}
+    assert metadata["rdap_deferrals_by_registry"] == {"arin": 4}
+    assert (metadata["budget_waits"], sum(slept)) == (1, pytest.approx(300))
+    assert metadata["requests_by_endpoint"] == {
+        "arin:direct": 3,
+        "ripe:direct": 1,
+        "apnic:direct": 1,
+    }
+    assert env.client.execute(
+        "SELECT rdap_lookup_status, count() FROM corpscout.ip_enrichment_results FINAL GROUP BY 1"
+    ) == [("found", 4)]
+    assert env.client.execute(
+        "SELECT count() FROM corpscout.rdap_ip_lookup_results FINAL WHERE lookup_status != 'found'"
+    ) == [(0,)]
+
+
+def test_rate_limit_back_off_doubles_honours_retry_after_and_resets(
+    environment, monkeypatch
+):
+    env = environment
+    clock = {"now": 100.0}
+    answers = iter([None, None, None, 42.0, "ok", None])
+
+    def arin(self, ip):
+        env.calls.append(ip)
+        answer = next(answers)
+        if answer == "ok":
+            return response(ip)
+        raise RdapClientError(
+            "rate limit",
+            code="rate_limited",
+            retryable=True,
+            status_code=429,
+            retry_after=answer,
+        )
+
+    monkeypatch.setattr(RdapClient, "lookup_ip", arin)
+    enricher = resolver(env, clock=lambda: clock["now"], rate_limit_retry_seconds=1000)
+    pauses = []
+    for ip in ("8.8.8.8", "8.8.8.8", "8.8.8.8", "8.8.8.8", "8.8.8.8", "1.1.1.1"):
+        enricher.reset_pass()
+        resolved = enricher.resolve_page(page(env, ip))
+        wait = enricher.seconds_until_budget_frees()
+        pauses.append(wait)
+        clock["now"] += wait
+        if ip in resolved:
+            assert resolved[ip]["rdap_lookup_status"] == "found"
+    # 300, 600, capped at 1000, then Retry-After 42; a success (0) resets the back-off.
+    assert pauses == [300, 600, 1000, 42, 0, 300]
+    assert enricher.pauses_by_endpoint == {"arin:direct": 5}
+    assert env.client.execute(
+        "SELECT ip, lookup_status FROM corpscout.rdap_ip_lookup_results FINAL"
+    ) == [("8.8.8.8", "found")]
+
+
+def test_retry_after_is_read_from_rdap_and_rest_answers(monkeypatch):
+    arin = "https://rdap.arin.net/registry/ip/8.8.8.8"
+    fake_rdap_http(monkeypatch, {arin: HttpAnswer(429, headers={"Retry-After": "120"})})
+    client = RdapClient(user_agent="test", reroute_hosts={"rdap.db.ripe.net"})
+    with pytest.raises(RdapClientError) as raised:
+        client.lookup_ip("8.8.8.8")
+    assert (raised.value.code, raised.value.retry_after) == ("rate_limited", 120.0)
+    now = datetime(2026, 9, 27, 12, 0, tzinfo=UTC)
+    assert (
+        rdap_client.retry_after_seconds("Sun, 27 Sep 2026 12:01:30 GMT", now=now) == 90
+    )
+    assert rdap_client.retry_after_seconds("soon") is None
+    assert rdap_client.retry_after_seconds(None) is None
+
+    class Response:
+        status_code = 429
+        headers = {"Retry-After": "7"}
+
+    class Session:
+        headers = {}
+
+        def get(self, url, **kwargs):
+            return Response()
+
+    with pytest.raises(RdapClientError) as rest:
+        RipeRestClient(user_agent="test", session=Session()).lookup_ip("5.1.1.1")
+    assert (rest.value.code, rest.value.retry_after) == ("rate_limited", 7.0)
+
+
+def test_lacnic_403_is_a_rate_limit_and_defaults_protect_lacnic_and_afrinic(
+    environment, monkeypatch
+):
+    env = environment
+    config = IpEnrichmentResultsConfig(task_id=str(uuid4()))
+    assert config.registry_request_delays == {"lacnic": 6.5}
+    assert config.registry_daily_budgets == {"afrinic": 4500}
+    assert config.rate_limit_pause_seconds == 300 and config.use_proxies == []
+    with pytest.raises(ValueError, match="unknown registry 'ripencc'"):
+        IpEnrichmentResultsConfig(
+            task_id=str(uuid4()), registry_request_delays={"ripencc": 1}
+        )
+    with pytest.raises(ValueError, match="0 <= seconds <= 60"):
+        IpEnrichmentResultsConfig(
+            task_id=str(uuid4()), registry_request_delays={"arin": 61}
+        )
+    monkeypatch.setattr(RdapClient, "registry_for", lambda self, ip: "lacnic")
+
+    def denied(self, ip):
+        env.calls.append(ip)
+        raise RdapClientError(
+            "forbidden", code="access_denied", retryable=False, status_code=403
+        )
+
+    monkeypatch.setattr(RdapClient, "lookup_ip", denied)
+    clock = {"now": 0.0}
+    enricher = resolver(env, clock=lambda: clock["now"], registry_request_delays={})
+    assert enricher.resolve_page(page(env, "200.1.1.1")) == {}
+    assert enricher.deferred == {"lacnic": 1}
+    assert enricher.pauses_by_endpoint == {"lacnic:direct": 1}
+    assert env.client.execute(
+        "SELECT count() FROM corpscout.rdap_ip_lookup_results"
+    ) == [(0,)]
+    # Delays apply per endpoint of a registry: LACNIC's default, else the global one.
+    paced = resolver(env, request_delay_seconds=1.5)
+    assert (
+        paced._direct("lacnic").delay,
+        paced._direct("arin").delay,
+    ) == (6.5, 1.5)
+
+
+def test_use_proxies_is_refused_outside_the_allowed_registries():
+    task = str(uuid4())
+    assert enrichment.PROXY_ALLOWED_REGISTRIES == {"arin", "afrinic"}
+    for registry in ("ripe", "apnic", "lacnic", "jpnic"):
+        with pytest.raises(ValueError, match="may not use proxies"):
+            IpEnrichmentResultsConfig(task_id=task, use_proxies=[registry])
+    assert IpEnrichmentResultsConfig(
+        task_id=task, use_proxies=[" ARIN ", "arin", "afrinic"]
+    ).use_proxies == ["arin", "afrinic"]
+    proxies = json.dumps({"ARIN": [PROXY_A, PROXY_B], "ripe": [PROXY_A]})
+    assert enrichment.rdap_proxies(["arin"], proxies) == {"arin": (PROXY_A, PROXY_B)}
+    assert enrichment.rdap_proxies([], None) == {}
+    for raw, message in [
+        (None, "RDAP_PROXIES is not set"),
+        ("{not json " + PROXY_A, "not valid JSON"),
+        (json.dumps({"afrinic": [PROXY_A]}), "no proxy list"),
+        (
+            json.dumps({"arin": ["socks5://user:s3cret@proxy-a.example:1080"]}),
+            "http://",
+        ),
+        (
+            json.dumps({"arin": ["http://user:s3cret@proxy-a.example:99999"]}),
+            "valid URL",
+        ),
+        (json.dumps({"arin": [PROXY_A, PROXY_A]}), "repeats"),
+    ]:
+        with pytest.raises(ValueError, match=message) as raised:
+            enrichment.rdap_proxies(["arin"], raw)
+        assert "s3cret" not in str(raised.value) and "proxy-a" not in str(raised.value)
+
+
+def test_arin_proxies_add_endpoints_that_share_the_lane_and_are_paced_each(
+    environment, monkeypatch
+):
+    env = environment
+    lock = threading.Lock()
+    clock = {"now": 0.0}
+
+    def now():
+        with lock:
+            return clock["now"]
+
+    def fake_sleep(seconds):
+        with lock:
+            clock["now"] += seconds
+
+    enricher = resolver(
+        env,
+        clock=now,
+        sleep=fake_sleep,
+        use_proxies=["arin"],
+        proxies={"arin": [PROXY_A, PROXY_B]},
+        request_delay_seconds=1.0,
+    )
+    endpoints = {e.rdap: e for e in enricher._endpoints_of("arin")}
+    assert [e.name for e in endpoints.values()] == [
+        "arin:direct",
+        "arin:proxy-1",
+        "arin:proxy-2",
+    ]
+    assert [proxy_of(client) for client in endpoints] == [None, PROXY_A, PROXY_B]
+    # The first three requests wait for each other: they must come from three endpoints.
+    barrier = threading.Barrier(3, timeout=20)
+    sends: dict[str, list[float]] = {}
+    started = []
+
+    def arin(self, ip):
+        endpoint = endpoints[self]
+        with lock:
+            started.append(ip)
+            first = len(started) <= 3
+        if first:
+            barrier.wait()
+        with lock:
+            sends.setdefault(endpoint.name, []).append(endpoint.last_send)
+        env.calls.append(ip)
+        return response(ip)
+
+    monkeypatch.setattr(RdapClient, "lookup_ip", arin)
+    ips = [f"8.8.{n}.1" for n in range(1, 10)]
+    resolved = enricher.resolve_page(page(env, *ips))
+    assert set(resolved) == set(ips) and sorted(env.calls) == sorted(ips)
+    assert (
+        set(enricher.requests_by_endpoint)
+        == set(sends)
+        == {
+            "arin:direct",
+            "arin:proxy-1",
+            "arin:proxy-2",
+        }
+    )
+    assert sum(enricher.requests_by_endpoint.values()) == 9
+    # Each endpoint keeps its own pace: consecutive sends at least 1 s apart.
+    for times in sends.values():
+        assert all(b - a >= 1.0 for a, b in zip(times, times[1:], strict=False))
+
+
+def test_redirects_out_of_a_proxy_lane_go_direct(environment, monkeypatch):
+    env = environment
+    arin = "https://rdap.arin.net/registry/ip/"
+    ripe = "https://rdap.db.ripe.net/ip/"
+    lacnic = "https://rdap.lacnic.net/rdap/ip/"
+    monkeypatch.setattr(RdapClient, "lookup_ip", REAL_RDAP_LOOKUP_IP)
+    lacnic_body = arin_rdap_body("45.30.1.1")
+    lacnic_body["links"] = [{"rel": "self", "href": lacnic + "45.30.1.0"}]
+    fake_rdap_http(
+        monkeypatch,
+        {
+            arin + "45.10.1.1": HttpAnswer(301, location=ripe + "45.10.1.1"),
+            arin + "45.30.1.1": HttpAnswer(301, location=lacnic + "45.30.1.1"),
+            lacnic + "45.30.1.1": HttpAnswer(200, body=lacnic_body),
+        },
+    )
+    fetch = rdap_client.http_request
+    via = []
+    monkeypatch.setattr(
+        rdap_client,
+        "http_request",
+        lambda session, url, **kw: (
+            via.append((url, session.proxies.get("https"))),
+            fetch(session, url, **kw),
+        )[1],
+    )
+    enricher = resolver(env, use_proxies=["arin"], proxies={"arin": [PROXY_A]})
+    enricher._direct("arin").paused_until = float("inf")  # the proxy lane takes both
+    resolved = enricher.resolve_page(page(env, "45.10.1.1", "45.30.1.1"))
+    assert (resolved["45.10.1.1"]["rdap_rir"], resolved["45.30.1.1"]["rdap_rir"]) == (
+        "ripe",
+        "lacnic",
+    )
+    # ARIN through the proxy; LACNIC's answer fetched direct, RIPE's never (REST, direct).
+    assert sorted(via) == [
+        (arin + "45.10.1.1", PROXY_A),
+        (arin + "45.30.1.1", PROXY_A),
+        (lacnic + "45.30.1.1", None),
+    ]
+    assert env.calls == ["45.10.1.1"]
+    assert enricher.reroutes_by_registry == {"ripe": 1, "lacnic": 1}
+    assert enricher.requests_by_endpoint == {
+        "arin:proxy-1": 2,
+        "ripe:direct": 1,
+        "lacnic:direct": 1,
+    }
+
+
+def test_afrinic_budget_applies_per_endpoint(environment, monkeypatch):
+    env = environment
+    monkeypatch.setattr(
+        RdapClient,
+        "registry_for",
+        lambda self, ip: "afrinic" if ip.startswith("41.") else "arin",
+    )
+    clock = {"now": 1000.0}
+    enricher = resolver(
+        env,
+        clock=lambda: clock["now"],
+        use_proxies=["afrinic"],
+        proxies={"afrinic": [PROXY_A]},
+        registry_daily_budgets={"afrinic": 1},
+    )
+    resolved = enricher.resolve_page(page(env, "41.1.1.1", "41.2.2.2", "41.3.3.3"))
+    assert len(resolved) == 2 and enricher.deferred == {"afrinic": 1}
+    assert enricher.requests_by_endpoint == {"afrinic:direct": 1, "afrinic:proxy-1": 1}
+    assert enricher.seconds_until_budget_frees() == pytest.approx(86_400)
+    # Usage seeded from the network table names only the registry: every endpoint is
+    # charged with it, so no source address can exceed its own budget after a resume.
+    fresh = resolver(
+        env,
+        clock=lambda: clock["now"],
+        use_proxies=["afrinic"],
+        proxies={"afrinic": [PROXY_A]},
+        registry_daily_budgets={"afrinic": 1},
+    )
+    fresh.seed_registry_usage([("afrinic", 10.0)])
+    assert fresh.resolve_page(page(env, "41.4.4.4")) == {}
+    assert fresh.deferred == {"afrinic": 1} and fresh.requests == 0
+
+
+def test_the_same_network_is_fetched_once_per_page_across_lanes(
+    environment, monkeypatch
+):
+    env = environment
+    arin = "https://rdap.arin.net/registry/ip/"
+    registry_for = RdapClient.registry_for
+    monkeypatch.setattr(
+        RdapClient,
+        "registry_for",
+        lambda self, ip: "ripe" if ip == "45.10.1.2" else registry_for(self, ip),
+    )
+    monkeypatch.setattr(RdapClient, "lookup_ip", REAL_RDAP_LOOKUP_IP)
+    ripe_done = threading.Event()
+    fake_rdap_http(
+        monkeypatch,
+        {
+            arin + "45.10.1.1": HttpAnswer(
+                301, location="https://rdap.db.ripe.net/ip/45.10.1.1"
+            ),
+            arin + "8.8.8.8": HttpAnswer(200, body=arin_rdap_body("8.8.8.8")),
+        },
+    )
+    fetch = rdap_client.http_request
+
+    def after_ripe(session, url, **kw):
+        # ARIN's redirect arrives only once RIPE's lane has fetched the network.
+        if url.endswith("45.10.1.1"):
+            assert ripe_done.wait(20)
+        return fetch(session, url, **kw)
+
+    monkeypatch.setattr(rdap_client, "http_request", after_ripe)
+    fetch_miss = RdapEnricher._fetch
+
+    def signalling(self, page_state, miss, endpoint):
+        outcome = fetch_miss(self, page_state, miss, endpoint)
+        if miss.ip == "45.10.1.2":
+            ripe_done.set()
+        return outcome
+
+    monkeypatch.setattr(RdapEnricher, "_fetch", signalling)
+    enricher = resolver(env)
+    resolved = enricher.resolve_page(
+        page(env, "45.10.1.1", "45.10.1.2", "8.8.8.8", "8.8.8.9")
+    )
+    assert {ip: r["rdap_network_key"] for ip, r in resolved.items()} == {
+        "45.10.1.1": "ripe:45.10.1.0 - 45.10.1.255",
+        "45.10.1.2": "ripe:45.10.1.0 - 45.10.1.255",
+        "8.8.8.8": "arin:TEST-8.8.8.8",
+        "8.8.8.9": "arin:TEST-8.8.8.8",
+    }
+    # One REST request for the RIPE /24 (the rerouted miss reused it), one ARIN RDAP
+    # request for 8.8.8.0/24 (its neighbour reused it in the same lane).
+    assert env.calls == ["45.10.1.2"]
+    assert enricher.requests_by_registry == {"arin": 2, "ripe": 1}
+    assert enricher.reroutes_by_registry == {"ripe": 1} and enricher.cache_hits == 2
+    assert env.client.execute(
+        "SELECT ip FROM corpscout.rdap_ip_lookup_results FINAL ORDER BY ip"
+    ) == [("45.10.1.2",), ("8.8.8.8",)]
+    assert env.client.execute("SELECT count() FROM corpscout.rdap_networks") == [(2,)]
+
+
+def test_lanes_commit_the_same_outcomes_in_the_same_order_as_one_lane(
+    environment, monkeypatch
+):
+    env = environment
+
+    def arin(self, ip):
+        env.calls.append(ip)
+        if ip == "9.9.9.9":
+            raise RdapClientError(
+                "unavailable", code="remote_server", retryable=True, status_code=503
+            )
+        found = response(ip)
+        if ip == "1.1.1.1":
+            found.raw_response["links"] = [
+                {"rel": "up", "href": "https://rdap.arin.net/registry/ip/1.0.0.0/8"}
+            ]
+        return found
+
+    monkeypatch.setattr(RdapClient, "lookup_ip", arin)
+    monkeypatch.setattr(
+        RdapClient,
+        "lookup_up_url",
+        lambda self, url, *, rir: response(
+            "1.0.0.1", start="1.0.0.0", end="1.255.255.255"
+        ),
+    )
+    written = []
+    execute = Client.execute
+
+    def recording(self, query, *args, **kwargs):
+        if query in (RDAP_NETWORK_INSERT_SQL, RDAP_SEGMENT_INSERT_SQL):
+            written.append((query == RDAP_NETWORK_INSERT_SQL, args[0][0][0]))
+        return execute(self, query, *args, **kwargs)
+
+    monkeypatch.setattr(Client, "execute", recording)
+    ips = (
+        "8.8.8.8",
+        "5.1.1.1",
+        "202.1.1.1",
+        "8.8.8.9",
+        "1.1.1.1",
+        "10.0.0.1",
+        "5.1.1.2",
+        "9.9.9.9",
+        "202.1.1.2",
+    )
+    volatile = {"rdap_checked_at", "rdap_retry_after"}
+
+    def run_once(concurrent):
+        for table in (
+            "rdap_networks",
+            "rdap_network_segments",
+            "rdap_ip_lookup_results",
+            "rdap_network_registry_class",
+        ):
+            env.client.execute(f"TRUNCATE TABLE corpscout.{table}")
+        env.client.execute("SYSTEM RELOAD DICTIONARY corpscout.rdap_network_trie")
+        written.clear()
+        env.calls.clear()
+        enricher = resolver(env, concurrent=concurrent)
+        resolved = enricher.resolve_page(page(env, *ips))
+        return (
+            {
+                ip: {k: v for k, v in result.items() if k not in volatile}
+                for ip, result in resolved.items()
+            },
+            list(written),
+            sorted(env.calls),
+            env.client.execute(
+                """SELECT ip, lookup_status, network_key, error_code
+                FROM corpscout.rdap_ip_lookup_results FINAL ORDER BY ip"""
+            ),
+            (
+                enricher.requests,
+                enricher.cache_hits,
+                enricher.requests_by_registry,
+                enricher.networks_written,
+            ),
+        )
+
+    sequential = run_once(False)
+    lanes = run_once(True)
+    assert lanes == sequential
+    results_of, order, calls, markers, counters = lanes
+    assert len(results_of) == len(ips)
+    # Page order: 8.8.8.8, 5.1.1.1, 202.1.1.1, 1.1.1.1 and its parent (network, segments).
+    assert [key for is_network, key in order if is_network] == [
+        "arin:TEST-8.8.8.8",
+        "ripe:5.1.1.0 - 5.1.1.255",
+        "apnic:202.1.1.0 - 202.1.1.255",
+        "arin:TEST-1.1.1.1",
+        "arin:TEST-1.0.0.1",
+    ]
+    assert results_of["9.9.9.9"]["rdap_error_code"] == "remote_server"
+    # 5 misses (9.9.9.9 failed) + 1 parent; 8.8.8.9, 5.1.1.2 and 202.1.1.2 were reused.
+    assert counters[:2] == (6, 3)

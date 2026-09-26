@@ -11,6 +11,7 @@ again.
 """
 
 import json
+import os
 from collections.abc import Callable, Iterator
 from contextlib import closing
 from datetime import UTC, datetime
@@ -33,11 +34,13 @@ from dagster_v3.defs.commoncrawl_rdap.assets import (
 )
 from dagster_v3.defs.commoncrawl_rdap.ripe_rest import RipeRestClient
 from dagster_v3.defs.ip_enrichment.enrichment import (
+    RDAP_PROXIES_ENV,
     IpEnrichmentResultsConfig,
     RdapClient,
     RdapEnricher,
     geoip_result,
     maxminddb,
+    rdap_proxies,
 )
 from dagster_v3.defs.ip_enrichment.input import (
     ERROR_STATUSES,
@@ -48,12 +51,16 @@ from dagster_v3.defs.ip_enrichment.input import (
 )
 
 LOOKUP_STATUSES = ("city_lookup_status", "asn_lookup_status", "rdap_lookup_status")
-# Page size, request budgets and pacing are transport: they may change between resumes.
+# Page size, request budgets, pacing, pauses and proxies are transport: they may change
+# between resumes.
 TRANSPORT_SETTINGS = (
     "batch_size",
     "max_requests",
     "request_delay_seconds",
+    "registry_request_delays",
     "registry_daily_budgets",
+    "rate_limit_pause_seconds",
+    "use_proxies",
 )
 NOT_FROZEN = {"task_id", "execution_id", *TRANSPORT_SETTINGS}
 FAILED_SQL = " OR ".join(f"{column} IN %(errors)s" for column in LOOKUP_STATUSES)
@@ -405,6 +412,12 @@ def ip_enrichment_results(
             label="IP enrichment",
         )
 
+    try:
+        # Proxy URLs are secrets: read from the environment, never from run config, and
+        # never logged (errors name the registry and index only).
+        proxies = rdap_proxies(config.use_proxies, os.environ.get(RDAP_PROXIES_ENV))
+    except ValueError as error:
+        raise dg.Failure(str(error), allow_retries=False) from None
     with (
         processing.get_store() as store,
         store.selection_lock(config.task_id),
@@ -493,17 +506,27 @@ def ip_enrichment_results(
                 context.log,
                 started_at=datetime.fromisoformat(execution["started_at"]),
                 cache_cutoff=datetime.fromisoformat(execution["freshness_cutoff"]),
+                proxies=proxies,
             )
-            enricher.seed_registry_usage(client.execute(REGISTRY_USAGE_SQL))
-            counts = run_ip_enrichment(
-                context,
-                client,
-                task,
-                config,
-                enricher=enricher,
-                city_reader=city_reader,
-                asn_reader=asn_reader,
-            )
+            if proxies:
+                context.log.info(
+                    "RDAP proxies: %s",
+                    ", ".join(
+                        f"{registry} direct + {len(urls)}"
+                        for registry, urls in sorted(proxies.items())
+                    ),
+                )
+            with closing(enricher):
+                enricher.seed_registry_usage(client.execute(REGISTRY_USAGE_SQL))
+                counts = run_ip_enrichment(
+                    context,
+                    client,
+                    task,
+                    config,
+                    enricher=enricher,
+                    city_reader=city_reader,
+                    asn_reader=asn_reader,
+                )
             if enricher.networks_written:
                 client.execute("SYSTEM RELOAD DICTIONARY corpscout.rdap_network_trie")
         metadata = {
@@ -518,11 +541,13 @@ def ip_enrichment_results(
             "parent_lookup_failures": enricher.parent_failures,
             "registry_level_responses": enricher.registry_level_responses,
             "rdap_requests_by_registry": enricher.requests_by_registry,
+            "requests_by_endpoint": enricher.requests_by_endpoint,
             "rdap_person_entities_by_registry": enricher.person_entities_by_registry,
             "rdap_deferrals_by_registry": enricher.deferrals_by_registry,
             "rdap_fallbacks_by_registry": enricher.rdap_fallbacks_by_registry,
             "reroutes_by_registry": enricher.reroutes_by_registry,
             "pauses_by_registry": enricher.pauses_by_registry,
+            "pauses_by_endpoint": enricher.pauses_by_endpoint,
             "embedded_ipv4_lookups": enricher.embedded_ipv4_lookups,
             "teredo_special": enricher.teredo_special,
             **counts,

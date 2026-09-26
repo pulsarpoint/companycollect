@@ -17,7 +17,7 @@ from urllib.parse import quote
 
 import requests
 
-from dagster_v3.defs.commoncrawl_rdap.client import RdapClientError
+from dagster_v3.defs.commoncrawl_rdap.client import RdapClientError, retry_after_seconds
 from dagster_v3.defs.commoncrawl_rdap.rdap import RdapLookupResponse
 
 SEARCH_URL = "https://rest.db.ripe.net/search.json"
@@ -129,6 +129,9 @@ class RipeRestClient:
                 str(error), code="transport_error", retryable=True
             ) from error
         status = response.status_code
+        retry_after = retry_after_seconds(
+            (getattr(response, "headers", None) or {}).get("Retry-After")
+        )
         if status == 404:
             raise RdapClientError(
                 "no RIPE object", code="not_found", retryable=False, status_code=404
@@ -139,6 +142,7 @@ class RipeRestClient:
                 code="rate_limited",
                 retryable=True,
                 status_code=429,
+                retry_after=retry_after,
             )
         if status >= 500:
             raise RdapClientError(
@@ -155,6 +159,7 @@ class RipeRestClient:
                 code="access_denied",
                 retryable=True,
                 status_code=403,
+                retry_after=retry_after,
             )
         if status != 200:
             raise RdapClientError(
