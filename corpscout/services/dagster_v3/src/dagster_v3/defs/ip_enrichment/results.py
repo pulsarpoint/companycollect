@@ -536,8 +536,14 @@ def ip_enrichment_results(
         return dg.MaterializeResult(metadata={**metadata, **complete(store, task)})
 
 
+# dagster.yaml retries failed runs twice, and dg.Failure(allow_retries=False) only bypasses
+# op retry policies: a run stopped by max_requests (or a crash) would be relaunched and
+# resume the same execution, spending up to 3x max_requests. Resuming is the operator's
+# re-run. `tags` (not `run_tags`) so the backoffice's GraphQL launch, which merges the
+# job's definition tags, carries it too.
 ip_enrichment_results_job = dg.define_asset_job(
     "ip_enrichment_results_job",
     selection=dg.AssetSelection.assets(ip_enrichment_results),
+    tags={"dagster/max_retries": "0"},
 )
 defs = dg.Definitions(assets=[ip_enrichment_results], jobs=[ip_enrichment_results_job])

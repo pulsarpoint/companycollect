@@ -1622,7 +1622,7 @@ def test_apnic_whois_client_parses_answers_and_maps_errors():
         assert (raised.value.code, raised.value.retryable) == (code, retryable), answer
 
 
-def test_person_entities_counts_individual_vcards_nested_included():
+def test_person_entities_counts_person_and_role_vcards_nested_included():
     assert enrichment.person_entities({}) == 0
     raw = {
         "entities": [
@@ -1660,7 +1660,23 @@ def test_person_entities_counts_individual_vcards_nested_included():
             },
         ]
     }
-    assert enrichment.person_entities(raw) == 2
+    # P1, P2 (persons) and R1 (a role object); the org registrant is not personal data.
+    assert enrichment.person_entities(raw) == 3
+    # A role-only answer (common for large ISPs in RIPE's RDAP) still shows up.
+    role_only = {
+        "entities": [
+            {
+                "objectClassName": "entity",
+                "handle": "NOC-RIPE",
+                "roles": ["abuse", "technical"],
+                "vcardArray": [
+                    "vcard",
+                    [["version", {}, "text", "4.0"], ["kind", {}, "text", "group"]],
+                ],
+            }
+        ]
+    }
+    assert enrichment.person_entities(role_only) == 1
 
 
 def test_registry_budget_defers_misses_and_frees_after_the_window(environment):
@@ -2090,12 +2106,26 @@ def test_rerouted_host_is_refused_before_any_fetch(environment, monkeypatch):
     assert (
         resolved["45.10.1.1"]["rdap_lookup_status"],
         resolved["45.10.1.1"]["rdap_error_code"],
-    ) == ("retryable_error", "no_registry")
-    assert resolved["45.10.1.1"]["rdap_retry_after"] is not None
+    ) == ("terminal_error", "no_registry")
+    assert resolved["45.10.1.1"]["rdap_retry_after"] is None
     assert rdap_calls == [] and env.calls == [] and enricher.requests == 0
     assert env.client.execute(
         "SELECT ip, lookup_status, error_code FROM corpscout.rdap_ip_lookup_results_current"
-    ) == [("45.10.1.1", "retryable_error", "no_registry")]
+    ) == [("45.10.1.1", "terminal_error", "no_registry")]
+    # The terminal marker is served within rdap_cache_days: the next run does not ask
+    # the bootstrap again and still requests nothing.
+    monkeypatch.setattr(
+        RdapClient,
+        "registry_for",
+        lambda self, ip: pytest.fail("a cached no_registry marker was re-resolved"),
+    )
+    again = resolver(env)
+    cached = again.resolve_page(page(env, "45.10.1.1"))["45.10.1.1"]
+    assert (cached["rdap_lookup_status"], cached["rdap_error_code"]) == (
+        "terminal_error",
+        "no_registry",
+    )
+    assert rdap_calls == [] and again.requests == 0 and again.cache_hits == 1
 
 
 def test_redirects_to_apnic_are_answered_by_whois(environment, monkeypatch):
@@ -2141,3 +2171,13 @@ def test_parent_redirect_into_ripe_is_a_parent_failure_without_a_fetch(
     assert fetched == [direct, parent]  # RIPE's body is never fetched
     assert enricher.parent_failures == 1 and enricher.person_entities_by_registry == {}
     assert env.client.execute("SELECT count() FROM corpscout.rdap_networks") == [(1,)]
+
+
+def test_results_job_is_never_retried_by_the_run_retry_daemon():
+    # dagster.yaml enables run retries (max_retries 2) and they apply to a
+    # dg.Failure(allow_retries=False) too (checked against Dagster 1.13.9): without this
+    # tag a max_requests stop would be relaunched and resume the same execution.
+    job = results.ip_enrichment_results_job
+    assert job.run_tags["dagster/max_retries"] == "0"
+    # The GraphQL launch (backoffice, launchpad) merges the definition tags.
+    assert job.tags["dagster/max_retries"] == "0"

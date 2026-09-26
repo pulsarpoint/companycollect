@@ -16,7 +16,8 @@ APNIC's RDAP server (RIPE-managed space inside an ARIN /8, for example) is not f
 but sends the miss to the REST or whois client instead, so the redirected body with its
 person objects is never fetched.
 
-Counters: requests and person entities are keyed by the registry that answered
+Counters: requests and person entities (person and role vCards) are keyed by the registry
+that answered
 (RdapLookupResponse.rir); RDAP fallbacks of the no-personal paths are counted in
 rdap_fallbacks_by_registry and their person entities under "<rir>:fallback" keys, so a
 plain "ripe" or "apnic" key in person_entities_by_registry means personal data leaked.
@@ -287,12 +288,18 @@ def cached_network_row(row) -> RdapNetwork:
     return RdapNetwork(raw_response="", **values)
 
 
-def person_entities(raw: Mapping) -> int:
-    """Entities whose vCard is of kind 'individual', nested included.
+# vCard kinds of personal data sets: 'individual' is a person object, 'group' a role
+# object (RIPE's AUP counts both against its daily limit).
+PERSONAL_VCARD_KINDS = frozenset({"individual", "group"})
 
-    RIPE counts person objects against its daily limit; RDAP answers of the other
-    registries carry them too. An upper bound (RIPE marks maintainers 'individual' as well).
-    The REST and whois shapes never carry any, so their count is 0.
+
+def person_entities(raw: Mapping) -> int:
+    """Entities whose vCard is of kind 'individual' or 'group', nested included.
+
+    RIPE counts person and role objects against its daily limit; RDAP answers of the
+    other registries carry them too. Both kinds land in the same counter key, so a role-only
+    answer is as visible as one with persons. An upper bound (RIPE marks maintainers
+    'individual' as well). The REST and whois shapes never carry any, so their count is 0.
     """
     count = 0
     pending = list(raw.get("entities") or [])
@@ -306,7 +313,7 @@ def person_entities(raw: Mapping) -> int:
                 isinstance(item, list)
                 and len(item) == 4
                 and item[0] == "kind"
-                and item[3] == "individual"
+                and item[3] in PERSONAL_VCARD_KINDS
                 for item in vcard[1]
             ):
                 count += 1
@@ -804,13 +811,15 @@ class RdapEnricher:
                 return None
             self._bootstrap_failures = 0
             if registry == "":
-                # No exact bootstrap match: whoisit would send the query to a random
-                # registry (possibly RIPE's or APNIC's RDAP). Nothing is requested; the
-                # miss is retried after transient_retry_seconds.
+                # No exact bootstrap match (6to4 2002::/16, unmapped space): whoisit
+                # would send the query to a random registry (possibly RIPE's or APNIC's
+                # RDAP). Nothing is requested; a terminal marker is cached for
+                # rdap_cache_days like other terminal errors, so retry drafts do not
+                # re-queue it into a request every time.
                 raise RdapClientError(
                     f"No registry is known for {ip}",
                     code="no_registry",
-                    retryable=True,
+                    retryable=False,
                 )
             if self._blocked(registry):
                 self._defer(registry)
