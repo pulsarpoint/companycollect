@@ -5,6 +5,7 @@ from urllib.parse import unquote, urlsplit
 
 import requests
 import whoisit
+from whoisit.bootstrap import BaseBootstrap
 from whoisit.errors import (
     ArgumentError,
     BootstrapError,
@@ -18,6 +19,12 @@ from whoisit.errors import (
 )
 
 from dagster_v3.defs.commoncrawl_rdap.rdap import RdapLookupResponse
+
+# RDAP host -> whoisit's registry name ('ripe', 'arin', 'apnic', 'jpnic', ...), the same
+# names whoisit reports as `rir` in a parsed response.
+RIR_BY_HOST = {
+    urlsplit(url).netloc: name for name, url in BaseBootstrap.RIR_RDAP_ENDPOINTS.items()
+}
 
 
 class RdapClientError(Exception):
@@ -54,6 +61,21 @@ class RdapClient:
 
     def lookup_up_url(self, up_url: str, *, rir: str) -> RdapLookupResponse:
         return self._lookup(ip_resource_from_up_url(up_url), rir=rir)
+
+    def registry_for(self, ip_address_or_network: str) -> str:
+        """The registry whoisit would ask for this address, or '' when it cannot tell.
+
+        Resolved from the IANA bootstrap data already loaded for lookups (no HTTP), so
+        the RIPE REST path and the per-registry budget are chosen before a request is sent.
+        """
+        self._ensure_bootstrapped()
+        try:
+            _, url, _ = whoisit.build_query(
+                query_type="ip", query_value=ip_address_or_network
+            )
+        except QueryError, BootstrapError, ArgumentError, UnsupportedError:
+            return ""
+        return RIR_BY_HOST.get(urlsplit(url).netloc, "")
 
     def close(self) -> None:
         if self._owns_session:
