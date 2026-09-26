@@ -7,7 +7,7 @@ import { chQuery } from "~/lib/clickhouse.server";
 import { dagsterRunUrl, launchRun, listRuns } from "~/lib/dagster.server";
 import { objectSettings, parseCrawlSettings } from "~/lib/crawl-settings.server";
 import { assertWebtechAvailable } from "~/lib/webtech-maintenance.server";
-import { CRAWL_QUEUES, ACTIVE_QUEUE_RUNS, IP_ENRICHMENT_PROXY_REGISTRIES, QUEUE_NUMBER_LIMITS, QUEUE_PAGE_SIZE, QUEUE_UUID, type CrawlQueueType, type QueueFilters } from "~/lib/queues";
+import { CRAWL_QUEUES, ACTIVE_QUEUE_RUNS, IP_ENRICHMENT_PROXY_REGISTRIES, QUEUE_NUMBER_LIMITS, QUEUE_PAGE_SIZE, QUEUE_TEMPLATES, QUEUE_UUID, type CrawlQueueType, type QueueFilters } from "~/lib/queues";
 
 export class QueueRequestError extends Error {}
 
@@ -139,23 +139,34 @@ const EXTRA_FIELDS = {
   crawler: ["execution_id", "full_crawl_all", "max_in_flight", "refresh_interval_days", "force_refresh", "challenge_agent_model", "challenge_agent_max_runs", "llm_profile_id", "max_pages", "max_model_calls", "page_selection", "instructions", "wait_timeout_seconds", "poll_interval_seconds"],
 } as const;
 
-/** Per-registry maps and the proxy list; Dagster validates registry names authoritatively. */
-function registryMap(key: string, min: number, max: number, fractional: boolean) {
+/**
+ * Per-registry maps merge over the safe defaults, as Dagster's validators do, and the
+ * registry limits are refused here too; Dagster validates registry names authoritatively.
+ */
+function registryMap(key: "registry_request_delays" | "registry_daily_budgets", min: number, max: number, fractional: boolean,
+  limits: Record<string, [number, number, string]>) {
   return (entry: unknown) => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new QueueRequestError(`${key} must be an object of registry names to numbers.`);
+    const merged: Record<string, number> = {...QUEUE_TEMPLATES["ip-enrichment"][key] as Record<string, number>};
     for (const [registry, value] of Object.entries(entry)) {
       if (!/^[a-z][a-z.]{1,31}$/.test(registry)) throw new QueueRequestError(`${key}: invalid registry name ${JSON.stringify(registry)}.`);
       if (typeof value !== "number" || !Number.isFinite(value) || (!fractional && !Number.isSafeInteger(value)) || value < min || value > max) throw new QueueRequestError(`${key}.${registry} must be ${fractional ? "a number" : "an integer"} between ${min} and ${max}.`);
+      merged[registry] = value;
     }
+    for (const [registry, [low, high, why]] of Object.entries(limits)) {
+      if (merged[registry] < low || merged[registry] > high) throw new QueueRequestError(`${key}.${registry} must be between ${low} and ${high} (${why}).`);
+    }
+    return merged;
   };
 }
-const IP_ENRICHMENT_STRUCTURED: Record<string, (entry: unknown) => void> = {
-  registry_request_delays: registryMap("registry_request_delays", 0, 60, true),
-  registry_daily_budgets: registryMap("registry_daily_budgets", 1, Number.MAX_SAFE_INTEGER, false),
+const IP_ENRICHMENT_STRUCTURED: Record<string, (entry: unknown) => unknown> = {
+  registry_request_delays: registryMap("registry_request_delays", 0, 60, true, {lacnic: [6, 60, "LACNIC allows 10 queries per minute per address"]}),
+  registry_daily_budgets: registryMap("registry_daily_budgets", 1, Number.MAX_SAFE_INTEGER, false, {afrinic: [1, 5000, "AFRINIC blocks an address above 5,000 queries a day"]}),
   use_proxies: entry => {
     if (!Array.isArray(entry) || entry.some(registry => typeof registry !== "string" || !IP_ENRICHMENT_PROXY_REGISTRIES.includes(registry))) {
       throw new QueueRequestError(`use_proxies may only list ${IP_ENRICHMENT_PROXY_REGISTRIES.join(", ")}; RIPE, APNIC and LACNIC always go direct. Proxy URLs belong in the service environment (RDAP_PROXIES).`);
     }
+    return entry;
   },
 };
 
@@ -168,7 +179,7 @@ export function parseQueueConfig(filters: QueueFilters, serialized: string): Rec
   const allowed: readonly string[] = EXTRA_FIELDS[filters.type];
   for (const [key, entry] of Object.entries(config)) {
     if (!allowed.includes(key)) throw new QueueRequestError(`Unsupported processing parameter: ${key}.`);
-    if (filters.type === "ip-enrichment" && Object.hasOwn(IP_ENRICHMENT_STRUCTURED, key)) { IP_ENRICHMENT_STRUCTURED[key](entry); continue; }
+    if (filters.type === "ip-enrichment" && Object.hasOwn(IP_ENRICHMENT_STRUCTURED, key)) { config[key] = IP_ENRICHMENT_STRUCTURED[key](entry); continue; }
     if (entry !== null && !["string", "number", "boolean"].includes(typeof entry)) throw new QueueRequestError(`Invalid value for ${key}.`);
   }
   if (config.execution_id != null && (typeof config.execution_id !== "string" || !QUEUE_UUID.test(config.execution_id))) throw new QueueRequestError("execution_id must be a UUID from the original execution.");

@@ -88,7 +88,8 @@ Queues → IP enrichment automatically selects the current draft; Start launches
 resumes; the RDAP policy fields are frozen at Start. The sheet shows the per-registry
 defaults explicitly (`registry_request_delays: {"lacnic": 6.5}`,
 `registry_daily_budgets: {"afrinic": 4500}`, per endpoint) and edits the maps and the proxy
-list as JSON; `use_proxies` accepts only `arin` and `afrinic`, and the proxy URLs themselves
+list as JSON; explicit maps merge over these defaults (as in Dagster), and a LACNIC delay
+below 6 s or an AFRINIC budget outside 1–5,000 is refused; `use_proxies` accepts only `arin` and `afrinic`, and the proxy URLs themselves
 live in the Dagster environment (`RDAP_PROXIES`), never in the form. Lookup errors complete
 the task “with errors”; add the failed addresses to a new draft (`retry_failed_task_id`) to
 retry them. RIPE and APNIC are asked without personal data (REST search, whois `-r`). See

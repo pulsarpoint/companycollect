@@ -31,8 +31,9 @@ export const QUEUE_TEMPLATES: Record<Exclude<QueueType, "crawler">, Record<strin
   "ip-enrichment": {
     force_rdap: false, rdap_cache_days: 30, parent_depth: 1,
     batch_size: 250, max_requests: null, request_delay_seconds: 1,
-    // Per registry, mirroring the Dagster defaults: LACNIC allows 10 queries per minute
-    // per address, AFRINIC 5,000 per address and day (budgets apply per endpoint).
+    // Per registry, mirroring the Dagster defaults (explicit maps merge over them): LACNIC
+    // allows 10 queries per minute per address, AFRINIC 5,000 per address and day
+    // (budgets apply per endpoint).
     registry_request_delays: { lacnic: 6.5 }, registry_daily_budgets: { afrinic: 4500 },
     rate_limit_pause_seconds: 300, use_proxies: [],
     rate_limit_retry_seconds: 3600, transient_retry_seconds: 900,
