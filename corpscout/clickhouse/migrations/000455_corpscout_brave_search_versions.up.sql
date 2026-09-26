@@ -1,3 +1,5 @@
+CREATE DATABASE IF NOT EXISTS corpscout;
+
 -- Only the exact original official-website question belongs to the seeded search.
 -- Defaults also make existing answers available to its normal freshness check.
 ALTER TABLE corpscout.company_brave_search_results
