@@ -11,9 +11,10 @@ again.
 """
 
 import json
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import closing
 from datetime import UTC, datetime
+from time import monotonic
 from uuid import UUID, uuid5
 
 import dagster as dg
@@ -57,6 +58,8 @@ TRANSPORT_SETTINGS = (
 NOT_FROZEN = {"task_id", "execution_id", *TRANSPORT_SETTINGS}
 FAILED_SQL = " OR ".join(f"{column} IN %(errors)s" for column in LOOKUP_STATUSES)
 RESULT_BATCH = 500
+# Seconds between progress lines: a 48.6M-address run has ~194k pages.
+PROGRESS_SECONDS = 60.0
 # APNIC's NIRs answer under their own name, but the request was sent to (and budgeted
 # as) APNIC.
 APNIC_NIRS = ("jpnic", "krnic", "twnic", "idnic", "cnnic", "irinn", "vnnic")
@@ -236,6 +239,7 @@ def run_ip_enrichment(
     enricher,
     city_reader,
     asn_reader,
+    clock: Callable[[], float] | None = None,
 ) -> dict:
     """Walk the task bucket by bucket until a whole pass finds nothing remaining.
 
@@ -245,7 +249,8 @@ def run_ip_enrichment(
     budget flushes what was resolved and stops; the rest stays remaining for the
     resume. A pass that resolved nothing while entries were deferred (a registry at its
     budget or paused, or the bootstrap paused) waits for the earliest window and walks
-    again.
+    again. Whatever is buffered when the loop fails is still stored. Progress is logged
+    at most once a minute (``clock`` is injectable) and at the end of every pass.
     """
     execution = task["config"]["execution"]
     execution_uuid = UUID(execution["execution_id"])
@@ -265,67 +270,94 @@ def run_ip_enrichment(
         flush, max_items=RESULT_BATCH, max_seconds=5.0
     )
     buckets = task_buckets(client, task)
-    while True:
-        processed = 0
-        enricher.reset_pass()
-        for rows in remaining_pages(client, task, buckets, size=config.batch_size):
-            rdap = enricher.resolve_page(rows)
-            records = []
-            for row in rows:
-                if row["ip"] not in rdap:
-                    continue  # deferred, or the request budget ran out
-                checked_at = datetime.now(UTC)
-                records.append(
-                    {
-                        "ip": row["ip"],
-                        "result_id": str(uuid5(execution_uuid, row["input_id"])),
-                        "task_id": str(task["task_id"]),
-                        "execution_id": execution["execution_id"],
-                        "input_id": row["input_id"],
-                        "source_run_id": context.run.run_id,
-                        "processor_version": PROCESSOR_VERSION,
-                        "attempt": 1,
-                        "completed_at": checked_at,
-                        **geoip_result(
-                            row["ip"],
-                            city_reader,
-                            asn_reader,
-                            checked_at=checked_at,
-                            retry_seconds=config.transient_retry_seconds,
-                        ),
-                        **rdap[row["ip"]],
-                    }
+    clock = clock or monotonic
+    last_log = None
+
+    def progress(rows: list[dict], *, force: bool = False) -> None:
+        """At most one progress line a minute (plus one per pass), with running totals."""
+        nonlocal last_log
+        now = clock()
+        if not force and last_log is not None and now - last_log < PROGRESS_SECONDS:
+            return
+        last_log = now
+        context.log.info(
+            "IP enrichment execution=%s pages=%s written=%s buffered=%s bucket=%s "
+            "rdap_requests=%s cache_hits=%s deferred=%s",
+            execution["execution_id"],
+            counts["pages"],
+            counts["written"],
+            len(buffer),
+            rows[-1]["bucket"] if rows else "-",
+            enricher.requests,
+            enricher.cache_hits,
+            enricher.deferred,
+        )
+
+    try:
+        while True:
+            processed = 0
+            enricher.reset_pass()
+            rows: list[dict] = []
+            for rows in remaining_pages(client, task, buckets, size=config.batch_size):
+                rdap = enricher.resolve_page(rows)
+                records = []
+                for row in rows:
+                    if row["ip"] not in rdap:
+                        continue  # deferred, or the request budget ran out
+                    checked_at = datetime.now(UTC)
+                    records.append(
+                        {
+                            "ip": row["ip"],
+                            "result_id": str(uuid5(execution_uuid, row["input_id"])),
+                            "task_id": str(task["task_id"]),
+                            "execution_id": execution["execution_id"],
+                            "input_id": row["input_id"],
+                            "source_run_id": context.run.run_id,
+                            "processor_version": PROCESSOR_VERSION,
+                            "attempt": 1,
+                            "completed_at": checked_at,
+                            **geoip_result(
+                                row["ip"],
+                                city_reader,
+                                asn_reader,
+                                checked_at=checked_at,
+                                retry_seconds=config.transient_retry_seconds,
+                            ),
+                            **rdap[row["ip"]],
+                        }
+                    )
+                buffer.add(records)
+                processed += len(records)
+                counts["pages"] += 1
+                progress(rows)
+                if enricher.budget_reached:
+                    buffer.flush()
+                    counts["request_limit_reached"] = True
+                    progress(rows, force=True)
+                    return counts
+            buffer.flush()  # an unacknowledged batch fails the run; the resume re-reads its rows
+            progress(rows, force=True)
+            if processed == 0:
+                if not enricher.deferred:
+                    return counts
+                context.log.warning(
+                    "Nothing else remains; deferred %s. Waiting %.0f s before the next pass",
+                    enricher.deferred,
+                    enricher.seconds_until_budget_frees(),
                 )
-            buffer.add(records)
-            processed += len(records)
-            counts["pages"] += 1
-            context.log.info(
-                "IP enrichment execution=%s page=%s buckets=%s-%s resolved=%s "
-                "rdap_requests=%s cache_hits=%s deferred=%s",
-                execution["execution_id"],
-                counts["pages"],
-                rows[0]["bucket"],
-                rows[-1]["bucket"],
-                counts["written"] + len(buffer),
-                enricher.requests,
-                enricher.cache_hits,
-                enricher.deferred,
-            )
-            if enricher.budget_reached:
-                buffer.flush()
-                counts["request_limit_reached"] = True
-                return counts
-        buffer.flush()  # an unacknowledged batch fails the run; the resume re-reads its rows
-        if processed == 0:
-            if not enricher.deferred:
-                return counts
+                counts["budget_waits"] += 1
+                counts["budget_wait_seconds"] += enricher.wait_for_registry_budget()
+    except BaseException:
+        # Keep what was resolved before the failure; a flush error must not mask it.
+        try:
+            buffer.flush()
+        except Exception as error:  # the original exception is re-raised below
             context.log.warning(
-                "Nothing else remains; deferred %s. Waiting %.0f s before the next pass",
-                enricher.deferred,
-                enricher.seconds_until_budget_frees(),
+                "Could not store %s buffered results after a failure: %r",
+                len(buffer),
+                error,
             )
-            counts["budget_waits"] += 1
-            counts["budget_wait_seconds"] += enricher.wait_for_registry_budget()
+        raise
 
 
 def finish_ip_execution(store, client, task: dict) -> dict:

@@ -780,6 +780,96 @@ def test_run_metadata_publishes_every_per_registry_counter(environment):
     ) == ({}, {}, {}, {})
 
 
+def test_run_metadata_publishes_reroutes_and_fallbacks(environment, monkeypatch):
+    env = environment
+    arin, ripe = "https://rdap.arin.net/registry/ip/", "https://rdap.db.ripe.net/ip/"
+    monkeypatch.setattr(RdapClient, "lookup_ip", REAL_RDAP_LOOKUP_IP)
+    fetched = fake_rdap_http(
+        monkeypatch,
+        {
+            # RIPE-managed space inside an ARIN block: rerouted to REST.
+            arin + "45.10.1.1": HttpAnswer(301, location=ripe + "45.10.1.1"),
+            # The fallback of a catch-all REST answer follows RDAP to RIPE.
+            arin + "5.9.9.9": HttpAnswer(301, location=ripe + "5.9.9.9"),
+            ripe + "5.9.9.9": HttpAnswer(
+                200, body=ripe_rdap_body("5.9.9.9", persons=2)
+            ),
+        },
+    )
+    stub = RipeRestClient.lookup_ip  # the fixture's REST stub
+
+    def rest(self, ip):
+        if ip != "5.9.9.9":
+            return stub(self, ip)
+        env.calls.append(ip)
+        return RdapLookupResponse(
+            rir="ripe",
+            raw_response=ripe_rest.rdap_shape(
+                rest_object(ip, start="0.0.0.0", end="255.255.255.255")
+            ),
+        )
+
+    monkeypatch.setattr(RipeRestClient, "lookup_ip", rest)
+    result = run(env, select(env, ["45.10.1.1", "5.9.9.9"]))
+    assert result.success
+    metadata = outcome(result)
+    assert metadata["completion_status"] == "completed"
+    assert metadata["reroutes_by_registry"] == {"ripe": 1}
+    assert metadata["rdap_fallbacks_by_registry"] == {"ripe": 1}
+    assert metadata["rdap_person_entities_by_registry"] == {"ripe:fallback": 2}
+    assert metadata["rdap_requests_by_registry"] == {"arin": 1, "ripe": 3}
+    assert metadata["pauses_by_registry"] == {}
+    assert ripe + "45.10.1.1" not in fetched  # the rerouted body is never requested
+    assert env.client.execute(
+        "SELECT ip, rdap_lookup_status, rdap_rir FROM corpscout.ip_enrichment_current ORDER BY ip"
+    ) == [("45.10.1.1", "found", "ripe"), ("5.9.9.9", "found", "ripe")]
+
+
+def test_a_failure_mid_pass_still_stores_the_buffered_results(environment, monkeypatch):
+    env = environment
+    resolve = RdapEnricher.resolve_page
+    pages = []
+
+    def failing_second_page(self, rows):
+        pages.append(rows)
+        if len(pages) == 2:
+            raise RuntimeError("resolver failed")
+        return resolve(self, rows)
+
+    monkeypatch.setattr(RdapEnricher, "resolve_page", failing_second_page)
+    task = select(env, ["1.1.1.1", "8.8.8.8"])
+    assert not run(env, task, batch_size=1).success
+    # The first page was only buffered (1 row < 500, < 5 s) when the second failed.
+    assert env.client.execute(
+        "SELECT count() FROM corpscout.ip_enrichment_results FINAL"
+    ) == [(1,)]
+    monkeypatch.setattr(RdapEnricher, "resolve_page", resolve)
+    assert run(env, task).success and len(env.calls) == 2
+
+
+def test_remaining_pages_fill_across_buckets_and_never_repeat(monkeypatch):
+    layout = {1: 7, 2: 2, 3: 4}
+    entries = {
+        bucket: [f"{bucket:03d}:{n}" for n in range(count)]
+        for bucket, count in layout.items()
+    }
+    limits = []
+
+    def remaining_entries(client, task, *, bucket, after=None, limit):
+        limits.append(limit)
+        ids = [i for i in entries[bucket] if after is None or i > after][:limit]
+        return [{"input_id": i, "bucket": bucket} for i in ids]
+
+    monkeypatch.setattr(results, "remaining_entries", remaining_entries)
+    pages = list(results.remaining_pages(None, {}, sorted(layout), size=3))
+    ids = [row["input_id"] for page in pages for row in page]
+    assert ids == [i for bucket in sorted(layout) for i in entries[bucket]]
+    assert len(ids) == len(set(ids)) == 13
+    assert [len(page) for page in pages] == [3, 3, 3, 3, 1]
+    assert [row["bucket"] for row in pages[2]] == [1, 2, 2]  # bucket 1 split, then 2
+    assert all(0 < limit <= 3 for limit in limits)
+
+
 def test_registry_usage_sql_charges_nir_answers_to_apnic(environment):
     env = environment
     normalized = normalize_rdap_network(
