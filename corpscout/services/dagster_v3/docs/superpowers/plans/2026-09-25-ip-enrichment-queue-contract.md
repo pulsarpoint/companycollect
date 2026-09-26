@@ -2,522 +2,117 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Move IP enrichment onto the shared processing queue contract (drafts with receipts, a task-partitioned entry table, live remaining work, acknowledged result batches, completion from results, `DROP PARTITION` cleanup), cut the per-IP ClickHouse round trips that made the 48.6M-IP run take 76 days, stop reusing registry-level RDAP blocks such as `APNIC-AP` for other addresses, and automate GeoLite2 updates.
+**Goal:** Move IP enrichment onto the shared processing queue contract (drafts with receipts, a task-partitioned entry table, live remaining work, acknowledged result batches, completion from results, `DROP PARTITION` cleanup), cut the per-IP ClickHouse round trips that made the 48.6M-IP run take 76 days, keep RDAP inside the registries' acceptable-use limits with a per-registry request budget, make GeoLite2 staleness visible, and then wipe the enrichment tables and the RDAP cache and re-run the whole inventory through the new execution.
 
-**Architecture:** The draft import (`ip_enrichment_input`) appends selections to the open workspace draft with one `INSERT … SELECT` from `selected_ips_sql`, keyed by an `input_id` that starts with the IP's 256-way bucket. The execution (`ip_enrichment_results`) freezes the draft through `defs/common/queue_execution.py`, walks the task bucket by bucket with a live "remaining" query (entries without a result of this execution, each query one primary-key range of `ip_enrichment_results`), resolves each page's RDAP coverage with a fixed number of ClickHouse round trips (one negative-cache read, one trie `dictGet`, one read of the network rows the page needs, one insert of lookup markers) and HTTP only for misses, stores outcomes through `ResultBuffer`, and finishes with counts derived from results. A registry-level classifier (Python + an identical SQL predicate baked into the trie's source view) keeps RIR/IANA/unallocated blocks out of `rdap_network_trie`. A weekly asset downloads, verifies and atomically installs the GeoLite2 files, with a 14-day staleness check. The backoffice "Enrich" action becomes "Add to enrichment queue" and processing starts from `/admin/queues/ip-enrichment`.
+**Architecture:** The draft import (`ip_enrichment_input`) appends selections to the open workspace draft with one `INSERT … SELECT` from `selected_ips_sql`, keyed by an `input_id` that starts with the IP's 256-way bucket. The execution (`ip_enrichment_results`) freezes the draft through `defs/common/queue_execution.py`, walks the task bucket by bucket with a live "remaining" query (entries without a result of this execution, each query one primary-key range of `ip_enrichment_results`), resolves each page's RDAP coverage with a fixed number of ClickHouse round trips (one negative-cache read, one trie `dictGet`, one read of the network rows the page needs, one insert of lookup markers) and HTTP only for misses, classifies every miss with the deployed `classify_registration` (registry-level and unallocated answers serve only their address), resolves RIPE misses through the RIPE Database REST search and APNIC misses through APNIC's port-43 whois with `-r` (both without personal data; NIR-managed space falls back to RDAP), every other registry through RDAP, with an optional per-registry request budget (a miss of a registry at its budget is deferred, never failed), stores outcomes through `ResultBuffer`, and finishes with counts derived from results. A check on `ip_enrichment_results` fails when either GeoLite2 file is older than 14 days; the files are updated by hand. The backoffice "Enrich" action becomes "Add to enrichment queue" and processing starts from `/admin/queues/ip-enrichment`. The deploy wipes `ip_enrichment_input`, `ip_enrichment_results` (including the legacy GeoIP import) and the RDAP cache after a backup check and the owner's go-ahead, then queues the full inventory again.
 
-**Tech Stack:** Python 3.14, Dagster 1.13.9, ClickHouse 26.5 (clickhouse-driver), PostgreSQL (psycopg2), whoisit 4 (RDAP), maxminddb, netaddr, dlt requests helpers, React Router 8 + vitest backoffice, pytest against disposable ClickHouse/PostgreSQL containers.
+**Tech Stack:** Python 3.14, Dagster 1.13.9, ClickHouse 26.5 (clickhouse-driver), PostgreSQL (psycopg2), whoisit 4.0.4 (RDAP, IANA bootstrap), maxminddb, netaddr, React Router 8 + vitest backoffice, pytest against disposable ClickHouse/PostgreSQL containers.
 
 **Spec:** `services/dagster_v3/docs/superpowers/specs/2026-09-24-shared-processing-queue-contract-design.md`
-**Binding decisions:** the owner's decisions file of 2026-09-25 (D1–D10 below, with its two review reports as evidence). Reference implementations on prod: webtech (`defs/webtech/{input,execution,task_assets}.py`, migration `000446`), crawl (`defs/website_crawl/{queue_input,queue_execution}.py`, migration `000448`, plan `2026-09-25-crawl-queue-contract.md`), shared `defs/common/{queue_execution,draft_queue,result_buffer}.py`.
+**Binding decisions:** the owner's decisions file of 2026-09-25 (D1–D10, `scratchpad/ip/decisions.md`) as revised by the owner's evening revision of 2026-09-25 (R1–R5, `scratchpad/ip/revision-clean-rerun.md`), with the two review reports (`scratchpad/ip/review-rdap-geoip.md`, `scratchpad/ip/queue-map.md`) as evidence. Reference implementations on prod: webtech (`defs/webtech/{input,execution,task_assets}.py`, migration `000446`), crawl (`defs/website_crawl/{queue_input,queue_execution}.py`, migration `000448`, plan `2026-09-25-crawl-queue-contract.md`), shared `defs/common/{queue_execution,draft_queue,result_buffer}.py`; registry reference data (plan `2026-09-25-ip-registry-reference-data.md`, migrations `000450`/`000451`, module `defs/ip_registry`, `defs/commoncrawl_rdap/registry.py`).
+
+## What is already live on prod (build on it, do not re-implement)
+
+- **Registry reference data and the data-driven registry-level rule** (main `b33ca08d2`): ClickHouse `000450` (`ip_registry_*` tables/views, `ip_registry_special_trie`, holder blocks, `rdap_network_registry_class` + `_current` + `_derived`, rule view `ip_registry_iana_blocks_rule_current`, `ip_registry_ready`) and `000451` (`rdap_network_segments_current` / `rdap_network_trie` serve only registrations classified `reusable`). Dagster module `defs/ip_registry` (7 loader assets, 7 checks, `ip_registry_refresh_job`, schedule `ip_registry_daily` at 06:05 UTC, RUNNING). On 2026-09-25 evening: `ip_registry_ready = 1`, 15,319 classified networks (15,307 `reusable`, 11 `registry_level`, 1 `unallocated`), trie 16,595 elements.
+- `defs/commoncrawl_rdap/registry.py`: `classify_registration(client, network) -> RegistryClassification` (`.registry_class`, `.reusable`, `.clickhouse_values(network_key, classified_at)`), `REGISTRY_CONTEXT_SQL` (one round trip per RDAP miss), `REGISTRY_CLASS_SQL`, `REGISTRY_CLASS_INSERT_SQL`. `RdapEnricher` (`defs/ip_enrichment/enrichment.py:384-395`) and the legacy bucket worker (`commoncrawl_rdap/assets.py:609`) already classify each direct registration, write the class row between the network row and its segments, and never put a non-reusable registration into their in-run caches. **R1: this plan keeps that behaviour inside the per-page resolver and adds no classifier, no segment role and no trie-exclusion migration of its own.**
+- ClickHouse ledger on prod: `max(version) WHERE dirty=0` = **452** on 2026-09-25 evening (`000452_corpscout_website_crawl_normalized` belongs to the crawl-normalization workstream; `000449` is `queue_task_sources`). This plan needs **one** migration; it takes **000453** and re-checks main AND prod at merge.
+
+## Production state this plan starts from (read-only inventory, 2026-09-25 evening)
+
+| Object | Rows / size | Note |
+| --- | --- | --- |
+| `corpscout.ip_enrichment_input` | 48,596,636 rows, 3.03 GiB, 4 tasks | `4802549d-…` 48,596,631 (the terminated run's task), `a0a328d6-…` 3, `422ce6d8-…` 1, `6f3377b2-…` 1 |
+| `processing.tasks` (`ip-enrichment-v1`) | 4 rows | all `selected`, `queue_scope NULL`, never frozen; 0 `input_submissions` |
+| `corpscout.ip_enrichment_results` | 9,374,666 rows, 740 MiB | `legacy-geoip-import-v1` 8,291,326 (task/execution `cd603d91-8a85-52f4-9b74-61f95d2f763a`, City/ASN builds of 2026-07-10, RDAP `not_attempted`); `ip-enrichment-v1` 1,083,340 (task `4802549d` 1,083,335 + 5) |
+| `corpscout.rdap_networks` | 16,632 rows (15,319 current), 7.71 MiB | ripe 5,893 · apnic 3,727 · arin 2,942 · jpnic 1,115 · afrinic 643 · idnic 402 · twnic 191 · krnic 182 · registro.br 123 · lacnic 101; IPv4 13,305 / IPv6 2,014 |
+| `corpscout.rdap_network_segments` | 17,308 rows | trie source |
+| `corpscout.rdap_ip_lookup_results` | 227,084 rows, 3.83 MiB | not_global 209,651 · found 16,995 · retryable_error 113 · terminal_error 43 · not_found 5 |
+| `corpscout.rdap_network_registry_class` | 15,319 rows | regenerated per miss and by `ip_registry_daily` |
+| `corpscout.commoncrawl_ip_addresses` | 79,610,151 rows, 49,296,517 distinct IPs | ≈11.35M IPv4 (arin 5.85M, ripencc 3.15M, apnic 1.34M, lacnic 0.48M, legacy/other 0.33M, afrinic 0.18M by IANA /8) and ≈37.9M IPv6 (RIPE-dominated: 2a02::/16 alone 32.5M rows; 14,858 distinct /32, 71,414 distinct /48, 10,302 distinct /29) |
+
+Last writers: the terminated run's last `ip_enrichment_results` insert was 2026-09-25 14:47 UTC; nothing writes these tables now. The legacy worker `commoncrawl_ip_rdap_networks` has no schedule (`commoncrawl_rdap/definitions.py` registers only the asset).
 
 ## Global Constraints
 
 - ClickHouse holds entry lists, PostgreSQL holds coordination. Never `UPDATE`/`DELETE` individual entry rows; the only exception is the submission retry `DELETE … WHERE task_id AND submission_id` while the draft is open, which is why the table keeps `SETTINGS number_of_free_entries_in_pool_to_execute_mutation = 1` (D1).
 - Entry table `corpscout.ip_enrichment_input`: `ENGINE = MergeTree`, `PARTITION BY task_id`, `ORDER BY (task_id, input_id)`, `task_id String`, required `submission_id`. Plain `MergeTree` rejects `FINAL`; the backoffice reads it ordered by `(task_id, input_id)` without `FINAL` (D1, D8).
-- `input_id` = `leftPad(bucket, 3, '0') + ':' + toJSONString(tuple(source_name, source_record_id, ip))`, computed in ClickHouse (`INPUT_ID_SQL`, Task 2) and enforced by a `CHECK`. This is the one deliberate change to today's `toJSONString(tuple(...))` identity: it makes `ORDER BY (task_id, input_id)` walk a task bucket by bucket, so every remaining/completion query anti-joins one primary-key range (`bucket = b`) of `ip_enrichment_results` instead of scanning the whole results table per page (48.6M-row tasks). Results keep carrying `input_id`; identity is per task, so the ~1.08M kept results of the terminated run (old format, legacy task) are unaffected.
-- Results table `corpscout.ip_enrichment_results` and view `ip_enrichment_current` are never touched; legacy GeoIP rows (task `cd603d91-…`) stay.
-- Freeze via `queue_execution.start_execution`: frozen profile `force_rdap, rdap_cache_days, parent_depth, rate_limit_retry_seconds, transient_retry_seconds, processor_version`; transport keys `batch_size, max_requests, request_delay_seconds`; `execution_id` = the original Dagster run id (`default_execution_id = root run id`); an explicit `execution_id` only resumes (D4).
-- RDAP cache freshness is bounded by the frozen execution: a network row or negative marker counts as fresh when its time is `>= freshness_cutoff = started_at − rdap_cache_days`; a retryable-error marker is honoured when `retry_after > started_at`. Never `datetime.now()` per lookup. The window has no upper bound at `started_at` on purpose: a network this execution fetched (`fetched_at > started_at`) must stay reusable on resume, otherwise every resume re-requests every network the run already discovered (D4, decided here).
-- Remaining = live ClickHouse anti-join per bucket; done means a result row exists; an RDAP error is a published outcome (`completed_with_errors`); failed IPs are retried by a new draft (`retry_failed_task_id`, Task 3) (D4).
-- Per page: ONE negative-cache query, ONE trie lookup, ONE read of uncached network rows (never `raw_response`), ONE lookup-marker insert, results through `ResultBuffer`; RDAP HTTP only for misses; a test asserts the ClickHouse query count per page is bounded (D5). Network/segment writes for misses stay per miss (decided: coverage must be durable before the result that references it, and a miss already costs ≥ 1.4 s of HTTP + delay; ~1% of IPs). Lookup markers (`rdap_ip_lookup_results`) are buffered per page.
-- Registry-level rule (D6): a registration is per-IP only (never in the trie, never reused in-run) when its widest segment is shorter than `/8` (IPv4) or `/12` (IPv6), or a token of `name`/`handle`/`registration_type`/`status` is one of `IANA, APNIC, ARIN, LACNIC, AFRINIC, RIPE, UNALLOCATED, UNSPECIFIED`, or a registrant handle is one of `ARIN, IANA, APNIC, LACNIC, AFRINIC, ORG-NCC1-RIPE`, or a registrant name contains a registry's full name, or `country_code = 'ZZ'`. Remarks are not consulted (decided: they are not a normalized column, and the Python rule and the view predicate must agree exactly; every example in the review is caught by normalized fields). Such segments are stored with `segment_role = 'registry_level'`; the view `rdap_network_segments_current` excludes them and every existing poisoned row by the same predicate.
-- GeoLite2 (D7): asset `geolite2_databases` + weekly schedule (STOPPED by default, started at instance level) + check `geolite2_databases_fresh` (fails at > 14 days). Credentials `MAXMIND_ACCOUNT_ID` / `MAXMIND_LICENSE_KEY` (none exist today; `.env.example` gets them and its line 70 is corrected).
+- `input_id` = `leftPad(bucket, 3, '0') + ':' + toJSONString(tuple(source_name, source_record_id, ip))`, computed in ClickHouse (`INPUT_ID_SQL`, Task 1) and enforced by a `CHECK`. This is the one deliberate change to today's `toJSONString(tuple(...))` identity: it makes `ORDER BY (task_id, input_id)` walk a task bucket by bucket, so every remaining/completion query anti-joins one primary-key range (`bucket = b`) of `ip_enrichment_results` instead of scanning the whole results table per page (49M-row tasks). Results keep carrying `input_id`; identity is per task. After the wipe (Task 8) no result row with the old identity format exists.
+- Results table `corpscout.ip_enrichment_results` and view `ip_enrichment_current` keep their DDL (`000433`); their rows are wiped once, in Task 8, by `TRUNCATE` after the owner's go-ahead (R3). No migration touches them.
+- Freeze via `queue_execution.start_execution`: frozen profile `force_rdap, rdap_cache_days, parent_depth, rate_limit_retry_seconds, transient_retry_seconds, ripe_rest, apnic_whois, processor_version`; transport keys `batch_size, max_requests, request_delay_seconds, registry_daily_budgets`; `execution_id` = the original Dagster run id (`default_execution_id = root run id`); an explicit `execution_id` only resumes (D4).
+- RDAP cache freshness is bounded by the frozen execution: a network row or negative marker counts as fresh when its time is `>= freshness_cutoff = started_at − rdap_cache_days`; a retryable-error marker is honoured when `retry_after > started_at`. Never `datetime.now()` per lookup. The window has no upper bound at `started_at` on purpose: a network this execution fetched (`fetched_at > started_at`) must stay reusable on resume (D4).
+- Remaining = live ClickHouse anti-join per bucket; done means a result row exists; an RDAP error is a published outcome (`completed_with_errors`); failed IPs are retried by a new draft (`retry_failed_task_id`, Task 2) (D4).
+- Per page: ONE negative-cache query, ONE trie lookup, ONE read of uncached network rows (never `raw_response`), ONE lookup-marker insert, results through `ResultBuffer`; RDAP HTTP only for misses; a test asserts the ClickHouse query count per page is bounded (D5). Per miss (≈1% of addresses, each already ≥ 1.4 s of HTTP + pacing): the registry-context query of `classify_registration`, then the network row, its class row (unless `unknown`) and its segments, in that order, so coverage and its class are durable before the result that references it (R1). Lookup markers are buffered per page.
+- Registry-level rule (R1): the deployed `classify_registration` decides; `registry_level`/`unallocated` registrations are stored with segment role `lookup_result` like every other registration, excluded from `rdap_network_trie` by their class row (`000451`), never added to the in-run `recent` cache, and answer only the queried address; the address's own `found` marker in `rdap_ip_lookup_results` serves it next time. The resolver treats the trie as already excluding non-reusable networks.
+- RIPE acceptable-use policy (R4, corrected 2026-09-26 from the published AUP and two live answers): the limit is **1,000 personal data sets per 24 hours per source address** (20,000 only for a proxy registered with the RIPE NCC); queries are "Unlimited" within reasonable use, at most 3 simultaneous connections; a client over the limit is blocked until the end of the calendar day, repeatedly → permanently; the "Anti-avoidance and Connected Persons" clause treats pooling limits across addresses as a violation. RIPE's RDAP `ip` answers carry 1–5 person objects, so they count; the owner needs no personal data, so **RIPE misses use the RIPE Database REST search with `flags=no-referenced`** (`ripe_rest.py`, Task 4): the most specific `inetnum`/`inet6num` without person or role objects, which counts nothing. RDAP stays for the other registries. **APNIC misses use APNIC's port-43 whois with `-r`** (`apnic_whois.py`, Task 4; verified 2026-09-26: the most specific `inetnum`/`inet6num` with contact handles only, no person/role/irt objects; the HTTP gateway `wq.apnic.net` does not honour `-r` and is not used); the holder name is the first `descr` line (only 2.4% of APNIC objects carry `org:`), and an answer that is an NIR's own allocation object (JPNIC, KRNIC, TWNIC, IDNIC, CNNIC, IRINN, VNNIC) falls back to RDAP, which the IANA bootstrap routes to the NIR server. ARIN, LACNIC and AFRINIC stay on RDAP. `registry_daily_budgets` (transport, default `{}`) is an optional rolling 24-hour *request* budget per registry; a miss of a registry at its budget is **deferred** (no result row, no error) and the run waits only when a whole pass resolved nothing else. Proxy egress lanes were considered at the owner's request and dropped on 2026-09-26 (no speed gain, unnecessary with the no-personal-data paths, and pooling a registry's allowance across addresses is the anti-avoidance case above). Every run reports requests and person entities per registry (`rdap_person_entities_by_registry`, expected to have neither a `ripe` nor an `apnic` key).
+- GeoLite2 (R2): no MaxMind account; the owner replaces `GeoLite2-City.mmdb`/`GeoLite2-ASN.mmdb` by hand. This plan keeps only the check `geolite2_databases_fresh` (fails when either loaded file's build epoch is older than 14 days; no credentials), the `.env.example:70-71` fix and the manual procedure in the docs. `MaxMindDatabaseResource.database_paths()` resolves the paths at execution time and `ip_enrichment_results` opens the files per run, so a replaced file is used by the next run without a restart; replace by `mv` (rename), never by copying over the open file (maxminddb maps it).
 - `ip_enrichment_workflow` is removed; the backoffice "Enrich" adds to the draft (`ip_enrichment_input_job`), processing starts from the queue page (D8).
 - Out of scope, listed as follow-ups at the end (D9).
-- Destructive migrations carry an inline `throwIf` gate; migration comments must not contain `;`. Next free ClickHouse numbers on main and prod are **000449** (trie exclusion) and **000450** (entry table); re-check at merge (the Common Crawl graph-ranks work took 447 during the crawl plan) with `ls clickhouse/migrations | tail -2` and prod `SELECT max(version) FROM corpscout.schema_migrations WHERE dirty=0` (the ledger is TinyLog with a dirty=1 and a dirty=0 row per version).
-- Commands from `services/dagster_v3`: `uv run --frozen --no-sync pytest … -q -p no:cacheprovider`, `uv run --frozen --no-sync dg check defs`, `uv run --frozen --no-sync ruff format <touched files>` and `uv run --frozen --no-sync ruff check <touched files>` on touched Python files only. Backoffice from `services/backoffice`: `npm run typecheck` and targeted `npx vitest run <file>` only (the full suite hits prod ClickHouse). Test fixtures that start containers wait for `docker port` and probe with `docker exec … clickhouse-client` before use (already the case in `tests/test_ip_enrichment_input.py:server`).
-- Commit by explicit path, never `git add -A` (`searcher/` is unrelated untracked work). Conventional commits with trailer `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>`.
-- Do not restart `corpscout-dagster-dev`; deploy by `light_sync`. Task 9 requires the owner's go-ahead. Never call real RDAP servers or MaxMind from tests.
+- Destructive migrations carry an inline `throwIf` gate; migration comments must not contain `;`; no `TRUNCATE` inside a migration. This plan's single migration is **000453** (`corpscout_ip_enrichment_queue_contract`); re-check at merge with `ls clickhouse/migrations | tail -2` and prod `SELECT max(version) FROM corpscout.schema_migrations WHERE dirty=0` (452 on 2026-09-25 evening; the ledger is TinyLog with a dirty=1 and a dirty=0 row per version). If another workstream took 453, renumber both files and every mention in Tasks 1–8.
+- Commands from `services/dagster_v3`: `uv run --frozen --no-sync pytest … -q -p no:cacheprovider`, `uv run --frozen --no-sync dg check defs`, `uv run --frozen --no-sync ruff format <touched files>` and `uv run --frozen --no-sync ruff check <touched files>` on touched Python files only. Backoffice from `services/backoffice`: `npm run typecheck` and targeted `npx vitest run <file>` only (the full suite hits prod ClickHouse). Test fixtures that start containers wait for `docker port` and probe with `docker exec … clickhouse-client` before use (already the case in `tests/test_ip_enrichment_input.py:server`). Never call real RDAP servers, IANA or MaxMind from tests.
+- Commit by explicit path, never `git add -A` (`searcher/` and other sessions' files are unrelated untracked work). Conventional commits with trailer `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>`.
+- Do not restart `corpscout-dagster-dev`; deploy by `light_sync`. Task 8 requires the owner's go-ahead before its first step and again before the wipe. Heavy runs (the smoke batch and the full re-run) run on the prod Dagster host, never locally; anything spanning more than one run is a server-side procedure, not a loop on the workstation.
 
 ## Task ordering note
 
-The owner's suggested order is kept. Task 1 (registry-level fix, migration 449) comes first because it is independent of the queue work and the trie view it changes is what Tasks 4–5 test against. Task 2 (migration 450) precedes the import rewrite because the new table requires `submission_id` and the bucket-prefixed `input_id`, which today's `ip_enrichment_input` does not write; the input suite is red between Task 2 and Task 3 and the results suite between Task 2 and Task 5 (both are rewritten in those tasks), so run only the files each task names.
+Task 1 (migration 000453) precedes the import rewrite because the new table requires `submission_id` and the bucket-prefixed `input_id`, which today's `ip_enrichment_input` does not write; the input suite is red between Task 1 and Task 2 and the results suite between Task 1 and Task 5 (both are rewritten in those tasks), so run only the files each task names. Task 3 (the GeoLite2 check) comes before the resolver and the execution loop because Task 5 imports its `MAX_AGE`/`freshness` to report the build dates of every run. Task 4 (resolver) and Task 5 (loop) are the throughput work; Task 6 the backoffice; Task 7 the docs; Task 8 the deploy with the wipe, the smoke batch and the full re-run.
 
 ## File Structure
 
 | File | Change | Responsibility after this plan |
 | --- | --- | --- |
-| `services/dagster_v3/src/dagster_v3/defs/commoncrawl_rdap/rdap.py` | modify | `registry_level_reason`, `REGISTRY_LEVEL_SQL`, `registry_level` segment role |
-| `clickhouse/migrations/000449_corpscout_rdap_registry_level_exclusion.{up,down}.sql` | create | trie source view excludes registry-level networks; reader grants |
-| `clickhouse/migrations/000450_corpscout_ip_enrichment_queue_contract.{up,down}.sql` | create | partitioned entry table |
+| `clickhouse/migrations/000453_corpscout_ip_enrichment_queue_contract.{up,down}.sql` | create | partitioned entry table (gated rebuild while empty) |
 | `services/dagster_v3/src/dagster_v3/defs/ip_enrichment/input.py` | rewrite | config, `selected_ips_sql` (+ failed-of-task mode), `INPUT_ID_SQL`, `load_ip_draft`, input asset/job |
-| `services/dagster_v3/src/dagster_v3/defs/ip_enrichment/enrichment.py` | rewrite | GeoIP per address, `RdapEnricher.resolve_page` (bounded round trips), registry-level handling |
-| `services/dagster_v3/src/dagster_v3/defs/ip_enrichment/results.py` | rewrite | freeze, bucket walk of remaining entries, `ResultBuffer`, finish, purge; no workflow job |
-| `services/dagster_v3/src/dagster_v3/defs/commoncrawl_geoip/update.py` | create | GeoLite2 download/verify/install asset, freshness check, job, schedule |
-| `services/dagster_v3/.env.example` | modify | MaxMind directory comment + credentials |
+| `services/dagster_v3/src/dagster_v3/defs/commoncrawl_rdap/client.py` | modify | `RdapClient.registry_for` (registry of an address from whoisit's bootstrap data, no HTTP) |
+| `services/dagster_v3/src/dagster_v3/defs/commoncrawl_rdap/ripe_rest.py` | create | RIPE Database REST search with `no-referenced` (no person/role objects) reshaped into the RDAP document the normalizer reads |
+| `services/dagster_v3/src/dagster_v3/defs/commoncrawl_rdap/apnic_whois.py` | create | APNIC port-43 whois with `-r` (contact handles only), RPSL parsing, NIR-object rule, reshaped into the same RDAP document |
+| `services/dagster_v3/src/dagster_v3/defs/ip_enrichment/enrichment.py` | rewrite | GeoIP per address, `RdapEnricher.resolve_page` (bounded round trips), classes via `classify_registration`, RIPE via REST, APNIC via whois `-r`, optional per-registry budget |
+| `services/dagster_v3/src/dagster_v3/defs/ip_enrichment/results.py` | rewrite | freeze, bucket walk of remaining entries, `ResultBuffer`, budget waits, finish, purge; no workflow job |
+| `services/dagster_v3/src/dagster_v3/defs/commoncrawl_geoip/freshness.py` | create | build-time reader, `freshness`, check `geolite2_databases_fresh`, check-only job |
+| `services/dagster_v3/src/dagster_v3/defs/commoncrawl_geoip/definitions.py` | modify | registers the check and its job |
+| `services/dagster_v3/.env.example` | modify | MaxMind directory comment (manual updates, no credentials) |
 | `services/dagster_v3/tests/test_ip_enrichment_input.py` | rewrite | draft import against disposable ClickHouse/PostgreSQL; owns the module `server` fixture other suites import |
-| `services/dagster_v3/tests/test_ip_enrichment_results.py` | rewrite | registry-level parity, execution loop, bounded queries, completion/purge |
+| `services/dagster_v3/tests/test_ip_enrichment_results.py` | rewrite | resolver (page batching, classes, budget), execution loop, bounded queries, completion/purge |
 | `services/dagster_v3/tests/test_ip_enrichment_clickhouse_local.py` | modify | new entry-table layout |
 | `services/dagster_v3/tests/test_clickhouse_migrations.py` | modify | `EXPECTED_MIGRATIONS` |
-| `services/dagster_v3/tests/test_geolite2_update.py` | create | install/verify/check unit tests |
+| `services/dagster_v3/tests/test_geolite2_freshness.py` | create | freshness unit tests |
 | `services/backoffice/app/lib/ip-enrichment.server.ts` | rewrite | `addIpsToEnrichmentQueue`, `ipEnrichmentQueueSubmission`, selection parsing |
 | `services/backoffice/app/routes/admin-ip-enrichment-queue-submission.ts` | create | import status route |
 | `services/backoffice/app/routes/admin-ip-addresses.tsx`, `app/routes.ts`, `app/components/admin/queue-import-status.tsx`, `app/lib/queues.ts`, `app/lib/queues.server.ts`, `app/routes/admin-queue.tsx`, `app/components/admin/queue-process-sheet.tsx` | modify | draft semantics for the IP enrichment queue |
 | `services/backoffice/tests/{ip-enrichment.server.test.ts, admin-ip-addresses-action.test.ts, queues.server.test.ts, queue-route.test.ts}` | modify | |
-| `services/dagster_v3/docs/operations/ip-enrichment-draft-queue.md` | create | operations guide |
-| `services/dagster_v3/docs/ip-enrichment-schema.md`, `services/backoffice/docs/queues.md`, `defs/commoncrawl_geoip/docs/commoncrawl_geoip-design.md`, `defs/commoncrawl_rdap/docs/commoncrawl_rdap-design.md`, `services/dagster_v3/docs/deployment-runbook.md` | modify | |
-| spec status line | modify (Task 9) | |
+| `services/dagster_v3/docs/operations/ip-enrichment-draft-queue.md` | create | operations guide (queue, budget, manual GeoLite2 update, the 2026-09 clean re-run) |
+| `services/dagster_v3/docs/ip-enrichment-schema.md`, `services/backoffice/docs/queues.md`, `defs/commoncrawl_geoip/docs/commoncrawl_geoip-design.md`, `defs/commoncrawl_rdap/docs/commoncrawl_rdap-design.md`, `services/dagster_v3/docs/deployment-runbook.md`, `services/dagster_v3/docs/operations/ip-registry-reference-data.md` | modify | |
+| spec status line | modify (Task 8) | |
+
+Removed from the previous version of this plan (R1–R3): the registry-level classifier and migration 449 (`registry_level_reason`, `REGISTRY_LEVEL_SQL`, segment role `registry_level`), the GeoLite2 download asset/job/weekly schedule and `MAXMIND_ACCOUNT_ID`/`MAXMIND_LICENSE_KEY`, and the ~170k-IP remediation draft (superseded by the clean re-run). Corrected on 2026-09-26: the first draft of R4 assumed a 20,000-request RIPE allowance and a default budget of 18,000 requests/day; the AUP limit is 1,000 *personal data sets* per address, which the REST path avoids entirely (Task 4). Also considered and dropped on 2026-09-26: bulk RIR database dumps (terms of use, NIR precision) and proxy egress lanes with per-lane budgets (no speed gain, anti-avoidance clause).
 
 ---
+### Task 1: Partitioned entry table (migration 000453) and the entry-table contract test
 
-### Task 1: Registry-level classifier and the trie exclusion migration (000449)
-
-Evidence from the review: 173,991 IPs were served from `/8` blocks (`apnic:103.0.0.0-103.255.255.255` "APNIC-AP" 135,677; apnic 101/8, 113/8, 111/8; afrinic 102/8), plus `ripe:2A00::/11` "EU-ZZ-2A00", `arin:NET6-2600-1` (2600::/12, registrant ARIN) and LACNIC "UNALLOCATED" ranges stored as found. The trie source is the view `corpscout.rdap_network_segments_current` (migration 000258: `segment_role = 'lookup_result' AND prefix_length > 0`), read by the dictionary as user `corpscout_rdap_dictionary` (000126), which today has `SELECT` only on the segment tables.
+`task_id` becomes `String` (as in 446/448: the partition key and the shared `purge_completed_inputs` pass `DROP PARTITION %(task)s` as a string). The results table keeps `task_id UUID`; comparisons with a string parameter already work today (`results.py:83`). The migration rebuilds the table only while it is empty; on prod that is true after Task 8's wipe.
 
 **Files:**
-- Modify: `services/dagster_v3/src/dagster_v3/defs/commoncrawl_rdap/rdap.py:1-12, 99-100`
-- Create: `clickhouse/migrations/000449_corpscout_rdap_registry_level_exclusion.up.sql`, `…down.sql`
-- Modify: `services/dagster_v3/tests/test_clickhouse_migrations.py:463` (`EXPECTED_MIGRATIONS`)
-- Modify: `services/dagster_v3/tests/test_ip_enrichment_results.py:60-101` (`response`, `environment`) and append the parity tests
-
-**Interfaces:**
-- Produces (module `dagster_v3.defs.commoncrawl_rdap.rdap`):
-  - `VALID_SEGMENT_ROLES = frozenset({"lookup_result", "parent", "registry_level"})`
-  - `REGISTRY_TOKENS`, `REGISTRY_REGISTRANT_HANDLES`, `REGISTRY_REGISTRANT_PHRASES`, `MIN_REUSABLE_PREFIX = {4: 8, 6: 12}`
-  - `REGISTRY_LEVEL_SQL: str` — the predicate over one `rdap_networks` row (attributes only; the prefix rule is evaluated over segments in the view). Copied verbatim into the migration; a test asserts it.
-  - `registry_level_reason(network: RdapNetwork, segments: Sequence[RdapNetworkSegment]) -> str | None`.
-- The dictionary `corpscout.rdap_network_trie` keeps its name, columns and `USER 'corpscout_rdap_dictionary'` source (`_assert_rdap_storage_exists` in `commoncrawl_rdap/assets.py:814-824` checks that string).
-
-- [ ] **Step 1: Write the failing parity tests**
-
-In `services/dagster_v3/tests/test_ip_enrichment_results.py` change the `response` helper (lines 60-80) to accept raw overrides:
-
-```python
-def response(ip, *, start=None, end=None, **raw):
-    ipv6 = ":" in ip
-    return RdapLookupResponse(
-        rir="arin",
-        raw_response={
-            "objectClassName": "ip network",
-            "handle": "TEST-" + ip,
-            "startAddress": start
-            or ("2001:4860::" if ipv6 else ip.rsplit(".", 1)[0] + ".0"),
-            "endAddress": end
-            or (
-                "2001:4860:ffff:ffff:ffff:ffff:ffff:ffff"
-                if ipv6
-                else ip.rsplit(".", 1)[0] + ".255"
-            ),
-            "ipVersion": "v6" if ipv6 else "v4",
-            "name": "Test registration",
-            "country": "CA",
-            "status": ["active"],
-            **raw,
-        },
-    )
-```
-
-Replace the start of the `environment` fixture (lines 84-101, up to and including the `CREATE DICTIONARY` statement) with:
-
-```python
-MIGRATIONS = Path(__file__).resolve().parents[3] / "clickhouse/migrations"
-
-
-def statements(sql: str, *, before: str | None = None) -> list[str]:
-    """Executable statements of a migration file, comments and GRANTs stripped."""
-    if before is not None:
-        sql = sql.split(before, 1)[0]
-    chosen = []
-    for statement in sql.split(";"):
-        lines = [
-            line
-            for line in statement.splitlines()
-            if line.strip() and not line.lstrip().startswith("--")
-        ]
-        # Grants need the dictionary reader user; the test dictionary reads as `test`.
-        if lines and not lines[0].lstrip().startswith("GRANT"):
-            chosen.append("\n".join(lines))
-    return chosen
-
-
-@pytest.fixture
-def environment(server, store, tmp_path, monkeypatch):
-    client, resource = server
-    for statement in statements(
-        (MIGRATIONS / "000124_corpscout_rdap_networks.up.sql").read_text(),
-        before="CREATE DICTIONARY",
-    ):
-        client.execute(statement)
-    for statement in statements(
-        (MIGRATIONS / "000449_corpscout_rdap_registry_level_exclusion.up.sql").read_text(),
-        before="CREATE DICTIONARY",
-    ):
-        client.execute(statement)
-    client.execute("DROP DICTIONARY IF EXISTS corpscout.rdap_network_trie")
-    client.execute("""CREATE DICTIONARY corpscout.rdap_network_trie
-        (cidr String, matched_cidr String, network_key String) PRIMARY KEY cidr
-        SOURCE(CLICKHOUSE(HOST 'localhost' PORT 9000 USER 'test' PASSWORD 'test'
-            DB 'corpscout' TABLE 'rdap_network_segments_current'))
-        LAYOUT(IP_TRIE()) LIFETIME(0)""")
-```
-
-(The rest of the fixture — table truncation, readers, monkeypatches, `DagsterInstance.ephemeral()` — stays.) Add to the imports (`datetime` is needed by `registration()` here and by the Task 4/5 tests):
-
-```python
-from datetime import UTC, datetime, timedelta
-
-from dagster_v3.defs.commoncrawl_rdap.assets import (
-    RDAP_NETWORK_INSERT_SQL,
-    RDAP_SEGMENT_INSERT_SQL,
-)
-from dagster_v3.defs.commoncrawl_rdap.rdap import (
-    REGISTRY_LEVEL_SQL,
-    RdapLookupResponse,
-    normalize_rdap_network,
-    registry_level_reason,
-)
-```
-
-Append the parity tests:
-
-```python
-def registration(index, **raw):
-    """A normalized IPv4 /24 holder registration unless ``raw`` says otherwise."""
-    return normalize_rdap_network(
-        RdapLookupResponse(
-            rir="arin",
-            raw_response={
-                "objectClassName": "ip network",
-                "handle": f"CASE-{index}",
-                "startAddress": "8.8.8.0",
-                "endAddress": "8.8.8.255",
-                "ipVersion": "v4",
-                "name": "HOLDER-NET",
-                "type": "ASSIGNMENT",
-                "status": ["active"],
-                **raw,
-            },
-        ),
-        fetched_at=datetime.now(UTC),
-        segment_role="lookup_result",
-    )
-
-
-def registrant(handle, name):
-    return {
-        "objectClassName": "entity",
-        "handle": handle,
-        "roles": ["registrant"],
-        "vcardArray": ["vcard", [["fn", {}, "text", name]]],
-    }
-
-
-REGISTRY_CASES = [
-    ("holder /24", {}, True),
-    ("apnic /8 block", {"handle": "103.0.0.0 - 103.255.255.255", "startAddress": "103.0.0.0", "endAddress": "103.255.255.255", "name": "APNIC-AP", "type": "ALLOCATED PORTABLE"}, False),
-    ("wider than /8 without a marker", {"startAddress": "100.0.0.0", "endAddress": "103.255.255.255", "name": "SOMEONE"}, False),
-    ("iana block", {"name": "IANA-BLOCK"}, False),
-    ("allocated unspecified", {"type": "ALLOCATED UNSPECIFIED"}, False),
-    ("unallocated status", {"status": ["UNALLOCATED"]}, False),
-    ("registrant handle arin", {"entities": [registrant("ARIN", "American Registry for Internet Numbers")]}, False),
-    ("registrant name ripe ncc", {"entities": [registrant("ORG-XY1-RIPE", "RIPE Network Coordination Centre")]}, False),
-    ("country zz", {"country": "ZZ"}, False),
-    ("marina is not arin", {"name": "MARINA-NET"}, True),
-    ("ripe org handle suffix is not a marker", {"entities": [registrant("ORG-HZ1-RIPE", "Hetzner Online GmbH")]}, True),
-    ("ipv6 /11", {"startAddress": "2a00::", "endAddress": "2a1f:ffff:ffff:ffff:ffff:ffff:ffff:ffff", "ipVersion": "v6", "name": "EU-ZZ-2A00"}, False),
-    ("ipv6 /12 holder", {"startAddress": "2600::", "endAddress": "260f:ffff:ffff:ffff:ffff:ffff:ffff:ffff", "ipVersion": "v6", "name": "HOLDER6"}, True),
-]
-
-
-@pytest.mark.parametrize(("label", "raw", "reusable"), REGISTRY_CASES)
-def test_registry_level_rule_in_python(label, raw, reusable):
-    normalized = registration(0, **raw)
-    assert (registry_level_reason(normalized.network, normalized.segments) is None) == reusable, label
-
-
-def test_trie_view_and_python_agree_on_registry_level_networks(environment):
-    env = environment
-    expected = {}
-    for index, (label, raw, reusable) in enumerate(REGISTRY_CASES):
-        normalized = registration(index, **raw)
-        expected[normalized.network.network_key] = reusable
-        env.client.execute(RDAP_NETWORK_INSERT_SQL, [normalized.network.clickhouse_values()])
-        env.client.execute(
-            RDAP_SEGMENT_INSERT_SQL,
-            [segment.clickhouse_values() for segment in normalized.segments],
-        )
-    served = {
-        key
-        for (key,) in env.client.execute(
-            "SELECT DISTINCT network_key FROM corpscout.rdap_network_segments_current"
-        )
-    }
-    assert {key: key in served for key in expected} == expected
-    # A registry-level segment written by the enricher is excluded by its role alone.
-    marked = registration(99, name="OK-NET")
-    env.client.execute(RDAP_NETWORK_INSERT_SQL, [marked.network.clickhouse_values()])
-    env.client.execute(
-        RDAP_SEGMENT_INSERT_SQL,
-        [(*segment.clickhouse_values()[:4], "registry_level", *segment.clickhouse_values()[5:]) for segment in marked.segments],
-    )
-    assert env.client.execute(
-        "SELECT count() FROM corpscout.rdap_network_segments_current WHERE network_key = %(key)s",
-        {"key": marked.network.network_key},
-    ) == [(0,)]
-
-
-def test_migration_449_carries_the_python_predicate_and_grants_the_reader():
-    migration = (MIGRATIONS / "000449_corpscout_rdap_registry_level_exclusion.up.sql").read_text()
-    normalize = lambda text: " ".join(text.split())  # noqa: E731
-    assert normalize(REGISTRY_LEVEL_SQL) in normalize(migration)
-    assert "min(prefix_length) < if(any(ip_version) = 4, 8, 12)" in migration
-    assert "GRANT SELECT ON corpscout.rdap_networks_current TO corpscout_rdap_dictionary" in migration
-    assert "USER 'corpscout_rdap_dictionary'" in migration
-    assert migration.index("DROP DICTIONARY") < migration.index("DROP VIEW") < migration.index("CREATE VIEW") < migration.index("CREATE DICTIONARY")
-```
-
-- [ ] **Step 2: Run to verify they fail**
-
-Run: `uv run --frozen --no-sync pytest tests/test_ip_enrichment_results.py -k "registry or migration_449" -q -p no:cacheprovider`
-Expected: FAIL — `ImportError: cannot import name 'REGISTRY_LEVEL_SQL' from 'dagster_v3.defs.commoncrawl_rdap.rdap'`.
-
-- [ ] **Step 3: Add the classifier to `rdap.py`**
-
-Replace lines 1-12 of `services/dagster_v3/src/dagster_v3/defs/commoncrawl_rdap/rdap.py` with:
-
-```python
-import hashlib
-import json
-import re
-from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass
-from datetime import UTC, datetime
-from ipaddress import ip_address
-from typing import Any
-
-from netaddr import iprange_to_cidrs
-
-
-# A registry_level segment answers only the IP that was queried: it is stored for audit
-# but never feeds rdap_network_trie (the view filters on segment_role).
-VALID_SEGMENT_ROLES = frozenset({"lookup_result", "parent", "registry_level"})
-
-# Marks a registration as an RIR/IANA block or unallocated space rather than a holder's
-# network. The tokens are matched against whole tokens of name, handle, type and status
-# (so MARINA is not ARIN); the handles are exact registrant handles; the phrases are
-# searched in registrant names. RIPE org handles end in -RIPE, which is why the token
-# rule never looks at registrant_handles.
-REGISTRY_TOKENS = (
-    "IANA",
-    "APNIC",
-    "ARIN",
-    "LACNIC",
-    "AFRINIC",
-    "RIPE",
-    "UNALLOCATED",
-    "UNSPECIFIED",
-)
-REGISTRY_REGISTRANT_HANDLES = (
-    "ARIN",
-    "IANA",
-    "APNIC",
-    "LACNIC",
-    "AFRINIC",
-    "ORG-NCC1-RIPE",
-)
-REGISTRY_REGISTRANT_PHRASES = (
-    "INTERNET ASSIGNED NUMBERS AUTHORITY",
-    "ASIA PACIFIC NETWORK INFORMATION CENTRE",
-    "RIPE NETWORK COORDINATION CENTRE",
-    "RIPE NCC",
-    "AMERICAN REGISTRY FOR INTERNET NUMBERS",
-    "LATIN AMERICAN AND CARIBBEAN IP ADDRESS REGIONAL REGISTRY",
-    "AFRICAN NETWORK INFORMATION CENTER",
-)
-# Widest reusable prefix per IP version: IANA hands /8s (v4) and /12s (v6) to the RIRs.
-MIN_REUSABLE_PREFIX = {4: 8, 6: 12}
-
-
-def _sql_list(values: Sequence[str]) -> str:
-    return "[" + ", ".join(f"'{value}'" for value in values) + "]"
-
-
-# The SQL twin of registry_level_reason over one corpscout.rdap_networks row, without the
-# prefix rule (the view evaluates that over rdap_network_segments). Migration 000449
-# embeds this text verbatim; tests/test_ip_enrichment_results.py asserts it.
-REGISTRY_LEVEL_SQL = (
-    "hasAny(splitByRegexp('[^A-Z0-9]+', upperUTF8(concat(ifNull(name, ''), ' ', handle, ' ', "
-    "ifNull(registration_type, ''), ' ', arrayStringConcat(status, ' ')))), "
-    + _sql_list(REGISTRY_TOKENS)
-    + ") OR hasAny(registrant_handles, "
-    + _sql_list(REGISTRY_REGISTRANT_HANDLES)
-    + ") OR arrayExists(registrant -> multiSearchAny(upperUTF8(registrant), "
-    + _sql_list(REGISTRY_REGISTRANT_PHRASES)
-    + "), registrant_names) OR ifNull(country_code, '') = 'ZZ'"
-)
-```
-
-After `is_registry_catch_all` (line 100) add:
-
-```python
-def registry_level_reason(
-    network: "RdapNetwork", segments: Sequence["RdapNetworkSegment"]
-) -> str | None:
-    """Why a registration answers only the queried IP, or None when it is reusable coverage."""
-    widest = min((segment.prefix_length for segment in segments), default=0)
-    if widest < MIN_REUSABLE_PREFIX[network.ip_version]:
-        return f"range wider than a /{MIN_REUSABLE_PREFIX[network.ip_version]}"
-    text = " ".join(
-        [network.name or "", network.handle, network.registration_type or "", *network.status]
-    ).upper()
-    tokens = set(re.split(r"[^A-Z0-9]+", text)) - {""}
-    if tokens & set(REGISTRY_TOKENS):
-        return "registry or unallocated marker in name, handle, type or status"
-    if set(network.registrant_handles) & set(REGISTRY_REGISTRANT_HANDLES):
-        return "registrant is a registry"
-    if any(
-        phrase in name.upper()
-        for name in network.registrant_names
-        for phrase in REGISTRY_REGISTRANT_PHRASES
-    ):
-        return "registrant is a registry"
-    if network.country_code == "ZZ":
-        return "country ZZ is a registry placeholder"
-    return None
-```
-
-- [ ] **Step 4: Write the migrations**
-
-`clickhouse/migrations/000449_corpscout_rdap_registry_level_exclusion.up.sql` (the `WHERE` of the second subquery is `REGISTRY_LEVEL_SQL` copied verbatim on one line):
-
-```sql
-CREATE DATABASE IF NOT EXISTS corpscout;
-
--- Registry-level and unallocated registrations (an RIR or IANA block, a range wider than
--- a /8 or /12, or a placeholder such as ALLOCATED UNSPECIFIED) answer only the IP that
--- was queried. They must not serve other IPs from the longest-prefix trie, so the view
--- feeding rdap_network_trie excludes them by range size and by normalized attributes.
--- The predicate is the SQL twin of registry_level_reason in commoncrawl_rdap/rdap.py.
--- The dictionary reader now needs the network attributes as well as the segments.
-GRANT SELECT ON corpscout.rdap_networks TO corpscout_rdap_dictionary;
-GRANT SELECT ON corpscout.rdap_networks_current TO corpscout_rdap_dictionary;
-
-DROP DICTIONARY IF EXISTS corpscout.rdap_network_trie;
-DROP VIEW IF EXISTS corpscout.rdap_network_segments_current;
-
-CREATE VIEW corpscout.rdap_network_segments_current AS
-SELECT
-    cidr,
-    cidr AS matched_cidr,
-    argMax(network_key, tuple(derived_at, network_key)) AS network_key
-FROM corpscout.rdap_network_segments FINAL
-WHERE segment_role = 'lookup_result'
-  AND prefix_length > 0
-  AND network_key NOT IN (
-      SELECT network_key
-      FROM corpscout.rdap_network_segments FINAL
-      WHERE segment_role = 'lookup_result'
-      GROUP BY network_key
-      HAVING min(prefix_length) < if(any(ip_version) = 4, 8, 12))
-  AND network_key NOT IN (
-      SELECT network_key
-      FROM corpscout.rdap_networks_current
-      WHERE hasAny(splitByRegexp('[^A-Z0-9]+', upperUTF8(concat(ifNull(name, ''), ' ', handle, ' ', ifNull(registration_type, ''), ' ', arrayStringConcat(status, ' ')))), ['IANA', 'APNIC', 'ARIN', 'LACNIC', 'AFRINIC', 'RIPE', 'UNALLOCATED', 'UNSPECIFIED']) OR hasAny(registrant_handles, ['ARIN', 'IANA', 'APNIC', 'LACNIC', 'AFRINIC', 'ORG-NCC1-RIPE']) OR arrayExists(registrant -> multiSearchAny(upperUTF8(registrant), ['INTERNET ASSIGNED NUMBERS AUTHORITY', 'ASIA PACIFIC NETWORK INFORMATION CENTRE', 'RIPE NETWORK COORDINATION CENTRE', 'RIPE NCC', 'AMERICAN REGISTRY FOR INTERNET NUMBERS', 'LATIN AMERICAN AND CARIBBEAN IP ADDRESS REGIONAL REGISTRY', 'AFRICAN NETWORK INFORMATION CENTER']), registrant_names) OR ifNull(country_code, '') = 'ZZ')
-GROUP BY cidr;
-
-CREATE DICTIONARY corpscout.rdap_network_trie
-(
-    cidr          String,
-    matched_cidr  String,
-    network_key   String
-)
-PRIMARY KEY cidr
-SOURCE(
-    CLICKHOUSE(
-        USER 'corpscout_rdap_dictionary'
-        DB 'corpscout'
-        TABLE 'rdap_network_segments_current'
-    )
-)
-LAYOUT(IP_TRIE())
-LIFETIME(MIN 300 MAX 600);
-```
-
-`clickhouse/migrations/000449_corpscout_rdap_registry_level_exclusion.down.sql` (the 000258 layout):
-
-```sql
-CREATE DATABASE IF NOT EXISTS corpscout;
-
-DROP DICTIONARY IF EXISTS corpscout.rdap_network_trie;
-DROP VIEW IF EXISTS corpscout.rdap_network_segments_current;
-
-CREATE VIEW corpscout.rdap_network_segments_current AS
-SELECT
-    cidr,
-    cidr AS matched_cidr,
-    argMax(network_key, tuple(derived_at, network_key)) AS network_key
-FROM corpscout.rdap_network_segments FINAL
-WHERE segment_role = 'lookup_result'
-  AND prefix_length > 0
-GROUP BY cidr;
-
-CREATE DICTIONARY corpscout.rdap_network_trie
-(
-    cidr          String,
-    matched_cidr  String,
-    network_key   String
-)
-PRIMARY KEY cidr
-SOURCE(
-    CLICKHOUSE(
-        USER 'corpscout_rdap_dictionary'
-        DB 'corpscout'
-        TABLE 'rdap_network_segments_current'
-    )
-)
-LAYOUT(IP_TRIE())
-LIFETIME(MIN 300 MAX 600);
-
-REVOKE SELECT ON corpscout.rdap_networks_current FROM corpscout_rdap_dictionary;
-REVOKE SELECT ON corpscout.rdap_networks FROM corpscout_rdap_dictionary;
-```
-
-In `services/dagster_v3/tests/test_clickhouse_migrations.py` append `"000449_corpscout_rdap_registry_level_exclusion",` after line 463 (`"000448_corpscout_crawl_queue_contract",`).
-
-- [ ] **Step 5: Run the tests**
-
-Run: `uv run --frozen --no-sync pytest tests/test_ip_enrichment_results.py -k "registry or migration_449" tests/test_clickhouse_migrations.py tests/test_commoncrawl_rdap_assets.py -q -p no:cacheprovider`
-Expected: all pass (the remaining `test_ip_enrichment_results.py` tests still pass here — nothing else changed yet).
-
-Run ruff format/check on `src/dagster_v3/defs/commoncrawl_rdap/rdap.py tests/test_ip_enrichment_results.py`.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add services/dagster_v3/src/dagster_v3/defs/commoncrawl_rdap/rdap.py clickhouse/migrations/000449_corpscout_rdap_registry_level_exclusion.up.sql clickhouse/migrations/000449_corpscout_rdap_registry_level_exclusion.down.sql services/dagster_v3/tests/test_clickhouse_migrations.py services/dagster_v3/tests/test_ip_enrichment_results.py
-git commit -m "fix(clickhouse): keep registry-level and unallocated RDAP blocks out of rdap_network_trie
-
-Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
-```
-
----
-
-### Task 2: Partitioned entry table (migration 000450) and the entry-table contract test
-
-`task_id` becomes `String` (as in 446/448: the partition key and the shared `purge_completed_inputs` pass `DROP PARTITION %(task)s` as a string). The results table keeps `task_id UUID`; comparisons with a string parameter already work today (`results.py:83`).
-
-**Files:**
-- Create: `clickhouse/migrations/000450_corpscout_ip_enrichment_queue_contract.up.sql`, `…down.sql`
-- Modify: `services/dagster_v3/tests/test_clickhouse_migrations.py` (`EXPECTED_MIGRATIONS`)
+- Create: `clickhouse/migrations/000453_corpscout_ip_enrichment_queue_contract.up.sql`, `…down.sql`
+- Modify: `services/dagster_v3/tests/test_clickhouse_migrations.py` (`EXPECTED_MIGRATIONS`, after its last entry)
 - Modify: `services/dagster_v3/tests/test_ip_enrichment_input.py:88-96` (`server` fixture) and append the contract test
-- Modify: `services/dagster_v3/tests/test_ip_enrichment_clickhouse_local.py:12-28, 82-98, 125-144`
+- Modify: `services/dagster_v3/tests/test_ip_enrichment_clickhouse_local.py:12-13, 21-27, 84-98, 101, 128-134`
+- Modify: `services/dagster_v3/src/dagster_v3/defs/ip_enrichment/input.py:21` (add `INPUT_ID_SQL`)
 
 **Interfaces:**
 - Produces: `corpscout.ip_enrichment_input(task_id String, input_id String, ip String, ip_version UInt8 MATERIALIZED, bucket UInt16 MATERIALIZED, source_name LowCardinality(String), source_record_id String, source_run_id String, submission_id String, observed_at Nullable(DateTime64(6,'UTC')), submitted_at DateTime64(6,'UTC'))`, `ENGINE = MergeTree PARTITION BY task_id ORDER BY (task_id, input_id)`, constraints `valid_identity` (non-empty `task_id`/`submission_id`, `input_id` equals the bucket-prefixed JSON tuple), `valid_source`, `canonical_ip`.
-- The `server` fixture of `tests/test_ip_enrichment_input.py` (imported by `test_ip_enrichment_results.py`, `test_webtech_input.py`, `test_webtech_draft_execution.py`, `test_domains_inventory.py`, `test_web_inventory.py`, `test_domains_search.py`) applies 000433 then 000450; its name and shape are unchanged.
+- Produces (module `dagster_v3.defs.ip_enrichment.input`): `INPUT_ID_SQL: str` with `{ip}`, `{source}`, `{record}` placeholders.
+- The `server` fixture of `tests/test_ip_enrichment_input.py` (imported by `test_ip_enrichment_results.py`, `test_ip_registry.py`, `test_webtech_input.py`, `test_webtech_draft_execution.py`, `test_domains_inventory.py`, `test_web_inventory.py`, `test_domains_search.py`) applies 000433 then 000453; its name and shape are unchanged.
 
-- [ ] **Step 1: Confirm the migration numbers are free**
+- [ ] **Step 1: Confirm the migration number is free**
 
 Run: `ls clickhouse/migrations | tail -2`
-Expected: `000449_corpscout_rdap_registry_level_exclusion.up.sql` is the highest.
+Expected: the highest number is `000452` (`000452_corpscout_website_crawl_normalized` — another session's files; if they are not on your branch yet, the highest is `000451`). Either way `000453` is free.
 
-Run: `ssh companycollect 'sudo docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT max(version) FROM corpscout.schema_migrations WHERE dirty=0"'`
-Expected: `448`. If another workstream took 449 or 450 on main or prod, renumber both files of Task 1 and this task and every mention in Tasks 3–9.
+Run: `ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT max(version) FROM corpscout.schema_migrations WHERE dirty=0"'`
+Expected: `452`. If another workstream took 453 on main or prod, renumber both files of this task and every mention in Tasks 2–8.
 
 - [ ] **Step 2: Write the migrations**
 
-`clickhouse/migrations/000450_corpscout_ip_enrichment_queue_contract.up.sql`:
+`clickhouse/migrations/000453_corpscout_ip_enrichment_queue_contract.up.sql`:
 
 ```sql
 CREATE DATABASE IF NOT EXISTS corpscout;
@@ -527,7 +122,8 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 -- import replaces only its own rows. input_id starts with the address's 256-way bucket
 -- (leftPad(bucket, 3, '0') then ':' then the JSON tuple of source, record and IP), so a
 -- task is walked bucket by bucket and each remaining or completion query joins exactly
--- one primary-key range of ip_enrichment_results. The table is rebuilt only while empty.
+-- one primary-key range of ip_enrichment_results. The table is rebuilt only while empty
+-- (the 2026-09 clean re-run truncates it first, by hand, after the owner's go-ahead).
 -- The mutation-pool setting stays because the submission retry deletes its own rows with
 -- a lightweight DELETE.
 SELECT throwIf(count() > 0, 'ip_enrichment_input must be empty before its layout changes')
@@ -562,7 +158,7 @@ ORDER BY (task_id, input_id)
 SETTINGS number_of_free_entries_in_pool_to_execute_mutation = 1;
 ```
 
-`clickhouse/migrations/000450_corpscout_ip_enrichment_queue_contract.down.sql` (the 000433 layout):
+`clickhouse/migrations/000453_corpscout_ip_enrichment_queue_contract.down.sql` (the 000433 layout):
 
 ```sql
 CREATE DATABASE IF NOT EXISTS corpscout;
@@ -594,7 +190,7 @@ ENGINE = MergeTree
 ORDER BY (input_id, task_id);
 ```
 
-Append `"000450_corpscout_ip_enrichment_queue_contract",` after the 449 entry in `EXPECTED_MIGRATIONS`.
+In `services/dagster_v3/tests/test_clickhouse_migrations.py` append `"000453_corpscout_ip_enrichment_queue_contract",` as the last entry of `EXPECTED_MIGRATIONS` (after `"000452_corpscout_website_crawl_normalized",` when that entry is present on your branch, else after `"000451_corpscout_rdap_trie_registry_class_exclusion",`).
 
 - [ ] **Step 3: Apply it in the shared fixture and write the contract test**
 
@@ -605,7 +201,7 @@ In `services/dagster_v3/tests/test_ip_enrichment_input.py` replace lines 88-96 (
             migrations = Path(__file__).resolve().parents[3] / "clickhouse/migrations"
             for name in (
                 "000433_corpscout_ip_enrichment.up.sql",
-                "000450_corpscout_ip_enrichment_queue_contract.up.sql",
+                "000453_corpscout_ip_enrichment_queue_contract.up.sql",
             ):
                 for statement in (migrations / name).read_text(encoding="utf-8").split(";"):
                     if statement.strip():
@@ -613,7 +209,7 @@ In `services/dagster_v3/tests/test_ip_enrichment_input.py` replace lines 88-96 (
             yield client, resource
 ```
 
-Append to the same file (the rest of the file is rewritten in Task 3; this test survives unchanged):
+Append to the same file (the rest of the file is rewritten in Task 2; this test survives unchanged):
 
 ```python
 def test_entry_table_follows_the_queue_contract(database):
@@ -646,12 +242,12 @@ def test_entry_table_follows_the_queue_contract(database):
     assert input_id == f"{bucket:03d}:" + '["manual","8.8.8.8","8.8.8.8"]'
 ```
 
-`INPUT_ID_SQL` does not exist until Task 3; add it now to `services/dagster_v3/src/dagster_v3/defs/ip_enrichment/input.py` after `PROCESSOR_VERSION` (line 21) so this task is green on its own:
+`INPUT_ID_SQL` does not exist until Task 2; add it now to `services/dagster_v3/src/dagster_v3/defs/ip_enrichment/input.py` after `PROCESSOR_VERSION` (line 21) so this task is green on its own:
 
 ```python
 # The entry identity, computed where the entries live: the address's 256-way bucket first,
 # so a task is walked bucket by bucket, then the JSON tuple of source, record and IP.
-# Migration 000450 enforces the same expression in its valid_identity CHECK.
+# Migration 000453 enforces the same expression in its valid_identity CHECK.
 INPUT_ID_SQL = (
     "concat(leftPad(toString(toUInt16(cityHash64({ip}) % 256)), 3, '0'), ':', "
     "toJSONString(tuple({source}, {record}, {ip})))"
@@ -667,7 +263,7 @@ Replace lines 12-13 with:
 ```python
 MIGRATIONS = Path(__file__).resolve().parents[3] / "clickhouse/migrations"
 MIGRATION = "000433_corpscout_ip_enrichment"
-QUEUE_MIGRATION = "000450_corpscout_ip_enrichment_queue_contract"
+QUEUE_MIGRATION = "000453_corpscout_ip_enrichment_queue_contract"
 IDENTITY = "concat(leftPad(toString(toUInt16(cityHash64(ip) % 256)), 3, '0'), ':', toJSONString(tuple(source_name, source_record_id, ip)))"
 ```
 
@@ -716,7 +312,7 @@ Replace lines 84-98 (the `subprocess.run` input) with:
     )
 ```
 
-and the first expected row `[2, 1, 2],` becomes `[2, 1, 2, 2],`.
+and the first expected row (line 101) `[2, 1, 2],` becomes `[2, 1, 2, 2],`.
 
 In `test_ip_enrichment_rejects_invalid_or_noncanonical_ips` replace lines 128-134 with:
 
@@ -736,23 +332,22 @@ In `test_ip_enrichment_rejects_invalid_or_noncanonical_ips` replace lines 128-13
 
 - [ ] **Step 5: Run the migration suites**
 
-Run: `uv run --frozen --no-sync pytest tests/test_clickhouse_migrations.py tests/test_ip_enrichment_clickhouse_local.py tests/test_legacy_geoip_migration.py tests/test_ip_enrichment_input.py::test_entry_table_follows_the_queue_contract -q -p no:cacheprovider`
-Expected: all pass. (`test_legacy_geoip_migration.py` only applies 000433 and touches the results table.) The other tests of `test_ip_enrichment_input.py` and of `test_ip_enrichment_results.py` are red until Tasks 3 and 5.
+Run: `uv run --frozen --no-sync pytest tests/test_clickhouse_migrations.py tests/test_ip_enrichment_clickhouse_local.py tests/test_legacy_geoip_migration.py tests/test_ip_enrichment_input.py::test_entry_table_follows_the_queue_contract tests/test_ip_registry.py -q -p no:cacheprovider`
+Expected: all pass. (`test_legacy_geoip_migration.py` only applies 000433 and touches the results table; `test_ip_registry.py` shares the `server` fixture and must still be green.) The other tests of `test_ip_enrichment_input.py` and of `test_ip_enrichment_results.py` are red until Tasks 2 and 5.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add clickhouse/migrations/000450_corpscout_ip_enrichment_queue_contract.up.sql clickhouse/migrations/000450_corpscout_ip_enrichment_queue_contract.down.sql services/dagster_v3/tests/test_clickhouse_migrations.py services/dagster_v3/tests/test_ip_enrichment_input.py services/dagster_v3/tests/test_ip_enrichment_clickhouse_local.py services/dagster_v3/src/dagster_v3/defs/ip_enrichment/input.py
+git add clickhouse/migrations/000453_corpscout_ip_enrichment_queue_contract.up.sql clickhouse/migrations/000453_corpscout_ip_enrichment_queue_contract.down.sql services/dagster_v3/tests/test_clickhouse_migrations.py services/dagster_v3/tests/test_ip_enrichment_input.py services/dagster_v3/tests/test_ip_enrichment_clickhouse_local.py services/dagster_v3/src/dagster_v3/defs/ip_enrichment/input.py
 git commit -m "feat(clickhouse): partition ip_enrichment_input by task with bucket-prefixed input ids and a required submission_id
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
+### Task 2: Draft import through the shared draft queue
 
-### Task 3: Draft import through the shared draft queue
-
-Today `ip_enrichment_input` (`input.py:244-357`) uses `store.prepare_selection`/`finish_selection` (legacy, `queue_scope NULL`), a task-wide `ALTER TABLE … DELETE` retry and no receipts. It becomes the crawl-style import: `draft_queue.find_draft` → `prepare_submission` → `KILL QUERY` + `DELETE … WHERE task_id AND submission_id` + one `INSERT … SELECT` → `finish_submission`, `fail_submission` on any error. `input_count` is the number of rows this submission added to the draft (after dedup against the draft), not a separate evaluation of the selection: evaluating a 48.6M-row selection twice costs minutes and the receipt only needs a count. `source_info.unique_ips` disappears (a `uniqExact` over 48.6M strings is not worth a freeze-time query); the materialization reports `input_count` and `total`. No draft size cap: entries cost nothing in PostgreSQL. A third selection mode, `retry_failed_task_id`, queues the addresses whose result in that task has any component in an error status (D4's "failed IPs of task X").
+Today `ip_enrichment_input` (`input.py:244-357`) uses `store.prepare_selection`/`finish_selection` (legacy, `queue_scope NULL`), a task-wide `ALTER TABLE … DELETE` retry and no receipts. It becomes the crawl-style import (`website_crawl/queue_input.py:41-205`): `draft_queue.find_draft` → `prepare_submission` → `KILL QUERY` + `DELETE … WHERE task_id AND submission_id` + one `INSERT … SELECT` → `finish_submission`, `fail_submission` on any error. `input_count` is the number of rows this submission added to the draft (after dedup against the draft), not a separate evaluation of the selection: evaluating a 49M-row selection twice costs minutes and the receipt only needs a count. `source_info.unique_ips` disappears (a `uniqExact` over 49M strings is not worth a freeze-time query); the materialization reports `input_count` and `total`. No draft size cap: entries cost nothing in PostgreSQL. A third selection mode, `retry_failed_task_id`, queues the addresses whose result in that task has any component in an error status (D4's "failed IPs of task X").
 
 **Files:**
 - Rewrite: `services/dagster_v3/src/dagster_v3/defs/ip_enrichment/input.py`
@@ -769,7 +364,7 @@ Today `ip_enrichment_input` (`input.py:244-357`) uses `store.prepare_selection`/
 
 - [ ] **Step 1: Write the failing tests**
 
-Replace everything in `services/dagster_v3/tests/test_ip_enrichment_input.py` after the `database` fixture (keep lines 1-110 as modified in Task 2, and keep `test_entry_table_follows_the_queue_contract`) with:
+Replace everything in `services/dagster_v3/tests/test_ip_enrichment_input.py` after the `database` fixture (keep lines 1-110 as modified in Task 1, and keep `test_entry_table_follows_the_queue_contract`) with:
 
 ```python
 def materialize(resource, dsn, **config):
@@ -1084,7 +679,7 @@ def test_new_submissions_after_start_form_the_next_draft(database, store):
         materialize(resource, dsn, queue_scope=space, task_id=first["task_id"], ips=["1.1.1.1"])
 ```
 
-(The import block at the top keeps `dg`, `pytest`, `ClickhouseResource`, `ValidationError`, `ProcessingResource`, `INPUT_RELATION`, `IpEnrichmentInputConfig`, `ip_enrichment_input`, the clickhouse_local helpers and the store fixtures; add `from datetime import UTC, datetime`; delete `from dagster_v3.defs.common.clickhouse_queue import ClickHouseInputQueue`.)
+(The import block at the top keeps `dg`, `pytest`, `ClickhouseResource`, `ValidationError`, `ProcessingResource`, `INPUT_RELATION`, `IpEnrichmentInputConfig`, `ip_enrichment_input`, the clickhouse_local helpers and the store fixtures; add `from datetime import UTC, datetime`; delete `from dagster_v3.defs.common.clickhouse_queue import ClickHouseInputQueue`. The `database` fixture keeps truncating `INPUT_RELATION`; add `client.execute("TRUNCATE TABLE corpscout.ip_enrichment_results")` next to it so the retry-failed test starts clean.)
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -1125,7 +720,7 @@ PROCESSOR_VERSION = "ip-enrichment-v1"
 ERROR_STATUSES = ("retryable_error", "terminal_error")
 # The entry identity, computed where the entries live: the address's 256-way bucket first,
 # so a task is walked bucket by bucket, then the JSON tuple of source, record and IP.
-# Migration 000450 enforces the same expression in its valid_identity CHECK.
+# Migration 000453 enforces the same expression in its valid_identity CHECK.
 INPUT_ID_SQL = (
     "concat(leftPad(toString(toUInt16(cityHash64({ip}) % 256)), 3, '0'), ':', "
     "toJSONString(tuple({source}, {record}, {ip})))"
@@ -1644,40 +1239,466 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
+### Task 3: GeoLite2 freshness check and the `.env.example` fix (no download, no credentials)
 
-### Task 4: Page-batched RDAP resolution bounded by the frozen execution window
-
-Today `RdapEnricher.lookup` (`enrichment.py:302-402`) issues, per IP, one `rdap_ip_lookup_results_current` query, one `rdap_networks_current FINAL` query that returns `raw_response` and re-parses it, and one `INSERT` per lookup marker; the review measured 90% of wall time in these round trips. The new `RdapEnricher.resolve_page(rows)` answers a whole page with four round trips at most, keeps two in-process caches (`cached`: fresh network rows read from ClickHouse, `recent`: reusable networks fetched over HTTP in this run) and requests RDAP only for misses. Registry-level responses (Task 1) are stored as `registry_level` segments, answer only their IP, and are never added to `recent`; a later task asking for the same IP is served by its own `found` marker in `rdap_ip_lookup_results` (per-IP hit) rather than by the trie.
+Evidence: every result row on prod carries City build `2026-07-10 06:34` and ASN build `2026-07-10 08:15`; there is no update mechanism and the owner has no MaxMind account (R2), so the files are replaced by hand. `MaxMindDatabaseResource.database_paths()` (`commoncrawl_geoip/resources.py:11-16`) resolves `<dir>/GeoLite2-City.mmdb` and `<dir>/GeoLite2-ASN.mmdb` at call time, and `ip_enrichment_results` opens both with `maxminddb.open_database` inside the run, so a file replaced by `mv` is used by the next run without restarting anything. `.env.example:70` still describes versioned `GeoLite2-City_*` folders, which `resources.py` does not read. Checks are registered like `commoncrawl_ip_checks.py` (an `@dg.asset_check` on another module's asset key plus a check-only job). The check is attached to `ip_enrichment_results` so it runs with every enrichment run launched with its checks and can be executed alone from `geolite2_freshness_job`; Task 5 additionally reports the build dates in every run's metadata.
 
 **Files:**
-- Rewrite: `services/dagster_v3/src/dagster_v3/defs/ip_enrichment/enrichment.py`
-- Modify: `services/dagster_v3/tests/test_ip_enrichment_results.py` (append the resolver tests; they drive `RdapEnricher` directly with the `environment` fixture)
+- Create: `services/dagster_v3/src/dagster_v3/defs/commoncrawl_geoip/freshness.py`
+- Modify: `services/dagster_v3/src/dagster_v3/defs/commoncrawl_geoip/definitions.py`
+- Create: `services/dagster_v3/tests/test_geolite2_freshness.py`
+- Modify: `services/dagster_v3/.env.example:70-71`
 
 **Interfaces:**
-- Produces (module `dagster_v3.defs.ip_enrichment.enrichment`):
-  - `IpEnrichmentResultsConfig` — unchanged fields and defaults (`batch_size=250`, `max_requests=250`, `request_delay_seconds=1.0`, `parent_depth=1`, `rdap_cache_days=30`, `force_rdap=False`, `rate_limit_retry_seconds=3600`, `transient_retry_seconds=900`).
-  - `geoip_result(ip, city_reader, asn_reader, *, checked_at, retry_seconds) -> dict` (unchanged), `rdap_result(...)` (unchanged), `matching_cidr(normalized, address)` (unchanged), `cidr_containing(start: str, end: str, address) -> str | None`.
-  - `NETWORK_COLUMNS: tuple[str, ...]` (every `rdap_networks` column except `raw_response`), `cached_network_row(row) -> RdapNetwork` (with `raw_response=""`).
-  - `RdapEnricher(client, rdap: RdapClient, config, log, *, started_at: datetime, cache_cutoff: datetime)` with counters `requests, cache_hits, networks_written, parent_failures, registry_level_responses`, flag `budget_reached`, and `resolve_page(rows: list[dict]) -> dict[str, dict]` mapping each row's `ip` to the `rdap_*` result fields; an IP missing from the result was not resolved because the budget ran out (`budget_reached` is then `True`).
-- Removes: `RdapEnricher.lookup`. `RequestBudgetReached` stays defined (unused) so `results.py` keeps importing until Task 5 deletes both; the `maxminddb` re-export stays (`results.py` and tests patch `enrichment.maxminddb.open_database`).
+- Produces (module `dagster_v3.defs.commoncrawl_geoip.freshness`): `EDITIONS = ("GeoLite2-City", "GeoLite2-ASN")`, `MAX_AGE = timedelta(days=14)`, `RESULTS_ASSET = dg.AssetKey("ip_enrichment_results")`, `database_build_times(resource: MaxMindDatabaseResource, *, opener=maxminddb.open_database) -> dict[str, datetime]`, `freshness(times: dict[str, datetime], now: datetime) -> dg.AssetCheckResult`, check `geolite2_databases_fresh` (asset `ip_enrichment_results`, `blocking=False`), job `geolite2_freshness_job` (checks only). Task 5 imports `MAX_AGE` and `freshness`.
 
-- [ ] **Step 1: Write the failing resolver tests**
+- [ ] **Step 1: Write the failing tests**
 
-Append to `services/dagster_v3/tests/test_ip_enrichment_results.py` (add `from clickhouse_driver import Client` and `from dagster_v3.defs.ip_enrichment.enrichment import IpEnrichmentResultsConfig, RdapEnricher` to the imports; `SimpleNamespace` and `datetime` are already imported):
+Create `services/dagster_v3/tests/test_geolite2_freshness.py`:
 
 ```python
-def resolver(env, *, started_at=None, cache_days=30, **config):
+"""GeoLite2 freshness with fake readers; no MaxMind traffic, no real .mmdb files."""
+
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+
+from dagster_v3.defs.commoncrawl_geoip import freshness
+from dagster_v3.defs.commoncrawl_geoip.resources import MaxMindDatabaseResource
+
+
+class Reader:
+    def __init__(self, path, build_epoch):
+        self.path, self.build_epoch = path, build_epoch
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def metadata(self):
+        return SimpleNamespace(database_type="GeoLite2-City", build_epoch=self.build_epoch)
+
+
+def test_build_times_are_read_per_edition_from_the_resource_paths(tmp_path):
+    for edition in freshness.EDITIONS:
+        (tmp_path / f"{edition}.mmdb").touch()
+    resource = MaxMindDatabaseResource(database_directory=str(tmp_path))
+    opened = []
+
+    def opener(path):
+        opened.append(path.name)
+        return Reader(path, 1_790_000_000)
+
+    times = freshness.database_build_times(resource, opener=opener)
+    assert opened == ["GeoLite2-City.mmdb", "GeoLite2-ASN.mmdb"]
+    assert times == dict.fromkeys(freshness.EDITIONS, datetime.fromtimestamp(1_790_000_000, UTC))
+
+
+def test_freshness_check_fails_after_fourteen_days():
+    now = datetime(2026, 9, 25, tzinfo=UTC)
+    fresh = now - timedelta(days=3)
+    stale = now - timedelta(days=20)
+    passed = freshness.freshness({"GeoLite2-City": fresh, "GeoLite2-ASN": fresh}, now)
+    assert passed.passed and passed.metadata["max_age_days"].value == 14
+    assert passed.metadata["GeoLite2-City_build"].value == fresh.isoformat()
+    result = freshness.freshness({"GeoLite2-City": fresh, "GeoLite2-ASN": stale}, now)
+    assert not result.passed and "GeoLite2-ASN built 2026-09-05" in result.description
+    boundary = freshness.freshness({"GeoLite2-City": now - freshness.MAX_AGE, "GeoLite2-ASN": fresh}, now)
+    assert boundary.passed  # exactly 14 days old is still current
+
+
+def test_check_targets_the_results_asset_and_the_job_selects_only_the_check():
+    assert freshness.geolite2_databases_fresh.check_key == freshness.CHECK_KEY
+    assert freshness.CHECK_KEY.asset_key == freshness.RESULTS_ASSET
+    assert freshness.geolite2_freshness_job.name == "geolite2_freshness_job"
+```
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `uv run --frozen --no-sync pytest tests/test_geolite2_freshness.py -q -p no:cacheprovider`
+Expected: FAIL — `ImportError: cannot import name 'freshness' from 'dagster_v3.defs.commoncrawl_geoip'`.
+
+- [ ] **Step 3: Create the freshness module and register it**
+
+Create `services/dagster_v3/src/dagster_v3/defs/commoncrawl_geoip/freshness.py`:
+
+```python
+"""GeoLite2 freshness: the files are replaced by hand, this check says when it is due.
+
+MaxMind publishes GeoLite2 twice a week; there is no MaxMind account here, so nothing
+downloads. The check reads the build epoch from each installed file's metadata and
+fails when either GeoLite2-City.mmdb or GeoLite2-ASN.mmdb is older than 14 days.
+ip_enrichment_results opens the files per run through MaxMindDatabaseResource, so a
+file replaced with mv is used by the next run without a restart; see
+docs/operations/ip-enrichment-draft-queue.md for the manual procedure.
+"""
+
+from datetime import UTC, datetime, timedelta
+
+import dagster as dg
+import maxminddb
+
+from dagster_v3.defs.commoncrawl_geoip.resources import MaxMindDatabaseResource
+
+EDITIONS = ("GeoLite2-City", "GeoLite2-ASN")
+MAX_AGE = timedelta(days=14)
+RESULTS_ASSET = dg.AssetKey("ip_enrichment_results")
+CHECK_KEY = dg.AssetCheckKey(RESULTS_ASSET, "geolite2_databases_fresh")
+
+
+def database_build_times(
+    resource: MaxMindDatabaseResource, *, opener=maxminddb.open_database
+) -> dict[str, datetime]:
+    """Build time per edition, read from the installed files' metadata."""
+    times = {}
+    for edition, path in zip(EDITIONS, resource.database_paths(), strict=True):
+        with opener(path) as reader:
+            times[edition] = datetime.fromtimestamp(reader.metadata().build_epoch, UTC)
+    return times
+
+
+def freshness(times: dict[str, datetime], now: datetime) -> dg.AssetCheckResult:
+    stale = {edition: built for edition, built in times.items() if now - built > MAX_AGE}
+    return dg.AssetCheckResult(
+        passed=not stale,
+        severity=dg.AssetCheckSeverity.ERROR,
+        description=(
+            "GeoLite2 databases are current."
+            if not stale
+            else "Stale GeoLite2 databases, replace them by hand: "
+            + ", ".join(
+                f"{edition} built {built.date().isoformat()}"
+                for edition, built in stale.items()
+            )
+        ),
+        metadata={
+            **{f"{edition}_build": built.isoformat() for edition, built in times.items()},
+            "max_age_days": MAX_AGE.days,
+        },
+    )
+
+
+@dg.asset_check(
+    asset=RESULTS_ASSET,
+    name=CHECK_KEY.name,
+    description="Fails when GeoLite2-City.mmdb or GeoLite2-ASN.mmdb in "
+    "MAXMIND_DATABASE_DIRECTORY was built more than 14 days ago (MaxMind publishes "
+    "twice a week; the files are updated by hand).",
+    blocking=False,
+)
+def geolite2_databases_fresh(
+    maxmind_geoip: MaxMindDatabaseResource,
+) -> dg.AssetCheckResult:
+    return freshness(database_build_times(maxmind_geoip), datetime.now(UTC))
+
+
+# Runs the check alone (Dagster UI or dg launch); no schedule, per the owner's decision.
+geolite2_freshness_job = dg.define_asset_job(
+    "geolite2_freshness_job", selection=dg.AssetSelection.checks(CHECK_KEY)
+)
+```
+
+Replace the whole of `services/dagster_v3/src/dagster_v3/defs/commoncrawl_geoip/definitions.py` with:
+
+```python
+import dagster as dg
+
+from dagster_v3.defs.commoncrawl_geoip.freshness import (
+    geolite2_databases_fresh,
+    geolite2_freshness_job,
+)
+from dagster_v3.defs.commoncrawl_geoip.resources import MaxMindDatabaseResource
+
+
+defs = dg.Definitions(
+    resources={
+        "maxmind_geoip": MaxMindDatabaseResource(),
+    },
+    asset_checks=[geolite2_databases_fresh],
+    jobs=[geolite2_freshness_job],
+)
+```
+
+- [ ] **Step 4: Fix `.env.example`**
+
+Replace lines 70-71 of `services/dagster_v3/.env.example` with:
+
+```
+# Directory holding GeoLite2-City.mmdb and GeoLite2-ASN.mmdb directly (no versioned
+# subfolders). Replaced by hand (mv, never cp over the open file); the check
+# geolite2_databases_fresh on ip_enrichment_results fails once either is 14 days old.
+MAXMIND_DATABASE_DIRECTORY=/path/to/geoip
+```
+
+- [ ] **Step 5: Run the tests and the definitions check**
+
+Run: `uv run --frozen --no-sync pytest tests/test_geolite2_freshness.py tests/test_commoncrawl_geoip_assets.py tests/test_schedule_cron_contracts.py -q -p no:cacheprovider`
+Expected: all pass (no schedule was added, so the cron contract is untouched).
+
+Run: `uv run --frozen --no-sync dg check defs`
+Expected: `All definitions loaded successfully.` (the check resolves `ip_enrichment_results` from `defs/ip_enrichment/results.py`; `geolite2_freshness_job` loads).
+
+Run: `rg -n "MAXMIND_ACCOUNT_ID|MAXMIND_LICENSE_KEY|geolite2_update|GeoLite2-City_\*" services/dagster_v3/src services/dagster_v3/.env.example services/dagster_v3/ansible services/dagster_v3/docs`
+Expected: no matches (nothing in the repo refers to credentials or a download).
+
+Run ruff format/check on `src/dagster_v3/defs/commoncrawl_geoip/freshness.py src/dagster_v3/defs/commoncrawl_geoip/definitions.py tests/test_geolite2_freshness.py`.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add services/dagster_v3/src/dagster_v3/defs/commoncrawl_geoip/freshness.py services/dagster_v3/src/dagster_v3/defs/commoncrawl_geoip/definitions.py services/dagster_v3/tests/test_geolite2_freshness.py services/dagster_v3/.env.example
+git commit -m "feat(dagster): geolite2_databases_fresh check on ip_enrichment_results; GeoLite2 files are replaced by hand
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
+```
+
+---
+### Task 4: Page-batched RDAP resolution, registry classes per miss, RIPE and APNIC without personal data, optional per-registry budget
+
+Today `RdapEnricher.lookup` (`enrichment.py:322-434`) issues, per IP, one `rdap_ip_lookup_results_current` query, one `rdap_networks_current FINAL` query that returns `raw_response` and re-parses it, and one `INSERT` per lookup marker; the review measured 90% of wall time in these round trips. The new `RdapEnricher.resolve_page(rows)` answers a whole page with four round trips at most, keeps two in-process caches (`cached`: fresh network rows read from ClickHouse, `recent`: reusable networks fetched over HTTP in this run) and asks the registries only for misses. Each miss keeps today's deployed behaviour (`enrichment.py:381-395`): `classify_registration` (one context round trip), the network row, its class row (unless `unknown`), its segments; a non-reusable registration is counted in `registry_level_responses`, never enters `recent`, and answers only its address — a later page or task asking for that address is served by its own `found` marker in `rdap_ip_lookup_results` (per-address hit), while other addresses of the block get their own lookup.
+
+**RIPE (R4, corrected on 2026-09-26 from the published AUP and two live answers).** The RIPE Database AUP limits the *personal data sets* (person/role objects) one source address may receive to **1,000 per 24 hours** (20,000 applies only to a proxy registered with the RIPE NCC); queries themselves are "Unlimited" within reasonable use, at most 3 simultaneous connections, and its "Anti-avoidance and Connected Persons" clause treats pooling limits across addresses as a violation. RIPE's RDAP `ip` answers embed 1–5 person objects with real names (`kind: individual`), so every RDAP request to RIPE counts. The owner does not need personal data, so RIPE misses go to the RIPE Database REST search with `flags=no-referenced` (whois `-r`): it returns the most specific `inetnum`/`inet6num` with `netname`, `country`, `status`, `org`, `mnt-by`, dates and contact *handles* only — no person or role objects, so nothing counts against the limit — and for unallocated space the root object `0.0.0.0 - 255.255.255.255`, which the existing catch-all check rejects. `ripe_rest.rdap_shape` turns that object into the RDAP document `normalize_rdap_network` already understands (same `network_key` `ripe:<range>` as an RDAP answer, `descr`/`admin-c`/`tech-c`/`remarks` dropped on purpose), so classification, segments, caches and results are unchanged. **APNIC (owner decision 2026-09-26: "RIPE and APNIC first").** APNIC's RDAP answers embed contact entities too. Its whois service on port 43 honours the `-r` flag (verified by the controller on 2026-09-26: `whois -h whois.apnic.net -- "-r 103.35.64.49"` returns the `inetnum` `103.35.64.0 - 103.35.67.255`, netname `FPT-VN`, `descr` `FPT Telecom` plus an address line, `admin-c`/`tech-c` as handles only, country `VN`, `mnt-by MAINT-VN-VNNIC`, `mnt-irt IRT-VNNIC-AP`, status `ALLOCATED PORTABLE`, `last-modified`, no person/role/irt objects, followed by matching `route` objects); the HTTP gateway `https://wq.apnic.net/query?searchtext=…&flags=r` does **not** honour `-r` (it returned an irt object with an address) and is not used. `apnic_whois.py` speaks the port-43 protocol directly (one TCP connection per query, `-r <ip>`, read to EOF, 10 s connect / 30 s read, paced by `request_delay_seconds` like every request), keeps only the first `inetnum`/`inet6num` object and reshapes it like the RIPE answer. Holder name: only 2.4% of APNIC's inetnum objects carry `org:` (2026-09-25 dump), so the **first `descr` line** is the registrant name; further `descr` lines (addresses) and all contact handles are dropped; `status` is upper-cased and whitespace-collapsed (the dump spells `Allocated non-portable`, `ASSIGNED  NON-PORTABLE`). **NIR rule:** the answer is an NIR's own allocation object — not a holder's — when its `netname` starts with `JPNIC`, `KRNIC`, `TWNIC`, `IDNIC`, `CNNIC`, `IRINN` or `VNNIC`, or its first `descr` names the NIR (`Japan Network Information Center`, `Korea Network Information Center` / `Korea Internet`, `Taiwan Network Information Center`, `Indonesia Network Information Center`, `China Internet Network Information Center`, `Indian Registry for Internet Names and Numbers`, `Vietnam Internet Network Information Centre`); then the end holder lives in the NIR's database and the resolver falls back to RDAP, which the IANA bootstrap routes to the NIR server. `mnt-by` decides nothing: FPT's `103.35.64.0/22` is maintained by `MAINT-VN-VNNIC` and *is* the holder's allocation (the real answer above is the test fixture). ISP-level allocations that NIRs keep in APNIC's database (JPNIC's `MEGAEGG 1.0.64.0/18`, KRNIC's `KORNET 168.126.0.0/16`) are holders and are used as they are. Placeholders (`0.0.0.0 - 255.255.255.255 IANA-BLOCK`, `APNIC-AP` blocks) go through the catch-all rejection and the registry class like any other answer. `apnic_whois: true` is frozen in the profile. RDAP stays for ARIN, LACNIC and AFRINIC (their contact entities carry no documented daily cap; each run reports `rdap_person_entities_by_registry`, and a `ripe` or `apnic` key there means a no-personal-data path is not in use).
+
+**Budget (R4).** `registry_daily_budgets` (transport, default `{}`) is an optional rolling 24-hour *request* budget per registry: a miss of a registry at its budget is **deferred** (no result, no error) and `wait_for_registry_budget()` sleeps until an hour's share of that registry's budget frees. The window is seeded on start from `rdap_networks.fetched_at` of the last day (every writer, so a resume and the legacy worker share it). With the REST path RIPE needs no budget; the guard exists for a registry that starts rate-limiting the direct address. Proxy egress lanes were considered at the owner's request and dropped on 2026-09-26: they would not shorten the run (pacing is global and the loop single-threaded), RIPE no longer needs them, and pooling a registry's allowance across addresses is the RIPE AUP's anti-avoidance case.
+
+**Files:**
+- Create: `services/dagster_v3/src/dagster_v3/defs/commoncrawl_rdap/ripe_rest.py`
+- Create: `services/dagster_v3/src/dagster_v3/defs/commoncrawl_rdap/apnic_whois.py`
+- Rewrite: `services/dagster_v3/src/dagster_v3/defs/ip_enrichment/enrichment.py`
+- Modify: `services/dagster_v3/src/dagster_v3/defs/commoncrawl_rdap/client.py:1-21, 52-57` (imports, `RIR_BY_HOST`, `registry_for`)
+- Modify: `services/dagster_v3/tests/test_ip_enrichment_results.py:1-25, 61-81, 84-147` (imports, `response`, `environment`) and append the resolver tests (they drive `RdapEnricher` directly with the `environment` fixture)
+
+**Interfaces:**
+- Produces (module `dagster_v3.defs.commoncrawl_rdap.client`): `RIR_BY_HOST: dict[str, str]` (RDAP host → whoisit registry name, from `whoisit.bootstrap.BaseBootstrap.RIR_RDAP_ENDPOINTS`), `RdapClient.registry_for(ip_address_or_network: str) -> str` (`"ripe"`, `"arin"`, … or `""` when whoisit cannot map the address).
+- Produces (module `dagster_v3.defs.commoncrawl_rdap.ripe_rest`): `SEARCH_URL`, `OBJECT_URL`, `NETWORK_TYPES`, `rdap_shape(obj: dict) -> dict`, `RipeRestClient(*, user_agent: str, session: requests.Session | None = None)` with `lookup_ip(ip) -> RdapLookupResponse` (raises `RdapClientError` with the same codes as `RdapClient`) and `close()`.
+- Produces (module `dagster_v3.defs.commoncrawl_rdap.apnic_whois`): `WHOIS_HOST = "whois.apnic.net"`, `WHOIS_PORT = 43`, `CONNECT_TIMEOUT = 10.0`, `READ_TIMEOUT = 30.0`, `NETWORK_TYPES`, `NIR_NETNAME_PREFIXES`, `NIR_DESCR_PHRASES`, `parse_answer(text: str) -> list[list[tuple[str, str]]]`, `network_object(objects) -> list[tuple[str, str]] | None`, `nir_of(netname: str, descr: str) -> str`, `rdap_shape(obj) -> dict` (its `corpscout` block carries `source: apnic-whois`, `flags: -r`, `nir`, `mnt_by`, `mnt_irt`), `is_nir_object(raw: Mapping) -> bool`, `ApnicWhoisClient(*, host=WHOIS_HOST, port=WHOIS_PORT, connect=socket.create_connection)` with `query(ip) -> str` (the port-43 exchange), `lookup_ip(ip) -> RdapLookupResponse` (raises `RdapClientError` with the RDAP client's codes) and `close()`.
+- Produces (module `dagster_v3.defs.ip_enrichment.enrichment`):
+  - `IpEnrichmentResultsConfig` — today's fields and defaults (`batch_size=250`, `max_requests=250`, `request_delay_seconds=1.0`, `parent_depth=1`, `rdap_cache_days=30`, `force_rdap=False`, `rate_limit_retry_seconds=3600`, `transient_retry_seconds=900`) plus `registry_daily_budgets: dict[str, int]` (default `{}`, keys lower-cased whoisit names, values ≥ 1; a transport setting), `ripe_rest: bool = True` (frozen) and `apnic_whois: bool = True` (frozen).
+  - `BUDGET_WINDOW_SECONDS = 86_400`, `NEGATIVE_STATUSES`, `NETWORK_COLUMNS` (every `rdap_networks` column except `raw_response`), `WRITE_SETTINGS`.
+  - `geoip_result(...)`, `rdap_result(...)`, `matching_cidr(...)` (unchanged), `cidr_containing(start: str, end: str, address) -> str | None`, `cached_network_row(row) -> RdapNetwork` (with `raw_response=""`), `person_entities(raw: Mapping) -> int` (vCards of kind `individual`, nested included).
+  - `RdapEnricher(client, rdap: RdapClient, ripe: RipeRestClient, apnic: ApnicWhoisClient, config, log, *, started_at: datetime, cache_cutoff: datetime, clock=None, sleep=None)` with counters `requests, cache_hits, networks_written, parent_failures, registry_level_responses`, dicts `requests_by_registry, person_entities_by_registry, deferrals_by_registry` (cumulative) and `deferred` (since the last `reset_pass()`), flag `budget_reached` (the `max_requests` budget), and methods `resolve_page(rows: list[dict]) -> dict[str, dict]` (each row's `ip` → the `rdap_*` result fields; an IP is absent when it was deferred by a registry budget or the `max_requests` budget ran out), `seed_registry_usage(rows: list[tuple[str, float]])` (registry, seconds ago; chronological), `seconds_until_budget_frees() -> float`, `wait_for_registry_budget() -> float` (seconds slept; resets `deferred`), `reset_pass()`.
+- Removes: `RdapEnricher.lookup`. `RequestBudgetReached` stays defined (unused) so `results.py` keeps importing until Task 5 deletes both; the `maxminddb` re-export stays (`results.py` and tests patch `enrichment.maxminddb.open_database`).
+
+- [ ] **Step 1: Adjust the fixture and the helpers**
+
+In `services/dagster_v3/tests/test_ip_enrichment_results.py`:
+
+Replace the import block (lines 1-25) with:
+
+```python
+"""Task-scoped enrichment with real storage and controlled external lookup responses."""
+
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from types import SimpleNamespace
+from uuid import uuid4
+
+import dagster as dg
+import pytest
+from clickhouse_driver import Client
+
+from dagster_v3.defs.common.processing import ProcessingResource
+from dagster_v3.defs.commoncrawl_geoip.resources import MaxMindDatabaseResource
+from dagster_v3.defs.commoncrawl_rdap import client as rdap_client
+from dagster_v3.defs.commoncrawl_rdap import apnic_whois, ripe_rest
+from dagster_v3.defs.commoncrawl_rdap.assets import (
+    RDAP_NETWORK_INSERT_SQL,
+    RDAP_SEGMENT_INSERT_SQL,
+)
+from dagster_v3.defs.commoncrawl_rdap.client import RdapClient, RdapClientError
+from dagster_v3.defs.commoncrawl_rdap.rdap import (
+    RdapLookupResponse,
+    normalize_rdap_network,
+)
+from dagster_v3.defs.commoncrawl_rdap.apnic_whois import ApnicWhoisClient
+from dagster_v3.defs.commoncrawl_rdap.ripe_rest import RipeRestClient
+from dagster_v3.defs.ip_enrichment import enrichment, results
+from dagster_v3.defs.ip_enrichment.enrichment import (
+    IpEnrichmentResultsConfig,
+    RdapEnricher,
+)
+from tests.test_ip_enrichment_input import (
+    materialize as prepare_input,
+    server as server,
+)
+from tests.test_ip_registry import apply_migration, seed_reference_data
+from tests.test_processing_store import (
+    processing_postgres_url as processing_postgres_url,
+    store as store,
+)
+```
+
+(`Path` stays imported for the fixture; `from dagster_v3.defs.ip_enrichment.input import ip_enrichment_input` goes — the workflow test that used it is deleted in Task 5.)
+
+Change the `response` helper (lines 61-81) to accept raw overrides, and add `rest_object` after it:
+
+```python
+def response(ip, *, start=None, end=None, **raw):
+    ipv6 = ":" in ip
+    return RdapLookupResponse(
+        rir="arin",
+        raw_response={
+            "objectClassName": "ip network",
+            "handle": "TEST-" + ip,
+            "startAddress": start
+            or ("2001:4860::" if ipv6 else ip.rsplit(".", 1)[0] + ".0"),
+            "endAddress": end
+            or (
+                "2001:4860:ffff:ffff:ffff:ffff:ffff:ffff"
+                if ipv6
+                else ip.rsplit(".", 1)[0] + ".255"
+            ),
+            "ipVersion": "v6" if ipv6 else "v4",
+            "name": "Test registration",
+            "country": "CA",
+            "status": ["active"],
+            **raw,
+        },
+    )
+
+
+def rest_object(ip, *, start=None, end=None, netname="RIPE-TEST-NET", org="ORG-TEST1-RIPE"):
+    """A RIPE REST search object (inetnum) as rest.db.ripe.net returns it with no-referenced."""
+    start = start or ip.rsplit(".", 1)[0] + ".0"
+    end = end or ip.rsplit(".", 1)[0] + ".255"
+    attributes = [
+        {"name": "inetnum", "value": f"{start} - {end}"},
+        {"name": "netname", "value": netname},
+        {"name": "descr", "value": "A person's name may appear here"},
+        {"name": "country", "value": "SE"},
+        {"name": "admin-c", "value": "AB1234-RIPE"},
+        {"name": "tech-c", "value": "AB1234-RIPE"},
+        {"name": "status", "value": "ASSIGNED PA"},
+        {"name": "mnt-by", "value": "TEST-MNT"},
+        {"name": "created", "value": "2010-05-04T10:00:00Z"},
+        {"name": "last-modified", "value": "2024-01-02T03:04:05Z"},
+        {"name": "source", "value": "RIPE"},
+    ]
+    if org:
+        attributes.insert(4, {"name": "org", "value": org})
+    return {
+        "type": "inetnum",
+        "primary-key": {"attribute": [{"name": "inetnum", "value": f"{start} - {end}"}]},
+        "attributes": {"attribute": attributes},
+    }
+
+
+# The answer of `whois -h whois.apnic.net -- "-r 103.35.64.49"` on 2026-09-26: the object
+# attributes as returned (the address line and the route block are representative).
+APNIC_FPT_ANSWER = """% [whois.apnic.net]
+% Whois data copyright terms    http://www.apnic.net/db/dbcopyright.html
+
+% Information related to '103.35.64.0 - 103.35.67.255'
+
+% Abuse contact for '103.35.64.0 - 103.35.67.255' is 'hm-changed@vnnic.vn'
+
+inetnum:        103.35.64.0 - 103.35.67.255
+netname:        FPT-VN
+descr:          FPT Telecom
+descr:          9th floor, FPT Building, Duy Tan street, Cau Giay, Ha Noi
+country:        VN
+admin-c:        FHIG1-AP
+tech-c:         FHIG1-AP
+mnt-by:         MAINT-VN-VNNIC
+mnt-irt:        IRT-VNNIC-AP
+status:         ALLOCATED PORTABLE
+last-modified:  2019-03-13T05:19:11Z
+source:         APNIC
+
+% Information related to '103.35.64.0/22AS18403'
+
+route:          103.35.64.0/22
+descr:          FPT Telecom Company
+origin:         AS18403
+mnt-by:         MAINT-VN-FPT
+source:         APNIC
+
+% This query was served by the APNIC Whois Service version 1.88.34 (WHOIS-AU1)
+"""
+
+# JPNIC's own object for a /24 it holds (from the 2026-09-25 dump): NIR-managed space whose
+# holder lives in JPNIC's database.
+APNIC_JPNIC_ANSWER = """% [whois.apnic.net]
+
+inetnum:        202.12.14.0 - 202.12.14.255
+netname:        JPNIC-NET-JP
+descr:          Japan Network Information Center
+country:        JP
+admin-c:        JNIC1-AP
+tech-c:         JNIC1-AP
+status:         ASSIGNED PORTABLE
+mnt-by:         MAINT-JPNIC
+last-modified:  2008-09-04T06:51:28Z
+source:         APNIC
+"""
+
+
+def apnic_answer(ip, *, netname="APNIC-TEST-NET", descr=("Test Holder Pty Ltd", "1 Test Street, Sydney NSW 2000"), status="ASSIGNED NON-PORTABLE", mnt_by="MAINT-AU-TEST"):
+    """A port-43 answer with -r for the /24 around ``ip``, in the shape whois.apnic.net returns."""
+    start, end = ip.rsplit(".", 1)[0] + ".0", ip.rsplit(".", 1)[0] + ".255"
+    lines = [
+        f"inetnum:        {start} - {end}",
+        f"netname:        {netname}",
+        *(f"descr:          {line}" for line in descr),
+        "country:        AU",
+        "admin-c:        TEST1-AP",
+        "tech-c:         TEST1-AP",
+        f"mnt-by:         {mnt_by}",
+        f"status:         {status}",
+        "last-modified:  2024-01-02T03:04:05Z",
+        "source:         APNIC",
+    ]
+    return (
+        "% [whois.apnic.net]\n% Whois data copyright terms    http://www.apnic.net/db/dbcopyright.html\n\n"
+        + "\n".join(lines)
+        + "\n\n% This query was served by the APNIC Whois Service version 1.88.34 (WHOIS-AU1)\n"
+    )
+```
+
+In the `environment` fixture keep everything (the 000124 statements, the test dictionary, `apply_migration` of 000450/000451, the truncations, the readers, the `lookup_ip` monkeypatch, `DagsterInstance.ephemeral()`) and add, right after the `RdapClient.lookup_ip` monkeypatch (line 136):
+
+```python
+    # RIPE addresses (5/8 and 2a0x:: in these tests) go to the REST client, 202/8 to APNIC's
+    # whois (its real parser over a stubbed port-43 exchange); everything else to RDAP as
+    # ARIN. Every stub records the address in env.calls.
+    monkeypatch.setattr(
+        RdapClient,
+        "registry_for",
+        lambda self, ip: "ripe" if ip.startswith(("5.", "2a0")) else "apnic" if ip.startswith("202.") else "arin",
+    )
+
+    def rest_lookup(self, ip):
+        calls.append(ip)
+        return RdapLookupResponse(rir="ripe", raw_response=ripe_rest.rdap_shape(rest_object(ip)))
+
+    def apnic_query(self, ip):
+        calls.append(ip)
+        return apnic_answer(ip)
+
+    monkeypatch.setattr(RipeRestClient, "lookup_ip", rest_lookup)
+    monkeypatch.setattr(ApnicWhoisClient, "query", apnic_query)
+```
+
+Append the helpers and the resolver tests at the end of the file:
+
+```python
+def resolver(env, *, started_at=None, cache_days=30, clock=None, sleep=None, **config):
     started = started_at or datetime.now(UTC)
     settings = IpEnrichmentResultsConfig(
         task_id=str(uuid4()), request_delay_seconds=0, rdap_cache_days=cache_days, **config
     )
     return RdapEnricher(
         env.client,
-        enrichment.RdapClient(user_agent="test"),
+        RdapClient(user_agent="test"),
+        RipeRestClient(user_agent="test"),
+        ApnicWhoisClient(),
         settings,
         SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
         started_at=started,
         cache_cutoff=started - timedelta(days=cache_days),
+        clock=clock,
+        sleep=sleep,
     )
 
 
@@ -1704,6 +1725,17 @@ def seed_network(env, ip, *, fetched_at, **raw):
     return normalized
 
 
+def query_kinds(queries):
+    return {
+        "negative": sum(q.lstrip().startswith("SELECT ip, lookup_status") for q in queries),
+        "trie": sum("dictGetOrDefault('corpscout.rdap_network_trie'" in q for q in queries),
+        "networks": sum(q.lstrip().startswith("SELECT network_key, rir") for q in queries),
+        "markers": sum(q.lstrip().startswith("INSERT INTO corpscout.rdap_ip_lookup_results") for q in queries),
+        "context": sum(q.lstrip().startswith("SELECT ifNull((SELECT ready") for q in queries),
+        "results": sum(q.lstrip().startswith("INSERT INTO corpscout.ip_enrichment_results") for q in queries),
+    }
+
+
 def test_page_resolution_uses_a_fixed_number_of_round_trips(environment, monkeypatch):
     env = environment
     seed_network(env, "8.8.8.1", fetched_at=datetime.now(UTC))
@@ -1717,21 +1749,15 @@ def test_page_resolution_uses_a_fixed_number_of_round_trips(environment, monkeyp
     assert {ip: r["rdap_lookup_status"] for ip, r in resolved.items()} == {
         **{row["ip"]: "found" for row in rows[:40]}, "127.0.0.1": "not_global", "10.0.0.1": "not_global"}
     assert resolved["8.8.8.40"]["rdap_matched_cidr"] == "8.8.8.0/24"
-    kinds = {
-        "negative": sum(q.lstrip().startswith("SELECT ip, lookup_status") for q in queries),
-        "trie": sum("dictGetOrDefault" in q for q in queries),
-        "networks": sum(q.lstrip().startswith("SELECT network_key, rir") for q in queries),
-        "markers": sum(q.lstrip().startswith("INSERT INTO corpscout.rdap_ip_lookup_results") for q in queries),
-    }
-    assert kinds == {"negative": 1, "trie": 1, "networks": 1, "markers": 1}
+    assert query_kinds(queries) == {"negative": 1, "trie": 1, "networks": 1, "markers": 1, "context": 0, "results": 0}
     assert not any("raw_response" in q for q in queries)
     # A second page of the same run hits the in-process network cache: no network read.
     queries.clear()
     assert enricher.resolve_page(page(env, "8.8.8.7"))["8.8.8.7"]["rdap_lookup_status"] == "found"
-    assert sum(q.lstrip().startswith("SELECT network_key, rir") for q in queries) == 0
+    assert query_kinds(queries)["networks"] == 0
     # A fresh resolver (a resume) reads the row once.
     resolver(env).resolve_page(page(env, "8.8.8.7"))
-    assert sum(q.lstrip().startswith("SELECT network_key, rir") for q in queries) == 1
+    assert query_kinds(queries)["networks"] == 1
 
 
 def test_cache_window_is_the_frozen_execution_not_now(environment):
@@ -1758,7 +1784,7 @@ def test_negative_markers_are_honoured_by_the_frozen_start(environment, monkeypa
         env.calls.append(ip)
         raise RdapClientError("rate limit", code="rate_limited", retryable=True, status_code=429)
 
-    monkeypatch.setattr(enrichment.RdapClient, "lookup_ip", limited)
+    monkeypatch.setattr(RdapClient, "lookup_ip", limited)
     first = resolver(env, started_at=started, rate_limit_retry_seconds=3600).resolve_page(page(env, "8.8.8.8"))
     assert first["8.8.8.8"]["rdap_lookup_status"] == "retryable_error"
     assert env.calls == ["8.8.8.8"]
@@ -1774,50 +1800,732 @@ def test_negative_markers_are_honoured_by_the_frozen_start(environment, monkeypa
 
 def test_registry_level_response_answers_only_its_ip(environment, monkeypatch):
     env = environment
+    seed_reference_data(env.client)  # ip_registry_ready = 1: classes are decided
     monkeypatch.setattr(
-        enrichment.RdapClient,
+        RdapClient,
         "lookup_ip",
         lambda self, ip: (env.calls.append(ip), response(ip, start="103.0.0.0", end="103.255.255.255", handle="103.0.0.0 - 103.255.255.255", name="APNIC-AP"))[1],
     )
-    first = resolver(env).resolve_page(page(env, "103.35.64.49"))
-    assert first["103.35.64.49"]["rdap_lookup_status"] == "found"
-    assert first["103.35.64.49"]["rdap_name"] == "APNIC-AP"
-    assert first["103.35.64.49"]["rdap_matched_cidr"] == "103.0.0.0/8"
-    assert env.client.execute("SELECT DISTINCT segment_role FROM corpscout.rdap_network_segments") == [("registry_level",)]
+    first = resolver(env)
+    resolved = first.resolve_page(page(env, "103.35.64.49"))
+    assert resolved["103.35.64.49"]["rdap_lookup_status"] == "found"
+    assert resolved["103.35.64.49"]["rdap_name"] == "APNIC-AP"
+    assert resolved["103.35.64.49"]["rdap_matched_cidr"] == "103.0.0.0/8"
+    assert first.registry_level_responses == 1
+    # Stored with the ordinary segment role; its class row keeps it out of the trie.
+    assert env.client.execute("SELECT DISTINCT segment_role FROM corpscout.rdap_network_segments") == [("lookup_result",)]
+    assert env.client.execute(
+        "SELECT network_key, registry_class, covered_rir_blocks FROM corpscout.rdap_network_registry_class_current"
+    ) == [("arin:103.0.0.0 - 103.255.255.255", "registry_level", 1)]
     env.client.execute("SYSTEM RELOAD DICTIONARY corpscout.rdap_network_trie")
     assert env.client.execute("SELECT count() FROM corpscout.rdap_network_segments_current") == [(0,)]
     # Another address in the block is not served by the trie nor by the in-run cache.
-    second = resolver(env).resolve_page(page(env, "103.15.66.50"))
+    second = first.resolve_page(page(env, "103.15.66.50"))
     assert second["103.15.66.50"]["rdap_lookup_status"] == "found"
     assert env.calls == ["103.35.64.49", "103.15.66.50"]
     # The queried address itself is served by its own lookup marker next time.
     third = resolver(env)
     assert third.resolve_page(page(env, "103.35.64.49"))["103.35.64.49"]["rdap_name"] == "APNIC-AP"
     assert env.calls == ["103.35.64.49", "103.15.66.50"] and third.cache_hits == 1
+    # A holder registration is classified reusable and serves its neighbours.
+    monkeypatch.setattr(
+        RdapClient,
+        "lookup_ip",
+        lambda self, ip: (env.calls.append(ip), response(ip, start="103.35.64.0", end="103.35.67.255"))[1],
+    )
+    holder = resolver(env)
+    assert holder.resolve_page(page(env, "103.35.64.1", "103.35.64.2"))["103.35.64.2"]["rdap_matched_cidr"] == "103.35.64.0/22"
+    assert env.calls[-1] == "103.35.64.1" and holder.requests == 1 and holder.cache_hits == 1
+    assert env.client.execute(
+        "SELECT registry_class FROM corpscout.rdap_network_registry_class_current WHERE network_key = 'arin:TEST-103.35.64.1'"
+    ) == [("reusable",)]
 
 
-def test_misses_reuse_networks_fetched_earlier_in_the_run_and_stop_at_the_budget(environment):
+def test_misses_reuse_networks_fetched_earlier_in_the_run_and_stop_at_the_budget(environment, monkeypatch):
     env = environment
+    queries = []
+    execute = Client.execute
+    monkeypatch.setattr(Client, "execute", lambda self, query, *a, **k: (queries.append(query), execute(self, query, *a, **k))[1])
     enricher = resolver(env, max_requests=1)
     resolved = enricher.resolve_page(page(env, "8.8.8.8", "8.8.8.9", "1.1.1.1"))
     assert env.calls == ["8.8.8.8"]
     assert resolved["8.8.8.9"]["rdap_matched_cidr"] == "8.8.8.0/24"  # in-run reuse, no HTTP
     assert "1.1.1.1" not in resolved and enricher.budget_reached
     assert enricher.cache_hits == 1 and enricher.requests == 1
+    assert query_kinds(queries)["context"] == 1  # one classification round trip per miss
     # The page's markers were written for what was resolved.
     assert env.client.execute(
         "SELECT ip, lookup_status FROM corpscout.rdap_ip_lookup_results_current ORDER BY ip"
     ) == [("8.8.8.8", "found")]
+
+
+def test_ripe_addresses_use_the_rest_api_and_carry_no_person_data(environment, monkeypatch):
+    env = environment
+    rdap_calls = []
+    monkeypatch.setattr(RdapClient, "lookup_ip", lambda self, ip: (rdap_calls.append(ip), response(ip))[1])
+    enricher = resolver(env)
+    resolved = enricher.resolve_page(page(env, "5.1.1.1", "5.1.1.2"))
+    assert env.calls == ["5.1.1.1"] and rdap_calls == []  # REST once, the neighbour from the in-run cache
+    found = resolved["5.1.1.2"]
+    assert (found["rdap_rir"], found["rdap_name"], found["rdap_registration_type"], found["rdap_country_code"]) == ("ripe", "RIPE-TEST-NET", "ASSIGNED PA", "SE")
+    assert found["rdap_handle"] == "5.1.1.0 - 5.1.1.255" and found["rdap_network_key"] == "ripe:5.1.1.0 - 5.1.1.255"
+    assert found["rdap_registrant_handles"] == ["ORG-TEST1-RIPE"] and found["rdap_registrant_names"] == []
+    assert found["rdap_self_url"] == "https://rest.db.ripe.net/ripe/inetnum/5.1.1.0%20-%205.1.1.255"
+    assert enricher.person_entities_by_registry == {} and enricher.requests_by_registry == {"ripe": 1}
+    [(raw,)] = env.client.execute("SELECT raw_response FROM corpscout.rdap_networks")
+    assert "descr" not in raw and "admin-c" not in raw and '"source":"ripe-rest"' in raw
+    # The root object for unallocated space is a catch-all: one RDAP request follows, once.
+    monkeypatch.setattr(
+        RipeRestClient,
+        "lookup_ip",
+        lambda self, ip: (env.calls.append(ip), RdapLookupResponse(rir="ripe", raw_response=ripe_rest.rdap_shape(rest_object(ip, start="0.0.0.0", end="255.255.255.255", netname="IANA-BLK"))))[1],
+    )
+    resolved = enricher.resolve_page(page(env, "5.9.9.9"))
+    assert env.calls == ["5.1.1.1", "5.9.9.9"] and rdap_calls == ["5.9.9.9"]
+    assert resolved["5.9.9.9"]["rdap_lookup_status"] == "found" and resolved["5.9.9.9"]["rdap_rir"] == "arin"
+    # ripe_rest=false keeps RDAP for RIPE addresses.
+    plain = resolver(env, ripe_rest=False)
+    plain.resolve_page(page(env, "5.7.7.7"))
+    assert rdap_calls == ["5.9.9.9", "5.7.7.7"]
+
+
+def test_rdap_shape_builds_an_ip_network_without_contacts():
+    shaped = ripe_rest.rdap_shape(rest_object("5.1.1.1"))
+    assert shaped["objectClassName"] == "ip network" and shaped["ipVersion"] == "v4"
+    assert (shaped["handle"], shaped["startAddress"], shaped["endAddress"]) == ("5.1.1.0 - 5.1.1.255", "5.1.1.0", "5.1.1.255")
+    assert (shaped["name"], shaped["type"], shaped["country"], shaped["status"]) == ("RIPE-TEST-NET", "ASSIGNED PA", "SE", ["active"])
+    assert shaped["entities"] == [{"objectClassName": "entity", "handle": "ORG-TEST1-RIPE", "roles": ["registrant"]}]
+    assert shaped["events"] == [
+        {"eventAction": "registration", "eventDate": "2010-05-04T10:00:00Z"},
+        {"eventAction": "last changed", "eventDate": "2024-01-02T03:04:05Z"},
+    ]
+    assert shaped["corpscout"] == {"source": "ripe-rest", "flags": "no-referenced", "mnt_by": ["TEST-MNT"]}
+    assert "descr" not in str(shaped) and "admin-c" not in str(shaped)
+    six = ripe_rest.rdap_shape({
+        "type": "inet6num",
+        "attributes": {"attribute": [{"name": "inet6num", "value": "2001:638:501::/48"}, {"name": "netname", "value": "UNI-ESSEN"}, {"name": "status", "value": "ASSIGNED"}]},
+    })
+    assert (six["startAddress"], six["endAddress"], six["ipVersion"], six["entities"], six["events"]) == (
+        "2001:638:501::", "2001:638:501:ffff:ffff:ffff:ffff:ffff", "v6", [], [])
+    assert ripe_rest.rdap_shape(rest_object("5.1.1.1", org=None))["entities"] == []
+    with pytest.raises(ValueError, match="not a network object"):
+        ripe_rest.rdap_shape({"type": "route", "attributes": {"attribute": [{"name": "route", "value": "5.0.0.0/8"}]}})
+
+
+def test_ripe_rest_client_maps_answers_and_errors(monkeypatch):
+    class Response:
+        def __init__(self, status, payload=None):
+            self.status_code = status
+            self._payload = payload
+
+        def json(self):
+            if self._payload is None:
+                raise ValueError("no json")
+            return self._payload
+
+    seen = []
+
+    class Session:
+        headers = {}
+
+        def get(self, url, *, params, headers, timeout):
+            seen.append((url, params, headers["Accept"]))
+            return answers.pop(0)
+
+    client = RipeRestClient(user_agent="test", session=Session())
+    answers = [Response(200, {"objects": {"object": [{"type": "route", "attributes": {"attribute": []}}, rest_object("5.1.1.1")]}})]
+    found = client.lookup_ip("5.1.1.1")
+    assert found.rir == "ripe" and found.raw_response["handle"] == "5.1.1.0 - 5.1.1.255"
+    assert seen == [(
+        ripe_rest.SEARCH_URL,
+        [("query-string", "5.1.1.1"), ("flags", "no-referenced"), ("source", "ripe"), ("type-filter", "inetnum"), ("type-filter", "inet6num")],
+        "application/json",
+    )]
+    for status, payload, code, retryable in [
+        (404, None, "not_found", False),
+        (429, None, "rate_limited", True),
+        (503, None, "remote_server", True),
+        (403, None, "access_denied", False),
+        (418, None, "query_error", False),
+        (200, None, "invalid_response", False),
+        (200, {"objects": {"object": []}}, "not_found", False),
+    ]:
+        answers = [Response(status, payload)]
+        with pytest.raises(RdapClientError) as raised:
+            client.lookup_ip("5.1.1.1")
+        assert (raised.value.code, raised.value.retryable) == (code, retryable), status
+
+
+def test_apnic_addresses_use_whois_r_and_take_the_holder_from_the_first_descr(environment, monkeypatch):
+    env = environment
+    rdap_calls = []
+    monkeypatch.setattr(RdapClient, "lookup_ip", lambda self, ip: (rdap_calls.append(ip), response(ip))[1])
+    monkeypatch.setattr(RdapClient, "registry_for", lambda self, ip: "apnic")
+    monkeypatch.setattr(ApnicWhoisClient, "query", lambda self, ip: (env.calls.append(ip), APNIC_FPT_ANSWER)[1])
+    enricher = resolver(env)
+    resolved = enricher.resolve_page(page(env, "103.35.64.49", "103.35.65.7"))
+    assert env.calls == ["103.35.64.49"] and rdap_calls == []  # whois once, the neighbour from the in-run cache
+    found = resolved["103.35.65.7"]
+    assert (found["rdap_rir"], found["rdap_name"], found["rdap_registration_type"], found["rdap_country_code"]) == ("apnic", "FPT-VN", "ALLOCATED PORTABLE", "VN")
+    assert found["rdap_handle"] == "103.35.64.0 - 103.35.67.255" and found["rdap_matched_cidr"] == "103.35.64.0/22"
+    assert found["rdap_registrant_names"] == ["FPT Telecom"] and found["rdap_registrant_handles"] == []
+    assert found["rdap_self_url"] == "https://rdap.apnic.net/ip/103.35.64.0"
+    assert found["rdap_last_changed_at"] == datetime(2019, 3, 13, 5, 19, 11, tzinfo=UTC)
+    assert enricher.person_entities_by_registry == {} and enricher.requests_by_registry == {"apnic": 1}
+    [(raw,)] = env.client.execute("SELECT raw_response FROM corpscout.rdap_networks")
+    assert "FHIG1-AP" not in raw and "Duy Tan" not in raw and '"source":"apnic-whois"' in raw
+
+
+def test_apnic_nir_allocation_objects_fall_back_to_rdap(environment, monkeypatch):
+    env = environment
+    rdap_calls = []
+    monkeypatch.setattr(RdapClient, "lookup_ip", lambda self, ip: (rdap_calls.append(ip), response(ip))[1])
+    monkeypatch.setattr(ApnicWhoisClient, "query", lambda self, ip: (env.calls.append(ip), APNIC_JPNIC_ANSWER)[1])
+    resolved = resolver(env).resolve_page(page(env, "202.12.14.5"))  # 202/8 is APNIC in the fixture
+    assert env.calls == ["202.12.14.5"] and rdap_calls == ["202.12.14.5"]
+    assert resolved["202.12.14.5"]["rdap_lookup_status"] == "found" and resolved["202.12.14.5"]["rdap_rir"] == "arin"
+    # The rule: the NIR's own object, never the maintainer. FPT's /22 is maintained by VNNIC and is a holder's.
+    fpt = apnic_whois.network_object(apnic_whois.parse_answer(APNIC_FPT_ANSWER))
+    assert apnic_whois.nir_of("FPT-VN", "FPT Telecom") == "" and not apnic_whois.is_nir_object(apnic_whois.rdap_shape(fpt))
+    assert apnic_whois.is_nir_object(apnic_whois.rdap_shape(apnic_whois.network_object(apnic_whois.parse_answer(APNIC_JPNIC_ANSWER))))
+    assert apnic_whois.nir_of("JPNIC-NET-JP-ERX", "") == "jpnic"
+    assert apnic_whois.nir_of("CIDR-BLK3-TW", "Taiwan Network Information Center") == "twnic"
+    assert apnic_whois.nir_of("KORNET", "Korea Telecom") == ""
+    assert apnic_whois.nir_of("MEGAEGG", "MEGA EGG") == ""
+    # apnic_whois=false keeps RDAP for APNIC addresses.
+    resolver(env, apnic_whois=False).resolve_page(page(env, "202.12.9.9"))
+    assert env.calls == ["202.12.14.5"] and rdap_calls == ["202.12.14.5", "202.12.9.9"]
+
+
+def test_apnic_whois_client_parses_answers_and_maps_errors():
+    sent = []
+
+    class Socket:
+        def __init__(self, answer):
+            self.answer = answer.encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def settimeout(self, seconds):
+            pass
+
+        def sendall(self, data):
+            sent.append(data)
+
+        def recv(self, size):
+            chunk, self.answer = self.answer[:size], self.answer[size:]
+            return chunk
+
+    answers = []
+
+    def connect(address, timeout):
+        assert address == ("whois.apnic.net", 43) and timeout == 10.0
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return Socket(answer)
+
+    client = ApnicWhoisClient(connect=connect)
+    answers = [APNIC_FPT_ANSWER]
+    found = client.lookup_ip("103.35.64.49")
+    assert sent == [b"-r 103.35.64.49\r\n"]
+    assert found.rir == "apnic" and found.raw_response["handle"] == "103.35.64.0 - 103.35.67.255"
+    assert found.raw_response["name"] == "FPT-VN" and found.raw_response["type"] == "ALLOCATED PORTABLE"
+    assert found.raw_response["entities"] == [{"objectClassName": "entity", "handle": None, "roles": ["registrant"], "vcardArray": ["vcard", [["version", {}, "text", "4.0"], ["kind", {}, "text", "org"], ["fn", {}, "text", "FPT Telecom"]]]}]
+    assert found.raw_response["corpscout"] == {"source": "apnic-whois", "flags": "-r", "nir": "", "mnt_by": ["MAINT-VN-VNNIC"], "mnt_irt": ["IRT-VNNIC-AP"]}
+    assert "FHIG1-AP" not in str(found.raw_response) and "Duy Tan" not in str(found.raw_response)
+    # Status spellings of the dump are normalised; inet6num ranges are prefixes.
+    six = apnic_whois.rdap_shape(apnic_whois.network_object(apnic_whois.parse_answer(
+        "inet6num:       2001:200::/35\nnetname:        WIDE-JP\ndescr:          WIDE Project\nstatus:         Allocated non-portable\nsource:         APNIC\n")))
+    assert (six["startAddress"], six["endAddress"], six["ipVersion"], six["type"]) == ("2001:200::", "2001:200:1fff:ffff:ffff:ffff:ffff:ffff", "v6", "ALLOCATED NON-PORTABLE")
+    assert apnic_whois.rdap_shape([("inetnum", "1.0.0.0 - 1.0.0.255"), ("netname", "X"), ("status", "ASSIGNED  NON-PORTABLE")])["type"] == "ASSIGNED NON-PORTABLE"
+    with pytest.raises(ValueError, match="not a network object"):
+        apnic_whois.rdap_shape([("route", "1.0.0.0/24")])
+    for answer, code, retryable in [
+        ("%ERROR:101: no entries found\n", "not_found", False),
+        ("%ERROR:201: access denied\n", "rate_limited", True),
+        ("%ERROR:305: connection limit\n", "query_error", True),
+        ("route:          1.0.0.0/24\norigin:         AS1\nsource:         APNIC\n", "not_found", False),
+        (OSError("connection refused"), "transport_error", True),
+    ]:
+        answers = [answer]
+        with pytest.raises(RdapClientError) as raised:
+            client.lookup_ip("1.0.0.1")
+        assert (raised.value.code, raised.value.retryable) == (code, retryable), answer
+
+
+def test_person_entities_counts_individual_vcards_nested_included():
+    assert enrichment.person_entities({}) == 0
+    raw = {
+        "entities": [
+            {"objectClassName": "entity", "handle": "ORG-A", "roles": ["registrant"], "vcardArray": ["vcard", [["kind", {}, "text", "org"], ["fn", {}, "text", "A GmbH"]]]},
+            {
+                "objectClassName": "entity",
+                "handle": "P1",
+                "vcardArray": ["vcard", [["kind", {}, "text", "individual"], ["fn", {}, "text", "A Person"]]],
+                "entities": [{"objectClassName": "entity", "handle": "P2", "vcardArray": ["vcard", [["kind", {}, "text", "individual"]]]}],
+            },
+            {"objectClassName": "entity", "handle": "R1", "vcardArray": ["vcard", [["kind", {}, "text", "group"]]]},
+        ]
+    }
+    assert enrichment.person_entities(raw) == 2
+
+
+def test_registry_budget_defers_misses_and_frees_after_the_window(environment):
+    env = environment
+    clock = {"now": 1000.0}
+    slept = []
+
+    def sleep(seconds):
+        slept.append(seconds)
+        clock["now"] += seconds
+
+    enricher = resolver(env, registry_daily_budgets={"arin": 2}, clock=lambda: clock["now"], sleep=sleep)
+    resolved = enricher.resolve_page(page(env, "8.8.8.8", "8.8.4.4", "1.1.1.1", "5.1.1.1"))
+    assert env.calls == ["8.8.8.8", "8.8.4.4", "5.1.1.1"]  # the third ARIN miss is deferred, RIPE is not budgeted
+    assert "1.1.1.1" not in resolved and not enricher.budget_reached
+    assert enricher.deferred == {"arin": 1} and enricher.deferrals_by_registry == {"arin": 1}
+    assert enricher.requests_by_registry == {"arin": 2, "ripe": 1}
+    assert enricher.person_entities_by_registry == {}  # the test responses carry no vCards
+    assert enricher.seconds_until_budget_frees() == pytest.approx(86_400)
+    clock["now"] += 3600
+    assert enricher.resolve_page(page(env, "1.1.1.1")) == {} and enricher.deferred == {"arin": 2}
+    assert enricher.wait_for_registry_budget() == pytest.approx(86_400 - 3600)
+    assert enricher.deferred == {} and sum(slept) == pytest.approx(86_400 - 3600)
+    assert enricher.resolve_page(page(env, "1.1.1.1"))["1.1.1.1"]["rdap_lookup_status"] == "found"
+    # Requests other runs made in the last day count against the same window.
+    fresh = resolver(env, registry_daily_budgets={"arin": 2}, clock=lambda: clock["now"])
+    fresh.seed_registry_usage([("arin", 100.0), ("arin", 50.0), ("ripe", 10.0)])
+    assert fresh.resolve_page(page(env, "9.9.9.9")) == {} and fresh.deferred == {"arin": 1}
+    assert fresh.resolve_page(page(env, "5.4.4.4"))["5.4.4.4"]["rdap_lookup_status"] == "found"
+
+
+def test_registry_for_maps_the_bootstrap_endpoint_to_the_registry_name(monkeypatch):
+    client = rdap_client.RdapClient(user_agent="test")
+    monkeypatch.setattr(client, "_ensure_bootstrapped", lambda: None)
+    urls = {
+        "5.134.16.1": "https://rdap.db.ripe.net/ip/5.134.16.1",
+        "8.8.8.8": "https://rdap.arin.net/registry/ip/8.8.8.8",
+        "2001:db8::1": "https://unknown.example/ip/2001:db8::1",
+    }
+    monkeypatch.setattr(
+        rdap_client.whoisit, "build_query", lambda *, query_type, query_value: ("GET", urls[query_value], True)
+    )
+    assert client.registry_for("5.134.16.1") == "ripe"
+    assert client.registry_for("8.8.8.8") == "arin"
+    assert client.registry_for("2001:db8::1") == ""
+
+    def refused(**kwargs):
+        raise rdap_client.QueryError("You need to load bootstrap data before making any queries")
+
+    monkeypatch.setattr(rdap_client.whoisit, "build_query", refused)
+    assert client.registry_for("8.8.8.8") == ""
+    assert rdap_client.RIR_BY_HOST["rdap.db.ripe.net"] == "ripe"
 ```
 
-(The bucket comes from ClickHouse's `cityHash64(ip) % 256` in `page()`; Python has no twin of that hash, which is also why `input_id` is computed in SQL.)
+(The bucket comes from ClickHouse's `cityHash64(ip) % 256` in `page()`; Python has no twin of that hash, which is also why `input_id` is computed in SQL. `registry_for` and both `lookup_ip` methods are stubbed on the classes in the fixture; no test bootstraps whoisit or contacts RIPE.)
 
 - [ ] **Step 2: Run to verify they fail**
 
-Run: `uv run --frozen --no-sync pytest tests/test_ip_enrichment_results.py -k "page_resolution or cache_window or negative_markers or registry_level_response or misses_reuse" -q -p no:cacheprovider`
-Expected: FAIL — `TypeError: RdapEnricher.__init__() got an unexpected keyword argument 'started_at'`.
+Run: `uv run --frozen --no-sync pytest tests/test_ip_enrichment_results.py -k "page_resolution or cache_window or negative_markers or registry_level_response or misses_reuse or ripe or rdap_shape or apnic or person_entities or registry_budget or registry_for" -q -p no:cacheprovider`
+Expected: FAIL — `ImportError: cannot import name 'apnic_whois' from 'dagster_v3.defs.commoncrawl_rdap'` (collection error; once both modules exist, `AttributeError: RdapClient has no attribute 'registry_for'` from the fixture and `TypeError: RdapEnricher.__init__() got an unexpected keyword argument 'started_at'`).
 
-- [ ] **Step 3: Rewrite `enrichment.py`**
+- [ ] **Step 3: Add `registry_for` to the RDAP client**
+
+In `services/dagster_v3/src/dagster_v3/defs/commoncrawl_rdap/client.py` replace lines 1-20 (the imports) with:
+
+```python
+from collections.abc import Mapping
+from ipaddress import ip_network
+from typing import Any
+from urllib.parse import unquote, urlsplit
+
+import requests
+import whoisit
+from whoisit.bootstrap import BaseBootstrap
+from whoisit.errors import (
+    ArgumentError,
+    BootstrapError,
+    ParseError,
+    QueryError,
+    RateLimitedError,
+    RemoteServerError,
+    ResourceAccessDeniedError,
+    ResourceDoesNotExist,
+    UnsupportedError,
+)
+
+from dagster_v3.defs.commoncrawl_rdap.rdap import RdapLookupResponse
+
+# RDAP host -> whoisit's registry name ('ripe', 'arin', 'apnic', 'jpnic', ...), the same
+# names whoisit reports as `rir` in a parsed response.
+RIR_BY_HOST = {
+    urlsplit(url).netloc: name for name, url in BaseBootstrap.RIR_RDAP_ENDPOINTS.items()
+}
+```
+
+After `lookup_up_url` (line 56) add:
+
+```python
+    def registry_for(self, ip_address_or_network: str) -> str:
+        """The registry whoisit would ask for this address, or '' when it cannot tell.
+
+        Resolved from the IANA bootstrap data already loaded for lookups (no HTTP), so
+        the RIPE REST path and the per-registry budget are chosen before a request is sent.
+        """
+        self._ensure_bootstrapped()
+        try:
+            _, url, _ = whoisit.build_query(
+                query_type="ip", query_value=ip_address_or_network
+            )
+        except (QueryError, BootstrapError, ArgumentError):
+            return ""
+        return RIR_BY_HOST.get(urlsplit(url).netloc, "")
+```
+
+- [ ] **Step 4: Create the RIPE REST client**
+
+Create `services/dagster_v3/src/dagster_v3/defs/commoncrawl_rdap/ripe_rest.py`:
+
+```python
+"""RIPE Database REST lookups without personal data.
+
+RIPE's acceptable use policy limits the personal data sets (person and role objects) one
+source address may receive to 1,000 per 24 hours, while queries themselves are unlimited
+within reasonable use. RIPE's RDAP `ip` answers embed the contacts as person objects, so
+every one of them counts. The REST search with flags=no-referenced (whois -r) returns the
+most specific inetnum/inet6num alone: netname, country, status, org, mnt-by, dates and
+contact handles, but no person or role object, so nothing counts. The object is reshaped
+into the RDAP document normalize_rdap_network expects, with the same handle RIPE's RDAP
+uses (the range text), so network keys, segments, classes and results are unchanged.
+descr, admin-c, tech-c and remarks are dropped on purpose: no personal data, not even a
+name written into descr.
+"""
+
+from ipaddress import ip_network
+from urllib.parse import quote
+
+import requests
+
+from dagster_v3.defs.commoncrawl_rdap.client import RdapClientError
+from dagster_v3.defs.commoncrawl_rdap.rdap import RdapLookupResponse
+
+SEARCH_URL = "https://rest.db.ripe.net/search.json"
+OBJECT_URL = "https://rest.db.ripe.net/ripe/{kind}/{key}"
+NETWORK_TYPES = ("inetnum", "inet6num")
+QUERY_FLAGS = (("flags", "no-referenced"), ("source", "ripe"), ("type-filter", "inetnum"), ("type-filter", "inet6num"))
+
+
+def rdap_shape(obj: dict) -> dict:
+    """An RDAP 'ip network' document built from one REST search object."""
+    kind = obj.get("type")
+    attributes = [
+        (attribute.get("name"), attribute.get("value", ""))
+        for attribute in obj.get("attributes", {}).get("attribute", [])
+    ]
+    values: dict[str, str] = {}
+    for name, value in attributes:
+        values.setdefault(name, value)
+    key = values.get(kind or "")
+    if kind not in NETWORK_TYPES or not key:
+        raise ValueError(f"not a network object: {kind!r}")
+    if kind == "inetnum":
+        start, end = (part.strip() for part in key.split("-", 1))
+        version = "v4"
+    else:
+        network = ip_network(key, strict=False)
+        start, end, version = str(network[0]), str(network[-1]), "v6"
+    events = [
+        {"eventAction": action, "eventDate": values[attribute]}
+        for attribute, action in (("created", "registration"), ("last-modified", "last changed"))
+        if values.get(attribute)
+    ]
+    entities = (
+        [{"objectClassName": "entity", "handle": values["org"], "roles": ["registrant"]}]
+        if values.get("org")
+        else []
+    )
+    return {
+        "objectClassName": "ip network",
+        "handle": key,
+        "startAddress": start,
+        "endAddress": end,
+        "ipVersion": version,
+        "name": values.get("netname"),
+        "type": values.get("status"),
+        "country": values.get("country"),
+        "status": ["active"],
+        "entities": entities,
+        "links": [{"rel": "self", "href": OBJECT_URL.format(kind=kind, key=quote(key, safe=""))}],
+        "events": events,
+        "port43": "whois.ripe.net",
+        "corpscout": {
+            "source": "ripe-rest",
+            "flags": "no-referenced",
+            "mnt_by": [value for name, value in attributes if name == "mnt-by"],
+        },
+    }
+
+
+class RipeRestClient:
+    """One session; errors use RdapClient's codes."""
+
+    def __init__(self, *, user_agent: str, session: requests.Session | None = None) -> None:
+        if user_agent.strip() == "":
+            raise ValueError("user_agent must not be empty")
+        self._owns_session = session is None
+        self._session = session if session is not None else requests.Session()
+        self._session.headers["User-Agent"] = user_agent.strip()
+
+    def close(self) -> None:
+        if self._owns_session:
+            self._session.close()
+
+    def lookup_ip(self, ip: str) -> RdapLookupResponse:
+        try:
+            response = self._session.get(
+                SEARCH_URL,
+                params=[("query-string", ip), *QUERY_FLAGS],
+                headers={"Accept": "application/json"},
+                timeout=(10, 30),
+            )
+        except requests.RequestException as error:
+            raise RdapClientError(str(error), code="transport_error", retryable=True) from error
+        status = response.status_code
+        if status == 404:
+            raise RdapClientError("no RIPE object", code="not_found", retryable=False, status_code=404)
+        if status == 429:
+            raise RdapClientError("RIPE REST rate limit", code="rate_limited", retryable=True, status_code=429)
+        if status >= 500:
+            raise RdapClientError(f"RIPE REST {status}", code="remote_server", retryable=True, status_code=status)
+        if status == 403:
+            raise RdapClientError("RIPE REST access denied", code="access_denied", retryable=False, status_code=403)
+        if status != 200:
+            raise RdapClientError(f"RIPE REST {status}", code="query_error", retryable=False, status_code=status)
+        try:
+            objects = response.json().get("objects", {}).get("object", [])
+        except ValueError as error:
+            raise RdapClientError("RIPE REST answer is not JSON", code="invalid_response", retryable=False) from error
+        network = next((item for item in objects if item.get("type") in NETWORK_TYPES), None)
+        if network is None:
+            raise RdapClientError("no network object in the RIPE answer", code="not_found", retryable=False, status_code=200)
+        try:
+            return RdapLookupResponse(rir="ripe", raw_response=rdap_shape(network))
+        except ValueError as error:
+            raise RdapClientError(str(error), code="invalid_response", retryable=False) from error
+```
+
+(A plain `requests.Session`, like `RdapClient`: dlt's retrying session would swallow the 429s and 5xx that the error mapping must see.)
+
+- [ ] **Step 5: Create the APNIC whois client**
+
+Create `services/dagster_v3/src/dagster_v3/defs/commoncrawl_rdap/apnic_whois.py`:
+
+```python
+"""APNIC whois over port 43 with -r: the holder object without personal data.
+
+APNIC's RDAP answers embed contact entities; its whois service with the -r flag returns
+the most specific inetnum/inet6num with contact handles only (no person, role or irt
+objects), followed by matching route objects, which are ignored. The HTTP gateway
+(wq.apnic.net) does not honour -r (verified 2026-09-26: it returned an irt object with an
+address), so this client speaks the port-43 protocol directly: one TCP connection per
+query, `-r <ip>`, read to EOF. The object is reshaped into the RDAP document
+normalize_rdap_network reads. Holder name: APNIC objects rarely carry org: (2.4% of the
+inetnum objects in the 2026-09-25 dump), so the FIRST descr line is the holder name;
+further descr lines (addresses) and every contact handle are dropped. NIR-managed space:
+when the answer is the NIR's own allocation object (netname or first descr naming JPNIC,
+KRNIC, TWNIC, IDNIC, CNNIC, IRINN or VNNIC) the end holder lives in the NIR's database and
+the caller falls back to RDAP, which the IANA bootstrap routes to the NIR server. mnt-by
+alone decides nothing: FPT's 103.35.64.0/22 is maintained by MAINT-VN-VNNIC and IS the
+holder's allocation.
+"""
+
+import re
+import socket
+from collections.abc import Mapping
+from ipaddress import ip_network
+
+from dagster_v3.defs.commoncrawl_rdap.client import RdapClientError
+from dagster_v3.defs.commoncrawl_rdap.rdap import RdapLookupResponse
+
+WHOIS_HOST = "whois.apnic.net"
+WHOIS_PORT = 43
+CONNECT_TIMEOUT = 10.0
+READ_TIMEOUT = 30.0
+NETWORK_TYPES = ("inetnum", "inet6num")
+OBJECT_URL = "https://rdap.apnic.net/ip/{start}"
+# The NIRs' own allocation objects (not the holders' allocations the NIRs maintain).
+NIR_NETNAME_PREFIXES = {
+    "JPNIC": "jpnic",
+    "KRNIC": "krnic",
+    "TWNIC": "twnic",
+    "IDNIC": "idnic",
+    "CNNIC": "cnnic",
+    "IRINN": "irinn",
+    "VNNIC": "vnnic",
+}
+NIR_DESCR_PHRASES = {
+    "JAPAN NETWORK INFORMATION CENTER": "jpnic",
+    "KOREA NETWORK INFORMATION CENTER": "krnic",
+    "KOREA INTERNET": "krnic",
+    "TAIWAN NETWORK INFORMATION CENTER": "twnic",
+    "INDONESIA NETWORK INFORMATION CENTER": "idnic",
+    "CHINA INTERNET NETWORK INFORMATION CENTER": "cnnic",
+    "INDIAN REGISTRY FOR INTERNET NAMES AND NUMBERS": "irinn",
+    "VIETNAM INTERNET NETWORK INFORMATION CENTRE": "vnnic",
+}
+_ERROR = re.compile(r"^%\s*ERROR:\s*(\d+)", re.MULTILINE)
+
+
+def parse_answer(text: str) -> list[list[tuple[str, str]]]:
+    """RPSL objects of a whois answer as lists of (attribute, value); % lines are comments."""
+    objects: list[list[tuple[str, str]]] = []
+    block: list[tuple[str, str]] = []
+    for raw in text.splitlines():
+        line = raw.rstrip("\r")
+        if not line.strip():
+            if block:
+                objects.append(block)
+                block = []
+            continue
+        if line.startswith("%"):
+            continue
+        if line[0] in " \t+" and block:
+            block[-1] = (block[-1][0], (block[-1][1] + " " + line.strip(" \t+")).strip())
+        else:
+            key, _, value = line.partition(":")
+            block.append((key.strip().lower(), value.strip()))
+    if block:
+        objects.append(block)
+    return objects
+
+
+def network_object(objects: list[list[tuple[str, str]]]) -> list[tuple[str, str]] | None:
+    """The first inetnum/inet6num object: whois answers the most specific one first."""
+    return next((obj for obj in objects if obj and obj[0][0] in NETWORK_TYPES), None)
+
+
+def nir_of(netname: str, descr: str) -> str:
+    """The NIR whose own allocation object this is, or '' for a holder's object."""
+    for prefix, nir in NIR_NETNAME_PREFIXES.items():
+        if netname.upper().startswith(prefix):
+            return nir
+    upper = descr.upper()
+    for phrase, nir in NIR_DESCR_PHRASES.items():
+        if phrase in upper:
+            return nir
+    return ""
+
+
+def rdap_shape(obj: list[tuple[str, str]]) -> dict:
+    """An RDAP 'ip network' document built from one whois object."""
+    kind, key = obj[0]
+    if kind not in NETWORK_TYPES or not key:
+        raise ValueError(f"not a network object: {kind!r}")
+    values: dict[str, str] = {}
+    descr: list[str] = []
+    for name, value in obj:
+        if name == "descr":
+            descr.append(value)
+        else:
+            values.setdefault(name, value)
+    if kind == "inetnum":
+        start, end = (part.strip() for part in key.split("-", 1))
+        version = "v4"
+    else:
+        network = ip_network(key, strict=False)
+        start, end, version = str(network[0]), str(network[-1]), "v6"
+    holder = descr[0] if descr else values.get("org")
+    status = " ".join(values.get("status", "").upper().split())
+    entities = []
+    if holder:
+        entities.append(
+            {
+                "objectClassName": "entity",
+                "handle": values.get("org"),
+                "roles": ["registrant"],
+                "vcardArray": ["vcard", [["version", {}, "text", "4.0"], ["kind", {}, "text", "org"], ["fn", {}, "text", holder]]],
+            }
+        )
+    events = [
+        {"eventAction": action, "eventDate": values[attribute]}
+        for attribute, action in (("created", "registration"), ("last-modified", "last changed"))
+        if values.get(attribute)
+    ]
+    return {
+        "objectClassName": "ip network",
+        "handle": key,
+        "startAddress": start,
+        "endAddress": end,
+        "ipVersion": version,
+        "name": values.get("netname"),
+        "type": status or None,
+        "country": values.get("country"),
+        "status": ["active"],
+        "entities": entities,
+        "links": [{"rel": "self", "href": OBJECT_URL.format(start=start)}],
+        "events": events,
+        "port43": WHOIS_HOST,
+        "corpscout": {
+            "source": "apnic-whois",
+            "flags": "-r",
+            "nir": nir_of(values.get("netname", ""), descr[0] if descr else ""),
+            "mnt_by": [value for name, value in obj if name == "mnt-by"],
+            "mnt_irt": [value for name, value in obj if name == "mnt-irt"],
+        },
+    }
+
+
+def is_nir_object(raw: Mapping) -> bool:
+    return bool(raw.get("corpscout", {}).get("nir"))
+
+
+class ApnicWhoisClient:
+    """One TCP connection per query to whois.apnic.net:43 with -r; errors use RdapClient's codes."""
+
+    def __init__(self, *, host: str = WHOIS_HOST, port: int = WHOIS_PORT, connect=socket.create_connection) -> None:
+        self._host, self._port, self._connect = host, port, connect
+
+    def close(self) -> None:
+        return None  # nothing is kept open between queries
+
+    def query(self, ip: str) -> str:
+        try:
+            with self._connect((self._host, self._port), timeout=CONNECT_TIMEOUT) as sock:
+                sock.settimeout(READ_TIMEOUT)
+                sock.sendall(f"-r {ip}\r\n".encode("ascii"))
+                chunks = []
+                while chunk := sock.recv(65536):
+                    chunks.append(chunk)
+        except (OSError, ValueError) as error:
+            raise RdapClientError(str(error), code="transport_error", retryable=True) from error
+        return b"".join(chunks).decode("utf-8", errors="replace")
+
+    def lookup_ip(self, ip: str) -> RdapLookupResponse:
+        text = self.query(ip)
+        error = _ERROR.search(text)
+        if error is not None:
+            number = int(error.group(1))
+            if number == 101:
+                raise RdapClientError("no entries found", code="not_found", retryable=False)
+            if number == 201:
+                # APNIC answers 201 when its query limit is hit; treated as a rate limit.
+                raise RdapClientError("APNIC whois access denied", code="rate_limited", retryable=True)
+            raise RdapClientError(f"APNIC whois error {number}", code="query_error", retryable=number >= 300)
+        obj = network_object(parse_answer(text))
+        if obj is None:
+            raise RdapClientError("no network object in the APNIC answer", code="not_found", retryable=False)
+        try:
+            return RdapLookupResponse(rir="apnic", raw_response=rdap_shape(obj))
+        except ValueError as error:
+            raise RdapClientError(str(error), code="invalid_response", retryable=False) from error
+```
+
+- [ ] **Step 6: Rewrite `enrichment.py`**
 
 Replace the whole of `services/dagster_v3/src/dagster_v3/defs/ip_enrichment/enrichment.py` with:
 
@@ -1826,16 +2534,26 @@ Replace the whole of `services/dagster_v3/src/dagster_v3/defs/ip_enrichment/enri
 
 A page's ClickHouse work is a fixed number of round trips whatever its size: one
 negative-cache read, one trie lookup, one read of the network rows the page needs
-(never raw_response) and one insert of the page's lookup markers. RDAP HTTP requests
-happen only for misses. Freshness is judged against the frozen execution start, so a
+(never raw_response) and one insert of the page's lookup markers. Registry requests
+happen only for misses; each miss also costs the registry-class context query
+(commoncrawl_rdap/registry.py), so registry-level and unallocated answers are stored
+for their address only. Freshness is judged against the frozen execution start, so a
 resume gives the same answers.
+
+RIPE addresses are resolved through the RIPE Database REST search and APNIC addresses
+through APNIC's port-43 whois with -r, both without personal data (commoncrawl_rdap/
+ripe_rest.py and apnic_whois.py; a placeholder or an NIR's own object falls back to RDAP);
+every other registry through RDAP. An optional
+rolling 24-hour request budget per registry defers misses instead of exceeding it; the
+loop waits for the window only when nothing else remains.
 """
 
-import time
-from collections import OrderedDict
-from dataclasses import asdict, replace
+from collections import OrderedDict, deque
+from collections.abc import Callable, Mapping
+from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from ipaddress import ip_address, ip_network
+from time import monotonic, sleep
 from uuid import UUID
 
 import dagster as dg
@@ -1848,20 +2566,26 @@ from dagster_v3.defs.commoncrawl_geoip.maxmind import (
     classify_ip_scope,
     lookup_maxmind_record,
 )
+from dagster_v3.defs.commoncrawl_rdap.apnic_whois import ApnicWhoisClient, is_nir_object
 from dagster_v3.defs.commoncrawl_rdap.assets import (
     RDAP_LOOKUP_INSERT_SQL,
     RDAP_NETWORK_INSERT_SQL,
     RDAP_SEGMENT_INSERT_SQL,
 )
 from dagster_v3.defs.commoncrawl_rdap.client import RdapClient, RdapClientError
+from dagster_v3.defs.commoncrawl_rdap.registry import (
+    REGISTRY_CLASS_INSERT_SQL,
+    RegistryClassification,
+    classify_registration,
+)
 from dagster_v3.defs.commoncrawl_rdap.rdap import (
     NormalizedRdapNetwork,
     RdapLookupResponse,
     RdapNetwork,
     is_registry_catch_all,
     normalize_rdap_network,
-    registry_level_reason,
 )
+from dagster_v3.defs.commoncrawl_rdap.ripe_rest import RipeRestClient
 
 NEGATIVE_STATUSES = {"not_found", "unsupported", "terminal_error"}
 # Every rdap_networks column except raw_response; the cache never loads the JSON.
@@ -1888,6 +2612,7 @@ NETWORK_COLUMNS = (
     "fetched_at",
 )
 WRITE_SETTINGS = {"async_insert": 1, "wait_for_async_insert": 1}
+BUDGET_WINDOW_SECONDS = 86_400
 
 
 class RequestBudgetReached(Exception):
@@ -1904,9 +2629,25 @@ class IpEnrichmentResultsConfig(dg.Config):
     max_requests: int | None = Field(
         default=250,
         ge=1,
-        description="RDAP HTTP request budget, including parents. Null processes the whole task.",
+        description="Registry HTTP request budget for this run, including parents. Null processes the whole task.",
     )
     request_delay_seconds: float = Field(default=1.0, ge=0, le=60)
+    registry_daily_budgets: dict[str, int] = Field(
+        default_factory=dict,
+        description="Optional rolling 24-hour request budget per registry, keyed by whoisit's "
+        "registry names (ripe, arin, apnic, lacnic, afrinic, jpnic, ...). A miss of a registry "
+        "at its budget is deferred, never failed; the run waits when nothing else remains.",
+    )
+    ripe_rest: bool = Field(
+        default=True,
+        description="Resolve RIPE addresses through the RIPE Database REST search with "
+        "no-referenced (no person or role objects) instead of RDAP.",
+    )
+    apnic_whois: bool = Field(
+        default=True,
+        description="Resolve APNIC addresses through APNIC's port-43 whois with -r (contact "
+        "handles only) instead of RDAP; an NIR's own allocation object falls back to RDAP.",
+    )
     parent_depth: int = Field(default=1, ge=0, le=5)
     rdap_cache_days: int = Field(default=30, ge=1)
     force_rdap: bool = False
@@ -1917,6 +2658,16 @@ class IpEnrichmentResultsConfig(dg.Config):
     @classmethod
     def uuid_identity(cls, value: str | None) -> str | None:
         return str(UUID(value)) if value is not None else None
+
+    @field_validator("registry_daily_budgets")
+    @classmethod
+    def positive_budgets(cls, value: dict[str, int]) -> dict[str, int]:
+        budgets = {}
+        for registry, budget in value.items():
+            if not registry.strip() or budget < 1:
+                raise ValueError("registry_daily_budgets needs registry names and budgets >= 1")
+            budgets[registry.strip().lower()] = budget
+        return budgets
 
 
 def geoip_result(ip, city_reader, asn_reader, *, checked_at, retry_seconds):
@@ -2038,44 +2789,86 @@ def cached_network_row(row) -> RdapNetwork:
     return RdapNetwork(raw_response="", **values)
 
 
+def person_entities(raw: Mapping) -> int:
+    """Entities whose vCard is of kind 'individual', nested included.
+
+    RIPE counts person objects against its daily limit; RDAP answers of the other
+    registries carry them too. An upper bound (RIPE marks maintainers 'individual' as well).
+    """
+    count = 0
+    pending = list(raw.get("entities") or [])
+    while pending:
+        entity = pending.pop()
+        if not isinstance(entity, Mapping):
+            continue
+        vcard = entity.get("vcardArray")
+        if isinstance(vcard, list) and len(vcard) == 2 and isinstance(vcard[1], list):
+            if any(
+                isinstance(item, list) and len(item) == 4 and item[0] == "kind" and item[3] == "individual"
+                for item in vcard[1]
+            ):
+                count += 1
+        pending.extend(entity.get("entities") or [])
+    return count
+
+
 def _clickhouse_time(value: datetime) -> str:
     return value.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")
 
 
 class RdapEnricher:
-    """Resolve RDAP coverage for a page of addresses with a bounded number of round trips."""
+    """Resolve registry coverage for a page of addresses with a bounded number of round trips."""
 
     def __init__(
         self,
         client,
         rdap: RdapClient,
+        ripe: RipeRestClient,
+        apnic: ApnicWhoisClient,
         config: IpEnrichmentResultsConfig,
         log,
         *,
         started_at: datetime,
         cache_cutoff: datetime,
+        clock: Callable[[], float] | None = None,
+        sleep: Callable[[float], None] | None = None,
     ):
         self.client = client
         self.rdap = rdap
+        self.ripe = ripe
+        self.apnic = apnic
         self.config = config
         self.log = log
         self.started_at = started_at
         self.cache_cutoff = cache_cutoff
+        # Resolved at construction so tests can patch the module names.
+        self._clock = clock or globals()["monotonic"]
+        self._sleep = sleep or globals()["sleep"]
         self.requests = 0
         self.cache_hits = 0
         self.networks_written = 0
         self.parent_failures = 0
         self.registry_level_responses = 0
         self.budget_reached = False
+        self.requests_by_registry: dict[str, int] = {}
+        self.person_entities_by_registry: dict[str, int] = {}
+        self.deferrals_by_registry: dict[str, int] = {}
+        self.deferred: dict[str, int] = {}  # since the last reset_pass()
         # Reusable networks fetched over HTTP in this run, checked before any request.
         self.recent: OrderedDict[str, NormalizedRdapNetwork] = OrderedDict()
         # Fresh network rows read from ClickHouse, keyed by network_key.
         self.cached: OrderedDict[str, RdapNetwork] = OrderedDict()
+        # Monotonic send times per registry inside the rolling window, oldest first.
+        self._sent: dict[str, deque[float]] = {}
 
     # --- page resolution -------------------------------------------------------
 
     def resolve_page(self, rows: list[dict]) -> dict[str, dict]:
-        """RDAP fields per address of the page; an address is absent only when the budget ran out."""
+        """Registry fields per address of the page.
+
+        An address is absent when its registry's daily budget deferred it or when the
+        run's max_requests budget ran out (``budget_reached`` is then True).
+        """
         addresses = {row["ip"]: ip_address(row["ip"]) for row in rows}
         buckets = {row["ip"]: row["bucket"] for row in rows}
         results: dict[str, dict] = {}
@@ -2141,7 +2934,9 @@ class RdapEnricher:
             if self._budget_exhausted():
                 self.budget_reached = True
                 break
-            results[ip] = self._request_ip(ip, addresses[ip], buckets[ip], markers)
+            result = self._request_ip(ip, addresses[ip], buckets[ip], markers)
+            if result is not None:
+                results[ip] = result
         if markers:
             self.client.execute(RDAP_LOOKUP_INSERT_SQL, markers, settings=WRITE_SETTINGS)
         return results
@@ -2190,6 +2985,62 @@ class RdapEnricher:
         while len(self.cached) > 4096:
             self.cached.popitem(last=False)
 
+    # --- registry budgets -------------------------------------------------------
+
+    def seed_registry_usage(self, rows: list[tuple[str, float]]) -> None:
+        """Requests any run made in the last day (registry, seconds ago), oldest first."""
+        now = self._clock()
+        for registry, seconds_ago in rows:
+            if seconds_ago < BUDGET_WINDOW_SECONDS:
+                self._sent.setdefault(registry, deque()).append(now - seconds_ago)
+
+    def _window(self, registry: str) -> deque[float]:
+        times = self._sent.setdefault(registry, deque())
+        horizon = self._clock() - BUDGET_WINDOW_SECONDS
+        while times and times[0] <= horizon:
+            times.popleft()
+        return times
+
+    def _over_budget(self, registry: str) -> bool:
+        budget = self.config.registry_daily_budgets.get(registry)
+        return budget is not None and len(self._window(registry)) >= budget
+
+    def _defer(self, registry: str) -> None:
+        self.deferred[registry] = self.deferred.get(registry, 0) + 1
+        self.deferrals_by_registry[registry] = self.deferrals_by_registry.get(registry, 0) + 1
+
+    def reset_pass(self) -> None:
+        self.deferred = {}
+
+    def seconds_until_budget_frees(self) -> float:
+        """Seconds until a deferred registry may be asked again (0 when none is deferred).
+
+        Waits for an hour's share of the registry's budget (at least one request), so
+        the pass that follows is worth its ClickHouse queries.
+        """
+        waits = []
+        for registry, deferred in self.deferred.items():
+            budget = self.config.registry_daily_budgets.get(registry)
+            times = self._window(registry)
+            if budget is None or len(times) < budget:
+                return 0.0
+            slots = max(1, min(deferred, budget // 24))
+            waits.append(times[len(times) - budget + slots - 1] + BUDGET_WINDOW_SECONDS - self._clock())
+        return max(0.0, min(waits)) if waits else 0.0
+
+    def wait_for_registry_budget(self) -> float:
+        """Sleep, in slices of at most a minute, until a deferred registry frees slots."""
+        total = self.seconds_until_budget_frees()
+        waited = 0.0
+        while waited < total:
+            step = min(60.0, total - waited)
+            self._sleep(step)
+            waited += step
+            if int(waited) % 600 == 0:
+                self.log.info("Registry budget wait: %.0f of %.0f s", waited, total)
+        self.reset_pass()
+        return waited
+
     # --- misses ---------------------------------------------------------------
 
     def _budget_exhausted(self) -> bool:
@@ -2198,20 +3049,46 @@ class RdapEnricher:
             and self.requests >= self.config.max_requests
         )
 
-    def _request(self, address_or_url, *, rir=None):
+    def _request(self, target: str, *, registry: str, rir: str | None = None, source: str = "rdap") -> RdapLookupResponse:
+        """One paced request through the registry's source: 'rdap', 'ripe_rest' or 'apnic_whois'."""
         if self.requests and self.config.request_delay_seconds:
-            time.sleep(self.config.request_delay_seconds)
+            self._sleep(self.config.request_delay_seconds)
         self.requests += 1
+        self._sent.setdefault(registry, deque()).append(self._clock())
+        self.requests_by_registry[registry] = self.requests_by_registry.get(registry, 0) + 1
         if rir is not None:
-            return self.rdap.lookup_up_url(address_or_url, rir=rir)
-        return self.rdap.lookup_ip(address_or_url)
+            response = self.rdap.lookup_up_url(target, rir=rir)
+        elif source == "ripe_rest":
+            response = self.ripe.lookup_ip(target)
+        elif source == "apnic_whois":
+            response = self.apnic.lookup_ip(target)
+        else:
+            response = self.rdap.lookup_ip(target)
+        persons = person_entities(response.raw_response)
+        if persons:
+            self.person_entities_by_registry[registry] = self.person_entities_by_registry.get(registry, 0) + persons
+        return response
 
-    def _persist(self, normalized: NormalizedRdapNetwork) -> None:
+    def _persist(
+        self, normalized: NormalizedRdapNetwork, classification: RegistryClassification | None = None
+    ) -> None:
         self.client.execute(
             RDAP_NETWORK_INSERT_SQL,
             [normalized.network.clickhouse_values()],
             settings=WRITE_SETTINGS,
         )
+        if classification is not None and classification.registry_class != "unknown":
+            # The class row lands before the segments: the trie source (migration 000451)
+            # never sees a segment whose class it does not know.
+            self.client.execute(
+                REGISTRY_CLASS_INSERT_SQL,
+                [
+                    classification.clickhouse_values(
+                        normalized.network.network_key, normalized.network.fetched_at
+                    )
+                ],
+                settings=WRITE_SETTINGS,
+            )
         self.client.execute(
             RDAP_SEGMENT_INSERT_SQL,
             [segment.clickhouse_values() for segment in normalized.segments],
@@ -2248,13 +3125,36 @@ class RdapEnricher:
             result["rdap_checked_at"],
         )
 
-    def _request_ip(self, ip, address, bucket, markers: list[tuple]) -> dict:
+    def _request_ip(self, ip, address, bucket, markers: list[tuple]) -> dict | None:
+        registry = self.rdap.registry_for(ip)
+        if self._over_budget(registry):
+            self._defer(registry)
+            return None
+        source = "rdap"
+        if registry == "ripe" and self.config.ripe_rest:
+            source = "ripe_rest"
+        elif registry == "apnic" and self.config.apnic_whois:
+            source = "apnic_whois"
         try:
-            response = self._request(ip)
+            response = self._request(ip, registry=registry, source=source)
             checked_at = datetime.now(UTC)
-            direct = normalize_rdap_network(
-                response, fetched_at=checked_at, segment_role="lookup_result"
-            )
+            direct = normalize_rdap_network(response, fetched_at=checked_at, segment_role="lookup_result")
+            if source != "rdap" and (
+                is_registry_catch_all(direct) or is_nir_object(response.raw_response)
+            ):
+                # RIPE's root object or APNIC's placeholder for unallocated / non-authoritative
+                # space, or an NIR's own allocation object: RDAP, routed by the IANA bootstrap
+                # (which redirects to the NIR server), knows the holder. One request past the
+                # budget at most.
+                self.log.info(
+                    "%s answer for %s is %s; asking RDAP",
+                    source,
+                    ip,
+                    "an NIR object (nir_fallback)" if is_nir_object(response.raw_response) else "a catch-all",
+                )
+                response = self._request(ip, registry=registry, source="rdap")
+                checked_at = datetime.now(UTC)
+                direct = normalize_rdap_network(response, fetched_at=checked_at, segment_role="lookup_result")
             cidr = matching_cidr(direct, address)
             if is_registry_catch_all(direct):
                 raise RdapClientError(
@@ -2286,29 +3186,33 @@ class RdapEnricher:
             )
             markers.append(self._marker(ip, address, bucket, result))
             return result
-        reason = registry_level_reason(direct.network, direct.segments)
-        if reason is not None:
-            # Answers only this address: stored for audit, kept out of the trie and of `recent`.
+        # Coverage and its class are durable before any exact-IP outcome refers to them.
+        # A registry-level or unallocated registration is stored for this address only:
+        # the trie excludes it by class (migration 000451) and the in-run cache never holds it.
+        classification = classify_registration(self.client, direct.network)
+        self._persist(direct, classification)
+        if classification.reusable:
+            self._remember(direct)
+        else:
             self.registry_level_responses += 1
             self.log.info(
-                "RDAP registration %s answers only %s (%s)", direct.network.network_key, ip, reason
+                "Registration %s is %s; it answers only %s",
+                direct.network.network_key,
+                classification.registry_class,
+                ip,
             )
-            direct = NormalizedRdapNetwork(
-                network=direct.network,
-                segments=tuple(replace(segment, segment_role="registry_level") for segment in direct.segments),
-            )
-        # Coverage is durable before any exact-IP outcome refers to it.
-        self._persist(direct)
-        if reason is None:
-            self._remember(direct)
         current = direct
         visited = {direct.network.network_key}
         for _ in range(self.config.parent_depth):
-            if current.network.up_url is None or self._budget_exhausted():
+            if (
+                current.network.up_url is None
+                or self._budget_exhausted()
+                or self._over_budget(current.network.rir)  # parents are optional
+            ):
                 break
             try:
                 parent = normalize_rdap_network(
-                    self._request(current.network.up_url, rir=current.network.rir),
+                    self._request(current.network.up_url, registry=current.network.rir, rir=current.network.rir),
                     fetched_at=datetime.now(UTC),
                     segment_role="parent",
                 )
@@ -2320,7 +3224,7 @@ class RdapEnricher:
             except (RdapClientError, ValueError) as error:
                 self.parent_failures += 1
                 self.log.warning(
-                    "Optional RDAP parent lookup failed for %s: %s", ip, type(error).__name__
+                    "Optional parent lookup failed for %s: %s", ip, type(error).__name__
                 )
                 break
         result = rdap_result(
@@ -2330,48 +3234,48 @@ class RdapEnricher:
         return result
 ```
 
-Notes for the implementer: `RdapLookupResponse` stays imported because tests build responses through it; `_markers_of` and `_load_networks` compare times in SQL so the driver's timezone handling never enters the decision; `rdap_result(checked_at=network.fetched_at)` keeps today's semantics (the cached registration's fetch time is the RDAP check time).
+Notes for the implementer: `RdapLookupResponse` stays imported because tests build responses through it; `_markers_of` and `_load_networks` compare times in SQL so the driver's timezone handling never enters the decision; `rdap_result(checked_at=network.fetched_at)` keeps today's semantics (the cached registration's fetch time is the RDAP check time); `globals()["monotonic"]` / `globals()["sleep"]` read the module names at construction so Task 5's loop test can patch `enrichment.monotonic` and `enrichment.sleep`; parents are charged to the registry that answered the direct registration (`network.rir`), which is where the `up` link points; the REST and whois answers and the RDAP fallback all go through `_request`, so pacing, the request counters and the budget window treat them alike.
 
-- [ ] **Step 4: Run the resolver tests**
+- [ ] **Step 7: Run the resolver tests**
 
-Run: `uv run --frozen --no-sync pytest tests/test_ip_enrichment_results.py -k "page_resolution or cache_window or negative_markers or registry_level_response or misses_reuse or registry_level_rule or agree_on_registry" -q -p no:cacheprovider`
-Expected: all pass. The asset-level tests of this file stay red until Task 5 rewrites `results.py` and them; `-k` selects only the resolver tests. The module still imports because `RequestBudgetReached` is kept as an unused class until Task 5 deletes it.
+Run: `uv run --frozen --no-sync pytest tests/test_ip_enrichment_results.py -k "page_resolution or cache_window or negative_markers or registry_level_response or misses_reuse or ripe or rdap_shape or apnic or person_entities or registry_budget or registry_for" tests/test_commoncrawl_rdap_assets.py tests/test_ip_registry.py -q -p no:cacheprovider`
+Expected: all pass. The asset-level tests of this file stay red until Task 5 rewrites `results.py` and them; `-k` selects only the resolver tests. The module still imports because `RequestBudgetReached` is kept as an unused class until Task 5 deletes it. `test_commoncrawl_rdap_assets.py` proves the legacy worker is untouched by the client change.
 
-Run ruff format/check on `src/dagster_v3/defs/ip_enrichment/enrichment.py tests/test_ip_enrichment_results.py`.
+Run ruff format/check on `src/dagster_v3/defs/ip_enrichment/enrichment.py src/dagster_v3/defs/commoncrawl_rdap/client.py src/dagster_v3/defs/commoncrawl_rdap/ripe_rest.py src/dagster_v3/defs/commoncrawl_rdap/apnic_whois.py tests/test_ip_enrichment_results.py`.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add services/dagster_v3/src/dagster_v3/defs/ip_enrichment/enrichment.py services/dagster_v3/tests/test_ip_enrichment_results.py
-git commit -m "perf(dagster): resolve RDAP coverage per page with a fixed number of ClickHouse round trips, bounded by the frozen window
+git add services/dagster_v3/src/dagster_v3/defs/ip_enrichment/enrichment.py services/dagster_v3/src/dagster_v3/defs/commoncrawl_rdap/client.py services/dagster_v3/src/dagster_v3/defs/commoncrawl_rdap/ripe_rest.py services/dagster_v3/src/dagster_v3/defs/commoncrawl_rdap/apnic_whois.py services/dagster_v3/tests/test_ip_enrichment_results.py
+git commit -m "perf(dagster): resolve registry coverage per page with bounded round trips; RIPE via REST and APNIC via whois -r without personal data; optional per-registry daily budget
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
+### Task 5: Execution loop over live remaining work, budget waits, completion from results, partition purge
 
-### Task 5: Execution loop over live remaining work, completion from results, partition purge
-
-`results.py` is rewritten around the shared lifecycle. Design decided here: the task is walked bucket by bucket (`SELECT DISTINCT bucket` once per pass); within a bucket, pages come from a cursor on `input_id` and the anti-join subquery reads `ip_enrichment_results WHERE bucket = b AND task_id AND execution_id` — one primary-key range of the results table (`ORDER BY (bucket, ip, result_id)`), so the cost per page is independent of the task size. Results go through a `ResultBuffer` (500 rows / 5 s) and the cursor never re-reads a page inside a pass; after each pass the buffer is flushed and the walk restarts, and a pass that finds nothing ends the loop. Completion counts use the same bucket-scoped queries. `attempt` is always 1: a task has one execution and failed addresses are retried in a new draft. A reached RDAP budget flushes what was resolved and raises `dg.Failure` (task stays `selected`, re-running the task resumes). `ip_enrichment_workflow` goes.
+`results.py` is rewritten around the shared lifecycle (`common/queue_execution.py`, crawl's `website_crawl/queue_execution.py` as the model). Design decided here: the task is walked bucket by bucket (`SELECT DISTINCT bucket` once per pass); within a bucket, pages come from a cursor on `input_id` and the anti-join subquery reads `ip_enrichment_results WHERE bucket = b AND task_id AND execution_id` — one primary-key range of the results table (`ORDER BY (bucket, ip, result_id)`), so the cost per page is independent of the task size. Results go through a `ResultBuffer` (500 rows / 5 s) and the cursor never re-reads a page inside a pass; after each pass the buffer is flushed and the walk restarts, and a pass that finds nothing ends the loop. A pass that read entries but resolved none because a registry budget deferred them makes the run wait (`wait_for_registry_budget`) and walk again — so a RIPE-bound run keeps processing every other registry and only idles when nothing else remains. Completion counts use the same bucket-scoped queries. `attempt` is always 1: a task has one execution and failed addresses are retried in a new draft. A reached `max_requests` budget flushes what was resolved and raises `dg.Failure` (task stays `selected`, re-running the task resumes: the documented pause-and-resume procedure). Every run reports the GeoLite2 build dates and warns when they are older than `MAX_AGE`. `ip_enrichment_workflow` goes.
 
 **Files:**
 - Rewrite: `services/dagster_v3/src/dagster_v3/defs/ip_enrichment/results.py`
 - Modify: `services/dagster_v3/src/dagster_v3/defs/ip_enrichment/enrichment.py` (delete the `RequestBudgetReached` shim)
-- Modify: `services/dagster_v3/tests/test_ip_enrichment_results.py` (replace the asset-level tests from `select` down to `test_workflow_freezes_and_processes_the_same_task`; keep the Task 1 and Task 4 tests)
+- Modify: `services/dagster_v3/tests/test_ip_enrichment_results.py` (replace the asset-level tests from `def select(env, ips):` through the end of `test_registry_level_registration_answers_only_the_queried_ip`; keep the Task 4 helpers and tests appended after them)
 
 **Interfaces:**
 - Produces (module `dagster_v3.defs.ip_enrichment.results`):
-  - `TRANSPORT_SETTINGS = ("batch_size", "max_requests", "request_delay_seconds")`, `NOT_FROZEN`, `LOOKUP_STATUSES`, `FAILED_SQL`.
-  - `start_ip_execution(store, client, config, run_id, *, default_execution_id=None) -> dict` (via `queue_execution.start_execution`, profile = config minus `task_id, execution_id, batch_size, max_requests, request_delay_seconds` plus `processor_version`, `freshness_days = rdap_cache_days`, label `"IP enrichment"`).
+  - `TRANSPORT_SETTINGS = ("batch_size", "max_requests", "request_delay_seconds", "registry_daily_budgets")`, `NOT_FROZEN`, `LOOKUP_STATUSES`, `FAILED_SQL`, `RESULT_BATCH = 500`, `REGISTRY_USAGE_SQL` (rows `(rir, seconds_ago)` of the last day).
+  - `start_ip_execution(store, client, config, run_id, *, default_execution_id=None) -> dict` (via `queue_execution.start_execution`, profile = config minus `task_id, execution_id` and the transport settings, plus `processor_version`; `freshness_days = rdap_cache_days`; label `"IP enrichment"`).
   - `task_buckets(client, task) -> list[int]`, `remaining_entries(client, task, *, bucket: int, after: str | None = None, limit: int) -> list[dict]` (keys `input_id, ip, ip_version, bucket`, ordered by `input_id`), `count_outcomes(client, task, buckets) -> tuple[int, int, int]` (`remaining, succeeded, failed`).
-  - `store_results(client, records: list[dict]) -> None`, `run_ip_enrichment(context, client, task, config, *, enricher, city_reader, asn_reader) -> dict` with keys `written, pages, request_limit_reached`.
+  - `store_results(client, records: list[dict]) -> None`, `run_ip_enrichment(context, client, task, config, *, enricher, city_reader, asn_reader) -> dict` with keys `written, pages, request_limit_reached, budget_waits, budget_wait_seconds`.
   - `finish_ip_execution(store, client, task) -> dict`.
-  - Asset `ip_enrichment_results` with metadata keys `task_id, execution_id, results_table, coverage_semantics, rdap_requests, rdap_cache_hits, parent_lookup_failures, registry_level_responses, written, pages, request_limit_reached, completion_status, succeeded_pages, failed_pages, skipped_recent, inputs_purged` (or `already_completed`); run tags `processing/task_id, ip_enrichment/execution_id, ip_enrichment/execution, ip_enrichment/outcome, ip_enrichment/succeeded_pages, ip_enrichment/failed_pages, ip_enrichment/skipped_pages`; job `ip_enrichment_results_job`.
+  - Asset `ip_enrichment_results` with metadata keys `task_id, execution_id, results_table, coverage_semantics, geolite2_city_build, geolite2_asn_build, rdap_requests, rdap_cache_hits, parent_lookup_failures, registry_level_responses, rdap_requests_by_registry, rdap_person_entities_by_registry, rdap_deferrals_by_registry, written, pages, request_limit_reached, budget_waits, budget_wait_seconds, completion_status, succeeded_pages, failed_pages, skipped_recent, inputs_purged` (or `already_completed`); run tags `processing/task_id, ip_enrichment/execution_id, ip_enrichment/execution, ip_enrichment/outcome, ip_enrichment/succeeded_pages, ip_enrichment/failed_pages, ip_enrichment/skipped_pages`; job `ip_enrichment_results_job`.
+- Consumes: `freshness.MAX_AGE`, `freshness.freshness` (Task 3); `RdapEnricher`, `RipeRestClient`, `ApnicWhoisClient`, the per-registry counters (Task 4); `bucket_prefix`, `ERROR_STATUSES`, `RESULT_RELATION` (Task 2).
 - Removes: `ip_enrichment_workflow`, `prepare_execution`, `page_outcomes`, `insert_result`, `EXECUTION_TAG`, `RequestBudgetReached`.
 
 - [ ] **Step 1: Write the failing tests**
 
-In `services/dagster_v3/tests/test_ip_enrichment_results.py` replace everything from `def select(env, ips):` through the end of `test_workflow_freezes_and_processes_the_same_task` with:
+In `services/dagster_v3/tests/test_ip_enrichment_results.py` replace everything from `def select(env, ips):` through the end of `test_registry_level_registration_answers_only_the_queried_ip` (the last test that existed before Task 4; the Task 4 helpers and tests stay below) with:
 
 ```python
 def select(env, ips, *, scope=None, **config):
@@ -2442,6 +3346,9 @@ def test_draft_geoip_rdap_segments_completion_and_purge(environment):
     assert metadata["completion_status"] == "completed"
     assert (metadata["written"], metadata["succeeded_pages"], metadata["failed_pages"], metadata["skipped_recent"]) == (4, 4, 0, 0)
     assert metadata["execution_id"] == first.run_id
+    assert metadata["rdap_requests_by_registry"] == {"arin": 2}
+    assert metadata["geolite2_city_build"] == "2026-08-01"  # the fixture readers' build epoch 1785542400
+    assert (metadata["budget_waits"], metadata["rdap_deferrals_by_registry"]) == (0, {})
     record = task_row(env, task)
     assert record["status"] == "completed" and record["inputs_purged_at"] is not None
     assert (record["succeeded_count"], record["terminal_failed_count"], record["skipped_count"]) == (4, 0, 0)
@@ -2467,7 +3374,7 @@ def test_errors_are_published_outcomes_and_backoff_holds_until_forced(environmen
             "rate limit", code="rate_limited", retryable=True, status_code=429
         )
 
-    monkeypatch.setattr(enrichment.RdapClient, "lookup_ip", unavailable)
+    monkeypatch.setattr(RdapClient, "lookup_ip", unavailable)
     task = select(env, ["8.8.8.8"])
     first = run(env, task)
     assert first.success and outcome(first)["completion_status"] == "completed_with_errors"
@@ -2486,7 +3393,7 @@ def test_errors_are_published_outcomes_and_backoff_holds_until_forced(environmen
     again = retry.asset_materializations_for_node("ip_enrichment_input")[0].metadata["task_id"].value
     assert task_row(env, again)["total"] == 1
     assert run(env, again).success and attempts == ["8.8.8.8"]
-    monkeypatch.setattr(enrichment.RdapClient, "lookup_ip", lambda self, ip: response(ip))
+    monkeypatch.setattr(RdapClient, "lookup_ip", lambda self, ip: response(ip))
     assert run(env, select(env, ["8.8.8.8"]), force_rdap=True).success
     assert env.client.execute(
         "SELECT rdap_lookup_status FROM corpscout.ip_enrichment_current"
@@ -2503,7 +3410,7 @@ def test_request_budget_fails_the_run_and_the_same_task_resumes(environment):
     ) == [(1,)]
     assert task_row(env, task)["status"] == "selected"
     # Transport settings may change; the saved execution is resumed without execution_id.
-    resumed = run(env, task, max_requests=1, batch_size=7)
+    resumed = run(env, task, max_requests=1, batch_size=7, registry_daily_budgets={"ripe": 5})
     assert resumed.success and outcome(resumed)["execution_id"] == first.run_id
     assert env.calls == ["1.1.1.1", "8.8.8.8"]
     assert env.client.execute(
@@ -2511,11 +3418,48 @@ def test_request_budget_fails_the_run_and_the_same_task_resumes(environment):
     ) == [(2, 1)]
 
 
+def test_registry_budget_defers_and_the_run_waits_for_the_window(environment, monkeypatch):
+    env = environment
+    clock = {"now": 0.0}
+    slept = []
+
+    def fake_sleep(seconds):
+        slept.append(seconds)
+        clock["now"] += seconds
+
+    monkeypatch.setattr(enrichment, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(enrichment, "sleep", fake_sleep)
+    task = select(env, ["5.1.1.1", "5.2.2.2", "8.8.8.8"])
+    result = run(env, task, batch_size=1, registry_daily_budgets={"ripe": 1})
+    assert result.success
+    # One RIPE miss per day: whichever RIPE address comes first in bucket order is fetched,
+    # the other is deferred, ARIN continues, then the run waits a full window.
+    assert len(env.calls) == 3 and "8.8.8.8" in env.calls[:2] and env.calls[2].startswith("5.")
+    metadata = outcome(result)
+    assert metadata["completion_status"] == "completed" and metadata["written"] == 3
+    assert metadata["budget_waits"] == 1 and metadata["budget_wait_seconds"] == pytest.approx(86_400)
+    assert metadata["rdap_deferrals_by_registry"] == {"ripe": 2}  # once per pass until it slept
+    assert metadata["rdap_requests_by_registry"] == {"ripe": 2, "arin": 1}
+    assert "ripe" not in metadata["rdap_person_entities_by_registry"]
+    assert sum(slept) == pytest.approx(86_400)
+
+
+def test_registry_usage_sql_reads_the_last_day(environment):
+    env = environment
+    seed_network(env, "5.1.1.1", fetched_at=datetime.now(UTC) - timedelta(hours=1), handle="RIPE-1")
+    seed_network(env, "5.2.2.2", fetched_at=datetime.now(UTC) - timedelta(days=2), handle="RIPE-2")
+    rows = env.client.execute(results.REGISTRY_USAGE_SQL)
+    assert [(rir, 3500 < seconds < 3700) for rir, seconds in rows] == [("arin", True)]
+    enricher = resolver(env, registry_daily_budgets={"arin": 1})
+    enricher.seed_registry_usage(rows)
+    assert enricher.resolve_page(page(env, "8.8.8.8")) == {} and enricher.deferred == {"arin": 1}
+
+
 @pytest.mark.parametrize("kind", ["catch_all", "wrong_range"])
 def test_invalid_registration_coverage_is_a_terminal_error(environment, monkeypatch, kind):
     env = environment
     monkeypatch.setattr(
-        enrichment.RdapClient,
+        RdapClient,
         "lookup_ip",
         lambda self, ip: response(
             ip,
@@ -2582,7 +3526,7 @@ def test_resume_after_lost_write_acknowledgement_does_not_repeat_lookups(environ
 def test_non_aligned_rdap_range_saves_exact_matching_segment(environment, monkeypatch):
     env = environment
     monkeypatch.setattr(
-        enrichment.RdapClient,
+        RdapClient,
         "lookup_ip",
         lambda self, ip: response(ip, start="8.8.8.1", end="8.8.8.10"),
     )
@@ -2609,8 +3553,8 @@ def test_optional_parent_failure_preserves_direct_registration(environment, monk
     def parent(self, url, *, rir):
         raise RdapClientError("parent unavailable", code="remote_server", retryable=True)
 
-    monkeypatch.setattr(enrichment.RdapClient, "lookup_ip", direct)
-    monkeypatch.setattr(enrichment.RdapClient, "lookup_up_url", parent)
+    monkeypatch.setattr(RdapClient, "lookup_ip", direct)
+    monkeypatch.setattr(RdapClient, "lookup_up_url", parent)
     result = run(env, select(env, ["8.8.8.8"]))
     assert result.success
     metadata = outcome(result)
@@ -2644,25 +3588,16 @@ def test_page_work_is_bounded_per_page_not_per_address(environment, monkeypatch)
         return execute(self, query, *args, **kwargs)
 
     monkeypatch.setattr(Client, "execute", counting)
-
-    def per_kind():
-        return {
-            "negative": sum(q.lstrip().startswith("SELECT ip, lookup_status") for q in queries),
-            "trie": sum("dictGetOrDefault" in q for q in queries),
-            "networks": sum(q.lstrip().startswith("SELECT network_key, rir") for q in queries),
-            "markers": sum(q.lstrip().startswith("INSERT INTO corpscout.rdap_ip_lookup_results") for q in queries),
-            "results": sum(q.lstrip().startswith("INSERT INTO corpscout.ip_enrichment_results") for q in queries),
-        }
-
     assert run(env, select(env, ips), batch_size=10).success
     assert env.calls == []
-    four_pages = per_kind()
+    four_pages = query_kinds(queries)
     assert four_pages["negative"] <= 4 and four_pages["trie"] <= 4 and four_pages["networks"] <= 1
     assert four_pages["markers"] == 0 and four_pages["results"] == 1  # 40 rows < 500: one flush
+    assert four_pages["context"] == 0
     assert not any("raw_response" in q for q in queries)
     queries.clear()
     assert run(env, select(env, ips), batch_size=40).success
-    one_page = per_kind()
+    one_page = query_kinds(queries)
     assert one_page["negative"] <= 1 and one_page["trie"] <= 1 and one_page["results"] == 1
     assert env.client.execute(
         "SELECT count() FROM corpscout.ip_enrichment_results FINAL"
@@ -2701,12 +3636,12 @@ def test_new_submissions_after_start_form_the_next_draft(environment):
     assert second != first and task_row(env, second)["status"] == "draft"
 ```
 
-Also delete `from dagster_v3.defs.ip_enrichment.input import ip_enrichment_input` from the imports (the workflow test was its only user) and add `from clickhouse_driver import Client` if Task 4 did not.
+Fixture note for the deferral test: `Reader.metadata()` returns `build_epoch=1785542400` (2026-08-01T00:00Z), which is what `geolite2_city_build` reports. In `test_registry_budget_defers_and_the_run_waits_for_the_window` the loop's clock is faked at 0 and the fixture truncates `rdap_networks`, so the `REGISTRY_USAGE_SQL` seed is empty; the first RIPE request is logged at fake time 0, the other RIPE address is deferred in pass 1 and again in pass 2 (nothing else resolved → the run waits exactly one window from time 0), pass 3 fetches it and pass 4 finds nothing: `ripe` deferrals 2, one wait of 86,400 s. `batch_size=1` keeps every address in its own page; bucket order (cityHash64) decides which RIPE address is first.
 
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `uv run --frozen --no-sync pytest tests/test_ip_enrichment_results.py -q -p no:cacheprovider`
-Expected: the new asset tests FAIL (`ValueError: materialize ip_enrichment_input first with this task_id` from the old asset, `KeyError: 'completion_status'`); the Task 1/4 tests pass.
+Expected: the new asset tests FAIL (`ValueError: materialize ip_enrichment_input first with this task_id` from the old asset, `KeyError: 'completion_status'`, `AttributeError: module 'dagster_v3.defs.ip_enrichment.results' has no attribute 'REGISTRY_USAGE_SQL'`); the Task 4 tests pass.
 
 - [ ] **Step 3: Rewrite `results.py`**
 
@@ -2719,7 +3654,9 @@ Remaining work is a live ClickHouse query per 256-way bucket (entries without a 
 of this execution; each query anti-joins one primary-key range of the results table),
 every page costs a fixed number of ClickHouse round trips whatever its size, outcomes
 are stored in acknowledged micro-batches, and completion counts come from the results
-table. Nothing about a page is persisted, so a resume is the same loop again.
+table. Nothing about a page is persisted, so a resume is the same loop again. Entries
+a registry budget deferred stay remaining; when a whole pass resolved nothing else the
+run waits for the budget window, then walks again.
 """
 
 import json
@@ -2734,11 +3671,14 @@ from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.common import queue_execution
 from dagster_v3.defs.common.processing import ProcessingResource
 from dagster_v3.defs.common.result_buffer import ResultBuffer
+from dagster_v3.defs.commoncrawl_geoip.freshness import MAX_AGE, freshness
 from dagster_v3.defs.commoncrawl_geoip.resources import MaxMindDatabaseResource
+from dagster_v3.defs.commoncrawl_rdap.apnic_whois import ApnicWhoisClient
 from dagster_v3.defs.commoncrawl_rdap.assets import (
     BEST_KNOWN_SEMANTICS_WARNING,
     RDAP_USER_AGENT,
 )
+from dagster_v3.defs.commoncrawl_rdap.ripe_rest import RipeRestClient
 from dagster_v3.defs.ip_enrichment.enrichment import (
     IpEnrichmentResultsConfig,
     RdapClient,
@@ -2755,11 +3695,22 @@ from dagster_v3.defs.ip_enrichment.input import (
 )
 
 LOOKUP_STATUSES = ("city_lookup_status", "asn_lookup_status", "rdap_lookup_status")
-# Page size, request budget and pacing are transport: they may change between resumes.
-TRANSPORT_SETTINGS = ("batch_size", "max_requests", "request_delay_seconds")
+# Page size, request budgets and pacing are transport: they may change between resumes.
+TRANSPORT_SETTINGS = (
+    "batch_size",
+    "max_requests",
+    "request_delay_seconds",
+    "registry_daily_budgets",
+)
 NOT_FROZEN = {"task_id", "execution_id", *TRANSPORT_SETTINGS}
 FAILED_SQL = " OR ".join(f"{column} IN %(errors)s" for column in LOOKUP_STATUSES)
 RESULT_BATCH = 500
+# Requests any writer made in the last day, per registry, oldest first: the per-registry
+# budget window survives a resume and counts the legacy bucket worker too.
+REGISTRY_USAGE_SQL = """SELECT rir, toFloat64(dateDiff('second', fetched_at, now64(6)))
+    FROM corpscout.rdap_networks
+    WHERE fetched_at >= now64(6) - INTERVAL 1 DAY
+    ORDER BY fetched_at"""
 
 
 def execution_parameters(task: dict) -> dict:
@@ -2891,12 +3842,20 @@ def run_ip_enrichment(
 
     A page's outcomes enter the buffer together and the cursor moves past the page, so
     a page is never read twice inside a pass; the buffer is flushed at the end of every
-    pass and a further pass confirms that nothing remains. A reached RDAP budget flushes
-    what was resolved and stops; the rest stays remaining for the resume.
+    pass and a further pass confirms that nothing remains. A reached max_requests
+    budget flushes what was resolved and stops; the rest stays remaining for the
+    resume. A pass that resolved nothing while a registry budget deferred entries waits
+    for the budget window and walks again.
     """
     execution = task["config"]["execution"]
     execution_uuid = UUID(execution["execution_id"])
-    counts = {"written": 0, "pages": 0, "request_limit_reached": False}
+    counts = {
+        "written": 0,
+        "pages": 0,
+        "request_limit_reached": False,
+        "budget_waits": 0,
+        "budget_wait_seconds": 0.0,
+    }
 
     def flush(records: list[dict]) -> None:
         store_results(client, records)
@@ -2906,6 +3865,7 @@ def run_ip_enrichment(
     buckets = task_buckets(client, task)
     while True:
         processed = 0
+        enricher.reset_pass()
         for bucket in buckets:
             after = None
             while rows := remaining_entries(client, task, bucket=bucket, after=after, limit=config.batch_size):
@@ -2914,7 +3874,7 @@ def run_ip_enrichment(
                 records = []
                 for row in rows:
                     if row["ip"] not in rdap:
-                        continue  # the request budget ran out before this address
+                        continue  # deferred by a registry budget, or the request budget ran out
                     checked_at = datetime.now(UTC)
                     records.append(
                         {
@@ -2941,13 +3901,14 @@ def run_ip_enrichment(
                 processed += len(records)
                 counts["pages"] += 1
                 context.log.info(
-                    "IP enrichment execution=%s bucket=%s page=%s resolved=%s rdap_requests=%s cache_hits=%s",
+                    "IP enrichment execution=%s bucket=%s page=%s resolved=%s rdap_requests=%s cache_hits=%s deferred=%s",
                     execution["execution_id"],
                     bucket,
                     counts["pages"],
                     counts["written"] + len(buffer),
                     enricher.requests,
                     enricher.cache_hits,
+                    enricher.deferred,
                 )
                 if enricher.budget_reached:
                     buffer.flush()
@@ -2955,7 +3916,15 @@ def run_ip_enrichment(
                     return counts
         buffer.flush()  # an unacknowledged batch fails the run; the resume re-reads its rows
         if processed == 0:
-            return counts
+            if not enricher.deferred:
+                return counts
+            context.log.warning(
+                "Registry budget reached (%s); waiting %.0f s before the next pass",
+                enricher.deferred,
+                enricher.seconds_until_budget_frees(),
+            )
+            counts["budget_waits"] += 1
+            counts["budget_wait_seconds"] += enricher.wait_for_registry_budget()
 
 
 def finish_ip_execution(store, client, task: dict) -> dict:
@@ -3047,6 +4016,9 @@ def ip_enrichment_results(
                 "rdap_network_segments",
                 "rdap_network_segments_current",
                 "rdap_ip_lookup_results_current",
+                "rdap_network_registry_class",
+                "rdap_network_registry_class_current",
+                "ip_registry_ready",
             ),
         )
         city_path, asn_path = maxmind_geoip.database_paths()
@@ -3054,19 +4026,36 @@ def ip_enrichment_results(
             maxminddb.open_database(city_path) as city_reader,
             maxminddb.open_database(asn_path) as asn_reader,
             closing(RdapClient(user_agent=RDAP_USER_AGENT)) as rdap_client,
+            closing(RipeRestClient(user_agent=RDAP_USER_AGENT)) as ripe_client,
+            closing(ApnicWhoisClient()) as apnic_client,
         ):
+            builds = {}
             for kind, reader in (("City", city_reader), ("ASN", asn_reader)):
                 if kind not in reader.metadata().database_type:
                     raise ValueError(f"expected a MaxMind {kind} database")
+                builds[f"GeoLite2-{kind}"] = datetime.fromtimestamp(
+                    reader.metadata().build_epoch, UTC
+                )
+            geolite2 = freshness(builds, datetime.now(UTC))
+            if not geolite2.passed:
+                context.log.warning(
+                    "%s Older than %s days; replace the files by hand "
+                    "(docs/operations/ip-enrichment-draft-queue.md).",
+                    geolite2.description,
+                    MAX_AGE.days,
+                )
             client.execute("SYSTEM RELOAD DICTIONARY corpscout.rdap_network_trie")
             enricher = RdapEnricher(
                 client,
                 rdap_client,
+                ripe_client,
+                apnic_client,
                 config,
                 context.log,
                 started_at=datetime.fromisoformat(execution["started_at"]),
                 cache_cutoff=datetime.fromisoformat(execution["freshness_cutoff"]),
             )
+            enricher.seed_registry_usage(client.execute(REGISTRY_USAGE_SQL))
             counts = run_ip_enrichment(
                 context, client, task, config,
                 enricher=enricher, city_reader=city_reader, asn_reader=asn_reader,
@@ -3078,10 +4067,15 @@ def ip_enrichment_results(
             "execution_id": execution["execution_id"],
             "results_table": RESULT_RELATION,
             "coverage_semantics": BEST_KNOWN_SEMANTICS_WARNING,
+            "geolite2_city_build": builds["GeoLite2-City"].date().isoformat(),
+            "geolite2_asn_build": builds["GeoLite2-ASN"].date().isoformat(),
             "rdap_requests": enricher.requests,
             "rdap_cache_hits": enricher.cache_hits,
             "parent_lookup_failures": enricher.parent_failures,
             "registry_level_responses": enricher.registry_level_responses,
+            "rdap_requests_by_registry": enricher.requests_by_registry,
+            "rdap_person_entities_by_registry": enricher.person_entities_by_registry,
+            "rdap_deferrals_by_registry": enricher.deferrals_by_registry,
             **counts,
         }
         if counts["request_limit_reached"]:
@@ -3105,13 +4099,13 @@ Delete the `RequestBudgetReached` class from `enrichment.py`.
 
 - [ ] **Step 4: Run the suites and the definitions check**
 
-Run: `uv run --frozen --no-sync pytest tests/test_ip_enrichment_results.py tests/test_ip_enrichment_input.py tests/test_queue_execution_common.py -q -p no:cacheprovider`
+Run: `uv run --frozen --no-sync pytest tests/test_ip_enrichment_results.py tests/test_ip_enrichment_input.py tests/test_queue_execution_common.py tests/test_geolite2_freshness.py -q -p no:cacheprovider`
 Expected: all pass.
 
 Run: `uv run --frozen --no-sync dg check defs`
-Expected: `All definitions loaded successfully.` (no `ip_enrichment_workflow`).
+Expected: `All definitions loaded successfully.` (no `ip_enrichment_workflow`; `geolite2_databases_fresh` still resolves its asset).
 
-Run: `rg -n "ip_enrichment_workflow|RequestBudgetReached|prepare_execution|page_outcomes|insert_result|EXECUTION_TAG|ClickHouseInputQueue" services/dagster_v3/src/dagster_v3/defs/ip_enrichment services/dagster_v3/tests/test_ip_enrichment_results.py services/dagster_v3/tests/test_ip_enrichment_input.py`
+Run: `rg -n "ip_enrichment_workflow|RequestBudgetReached|prepare_execution|page_outcomes|insert_result|EXECUTION_TAG|ClickHouseInputQueue|contact_entities|use_rdap_proxies|RDAP_PROXIES|build_lanes|egress" services/dagster_v3/src/dagster_v3/defs/ip_enrichment services/dagster_v3/tests/test_ip_enrichment_results.py services/dagster_v3/tests/test_ip_enrichment_input.py`
 Expected: no matches.
 
 Run ruff format/check on `src/dagster_v3/defs/ip_enrichment/results.py src/dagster_v3/defs/ip_enrichment/enrichment.py tests/test_ip_enrichment_results.py`.
@@ -3120,380 +4114,28 @@ Run ruff format/check on `src/dagster_v3/defs/ip_enrichment/results.py src/dagst
 
 ```bash
 git add services/dagster_v3/src/dagster_v3/defs/ip_enrichment/results.py services/dagster_v3/src/dagster_v3/defs/ip_enrichment/enrichment.py services/dagster_v3/tests/test_ip_enrichment_results.py
-git commit -m "feat(dagster): IP enrichment runs the shared queue lifecycle over live remaining work and finishes from results
+git commit -m "feat(dagster): IP enrichment runs the shared queue lifecycle over live remaining work, waits for registry budgets and finishes from results
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
+### Task 6: Backoffice — "Add to enrichment queue", draft semantics on the queue page
 
-### Task 6: GeoLite2 update asset, weekly schedule, staleness check, `.env.example`
-
-Evidence: every result row on prod carries City build `2026-07-10 06:34` and ASN build `2026-07-10 08:15`; there is no update mechanism anywhere (`rg MAXMIND` finds only `MaxMindDatabaseResource` and `.env.example:70`, whose comment describes versioned `GeoLite2-City_*` folders while `resources.py:14-15` wants `GeoLite2-City.mmdb` directly in the directory). No MaxMind credential variable exists in `.env.example`, `ansible/group_vars/dagster_hosts/vars.yml` or the deploy roles, so `MAXMIND_ACCOUNT_ID` / `MAXMIND_LICENSE_KEY` are new. MaxMind's permalinks: `https://download.maxmind.com/geoip/databases/<edition>/download?suffix=tar.gz` (HTTP Basic auth with account id + license key) and `?suffix=tar.gz.sha256` (text `"<sha256>  <file>"`); the archive holds `<edition>_YYYYMMDD/<edition>.mmdb`. Credentials are read from the process environment in the asset (like `CRAWLER_API_TOKEN` in `website_crawl/queue_execution.py:445`), never from `dg.EnvVar` on the shared resource, so a missing key cannot break `ip_enrichment_results`.
-
-**Files:**
-- Create: `services/dagster_v3/src/dagster_v3/defs/commoncrawl_geoip/update.py`
-- Create: `services/dagster_v3/tests/test_geolite2_update.py`
-- Modify: `services/dagster_v3/.env.example:70-71`
-
-**Interfaces:**
-- Produces (module `dagster_v3.defs.commoncrawl_geoip.update`): `EDITIONS = ("GeoLite2-City", "GeoLite2-ASN")`, `DOWNLOAD_URL`, `MAX_AGE = timedelta(days=14)`, `maxmind_credentials() -> tuple[str, str]`, `download_edition(http, edition, auth) -> tuple[bytes, str]`, `install_edition(directory: Path, edition: str, archive: bytes, expected_sha256: str, *, opener=maxminddb.open_database) -> datetime`, `database_build_times(resource, *, opener=maxminddb.open_database) -> dict[str, datetime]`, `freshness(times: dict[str, datetime], now: datetime) -> dg.AssetCheckResult`, asset `geolite2_databases`, check `geolite2_databases_fresh`, job `geolite2_update_job`, schedule `geolite2_update_weekly` (`15 3 * * 3` UTC, STOPPED by default).
-
-- [ ] **Step 1: Write the failing tests**
-
-Create `services/dagster_v3/tests/test_geolite2_update.py`:
-
-```python
-"""GeoLite2 install/verify/check logic with fake archives and readers; no MaxMind traffic."""
-
-import hashlib
-import io
-import tarfile
-from datetime import UTC, datetime, timedelta
-from pathlib import Path
-from types import SimpleNamespace
-
-import pytest
-
-from dagster_v3.defs.commoncrawl_geoip import update
-from dagster_v3.defs.commoncrawl_geoip.resources import MaxMindDatabaseResource
-
-
-def archive_for(edition: str, payload: bytes, *, member: str | None = None) -> bytes:
-    buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
-        info = tarfile.TarInfo(member or f"{edition}_20260922/{edition}.mmdb")
-        info.size = len(payload)
-        tar.addfile(info, io.BytesIO(payload))
-    return buffer.getvalue()
-
-
-class Reader:
-    def __init__(self, path, database_type, build_epoch):
-        self.path, self.database_type, self.build_epoch = path, database_type, build_epoch
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        return False
-
-    def metadata(self):
-        return SimpleNamespace(database_type=self.database_type, build_epoch=self.build_epoch)
-
-
-def opener(database_type="GeoLite2-City", build_epoch=1_790_000_000):
-    return lambda path: Reader(path, database_type, build_epoch)
-
-
-def test_install_verifies_then_replaces_atomically(tmp_path: Path):
-    target = tmp_path / "GeoLite2-City.mmdb"
-    target.write_bytes(b"old")
-    archive = archive_for("GeoLite2-City", b"new")
-    built = update.install_edition(
-        tmp_path, "GeoLite2-City", archive, hashlib.sha256(archive).hexdigest(), opener=opener()
-    )
-    assert built == datetime.fromtimestamp(1_790_000_000, UTC)
-    assert target.read_bytes() == b"new"
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["GeoLite2-City.mmdb"]
-
-
-@pytest.mark.parametrize(
-    ("archive", "digest_ok", "reader_type", "message"),
-    [
-        (archive_for("GeoLite2-City", b"new"), False, "GeoLite2-City", "SHA-256"),
-        (archive_for("GeoLite2-City", b"new"), True, "GeoLite2-ASN", "holds a GeoLite2-ASN"),
-        (archive_for("GeoLite2-City", b"new", member="GeoLite2-City_20260922/README.txt"), True, "GeoLite2-City", "no GeoLite2-City.mmdb"),
-    ],
-)
-def test_install_refuses_bad_archives_and_leaves_the_old_file(tmp_path, archive, digest_ok, reader_type, message):
-    target = tmp_path / "GeoLite2-City.mmdb"
-    target.write_bytes(b"old")
-    digest = hashlib.sha256(archive).hexdigest() if digest_ok else "0" * 64
-    with pytest.raises(ValueError, match=message):
-        update.install_edition(tmp_path, "GeoLite2-City", archive, digest, opener=opener(reader_type))
-    assert target.read_bytes() == b"old"
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["GeoLite2-City.mmdb"]
-
-
-def test_download_uses_basic_auth_and_the_published_digest():
-    calls = []
-
-    class Http:
-        def get(self, url, *, auth, timeout):
-            calls.append((url, auth))
-            body = b"archive" if url.endswith("suffix=tar.gz") else b"abc123  GeoLite2-ASN_20260922.tar.gz\n"
-            return SimpleNamespace(content=body, text=body.decode(), raise_for_status=lambda: None)
-
-    archive, digest = update.download_edition(Http(), "GeoLite2-ASN", ("123", "key"))
-    assert (archive, digest) == (b"archive", "abc123")
-    assert calls == [
-        ("https://download.maxmind.com/geoip/databases/GeoLite2-ASN/download?suffix=tar.gz", ("123", "key")),
-        ("https://download.maxmind.com/geoip/databases/GeoLite2-ASN/download?suffix=tar.gz.sha256", ("123", "key")),
-    ]
-
-
-def test_missing_credentials_fail_before_any_download(monkeypatch):
-    monkeypatch.delenv("MAXMIND_ACCOUNT_ID", raising=False)
-    monkeypatch.setenv("MAXMIND_LICENSE_KEY", "key")
-    with pytest.raises(ValueError, match="MAXMIND_ACCOUNT_ID"):
-        update.maxmind_credentials()
-    monkeypatch.setenv("MAXMIND_ACCOUNT_ID", " 123 ")
-    assert update.maxmind_credentials() == ("123", "key")
-
-
-def test_freshness_check_fails_after_fourteen_days(tmp_path):
-    for edition in update.EDITIONS:
-        (tmp_path / f"{edition}.mmdb").touch()
-    resource = MaxMindDatabaseResource(database_directory=str(tmp_path))
-    now = datetime(2026, 9, 25, tzinfo=UTC)
-    fresh = int((now - timedelta(days=3)).timestamp())
-    stale = int((now - timedelta(days=20)).timestamp())
-    times = update.database_build_times(resource, opener=opener(build_epoch=fresh))
-    assert set(times) == set(update.EDITIONS)
-    assert update.freshness(times, now).passed
-    result = update.freshness({"GeoLite2-City": times["GeoLite2-City"], "GeoLite2-ASN": datetime.fromtimestamp(stale, UTC)}, now)
-    assert not result.passed and "GeoLite2-ASN built 2026-09-05" in result.description
-    assert result.metadata["max_age_days"].value == 14
-```
-
-- [ ] **Step 2: Run to verify they fail**
-
-Run: `uv run --frozen --no-sync pytest tests/test_geolite2_update.py -q -p no:cacheprovider`
-Expected: FAIL — `ImportError: cannot import name 'update' from 'dagster_v3.defs.commoncrawl_geoip'`.
-
-- [ ] **Step 3: Create the update module**
-
-Create `services/dagster_v3/src/dagster_v3/defs/commoncrawl_geoip/update.py`:
-
-```python
-"""Weekly GeoLite2 refresh: download, verify and atomically replace the .mmdb files.
-
-MaxMind publishes GeoLite2 twice a week. The asset fetches each edition's tar.gz with
-the account credentials, checks the published SHA-256 and the database type, and
-replaces <MAXMIND_DATABASE_DIRECTORY>/<edition>.mmdb with os.replace, so a running
-enrichment keeps reading the file it opened. The check fails when a database is
-older than 14 days.
-"""
-
-import hashlib
-import io
-import os
-import tarfile
-from datetime import UTC, datetime, timedelta
-from pathlib import Path
-
-import dagster as dg
-import maxminddb
-from dlt.sources.helpers.requests import Session
-
-from dagster_v3.defs.commoncrawl_geoip.resources import MaxMindDatabaseResource
-
-EDITIONS = ("GeoLite2-City", "GeoLite2-ASN")
-DOWNLOAD_URL = "https://download.maxmind.com/geoip/databases/{edition}/download?suffix={suffix}"
-MAX_AGE = timedelta(days=14)
-
-
-def maxmind_credentials() -> tuple[str, str]:
-    account_id = os.environ.get("MAXMIND_ACCOUNT_ID", "").strip()
-    license_key = os.environ.get("MAXMIND_LICENSE_KEY", "").strip()
-    if not account_id or not license_key:
-        raise ValueError(
-            "Configure MAXMIND_ACCOUNT_ID and MAXMIND_LICENSE_KEY on the Dagster host"
-        )
-    return account_id, license_key
-
-
-def download_edition(http, edition: str, auth: tuple[str, str]) -> tuple[bytes, str]:
-    """The edition's tar.gz and the SHA-256 MaxMind publishes next to it."""
-    archive = http.get(
-        DOWNLOAD_URL.format(edition=edition, suffix="tar.gz"), auth=auth, timeout=(10, 300)
-    )
-    archive.raise_for_status()
-    digest = http.get(
-        DOWNLOAD_URL.format(edition=edition, suffix="tar.gz.sha256"), auth=auth, timeout=(10, 60)
-    )
-    digest.raise_for_status()
-    return archive.content, digest.text.split()[0].lower()
-
-
-def install_edition(
-    directory: Path,
-    edition: str,
-    archive: bytes,
-    expected_sha256: str,
-    *,
-    opener=maxminddb.open_database,
-) -> datetime:
-    """Verify, extract and atomically replace <directory>/<edition>.mmdb; return its build time."""
-    if hashlib.sha256(archive).hexdigest() != expected_sha256.lower():
-        raise ValueError(f"{edition} download does not match its published SHA-256")
-    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as tar:
-        member = next(
-            (
-                item
-                for item in tar.getmembers()
-                if item.isfile() and item.name.rsplit("/", 1)[-1] == f"{edition}.mmdb"
-            ),
-            None,
-        )
-        if member is None:
-            raise ValueError(f"{edition} archive holds no {edition}.mmdb")
-        payload = tar.extractfile(member).read()
-    target = directory / f"{edition}.mmdb"
-    staged = directory / f".{edition}.{os.getpid()}.mmdb.tmp"
-    staged.write_bytes(payload)
-    try:
-        with opener(staged) as reader:
-            metadata = reader.metadata()
-            if edition.split("-", 1)[1] not in metadata.database_type:
-                raise ValueError(f"{edition} archive holds a {metadata.database_type} database")
-            built = datetime.fromtimestamp(metadata.build_epoch, UTC)
-        os.replace(staged, target)  # readers that already opened the old file keep their inode
-    except BaseException:
-        staged.unlink(missing_ok=True)
-        raise
-    return built
-
-
-def database_build_times(
-    resource: MaxMindDatabaseResource, *, opener=maxminddb.open_database
-) -> dict[str, datetime]:
-    times = {}
-    for edition, path in zip(EDITIONS, resource.database_paths(), strict=True):
-        with opener(path) as reader:
-            times[edition] = datetime.fromtimestamp(reader.metadata().build_epoch, UTC)
-    return times
-
-
-def freshness(times: dict[str, datetime], now: datetime) -> dg.AssetCheckResult:
-    stale = {edition: built for edition, built in times.items() if now - built > MAX_AGE}
-    return dg.AssetCheckResult(
-        passed=not stale,
-        severity=dg.AssetCheckSeverity.ERROR,
-        description=(
-            "GeoLite2 databases are current."
-            if not stale
-            else "Stale GeoLite2 databases: "
-            + ", ".join(f"{edition} built {built.date().isoformat()}" for edition, built in stale.items())
-        ),
-        metadata={
-            **{f"{edition}_build": built.isoformat() for edition, built in times.items()},
-            "max_age_days": MAX_AGE.days,
-        },
-    )
-
-
-@dg.asset(
-    group_name="ip_enrichment",
-    kinds={"python", "maxmind"},
-    pool="geolite2_databases",
-    description="Download GeoLite2-City and GeoLite2-ASN with the MaxMind account credentials, "
-    "verify the published SHA-256 and the database type, and atomically replace the .mmdb "
-    "files in MAXMIND_DATABASE_DIRECTORY.",
-)
-def geolite2_databases(
-    context: dg.AssetExecutionContext, maxmind_geoip: MaxMindDatabaseResource
-) -> dg.MaterializeResult:
-    auth = maxmind_credentials()
-    directory = Path(maxmind_geoip.database_directory).expanduser()
-    if not directory.is_dir():
-        raise ValueError(f"MAXMIND_DATABASE_DIRECTORY is not a directory: {directory}")
-    built = {}
-    with Session(raise_for_status=False) as http:
-        for edition in EDITIONS:
-            archive, digest = download_edition(http, edition, auth)
-            built[edition] = install_edition(directory, edition, archive, digest)
-            context.log.info("%s installed, built %s", edition, built[edition].isoformat())
-    return dg.MaterializeResult(
-        metadata={
-            "directory": str(directory),
-            **{f"{edition}_build": built[edition].isoformat() for edition in EDITIONS},
-        }
-    )
-
-
-@dg.asset_check(
-    asset=geolite2_databases,
-    name="geolite2_databases_fresh",
-    description="Fails when either loaded GeoLite2 database was built more than 14 days ago "
-    "(MaxMind publishes twice a week).",
-)
-def geolite2_databases_fresh(maxmind_geoip: MaxMindDatabaseResource) -> dg.AssetCheckResult:
-    return freshness(database_build_times(maxmind_geoip), datetime.now(UTC))
-
-
-geolite2_update_job = dg.define_asset_job(
-    "geolite2_update_job", selection=dg.AssetSelection.assets(geolite2_databases)
-)
-# Wednesday 03:15 UTC, after MaxMind's Tuesday release; no other schedule uses 03:15.
-# STOPPED by default per house pattern for new schedules; start it at instance level.
-geolite2_update_weekly = dg.ScheduleDefinition(
-    name="geolite2_update_weekly",
-    job=geolite2_update_job,
-    cron_schedule="15 3 * * 3",
-    execution_timezone="UTC",
-    default_status=dg.DefaultScheduleStatus.STOPPED,
-)
-
-defs = dg.Definitions(
-    assets=[geolite2_databases],
-    asset_checks=[geolite2_databases_fresh],
-    jobs=[geolite2_update_job],
-    schedules=[geolite2_update_weekly],
-)
-```
-
-- [ ] **Step 4: Fix `.env.example`**
-
-Replace lines 70-71 of `services/dagster_v3/.env.example` with:
-
-```
-# Directory holding GeoLite2-City.mmdb and GeoLite2-ASN.mmdb directly (no versioned
-# subfolders). geolite2_databases (weekly, geolite2_update_weekly) replaces them in place.
-MAXMIND_DATABASE_DIRECTORY=/path/to/geoip
-# MaxMind account for the GeoLite2 downloads (Account > Manage License Keys).
-MAXMIND_ACCOUNT_ID=
-MAXMIND_LICENSE_KEY=
-```
-
-- [ ] **Step 5: Run the tests and the definitions check**
-
-Run: `uv run --frozen --no-sync pytest tests/test_geolite2_update.py tests/test_commoncrawl_geoip_assets.py -q -p no:cacheprovider`
-Expected: all pass.
-
-Run: `uv run --frozen --no-sync dg check defs`
-Expected: `All definitions loaded successfully.` (`geolite2_update_job`, `geolite2_update_weekly` and the check load; the `maxmind_geoip` resource comes from `commoncrawl_geoip/definitions.py`).
-
-Run ruff format/check on `src/dagster_v3/defs/commoncrawl_geoip/update.py tests/test_geolite2_update.py`.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add services/dagster_v3/src/dagster_v3/defs/commoncrawl_geoip/update.py services/dagster_v3/tests/test_geolite2_update.py services/dagster_v3/.env.example
-git commit -m "feat(dagster): weekly GeoLite2 download with verification, atomic install and a 14-day freshness check
-
-Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
-```
-
----
-
-### Task 7: Backoffice — "Add to enrichment queue", draft semantics on the queue page
-
-Determined from the code: `launchIpEnrichment` (`app/lib/ip-enrichment.server.ts:86-140`) is the only launcher of `ip_enrichment_workflow`; it is called from `routes/admin-ip-addresses.tsx:131` and mocked in `tests/admin-ip-addresses-action.test.ts`. The queue page reads `ip_enrichment_input` with `ORDER BY input_id, task_id` (`queues.server.ts:51`, the non-crawler branch), never with `FINAL`, and treats only `webtech`/`crawler` as draft queues (`admin-queue.tsx:23, 60, 103, 119, 122, 126, 129, 131`; `queue-process-sheet.tsx:81, 103, 110`; `queues.server.ts:99` maps history outcome tags for `crawler`/`webtech` only). `QueueImportStatus`/`useQueueSubmission` (`components/admin/queue-import-status.tsx`) poll `/admin/<queue>/queue-submissions/<runId>` and know two queues. `ip-enrichment` keeps `batch_size`, `max_requests` and `request_delay_seconds` as processing parameters (they are transport keys the results asset accepts on resume).
+Determined from the code on main: `launchIpEnrichment` (`app/lib/ip-enrichment.server.ts:86-140`) is the only launcher of `ip_enrichment_workflow`; it is called from `routes/admin-ip-addresses.tsx:131` and mocked in `tests/admin-ip-addresses-action.test.ts`. The queue page reads `ip_enrichment_input` with `ORDER BY input_id, task_id` (`queues.server.ts:53`, the non-crawler branch), never with `FINAL`, and treats only `webtech`/`crawler` as draft queues (`admin-queue.tsx:24, 61, 104, 120, 132, 141, 147`; `queue-process-sheet.tsx:83-85, 106, 113`; `queues.server.ts:108-109` maps history outcome tags for `crawler`/`webtech` only). `QueueImportStatus`/`useQueueSubmission` (`components/admin/queue-import-status.tsx`) poll `/admin/<queue>/queue-submissions/<runId>` and know two queues. `ip-enrichment` keeps `batch_size`, `max_requests` and `request_delay_seconds` as processing parameters (they are transport keys the results asset accepts on resume). `registry_daily_budgets` is not exposed in the sheet (the Dagster default applies; set it from the Dagster launchpad when it must differ — follow-up).
 
 Run all commands from `services/backoffice`. New route file: the long-running dev server on 5183 needs a restart to see it (memory: stale Vite fs cache); verify on a second port if needed.
 
 **Files:**
 - Rewrite: `app/lib/ip-enrichment.server.ts`
 - Create: `app/routes/admin-ip-enrichment-queue-submission.ts`
-- Modify: `app/routes.ts:138`
-- Modify: `app/components/admin/queue-import-status.tsx`
-- Modify: `app/routes/admin-ip-addresses.tsx:1-14, 113-152, 158-317`
-- Modify: `app/lib/queues.ts:15-17`
-- Modify: `app/lib/queues.server.ts:51, 93-106`
-- Modify: `app/routes/admin-queue.tsx:12, 23, 60, 103, 119, 122, 126, 129, 131, 140, 145`
-- Modify: `app/components/admin/queue-process-sheet.tsx:4, 81-85, 103, 110`
+- Modify: `app/routes.ts:139`
+- Modify: `app/components/admin/queue-import-status.tsx:8, 19-26, 38`
+- Modify: `app/routes/admin-ip-addresses.tsx:6-9, 113-152, 162-194, 243-264, 294-316`
+- Modify: `app/lib/queues.ts:17`
+- Modify: `app/lib/queues.server.ts:53, 95-109`
+- Modify: `app/routes/admin-queue.tsx:13, 24, 61, 104, 120, 132, 141, 147, 149`
+- Modify: `app/components/admin/queue-process-sheet.tsx:4, 83-85, 106, 113`
 - Rewrite: `tests/ip-enrichment.server.test.ts`
 - Modify: `tests/admin-ip-addresses-action.test.ts`, `tests/queues.server.test.ts`, `tests/queue-route.test.ts`
 
@@ -3585,7 +4227,7 @@ describe("IP enrichment queue submission", () => {
 });
 ```
 
-In `tests/admin-ip-addresses-action.test.ts` rename the hoisted mock: line 5 `addIpsToEnrichmentQueue: launch,` and the first test becomes:
+In `tests/admin-ip-addresses-action.test.ts` rename the hoisted mock: line 5 `addIpsToEnrichmentQueue: launch,` and the first test (lines 24-31) becomes:
 
 ```ts
 it("uses the submitted selection and submission id independently of page filters", async () => {
@@ -3599,7 +4241,7 @@ it("uses the submitted selection and submission id independently of page filters
 
 (the "launch failure" test keeps working: its `submit` body gains no `submissionId`, which the action forwards as `""`).
 
-Append to `tests/queues.server.test.ts`:
+Append to `tests/queues.server.test.ts` (inside its `describe`, after the existing cases; `filters`, `chQuery`, `listRuns` and `loadQueueInputs` are already imported there):
 
 ```ts
 it("reads the IP enrichment entry table in sort-key order without FINAL and maps its outcome tags", async () => {
@@ -3631,7 +4273,7 @@ Expected: FAIL — `addIpsToEnrichmentQueue is not a function`, the ORDER BY ass
 
 - [ ] **Step 3: Rewrite `ip-enrichment.server.ts`**
 
-Keep `IpEnrichmentSelectionError`, `record`, `ipList` and `parseIpEnrichmentSelection` (lines 10-84) and replace the imports and `launchIpEnrichment` with:
+Keep `IpEnrichmentSelectionError`, `record`, `ipList` and `parseIpEnrichmentSelection` (lines 10-84) and replace the imports (lines 1-8) and `launchIpEnrichment` (lines 86-140) with:
 
 ```ts
 import { createHash } from "node:crypto";
@@ -3707,7 +4349,7 @@ export async function ipEnrichmentQueueSubmission(runId: string, options: Dagste
 }
 ```
 
-Delete `import { randomUUID } from "node:crypto";` (line 1) and the old `launchIpEnrichment`.
+`import { randomUUID } from "node:crypto";` (line 1) and the old `launchIpEnrichment` are gone.
 
 - [ ] **Step 4: Add the status route and generalize the import status component**
 
@@ -3725,13 +4367,13 @@ export async function loader({params}: Route.LoaderArgs) {
 }
 ```
 
-In `app/routes.ts` after line 138 (`route("webtech/queue-submissions/:runId", …)`) add:
+In `app/routes.ts` after line 139 (`route("webtech/queue-submissions/:runId", …)`) add:
 
 ```ts
     route("ip-enrichment/queue-submissions/:runId", "routes/admin-ip-enrichment-queue-submission.ts"),
 ```
 
-In `app/components/admin/queue-import-status.tsx` replace lines 8 and 19-26 so the component knows three queues:
+In `app/components/admin/queue-import-status.tsx` replace line 8 and lines 19-26 so the component knows three queues:
 
 ```ts
 export type ImportQueue = "webtech" | "crawler" | "ip-enrichment";
@@ -3752,7 +4394,7 @@ export function QueueImportStatus({receipt, state, fallbackSearch = "", crawlTyp
   const label = LABELS[target];
 ```
 
-and the link becomes ``to={`/admin/queues/${target}${params.size ? `?${params}` : ""}`}``.
+and the link (line 38) becomes ``to={`/admin/queues/${target}${params.size ? `?${params}` : ""}`}``.
 
 - [ ] **Step 5: The IP addresses page adds to the draft**
 
@@ -3798,7 +4440,7 @@ export async function action({ request }: Route.ActionArgs) {
 }
 ```
 
-In the component, replace lines 162-190 (from `const navigationBusy` through the `useEffect` that clears the selection) with:
+In the component, replace lines 162-194 (from `const navigationBusy` through `const hasSelection = …`) with:
 
 ```ts
   type SelectionState = { filterKey: string; selection: WorkspaceIpSelection };
@@ -3845,7 +4487,7 @@ In the component, replace lines 162-190 (from `const navigationBusy` through the
   };
 ```
 
-(delete the old `pageSelected`/`hasSelection` lines 191-194 that this block now defines). Replace the result `Alert` block (lines 242-264) with:
+Replace the result `Alert` block (lines 243-264, `{fetcher.data && !submitting ? (` … `) : null}`) with:
 
 ```tsx
       {receipt && <QueueImportStatus receipt={receipt} state={importState} queue="ip-enrichment" />}
@@ -3881,7 +4523,7 @@ and the paragraph below it (lines 313-316) with:
 
 - [ ] **Step 6: Queue page: IP enrichment is a draft queue**
 
-`app/lib/queues.ts` — after line 17 add:
+`app/lib/queues.ts` — after line 17 (`ACTIVE_QUEUE_RUNS`) add:
 
 ```ts
 /** Queues on the shared processing queue contract: one open draft per scope, freeze at Start, partition purge. */
@@ -3890,8 +4532,8 @@ export function isDraftQueue(type: QueueType) { return DRAFT_QUEUES.includes(typ
 ```
 
 `app/lib/queues.server.ts`:
-- line 51: `const inputOrder = filters.type === "brave" ? "input_id, task_id" : "task_id, input_id";` (Brave's table is still sorted the legacy way).
-- lines 93-106 (`loadQueueHistory`): before the loop add `const OUTCOME_TAGS: Record<QueueFilters["type"], string | null> = {webtech: "webtech", crawler: "crawler", "ip-enrichment": "ip_enrichment", brave: null};` and replace lines 99-100 with:
+- line 53: `const inputOrder = filters.type === "brave" ? "input_id, task_id" : "task_id, input_id";` (Brave's table is still sorted the legacy way).
+- lines 95-109 (`loadQueueHistory`): before the `for` loop add `const OUTCOME_TAGS: Record<QueueFilters["type"], string | null> = {webtech: "webtech", crawler: "crawler", "ip-enrichment": "ip_enrichment", brave: null};` and replace lines 108-109 with:
 
 ```ts
     const prefix = OUTCOME_TAGS[filters.type];
@@ -3899,32 +4541,30 @@ export function isDraftQueue(type: QueueType) { return DRAFT_QUEUES.includes(typ
 ```
 
 `app/routes/admin-queue.tsx`:
-- line 12: add `isDraftQueue` to the `~/lib/queues` import.
-- line 23: `if (isDraftQueue(filters.type) && (!filters.task || inputs.value.selectedTotal === 0)) {`
-- line 60: `const processingBlocked = !filters.task ? (isDraftQueue(filters.type) ? "The queue is empty. Add inputs to prepare the next execution." : "Choose a task below to configure processing.")`
-- line 103: `{((!isDraftQueue(filters.type) && !filters.task) || (isDraftQueue(filters.type) && inputs.totalTasks > 1)) && <>`
-- line 119: `<p className="text-sm text-muted-foreground">{isDraftQueue(filters.type) ? "Inputs can be appended while the task is a draft. Dagster checks submissions and freezes the task when execution begins." : "This queue uses a fixed input selection."}</p>`
-- line 122: `{!isDraftQueue(filters.type) && runState && runState.runs.length > 0 && …`
-- line 126: `{!isDraftQueue(filters.type) && <TableHead>Task</TableHead>}`
-- line 129: `{!isDraftQueue(filters.type) && <TableCell className="max-w-64 whitespace-normal">…`
-- line 131: `colSpan={isDraftQueue(filters.type) ? 3 : 4}`
-- line 140: `Completed inputs are removed from Webtech, Crawler and IP enrichment queues; results and history remain available.`
-- line 145: `{filters.type === "crawler" ? "crawl errors" : filters.type === "ip-enrichment" ? "address errors" : "page errors"}`
+- line 13: add `isDraftQueue` to the `~/lib/queues` import.
+- line 24: `if (isDraftQueue(filters.type) && (!filters.task || inputs.value.selectedTotal === 0)) {`
+- line 61: `const processingBlocked = !filters.task ? (isDraftQueue(filters.type) ? "The queue is empty. Add inputs to prepare the next execution." : "Choose a task below to configure processing.")`
+- line 104: `{((!isDraftQueue(filters.type) && !filters.task) || (isDraftQueue(filters.type) && inputs.totalTasks > 1)) && <>`
+- line 120: `<p className="text-sm text-muted-foreground">{isDraftQueue(filters.type) ? "Inputs can be appended while the task is a draft. Dagster checks submissions and freezes the task when execution begins." : "This queue uses a fixed input selection."}</p>`
+- line 132: `colSpan={isDraftQueue(filters.type) ? 3 : 4}`
+- line 141: `Completed inputs are removed from Webtech, Crawler and IP enrichment queues; results and history remain available.`
+- line 147: `{filters.type === "crawler" ? "crawl errors" : filters.type === "ip-enrichment" ? "address errors" : "page errors"}`
+- line 149 stays (the history source column exists only for crawler/webtech; IP enrichment has no `queue_task_sources` rows).
 
 `app/components/admin/queue-process-sheet.tsx`:
 - line 4: import `isDraftQueue` too.
-- lines 81-85: the paragraph becomes
+- lines 83-85: the paragraph becomes
 
 ```tsx
             <p className="text-sm text-muted-foreground">{filters.type === "ip-enrichment"
-              ? "A draft freezes when the results asset begins. GeoIP, ASN and RDAP are saved per address in acknowledged batches; cached RDAP coverage is judged against the frozen start time and the cache window. Leave the RDAP request budget empty to process the whole task; a reached budget keeps the task resumable."
+              ? "A draft freezes when the results asset begins. GeoIP, ASN and RDAP are saved per address in acknowledged batches; cached RDAP coverage is judged against the frozen start time and the cache window. Leave the RDAP request budget empty to process the whole task; a reached budget keeps the task resumable. RIPE and APNIC are asked without personal data (RIPE REST search, APNIC whois -r); per-registry budgets are a Dagster launchpad setting."
               : isDraftQueue(filters.type)
               ? "Freshness is checked when execution is prepared. Recent inputs remain in the queue and are counted as skipped. A draft freezes when the results asset begins."
               : "Searches use the saved company inputs. Freshness and force options are evaluated during processing."}</p>
 ```
 
-- line 103: `{isDraftQueue(filters.type) ? "For draft queues, leave empty …" : "Leave empty for a new execution. …"}` (same two texts as today).
-- line 110: `{isDraftQueue(filters.type) ? "Inputs are removed when every entry has a saved outcome or is skipped as recent. Lookup errors remain in results and history. Pipeline failures keep inputs for recovery. Use the processing profile to control this execution." : "Existing input rows are retained for retries."}`
+- line 106: `{isDraftQueue(filters.type) ? "For draft queues, leave empty …" : "Leave empty for a new execution. …"}` (same two texts as today).
+- line 113: `{isDraftQueue(filters.type) ? "Inputs are removed when every entry has a saved outcome or is skipped as recent. Lookup errors remain in results and history. Pipeline failures keep inputs for recovery. Use the processing profile to control this execution." : "Existing input rows are retained for retries."}`
 
 - [ ] **Step 7: Typecheck and targeted tests**
 
@@ -3946,16 +4586,16 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
-
-### Task 8: Documentation
+### Task 7: Documentation
 
 **Files:**
 - Create: `services/dagster_v3/docs/operations/ip-enrichment-draft-queue.md`
-- Modify: `services/dagster_v3/docs/ip-enrichment-schema.md:1-8, 10-29, 87-146, 148-216, 243-264`
+- Modify: `services/dagster_v3/docs/ip-enrichment-schema.md:3-8, 10-29, 92-151, 153-221, 248-268`
 - Modify: `services/backoffice/docs/queues.md:11, 20, 22` and append a section
-- Modify: `services/dagster_v3/src/dagster_v3/defs/commoncrawl_geoip/docs/commoncrawl_geoip-design.md:8-13`
+- Modify: `services/dagster_v3/src/dagster_v3/defs/commoncrawl_geoip/docs/commoncrawl_geoip-design.md` (append)
 - Modify: `services/dagster_v3/src/dagster_v3/defs/commoncrawl_rdap/docs/commoncrawl_rdap-design.md` (append a section)
 - Modify: `services/dagster_v3/docs/deployment-runbook.md:40`
+- Modify: `services/dagster_v3/docs/operations/ip-registry-reference-data.md:75-81` (the second "Known costs" bullet)
 
 - [ ] **Step 1: Write the operations guide**
 
@@ -3967,7 +4607,7 @@ Create `services/dagster_v3/docs/operations/ip-enrichment-draft-queue.md`:
 Backoffice **Admin → IP addresses → Add to enrichment queue** launches only
 `ip_enrichment_input_job`. There is one open draft per `queue_scope` (default `workspace`);
 table selections, explicit IP lists and "failed addresses of task X" append to it. Adding
-inputs never looks anything up. Since ClickHouse migration 450 the draft follows the shared
+inputs never looks anything up. Since ClickHouse migration 453 the draft follows the shared
 processing queue contract
 ([spec](../superpowers/specs/2026-09-24-shared-processing-queue-contract-design.md)), like
 Webtech and the crawler.
@@ -3987,8 +4627,9 @@ Webtech and the crawler.
 - `corpscout.ip_enrichment_results` (`ORDER BY (bucket, ip, result_id)`): one row per address
   and execution (`attempt` is always 1; a retry is a new draft). `ip_enrichment_current`
   serves the latest conclusive data per address. RDAP coverage stays in `rdap_networks`,
-  `rdap_network_segments` (roles `lookup_result`, `parent`, `registry_level`) and
-  `rdap_ip_lookup_results`.
+  `rdap_network_segments` (roles `lookup_result`, `parent`), `rdap_ip_lookup_results` and the
+  class table `rdap_network_registry_class`
+  ([ip-registry-reference-data.md](ip-registry-reference-data.md)).
 
 ## Import
 
@@ -4016,10 +4657,11 @@ Imports and Start share the task's PostgreSQL advisory lock.
 1. freezes the draft (`status=selected`, `frozen_at`) and saves the execution in
    `processing.tasks.config.execution`: `execution_id` (the original Dagster run id),
    `profile` (`force_rdap`, `rdap_cache_days`, `parent_depth`, `rate_limit_retry_seconds`,
-   `transient_retry_seconds`, `processor_version`), `started_at` and
-   `freshness_cutoff = started_at − rdap_cache_days`. `batch_size`, `max_requests` and
-   `request_delay_seconds` are transport settings and may change between resumes. The
-   default-draft slot is released at once, so new additions form the next draft;
+   `transient_retry_seconds`, `ripe_rest`, `apnic_whois`, `processor_version`), `started_at` and
+   `freshness_cutoff = started_at − rdap_cache_days`. `batch_size`, `max_requests`,
+   `request_delay_seconds` and `registry_daily_budgets` are transport settings and may
+   change between resumes. The default-draft slot is released at once, so new additions form the
+   next draft;
 2. loops until nothing remains. *Remaining* is a live query per bucket: the task's entries
    in that bucket whose `input_id` has no row in `ip_enrichment_results` for this execution
    (`bucket = b AND task_id AND execution_id`, one primary-key range). Pages of `batch_size`
@@ -4028,14 +4670,17 @@ Imports and Start share the task's PostgreSQL advisory lock.
    page needs (never `raw_response`), one insert of lookup markers and a share of one result
    insert. Freshness is judged against the frozen execution: a network or marker counts when
    its time is `>= freshness_cutoff`, a retryable error when `retry_after > started_at`;
-   `force_rdap` skips both caches. RDAP HTTP requests happen only for misses, paced by
-   `request_delay_seconds`, and networks fetched earlier in the run are reused before any
-   request. GeoIP City/ASN are read locally per address;
+   `force_rdap` skips both caches. Registry requests (RIPE through its REST search, APNIC
+   through whois `-r`, the others through RDAP) happen only for misses, paced by `request_delay_seconds`; a miss also
+   costs one registry-class context query, and networks fetched earlier in the run are reused
+   before any request. GeoIP City/ASN are read locally
+   per address;
 3. stores outcomes through a `ResultBuffer` (500 rows or 5 seconds, acknowledged
    `async_insert`); the cursor never re-reads a page inside a pass, the buffer is flushed
    after every pass and a further pass confirms nothing remains. A reached `max_requests`
    flushes what was resolved and fails the run with "budget reached"; the task stays
-   `selected` and re-running it resumes;
+   `selected` and re-running it resumes (this is the pause-and-resume procedure: terminate
+   or let the run stop, change transport settings if needed, re-run the task);
 4. finishes when a pass finds nothing: counts succeeded/failed per bucket from the results
    (failed = any of City/ASN/RDAP in `retryable_error`/`terminal_error`), `skipped = total −
    succeeded − failed` (expected 0), marks the task `completed` (`completed_with_errors` in
@@ -4049,49 +4694,118 @@ cleanup. A changed profile is rejected; to re-look addresses up, add them to a n
 History stays readable from run tags (`ip_enrichment/execution_id`, `ip_enrichment/outcome`,
 `ip_enrichment/succeeded_pages`, `ip_enrichment/failed_pages`, `ip_enrichment/skipped_pages`).
 
+## RIPE and APNIC without personal data, and the per-registry budget
+
+The RIPE Database acceptable use policy limits the **personal data sets** (person and role
+objects) one source address may receive to **1,000 per 24 hours**; queries themselves are
+unlimited within reasonable use (3 simultaneous connections at most), and pooling limits
+across addresses is named as avoidance. RIPE's RDAP `ip` answers embed 1–5 person objects,
+so every one counts. We do not need contacts, so RIPE misses go to the RIPE Database REST
+search with `flags=no-referenced` (`commoncrawl_rdap/ripe_rest.py`): the most specific
+`inetnum`/`inet6num` with `netname`, `country`, `status`, `org` handle, `mnt-by` and dates,
+no person or role object, so nothing counts. The answer is stored like an RDAP one (same
+`ripe:<range>` network key, `rdap_self_url` under `rest.db.ripe.net`, empty registrant
+names; `descr` is dropped). Unallocated or non-authoritative space answers with RIPE's root
+object; the resolver then asks RDAP once. `ripe_rest: true` is part of the frozen profile.
+
+APNIC misses go to APNIC's whois service on port 43 with the `-r` flag
+(`commoncrawl_rdap/apnic_whois.py`; the HTTP gateway `wq.apnic.net` does not honour `-r`):
+the most specific `inetnum`/`inet6num` with contact handles only, followed by route objects
+that are ignored. The holder name is the **first `descr` line** (APNIC objects rarely carry
+`org:`); further `descr` lines (addresses) and every contact handle are dropped; `status` is
+upper-cased and whitespace-collapsed. An answer that is an NIR's own allocation object —
+`netname` starting with `JPNIC`, `KRNIC`, `TWNIC`, `IDNIC`, `CNNIC`, `IRINN` or `VNNIC`, or a
+first `descr` naming the NIR — falls back to RDAP, which the IANA bootstrap routes to the
+NIR server; `mnt-by` alone decides nothing (FPT's `103.35.64.0/22` is maintained by
+`MAINT-VN-VNNIC` and is the holder's allocation). `apnic_whois: true` is part of the frozen
+profile. ARIN, LACNIC and AFRINIC stay on RDAP.
+
+Every run reports `rdap_person_entities_by_registry` (vCards of kind `individual`); it must
+never have a `ripe` or an `apnic` key.
+
+`registry_daily_budgets` (transport, default `{}`, keys are whoisit's names: `ripe`, `arin`,
+`apnic`, `lacnic`, `afrinic`, `jpnic`, `idnic`, `krnic`, `twnic`, `registro.br`) is an
+optional rolling 24-hour **request** budget per registry. The registry of a miss is resolved
+from whoisit's bootstrap data before the request (`RdapClient.registry_for`); a miss of a
+registry at its budget is deferred (no result row, no error), the run keeps processing
+everything else, and when a whole pass resolved nothing it sleeps until an hour's share of
+the budget frees (`wait_for_registry_budget`, logged every 10 minutes). The window is seeded
+on start from `rdap_networks.fetched_at` of the last day (every writer). Each run reports
+`rdap_requests_by_registry` and `rdap_deferrals_by_registry`. Proxy egress lanes were
+considered and dropped on 2026-09-26: they would not shorten a run (pacing is global), the
+no-personal-data paths make them unnecessary, and pooling a registry's allowance across
+addresses is the AUP's anti-avoidance case. The budget is not in the backoffice sheet; set it
+in the Dagster launchpad.
+
 ## Registry-level registrations
 
-A registration answers only the queried address when it is an RIR/IANA block or unallocated
-space: a range wider than /8 (IPv4) or /12 (IPv6); a token `IANA`, `APNIC`, `ARIN`, `LACNIC`,
-`AFRINIC`, `RIPE`, `UNALLOCATED` or `UNSPECIFIED` in its name, handle, type or status; a
-registrant handle `ARIN`, `IANA`, `APNIC`, `LACNIC`, `AFRINIC` or `ORG-NCC1-RIPE`; a registrant
-name containing a registry's full name; or country `ZZ`. Such responses are stored with
-`segment_role = 'registry_level'` and the trie's source view (migration 449) excludes them and
-every older row matching the same predicate (`REGISTRY_LEVEL_SQL` in
-`commoncrawl_rdap/rdap.py`). The queried address is still `found` with that registration,
-and its own lookup marker serves it next time; other addresses in the block get their own
-lookup.
+Every miss is classified with the deployed rule (`classify_registration`, data from
+`ip_registry_daily`): `reusable`, `registry_level`, `unallocated` or `unknown` while the
+reference data is incomplete. A `registry_level`/`unallocated` registration is stored like
+any other (role `lookup_result`) with its class row; `rdap_network_trie` excludes it
+(migration 451) and the in-run cache never remembers it, so it answers only the queried
+address — which is served next time by its own `found` marker in `rdap_ip_lookup_results`.
+Other addresses of the block get their own lookup. Details and queries:
+[ip-registry-reference-data.md](ip-registry-reference-data.md).
 
-## GeoLite2
+## GeoLite2 (manual updates)
 
-`geolite2_databases` (job `geolite2_update_job`, schedule `geolite2_update_weekly`, Wednesdays
-03:15 UTC, started at instance level) downloads GeoLite2-City and GeoLite2-ASN with
-`MAXMIND_ACCOUNT_ID`/`MAXMIND_LICENSE_KEY`, verifies the published SHA-256 and the database
-type, and atomically replaces the `.mmdb` files in `MAXMIND_DATABASE_DIRECTORY`. The check
-`geolite2_databases_fresh` fails when a database is older than 14 days.
+There is no MaxMind account, so the files are replaced by hand. `MAXMIND_DATABASE_DIRECTORY`
+on the Dagster host holds `GeoLite2-City.mmdb` and `GeoLite2-ASN.mmdb` directly. Procedure:
+
+1. Download `GeoLite2-City.tar.gz` and `GeoLite2-ASN.tar.gz` from MaxMind (owner's browser
+   login), copy them to the host and extract:
+   `tar -xzf GeoLite2-City.tar.gz --strip-components=1 -C /tmp '*/GeoLite2-City.mmdb'`
+   (same for ASN).
+2. Move each file over the old one **with `mv`** (a rename; never `cp` over the existing
+   file — a running enrichment maps it): `mv /tmp/GeoLite2-City.mmdb "$DIR/GeoLite2-City.mmdb"`
+   (same for ASN), then `chown` to the Dagster service user.
+3. No restart: `ip_enrichment_results` opens the files per run. A running run keeps its old
+   inode until it ends; the next run uses the new files.
+4. Execute the check `geolite2_databases_fresh` (job `geolite2_freshness_job`, or launch
+   `ip_enrichment_results` with its checks): it fails when either build epoch is older than
+   14 days. Every results run also reports `geolite2_city_build`/`geolite2_asn_build` and
+   warns when stale.
+
+## The 2026-09 clean re-run
+
+On 2026-09-25 the 48.6M-IP run (task `4802549d-…`) was terminated after 1.08M addresses:
+~90% of its wall time were per-address ClickHouse round trips and 174k addresses had been
+answered by registry-level blocks (`APNIC-AP` 103.0.0.0/8 and similar). The owner decided a
+clean re-run instead of a remediation: at deploy (plan
+`2026-09-25-ip-enrichment-queue-contract.md`, Task 8) the four legacy PostgreSQL tasks were
+cancelled and `ip_enrichment_input`, `ip_enrichment_results` (including the 8.29M legacy
+GeoIP import rows of 2026-07-10, task `cd603d91-…`), `rdap_networks`,
+`rdap_network_segments`, `rdap_ip_lookup_results` and `rdap_network_registry_class` were
+truncated after checking the latest ClickHouse B2 backup; the `ip_registry_*` reference
+tables and `ip_registry_daily` were kept. Until the re-run reaches an address,
+`ip_enrichment_current` has nothing for it (backoffice IP pages, `commoncrawl_ip_checks`).
+Classes regenerate per miss and at the daily refresh.
 
 ## Validation
 
 `tests/test_ip_enrichment_input.py` (disposable ClickHouse + PostgreSQL): entry-table contract,
 canonical dedup and append, receipt replay, a retry replacing only its own rows, source
 filters, inventory search, the failed-results mode, freeze → next draft.
-`tests/test_ip_enrichment_results.py`: registry-level rule parity with the view, bounded
-round trips per page, frozen cache window, negative markers, in-run reuse and the budget,
-completion with partition purge, errors as published outcomes, budget resume, lost write and
-cleanup acknowledgements, changed-profile refusal. `tests/test_geolite2_update.py`: install,
-verification, credentials, freshness.
+`tests/test_ip_enrichment_results.py`: bounded round trips per page, frozen cache window,
+negative markers, registry classes per miss (trie exclusion, per-address marker), in-run reuse
+and the request budget, RIPE via REST and APNIC via whois `-r` without person objects (the
+root-object and NIR fallbacks, the real FPT answer), budget deferral and wait (resolver and loop), completion
+with partition purge, errors as published outcomes, budget resume, lost write and cleanup
+acknowledgements, changed-profile refusal. `tests/test_geolite2_freshness.py`: build times,
+14-day rule, check wiring.
 ````
 
 - [ ] **Step 2: Update the schema doc**
 
 In `services/dagster_v3/docs/ip-enrichment-schema.md`:
-- lines 3-8: replace "The `ip_enrichment_input` Dagster asset prepares input batches from a list or a source relation. `ip_enrichment_results` processes a prepared task using the existing MaxMind mapping and RDAP network cache. The Workspace IP addresses page submits both steps through `ip_enrichment_workflow`." with "Since migration `000450` the input table follows the shared processing queue contract: `ip_enrichment_input` appends to an open draft and `ip_enrichment_results` freezes and processes it (see [ip-enrichment-draft-queue.md](operations/ip-enrichment-draft-queue.md)). The Workspace IP addresses page adds to the draft; processing starts from the queue page."
-- lines 12-17: replace with "`ip_enrichment_input` is `MergeTree`, `PARTITION BY task_id`, `ORDER BY (task_id, input_id)`, read without `FINAL`. `input_id` is the bucket-prefixed JSON tuple of `source_name`, `source_record_id` and `ip`, computed and enforced in ClickHouse; the draft keeps one row per identity and a completed task drops its partition."
-- lines 87-146 ("Materializing the input asset"): replace the first paragraph's asset description with the draft semantics (stable `submission_id`, `queue_scope`, one of `ips`/`source_relation`/`retry_failed_task_id`), keep the two YAML examples, add `retry_failed_task_id: "<task uuid>"` as a third, and replace the paragraphs from "The materialization reports `task_id`, `selected_inputs`, and `selected_ips`." to the end of the section with: "The materialization reports `task_id`, `submission_id`, `input_count` (rows this submission added) and `total`. Repeating a `submission_id` with the same selection is a no-op; a different selection under it is rejected; a failed import is retried by reselecting the source. New submissions after Start go to the next draft."
-- lines 148-216 ("Materializing enrichment results"): replace from "The input batch must be fully prepared." through the end of the section with the summary: freeze via the shared lifecycle, per-bucket live remaining query, bounded round trips per page, `ResultBuffer` writes, frozen cache window, `max_requests` budget → failed run that resumes on re-run, errors are published outcomes (`completed_with_errors`), completion drops the partition, `attempt` always 1, retries via a new draft. Keep the YAML example (`batch_size`, `max_requests`, `request_delay_seconds`).
-- lines 243-264 ("Workspace IP selection"): replace "`ip_enrichment_workflow` runs input preparation before results processing with one shared task UUID." with "**Add to enrichment queue** launches `ip_enrichment_input_job` with a stable `submission_id` and `queue_scope: workspace`; processing is started from Queues → IP enrichment." and delete the last paragraph's "The UI submits `max_requests: null` so the entire selected batch can be processed; the standalone worker default remains 250 requests." (the queue sheet's template still sends `max_requests: null`; say so).
+- lines 3-8: replace "The `ip_enrichment_input` Dagster asset prepares input batches from a list or a source relation. `ip_enrichment_results` processes a prepared task using the existing MaxMind mapping and RDAP network cache. The Workspace IP addresses page submits both steps through `ip_enrichment_workflow`." with "Since migration `000453` the input table follows the shared processing queue contract: `ip_enrichment_input` appends to an open draft and `ip_enrichment_results` freezes and processes it (see [ip-enrichment-draft-queue.md](operations/ip-enrichment-draft-queue.md)). The Workspace IP addresses page adds to the draft; processing starts from the queue page." Keep the sentence about migrations 434–435 and add: "Their imported rows were removed in the 2026-09 clean re-run; every row now comes from `ip-enrichment-v1`."
+- lines 12-16: replace with "`ip_enrichment_input` is `MergeTree`, `PARTITION BY task_id`, `ORDER BY (task_id, input_id)`, read without `FINAL`. `input_id` is the bucket-prefixed JSON tuple of `source_name`, `source_record_id` and `ip`, computed and enforced in ClickHouse; the draft keeps one row per identity and a completed task drops its partition."
+- lines 92-151 ("Materializing the input asset"): replace "Apply migration 000433 before using" with "Apply migrations 000433 and 000453 before using"; replace the first paragraph's asset description with the draft semantics (stable `submission_id`, `queue_scope`, one of `ips`/`source_relation`/`retry_failed_task_id`), keep the two YAML examples, add `retry_failed_task_id: "<task uuid>"` as a third, and replace the paragraphs from "The materialization reports `task_id`, `selected_inputs`, and `selected_ips`." to the end of the section with: "The materialization reports `task_id`, `submission_id`, `input_count` (rows this submission added) and `total`. Repeating a `submission_id` with the same selection is a no-op; a different selection under it is rejected; a failed import is retried by reselecting the source. New submissions after Start go to the next draft. `tests/test_ip_enrichment_input.py` exercises every mode and crash recovery using disposable ClickHouse and PostgreSQL servers."
+- lines 153-221 ("Materializing enrichment results"): keep the YAML example and add `registry_daily_budgets: {}`, `ripe_rest: true` and `apnic_whois: true` to it; replace from "The input batch must be fully prepared." through the end of the section with the summary: freeze via the shared lifecycle, per-bucket live remaining query, bounded round trips per page, one class-context query per miss, `ResultBuffer` writes, frozen cache window, RIPE via the REST search and APNIC via whois `-r` without personal data (NIR space falls back to RDAP), optional per-registry budgets with deferral and waits, `max_requests` budget → failed run that resumes on re-run, errors are published outcomes (`completed_with_errors`), completion drops the partition, `attempt` always 1, retries via a new draft, GeoLite2 build dates in the metadata; end with the pointer to the operations guide.
+- lines 248-268 ("Workspace IP selection"): replace "`ip_enrichment_workflow` runs input preparation before results processing with one shared task UUID." with "**Add to enrichment queue** launches `ip_enrichment_input_job` with a stable `submission_id` and `queue_scope: workspace`; processing is started from Queues → IP enrichment." and replace the last paragraph with "The queue sheet's template sends `max_requests: null` so the whole task is processed; the standalone asset default remains 250 requests. Large drafts run in the background and the queue page links to their Dagster run."
 
-- [ ] **Step 3: Update the backoffice queue doc and the two design docs**
+- [ ] **Step 3: Update the backoffice queue doc and the design docs**
 
 `services/backoffice/docs/queues.md`: line 11 `| IP enrichment | `ip_enrichment_input` (draft) | `ip_enrichment_results_job` |`; line 20 "Other processors retain their existing fixed input selection lifecycle." → "Brave retains its fixed input selection lifecycle."; line 22 "Other processors use the original results run ID for resumption." → "Brave uses the original results run ID for resumption."; append:
 
@@ -4108,110 +4822,147 @@ Queues → IP enrichment automatically selects the current draft; Start launches
 `ip_enrichment_results` with `task_id`. `batch_size`, `max_requests` and
 `request_delay_seconds` may change between resumes; the RDAP policy fields are frozen at
 Start. Lookup errors complete the task “with errors”; add the failed addresses to a new
-draft (`retry_failed_task_id`) to retry them. The old one-shot `ip_enrichment_workflow` is
+draft (`retry_failed_task_id`) to retry them. RIPE and APNIC are asked without personal data
+(REST search, whois `-r`); the per-registry request budget (`registry_daily_budgets`) is a
+Dagster launchpad setting, not a sheet field. The old one-shot `ip_enrichment_workflow` is
 removed.
 ```
 
-`commoncrawl_geoip-design.md` lines 8-13: append "The `geolite2_databases` asset (`update.py`) refreshes the two `.mmdb` files weekly and `geolite2_databases_fresh` fails when they are older than 14 days; see [ip-enrichment-draft-queue.md](../../../../../docs/operations/ip-enrichment-draft-queue.md)."
+`commoncrawl_geoip-design.md`: append "The GeoLite2 files are replaced by hand (no MaxMind account); the check `geolite2_databases_fresh` on `ip_enrichment_results` (`freshness.py`, job `geolite2_freshness_job`) fails when either file is older than 14 days, and every results run reports the build dates. Procedure: [ip-enrichment-draft-queue.md](../../../../../docs/operations/ip-enrichment-draft-queue.md)."
 
-`commoncrawl_rdap-design.md`: append a section "## Registry-level registrations" with the rule and the pointer to `REGISTRY_LEVEL_SQL` / migration 449 (the legacy bucket worker keeps writing `lookup_result` segments; the view excludes registry-level ones for every writer).
+`commoncrawl_rdap-design.md`: append a section "## IP enrichment: page batching and registry budgets" — per page one negative-cache read, one trie `dictGet`, one network read without `raw_response`, one marker insert; per miss the class-context query then network, class row, segments; `RdapClient.registry_for`; the RIPE REST search without personal data (`ripe_rest.py`, and why: the AUP's limit of 1,000 personal data sets per day, the 1–5 person objects in a RIPE RDAP answer); APNIC whois `-r` (`apnic_whois.py`: port 43, first-`descr` holder name, status normalisation, the NIR-object rule and why `mnt-by` does not decide, the `wq.apnic.net` gateway that ignores `-r`); the optional per-registry daily budget (deferral, wait, seeding from `rdap_networks` of the last day); the legacy bucket worker keeps its per-IP RDAP lookups — RIPE and APNIC included, so it does consume personal data sets — and shares the budget window only through the seed.
 
-`deployment-runbook.md` line 40: `| MaxMind dir | `MAXMIND_DATABASE_DIRECTORY`, `MAXMIND_ACCOUNT_ID`, `MAXMIND_LICENSE_KEY` | ip_enrichment, geolite2_databases |`.
+`deployment-runbook.md` line 40: `| MaxMind dir | `MAXMIND_DATABASE_DIRECTORY` (files replaced by hand; check `geolite2_databases_fresh`) | ip_enrichment |`.
+
+`docs/operations/ip-registry-reference-data.md` lines 75-81 (the second "Known costs" bullet): replace with "- IP enrichment serves an address answered by a registry-level or unallocated registration from that address's own `found` marker in `rdap_ip_lookup_results` (per-address positive cache, since the page-batched resolver); other addresses of the block are looked up over RDAP once per task while they fall inside `rdap_cache_days`. The legacy bucket worker has no positive per-IP cache and asks again."
 
 - [ ] **Step 4: Check for stale wording**
 
-Run from `corpscout/`: `rg -n "ip_enrichment_workflow|prepare_selection|selected_ips\b|unique_ips|input_id, task_id|Enrich IP addresses" services/dagster_v3/docs services/dagster_v3/src/dagster_v3/defs/commoncrawl_geoip/docs services/dagster_v3/src/dagster_v3/defs/commoncrawl_rdap/docs services/backoffice/docs`
-Expected: only the sentence that says the workflow is removed.
+Run from `corpscout/`: `rg -n "ip_enrichment_workflow|prepare_selection|selected_ips\b|unique_ips|input_id, task_id|Enrich IP addresses|MAXMIND_ACCOUNT_ID|geolite2_update|18,?000|contact_entities|use_rdap_proxies|RDAP_PROXIES|egress" services/dagster_v3/docs services/dagster_v3/src/dagster_v3/defs/commoncrawl_geoip/docs services/dagster_v3/src/dagster_v3/defs/commoncrawl_rdap/docs services/backoffice/docs`
+Expected: only the sentences that say the workflow is removed.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add services/dagster_v3/docs/operations/ip-enrichment-draft-queue.md services/dagster_v3/docs/ip-enrichment-schema.md services/backoffice/docs/queues.md services/dagster_v3/src/dagster_v3/defs/commoncrawl_geoip/docs/commoncrawl_geoip-design.md services/dagster_v3/src/dagster_v3/defs/commoncrawl_rdap/docs/commoncrawl_rdap-design.md services/dagster_v3/docs/deployment-runbook.md
-git commit -m "docs: IP enrichment on the shared queue contract, registry-level RDAP rule, GeoLite2 updates
+git add services/dagster_v3/docs/operations/ip-enrichment-draft-queue.md services/dagster_v3/docs/ip-enrichment-schema.md services/backoffice/docs/queues.md services/dagster_v3/src/dagster_v3/defs/commoncrawl_geoip/docs/commoncrawl_geoip-design.md services/dagster_v3/src/dagster_v3/defs/commoncrawl_rdap/docs/commoncrawl_rdap-design.md services/dagster_v3/docs/deployment-runbook.md services/dagster_v3/docs/operations/ip-registry-reference-data.md
+git commit -m "docs: IP enrichment on the shared queue contract, registry budgets, manual GeoLite2 updates, the 2026-09 clean re-run
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
+### Task 8: Deploy, clean wipe, smoke batch and the full re-run on prod — REQUIRES THE OWNER'S GO-AHEAD BEFORE STEP 1 AND AGAIN BEFORE STEP 4
 
-### Task 9: Deploy, remediation and verification on prod — REQUIRES THE OWNER'S GO-AHEAD BEFORE STEP 1
+**Files:** none until Step 12 (spec status line). Everything here runs against prod; the executor runs the commands (ask only when a permission gate refuses), the owner gives the two go-aheads.
 
-**Files:** none until Step 11 (spec status line).
+**Wipe design (R3), decided:** `TRUNCATE TABLE`, not drop-and-recreate. The tables keep the DDL their migrations own (000124, 000433, 000450), nothing changes in the ledger, and truncation of MergeTree families is a metadata operation whatever the row count. Order: PostgreSQL tasks → `ip_enrichment_input` → `ip_enrichment_results` → `rdap_ip_lookup_results` → `rdap_network_segments` → `rdap_networks` → `rdap_network_registry_class`, then `SYSTEM RELOAD DICTIONARY corpscout.rdap_network_trie`. Effects: the ordinary views (`ip_enrichment_current`, `rdap_*_current`, `rdap_network_registry_class_derived`) need no change and return nothing until refilled; the trie reloads to 0 elements (status `LOADED`); `ip_registry_*` tables, `ip_registry_special_trie`, `ip_registry_ready` and `ip_registry_daily` are untouched (the daily class refresh inserts nothing while `rdap_networks_current` is empty and reclassifies whatever the re-run stores later; its check `classification_complete` passes with 0 networks); the backoffice IP pages (`workspace-ip-addresses.server.ts`, `queries.server.ts`) and `commoncrawl_ip_checks` read `ip_enrichment_current` only and show no enrichment until the re-run reaches an address; the 8.29M legacy GeoIP rows (City/ASN builds of 2026-07-10) are gone for good — the B2 backup checked in Step 2 is the only rollback. The legacy worker `commoncrawl_ip_rdap_networks` has no schedule; it must not run during the wipe (Step 1) and should not be launched during the re-run (it shares the `commoncrawl_rdap` pool, limit 1, so it would only queue behind the run, but its per-IP lookups would count against the registry windows without the batching).
 
 - [ ] **Step 1: Preconditions**
 
-- Everything is merged on `main`, the tree is clean (`git status --short` shows only `?? searcher/`), and `ls clickhouse/migrations | tail -2` still shows 449/450 as the newest (renumber before merging if another workstream took a number).
-- No active IP enrichment run: in the Dagster UI the run lists of `ip_enrichment_results_job`, `ip_enrichment_input_job` and `ip_enrichment_workflow` filtered to `STARTED`/`QUEUED`/`STARTING` are empty (the 48.6M run `83283501-…` was terminated on 2026-09-25).
-- Prod ledger: `ssh companycollect 'sudo docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT version, dirty FROM corpscout.schema_migrations ORDER BY version DESC LIMIT 4"'` → the highest version with a `dirty=0` row is `448` and no higher version has only a `dirty=1` row.
-- Not inside the Tuesday 01:05 Stockholm address-chain window.
-- GeoLite2 credentials: `ssh companycollect 'sudo grep -c "^MAXMIND_ACCOUNT_ID=.\+" /opt/companycollect/corpscout/dagster_v3/.env; sudo grep -c "^MAXMIND_LICENSE_KEY=.\+" /opt/companycollect/corpscout/dagster_v3/.env'` → `1` and `1`. If either is `0`, ask the owner for the MaxMind account id and license key and for permission to append them to the server-owned `.env` (Ansible never copies secrets). Do not invent values. Note: the running daemon loaded `.env` at service start, so `geolite2_databases` (Step 8) can only see new variables after a service restart — the owner decides when (`dagster_force_restart` in a full `site.yml` deploy, or a manual restart outside a run); until then Step 8 is deferred and the check stays red.
-
-- [ ] **Step 2: Cancel the legacy tasks (owner-approved)**
-
-```bash
-ssh companycollect "sudo docker exec ppoint-postgres psql -U corpscout -d corpscout -Atc \"SELECT task_id, status, total, queue_scope FROM processing.tasks WHERE processor='ip-enrichment-v1' ORDER BY created_at\""
-```
-
-Expected: exactly the four tasks `4802549d-c320-482f-9bbf-6f21b8ffcd18`, `a0a328d6-…`, `422ce6d8-…`, `6f3377b2-…`, all `selected`, `queue_scope` empty. Then (only `cancelled` is allowed for `queue_scope IS NULL` by `tasks_queue_lifecycle_check`):
+- Everything is merged on `main`, the tree is clean apart from other sessions' untracked files, and `ls clickhouse/migrations | tail -1` shows `000453_corpscout_ip_enrichment_queue_contract.up.sql` (renumber before merging if another workstream took 453).
+- Prod ledger: `ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT version, dirty FROM corpscout.schema_migrations ORDER BY version DESC LIMIT 4"'` → the highest version with a `dirty=0` row is `452` and no higher version has only a `dirty=1` row (453 is this plan's).
+- No active runs: in the Dagster UI the run lists of `ip_enrichment_results_job`, `ip_enrichment_input_job`, `ip_enrichment_workflow`, the asset `commoncrawl_ip_rdap_networks` and `ip_registry_refresh_job` filtered to `STARTED`/`QUEUED`/`STARTING` are empty (the 48.6M run `83283501-…` was terminated on 2026-09-25). Do not start between 06:00 and 06:30 UTC (`ip_registry_daily` at 06:05) nor inside the Tuesday 01:05 Stockholm address-chain window.
+- Confirm nothing wrote the tables recently: `ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT max(event_time) FROM system.query_log WHERE event_date >= today() - 1 AND type = '"'"'QueryFinish'"'"' AND query_kind = '"'"'Insert'"'"' AND hasAny(tables, ['"'"'corpscout.ip_enrichment_results'"'"', '"'"'corpscout.rdap_ip_lookup_results'"'"', '"'"'corpscout.ip_enrichment_input'"'"'])"'` → a time before the terminated run ended (2026-09-25 14:47 UTC) or earlier today.
+- GeoLite2 files on the host: `ssh companycollect 'ls -l "$(sudo grep "^MAXMIND_DATABASE_DIRECTORY=" /opt/companycollect/corpscout/dagster_v3/.env | cut -d= -f2)"'` → `GeoLite2-City.mmdb` and `GeoLite2-ASN.mmdb`. Their builds are 2026-07-10: tell the owner that `geolite2_databases_fresh` will fail until the files are replaced by hand (procedure in `docs/operations/ip-enrichment-draft-queue.md`) and recommend doing that before Step 10, so the 49M new rows carry current GeoIP. Do not fetch the files yourself (no account).
+- Outbound port 43 to `whois.apnic.net` must be open from the Dagster host (the APNIC path is TCP whois, not HTTPS): `ssh companycollect 'timeout 15 bash -c "printf \"-r 103.35.64.49\\r\\n\" | nc -w 10 whois.apnic.net 43" | grep -E "^(inetnum|netname|descr|person|role|irt):"'` → `inetnum: 103.35.64.0 - 103.35.67.255`, `netname: FPT-VN`, `descr: FPT Telecom`, and no `person:`/`role:`/`irt:` line.
+- Record the inventory of what will be wiped (SELECT only) into the scratchpad as `wipe-inventory-before.out`:
 
 ```bash
-ssh companycollect "sudo docker exec ppoint-postgres psql -U corpscout -d corpscout -Atc \"UPDATE processing.tasks SET status='cancelled' WHERE processor='ip-enrichment-v1' AND queue_scope IS NULL AND status='selected' RETURNING task_id\""
+ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT (SELECT count() FROM corpscout.ip_enrichment_input) AS input_rows, (SELECT uniqExact(task_id) FROM corpscout.ip_enrichment_input) AS input_tasks, (SELECT count() FROM corpscout.ip_enrichment_results) AS result_rows, (SELECT countIf(processor_version = '"'"'legacy-geoip-import-v1'"'"') FROM corpscout.ip_enrichment_results) AS legacy_geoip_rows, (SELECT count() FROM corpscout.rdap_networks) AS networks, (SELECT count() FROM corpscout.rdap_network_segments) AS segments, (SELECT count() FROM corpscout.rdap_ip_lookup_results) AS markers, (SELECT count() FROM corpscout.rdap_network_registry_class) AS classes FORMAT PrettyCompact"'
 ```
 
-Expected: the four ids. Results of those tasks in `ip_enrichment_results` are untouched.
+Expected orders of magnitude (2026-09-25 evening): input 48,596,636 rows / 4 tasks, results 9,374,666 rows of which 8,291,326 legacy GeoIP, rdap_networks 16,632, segments 17,308, lookup results 227,084, class rows 15,319. A materially larger results count means something wrote after planning: stop and find the writer before wiping.
 
-- [ ] **Step 3: Empty the entry table (owner-approved destructive step)**
+- [ ] **Step 2: Backup safety check (no backups are run here)**
 
 ```bash
-ssh companycollect 'sudo docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT count(), uniqExact(task_id) FROM corpscout.ip_enrichment_input"'
+ssh companycollect 'docker exec clickhouse-clickhouse-backup-1 clickhouse-backup list remote'
+ssh companycollect 'docker logs --tail 30 clickhouse-clickhouse-backup-1'
 ```
 
-Expected: `48596636	4` (only the four cancelled tasks). Then:
+Expected: the newest remote backup is dated today or yesterday (the sidecar runs an incremental every 24 h and a full every 72 h, keeping 3), it is not marked broken, and the log shows no upload in progress (an in-progress backup looks broken until its `metadata.json` lands — wait for it to finish rather than truncating under it). Write the newest backup's name into the scratchpad (`scratchpad/ip/rollback-backup.txt`); it is the rollback point. If there is no backup from the last 48 hours, stop and tell the owner (the owner decides whether to trigger one; never run `clickhouse-backup create`/`upload`/`delete` from here — see the memory `clickhouse-b2-backup-retention`).
+
+- [ ] **Step 3: Owner go-ahead for the wipe**
+
+Show the owner `wipe-inventory-before.out`, the rollback backup name and the effects listed in the wipe design above. Continue only on an explicit yes.
+
+- [ ] **Step 4: Cancel the legacy PostgreSQL tasks**
 
 ```bash
-ssh companycollect 'sudo docker exec clickhouse-clickhouse-1 clickhouse-client -q "TRUNCATE TABLE corpscout.ip_enrichment_input"'
-ssh companycollect 'sudo docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT count() FROM corpscout.ip_enrichment_input"'
+ssh companycollect "docker exec ppoint-postgres psql -U corpscout -d corpscout -Atc \"SELECT task_id, status, total, queue_scope FROM processing.tasks WHERE processor='ip-enrichment-v1' ORDER BY created_at\""
 ```
 
-Expected: `0`. The rows are re-selectable from `corpscout.commoncrawl_ip_addresses`.
+Expected: exactly `a0a328d6-15ea-4c68-b09d-4ae9bd65c222` (3), `6f3377b2-6ee7-4d51-b4a2-d1ab53474b7d` (1), `422ce6d8-b87c-4748-b0ef-bdb0fe002f33` (1), `4802549d-c320-482f-9bbf-6f21b8ffcd18` (48,596,631), all `selected`, `queue_scope` empty. Then (`tasks_queue_lifecycle_check` allows only `preparing/selected/ready/cancelled` for `queue_scope IS NULL`):
 
-- [ ] **Step 4: Apply migration 449 and verify the trie**
+```bash
+ssh companycollect "docker exec ppoint-postgres psql -U corpscout -d corpscout -Atc \"UPDATE processing.tasks SET status='cancelled' WHERE processor='ip-enrichment-v1' AND queue_scope IS NULL AND status='selected' RETURNING task_id\""
+```
+
+Expected: the four ids.
+
+- [ ] **Step 5: Wipe the enrichment tables and the RDAP cache**
+
+```bash
+ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "TRUNCATE TABLE corpscout.ip_enrichment_input"'
+ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "TRUNCATE TABLE corpscout.ip_enrichment_results"'
+ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "TRUNCATE TABLE corpscout.rdap_ip_lookup_results"'
+ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "TRUNCATE TABLE corpscout.rdap_network_segments"'
+ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "TRUNCATE TABLE corpscout.rdap_networks"'
+ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "TRUNCATE TABLE corpscout.rdap_network_registry_class"'
+ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "SYSTEM RELOAD DICTIONARY corpscout.rdap_network_trie"'
+ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT (SELECT count() FROM corpscout.ip_enrichment_input) AS input, (SELECT count() FROM corpscout.ip_enrichment_results) AS results, (SELECT count() FROM corpscout.ip_enrichment_current) AS current, (SELECT count() FROM corpscout.rdap_networks) AS networks, (SELECT count() FROM corpscout.rdap_network_segments) AS segments, (SELECT count() FROM corpscout.rdap_ip_lookup_results) AS markers, (SELECT count() FROM corpscout.rdap_network_registry_class) AS classes, (SELECT count() FROM corpscout.rdap_network_registry_class_derived) AS derived, (SELECT ready FROM corpscout.ip_registry_ready) AS ready, (SELECT count() FROM corpscout.ip_registry_special_segments) AS special FORMAT PrettyCompact"'
+ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT name, status, element_count FROM system.dictionaries WHERE database = '"'"'corpscout'"'"' AND name IN ('"'"'rdap_network_trie'"'"', '"'"'ip_registry_special_trie'"'"') FORMAT PrettyCompact"'
+```
+
+Expected: `0 0 0 0 0 0 0 0 1 <hundreds of thousands>`; `rdap_network_trie LOADED 0`, `ip_registry_special_trie LOADED` with its previous element count. Save the output as `scratchpad/ip/wipe-after.out`.
+
+- [ ] **Step 6: Apply migration 000453**
 
 Run from `corpscout/`: `make clickhouse-migrate-up-one </dev/null`
-Expected: `449/u corpscout_rdap_registry_level_exclusion`. Then:
+Expected: `453/u corpscout_ip_enrichment_queue_contract` (the `throwIf` gate passes on the empty table), then
 
 ```bash
-ssh companycollect 'sudo docker exec clickhouse-clickhouse-1 clickhouse-client -q "SYSTEM RELOAD DICTIONARY corpscout.rdap_network_trie"'
-ssh companycollect 'sudo docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT network_key, name, start_address, end_address FROM corpscout.rdap_networks_current WHERE network_key NOT IN (SELECT DISTINCT network_key FROM corpscout.rdap_network_segments_current) AND network_key IN (SELECT DISTINCT network_key FROM corpscout.rdap_network_segments WHERE segment_role = '"'"'lookup_result'"'"') ORDER BY rir, start_address FORMAT PrettyCompact"'
+ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT engine, partition_key, sorting_key FROM system.tables WHERE database='"'"'corpscout'"'"' AND name='"'"'ip_enrichment_input'"'"'"'
+ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT max(version) FROM corpscout.schema_migrations WHERE dirty=0"'
 ```
 
-Expected: the excluded set contains `apnic:103.0.0.0 - 103.255.255.255` (APNIC-AP), the apnic 101/8, 111/8, 113/8 and afrinic 102/8 blocks, `ripe` EU-ZZ-2A00 (2a00::/11), `arin:NET6-2600-1` and the LACNIC UNALLOCATED ranges from the review; and no ordinary holder network (spot-check: FPT-VN, DIGITALPACIFIC, Hetzner and Google blocks are still served: `SELECT dictGet('corpscout.rdap_network_trie', 'network_key', tuple(toIPv4('8.8.8.8')))`). Save the excluded `network_key` list to the scratchpad; Step 10 needs it. `SELECT count() FROM system.dictionaries WHERE name='rdap_network_trie' AND status='LOADED'` → `1`.
+→ `MergeTree	task_id	task_id, input_id` and `453`.
 
-- [ ] **Step 5: Apply migration 450**
-
-Run: `make clickhouse-migrate-up-one </dev/null`
-Expected: `450/u corpscout_ip_enrichment_queue_contract`, then
-
-```bash
-ssh companycollect 'sudo docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT engine, partition_key, sorting_key FROM system.tables WHERE database='"'"'corpscout'"'"' AND name='"'"'ip_enrichment_input'"'"'"'
-```
-
-→ `MergeTree	task_id	task_id, input_id`.
-
-- [ ] **Step 6: Deploy Dagster by light_sync**
+- [ ] **Step 7: Deploy Dagster by light_sync**
 
 Run: `cd services/dagster_v3/ansible && ANSIBLE_BECOME_TIMEOUT=60 LC_ALL=en_US.UTF-8 ansible-playbook -i inventory.ini light_sync.yml </dev/null > /private/tmp/claude-501/-Users-graovic-pulsarpoint-ppoint-companycollect-corpscout/9f2d193f-045d-4f26-91d7-d2b93320d3f5/scratchpad/ip/light_sync.log 2>&1; echo rc=$?`
-Expected: `rc=0`; the code location reloads. In the Dagster UI: `ip_enrichment_input_job`, `ip_enrichment_results_job`, `geolite2_update_job` and the schedule `geolite2_update_weekly` (stopped) exist; no `ip_enrichment_workflow`. Start `geolite2_update_weekly` from the Schedules page.
+Expected: `rc=0`; the code location reloads. In the Dagster UI: `ip_enrichment_input_job`, `ip_enrichment_results_job` and `geolite2_freshness_job` exist, no `ip_enrichment_workflow`, the check `geolite2_databases_fresh` is listed under `ip_enrichment_results`, `ip_registry_daily` is still RUNNING. Execute `geolite2_freshness_job` once: it fails while the 2026-07-10 files are installed (expected; it passes after the owner replaces them) and its metadata shows both build dates.
 
-- [ ] **Step 7: Backoffice (runs locally from main: merge = deploy)**
+- [ ] **Step 8: Backoffice (runs locally from main: merge = deploy)**
 
 The owner restarts the local backoffice dev server on `main` (a new route file was added). Open `/admin/queues/ip-enrichment` — the empty queue renders with "The queue is empty…" and no legacy task rows; `/admin/ip-addresses` shows **Add to enrichment queue**.
 
-- [ ] **Step 8: First GeoLite2 update (after the credentials are loaded, see Step 1)**
+- [ ] **Step 9: Smoke batch 1 — a handful of addresses**
 
-Launch `geolite2_update_job` from the UI. Expected: success, metadata `GeoLite2-City_build`/`GeoLite2-ASN_build` within the last week, the check `geolite2_databases_fresh` passes, and on the host `ls -l "$(sudo grep '^MAXMIND_DATABASE_DIRECTORY=' /opt/companycollect/corpscout/dagster_v3/.env | cut -d= -f2)"` shows only `GeoLite2-City.mmdb` and `GeoLite2-ASN.mmdb` with today's date (no `.tmp` files).
+Launch `ip_enrichment_input_job` from the Dagster launchpad:
 
-- [ ] **Step 9: End-to-end with a handful of addresses**
+```yaml
+ops:
+  ip_enrichment_input:
+    config:
+      submission_id: "<new uuid>"
+      source_name: smoke-2026-09
+      ips: [8.8.8.8, 103.35.64.49, 185.28.20.221, 2001:4860:4860::8888, 2a02:4780::1, 127.0.0.1]
+```
+
+Note `task_id` in the run metadata. On the backoffice, `/admin/queues/ip-enrichment` selects that draft; use **Configure processing** with the defaults (`max_requests` empty). Verify:
+
+```bash
+ssh companycollect "docker exec ppoint-postgres psql -U corpscout -d corpscout -Atc \"SELECT status, total, succeeded_count, terminal_failed_count, skipped_count, inputs_purged_at IS NOT NULL, config->'execution'->>'execution_id' FROM processing.tasks WHERE task_id='<task_id>'\""
+ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT ip, rdap_lookup_status, rdap_rir, rdap_name, rdap_matched_cidr, country_iso_code, toDate(city_db_build_epoch) FROM corpscout.ip_enrichment_current ORDER BY ip FORMAT PrettyCompact"'
+ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT network_key, registry_class FROM corpscout.rdap_network_registry_class_current ORDER BY network_key FORMAT PrettyCompact"'
+ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT count() FROM corpscout.ip_enrichment_input WHERE task_id = '"'"'<task_id>'"'"'"'
+ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT rir, count(), sum(length(registrant_names)) AS names, groupArray(self_url) FROM corpscout.rdap_networks GROUP BY rir FORMAT PrettyCompact"'
+```
+
+Expected: `completed | 6 | 6 | 0 | 0 | t | <execution_id>` (the results run id); `103.35.64.49` is `found` with `rdap_rir = apnic`, `rdap_name = FPT-VN`, `rdap_registrant_names = ['FPT Telecom']`, `rdap_registration_type = ALLOCATED PORTABLE`, a `rdap_self_url` under `rdap.apnic.net` and a /22 match (the whois `-r` path; not `APNIC-AP`); `185.28.20.221` and `2a02:4780::1` are `found` with `rdap_rir = ripe`, a `rdap_self_url` under `rest.db.ripe.net` and empty `rdap_registrant_names` (the REST path); `2001:4860:4860::8888` is `found`; `127.0.0.1` is `not_global`; every stored network has a class row (`reusable`); `0` input rows; the run's tags carry `ip_enrichment/outcome=completed` and its metadata `rdap_requests_by_registry` (`ripe` and `apnic` present), `rdap_person_entities_by_registry` (**neither a `ripe` nor an `apnic` key** — the proof that both were asked without personal data), `geolite2_city_build`. Then queue `103.35.64.49` once more in a new draft and process it: the results run's metadata shows `rdap_requests: 0` (served from coverage).
+
+- [ ] **Step 10: Smoke batch 2 — one hash bucket of the inventory (throughput and the RIPE ratio)**
 
 Launch `ip_enrichment_input_job`:
 
@@ -4220,46 +4971,76 @@ ops:
   ip_enrichment_input:
     config:
       submission_id: "<new uuid>"
-      source_name: e2e-2026-09
-      ips: [8.8.8.8, 103.35.64.49, 2001:4860:4860::8888, 127.0.0.1]
+      source_name: smoke-bucket-2026-09
+      source_relation: corpscout.commoncrawl_ip_addresses
+      source_final: true
+      observed_at_column: last_seen
+      filters:
+        bucket: ["0"]
+      select_all: true
 ```
 
-Note `task_id` in the run metadata. On the backoffice, `/admin/queues/ip-enrichment` selects that draft; use **Configure processing** with the defaults (`max_requests` empty) or launch `ip_enrichment_results_job` with `{task_id: "<task_id>", max_requests: null}`. Verify:
+Expected: `input_count` ≈ 49.3M / 256 ≈ 190,000 (a hash bucket is a representative slice of registries and IP versions). Process it from the queue page with the defaults (`max_requests` empty, `request_delay_seconds: 1`, `parent_depth: 1`). Expected: a few thousand registry requests (≈1–2% of the addresses, more than the steady state because the cache is empty), 1–3 hours, `completion_status` `completed` or `completed_with_errors` (rate-limited or unreachable registries produce published errors; they are retried later with `retry_failed_task_id`). Record from the run metadata: `pages`, wall time, `rdap_requests_by_registry`, `rdap_person_entities_by_registry` (must have **no `ripe` and no `apnic` key**; the other registries' counts are informational), the count of `nir_fallback` log lines (APNIC answers that were an NIR's own object), `rdap_deferrals_by_registry` (expected `{}`), `registry_level_responses`, the count of `rate_limited` errors per registry (`SELECT rdap_rir, count() FROM corpscout.ip_enrichment_current WHERE rdap_error_code = 'rate_limited' GROUP BY rdap_rir`), and compute throughput = `written / wall seconds` (expected ≥ 100 addresses/s; the terminated run did 7.3/s).
 
-```bash
-ssh companycollect "sudo docker exec ppoint-postgres psql -U corpscout -d corpscout -Atc \"SELECT status, total, succeeded_count, terminal_failed_count, skipped_count, inputs_purged_at IS NOT NULL, config->'execution'->>'execution_id' FROM processing.tasks WHERE task_id='<task_id>'\""
-ssh companycollect 'sudo docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT ip, rdap_lookup_status, rdap_name, rdap_matched_cidr, country_iso_code, toDate(city_db_build_epoch) FROM corpscout.ip_enrichment_current WHERE ip IN ('"'"'8.8.8.8'"'"','"'"'103.35.64.49'"'"','"'"'2001:4860:4860::8888'"'"','"'"'127.0.0.1'"'"') FORMAT PrettyCompact"'
-ssh companycollect 'sudo docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT count() FROM corpscout.ip_enrichment_input WHERE task_id = '"'"'<task_id>'"'"'"'
-```
+Also verify the queue page history shows the task as completed and that `SELECT count() FROM corpscout.ip_enrichment_current` equals the draft's `total`.
 
-Expected: `completed | 4 | 4 | 0 | 0 | t | <execution_id>` (the results run id); `103.35.64.49` is `found` with a specific holder (the review's spot check gave `FPT-VN`, a /22), not `APNIC-AP`; `2001:4860:4860::8888` is `found`; `127.0.0.1` is `not_global`; the GeoIP build date is the fresh one from Step 8 (or 2026-07-10 if Step 8 is deferred); `0` input rows. The run's tags carry `ip_enrichment/outcome=completed`. Then queue `103.35.64.49` once more in a new draft and process it: the results run's metadata shows `rdap_requests: 0` (served from coverage), and `SELECT segment_role, count() FROM corpscout.rdap_network_segments GROUP BY segment_role` shows no new `registry_level` rows for it.
+**Owner decision point:** (a) if `rdap_person_entities_by_registry` has a `ripe` or an `apnic` key, a no-personal-data path is not being used — stop and fix before the full run; (b) `registry_daily_budgets`: leave `{}` unless a registry returned 429s, then an entry below the observed ceiling; (c) if APNIC's whois answered `%ERROR:201` (access denied / query limit) during the bucket, lower the request rate or set an `apnic` budget; (d) estimate the full run's duration from the measured request rate and page throughput (see the estimate below) and tell the owner before Step 11.
 
-- [ ] **Step 10: Remediation draft for the addresses served by registry-level blocks (owner go-ahead)**
+- [ ] **Step 11: The full re-run (owner go-ahead, runs on the prod Dagster host)**
 
-Count them with the network keys saved in Step 4:
-
-```bash
-ssh companycollect 'sudo docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT count() FROM corpscout.ip_enrichment_current WHERE rdap_network_key IN ('"'"'<key1>'"'"', '"'"'<key2>'"'"', ...)"'
-```
-
-Expected: about 170,000 (the review counted 173,991 on /8 blocks plus the IPv6 and LACNIC rows). Launch `ip_enrichment_input_job`:
+Queue the whole inventory either from the backoffice (`/admin/ip-addresses` → **Select all matching addresses** → **Add to enrichment queue**, which sends `select_all: true, ip_search: "", filters: {}, excluded_ips: []`) or from the launchpad:
 
 ```yaml
 ops:
   ip_enrichment_input:
     config:
       submission_id: "<new uuid>"
-      source_name: remediation:registry-level-2026-09
-      source_relation: corpscout.ip_enrichment_current
-      ip_column: ip
+      source_name: backoffice:ip-addresses
+      source_relation: corpscout.commoncrawl_ip_addresses
+      observed_at_column: last_seen
       select_all: true
-      filters:
-        rdap_network_key: ["<key1>", "<key2>", "..."]
 ```
 
-(`ip_enrichment_current` is a view over the whole results history; this import evaluates it once, a minute or two.) Then process the draft from the queue page with `force_rdap: true`, `max_requests` empty, `request_delay_seconds: 1`, `parent_depth: 1`. Expected: ~10–30k RDAP requests (4–12 hours at one request per second), a task that completes (with errors for rate-limited registries), and afterwards `SELECT count() FROM corpscout.ip_enrichment_current WHERE rdap_network_key IN (<keys>)` drops to the addresses whose registries returned no more specific registration. Failed addresses can be queued again later with `retry_failed_task_id`.
+Expected: the import takes minutes (one `INSERT … SELECT` over 79.6M rows grouped to ≈49.3M identities with a `grace_hash` anti-join against the empty draft), `total` ≈ 49.3M (the bucket-0 addresses of Step 10 are included again; they are cache hits). Then start processing from the Dagster launchpad (the sheet cannot set `registry_daily_budgets`):
 
-- [ ] **Step 11: Mark the spec**
+```yaml
+ops:
+  ip_enrichment_results:
+    config:
+      task_id: "<task_id>"
+      batch_size: 500
+      max_requests: null
+      request_delay_seconds: 1
+      registry_daily_budgets: {}
+      ripe_rest: true
+      apnic_whois: true
+      parent_depth: 1
+      rdap_cache_days: 30
+```
+
+**Volume estimate (from the 2026-09-25 inventory and the terminated run's sample):** IPv4 ≈ 11.35M distinct addresses; the sample gave 77 addresses per reusable network overall but registry densities differ (ARIN ≈ 212 addresses per network, RIPE ≈ 40, APNIC ≈ 45 once the /8 answers are gone), so direct IPv4 requests ≈ ARIN 5.85M/212 ≈ 28k + RIPE 3.15M/40 ≈ 79k + APNIC 1.34M/45 ≈ 30k + LACNIC 0.48M/40 ≈ 12k + AFRINIC 4k + legacy 3k ≈ **155k** (range 120k–250k). IPv6 ≈ 37.9M distinct addresses in 14,858 /32s and 71,414 /48s; about half of today's cached IPv6 answers are /48 or smaller, so **35k–70k** requests, RIPE-dominated (2a02::/16 alone holds 32.5M rows). Parents (ARIN/LACNIC only, ≈8.6% of their direct requests in the sample) ≈ 5k–15k. Total ≈ **200k–330k requests**, ≈ 1.43 s each (1 s pacing + HTTP) ≈ 80–130 h of registry time. RIPE's share ≈ 110k–140k requests goes through the REST search and APNIC's ≈ 30k through whois `-r`, both without personal data, so no daily limit binds; the loop is single-threaded, so the request time adds to the ClickHouse page work (≈49M addresses at 100–250/s ≈ 2–6 days). Expect **6–12 days** for the single run; `budget_waits` stays 0 unless a `registry_daily_budgets` entry is set. Proxies were dropped (they would not shorten it: pacing is global); a lower `request_delay_seconds` would (reasonable use; RIPE allows 3 simultaneous connections, we use one).
+
+Monitoring while it runs (SELECT only, any time):
+
+```bash
+ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT toStartOfHour(completed_at) AS h, count() FROM corpscout.ip_enrichment_results WHERE completed_at >= now() - INTERVAL 1 DAY GROUP BY h ORDER BY h FORMAT PrettyCompact"'
+ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT rir, count(), countIf(self_url LIKE '"'"'https://rest.db.ripe.net/%'"'"') AS ripe_rest, countIf(self_url LIKE '"'"'https://rdap.apnic.net/%'"'"') AS apnic_whois FROM corpscout.rdap_networks WHERE fetched_at >= now64(6) - INTERVAL 1 DAY GROUP BY rir ORDER BY count() DESC FORMAT PrettyCompact"'
+ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT registry_class, count() FROM corpscout.rdap_network_registry_class_current GROUP BY registry_class FORMAT PrettyCompact"'
+```
+
+The second query is the per-registry 24-hour usage: every `ripe` row must come from the REST path and every `apnic` row from whois `-r` (their `self_url` hosts), and a registry with a `registry_daily_budgets` entry must stay below it. Pause-and-resume: terminating the run in Dagster (or a host restart) leaves the task `selected`; re-running `ip_enrichment_results_job` with the same `task_id` resumes the saved execution, transport settings may change, and the budget window is seeded from ClickHouse. An unattended resume after a host restart needs a sensor (follow-up); until then the operator re-runs the task.
+
+Post-run verification:
+
+```bash
+ssh companycollect "docker exec ppoint-postgres psql -U corpscout -d corpscout -Atc \"SELECT status, total, succeeded_count, terminal_failed_count, skipped_count, inputs_purged_at IS NOT NULL FROM processing.tasks WHERE task_id='<task_id>'\""
+ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT count(), countIf(rdap_lookup_status = '"'"'found'"'"'), countIf(rdap_lookup_status IN ('"'"'retryable_error'"'"', '"'"'terminal_error'"'"')), countIf(city_lookup_status = '"'"'found'"'"') FROM corpscout.ip_enrichment_current FORMAT PrettyCompact"'
+ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT count() FROM corpscout.ip_enrichment_current WHERE rdap_network_key IN (SELECT network_key FROM corpscout.rdap_network_registry_class_current WHERE registry_class != '"'"'reusable'"'"')"'
+```
+
+Expected: `completed | ≈49.3M | ≈49.3M − failed | failed | 0 | t`; the last count equals the run's `registry_level_responses` (addresses whose registry returned only a registry-level block; each was looked up individually, none was served from such a block). Queue the failed addresses later with `retry_failed_task_id` once their `retry_after` has passed.
+
+- [ ] **Step 12: Mark the spec**
 
 In `services/dagster_v3/docs/superpowers/specs/2026-09-24-shared-processing-queue-contract-design.md` change line 3 to:
 
@@ -4278,26 +5059,49 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 
 | Decision | Task(s) |
 | --- | --- |
-| D1 entry table layout (String task_id, required submission_id, gate, mutation-pool setting), input_id choice stated | 2 |
-| D2 legacy tasks cancelled, entry table truncated in the deploy task, results untouched | 9 |
-| D3 draft queue import with receipts, queue_scope, submission-scoped retry, no manifest | 3 |
-| D4 shared lifecycle, frozen profile vs transport keys, execution_id = original run, frozen cache window, live remaining, errors as outcomes, retry-failed mode, completion + purge | 4, 5 (retry mode in 3) |
+| R1 no own registry-level classifier/migration; per-miss `classify_registration`, class row before segments, never reuse non-reusable, trie already excludes | 4 (resolver), 5 (storage assertion), 7 (docs) |
+| R2 GeoLite2: no download/schedule/credentials; freshness check (14 days, build epoch from the .mmdb metadata), `.env.example:70` fix, manual procedure, no restart needed (verified: paths resolved and files opened per run) | 3, 5 (build dates per run), 7, 8 (Step 1, 7) |
+| R3 clean re-run: cancel the 4 legacy tasks, wipe input/results (incl. legacy GeoIP rows)/RDAP cache/classes by `TRUNCATE`, keep `ip_registry_*`, effects on views/dictionary/consumers/legacy worker stated, backup check first, then the full inventory through the new execution with a smoke batch first | 8 (Steps 1–5, 9–11), 7 (docs) |
+| R4 volume estimate per registry, `request_delay_seconds` kept, RIPE AUP (1,000 personal data sets/day/address): RIPE via the REST search and APNIC via whois `-r` without personal data (owner decisions 2026-09-26; NIR space falls back to RDAP), so nothing counts; optional per-registry request budget with deferral + wait; proxy lanes and bulk dumps considered and dropped; person entities measured per run | 4, 5, 8 (Steps 9–11), Risks |
+| R5 everything else stays | 1–7 |
+| D1 entry table layout (String task_id, required submission_id, gate, mutation-pool setting), input_id choice stated | 1 |
+| D2 legacy tasks cancelled, entry table emptied in the deploy task | 8 (superseded by R3's wider wipe) |
+| D3 draft queue import with receipts, queue_scope, submission-scoped retry, no manifest | 2 |
+| D4 shared lifecycle, frozen profile vs transport keys, execution_id = original run, frozen cache window, live remaining, errors as outcomes, retry-failed mode, completion + purge | 4, 5 (retry mode in 2) |
 | D5 per-page ClickHouse work, ResultBuffer, bounded-queries test, per-miss network writes stated | 4, 5 |
-| D6 registry-level rule, segment role, view exclusion via migration, remediation draft | 1, 4, 9 |
-| D7 GeoLite2 asset/schedule/check, credentials, `.env.example` fix | 6, 9 |
-| D8 workflow removed, backoffice adds to the draft, queue page draft semantics, ordering, no FINAL | 5, 7 |
+| D6 registry-level rule (now the deployed data-driven one), remediation replaced by the clean re-run | 4, 8 |
+| D7 GeoLite2 (narrowed by R2) | 3 |
+| D8 workflow removed, backoffice adds to the draft, queue page draft semantics, ordering, no FINAL | 5, 6 |
 | D9 follow-ups listed below | — |
-| D10 deploy with owner go-ahead, e2e incl. IPv6 and 103/8, remediation launch | 9 |
+| D10 deploy with owner go-ahead, e2e incl. IPv6 and 103/8 | 8 |
 
-## Follow-ups (out of scope, D9)
+## Risks and open questions for the owner
+
+1. **RIPE and APNIC without personal data.** RIPE's limit is 1,000 personal data sets per day per source address (read from the published AUP on 2026-09-26; two live RIPE RDAP answers carried 3 and 8 person objects). The REST search with `no-referenced` returns none, and APNIC's whois `-r` returns contact handles only, so the full run stays within the policies with no budget at all; both smoke batches must show neither a `ripe` nor an `apnic` key in `rdap_person_entities_by_registry` — if one appears, a no-personal-data path is not in use and the run must stop. Proxies were considered and dropped: pooling a registry's allowance across addresses is the AUP's anti-avoidance case and the no-personal-data paths make it moot. The legacy bucket worker still uses RDAP for both registries and consumes personal data sets; do not run it in bulk. Residual exposure: APNIC's first `descr` line, taken as the holder name, is a natural person's name for some individual holders (the 2026-09-25 dump has e.g. `descr: John Strangio`); it is the registrant name of a network object, not a contact, and the owner accepted it.
+2. **Duration.** One Dagster run of 6–12 days (≈200k–330k requests at one per second, added to the ClickHouse page work because the loop is single-threaded). A host restart or deploy stops it; the task resumes on re-run (budget window seeded from `rdap_networks`), but nobody re-runs it automatically — a resume sensor is a follow-up if the owner wants unattended recovery. Do not launch the legacy `commoncrawl_ip_rdap_networks` worker meanwhile.
+3. **Data gap during the re-run.** `ip_enrichment_current` is empty at the start and fills over the run; backoffice IP pages, company IP views and `commoncrawl_ip_checks` show nothing for addresses not yet reached, and the 8.29M legacy GeoIP rows are gone for good (rollback = the B2 backup named in Step 2).
+4. **GeoLite2 files are from 2026-07-10.** The check will fail until the owner replaces them by hand; replacing them before Step 11 means the 49M new rows carry current GeoIP, otherwise they carry July builds and a GeoIP-only refresh (follow-up) becomes necessary.
+5. **Migration number.** 000453 is free on 2026-09-25 evening (prod ledger 452); other workstreams are active — re-check at merge.
+6. **Estimate uncertainty.** The per-registry densities come from the terminated run's first 1.08M IPv4 addresses (ordered by IP text, so APNIC/ARIN-heavy); RIPE IPv4 could need 60k–120k requests alone. Step 10's bucket is representative and refines the estimate before the owner commits to Step 11.
+7. **Budget accounting.** The window is seeded from persisted networks (successful direct and parent fetches); failed requests (429, 5xx) are not seeded, so a resume right after a burst of errors undercounts by that burst. In-run accounting counts every request.
+8. **6to4 and unmapped space.** Addresses outside whoisit's bootstrap prefixes (2002::/16 — 587 distinct /32s in the inventory) fall back to whoisit's default servers; `registry_for` charges the fallback's registry and the request usually ends `not_found`. Unchanged from today, harmless, noted.
+9. **Checks under the backoffice launch.** `startQueueProcessing` launches `ip_enrichment_results_job` with `assetSelection: [asset]`; whether Dagster includes the asset's checks in that run depends on the GraphQL selection semantics, which is why every results run also reports the build dates itself and `geolite2_freshness_job` exists.
+10. **REST and whois semantics.** RIPE's REST search answers unallocated or non-authoritative (RIPE-NONAUTH) space with the root object; APNIC's whois answers with `IANA-BLOCK`/`APNIC-AP` placeholders or an NIR's own object; in each case the resolver asks RDAP once, which the IANA bootstrap routes to the registry or NIR that holds the range. The RIPE answer stores `netname`, `country`, `status`, the `org` handle and dates; `descr` (which may contain a person's name) is dropped, so RIPE holders without an `org` object show only their `netname` — the on-click contact/detail path (follow-up) fetches the rest live. The APNIC path keeps NIR-managed space at the ISP allocation level where the NIR's database holds finer assignments (KRNIC, JPNIC ISP allocations are in APNIC's database and are used as they are); the review's NIR networks were ~6% of found IPv4.
+11. **APNIC whois availability.** Port 43 must be reachable from the Dagster host (checked in Task 8, Step 1); APNIC's whois answers `%ERROR:201: access denied` when its query limit is hit — mapped to `rate_limited` (retryable, `rate_limit_retry_seconds`) and visible in the smoke bucket; the RDAP client's timeouts (10 s connect, 30 s read) apply.
+
+## Follow-ups (out of scope, D9 and new)
 
 - Bulk RIR delegation dumps as a range dictionary instead of per-network RDAP discovery.
-- Per-registry parallel rate lanes and honouring `Retry-After`.
+- Honouring `Retry-After` on 429s (today a retryable outcome with `rate_limit_retry_seconds`).
+- Proxy egress lanes with per-lane budgets if a registry's per-address rate limit ever binds (designed and dropped on 2026-09-26).
+- Contact details on demand: one live RDAP call when a user opens a network in the backoffice (the batch path stores no personal data).
+- No-contact paths for ARIN, LACNIC and AFRINIC (whois `-r` where their servers honour it) if their RDAP contact entities ever become a limit; LACNIC and AFRINIC whois `-r` were not verified.
 - Parent lookups served from the cache, and `parent_depth` default 0.
-- Owner-name fallback from `remarks` for APNIC-family and AFRINIC registrations (also the reason remarks are not part of the registry-level rule).
+- Owner-name fallback from `remarks` for APNIC-family and AFRINIC registrations.
 - ARIN broad-allocation children (children of a `DIRECT ALLOCATION` block).
 - whoisit's `User-Agent` override (`client.py:49` is never sent).
 - Storing the HTTP status code and registry on `query_error` rows.
-- GeoIP-only refresh of old result rows after a GeoLite2 update.
-- Backoffice control to queue "failed addresses of task X" (the Dagster config `retry_failed_task_id` exists; the UI does not expose it).
-- The legacy `commoncrawl_ip_rdap_networks` bucket worker still stores registry-level responses as `lookup_result` segments (the view excludes them); switching it to the shared classifier is a small change once that worker is next touched.
+- GeoIP-only refresh of result rows after a GeoLite2 update (needed if the files are replaced after Step 11).
+- A resume sensor for `ip_enrichment_results_job` (re-run a `selected` task whose last run stopped without completing), so a host restart does not need an operator.
+- Backoffice controls for `retry_failed_task_id` and `registry_daily_budgets` (the Dagster config exists; the UI does not expose them).
+- The legacy `commoncrawl_ip_rdap_networks` bucket worker keeps per-IP lookups; porting it to the page-batched resolver (or retiring it in favour of drafts) once it is next touched.
