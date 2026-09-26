@@ -11,9 +11,20 @@ resume gives the same answers.
 RIPE addresses are resolved through the RIPE Database REST search and APNIC addresses
 through APNIC's port-43 whois with -r, both without personal data (commoncrawl_rdap/
 ripe_rest.py and apnic_whois.py; a placeholder or an NIR's own object falls back to RDAP);
-every other registry through RDAP. An optional
-rolling 24-hour request budget per registry defers misses instead of exceeding it; the
-loop waits for the window only when nothing else remains.
+every other registry through RDAP. RDAP redirects are followed by hand: one to RIPE's or
+APNIC's RDAP server (RIPE-managed space inside an ARIN /8, for example) is not followed
+but sends the miss to the REST or whois client instead, so the redirected body with its
+person objects is never fetched.
+
+Counters: requests and person entities are keyed by the registry that answered
+(RdapLookupResponse.rir); RDAP fallbacks of the no-personal paths are counted in
+rdap_fallbacks_by_registry and their person entities under "<rir>:fallback" keys, so a
+plain "ripe" or "apnic" key in person_entities_by_registry means personal data leaked.
+
+An optional rolling 24-hour request budget per registry defers misses instead of
+exceeding it, and a rate-limited or blocked registry is paused for
+max(retry delay, 15 min) with its misses deferred the same way; the loop waits for the
+window only when nothing else remains.
 """
 
 from collections import OrderedDict, deque
@@ -40,7 +51,12 @@ from dagster_v3.defs.commoncrawl_rdap.assets import (
     RDAP_NETWORK_INSERT_SQL,
     RDAP_SEGMENT_INSERT_SQL,
 )
-from dagster_v3.defs.commoncrawl_rdap.client import RdapClient, RdapClientError
+from dagster_v3.defs.commoncrawl_rdap.client import (
+    RIR_BY_HOST,
+    RdapClient,
+    RdapClientError,
+    RdapRedirect,
+)
 from dagster_v3.defs.commoncrawl_rdap.registry import (
     REGISTRY_CLASS_INSERT_SQL,
     RegistryClassification,
@@ -81,6 +97,10 @@ NETWORK_COLUMNS = (
 )
 WRITE_SETTINGS = {"async_insert": 1, "wait_for_async_insert": 1}
 BUDGET_WINDOW_SECONDS = 86_400
+# A rate-limited or blocked registry is left alone at least this long.
+MIN_PAUSE_SECONDS = 900
+# Codes that pause the registry that answered them (403 from RIPE REST is retryable).
+PAUSE_CODES = frozenset({"rate_limited", "access_denied"})
 
 
 class RequestBudgetReached(Exception):
@@ -130,13 +150,17 @@ class IpEnrichmentResultsConfig(dg.Config):
     @field_validator("registry_daily_budgets")
     @classmethod
     def positive_budgets(cls, value: dict[str, int]) -> dict[str, int]:
+        known = sorted(set(RIR_BY_HOST.values()))
         budgets = {}
         for registry, budget in value.items():
-            if not registry.strip() or budget < 1:
+            name = registry.strip().lower()
+            if name not in known:
                 raise ValueError(
-                    "registry_daily_budgets needs registry names and budgets >= 1"
+                    f"registry_daily_budgets: unknown registry {registry!r}; use one of {known}"
                 )
-            budgets[registry.strip().lower()] = budget
+            if budget < 1:
+                raise ValueError("registry_daily_budgets needs budgets >= 1")
+            budgets[name] = budget
         return budgets
 
 
@@ -265,6 +289,7 @@ def person_entities(raw: Mapping) -> int:
 
     RIPE counts person objects against its daily limit; RDAP answers of the other
     registries carry them too. An upper bound (RIPE marks maintainers 'individual' as well).
+    The REST and whois shapes never carry any, so their count is 0.
     """
     count = 0
     pending = list(raw.get("entities") or [])
@@ -329,16 +354,44 @@ class RdapEnricher:
         self.parent_failures = 0
         self.registry_level_responses = 0
         self.budget_reached = False
+        # Keyed by the answering registry (RdapLookupResponse.rir); a failed request by
+        # the registry it was sent to.
         self.requests_by_registry: dict[str, int] = {}
+        # Person entities per answering registry; RDAP fallbacks of the no-personal
+        # paths count under "<rir>:fallback", so a plain ripe/apnic key is a leak.
         self.person_entities_by_registry: dict[str, int] = {}
+        # RDAP requests made because a REST/whois answer was a catch-all or an NIR's own
+        # object, keyed by the registry whose no-personal path fell back.
+        self.rdap_fallbacks_by_registry: dict[str, int] = {}
+        # Misses an RDAP server redirected to RIPE/APNIC, re-sent to REST/whois.
+        self.reroutes_by_registry: dict[str, int] = {}
+        # Rate-limit / block pauses started per registry.
+        self.pauses_by_registry: dict[str, int] = {}
         self.deferrals_by_registry: dict[str, int] = {}
         self.deferred: dict[str, int] = {}  # since the last reset_pass()
+        # Registries resolved without personal data, and the RDAP hosts whose redirects
+        # are re-sent to those paths instead of being followed.
+        self._private = frozenset(
+            name
+            for name, enabled in (
+                ("ripe", config.ripe_rest),
+                ("apnic", config.apnic_whois),
+            )
+            if enabled
+        )
+        self._reroute_hosts = frozenset(
+            host for host, name in RIR_BY_HOST.items() if name in self._private
+        )
+        # Monotonic time until which a rate-limited or blocked registry is not asked.
+        self._paused_until: dict[str, float] = {}
         # Reusable networks fetched over HTTP in this run, checked before any request.
         self.recent: OrderedDict[str, NormalizedRdapNetwork] = OrderedDict()
         # Fresh network rows read from ClickHouse, keyed by network_key.
         self.cached: OrderedDict[str, RdapNetwork] = OrderedDict()
-        # Monotonic send times per registry inside the rolling window, oldest first.
+        # Monotonic send times per budgeted registry inside the rolling window, oldest first.
         self._sent: dict[str, deque[float]] = {}
+        # Never evict keys a page just loaded: a page needs at most batch_size keys.
+        self._cached_cap = max(4096, 2 * config.batch_size)
 
     # --- page resolution -------------------------------------------------------
 
@@ -400,6 +453,9 @@ class RdapEnricher:
                 if network_key:
                     hits[ip] = network_key
             pending = [ip for ip in pending if ip not in hits]
+            for network_key in hits.values():  # keep this page's keys newest
+                if network_key in self.cached:
+                    self.cached.move_to_end(network_key)
             self._load_networks(
                 {key for key in hits.values() if key not in self.cached}
             )
@@ -489,7 +545,7 @@ class RdapEnricher:
             network = cached_network_row(row)
             self.cached[network.network_key] = network
             self.cached.move_to_end(network.network_key)
-        while len(self.cached) > 4096:
+        while len(self.cached) > self._cached_cap:
             self.cached.popitem(last=False)
 
     # --- registry budgets -------------------------------------------------------
@@ -498,7 +554,10 @@ class RdapEnricher:
         """Requests any run made in the last day (registry, seconds ago), oldest first."""
         now = self._clock()
         for registry, seconds_ago in rows:
-            if seconds_ago < BUDGET_WINDOW_SECONDS:
+            if (
+                registry in self.config.registry_daily_budgets
+                and seconds_ago < BUDGET_WINDOW_SECONDS
+            ):
                 self._sent.setdefault(registry, deque()).append(now - seconds_ago)
 
     def _window(self, registry: str) -> deque[float]:
@@ -512,6 +571,24 @@ class RdapEnricher:
         budget = self.config.registry_daily_budgets.get(registry)
         return budget is not None and len(self._window(registry)) >= budget
 
+    def _paused(self, registry: str) -> bool:
+        return self._paused_until.get(registry, float("-inf")) > self._clock()
+
+    def _blocked(self, registry: str) -> bool:
+        """At its daily budget or paused after a rate limit: its misses are deferred."""
+        return self._over_budget(registry) or self._paused(registry)
+
+    def _pause(self, registry: str, seconds: float) -> None:
+        until = self._clock() + max(seconds, MIN_PAUSE_SECONDS)
+        if until > self._paused_until.get(registry, float("-inf")):
+            self._paused_until[registry] = until
+        self.pauses_by_registry[registry] = self.pauses_by_registry.get(registry, 0) + 1
+        self.log.warning(
+            "Registry %r is rate limiting or blocking; paused for %.0f s",
+            registry,
+            max(seconds, MIN_PAUSE_SECONDS),
+        )
+
     def _defer(self, registry: str) -> None:
         self.deferred[registry] = self.deferred.get(registry, 0) + 1
         self.deferrals_by_registry[registry] = (
@@ -524,21 +601,26 @@ class RdapEnricher:
     def seconds_until_budget_frees(self) -> float:
         """Seconds until a deferred registry may be asked again (0 when none is deferred).
 
-        Waits for an hour's share of the registry's budget (at least one request), so
-        the pass that follows is worth its ClickHouse queries.
+        A paused registry waits for the end of its pause; a registry at its budget waits
+        for an hour's share of the budget (at least one request), so the pass that
+        follows is worth its ClickHouse queries.
         """
+        now = self._clock()
         waits = []
         for registry, deferred in self.deferred.items():
+            wait = max(0.0, self._paused_until.get(registry, now) - now)
             budget = self.config.registry_daily_budgets.get(registry)
-            times = self._window(registry)
-            if budget is None or len(times) < budget:
-                return 0.0
-            slots = max(1, min(deferred, budget // 24))
-            waits.append(
-                times[len(times) - budget + slots - 1]
-                + BUDGET_WINDOW_SECONDS
-                - self._clock()
-            )
+            if budget is not None:
+                times = self._window(registry)
+                if len(times) >= budget:
+                    slots = max(1, min(deferred, budget // 24))
+                    wait = max(
+                        wait,
+                        times[len(times) - budget + slots - 1]
+                        + BUDGET_WINDOW_SECONDS
+                        - now,
+                    )
+            waits.append(wait)
         return max(0.0, min(waits)) if waits else 0.0
 
     def wait_for_registry_budget(self) -> float:
@@ -562,6 +644,17 @@ class RdapEnricher:
             and self.requests >= self.config.max_requests
         )
 
+    def _source(self, registry: str) -> str:
+        """'ripe_rest' or 'apnic_whois' for the no-personal paths, else 'rdap'."""
+        if registry == "ripe" and "ripe" in self._private:
+            return "ripe_rest"
+        if registry == "apnic" and "apnic" in self._private:
+            return "apnic_whois"
+        return "rdap"
+
+    def _count(self, counter: dict[str, int], key: str, amount: int = 1) -> None:
+        counter[key] = counter.get(key, 0) + amount
+
     def _request(
         self,
         target: str,
@@ -569,28 +662,41 @@ class RdapEnricher:
         registry: str,
         rir: str | None = None,
         source: str = "rdap",
+        fallback: bool = False,
     ) -> RdapLookupResponse:
-        """One paced request through the registry's source: 'rdap', 'ripe_rest' or 'apnic_whois'."""
+        """One paced request through a source: 'rdap', 'ripe_rest' or 'apnic_whois'.
+
+        The budget window is charged to ``registry`` (where the request is sent); the
+        counters to the registry that answered. A fallback request follows every RDAP
+        redirect (it is the deliberate RDAP answer); any other RDAP request raises
+        RdapRedirect for a redirect to RIPE's or APNIC's RDAP server.
+        """
         if self.requests and self.config.request_delay_seconds:
             self._sleep(self.config.request_delay_seconds)
         self.requests += 1
-        self._sent.setdefault(registry, deque()).append(self._clock())
-        self.requests_by_registry[registry] = (
-            self.requests_by_registry.get(registry, 0) + 1
-        )
-        if rir is not None:
-            response = self.rdap.lookup_up_url(target, rir=rir)
-        elif source == "ripe_rest":
-            response = self.ripe.lookup_ip(target)
-        elif source == "apnic_whois":
-            response = self.apnic.lookup_ip(target)
-        else:
-            response = self.rdap.lookup_ip(target)
+        if registry in self.config.registry_daily_budgets:
+            self._sent.setdefault(registry, deque()).append(self._clock())
+        if fallback:
+            self._count(self.rdap_fallbacks_by_registry, registry)
+        self.rdap.reroute_hosts = frozenset() if fallback else self._reroute_hosts
+        try:
+            if rir is not None:
+                response = self.rdap.lookup_up_url(target, rir=rir)
+            elif source == "ripe_rest":
+                response = self.ripe.lookup_ip(target)
+            elif source == "apnic_whois":
+                response = self.apnic.lookup_ip(target)
+            else:
+                response = self.rdap.lookup_ip(target)
+        except RdapClientError:
+            self._count(self.requests_by_registry, registry)
+            raise
+        answered = response.rir or registry
+        self._count(self.requests_by_registry, answered)
         persons = person_entities(response.raw_response)
         if persons:
-            self.person_entities_by_registry[registry] = (
-                self.person_entities_by_registry.get(registry, 0) + persons
-            )
+            key = f"{answered}:fallback" if fallback else answered
+            self._count(self.person_entities_by_registry, key, persons)
         return response
 
     def _persist(
@@ -660,17 +766,26 @@ class RdapEnricher:
         )
 
     def _request_ip(self, ip, address, bucket, markers: list[tuple]) -> dict | None:
-        registry = self.rdap.registry_for(ip)
-        if self._over_budget(registry):
-            self._defer(registry)
-            return None
-        source = "rdap"
-        if registry == "ripe" and self.config.ripe_rest:
-            source = "ripe_rest"
-        elif registry == "apnic" and self.config.apnic_whois:
-            source = "apnic_whois"
+        registry = ""
         try:
-            response = self._request(ip, registry=registry, source=source)
+            # Inside the try: a bootstrap failure is a retryable outcome, not a crash.
+            registry = self.rdap.registry_for(ip)
+            if self._blocked(registry):
+                self._defer(registry)
+                return None
+            source = self._source(registry)
+            try:
+                response = self._request(ip, registry=registry, source=source)
+            except RdapRedirect as redirect:
+                # RIPE- or APNIC-managed space inside another registry's block: the
+                # redirect is not followed; the no-personal path answers instead.
+                self._count(self.reroutes_by_registry, redirect.registry)
+                registry = redirect.registry
+                if self._blocked(registry):
+                    self._defer(registry)
+                    return None
+                source = self._source(registry)
+                response = self._request(ip, registry=registry, source=source)
             checked_at = datetime.now(UTC)
             direct = normalize_rdap_network(
                 response, fetched_at=checked_at, segment_role="lookup_result"
@@ -690,7 +805,9 @@ class RdapEnricher:
                     if is_nir_object(response.raw_response)
                     else "a catch-all",
                 )
-                response = self._request(ip, registry=registry, source="rdap")
+                response = self._request(
+                    ip, registry=registry, source="rdap", fallback=True
+                )
                 checked_at = datetime.now(UTC)
                 direct = normalize_rdap_network(
                     response, fetched_at=checked_at, segment_role="lookup_result"
@@ -725,6 +842,8 @@ class RdapEnricher:
                     else self.config.transient_retry_seconds
                 )
                 retry_after = checked_at + timedelta(seconds=seconds)
+                if code in PAUSE_CODES:
+                    self._pause(registry, seconds)
             result = rdap_result(
                 status=status,
                 checked_at=checked_at,
@@ -754,7 +873,10 @@ class RdapEnricher:
             if (
                 current.network.up_url is None
                 or self._budget_exhausted()
-                or self._over_budget(current.network.rir)  # parents are optional
+                # Parents are optional: never from a registry resolved without personal
+                # data (its RDAP answers carry person objects), nor a blocked one.
+                or current.network.rir in self._private
+                or self._blocked(current.network.rir)
             ):
                 break
             try:
@@ -774,6 +896,17 @@ class RdapEnricher:
                 current = parent
             except (RdapClientError, ValueError) as error:
                 self.parent_failures += 1
+                if (
+                    isinstance(error, RdapClientError)
+                    and error.retryable
+                    and error.code in PAUSE_CODES
+                ):
+                    self._pause(
+                        current.network.rir,
+                        self.config.rate_limit_retry_seconds
+                        if error.code == "rate_limited"
+                        else self.config.transient_retry_seconds,
+                    )
                 self.log.warning(
                     "Optional parent lookup failed for %s: %s", ip, type(error).__name__
                 )

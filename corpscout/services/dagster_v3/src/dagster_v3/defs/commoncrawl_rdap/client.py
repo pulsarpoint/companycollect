@@ -1,7 +1,7 @@
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from ipaddress import ip_network
 from typing import Any
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote, urljoin, urlsplit
 
 import requests
 import whoisit
@@ -17,6 +17,9 @@ from whoisit.errors import (
     ResourceDoesNotExist,
     UnsupportedError,
 )
+from whoisit.parser import parse as parse_rdap
+from whoisit.query import Query
+from whoisit.utils import http_request
 
 from dagster_v3.defs.commoncrawl_rdap.rdap import RdapLookupResponse
 
@@ -25,6 +28,8 @@ from dagster_v3.defs.commoncrawl_rdap.rdap import RdapLookupResponse
 RIR_BY_HOST = {
     urlsplit(url).netloc: name for name, url in BaseBootstrap.RIR_RDAP_ENDPOINTS.items()
 }
+REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+MAX_REDIRECTS = 5
 
 
 class RdapClientError(Exception):
@@ -42,12 +47,31 @@ class RdapClientError(Exception):
         self.status_code = status_code
 
 
+class RdapRedirect(RdapClientError):
+    """An RDAP server redirected to a host the caller asked to handle itself.
+
+    Raised instead of following the redirect, so the target's body (e.g. RIPE's person
+    objects) is never fetched; ``registry`` names the target registry.
+    """
+
+    def __init__(self, location: str, *, registry: str, status_code: int) -> None:
+        super().__init__(
+            f"RDAP redirect to {location}",
+            code="cross_registry_redirect",
+            retryable=False,
+            status_code=status_code,
+        )
+        self.location = location
+        self.registry = registry
+
+
 class RdapClient:
     def __init__(
         self,
         *,
         user_agent: str,
         session: requests.Session | None = None,
+        reroute_hosts: Iterable[str] = (),
     ) -> None:
         if user_agent.strip() == "":
             raise ValueError("user_agent must not be empty")
@@ -55,6 +79,11 @@ class RdapClient:
         self._session = session if session is not None else requests.Session()
         self._session.headers["User-Agent"] = user_agent.strip()
         self._ready = False
+        # With hosts here, redirects are followed by hand (at most MAX_REDIRECTS hops) and
+        # one to these hosts raises RdapRedirect instead; the target is never fetched.
+        # Empty (the default) keeps whoisit's own request, which follows redirects. The
+        # caller may change the set between requests.
+        self.reroute_hosts: frozenset[str] = frozenset(reroute_hosts)
 
     def lookup_ip(self, ip_address_or_network: str) -> RdapLookupResponse:
         return self._lookup(ip_address_or_network, rir=None)
@@ -67,13 +96,17 @@ class RdapClient:
 
         Resolved from the IANA bootstrap data already loaded for lookups (no HTTP), so
         the RIPE REST path and the per-registry budget are chosen before a request is sent.
+        An address without an exact bootstrap match is '' (whoisit would pick a random
+        default registry). Raises RdapClientError when the bootstrap cannot be loaded.
         """
         self._ensure_bootstrapped()
         try:
-            _, url, _ = whoisit.build_query(
+            _, url, exact_match = whoisit.build_query(
                 query_type="ip", query_value=ip_address_or_network
             )
         except QueryError, BootstrapError, ArgumentError, UnsupportedError:
+            return ""
+        if not exact_match:
             return ""
         return RIR_BY_HOST.get(urlsplit(url).netloc, "")
 
@@ -89,12 +122,28 @@ class RdapClient:
     ) -> RdapLookupResponse:
         self._ensure_bootstrapped()
         try:
-            response = whoisit.ip(
-                ip_address_or_network,
-                rir=rir,
-                include_raw=True,
-                session=self._session,
-            )
+            if self.reroute_hosts:
+                # Redirects by hand, so one to a rerouted host is never followed.
+                _, url, _ = whoisit.build_query(
+                    query_type="ip", query_value=ip_address_or_network, rir=rir
+                )
+                raw = self._get(url)
+                if not isinstance(raw, Mapping):
+                    raise ParseError("RDAP answer is not a JSON object")
+                response = parse_rdap(
+                    whoisit._bootstrap,
+                    "ip",
+                    ip_address_or_network,
+                    raw,
+                    include_raw=True,
+                )
+            else:
+                response = whoisit.ip(
+                    ip_address_or_network,
+                    rir=rir,
+                    include_raw=True,
+                    session=self._session,
+                )
         except ResourceDoesNotExist as error:
             raise _client_error(error, code="not_found", retryable=False) from error
         except RateLimitedError as error:
@@ -127,6 +176,26 @@ class RdapClient:
                 retryable=True,
             ) from error
         return _lookup_response(response, requested_rir=rir)
+
+    def _get(self, url: str) -> Any:
+        """GET an RDAP URL following redirects by hand; whoisit's status mapping applies."""
+        for _ in range(MAX_REDIRECTS + 1):
+            response = http_request(self._session, url, allow_redirects=False)
+            location = response.headers.get("Location")
+            if response.status_code in REDIRECT_STATUSES and location:
+                response.close()
+                target = urljoin(url, location)
+                host = urlsplit(target).netloc.lower()
+                if host in self.reroute_hosts:
+                    raise RdapRedirect(
+                        target,
+                        registry=RIR_BY_HOST.get(host, ""),
+                        status_code=response.status_code,
+                    )
+                url = target
+                continue
+            return Query(self._session, "GET", url)._process_response(response)
+        raise QueryError(f"More than {MAX_REDIRECTS} RDAP redirects from {url}")
 
     def _ensure_bootstrapped(self) -> None:
         if self._ready:

@@ -23,8 +23,12 @@ from dagster_v3.defs.commoncrawl_rdap.rdap import RdapLookupResponse
 SEARCH_URL = "https://rest.db.ripe.net/search.json"
 OBJECT_URL = "https://rest.db.ripe.net/ripe/{kind}/{key}"
 NETWORK_TYPES = ("inetnum", "inet6num")
+# no-referenced (-r) drops every referenced object; no-personal drops person and role
+# objects (docs.db.ripe.net, "Referenced Objects in Query Response"). Both are sent so a
+# change to either default can not bring personal data back.
 QUERY_FLAGS = (
     ("flags", "no-referenced"),
+    ("flags", "no-personal"),
     ("source", "ripe"),
     ("type-filter", "inetnum"),
     ("type-filter", "inet6num"),
@@ -144,10 +148,12 @@ class RipeRestClient:
                 status_code=status,
             )
         if status == 403:
+            # RIPE answers 403 when it blocks the source address (e.g. over its daily
+            # personal-data limit): retried after a back-off, never a terminal outcome.
             raise RdapClientError(
                 "RIPE REST access denied",
                 code="access_denied",
-                retryable=False,
+                retryable=True,
                 status_code=403,
             )
         if status != 200:
@@ -158,11 +164,20 @@ class RipeRestClient:
                 status_code=status,
             )
         try:
-            objects = response.json().get("objects", {}).get("object", [])
+            payload = response.json()
         except ValueError as error:
             raise RdapClientError(
                 "RIPE REST answer is not JSON", code="invalid_response", retryable=False
             ) from error
+        objects = payload.get("objects") if isinstance(payload, dict) else None
+        objects = objects.get("object") if isinstance(objects, dict) else None
+        if not isinstance(objects, list):
+            raise RdapClientError(
+                "RIPE REST answer has no objects list",
+                code="invalid_response",
+                retryable=False,
+            )
+        objects = [item for item in objects if isinstance(item, dict)]
         network = next(
             (item for item in objects if item.get("type") in NETWORK_TYPES), None
         )

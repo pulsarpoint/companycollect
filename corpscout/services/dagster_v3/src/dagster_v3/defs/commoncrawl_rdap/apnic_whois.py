@@ -18,6 +18,7 @@ holder's allocation.
 
 import re
 import socket
+import time
 from collections.abc import Mapping
 from ipaddress import ip_network
 
@@ -28,6 +29,11 @@ WHOIS_HOST = "whois.apnic.net"
 WHOIS_PORT = 43
 CONNECT_TIMEOUT = 10.0
 READ_TIMEOUT = 30.0
+# The whole exchange, however slowly the server trickles bytes.
+TOTAL_TIMEOUT = 60.0
+# Every complete answer (objects or %ERROR) ends with this footer; an answer without it
+# was cut off and is retried, never read as "no object".
+COMPLETE_MARKER = "% This query was served by"
 NETWORK_TYPES = ("inetnum", "inet6num")
 OBJECT_URL = "https://rdap.apnic.net/ip/{start}"
 # The NIRs' own allocation objects (not the holders' allocations the NIRs maintain).
@@ -185,22 +191,33 @@ class ApnicWhoisClient:
         host: str = WHOIS_HOST,
         port: int = WHOIS_PORT,
         connect=socket.create_connection,
+        clock=time.monotonic,
     ) -> None:
         self._host, self._port, self._connect = host, port, connect
+        self._clock = clock
 
     def close(self) -> None:
         return None  # nothing is kept open between queries
 
     def query(self, ip: str) -> str:
         """The raw port-43 answer to `-r <ip>`, read to EOF."""
+        deadline = self._clock() + TOTAL_TIMEOUT
         try:
             with self._connect(
                 (self._host, self._port), timeout=CONNECT_TIMEOUT
             ) as sock:
-                sock.settimeout(READ_TIMEOUT)
                 sock.sendall(f"-r {ip}\r\n".encode("ascii"))
                 chunks = []
-                while chunk := sock.recv(65536):
+                while True:
+                    remaining = deadline - self._clock()
+                    if remaining <= 0:
+                        raise TimeoutError(
+                            f"APNIC whois answer took over {TOTAL_TIMEOUT:.0f} s"
+                        )
+                    sock.settimeout(min(READ_TIMEOUT, remaining))
+                    chunk = sock.recv(65536)
+                    if not chunk:
+                        break
                     chunks.append(chunk)
         except (OSError, ValueError) as error:
             raise RdapClientError(
@@ -217,15 +234,24 @@ class ApnicWhoisClient:
                 raise RdapClientError(
                     "no entries found", code="not_found", retryable=False
                 )
-            if number == 201:
-                # APNIC answers 201 when its query limit is hit; treated as a rate limit.
+            if 200 <= number < 300:
+                # 2xx: access denied / connection or query limits (201 when the daily
+                # query limit is hit): a rate limit, which pauses APNIC.
                 raise RdapClientError(
-                    "APNIC whois access denied", code="rate_limited", retryable=True
+                    f"APNIC whois access error {number}",
+                    code="rate_limited",
+                    retryable=True,
                 )
             raise RdapClientError(
                 f"APNIC whois error {number}",
                 code="query_error",
                 retryable=number >= 300,
+            )
+        if COMPLETE_MARKER not in text:
+            raise RdapClientError(
+                f"APNIC whois answer is empty or cut off ({len(text)} characters)",
+                code="transport_error",
+                retryable=True,
             )
         obj = network_object(parse_answer(text))
         if obj is None:
