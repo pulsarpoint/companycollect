@@ -24,7 +24,8 @@ plain "ripe" or "apnic" key in person_entities_by_registry means personal data l
 An optional rolling 24-hour request budget per registry defers misses instead of
 exceeding it, and a rate-limited or blocked registry is paused for
 max(retry delay, 15 min) with its misses deferred the same way; the loop waits for the
-window only when nothing else remains.
+window only when nothing else remains. A failed IANA bootstrap defers every miss the same
+way (key "bootstrap", back-off 1 to 15 minutes) instead of storing an error per address.
 """
 
 from collections import OrderedDict, deque
@@ -101,10 +102,12 @@ BUDGET_WINDOW_SECONDS = 86_400
 MIN_PAUSE_SECONDS = 900
 # Codes that pause the registry that answered them (403 from RIPE REST is retryable).
 PAUSE_CODES = frozenset({"rate_limited", "access_denied"})
-
-
-class RequestBudgetReached(Exception):
-    """Kept for results.py until Task 5 replaces it with RdapEnricher.budget_reached."""
+# A failed IANA bootstrap pauses every miss of the run (deferral key "bootstrap") instead
+# of writing a retryable error per address; the pause doubles from 1 to at most 15 minutes.
+BOOTSTRAP = "bootstrap"
+BOOTSTRAP_CODES = frozenset({"bootstrap_error", "bootstrap_transport_error"})
+MIN_BOOTSTRAP_PAUSE_SECONDS = 60
+MAX_BOOTSTRAP_PAUSE_SECONDS = 900
 
 
 class IpEnrichmentResultsConfig(dg.Config):
@@ -384,6 +387,7 @@ class RdapEnricher:
         )
         # Monotonic time until which a rate-limited or blocked registry is not asked.
         self._paused_until: dict[str, float] = {}
+        self._bootstrap_failures = 0
         # Reusable networks fetched over HTTP in this run, checked before any request.
         self.recent: OrderedDict[str, NormalizedRdapNetwork] = OrderedDict()
         # Fresh network rows read from ClickHouse, keyed by network_key.
@@ -398,8 +402,9 @@ class RdapEnricher:
     def resolve_page(self, rows: list[dict]) -> dict[str, dict]:
         """Registry fields per address of the page.
 
-        An address is absent when its registry's daily budget deferred it or when the
-        run's max_requests budget ran out (``budget_reached`` is then True).
+        An address is absent when it was deferred (its registry at its daily budget or
+        paused, or the bootstrap paused) or when the run's max_requests budget ran out
+        (``budget_reached`` is then True).
         """
         addresses = {row["ip"]: ip_address(row["ip"]) for row in rows}
         buckets = {row["ip"]: row["bucket"] for row in rows}
@@ -589,6 +594,22 @@ class RdapEnricher:
             max(seconds, MIN_PAUSE_SECONDS),
         )
 
+    def _bootstrap_failed(self, error: RdapClientError) -> None:
+        """Pause every miss until the bootstrap is retried: 60 s, doubling to 15 min."""
+        self._bootstrap_failures += 1
+        seconds = min(
+            MAX_BOOTSTRAP_PAUSE_SECONDS,
+            MIN_BOOTSTRAP_PAUSE_SECONDS * 2 ** (self._bootstrap_failures - 1),
+        )
+        self._paused_until[BOOTSTRAP] = self._clock() + seconds
+        self._count(self.pauses_by_registry, BOOTSTRAP)
+        self.log.warning(
+            "RDAP bootstrap failed (%s: %s); misses paused for %.0f s",
+            error.code,
+            error,
+            seconds,
+        )
+
     def _defer(self, registry: str) -> None:
         self.deferred[registry] = self.deferred.get(registry, 0) + 1
         self.deferrals_by_registry[registry] = (
@@ -767,9 +788,21 @@ class RdapEnricher:
 
     def _request_ip(self, ip, address, bucket, markers: list[tuple]) -> dict | None:
         registry = ""
+        if self._paused(BOOTSTRAP):
+            self._defer(BOOTSTRAP)
+            return None
         try:
-            # Inside the try: a bootstrap failure is a retryable outcome, not a crash.
-            registry = self.rdap.registry_for(ip)
+            try:
+                registry = self.rdap.registry_for(ip)
+            except RdapClientError as error:
+                if error.code not in BOOTSTRAP_CODES:
+                    raise
+                # No registry can be chosen without the bootstrap: a run-wide pause,
+                # never an error per address.
+                self._bootstrap_failed(error)
+                self._defer(BOOTSTRAP)
+                return None
+            self._bootstrap_failures = 0
             if registry == "":
                 # No exact bootstrap match: whoisit would send the query to a random
                 # registry (possibly RIPE's or APNIC's RDAP). Nothing is requested; the

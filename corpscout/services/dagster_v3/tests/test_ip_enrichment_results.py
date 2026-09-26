@@ -1,5 +1,6 @@
 """Task-scoped enrichment with real storage and controlled external lookup responses."""
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -313,15 +314,26 @@ def environment(server, store, tmp_path, monkeypatch):
         )
 
 
-def select(env, ips):
-    task = str(uuid4())
-    assert prepare_input(env.resource, env.dsn, task_id=task, ips=ips).success
-    return task
+def select(env, ips, *, scope=None, **config):
+    """Append ``ips`` to the open draft of ``scope`` (a fresh scope by default); the task id."""
+    result = prepare_input(
+        env.resource,
+        env.dsn,
+        queue_scope=scope or "scope-" + uuid4().hex,
+        ips=ips,
+        **config,
+    )
+    assert result.success
+    return (
+        result.asset_materializations_for_node("ip_enrichment_input")[0]
+        .metadata["task_id"]
+        .value
+    )
 
 
 def run(env, task, **config):
     return dg.materialize(
-        [results.ip_enrichment_results],
+        [results.ip_enrichment_results, dg.AssetSpec("ip_enrichment_input")],
         instance=env.instance,
         resources={
             "clickhouse": env.resource,
@@ -331,11 +343,7 @@ def run(env, task, **config):
         run_config={
             "ops": {
                 "ip_enrichment_results": {
-                    "config": {
-                        "task_id": task,
-                        "request_delay_seconds": 0,
-                        **config,
-                    }
+                    "config": {"task_id": task, "request_delay_seconds": 0, **config}
                 }
             }
         },
@@ -343,13 +351,31 @@ def run(env, task, **config):
     )
 
 
-def test_selected_task_geoip_rdap_segments_and_resume(environment):
+def outcome(result):
+    return {
+        key: value.value
+        for key, value in result.asset_materializations_for_node(
+            "ip_enrichment_results"
+        )[0].metadata.items()
+    }
+
+
+def task_row(env, task):
+    with ProcessingResource(postgres_url=env.dsn).get_store() as store:
+        return store.task(task)
+
+
+def test_draft_geoip_rdap_segments_completion_and_purge(environment):
     env = environment
     select(env, ["9.9.9.9"])
     task = select(env, ["8.8.8.8", "8.8.8.9", "2001:4860::8888", "127.0.0.1"])
     first = run(env, task, batch_size=1)
     assert first.success
-    assert sorted(env.calls) == ["2001:4860::8888", "8.8.8.8"]
+    # One request per /24: whichever of 8.8.8.8/8.8.8.9 comes first in bucket order.
+    assert sorted(call.rsplit(".", 1)[0] for call in env.calls) == [
+        "2001:4860::8888",
+        "8.8.8",
+    ]
     assert "127.0.0.1" not in env.city.calls
     assert env.client.execute("""SELECT ip, country_iso_code, rdap_country_code,
         city_network, asn_network, rdap_matched_cidr FROM corpscout.ip_enrichment_current
@@ -357,27 +383,54 @@ def test_selected_task_geoip_rdap_segments_and_resume(environment):
         ("8.8.8.8", "US", "CA", "8.8.8.0/24", "8.8.8.0/24", "8.8.8.0/24")
     ]
     assert env.client.execute(
-        "SELECT count(), uniqExact(task_id) FROM corpscout.ip_enrichment_results FINAL"
-    ) == [(4, 1)]
+        "SELECT count(), uniqExact(task_id), uniqExact(execution_id), min(attempt) FROM corpscout.ip_enrichment_results FINAL"
+    ) == [(4, 1, 1, 1)]
     assert env.client.execute(
         "SELECT rdap_lookup_status, ip_scope FROM corpscout.ip_enrichment_current WHERE ip='127.0.0.1'"
     ) == [("not_global", "loopback")]
     assert env.client.execute(
         "SELECT count() FROM corpscout.rdap_network_segments FINAL"
     ) == [(2,)]
-    calls_before = list(env.calls)
-    assert run(env, task, execution_id=first.run_id, batch_size=2).success
-    assert env.calls == calls_before
-    assert env.client.execute(
-        "SELECT count() FROM corpscout.ip_enrichment_results FINAL"
-    ) == [(4,)]
-    assert run(env, select(env, ["8.8.8.10"])).success
+    metadata = outcome(first)
+    assert metadata["completion_status"] == "completed"
     assert (
-        env.calls == calls_before
-    )  # Cached coverage survives into another execution/task.
+        metadata["written"],
+        metadata["succeeded_pages"],
+        metadata["failed_pages"],
+        metadata["skipped_recent"],
+    ) == (4, 4, 0, 0)
+    assert metadata["execution_id"] == first.run_id
+    assert metadata["rdap_requests_by_registry"] == {"arin": 2}
+    assert (
+        metadata["geolite2_city_build"] == "2026-08-01"
+    )  # the fixture readers' build epoch 1785542400
+    assert (metadata["budget_waits"], metadata["rdap_deferrals_by_registry"]) == (0, {})
+    record = task_row(env, task)
+    assert record["status"] == "completed" and record["inputs_purged_at"] is not None
+    assert (
+        record["succeeded_count"],
+        record["terminal_failed_count"],
+        record["skipped_count"],
+    ) == (4, 0, 0)
+    assert env.client.execute(
+        "SELECT count() FROM corpscout.ip_enrichment_input WHERE task_id = %(task)s",
+        {"task": task},
+    ) == [(0,)]
+    tags = env.instance.get_run_by_id(first.run_id).tags
+    assert (
+        tags["ip_enrichment/outcome"] == "completed"
+        and tags["ip_enrichment/succeeded_pages"] == "4"
+    )
+    calls_before = list(env.calls)
+    # A completed task re-run only retries cleanup; another draft reuses the cached coverage.
+    assert outcome(run(env, task))["already_completed"] is True
+    assert run(env, select(env, ["8.8.8.10"])).success
+    assert env.calls == calls_before
 
 
-def test_errors_keep_geoip_and_retry_backoff(environment, monkeypatch):
+def test_errors_are_published_outcomes_and_backoff_holds_until_forced(
+    environment, monkeypatch
+):
     env = environment
     attempts = []
 
@@ -387,30 +440,46 @@ def test_errors_keep_geoip_and_retry_backoff(environment, monkeypatch):
             "rate limit", code="rate_limited", retryable=True, status_code=429
         )
 
-    monkeypatch.setattr(enrichment.RdapClient, "lookup_ip", unavailable)
+    monkeypatch.setattr(RdapClient, "lookup_ip", unavailable)
     task = select(env, ["8.8.8.8"])
     first = run(env, task)
-    assert not first.success
+    assert (
+        first.success and outcome(first)["completion_status"] == "completed_with_errors"
+    )
     assert env.client.execute("""SELECT city_lookup_status, asn_lookup_status, rdap_lookup_status,
         country_iso_code, rdap_error_code, rdap_retry_after > rdap_checked_at
         FROM corpscout.ip_enrichment_current""") == [
         ("found", "found", "retryable_error", "US", "rate_limited", 1)
     ]
-    assert not run(env, task, execution_id=first.run_id).success
-    assert not run(env, task).success
-    assert attempts == ["8.8.8.8"]
-    monkeypatch.setattr(
-        enrichment.RdapClient, "lookup_ip", lambda self, ip: response(ip)
+    record = task_row(env, task)
+    assert (
+        record["status"],
+        record["terminal_failed_count"],
+        record["inputs_purged_at"] is not None,
+    ) == ("completed", 1, True)
+    # The failed address goes to a new draft (retry mode); the saved backoff still applies there.
+    retry = prepare_input(
+        env.resource,
+        env.dsn,
+        queue_scope="scope-" + uuid4().hex,
+        retry_failed_task_id=task,
     )
-    assert run(env, task, force_rdap=True).success
+    assert retry.success
+    again = (
+        retry.asset_materializations_for_node("ip_enrichment_input")[0]
+        .metadata["task_id"]
+        .value
+    )
+    assert task_row(env, again)["total"] == 1
+    assert run(env, again).success and attempts == ["8.8.8.8"]
+    monkeypatch.setattr(RdapClient, "lookup_ip", lambda self, ip: response(ip))
+    assert run(env, select(env, ["8.8.8.8"]), force_rdap=True).success
     assert env.client.execute(
         "SELECT rdap_lookup_status FROM corpscout.ip_enrichment_current"
     ) == [("found",)]
 
 
-def test_request_budget_is_resumable_without_marking_unprocessed_inputs_done(
-    environment,
-):
+def test_request_budget_fails_the_run_and_the_same_task_resumes(environment):
     env = environment
     task = select(env, ["1.1.1.1", "8.8.8.8"])
     first = run(env, task, max_requests=1)
@@ -418,18 +487,84 @@ def test_request_budget_is_resumable_without_marking_unprocessed_inputs_done(
     assert env.client.execute(
         "SELECT count() FROM corpscout.ip_enrichment_results FINAL"
     ) == [(1,)]
-    assert run(env, task, execution_id=first.run_id, max_requests=1).success
+    assert task_row(env, task)["status"] == "selected"
+    # Transport settings may change; the saved execution is resumed without execution_id.
+    resumed = run(
+        env, task, max_requests=1, batch_size=7, registry_daily_budgets={"ripe": 5}
+    )
+    assert resumed.success and outcome(resumed)["execution_id"] == first.run_id
     assert env.calls == ["1.1.1.1", "8.8.8.8"]
     assert env.client.execute(
-        "SELECT count() FROM corpscout.ip_enrichment_results FINAL"
-    ) == [(2,)]
+        "SELECT count(), uniqExact(execution_id) FROM corpscout.ip_enrichment_results FINAL"
+    ) == [(2, 1)]
+
+
+def test_registry_budget_defers_and_the_run_waits_for_the_window(
+    environment, monkeypatch
+):
+    env = environment
+    clock = {"now": 0.0}
+    slept = []
+
+    def fake_sleep(seconds):
+        slept.append(seconds)
+        clock["now"] += seconds
+
+    monkeypatch.setattr(enrichment, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(enrichment, "sleep", fake_sleep)
+    task = select(env, ["5.1.1.1", "5.2.2.2", "8.8.8.8"])
+    result = run(env, task, batch_size=1, registry_daily_budgets={"ripe": 1})
+    assert result.success
+    # One RIPE miss per day: whichever RIPE address comes first in bucket order is fetched,
+    # the other is deferred, ARIN continues, then the run waits a full window.
+    assert (
+        len(env.calls) == 3
+        and "8.8.8.8" in env.calls[:2]
+        and env.calls[2].startswith("5.")
+    )
+    metadata = outcome(result)
+    assert metadata["completion_status"] == "completed" and metadata["written"] == 3
+    assert metadata["budget_waits"] == 1 and metadata[
+        "budget_wait_seconds"
+    ] == pytest.approx(86_400)
+    assert metadata["rdap_deferrals_by_registry"] == {
+        "ripe": 2
+    }  # once per pass until it slept
+    assert metadata["rdap_requests_by_registry"] == {"ripe": 2, "arin": 1}
+    assert "ripe" not in metadata["rdap_person_entities_by_registry"]
+    assert sum(slept) == pytest.approx(86_400)
+
+
+def test_registry_usage_sql_reads_the_last_day(environment):
+    env = environment
+    seed_network(
+        env,
+        "5.1.1.1",
+        fetched_at=datetime.now(UTC) - timedelta(hours=1),
+        handle="RIPE-1",
+    )
+    seed_network(
+        env,
+        "5.2.2.2",
+        fetched_at=datetime.now(UTC) - timedelta(days=2),
+        handle="RIPE-2",
+    )
+    rows = env.client.execute(results.REGISTRY_USAGE_SQL)
+    assert [(rir, 3500 < seconds < 3700) for rir, seconds in rows] == [("arin", True)]
+    enricher = resolver(env, registry_daily_budgets={"arin": 1})
+    enricher.seed_registry_usage(rows)
+    assert enricher.resolve_page(page(env, "8.8.8.8")) == {} and enricher.deferred == {
+        "arin": 1
+    }
 
 
 @pytest.mark.parametrize("kind", ["catch_all", "wrong_range"])
-def test_invalid_registration_coverage_is_not_saved(environment, monkeypatch, kind):
+def test_invalid_registration_coverage_is_a_terminal_error(
+    environment, monkeypatch, kind
+):
     env = environment
     monkeypatch.setattr(
-        enrichment.RdapClient,
+        RdapClient,
         "lookup_ip",
         lambda self, ip: response(
             ip,
@@ -437,7 +572,8 @@ def test_invalid_registration_coverage_is_not_saved(environment, monkeypatch, ki
             end="255.255.255.255" if kind == "catch_all" else "9.9.9.255",
         ),
     )
-    assert not run(env, select(env, ["8.8.8.8"])).success
+    result = run(env, select(env, ["8.8.8.8"]))
+    assert result.success and outcome(result)["failed_pages"] == 1
     assert env.client.execute(
         "SELECT rdap_lookup_status, city_lookup_status FROM corpscout.ip_enrichment_current"
     ) == [("terminal_error", "found")]
@@ -447,37 +583,55 @@ def test_invalid_registration_coverage_is_not_saved(environment, monkeypatch, ki
 def test_city_lookup_failure_does_not_discard_asn_or_rdap(environment):
     env = environment
     env.city.fail = True
-    assert not run(env, select(env, ["8.8.8.8"])).success
+    result = run(env, select(env, ["8.8.8.8"]))
+    assert (
+        result.success
+        and outcome(result)["completion_status"] == "completed_with_errors"
+    )
     assert env.client.execute(
         "SELECT city_lookup_status, asn_lookup_status, rdap_lookup_status, asn FROM corpscout.ip_enrichment_current"
     ) == [("retryable_error", "found", "found", 15169)]
 
 
-def test_unknown_task_fails_before_external_lookups(environment):
+def test_task_id_must_name_a_draft(environment):
     env = environment
     assert not run(env, str(uuid4())).success
+    legacy = str(uuid4())
+    with ProcessingResource(postgres_url=env.dsn).get_store() as store:
+        store.prepare_selection(
+            legacy, processor="ip-enrichment-v1", fingerprint="legacy"
+        )
+        assert store.task(legacy)["queue_scope"] is None
+    assert not run(env, legacy).success
     assert env.calls == env.city.calls == []
 
 
-def test_resume_after_lost_write_acknowledgement_does_not_repeat_lookup(
+def test_resume_after_lost_write_acknowledgement_does_not_repeat_lookups(
     environment, monkeypatch
 ):
     env = environment
     task = select(env, ["8.8.8.8"])
-    real_insert = results.insert_result
+    execute = Client.execute
+    interrupted = False
 
-    def write_then_disconnect(client, record):
-        real_insert(client, record)
-        raise ConnectionError("lost acknowledgement after durable insert")
+    def lost_ack(self, query, *args, **kwargs):
+        nonlocal interrupted
+        value = execute(self, query, *args, **kwargs)
+        if (
+            query.lstrip().startswith("INSERT INTO corpscout.ip_enrichment_results")
+            and not interrupted
+        ):
+            interrupted = True
+            raise ConnectionError("lost acknowledgement after durable insert")
+        return value
 
-    monkeypatch.setattr(results, "insert_result", write_then_disconnect)
+    monkeypatch.setattr(Client, "execute", lost_ack)
     first = run(env, task)
     assert not first.success
     assert env.client.execute(
         "SELECT count() FROM corpscout.ip_enrichment_results FINAL"
     ) == [(1,)]
-    monkeypatch.setattr(results, "insert_result", real_insert)
-    assert run(env, task, execution_id=first.run_id).success
+    assert run(env, task).success
     assert env.calls == env.city.calls == ["8.8.8.8"]
     assert env.client.execute(
         "SELECT count() FROM corpscout.ip_enrichment_results FINAL"
@@ -487,13 +641,9 @@ def test_resume_after_lost_write_acknowledgement_does_not_repeat_lookup(
 def test_non_aligned_rdap_range_saves_exact_matching_segment(environment, monkeypatch):
     env = environment
     monkeypatch.setattr(
-        enrichment.RdapClient,
+        RdapClient,
         "lookup_ip",
-        lambda self, ip: response(
-            ip,
-            start="8.8.8.1",
-            end="8.8.8.10",
-        ),
+        lambda self, ip: response(ip, start="8.8.8.1", end="8.8.8.10"),
     )
     assert run(env, select(env, ["8.8.8.8"])).success
     assert env.client.execute("""SELECT rdap_start_address, rdap_end_address, rdap_matched_cidr
@@ -522,125 +672,166 @@ def test_optional_parent_failure_preserves_direct_registration(
             "parent unavailable", code="remote_server", retryable=True
         )
 
-    monkeypatch.setattr(enrichment.RdapClient, "lookup_ip", direct)
-    monkeypatch.setattr(enrichment.RdapClient, "lookup_up_url", parent)
+    monkeypatch.setattr(RdapClient, "lookup_ip", direct)
+    monkeypatch.setattr(RdapClient, "lookup_up_url", parent)
     result = run(env, select(env, ["8.8.8.8"]))
     assert result.success
-    metadata = result.asset_materializations_for_node("ip_enrichment_results")[
-        0
-    ].metadata
-    assert metadata["parent_lookup_failures"].value == 1
-    assert metadata["rdap_requests"].value == 2
+    metadata = outcome(result)
+    assert metadata["parent_lookup_failures"] == 1 and metadata["rdap_requests"] == 2
     assert env.client.execute(
         "SELECT rdap_lookup_status, rdap_matched_cidr FROM corpscout.ip_enrichment_current"
     ) == [("found", "8.8.8.0/24")]
 
 
-def test_resume_rejects_different_task_or_lookup_policy(environment):
+def test_resume_rejects_a_changed_lookup_policy_or_a_foreign_execution(environment):
     env = environment
-    first_task = select(env, ["8.8.8.8"])
-    second_task = select(env, ["1.1.1.1"])
-    first = run(env, first_task)
-    assert first.success
-    assert not run(env, second_task, execution_id=first.run_id).success
-    assert not run(env, first_task, execution_id=first.run_id, force_rdap=True).success
-    assert env.calls == ["8.8.8.8"]
+    task = select(env, ["1.1.1.1", "8.8.8.8"])
+    first = run(env, task, max_requests=1)
+    assert not first.success
+    assert not run(env, task, force_rdap=True).success  # frozen profile
+    assert not run(env, task, rdap_cache_days=5).success
+    assert not run(
+        env, task, execution_id=str(uuid4())
+    ).success  # only the saved execution resumes
+    assert env.calls == ["1.1.1.1"]
+    assert run(env, task, execution_id=first.run_id, max_requests=5).success
 
 
-def test_workflow_freezes_and_processes_the_same_task(environment):
+def test_page_work_is_bounded_per_page_not_per_address(environment, monkeypatch):
     env = environment
-    task = str(uuid4())
-    defs = dg.Definitions(
-        assets=[ip_enrichment_input, results.ip_enrichment_results],
-        jobs=[results.ip_enrichment_workflow],
-        resources={
-            "clickhouse": env.resource,
-            "processing": ProcessingResource(postgres_url=env.dsn),
-            "maxmind_geoip": env.maxmind,
-        },
+    seed_network(env, "8.8.8.1", fetched_at=datetime.now(UTC))
+    ips = [f"8.8.8.{n}" for n in range(1, 41)]
+    queries = []
+    execute = Client.execute
+
+    def counting(self, query, *args, **kwargs):
+        queries.append(query)
+        return execute(self, query, *args, **kwargs)
+
+    monkeypatch.setattr(Client, "execute", counting)
+    assert run(env, select(env, ips), batch_size=10).success
+    assert env.calls == []
+    four_pages = query_kinds(queries)
+    assert (
+        four_pages["negative"] <= 4
+        and four_pages["trie"] <= 4
+        and four_pages["networks"] <= 1
     )
-    result = defs.resolve_job_def("ip_enrichment_workflow").execute_in_process(
-        instance=env.instance,
-        run_config={
-            "ops": {
-                "ip_enrichment_input": {
-                    "config": {
-                        "task_id": task,
-                        "ips": ["8.8.8.8", "9.9.9.9", "127.0.0.1"],
-                    }
-                },
-                "ip_enrichment_results": {
-                    "config": {
-                        "task_id": task,
-                        "max_requests": None,
-                        "request_delay_seconds": 0,
-                    }
-                },
-            }
-        },
+    assert (
+        four_pages["markers"] == 0 and four_pages["results"] == 1
+    )  # 40 rows < 500: one flush
+    assert four_pages["context"] == 0
+    assert not any("raw_response" in q for q in queries)
+    queries.clear()
+    assert run(env, select(env, ips), batch_size=40).success
+    one_page = query_kinds(queries)
+    assert (
+        one_page["negative"] <= 1 and one_page["trie"] <= 1 and one_page["results"] == 1
     )
-    assert result.success
-    assert len(result.asset_materializations_for_node("ip_enrichment_input")) == 1
-    assert len(result.asset_materializations_for_node("ip_enrichment_results")) == 1
     assert env.client.execute(
-        "SELECT ip FROM corpscout.ip_enrichment_results WHERE task_id=%(task)s ORDER BY ip",
-        {"task": task},
-    ) == [("127.0.0.1",), ("8.8.8.8",), ("9.9.9.9",)]
-    assert sorted(env.calls) == ["8.8.8.8", "9.9.9.9"]
+        "SELECT count() FROM corpscout.ip_enrichment_results FINAL"
+    ) == [(80,)]
 
 
-def test_registry_level_registration_answers_only_the_queried_ip(
+def test_lost_cleanup_ack_does_not_repeat_lookups(environment, monkeypatch):
+    env = environment
+    task = select(env, ["8.8.8.8"])
+    execute = Client.execute
+    interrupted = False
+
+    def lost_ack(self, query, *args, **kwargs):
+        nonlocal interrupted
+        value = execute(self, query, *args, **kwargs)
+        if (
+            query.startswith("ALTER TABLE corpscout.ip_enrichment_input DROP PARTITION")
+            and not interrupted
+        ):
+            interrupted = True
+            raise ConnectionError("lost cleanup acknowledgement")
+        return value
+
+    monkeypatch.setattr(Client, "execute", lost_ack)
+    assert not run(env, task).success
+    record = task_row(env, task)
+    assert record["status"] == "completed" and record["inputs_purged_at"] is None
+    before = list(env.calls)
+    assert run(env, task).success
+    assert env.calls == before and task_row(env, task)["inputs_purged_at"] is not None
+
+
+def test_new_submissions_after_start_form_the_next_draft(environment):
+    env = environment
+    scope = "scope-" + uuid4().hex
+    first = select(env, ["8.8.8.8"], scope=scope)
+    assert run(env, first).success
+    second = select(env, ["1.1.1.1"], scope=scope)
+    assert second != first and task_row(env, second)["status"] == "draft"
+
+
+def test_run_metadata_publishes_every_per_registry_counter(environment):
+    env = environment
+    metadata = outcome(run(env, select(env, ["5.1.1.1", "202.1.1.1", "8.8.8.8"])))
+    assert metadata["rdap_requests_by_registry"] == {"ripe": 1, "apnic": 1, "arin": 1}
+    assert (
+        metadata["rdap_fallbacks_by_registry"],
+        metadata["reroutes_by_registry"],
+        metadata["pauses_by_registry"],
+        metadata["rdap_person_entities_by_registry"],
+    ) == ({}, {}, {}, {})
+
+
+def test_registry_usage_sql_charges_nir_answers_to_apnic(environment):
+    env = environment
+    normalized = normalize_rdap_network(
+        replace(response("202.3.3.3"), rir="jpnic"),
+        fetched_at=datetime.now(UTC) - timedelta(minutes=5),
+        segment_role="lookup_result",
+    )
+    env.client.execute(
+        RDAP_NETWORK_INSERT_SQL, [normalized.network.clickhouse_values()]
+    )
+    assert [rir for rir, _ in env.client.execute(results.REGISTRY_USAGE_SQL)] == [
+        "apnic"
+    ]
+
+
+def test_failed_bootstrap_pauses_the_run_instead_of_storing_errors(
     environment, monkeypatch
 ):
     env = environment
-    seed_reference_data(env.client)
-    monkeypatch.setattr(
-        enrichment.RdapClient,
-        "lookup_ip",
-        lambda self, ip: (
-            env.calls.append(ip),
-            response(ip, start="103.0.0.0", end="103.255.255.255"),
-        )[1],
-    )
-    first = run(env, select(env, ["103.35.64.49"]))
-    assert first.success
-    assert (
-        first.asset_materializations_for_node("ip_enrichment_results")[0]
-        .metadata["registry_level_responses"]
-        .value
-        == 1
-    )
+    clock = {"now": 0.0}
+    slept = []
+
+    def fake_sleep(seconds):
+        slept.append(seconds)
+        clock["now"] += seconds
+
+    monkeypatch.setattr(enrichment, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(enrichment, "sleep", fake_sleep)
+    failures = iter([True])
+
+    def registry_for(self, ip):
+        if next(failures, False):
+            raise RdapClientError(
+                "IANA unavailable", code="bootstrap_error", retryable=True
+            )
+        return "arin"
+
+    monkeypatch.setattr(RdapClient, "registry_for", registry_for)
+    result = run(env, select(env, ["8.8.8.8", "1.1.1.1"]), batch_size=1)
+    assert result.success
+    metadata = outcome(result)
+    assert metadata["completion_status"] == "completed"
+    assert metadata["pauses_by_registry"] == {"bootstrap": 1}
+    assert metadata["rdap_deferrals_by_registry"] == {"bootstrap": 2}
+    assert (metadata["budget_waits"], sum(slept)) == (1, pytest.approx(60))
+    assert sorted(env.calls) == ["1.1.1.1", "8.8.8.8"]
     assert env.client.execute(
-        "SELECT rdap_lookup_status, rdap_matched_cidr, rdap_start_address FROM corpscout.ip_enrichment_current"
-    ) == [("found", "103.0.0.0/8", "103.0.0.0")]
-    assert env.client.execute(
-        "SELECT network_key, registry_class, covered_rir_blocks, iana_rir, special_status FROM corpscout.rdap_network_registry_class_current"
-    ) == [("arin:TEST-103.35.64.49", "registry_level", 1, "apnic", "")]
-    env.client.execute("SYSTEM RELOAD DICTIONARY corpscout.rdap_network_trie")
-    assert env.client.execute(
-        "SELECT count() FROM corpscout.rdap_network_segments_current"
+        "SELECT countIf(error_code = 'bootstrap_error') FROM corpscout.rdap_ip_lookup_results"
     ) == [(0,)]
-    # Another address of the block is looked up, not served from the /8 (neither trie nor in-run cache).
-    assert run(env, select(env, ["103.15.66.50", "103.15.66.51"]), batch_size=1).success
-    assert env.calls == ["103.35.64.49", "103.15.66.50", "103.15.66.51"]
-    # A holder registration is classified reusable and serves its neighbours as before.
-    monkeypatch.setattr(
-        enrichment.RdapClient,
-        "lookup_ip",
-        lambda self, ip: (
-            env.calls.append(ip),
-            response(ip, start="103.35.64.0", end="103.35.67.255"),
-        )[1],
-    )
-    assert run(env, select(env, ["103.35.64.1", "103.35.64.2"]), batch_size=1).success
-    assert env.calls == ["103.35.64.49", "103.15.66.50", "103.15.66.51", "103.35.64.1"]
     assert env.client.execute(
-        "SELECT registry_class FROM corpscout.rdap_network_registry_class_current WHERE network_key = 'arin:TEST-103.35.64.1'"
-    ) == [("reusable",)]
-    env.client.execute("SYSTEM RELOAD DICTIONARY corpscout.rdap_network_trie")
-    assert env.client.execute(
-        "SELECT dictGetOrDefault('corpscout.rdap_network_trie', 'network_key', tuple(toIPv4('103.35.65.9')), '')"
-    ) == [("arin:TEST-103.35.64.1",)]
+        "SELECT rdap_lookup_status, count() FROM corpscout.ip_enrichment_results FINAL GROUP BY 1"
+    ) == [("found", 2)]
 
 
 def resolver(env, *, started_at=None, cache_days=30, clock=None, sleep=None, **config):
@@ -1708,18 +1899,49 @@ def test_rate_limited_registry_is_paused_and_its_misses_deferred(
     assert enricher.seconds_until_budget_frees() == pytest.approx(900)
 
 
-def test_bootstrap_failure_is_a_retryable_outcome(environment, monkeypatch):
+def test_bootstrap_failure_pauses_every_miss_with_back_off(environment, monkeypatch):
     env = environment
+    clock = {"now": 0.0}
+    attempts = []
+    available = {"ok": False}
 
-    def unavailable(self, ip):
-        raise RdapClientError("no bootstrap", code="bootstrap_error", retryable=True)
+    def registry_for(self, ip):
+        attempts.append(ip)
+        if not available["ok"]:
+            raise RdapClientError(
+                "no bootstrap", code="bootstrap_transport_error", retryable=True
+            )
+        return "arin"
 
-    monkeypatch.setattr(RdapClient, "registry_for", unavailable)
-    resolved = resolver(env).resolve_page(page(env, "8.8.8.8"))
-    assert (
-        resolved["8.8.8.8"]["rdap_lookup_status"],
-        resolved["8.8.8.8"]["rdap_error_code"],
-    ) == ("retryable_error", "bootstrap_error")
+    monkeypatch.setattr(RdapClient, "registry_for", registry_for)
+    enricher = resolver(env, clock=lambda: clock["now"])
+    # The first miss fails the bootstrap; the rest of the page is deferred without
+    # asking again, and no address gets a result or a marker.
+    assert enricher.resolve_page(page(env, "8.8.8.8", "1.1.1.1")) == {}
+    assert attempts == ["8.8.8.8"] and enricher.deferred == {"bootstrap": 2}
+    assert enricher.seconds_until_budget_frees() == pytest.approx(60)
+    assert env.client.execute(
+        "SELECT count() FROM corpscout.rdap_ip_lookup_results"
+    ) == [(0,)]
+    clock["now"] = 60.0
+    enricher.reset_pass()
+    assert enricher.resolve_page(page(env, "8.8.8.8")) == {}
+    assert enricher.seconds_until_budget_frees() == pytest.approx(120)  # doubled
+    clock["now"] = 180.0 + 20 * 900  # far later: the cap is 15 minutes
+    for _ in range(5):
+        enricher.reset_pass()
+        enricher.resolve_page(page(env, "8.8.8.8"))
+        clock["now"] += enricher.seconds_until_budget_frees()
+    assert enricher.pauses_by_registry == {"bootstrap": 7}
+    enricher.reset_pass()
+    enricher.resolve_page(page(env, "8.8.8.8"))
+    assert enricher.seconds_until_budget_frees() == pytest.approx(900)
+    clock["now"] += 900
+    available["ok"] = True
+    enricher.reset_pass()
+    resolved = enricher.resolve_page(page(env, "8.8.8.8"))
+    assert resolved["8.8.8.8"]["rdap_lookup_status"] == "found"
+    assert enricher._bootstrap_failures == 0
 
 
 def test_budget_keys_are_registry_names_and_the_cache_keeps_a_page(environment):
