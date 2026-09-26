@@ -206,26 +206,39 @@ from the backoffice: Admin → Settings → GeoLite2 (`/admin/settings/geolite2`
 2. Upload one or both on the page (MaxMind's `.tar.gz` or a bare `GeoLite2-<edition>.mmdb`,
    at most 200 MB each). The backoffice checks only the file name and size, stores each file
    unchanged in bucket `geolite2` under `uploads/<uuid>/<file name>` (the bucket is created
-   on first use; the Dagster asset expires `uploads/` after 90 days by a lifecycle rule) and
-   launches `geolite2_install_job` with the uploaded keys. The page refreshes until the run
-   ends and links it in Dagster.
+   on first use) and launches `geolite2_install_job` with the uploaded keys. The page
+   refreshes until the run ends and links it in Dagster.
 3. The asset `geolite2_databases` (group `commoncrawl_geoip`) is the authority. For each
    upload it extracts the single `GeoLite2-<edition>.mmdb` member (tar data filter; absolute
-   paths, `..` and links refused), requires `database_type == "GeoLite2-<edition>"` and
+   paths, `..`, links and other non-regular members refused), requires `database_type == "GeoLite2-<edition>"` and
    refuses a build older than the installed one (an equal build with the same bytes is a
-   no-op). Every upload is validated before anything is replaced; then each file is copied to
+   no-op); a missing upload object fails the run naming the key. Every upload is validated
+   before anything is replaced; then each file is copied to
    `.GeoLite2-<edition>.mmdb.<uuid>.tmp` in the same directory, fsynced, re-opened and moved
    over the old file with `os.replace` (a rename: a running enrichment keeps its mapped old
-   inode). A refusal fails the run and replaces nothing. The files are owned by the Dagster
-   service user, mode 0644.
+   inode). Right before each rename the installed build is read again and the run stops if
+   it is now newer (a concurrent install). A refusal during validation replaces nothing; a
+   failure between the two renames can leave one edition replaced — the metadata and the
+   run log say which. Staged files not renamed are removed, and every run first sweeps
+   `.GeoLite2-*.mmdb.*.tmp` files older than an hour (left by a run that died). The files
+   are written by the user Dagster runs as (root on the host), mode 0644.
+   After installing, the asset applies the lifecycle rule expiring `uploads/` after 90 days;
+   a store that refuses it only logs a warning (`lifecycle_applied = false`).
 4. No restart: `ip_enrichment_results` opens the files per run; the next run uses the new
    files. The materialization metadata (`city_build`, `asn_build`, `city_sha256`,
-   `asn_sha256`, `installed`, `source_keys`, `fresh`, `city_age_days`, `asn_age_days`) is
-   what the page shows as installed.
+   `asn_sha256` — `missing` or `unreadable` when there is no readable file — `installed`,
+   `source_keys`, `lifecycle_applied`, `fresh`, `city_age_days`, `asn_age_days`) is what the
+   page shows as installed.
 5. The check `geolite2_databases_fresh` (job `geolite2_freshness_job`, or launch
    `ip_enrichment_results` with its checks) fails when either build epoch is older than
    14 days. Every results run also reports `geolite2_city_build`/`geolite2_asn_build` and
    warns when stale.
+
+Installs never overlap: the asset declares pool `geolite2_install`, and the instance limits
+every pool to one slot (`dagster.yaml` `concurrency.pools.default_limit: 1`); a second
+upload's run waits for the first. The page disables the upload button while the latest
+install run is unfinished; a zombie run stuck in `STARTED` (host crash) keeps it disabled —
+terminate it in Dagster (mark as canceled) to re-enable the button.
 
 Files replaced on the host by any other route are not reflected on the page until the next
 install run materializes the asset.
@@ -274,4 +287,7 @@ with partition purge, errors as published outcomes, budget resume, lost write an
 acknowledgements, changed-profile refusal. `tests/test_geolite2_freshness.py`: build times,
 14-day rule, check wiring. `tests/test_geolite2_install.py` (disposable RustFS, MaxMind's test
 databases): archive and bare installs, atomic replace, older-build and edition refusals,
-unsafe archive members, validate-all-before-install, metadata, upload expiry rule.
+unsafe archive members (traversal, links, hardlinks, devices), missing uploads, staged-copy
+cleanup and the stale-temp sweep, a concurrent newer install, validate-all-before-install,
+metadata (including an unreadable installed file), the upload expiry rule and its
+warning-only failure.
