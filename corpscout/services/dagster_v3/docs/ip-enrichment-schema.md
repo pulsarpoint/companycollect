@@ -1,7 +1,7 @@
 # Shared IP enrichment schema
 
 Migration `000433_corpscout_ip_enrichment` introduces two ClickHouse tables and
-one ordinary view in `corpscout`. Since migration `000456` the input table follows the
+one ordinary view in `corpscout`. Since migration `000458` the input table follows the
 shared processing queue contract: `ip_enrichment_input` appends to an open draft and
 `ip_enrichment_results` freezes and processes it (see
 [ip-enrichment-draft-queue.md](operations/ip-enrichment-draft-queue.md)). The Workspace IP
@@ -97,7 +97,7 @@ only their queried address). See `docs/operations/ip-registry-reference-data.md`
 
 ## Materializing the input asset
 
-Apply migrations 000433 and 000456 before using `ip_enrichment_input` (group
+Apply migrations 000433 and 000458 before using `ip_enrichment_input` (group
 `ip_enrichment`) or `ip_enrichment_input_job`. The asset appends to the open draft
 named by `queue_scope` (default `workspace`) with a stable `submission_id`, using the
 existing `clickhouse` and `processing` resources, including `PROCESSING_PG_URL`, just

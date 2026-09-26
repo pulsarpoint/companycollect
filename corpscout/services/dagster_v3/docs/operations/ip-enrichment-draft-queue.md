@@ -3,7 +3,7 @@
 Backoffice **Admin → IP addresses → Add to enrichment queue** launches only
 `ip_enrichment_input_job`. There is one open draft per `queue_scope` (default `workspace`);
 table selections, explicit IP lists and "failed addresses of task X" append to it. Adding
-inputs never looks anything up. Since ClickHouse migration 456 the draft follows the shared
+inputs never looks anything up. Since ClickHouse migration 458 the draft follows the shared
 processing queue contract
 ([spec](../superpowers/specs/2026-09-24-shared-processing-queue-contract-design.md)), like
 Webtech and the crawler.

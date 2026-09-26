@@ -15,7 +15,7 @@
 
 - **Registry reference data and the data-driven registry-level rule** (main `b33ca08d2`): ClickHouse `000450` (`ip_registry_*` tables/views, `ip_registry_special_trie`, holder blocks, `rdap_network_registry_class` + `_current` + `_derived`, rule view `ip_registry_iana_blocks_rule_current`, `ip_registry_ready`) and `000451` (`rdap_network_segments_current` / `rdap_network_trie` serve only registrations classified `reusable`). Dagster module `defs/ip_registry` (7 loader assets, 7 checks, `ip_registry_refresh_job`, schedule `ip_registry_daily` at 06:05 UTC, RUNNING). On 2026-09-25 evening: `ip_registry_ready = 1`, 15,319 classified networks (15,307 `reusable`, 11 `registry_level`, 1 `unallocated`), trie 16,595 elements.
 - `defs/commoncrawl_rdap/registry.py`: `classify_registration(client, network) -> RegistryClassification` (`.registry_class`, `.reusable`, `.clickhouse_values(network_key, classified_at)`), `REGISTRY_CONTEXT_SQL` (one round trip per RDAP miss), `REGISTRY_CLASS_SQL`, `REGISTRY_CLASS_INSERT_SQL`. `RdapEnricher` (`defs/ip_enrichment/enrichment.py:384-395`) and the legacy bucket worker (`commoncrawl_rdap/assets.py:609`) already classify each direct registration, write the class row between the network row and its segments, and never put a non-reusable registration into their in-run caches. **R1: this plan keeps that behaviour inside the per-page resolver and adds no classifier, no segment role and no trie-exclusion migration of its own.**
-- ClickHouse ledger on prod: `max(version) WHERE dirty=0` = **452** on 2026-09-25 evening (`000452_corpscout_website_crawl_normalized` belongs to the crawl-normalization workstream; `000449` is `queue_task_sources`). This plan needs **one** migration; it took **000453** and was renumbered to **000456** on 2026-09-26 (final review C1: prod's ledger had reached 454 from the unmerged `codex/crawl-normalization-schema` branch — 452 website_crawl_normalized, 453 brave_draft_queue, 454 retire_brave_legacy_input — with an untracked 455 beside it); re-check main AND prod at merge (Task 8 Step 1).
+- ClickHouse ledger on prod: `max(version) WHERE dirty=0` = **452** on 2026-09-25 evening (`000452_corpscout_website_crawl_normalized` belongs to the crawl-normalization workstream; `000449` is `queue_task_sources`). This plan needs **one** migration; it took **000453** and was renumbered to **000458** on 2026-09-26 (final review C1: prod's ledger had reached 454 from the unmerged `codex/crawl-normalization-schema` branch — 452 website_crawl_normalized, 453 brave_draft_queue, 454 retire_brave_legacy_input — with an untracked 455 beside it); re-check main AND prod at merge (Task 8 Step 1).
 
 ## Production state this plan starts from (read-only inventory, 2026-09-25 evening)
 
@@ -47,20 +47,20 @@ Last writers: the terminated run's last `ip_enrichment_results` insert was 2026-
 - GeoLite2 (R2): no MaxMind account; the owner replaces `GeoLite2-City.mmdb`/`GeoLite2-ASN.mmdb` by hand. This plan keeps only the check `geolite2_databases_fresh` (fails when either loaded file's build epoch is older than 14 days; no credentials), the `.env.example:70-71` fix and the manual procedure in the docs. `MaxMindDatabaseResource.database_paths()` resolves the paths at execution time and `ip_enrichment_results` opens the files per run, so a replaced file is used by the next run without a restart; replace by `mv` (rename), never by copying over the open file (maxminddb maps it).
 - `ip_enrichment_workflow` is removed; the backoffice "Enrich" adds to the draft (`ip_enrichment_input_job`), processing starts from the queue page (D8).
 - Out of scope, listed as follow-ups at the end (D9).
-- Destructive migrations carry an inline `throwIf` gate; migration comments must not contain `;`; no `TRUNCATE` inside a migration. This plan's single migration is **000456** (`corpscout_ip_enrichment_queue_contract`; 000453 until 2026-09-26); re-check at merge with `ls clickhouse/migrations | tail -2` and prod `SELECT max(version) FROM corpscout.schema_migrations WHERE dirty=0` (452 on 2026-09-25 evening; the ledger is TinyLog with a dirty=1 and a dirty=0 row per version). If another workstream took 456, renumber both files and every mention in Tasks 1–8.
+- Destructive migrations carry an inline `throwIf` gate; migration comments must not contain `;`; no `TRUNCATE` inside a migration. This plan's single migration is **000458** (`corpscout_ip_enrichment_queue_contract`; 000453 until 2026-09-26); re-check at merge with `ls clickhouse/migrations | tail -2` and prod `SELECT max(version) FROM corpscout.schema_migrations WHERE dirty=0` (452 on 2026-09-25 evening; the ledger is TinyLog with a dirty=1 and a dirty=0 row per version). If another workstream took 456, renumber both files and every mention in Tasks 1–8.
 - Commands from `services/dagster_v3`: `uv run --frozen --no-sync pytest … -q -p no:cacheprovider`, `uv run --frozen --no-sync dg check defs`, `uv run --frozen --no-sync ruff format <touched files>` and `uv run --frozen --no-sync ruff check <touched files>` on touched Python files only. Backoffice from `services/backoffice`: `npm run typecheck` and targeted `npx vitest run <file>` only (the full suite hits prod ClickHouse). Test fixtures that start containers wait for `docker port` and probe with `docker exec … clickhouse-client` before use (already the case in `tests/test_ip_enrichment_input.py:server`). Never call real RDAP servers, IANA or MaxMind from tests.
 - Commit by explicit path, never `git add -A` (`searcher/` and other sessions' files are unrelated untracked work). Conventional commits with trailer `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>`.
 - Do not restart `corpscout-dagster-dev`; deploy by `light_sync`. Task 8 requires the owner's go-ahead before its first step and again before the wipe. Heavy runs (the smoke batch and the full re-run) run on the prod Dagster host, never locally; anything spanning more than one run is a server-side procedure, not a loop on the workstation.
 
 ## Task ordering note
 
-Task 1 (migration 000456) precedes the import rewrite because the new table requires `submission_id` and the bucket-prefixed `input_id`, which today's `ip_enrichment_input` does not write; the input suite is red between Task 1 and Task 2 and the results suite between Task 1 and Task 5 (both are rewritten in those tasks), so run only the files each task names. Task 3 (the GeoLite2 check) comes before the resolver and the execution loop because Task 5 imports its `MAX_AGE`/`freshness` to report the build dates of every run. Task 4 (resolver) and Task 5 (loop) are the throughput work; Task 6 the backoffice; Task 7 the docs; Task 8 the deploy with the wipe, the smoke batch and the full re-run.
+Task 1 (migration 000458) precedes the import rewrite because the new table requires `submission_id` and the bucket-prefixed `input_id`, which today's `ip_enrichment_input` does not write; the input suite is red between Task 1 and Task 2 and the results suite between Task 1 and Task 5 (both are rewritten in those tasks), so run only the files each task names. Task 3 (the GeoLite2 check) comes before the resolver and the execution loop because Task 5 imports its `MAX_AGE`/`freshness` to report the build dates of every run. Task 4 (resolver) and Task 5 (loop) are the throughput work; Task 6 the backoffice; Task 7 the docs; Task 8 the deploy with the wipe, the smoke batch and the full re-run.
 
 ## File Structure
 
 | File | Change | Responsibility after this plan |
 | --- | --- | --- |
-| `clickhouse/migrations/000456_corpscout_ip_enrichment_queue_contract.{up,down}.sql` | create | partitioned entry table (gated rebuild while empty) |
+| `clickhouse/migrations/000458_corpscout_ip_enrichment_queue_contract.{up,down}.sql` | create | partitioned entry table (gated rebuild while empty) |
 | `services/dagster_v3/src/dagster_v3/defs/ip_enrichment/input.py` | rewrite | config, `selected_ips_sql` (+ failed-of-task mode), `INPUT_ID_SQL`, `load_ip_draft`, input asset/job |
 | `services/dagster_v3/src/dagster_v3/defs/commoncrawl_rdap/client.py` | modify | `RdapClient.registry_for` (registry of an address from whoisit's bootstrap data, no HTTP) |
 | `services/dagster_v3/src/dagster_v3/defs/commoncrawl_rdap/ripe_rest.py` | create | RIPE Database REST search with `no-referenced` (no person/role objects) reshaped into the RDAP document the normalizer reads |
@@ -86,12 +86,12 @@ Task 1 (migration 000456) precedes the import rewrite because the new table requ
 Removed from the previous version of this plan (R1–R3): the registry-level classifier and migration 449 (`registry_level_reason`, `REGISTRY_LEVEL_SQL`, segment role `registry_level`), the GeoLite2 download asset/job/weekly schedule and `MAXMIND_ACCOUNT_ID`/`MAXMIND_LICENSE_KEY`, and the ~170k-IP remediation draft (superseded by the clean re-run). Corrected on 2026-09-26: the first draft of R4 assumed a 20,000-request RIPE allowance and a default budget of 18,000 requests/day; the AUP limit is 1,000 *personal data sets* per address, which the REST path avoids entirely (Task 4). Also considered and dropped on 2026-09-26: bulk RIR database dumps (terms of use, NIR precision) and proxy egress lanes with per-lane budgets (no speed gain, anti-avoidance clause).
 
 ---
-### Task 1: Partitioned entry table (migration 000456) and the entry-table contract test
+### Task 1: Partitioned entry table (migration 000458) and the entry-table contract test
 
 `task_id` becomes `String` (as in 446/448: the partition key and the shared `purge_completed_inputs` pass `DROP PARTITION %(task)s` as a string). The results table keeps `task_id UUID`; comparisons with a string parameter already work today (`results.py:83`). The migration rebuilds the table only while it is empty; on prod that is true after Task 8's wipe.
 
 **Files:**
-- Create: `clickhouse/migrations/000456_corpscout_ip_enrichment_queue_contract.up.sql`, `…down.sql`
+- Create: `clickhouse/migrations/000458_corpscout_ip_enrichment_queue_contract.up.sql`, `…down.sql`
 - Modify: `services/dagster_v3/tests/test_clickhouse_migrations.py` (`EXPECTED_MIGRATIONS`, after its last entry)
 - Modify: `services/dagster_v3/tests/test_ip_enrichment_input.py:88-96` (`server` fixture) and append the contract test
 - Modify: `services/dagster_v3/tests/test_ip_enrichment_clickhouse_local.py:12-13, 21-27, 84-98, 101, 128-134`
@@ -100,7 +100,7 @@ Removed from the previous version of this plan (R1–R3): the registry-level cla
 **Interfaces:**
 - Produces: `corpscout.ip_enrichment_input(task_id String, input_id String, ip String, ip_version UInt8 MATERIALIZED, bucket UInt16 MATERIALIZED, source_name LowCardinality(String), source_record_id String, source_run_id String, submission_id String, observed_at Nullable(DateTime64(6,'UTC')), submitted_at DateTime64(6,'UTC'))`, `ENGINE = MergeTree PARTITION BY task_id ORDER BY (task_id, input_id)`, constraints `valid_identity` (non-empty `task_id`/`submission_id`, `input_id` equals the bucket-prefixed JSON tuple), `valid_source`, `canonical_ip`.
 - Produces (module `dagster_v3.defs.ip_enrichment.input`): `INPUT_ID_SQL: str` with `{ip}`, `{source}`, `{record}` placeholders.
-- The `server` fixture of `tests/test_ip_enrichment_input.py` (imported by `test_ip_enrichment_results.py`, `test_ip_registry.py`, `test_webtech_input.py`, `test_webtech_draft_execution.py`, `test_domains_inventory.py`, `test_web_inventory.py`, `test_domains_search.py`) applies 000433 then 000456; its name and shape are unchanged.
+- The `server` fixture of `tests/test_ip_enrichment_input.py` (imported by `test_ip_enrichment_results.py`, `test_ip_registry.py`, `test_webtech_input.py`, `test_webtech_draft_execution.py`, `test_domains_inventory.py`, `test_web_inventory.py`, `test_domains_search.py`) applies 000433 then 000458; its name and shape are unchanged.
 
 - [ ] **Step 1: Confirm the migration number is free**
 
@@ -110,11 +110,11 @@ Expected: the highest number is `000452` (`000452_corpscout_website_crawl_normal
 Run: `ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT max(version) FROM corpscout.schema_migrations WHERE dirty=0"'`
 Expected: `452`. If another workstream took 453 on main or prod, renumber both files of this task and every mention in Tasks 2–8.
 
-*(2026-09-26: this happened — the codex branch took 453–455, so the migration is now 000456; the file names below are updated. `EXPECTED_MIGRATIONS` lists only the files on this branch; 452–455 are added when the codex branch is merged first, Task 8 Step 1.)*
+*(2026-09-26: this happened — the codex branch took 453–455, so the migration is now 000458; the file names below are updated. `EXPECTED_MIGRATIONS` lists only the files on this branch; 452–455 are added when the codex branch is merged first, Task 8 Step 1.)*
 
 - [ ] **Step 2: Write the migrations**
 
-`clickhouse/migrations/000456_corpscout_ip_enrichment_queue_contract.up.sql`:
+`clickhouse/migrations/000458_corpscout_ip_enrichment_queue_contract.up.sql`:
 
 ```sql
 CREATE DATABASE IF NOT EXISTS corpscout;
@@ -160,7 +160,7 @@ ORDER BY (task_id, input_id)
 SETTINGS number_of_free_entries_in_pool_to_execute_mutation = 1;
 ```
 
-`clickhouse/migrations/000456_corpscout_ip_enrichment_queue_contract.down.sql` (the 000433 layout):
+`clickhouse/migrations/000458_corpscout_ip_enrichment_queue_contract.down.sql` (the 000433 layout):
 
 ```sql
 CREATE DATABASE IF NOT EXISTS corpscout;
@@ -192,7 +192,7 @@ ENGINE = MergeTree
 ORDER BY (input_id, task_id);
 ```
 
-In `services/dagster_v3/tests/test_clickhouse_migrations.py` append `"000456_corpscout_ip_enrichment_queue_contract",` as the last entry of `EXPECTED_MIGRATIONS` (after `"000452_corpscout_website_crawl_normalized",` when that entry is present on your branch, else after `"000451_corpscout_rdap_trie_registry_class_exclusion",`).
+In `services/dagster_v3/tests/test_clickhouse_migrations.py` append `"000458_corpscout_ip_enrichment_queue_contract",` as the last entry of `EXPECTED_MIGRATIONS` (after `"000452_corpscout_website_crawl_normalized",` when that entry is present on your branch, else after `"000451_corpscout_rdap_trie_registry_class_exclusion",`).
 
 - [ ] **Step 3: Apply it in the shared fixture and write the contract test**
 
@@ -203,7 +203,7 @@ In `services/dagster_v3/tests/test_ip_enrichment_input.py` replace lines 88-96 (
             migrations = Path(__file__).resolve().parents[3] / "clickhouse/migrations"
             for name in (
                 "000433_corpscout_ip_enrichment.up.sql",
-                "000456_corpscout_ip_enrichment_queue_contract.up.sql",
+                "000458_corpscout_ip_enrichment_queue_contract.up.sql",
             ):
                 for statement in (migrations / name).read_text(encoding="utf-8").split(";"):
                     if statement.strip():
@@ -249,7 +249,7 @@ def test_entry_table_follows_the_queue_contract(database):
 ```python
 # The entry identity, computed where the entries live: the address's 256-way bucket first,
 # so a task is walked bucket by bucket, then the JSON tuple of source, record and IP.
-# Migration 000456 enforces the same expression in its valid_identity CHECK.
+# Migration 000458 enforces the same expression in its valid_identity CHECK.
 INPUT_ID_SQL = (
     "concat(leftPad(toString(toUInt16(cityHash64({ip}) % 256)), 3, '0'), ':', "
     "toJSONString(tuple({source}, {record}, {ip})))"
@@ -265,7 +265,7 @@ Replace lines 12-13 with:
 ```python
 MIGRATIONS = Path(__file__).resolve().parents[3] / "clickhouse/migrations"
 MIGRATION = "000433_corpscout_ip_enrichment"
-QUEUE_MIGRATION = "000456_corpscout_ip_enrichment_queue_contract"
+QUEUE_MIGRATION = "000458_corpscout_ip_enrichment_queue_contract"
 IDENTITY = "concat(leftPad(toString(toUInt16(cityHash64(ip) % 256)), 3, '0'), ':', toJSONString(tuple(source_name, source_record_id, ip)))"
 ```
 
@@ -340,7 +340,7 @@ Expected: all pass. (`test_legacy_geoip_migration.py` only applies 000433 and to
 - [ ] **Step 6: Commit**
 
 ```bash
-git add clickhouse/migrations/000456_corpscout_ip_enrichment_queue_contract.up.sql clickhouse/migrations/000456_corpscout_ip_enrichment_queue_contract.down.sql services/dagster_v3/tests/test_clickhouse_migrations.py services/dagster_v3/tests/test_ip_enrichment_input.py services/dagster_v3/tests/test_ip_enrichment_clickhouse_local.py services/dagster_v3/src/dagster_v3/defs/ip_enrichment/input.py
+git add clickhouse/migrations/000458_corpscout_ip_enrichment_queue_contract.up.sql clickhouse/migrations/000458_corpscout_ip_enrichment_queue_contract.down.sql services/dagster_v3/tests/test_clickhouse_migrations.py services/dagster_v3/tests/test_ip_enrichment_input.py services/dagster_v3/tests/test_ip_enrichment_clickhouse_local.py services/dagster_v3/src/dagster_v3/defs/ip_enrichment/input.py
 git commit -m "feat(clickhouse): partition ip_enrichment_input by task with bucket-prefixed input ids and a required submission_id
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
@@ -722,7 +722,7 @@ PROCESSOR_VERSION = "ip-enrichment-v1"
 ERROR_STATUSES = ("retryable_error", "terminal_error")
 # The entry identity, computed where the entries live: the address's 256-way bucket first,
 # so a task is walked bucket by bucket, then the JSON tuple of source, record and IP.
-# Migration 000456 enforces the same expression in its valid_identity CHECK.
+# Migration 000458 enforces the same expression in its valid_identity CHECK.
 INPUT_ID_SQL = (
     "concat(leftPad(toString(toUInt16(cityHash64({ip}) % 256)), 3, '0'), ':', "
     "toJSONString(tuple({source}, {record}, {ip})))"
@@ -4609,7 +4609,7 @@ Create `services/dagster_v3/docs/operations/ip-enrichment-draft-queue.md`:
 Backoffice **Admin → IP addresses → Add to enrichment queue** launches only
 `ip_enrichment_input_job`. There is one open draft per `queue_scope` (default `workspace`);
 table selections, explicit IP lists and "failed addresses of task X" append to it. Adding
-inputs never looks anything up. Since ClickHouse migration 456 the draft follows the shared
+inputs never looks anything up. Since ClickHouse migration 458 the draft follows the shared
 processing queue contract
 ([spec](../superpowers/specs/2026-09-24-shared-processing-queue-contract-design.md)), like
 Webtech and the crawler.
@@ -4801,9 +4801,9 @@ acknowledgements, changed-profile refusal. `tests/test_geolite2_freshness.py`: b
 - [ ] **Step 2: Update the schema doc**
 
 In `services/dagster_v3/docs/ip-enrichment-schema.md`:
-- lines 3-8: replace "The `ip_enrichment_input` Dagster asset prepares input batches from a list or a source relation. `ip_enrichment_results` processes a prepared task using the existing MaxMind mapping and RDAP network cache. The Workspace IP addresses page submits both steps through `ip_enrichment_workflow`." with "Since migration `000456` the input table follows the shared processing queue contract: `ip_enrichment_input` appends to an open draft and `ip_enrichment_results` freezes and processes it (see [ip-enrichment-draft-queue.md](operations/ip-enrichment-draft-queue.md)). The Workspace IP addresses page adds to the draft; processing starts from the queue page." Keep the sentence about migrations 434–435 and add: "Their imported rows were removed in the 2026-09 clean re-run; every row now comes from `ip-enrichment-v1`."
+- lines 3-8: replace "The `ip_enrichment_input` Dagster asset prepares input batches from a list or a source relation. `ip_enrichment_results` processes a prepared task using the existing MaxMind mapping and RDAP network cache. The Workspace IP addresses page submits both steps through `ip_enrichment_workflow`." with "Since migration `000458` the input table follows the shared processing queue contract: `ip_enrichment_input` appends to an open draft and `ip_enrichment_results` freezes and processes it (see [ip-enrichment-draft-queue.md](operations/ip-enrichment-draft-queue.md)). The Workspace IP addresses page adds to the draft; processing starts from the queue page." Keep the sentence about migrations 434–435 and add: "Their imported rows were removed in the 2026-09 clean re-run; every row now comes from `ip-enrichment-v1`."
 - lines 12-16: replace with "`ip_enrichment_input` is `MergeTree`, `PARTITION BY task_id`, `ORDER BY (task_id, input_id)`, read without `FINAL`. `input_id` is the bucket-prefixed JSON tuple of `source_name`, `source_record_id` and `ip`, computed and enforced in ClickHouse; the draft keeps one row per identity and a completed task drops its partition."
-- lines 92-151 ("Materializing the input asset"): replace "Apply migration 000433 before using" with "Apply migrations 000433 and 000456 before using"; replace the first paragraph's asset description with the draft semantics (stable `submission_id`, `queue_scope`, one of `ips`/`source_relation`/`retry_failed_task_id`), keep the two YAML examples, add `retry_failed_task_id: "<task uuid>"` as a third, and replace the paragraphs from "The materialization reports `task_id`, `selected_inputs`, and `selected_ips`." to the end of the section with: "The materialization reports `task_id`, `submission_id`, `input_count` (rows this submission added) and `total`. Repeating a `submission_id` with the same selection is a no-op; a different selection under it is rejected; a failed import is retried by reselecting the source. New submissions after Start go to the next draft. `tests/test_ip_enrichment_input.py` exercises every mode and crash recovery using disposable ClickHouse and PostgreSQL servers."
+- lines 92-151 ("Materializing the input asset"): replace "Apply migration 000433 before using" with "Apply migrations 000433 and 000458 before using"; replace the first paragraph's asset description with the draft semantics (stable `submission_id`, `queue_scope`, one of `ips`/`source_relation`/`retry_failed_task_id`), keep the two YAML examples, add `retry_failed_task_id: "<task uuid>"` as a third, and replace the paragraphs from "The materialization reports `task_id`, `selected_inputs`, and `selected_ips`." to the end of the section with: "The materialization reports `task_id`, `submission_id`, `input_count` (rows this submission added) and `total`. Repeating a `submission_id` with the same selection is a no-op; a different selection under it is rejected; a failed import is retried by reselecting the source. New submissions after Start go to the next draft. `tests/test_ip_enrichment_input.py` exercises every mode and crash recovery using disposable ClickHouse and PostgreSQL servers."
 - lines 153-221 ("Materializing enrichment results"): keep the YAML example and add `registry_daily_budgets: {}`, `ripe_rest: true` and `apnic_whois: true` to it; replace from "The input batch must be fully prepared." through the end of the section with the summary: freeze via the shared lifecycle, per-bucket live remaining query, bounded round trips per page, one class-context query per miss, `ResultBuffer` writes, frozen cache window, RIPE via the REST search and APNIC via whois `-r` without personal data (NIR space falls back to RDAP), optional per-registry budgets with deferral and waits, `max_requests` budget → failed run that resumes on re-run, errors are published outcomes (`completed_with_errors`), completion drops the partition, `attempt` always 1, retries via a new draft, GeoLite2 build dates in the metadata; end with the pointer to the operations guide.
 - lines 248-268 ("Workspace IP selection"): replace "`ip_enrichment_workflow` runs input preparation before results processing with one shared task UUID." with "**Add to enrichment queue** launches `ip_enrichment_input_job` with a stable `submission_id` and `queue_scope: workspace`; processing is started from Queues → IP enrichment." and replace the last paragraph with "The queue sheet's template sends `max_requests: null` so the whole task is processed; the standalone asset default remains 250 requests. Large drafts run in the background and the queue page links to their Dagster run."
 
@@ -4863,10 +4863,10 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 
 - **Merge order (final review C2, 2026-09-26).** Prod's ClickHouse ledger reached 454 from the unmerged branch `codex/crawl-normalization-schema` (`000452_corpscout_website_crawl_normalized`, `000453_corpscout_brave_draft_queue`, `000454_corpscout_retire_brave_legacy_input`, plus an untracked `000455_corpscout_brave_search_versions` in the main checkout); `origin/main` was at 451 (`b33ca08d2`). Before anything below:
   - (a) `codex/crawl-normalization-schema` is merged to `main` first — by the owner or that branch's session, not by this task. Check: `git merge-base --is-ancestor codex/crawl-normalization-schema main && echo merged`.
-  - (b) This branch is then merged (or rebased) onto that `main` with the conflicts resolved so that Brave is a draft queue too. The shared backoffice lines both branches edit: `app/lib/queues.ts` (`DRAFT_QUEUES` includes `brave` if codex made it one), `app/lib/queues.server.ts` (the `inputOrder` rule becomes "draft queues → `(task_id, input_id)`", i.e. `isDraftQueue(filters.type) ? "task_id, input_id" : "input_id, task_id"`; `OUTCOME_TAGS` keeps codex's `brave` prefix next to `ip_enrichment`), `admin-queue.tsx` (the three draft-queue conditions and the empty-row `colSpan`), `queue-process-sheet.tsx` (its Brave copy) and `queue-import-status.tsx`. After the merge, from `services/backoffice`: `npm run typecheck` and `npx vitest run tests/ip-enrichment.server.test.ts tests/admin-ip-addresses-action.test.ts tests/queues.server.test.ts tests/queue-route.test.ts tests/crawl-queue.server.test.ts tests/webtech-queue.server.test.ts` → clean and green; in `services/dagster_v3` the suites named in the final-fix report stay green. `EXPECTED_MIGRATIONS` in `tests/test_clickhouse_migrations.py` then lists 452–455 (from codex) before `000456_corpscout_ip_enrichment_queue_contract`.
+  - (b) This branch is then merged (or rebased) onto that `main` with the conflicts resolved so that Brave is a draft queue too. The shared backoffice lines both branches edit: `app/lib/queues.ts` (`DRAFT_QUEUES` includes `brave` if codex made it one), `app/lib/queues.server.ts` (the `inputOrder` rule becomes "draft queues → `(task_id, input_id)`", i.e. `isDraftQueue(filters.type) ? "task_id, input_id" : "input_id, task_id"`; `OUTCOME_TAGS` keeps codex's `brave` prefix next to `ip_enrichment`), `admin-queue.tsx` (the three draft-queue conditions and the empty-row `colSpan`), `queue-process-sheet.tsx` (its Brave copy) and `queue-import-status.tsx`. After the merge, from `services/backoffice`: `npm run typecheck` and `npx vitest run tests/ip-enrichment.server.test.ts tests/admin-ip-addresses-action.test.ts tests/queues.server.test.ts tests/queue-route.test.ts tests/crawl-queue.server.test.ts tests/webtech-queue.server.test.ts` → clean and green; in `services/dagster_v3` the suites named in the final-fix report stay green. `EXPECTED_MIGRATIONS` in `tests/test_clickhouse_migrations.py` then lists 452–455 (from codex) before `000458_corpscout_ip_enrichment_queue_contract`.
   - (c) The code prod dagster_v3 runs is contained in the `main` being deployed, so Step 7's light_sync does not roll back the Brave/crawl code whose migrations are applied. light_sync rsyncs trees (`src/dagster_v3`, `exchange_rates`, `pyproject.toml`/`uv.lock`) to the Dagster host (`dagster` in `ansible/inventory.ini`, deploy dir `/opt/companycollect/corpscout/dagster_v3` from `group_vars/dagster_hosts/vars.yml`) and records no commit, so confirm it by content: ask the session that last deployed which commit it synced and check `git merge-base --is-ancestor <that commit> main`, and in any case preview from the main checkout with `rsync -rnc --delete --itemize-changes --exclude __pycache__ services/dagster_v3/src/dagster_v3/ dagster:/opt/companycollect/corpscout/dagster_v3/src/dagster_v3/` (dry run, nothing is written). Paths this plan changed (`defs/ip_enrichment/`, `defs/commoncrawl_rdap/`, `defs/commoncrawl_geoip/` and the definitions that register them) are expected. Any other listed path is either newer on `main` (a commit after prod's last sync — fine) or prod-only: fetch the deployed file (`ssh dagster cat …`) and find a `main` commit with that content (`git log main -- <path>`). A `*deleting` line (a file only prod has) or deployed content no `main` commit has means prod runs code `main` lacks — stop and find its commit before Step 7.
-- Everything is merged on `main`, the tree is clean apart from other sessions' untracked files, and `ls clickhouse/migrations | tail -2` shows `000456_corpscout_ip_enrichment_queue_contract.{down,up}.sql` (renumbered from 000453 on 2026-09-26; renumber again before merging if another workstream took 456).
-- Prod ledger: `ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT version, dirty FROM corpscout.schema_migrations ORDER BY version DESC LIMIT 6"'` → the highest version with a `dirty=0` row is `455` (or `454` if codex's `000455` has not been applied), no higher version has only a `dirty=1` row, and nothing is at or above 456. Two more conditions, because `migrate up 1` applies the next file after the ledger's version: **main contains the file of every applied version** (`for v in $(ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT DISTINCT version FROM corpscout.schema_migrations WHERE dirty=0 AND version >= 440 ORDER BY version"'); do ls clickhouse/migrations/$(printf %06d $v)_*.up.sql >/dev/null || echo "missing $v"; done` prints nothing), and **the ledger's highest version is the highest file on main below 456** (if main has a `000455_*.up.sql` that prod has not applied, `up 1` would apply that one instead of ours: stop and have its owner apply it first).
+- Everything is merged on `main`, the tree is clean apart from other sessions' untracked files, and `ls clickhouse/migrations | tail -2` shows `000458_corpscout_ip_enrichment_queue_contract.{down,up}.sql` (renumbered from 000453 on 2026-09-26; renumber again before merging if another workstream took 456).
+- Prod ledger: `ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT version, dirty FROM corpscout.schema_migrations ORDER BY version DESC LIMIT 6"'` → the highest version with a `dirty=0` row is `455` (or `454` if codex's `000455` has not been applied), no higher version has only a `dirty=1` row, and nothing is at or above 458. Two more conditions, because `migrate up 1` applies the next file after the ledger's version: **main contains the file of every applied version** (`for v in $(ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT DISTINCT version FROM corpscout.schema_migrations WHERE dirty=0 AND version >= 440 ORDER BY version"'); do ls clickhouse/migrations/$(printf %06d $v)_*.up.sql >/dev/null || echo "missing $v"; done` prints nothing), and **the ledger's highest version is the highest file on main below 458** (if main has a `000455_*.up.sql` that prod has not applied, `up 1` would apply that one instead of ours: stop and have its owner apply it first).
 - No active runs: in the Dagster UI the run lists of `ip_enrichment_results_job`, `ip_enrichment_input_job`, `ip_enrichment_workflow`, the asset `commoncrawl_ip_rdap_networks` and `ip_registry_refresh_job` filtered to `STARTED`/`QUEUED`/`STARTING` are empty (the 48.6M run `83283501-…` was terminated on 2026-09-25). Do not start between 06:00 and 06:30 UTC (`ip_registry_daily` at 06:05) nor inside the Tuesday 01:05 Stockholm address-chain window.
 - Confirm nothing wrote the tables recently: `ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT max(event_time) FROM system.query_log WHERE event_date >= today() - 1 AND type = '"'"'QueryFinish'"'"' AND query_kind = '"'"'Insert'"'"' AND hasAny(tables, ['"'"'corpscout.ip_enrichment_results'"'"', '"'"'corpscout.rdap_ip_lookup_results'"'"', '"'"'corpscout.ip_enrichment_input'"'"'])"'` → a time before the terminated run ended (2026-09-25 14:47 UTC) or earlier today.
 - GeoLite2 files on the host: `ssh dagster 'ls -l "$(sudo grep "^MAXMIND_DATABASE_DIRECTORY=" /opt/companycollect/corpscout/dagster_v3/.env | cut -d= -f2)"'` → `GeoLite2-City.mmdb` and `GeoLite2-ASN.mmdb`. Their builds are 2026-07-10: tell the owner that `geolite2_databases_fresh` will fail until the new files are installed through the backoffice page Admin → Settings → GeoLite2 (Task 9; Step 8b below, after the deploy and before Step 10, so the 49M new rows carry current GeoIP). Do not fetch the files yourself (no account); the owner has the 20260925 archives.
@@ -4922,17 +4922,17 @@ ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "SE
 
 Expected: `0 0 0 0 0 0 0 0 1 <hundreds of thousands>`; `rdap_network_trie LOADED 0`, `ip_registry_special_trie LOADED` with its previous element count. Save the output as `scratchpad/ip/wipe-after.out`.
 
-- [ ] **Step 6: Apply migration 000456**
+- [ ] **Step 6: Apply migration 000458**
 
 Run from `corpscout/`: `make clickhouse-migrate-up-one </dev/null`
-Expected: `456/u corpscout_ip_enrichment_queue_contract` (the `throwIf` gate passes on the empty table; if it names 455 or any other number, the ledger check of Step 1 was wrong — stop), then
+Expected: `458/u corpscout_ip_enrichment_queue_contract` (the `throwIf` gate passes on the empty table; if it names 455 or any other number, the ledger check of Step 1 was wrong — stop), then
 
 ```bash
 ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT engine, partition_key, sorting_key FROM system.tables WHERE database='"'"'corpscout'"'"' AND name='"'"'ip_enrichment_input'"'"'"'
 ssh companycollect 'docker exec clickhouse-clickhouse-1 clickhouse-client -q "SELECT max(version) FROM corpscout.schema_migrations WHERE dirty=0"'
 ```
 
-→ `MergeTree	task_id	task_id, input_id` and `456`.
+→ `MergeTree	task_id	task_id, input_id` and `458`.
 
 - [ ] **Step 7: Deploy Dagster by light_sync**
 
@@ -5104,7 +5104,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 2. **Duration.** One Dagster run of 6–12 days (≈200k–330k requests at one per second, added to the ClickHouse page work because the loop is single-threaded). A host restart or deploy stops it; the task resumes on re-run (budget window seeded from `rdap_networks`), but nobody re-runs it automatically — the job is tagged `dagster/max_retries: "0"` because Dagster's run retries would otherwise relaunch a failed or `max_requests`-stopped run twice (verified against Dagster 1.13.9 on 2026-09-26) — a resume sensor is a follow-up if the owner wants unattended recovery. Do not launch the legacy `commoncrawl_ip_rdap_networks` worker meanwhile.
 3. **Data gap during the re-run.** `ip_enrichment_current` is empty at the start and fills over the run; backoffice IP pages, company IP views and `commoncrawl_ip_checks` show nothing for addresses not yet reached, and the 8.29M legacy GeoIP rows are gone for good (rollback = the B2 backup named in Step 2).
 4. **GeoLite2 files are from 2026-07-10.** The check will fail until the owner installs the 20260925 archives on the GeoLite2 upload page (Step 8b, Task 9); installing them before Step 10 means the 49M new rows carry current GeoIP, otherwise they carry July builds and a GeoIP-only refresh (follow-up) becomes necessary.
-5. **Migration number.** Renumbered 000453 → **000456** on 2026-09-26: prod's ledger reached 454 from `codex/crawl-normalization-schema` (452–454, with an untracked 455 in the main checkout), none of it on `origin/main` (451). Step 1 requires that branch merged first, main to hold every applied file and the ledger at the highest file below 456; re-check at merge.
+5. **Migration number.** Renumbered 000453 → **000458** on 2026-09-26: prod's ledger reached 454 from `codex/crawl-normalization-schema` (452–454, with an untracked 455 in the main checkout), none of it on `origin/main` (451). Step 1 requires that branch merged first, main to hold every applied file and the ledger at the highest file below 458; re-check at merge. Renumbered again to **000458** on 2026-09-26 17:00 UTC: prod's ledger reached 457 from another session's `000456_corpscout_brave_captcha_health` and `000457_remove_brave_captcha_health`, applied from uncommitted files in the main checkout. Step 6 therefore runs from the main checkout, where those files exist, so `migrate up 1` finds the current version's file.
 6. **Estimate uncertainty.** The per-registry densities come from the terminated run's first 1.08M IPv4 addresses (ordered by IP text, so APNIC/ARIN-heavy); RIPE IPv4 could need 60k–120k requests alone. Step 10's bucket is representative and refines the estimate before the owner commits to Step 11.
 7. **Budget accounting.** The window is seeded from persisted networks (successful direct and parent fetches); failed requests (429, 5xx) are not seeded, so a resume right after a burst of errors undercounts by that burst. In-run accounting counts every request.
 8. **6to4, IPv4-mapped, Teredo and unmapped space.** Since Task 10 (owner decision 2026-09-26) a 6to4 (`2002::/16`, 587 distinct /32s in the inventory) or IPv4-mapped (`::ffff:0:0/96`) address whose embedded IPv4 is global is resolved as that IPv4: same registry routing, budgets, reroutes and caches, the IPv4's marker and segments only, and the IPv6 row carries the IPv4's registry fields (an IPv4 `rdap_matched_cidr` on an IPv6 row; the IPv4 is recomputed from `ip`, no new column). `ip_scope` of those rows is the embedded IPv4's, so GeoIP runs for them (MaxMind aliases both ranges). Before Task 10, 6to4 was `not_global` (Python's `ipaddress` calls all of 2002::/16 non-global) and global IPv4-mapped addresses got `no_registry`. Teredo (`2001::/32`) stays `not_global` with no request, counted as `teredo_special`. Any other global address outside whoisit's bootstrap prefixes is never requested (`registry_for` returns `''`, since whoisit would pick a default server at random, possibly RIPE's or APNIC's RDAP): it gets a **terminal** `no_registry` marker (since the final-fix pass; it was retryable), cached for `rdap_cache_days` like other terminal errors, so a `retry_failed_task_id` draft re-queues it but it is served from the marker without a request until the cache window passes.

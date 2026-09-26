@@ -27,7 +27,7 @@ PROCESSOR_VERSION = "ip-enrichment-v1"
 ERROR_STATUSES = ("retryable_error", "terminal_error")
 # The entry identity, computed where the entries live: the address's 256-way bucket first,
 # so a task is walked bucket by bucket, then the JSON tuple of source, record and IP.
-# Migration 000456 enforces the same expression in its valid_identity CHECK.
+# Migration 000458 enforces the same expression in its valid_identity CHECK.
 INPUT_ID_SQL = (
     "concat(leftPad(toString(toUInt16(cityHash64({ip}) % 256)), 3, '0'), ':', "
     "toJSONString(tuple({source}, {record}, {ip})))"

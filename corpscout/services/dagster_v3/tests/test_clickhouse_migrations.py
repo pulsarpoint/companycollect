@@ -468,7 +468,7 @@ EXPECTED_MIGRATIONS = (
     "000453_corpscout_brave_draft_queue",
     "000454_corpscout_retire_brave_legacy_input",
     "000455_corpscout_brave_search_versions",
-    "000456_corpscout_ip_enrichment_queue_contract",
+    "000458_corpscout_ip_enrichment_queue_contract",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
