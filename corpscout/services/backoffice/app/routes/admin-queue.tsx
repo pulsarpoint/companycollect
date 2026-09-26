@@ -86,11 +86,7 @@ export default function AdminQueue({loaderData}: Route.ComponentProps) {
         {queue.label}<Badge variant={crawlCounts?.[queue.id] ? "default" : "outline"} aria-label={crawlCounts ? `${crawlCounts[queue.id]} queued ${crawlCounts[queue.id] === 1 ? "entry" : "entries"}` : "Queued entries unavailable"}>{crawlCounts ? crawlCounts[queue.id].toLocaleString() : "–"}</Badge>
       </TabsTrigger>)}
     </TabsList></Tabs>}
-    {filters.type === "brave" && (inputs.legacyTasks?.length ?? 0) > 0 && <details className="rounded-md border p-4">
-      <summary className="cursor-pointer text-sm font-medium">Retained legacy inputs ({inputs.legacyTasks.length} tasks)</summary>
-      <p className="my-3 text-sm text-muted-foreground">Earlier task selections remain available for recovery. New additions use the draft queue below.</p>
-      <ul className="flex flex-col gap-2 text-sm">{inputs.legacyTasks.map(task => <li key={task.task_id}><Link className="underline" to={queuePath(filters, {task: task.task_id, page: 1, search: ""})}>{task.task_id}</Link> · {Number(task.total).toLocaleString()} companies</li>)}</ul>
-    </details>}
+
     <section className="flex flex-col gap-4" aria-label="Queue inputs">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-col gap-1"><h2 className="text-lg font-semibold">{QUEUE_TYPES.find(queue => queue.id === filters.type)?.label} inputs</h2>
@@ -156,6 +152,6 @@ export default function AdminQueue({loaderData}: Route.ComponentProps) {
         </TableRow>)}{!history.length && !historyError && <TableRow><TableCell colSpan={filters.type === "crawler" ? 6 : (filters.type === "webtech" || filters.type === "brave") ? 5 : 4}>No processing runs yet.</TableCell></TableRow>}</TableBody>
       </Table>
     </section>
-    {filters.task && searchParams.get("configure") === "1" && <QueueProcessSheet legacyTask={inputs.legacyTask} key={identity} filters={filters} total={inputs.selectedTotal} asset={inputs.asset} blockedReason={processingBlocked} onClose={() => configureProcessing(false)} />}
+    {filters.task && searchParams.get("configure") === "1" && <QueueProcessSheet key={identity} filters={filters} total={inputs.selectedTotal} asset={inputs.asset} blockedReason={processingBlocked} onClose={() => configureProcessing(false)} />}
   </div>;
 }

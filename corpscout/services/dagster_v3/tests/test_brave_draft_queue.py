@@ -401,3 +401,51 @@ def test_cleanup_failure_keeps_membership_and_is_resumable(
     assert client.execute(
         "SELECT count() FROM corpscout.company_brave_task_sources FINAL"
     ) == [(1,)]
+
+
+@pytest.mark.parametrize("values", [
+    {},
+    {"filters": {"company_name": []}},
+    {"filters": {"company_name; DROP TABLE x": ["active"]}},
+    {"company_ids": ["1"], "company_name_column": "company_name)"},
+    {"select_all": True, "source_relation": INPUT_RELATION},
+    {"select_all": True, "source_relation": "corpscout.company_brave_search_input"},
+])
+def test_input_requires_explicit_selection_and_safe_source(values):
+    with pytest.raises(ValueError):
+        BraveQueueInputConfig(**{
+            "source_relation": "corpscout.brave_draft_source",
+            "country_code": "SE", "submission_id": str(uuid4()), **values,
+        })
+
+
+def test_selection_combines_name_id_length_and_exclusions(database, store):
+    client, resource = database
+    processing, _ = store
+    client.execute("INSERT INTO corpscout.brave_draft_source VALUES ('10','Alpha AB'), ('20','Alpha excluded'), ('30','Beta AB'), ('400','Alpha long')")
+    task = add(resource, processing, company_name_pattern="Alpha%", company_id_length=2,
+               excluded_company_ids=["20"])
+    assert task["total"] == 1
+    assert client.execute(f"SELECT company_id FROM {INPUT_RELATION}") == [("10",)]
+
+
+def test_retirement_drops_only_legacy_inputs(database, store):
+    client, resource = database
+    processing, _ = store
+    migration = MIGRATIONS / "000454_corpscout_retire_brave_legacy_input.up.sql"
+    for statement in migration.with_name(migration.name.replace(".up.", ".down.")).read_text().split(";"):
+        if statement.strip():
+            client.execute(statement)
+    client.execute("INSERT INTO corpscout.company_brave_search_input VALUES ('SE:old','old','Old AB','SE','')")
+    client.execute("INSERT INTO corpscout.brave_draft_source VALUES ('1','One')")
+    add(resource, processing)
+    client.execute("INSERT INTO corpscout.company_brave_task_sources SELECT *,now64(6) FROM corpscout.company_brave_queue_input")
+    insert_results(client, [record("1")])
+    retained = [INPUT_RELATION, "corpscout.company_brave_task_sources", "corpscout.company_brave_search_results"]
+    before = {table: client.execute(f"SELECT * FROM {table}") for table in retained}
+    for _ in range(2):
+        for statement in migration.read_text().split(";"):
+            if statement.strip():
+                client.execute(statement)
+    assert client.execute("EXISTS TABLE corpscout.company_brave_search_input") == [(0,)]
+    assert {table: client.execute(f"SELECT * FROM {table}") for table in retained} == before

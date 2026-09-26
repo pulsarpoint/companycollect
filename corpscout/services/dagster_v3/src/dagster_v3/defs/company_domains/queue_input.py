@@ -2,16 +2,17 @@
 
 import hashlib
 import json
+import re
+from typing import Self
 from uuid import UUID
 
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from dagster_v3.defs.common import draft_queue
-from dagster_v3.defs.common.clickhouse_queue import ClickHouseInputQueue
+from dagster_v3.defs.common.clickhouse_queue import ClickHouseInputQueue, validate_relation
 from dagster_v3.defs.common.processing import ProcessingResource, ProcessingStore
-from dagster_v3.defs.company_domains.input import BraveInputConfig
 
 from dagster_v3.defs.company_domains.queue_tables import (
     INPUT_RELATION,
@@ -20,21 +21,64 @@ from dagster_v3.defs.company_domains.queue_tables import (
 )
 
 
-class BraveQueueInputConfig(BraveInputConfig):
+class BraveQueueInputConfig(dg.Config):
+    task_id: str | None = None
+    source_relation: str
+    company_id_column: str = "company_id"
+    company_name_column: str = "company_name"
+    country_code: str
+    company_ids: list[str] = Field(default_factory=list, description="Testing only. Use filters for production selections.")
+    excluded_company_ids: list[str] = Field(default_factory=list)
+    company_name_pattern: str | None = Field(default=None, min_length=1)
+    company_id_length: int | None = Field(default=None, ge=1)
+    filters: dict[str, list[str]] = Field(default_factory=dict)
+    source_final: bool = False
+    max_companies: int | None = Field(default=None, ge=1, le=1_000_000)
+    select_all: bool = False
     submission_id: str
     queue_scope: str = Field(default="workspace:SE", min_length=1)
     source_name: str = Field(default="backoffice:se-companies", min_length=1)
-    max_companies: int | None = Field(default=None, ge=1, le=1_000_000)
+
+    @field_validator("source_relation")
+    @classmethod
+    def named_source(cls, value: str) -> str:
+        value = validate_relation(value)
+        if value in {INPUT_RELATION, "corpscout.company_brave_search_input"}:
+            raise ValueError("the source must differ from the input queue")
+        return value
+
+    @field_validator("task_id")
+    @classmethod
+    def stable_task_id(cls, value: str | None) -> str | None:
+        return str(UUID(value)) if value is not None else None
+
+    @field_validator("country_code")
+    @classmethod
+    def country(cls, value: str) -> str:
+        value = value.strip().upper()
+        if not re.fullmatch(r"[A-Z]{2}", value):
+            raise ValueError("country_code must be a two-letter country code")
+        return value
 
     @model_validator(mode="after")
-    def draft_selection(self):
+    def selection(self) -> Self:
+        for column in (self.company_id_column, self.company_name_column, *self.filters):
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", column):
+                raise ValueError("column names must be simple SQL identifiers")
+        if any(not values for values in self.filters.values()):
+            raise ValueError("each column filter needs at least one value")
+        if not (
+            self.company_ids or self.filters or self.company_name_pattern
+            or self.company_id_length or self.max_companies or self.select_all
+        ):
+            raise ValueError(
+                "provide company_ids, filters, max_companies or explicit select_all"
+            )
         UUID(self.submission_id)
         if self.country_code != "SE":
             raise ValueError("Brave currently supports Swedish companies only")
-        if self.source_relation == INPUT_RELATION or not self.queue_scope.strip():
-            raise ValueError(
-                "Choose a source outside the input queue and a nonempty scope"
-            )
+        if not self.queue_scope.strip():
+            raise ValueError("Choose a nonempty queue scope")
         return self
 
 
@@ -48,7 +92,7 @@ def selected_companies(config: BraveQueueInputConfig) -> tuple[str, dict, list[d
         filters.append((config.company_id_column, config.company_ids))
     for index, (column, values) in enumerate(filters):
         name = f"selection_filter_{index}"
-        predicates.append(f"toString(`{column}`) IN (SELECT value FROM {name})")
+        predicates.append(f"toString(source.`{column}`) IN (SELECT value FROM {name})")
         external.append(
             {
                 "name": name,
@@ -58,7 +102,7 @@ def selected_companies(config: BraveQueueInputConfig) -> tuple[str, dict, list[d
         )
     if config.excluded_company_ids:
         predicates.append(
-            f"toString(`{config.company_id_column}`) NOT IN (SELECT value FROM exclusions)"
+            f"toString(source.`{config.company_id_column}`) NOT IN (SELECT value FROM exclusions)"
         )
         external.append(
             {
@@ -70,21 +114,21 @@ def selected_companies(config: BraveQueueInputConfig) -> tuple[str, dict, list[d
             }
         )
     if config.company_name_pattern is not None:
-        predicates.append(f"`{config.company_name_column}` ILIKE %(pattern)s")
+        predicates.append(f"source.`{config.company_name_column}` ILIKE %(pattern)s")
         params["pattern"] = config.company_name_pattern
     if config.company_id_length is not None:
         predicates.append(
-            f"length(toString(`{config.company_id_column}`)) = %(id_length)s"
+            f"length(toString(source.`{config.company_id_column}`)) = %(id_length)s"
         )
         params["id_length"] = config.company_id_length
     where = " WHERE " + " AND ".join(predicates) if predicates else ""
     # Stable name choice if a source repeats an identity. Draft entries already present
     # retain their original name; later submissions only contribute missing companies.
     sql = (
-        f"SELECT trimBoth(ifNull(toString(`{config.company_id_column}`),'')) AS company_id, "
-        f"minIf(trimBoth(ifNull(toString(`{config.company_name_column}`),'')), "
-        f"trimBoth(ifNull(toString(`{config.company_name_column}`),'')) != '') AS company_name "
-        f"FROM {config.source_relation}{' FINAL' if config.source_final else ''}{where} "
+        f"SELECT trimBoth(ifNull(toString(source.`{config.company_id_column}`),'')) AS company_id, "
+        f"minIf(trimBoth(ifNull(toString(source.`{config.company_name_column}`),'')), "
+        f"trimBoth(ifNull(toString(source.`{config.company_name_column}`),'')) != '') AS company_name "
+        f"FROM {config.source_relation} AS source{' FINAL' if config.source_final else ''}{where} "
         "GROUP BY company_id ORDER BY company_id"
     )
     if config.max_companies is not None:

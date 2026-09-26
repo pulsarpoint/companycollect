@@ -255,14 +255,20 @@ it("does not enable full crawl all for jobs or basic info", () => {
   expect(() => parseQueueConfig(filters("crawler", "jobs"), JSON.stringify({...crawlConfig, full_crawl_all: true}))).toThrow("full crawls only");
 });
 
-it("keeps old Brave inputs discoverable without auto-selecting them as the current draft", async () => {
+it("reads only the current Brave queue, including links to retired tasks", async () => {
   vi.mocked(chQuery).mockReset().mockResolvedValueOnce([]).mockResolvedValueOnce([{total: "0", tasks: "0"}])
-    .mockResolvedValueOnce([{total: "100", matching: "0", legacy: "100"}]).mockResolvedValueOnce([])
-    .mockResolvedValueOnce([{task_id: task, total: "100", submitted_at: ""}]);
+    .mockResolvedValueOnce([{total: "0", matching: "0"}]).mockResolvedValueOnce([]);
   const result = await loadQueueInputs(filters("brave"));
-  expect(result).toMatchObject({tasks: [], legacyTask: true, totalInputs: 0, selectedTotal: 100, legacyTasks: [{task_id: task, total: "100", submitted_at: ""}]});
-  expect(vi.mocked(chQuery).mock.calls[0][0]).not.toContain("company_brave_search_input");
-  expect(vi.mocked(chQuery).mock.calls[2][0]).toContain("company_brave_search_input");
+  expect(result).toMatchObject({tasks: [], totalInputs: 0, selectedTotal: 0});
+  expect(vi.mocked(chQuery).mock.calls).toHaveLength(4);
+  for (const [sql] of vi.mocked(chQuery).mock.calls) {
+    expect(sql).toContain("company_brave_queue_input");
+    expect(sql).not.toContain("company_brave_search_input");
+  }
+});
+
+it.each(["force", "rescan_old"])("rejects retired Brave processing option %s", name => {
+  expect(() => parseQueueConfig(filters("brave"), JSON.stringify({[name]: true}))).toThrow();
 });
 
 it("reads Brave completion counts and retained companies after the input queue is cleared", async () => {

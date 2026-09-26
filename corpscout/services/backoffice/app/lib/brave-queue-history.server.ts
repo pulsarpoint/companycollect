@@ -8,9 +8,7 @@ const MEMBERS = `WITH members AS (
  UNION ALL
  SELECT task_id,input_id,country_code,company_id,company_name,source_name,1
  FROM corpscout.company_brave_queue_input WHERE task_id IN {tasks:Array(String)}
- UNION ALL
- SELECT task_id,input_id,country_code,company_id,company_name,'legacy',1
- FROM corpscout.company_brave_search_input WHERE task_id IN {tasks:Array(String)}
+
  UNION ALL
  SELECT toString(task_id),input_id,country_code,company_id,company_name,'',0
  FROM corpscout.company_brave_search_results WHERE toString(task_id) IN {tasks:Array(String)}

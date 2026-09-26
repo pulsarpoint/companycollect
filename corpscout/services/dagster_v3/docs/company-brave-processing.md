@@ -121,24 +121,26 @@ must match that saved execution. Omit content settings to reuse the saved profil
 transport settings such as concurrency, page size and timeouts may change. Dagster
 run tags retain task/execution IDs and final outcome counts for Backoffice history.
 
-## Existing fixed selections
+## Retired fixed selections
 
-Legacy `company_brave_search_input`, `company_brave_search_input_job` and
-`company_brave_search_workflow` remain available for old `brave-v2` tasks. The existing
-input table is unchanged because old executions pin its table UUID. Backoffice lists
-these separately as **Retained legacy inputs** and uses their old processing controls.
-No old selection is automatically converted or deleted.
+The old `company_brave_search_input` asset, input job and combined workflow have
+been removed. Migration **454** drops their input table. Old manifests are marked
+cancelled, so a saved execution cannot resume searches against deleted inputs.
+Submit companies through the current draft queue to search them again.
 
-Legacy resumes still use their original `execution_id` and Dagster `brave/execution`
-tag. Their `force`/`rescan_old` policy is unchanged: without either flag, any saved
-outcome suppresses another search; `rescan_old` uses 30 days. Saved outcomes from the
-same execution are always retained. Legacy search errors still fail the run.
-`mode: publish` remains available for repairing old execution projections.
+Saved outcomes and old execution IDs remain available. History for these tasks
+shows companies found in saved outcomes, rather than claiming the complete original
+input selection. `mode: publish` can still repair saved execution projections.
 
 ## Deployment
 
 Apply ClickHouse migration **453** before deploying these definitions and Backoffice.
-It adds the partitioned input and company-membership tables alongside legacy inputs.
+It adds the partitioned input and company-membership tables.
+
+For legacy retirement, deploy the updated Backoffice and Dagster code first, verify
+that no Brave runs are active, then mark old `brave-v2` manifests cancelled before
+applying migration **454**. This permanently removes legacy queued inputs, including
+rows with no task ID. Rolling back 454 only recreates the empty schema.
 Grant `processing_publisher` SELECT on `company_brave_queue_input`; existing result
 SELECT/INSERT grants remain necessary. The storage provisioning script includes it.
 The worker uses its normal queue-management connection for imports and cleanup.

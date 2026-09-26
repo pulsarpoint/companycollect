@@ -1,7 +1,7 @@
 # Brave input queue alignment
 
 Status: implementation complete and validated, 2026-09-26. Rollout uses ClickHouse
-migration 453 and preserves the legacy table. Operational details are in
+migration 453. Legacy inputs are subsequently retired by migration 454, as requested. Operational details are in
 [Brave processing](../../company-brave-processing.md).
 
 ## Current behavior
@@ -236,3 +236,16 @@ but no task-scoped input rows. Counts span executions and cannot be compared as
 completion percentages. No legacy rows, execution IDs or table identities are
 changed by this rollout. Backoffice exposes retained task selections separately for
 recovery; new imports always use the draft processor.
+
+
+## Legacy retirement (2026-09-26)
+
+The operator requested removal of all retained legacy inputs after the draft queue
+rollout. This supersedes the temporary retention decision above. The audit found
+1,474,753 legacy input rows, nine old manifests and no active Brave runs.
+
+Remove the old importer and Backoffice legacy controls/reads, cancel the nine
+`brave-v2` manifests, then apply migration 454 to drop the old table. Keep all
+83,984 saved outcome rows, current draft inputs and retained draft company history.
+Old task history falls back to companies in saved outcomes. New submissions use
+only `company_brave_queue_input`; old executions cannot resume retired inputs.

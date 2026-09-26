@@ -155,7 +155,7 @@ def prepare_execution(
         if task is None:
             if config.input_relation is None:
                 raise ValueError(
-                    "initialize company_brave_search_input or supply a prepared input_relation"
+                    "add companies through company_brave_queue_input or supply a prepared input_relation"
                 )
             source = ClickHouseInputQueue(clickhouse, config.input_relation)
             store.register(
@@ -202,7 +202,7 @@ def prepare_execution(
 
 
 @dg.asset(
-    deps=["company_brave_search_input", "company_brave_queue_input"],
+    deps=["company_brave_queue_input"],
     group_name="brave_domain_search",
     kinds={"python", "browser", "clickhouse"},
     pool="company_domains_brave",
@@ -211,7 +211,7 @@ def prepare_execution(
     description="Search Swedish company drafts and save every answer or search error in ClickHouse. "
     "Drafts freeze the selected query and LLM, skip recent successes unless force_rescan=true, "
     "and preserve company history before clearing completed inputs. Resume a draft by task_id; "
-    "legacy fixed selections retain their force/rescan_old settings and execution_id recovery.",
+    "retired legacy inputs must be submitted as a new draft.",
 )
 def company_brave_search_results(
     context: dg.AssetExecutionContext,
@@ -231,6 +231,14 @@ def company_brave_search_results(
             return run_draft(context, config, clickhouse, processing_clickhouse,
                              company_brave_browser, processing, task_id)
     execution = prepare_execution(context, config, clickhouse, processing)
+    if config.mode == "process":
+        with processing.get_store() as store:
+            task = store.task(execution["task_id"])
+        if (execution["input_relation"] == "corpscout.company_brave_search_input"
+                or (task is not None and task["status"] == "cancelled")):
+            raise ValueError(
+                "These Brave inputs have been retired; add companies to a new queue in Backoffice"
+            )
     execution_id = execution["execution_id"]
     outcome_counts_sql = (
         f"SELECT countIf(status='success'),countIf(status='error') FROM {RESULT_TABLE} FINAL "

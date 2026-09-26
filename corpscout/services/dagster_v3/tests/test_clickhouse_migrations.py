@@ -466,6 +466,7 @@ EXPECTED_MIGRATIONS = (
     "000451_corpscout_rdap_trie_registry_class_exclusion",
     "000452_corpscout_website_crawl_normalized",
     "000453_corpscout_brave_draft_queue",
+    "000454_corpscout_retire_brave_legacy_input",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
