@@ -1,6 +1,6 @@
 # Brave service batch queue
 
-Status: implemented locally, pending deployment. The operator chose sequential
+Status: deployed and verified on 2026-09-26. The operator chose sequential
 batches with service-owned ClickHouse publication before a future Temporal migration.
 The earlier rolling-refill/Dagster-writer proposal is superseded by this contract.
 
@@ -50,7 +50,7 @@ schema is required; SQLite schema belongs to the service.
 
 Stage the service and Dagster code, coordinate a graceful stop of the current run,
 activate the configured service, then resume the same frozen task. Validate a small
-batch and compare throughput after startup. This batch change is not deployed yet.
+batch and compare throughput after startup.
 
 ## Verification
 
@@ -80,3 +80,34 @@ batch and compare throughput after startup. This batch change is not deployed ye
   approximately 6.4 seconds before deployment. A progress interval reported
   10.49 entries/minute versus the earlier 30-minute baseline of 7.63/minute.
   These are early observations, not a sustained throughput guarantee.
+
+## Service-batch rollout (2026-09-26)
+
+- Implementation committed to `main` as `9079031d6`, after incorporating the newer
+  IP-enrichment changes. The unrelated local `corpscout/searcher/` directory was excluded.
+- Browser release: `df7ad5b1bd2a630763e74d7c082fa3e3ea0b9a45500800e35925660b1a2e4020`.
+  PostgreSQL admission and ClickHouse publication settings are installed through
+  the ignored Ansible secrets file; no credentials are stored in Git.
+- The previous run `ea20ff85-78a7-4054-981c-226421e47bc1` failed before activation
+  with `Brave route crawl_proxy1 failed (OperationalError)`. Its 4,208 saved
+  results remained intact, and zero browser requests were active at activation.
+- Browser activation and Dagster hot-sync both passed. Dagster's supervisor was
+  preserved. Post-merge checks passed: 157 focused Python/migration tests,
+  77 Backoffice queue tests, and `dg check defs`.
+- Live verification run `51ed3dc7-eae0-4af6-aa5d-57cbf91f0dbe` processed batch
+  `7421c254-72aa-5f85-856c-eabe4ed3b3ad`. All eight outcomes reached ClickHouse:
+  seven successes, one CAPTCHA failure, eight distinct result IDs, no empty
+  successes, and seven matching rows in the successful-answer projection.
+  It was then stopped gracefully to change the operational batch size.
+- Resumed run: `020b0c4f-b1b5-485d-9c43-a9ad335eecb3`, batch size 500.
+  Task `077bb1e4-6a7d-461b-930e-22348d32bf9e` and execution
+  `053853b3-fc9c-4c4e-a49d-acebc383773d` remain unchanged. All 662,237 unique
+  frozen inputs were verified present after the canary.
+- At 19:46:36 UTC, batch `1cc03553-30c1-5b4c-9546-5e0a655876dd` was running:
+  two successful local results, four active browsers, 494 pending, no failures.
+  This batch is not yet published; publication occurs after all 500 finish.
+  Dagster logs show service-batch counts and processing speed. The CAPTCHA
+  statistics sensor is running and its latest tick saved 40 request observations.
+- SQLite database, WAL and shared-memory files under `/var/lib/browser-service/`
+  are owned by `browser-service` with mode 0600. No sustained-throughput claim is
+  made from this short deployment verification.
