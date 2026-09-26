@@ -2951,3 +2951,57 @@ def test_lanes_commit_the_same_outcomes_in_the_same_order_as_one_lane(
     assert results_of["9.9.9.9"]["rdap_error_code"] == "remote_server"
     # 5 misses (9.9.9.9 failed) + 1 parent; 8.8.8.9, 5.1.1.2 and 202.1.1.2 were reused.
     assert counters[:2] == (6, 3)
+
+
+def test_proxy_urls_never_reach_config_logs_or_metadata(environment, monkeypatch):
+    env = environment
+    via = []
+    monkeypatch.setattr(
+        RdapClient,
+        "lookup_ip",
+        lambda self, ip: (
+            via.append(proxy_of(self)),
+            env.calls.append(ip),
+            response(ip),
+        )[2],
+    )
+    # use_proxies without RDAP_PROXIES fails before the draft is frozen.
+    monkeypatch.delenv("RDAP_PROXIES", raising=False)
+    task = select(env, [f"8.8.{n}.1" for n in range(1, 7)])
+    refused = run(env, task, use_proxies=["arin"])
+    assert not refused.success and task_row(env, task)["status"] == "draft"
+    monkeypatch.setenv(
+        "RDAP_PROXIES", json.dumps({"arin": ["ftp://user:s3cret@proxy-a.example:21"]})
+    )
+    bad = run(env, task, use_proxies=["arin"])
+    assert not bad.success
+    monkeypatch.setenv("RDAP_PROXIES", json.dumps({"arin": [PROXY_A, PROXY_B]}))
+    result = run(env, task, use_proxies=["arin"])
+    assert result.success
+    metadata = outcome(result)
+    assert metadata["completion_status"] == "completed"
+    assert (
+        set(metadata["requests_by_endpoint"])
+        <= {
+            "arin:direct",
+            "arin:proxy-1",
+            "arin:proxy-2",
+        }
+        and sum(metadata["requests_by_endpoint"].values()) == 6
+    )
+    assert set(via) <= {None, PROXY_A, PROXY_B} and len(via) == 6
+    seen = [str(metadata)]
+    for run_id in (refused.run_id, bad.run_id, result.run_id):
+        record = env.instance.get_run_by_id(run_id)
+        seen += [str(record.run_config), str(record.tags)]
+        seen += [str(entry.message) for entry in env.instance.all_logs(run_id)]
+        seen += [
+            str(entry.dagster_event.event_specific_data)
+            for entry in env.instance.all_logs(run_id)
+            if entry.dagster_event is not None
+        ]
+    assert any("RDAP_PROXIES" in text for text in seen)  # the refusal is explained
+    assert any("RDAP proxies: arin direct + 2" in text for text in seen)
+    for text in seen:
+        assert "s3cret" not in text and "proxy-a.example" not in text
+        assert "proxy-b.example" not in text
