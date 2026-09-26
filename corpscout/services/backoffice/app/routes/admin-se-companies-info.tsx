@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { data, Link, useFetcher } from "react-router";
+import { data, useFetcher } from "react-router";
 import type { Route } from "./+types/admin-se-companies-info";
 import { SeCompanyInfoTable } from "~/components/admin/se-company-info-table";
 import { Alert, AlertDescription } from "~/components/ui/alert";
+import { useQueueSubmission, QueueImportStatus } from "~/components/admin/queue-import-status";
 import { Button } from "~/components/ui/button";
 import { launchSeCompanyBraveAnalysis } from "~/lib/se-company-brave.server";
 import {
@@ -64,6 +65,7 @@ export async function action({ request }: Route.ActionArgs) {
     return data(await launchSeCompanyBraveAnalysis(
       body.selection,
       process.env.BACKOFFICE_OPERATOR?.trim() || "backoffice",
+      body.submissionId,
     ));
   } catch (error) {
     return data({ ok: false as const, error: error instanceof Error ? error.message : "Could not prepare the Brave queue." }, { status: 400 });
@@ -79,28 +81,27 @@ export default function AdminSeCompanyInfoTable({ loaderData }: Route.ComponentP
   if (currentSelection !== selection) setSelection(currentSelection);
   const fetcher = useFetcher<typeof action>();
   const submittedSelection = useRef<SeCompanySelection | null>(null);
+  const submission = useRef<{id: string; selection: SeCompanySelection} | null>(null);
+  const receipt = fetcher.data?.ok ? fetcher.data : null;
+  const {state: importState, error: importError} = useQueueSubmission(receipt, "brave");
   const handledRun = useRef<string | null>(null);
   const busy = fetcher.state !== "idle";
   const selectedCount = currentSelection.mode === "ids"
     ? currentSelection.companyIds.length
     : Math.max(0, total - currentSelection.excludedCompanyIds.length);
   useEffect(() => {
-    if (fetcher.data?.ok && handledRun.current !== fetcher.data.runId) {
+    if (fetcher.data?.ok && importState?.status === "SUCCESS" && handledRun.current !== fetcher.data.runId) {
       handledRun.current = fetcher.data.runId;
       setSelection((current) => current === submittedSelection.current ? NO_COMPANIES_SELECTED : current);
+      submission.current = null;
     }
-  }, [fetcher.data]);
+  }, [fetcher.data, importState]);
   // The layout owns the page header now (title + tab bar), so this tab renders
   // only its own body.
   return (
     <div className="flex flex-col gap-4">
-    {fetcher.data && !busy && <Alert variant={fetcher.data.ok ? "default" : "destructive"}>
-      <AlertDescription>
-        {fetcher.data.ok
-          ? <>Preparing the Brave queue. <Link to={fetcher.data.queueUrl}>Choose an assistant model and configure processing</Link>. {fetcher.data.runUrl && <a href={fetcher.data.runUrl} target="_blank" rel="noreferrer">View preparation in Dagster</a>}.</>
-          : fetcher.data.error}
-      </AlertDescription>
-    </Alert>}
+    {receipt && <QueueImportStatus receipt={receipt} state={importState} type="brave" />}
+    {(importError || (fetcher.data && !fetcher.data.ok && fetcher.data.error)) && <Alert variant="destructive"><AlertDescription>{importError || (fetcher.data && !fetcher.data.ok && fetcher.data.error)}</AlertDescription></Alert>}
     <SeCompanyInfoTable
       rows={listPage.rows}
       total={total}
@@ -119,7 +120,8 @@ export default function AdminSeCompanyInfoTable({ loaderData }: Route.ComponentP
         onClick={() => {
           if (busy) return;
           submittedSelection.current = currentSelection;
-          fetcher.submit(JSON.stringify({ action: "brave_analysis", selection: currentSelection }), { method: "post", encType: "application/json", action: "/admin/se/companies?index" });
+          if (!submission.current || submission.current.selection !== currentSelection) submission.current = {id: crypto.randomUUID(), selection: currentSelection};
+          fetcher.submit(JSON.stringify({ action: "brave_analysis", selection: currentSelection, submissionId: submission.current.id }), { method: "post", encType: "application/json", action: "/admin/se/companies?index" });
         }}
       >{busy ? "Preparing Brave queue…" : "Add to Brave queue"}</Button>}
     />

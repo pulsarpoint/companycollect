@@ -34,11 +34,36 @@ def current_request_id() -> str:
     if not request_id:
         raise LlmDisabledError("Start this saved-model execution from Backoffice to register its dependencies")
     with control_transaction() as cursor:
-        cursor.execute("""UPDATE processing.run_requests SET dagster_run_id=%s,updated_at=now()
-            WHERE request_id=%s AND (dagster_run_id IS NULL OR dagster_run_id=%s) RETURNING request_id""",
-            (context.run.run_id, request_id, context.run.run_id))
-        if cursor.fetchone() is None:
+        cursor.execute("""SELECT dagster_run_id,job_name,task_id,stop_requested_at
+            FROM processing.run_requests WHERE request_id=%s FOR UPDATE""", (request_id,))
+        owner = cursor.fetchone()
+        if owner is None:
+            raise LlmDisabledError("This LLM execution is not registered in Backoffice")
+        if owner["stop_requested_at"] is not None:
+            raise LlmDisabledError("This LLM execution was stopped")
+        bound_run = str(owner["dagster_run_id"]) if owner["dagster_run_id"] else context.run.run_id
+        # Automatic retries inherit the dependency tag but receive a new run ID.
+        # Verify actual ancestry; a copied tag on an unrelated run grants no admission.
+        ancestor = context.run
+        visited = set()
+        while ancestor is not None:
+            if (ancestor.run_id in visited or ancestor.job_name != owner["job_name"]
+                    or ancestor.tags.get("llm/request_id") != request_id
+                    or (owner["task_id"] is not None
+                        and ancestor.tags.get("processing/task_id") != str(owner["task_id"]))):
+                raise LlmDisabledError("This run does not match its registered LLM execution")
+            if ancestor.run_id == bound_run:
+                break
+            visited.add(ancestor.run_id)
+            ancestor = (context.instance.get_run_by_id(ancestor.parent_run_id)
+                        if ancestor.parent_run_id else None)
+        else:
             raise LlmDisabledError("This is a different run; start or resume it from Backoffice")
+        # A manual retry can appear after monitoring marked its parent terminal.
+        # Keep the original run as the identity anchor and reopen monitoring atomically.
+        cursor.execute("""UPDATE processing.run_requests SET dagster_run_id=coalesce(dagster_run_id,%s),
+            status='running',finished_at=NULL,updated_at=now() WHERE request_id=%s""",
+            (context.run.run_id, request_id))
     return request_id
 
 

@@ -1,3 +1,4 @@
+import { loadBraveSourceSummaries } from "~/lib/brave-queue-history.server";
 import { loadQueueSourceSummaries, type QueueHistoryReference, type QueueSourceSummary } from "~/lib/queue-history.server";
 import { createHash } from "node:crypto";
 import { CrawlLlmError, prepareCrawlSettings, verifySelectedLlm } from "~/lib/crawl-llm.server";
@@ -17,9 +18,10 @@ function queueDefinition(filters: QueueFilters) {
       source: "source_name", record: "source_record_id", time: "toString(submitted_at)", id: "input_id",
     };
     case "brave": return {
-      table: "corpscout.company_brave_search_input", asset: "company_brave_search_results", job: "company_brave_search_job",
-      from: "corpscout.company_brave_search_input", where: "1", target: "company_name",
-      detail: "concat(country_code, ':', company_id)", source: "country_code", record: "company_id", time: "''", id: "input_id",
+      table: "corpscout.company_brave_queue_input", asset: "company_brave_search_results", job: "company_brave_search_job",
+      from: filters.task ? `(SELECT task_id,input_id,country_code,company_id,company_name,source_name,source_record_id,toString(submitted_at) AS submitted_at FROM corpscout.company_brave_queue_input
+        UNION ALL SELECT task_id,input_id,country_code,company_id,company_name,'legacy' AS source_name,company_id AS source_record_id,'' AS submitted_at FROM corpscout.company_brave_search_input)` : "corpscout.company_brave_queue_input", where: "1", target: "company_name",
+      detail: "concat(country_code, ':', company_id)", source: "source_name", record: "source_record_id", time: "toString(submitted_at)", id: "input_id",
     };
     case "ip-enrichment": return {
       table: "corpscout.ip_enrichment_input", asset: "ip_enrichment_results", job: "ip_enrichment_results_job",
@@ -50,21 +52,25 @@ export async function loadQueueInputs(filters: QueueFilters) {
   const matches = filters.search ? `(positionCaseInsensitiveUTF8(${def.target}, {search:String}) > 0
     OR positionCaseInsensitiveUTF8(${def.detail}, {search:String}) > 0)` : "1";
   const searchWhere = `${taskWhere} AND ${matches}`;
+  const overviewFrom = filters.type === "brave" ? def.table : def.from;
   const inputOrder = filters.type === "crawler" ? "task_id, input_id" : "input_id, task_id";
-  const [tasks, overview, counts, rows] = await Promise.all([
+  const [tasks, overview, counts, rows, legacyTasks] = await Promise.all([
     chQuery<QueueTask>(`SELECT toString(task_id) AS task_id, toString(count()) AS total, max(${def.time}) AS submitted_at
-      FROM ${def.from} WHERE ${def.where} AND toString(task_id) != '' GROUP BY task_id
+      FROM ${overviewFrom} WHERE ${def.where} AND toString(task_id) != '' GROUP BY task_id
       ORDER BY submitted_at DESC, task_id LIMIT {limit:UInt32} OFFSET {taskOffset:UInt64}`, params),
-    chQuery<{ total: string; tasks: string }>(`SELECT toString(count()) AS total, toString(uniqExactIf(task_id, toString(task_id) != '')) AS tasks FROM ${def.from} WHERE ${def.where}`, params),
-    chQuery<{ total: string; matching: string }>(`SELECT toString(count()) AS total,
-      toString(countIf(${matches})) AS matching
+    chQuery<{ total: string; tasks: string }>(`SELECT toString(count()) AS total, toString(uniqExactIf(task_id, toString(task_id) != '')) AS tasks FROM ${overviewFrom} WHERE ${def.where}`, params),
+    chQuery<{ total: string; matching: string; legacy: string }>(`SELECT toString(count()) AS total,
+      toString(countIf(${matches})) AS matching,
+      toString(countIf(${filters.type === "brave" && filters.task ? "source_name = 'legacy'" : "0"})) AS legacy
       FROM ${def.from} WHERE ${taskWhere}`, params),
     chQuery<QueueInput>(`SELECT toString(task_id) AS task_id, ${def.id} AS input_id, ${def.target} AS target,
       ${def.detail} AS detail, ${def.source} AS source, ${def.record} AS source_record_id, ${def.time} AS submitted_at
       FROM ${def.from} WHERE ${searchWhere} ORDER BY ${inputOrder}
       LIMIT {limit:UInt32} OFFSET {offset:UInt64}`, params),
+    filters.type === "brave" ? chQuery<QueueTask>(`SELECT task_id,toString(count()) AS total,'' AS submitted_at
+      FROM corpscout.company_brave_search_input WHERE task_id != '' GROUP BY task_id ORDER BY task_id LIMIT 50`, {}) : Promise.resolve([]),
   ]);
-  return { table: def.table, asset: def.asset, tasks, rows,
+  return { legacyTasks, table: def.table, asset: def.asset, tasks, rows, legacyTask: filters.type === "brave" && Number(counts[0]?.legacy ?? 0) > 0,
     totalInputs: Number(overview[0]?.total ?? 0), totalTasks: Number(overview[0]?.tasks ?? 0),
     selectedTotal: Number(counts[0]?.total ?? 0), matching: Number(counts[0]?.matching ?? 0) };
 }
@@ -105,7 +111,7 @@ export async function loadQueueHistory(filters: QueueFilters) {
     if (!taskId || !QUEUE_UUID.test(taskId)) continue;
     references.push({taskId, crawlType, executionId: run.tags["crawler/execution_id"] || run.runId});
     if (latest.has(`${crawlType}:${taskId}`)) continue;
-    const prefix = filters.type === "crawler" ? "crawler" : "webtech";
+    const prefix = filters.type === "crawler" ? "crawler" : filters.type === "brave" ? "brave" : "webtech";
     const outcome = run.status === "SUCCESS" && ["completed", "completed_with_errors"].includes(run.tags[`${prefix}/outcome`]) ? run.tags[`${prefix}/outcome`] : null;
     latest.set(`${crawlType}:${taskId}`, {taskId, crawlType, status: run.status, runUrl: dagsterRunUrl(run.runId), outcome,
       failedPages: outcome && /^\d+$/.test(run.tags[`${prefix}/failed_pages`] ?? "") ? Number(run.tags[`${prefix}/failed_pages`]) : null,
@@ -120,14 +126,18 @@ export async function loadQueueHistory(filters: QueueFilters) {
     try { sources = await loadQueueSourceSummaries(filters.type, references.filter(ref => history.some(task => task.taskId === ref.taskId && task.crawlType === ref.crawlType))); }
     catch { sourcesError = true; }
   }
+  if (filters.type === "brave") {
+    try { sources = await loadBraveSourceSummaries(history.map(task => task.taskId)); }
+    catch { sourcesError = true; }
+  }
   return history.map(task => ({...task, sourcesError,
-    sources: sources.find(source => source.task_id === task.taskId && source.task_type === (task.crawlType ?? "webtech")) ?? null}));
+    sources: sources.find(source => source.task_id === task.taskId && source.task_type === (task.crawlType ?? (filters.type === "brave" ? "brave" : "webtech"))) ?? null}));
 }
 
 const EXTRA_FIELDS = {
   // Envelope size stays a Dagster default: it is transport only, not a processing choice.
   webtech: ["execution_id", "force_rescan", "recent_days"],
-  brave: ["execution_id", "llm_profile_id", "query_type", "query_template", "force", "rescan_old", "requests_per_route", "input_batch_size", "answer_timeout_seconds", "progress_log_every", "progress_log_interval_seconds"],
+  brave: ["execution_id", "llm_profile_id", "force_rescan", "recent_days", "query_type", "query_template", "force", "rescan_old", "requests_per_route", "input_batch_size", "answer_timeout_seconds", "progress_log_every", "progress_log_interval_seconds"],
   "ip-enrichment": ["execution_id", "batch_size", "max_requests", "request_delay_seconds", "parent_depth", "rdap_cache_days", "force_rdap", "rate_limit_retry_seconds", "transient_retry_seconds"],
   crawler: ["execution_id", "full_crawl_all", "max_in_flight", "refresh_interval_days", "force_refresh", "challenge_agent_model", "challenge_agent_max_runs", "llm_profile_id", "max_pages", "max_model_calls", "page_selection", "instructions", "wait_timeout_seconds", "poll_interval_seconds"],
 } as const;

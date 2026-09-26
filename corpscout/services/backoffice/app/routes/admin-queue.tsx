@@ -1,3 +1,4 @@
+import { QueueHistoryCompanies } from "~/components/admin/queue-history-companies";
 import { QueueHistorySources } from "~/components/admin/queue-history-sources";
 import { data, redirect, Form, Link, useNavigation, useRevalidator, useSearchParams } from "react-router";
 import { PlayIcon, RefreshCwIcon } from "lucide-react";
@@ -21,7 +22,7 @@ export async function loader({request, params}: Route.LoaderArgs) {
   const [inputs, runState, history, crawlCounts] = await Promise.allSettled([loadQueueInputs(filters), loadQueueRuns(filters.task), loadQueueHistory(filters),
     filters.type === "crawler" ? loadCrawlQueueCounts() : Promise.resolve(null)]);
   if (inputs.status === "rejected") throw inputs.reason;
-  if ((filters.type === "webtech" || filters.type === "crawler") && (!filters.task || inputs.value.selectedTotal === 0)) {
+  if ((filters.type === "webtech" || filters.type === "crawler" || filters.type === "brave") && (!filters.task || inputs.value.selectedTotal === 0)) {
     const currentTask = inputs.value.tasks[0]?.task_id ?? "";
     if (currentTask !== filters.task) throw redirect(queuePath(filters, {task: currentTask, page: 1, taskPage: 1}));
   }
@@ -58,7 +59,7 @@ export default function AdminQueue({loaderData}: Route.ComponentProps) {
   const identity = `${filters.type}:${filters.crawlType}:${filters.task}`;
   const busy = useNavigation().state !== "idle";
   const revalidator = useRevalidator();
-  const processingBlocked = !filters.task ? ((filters.type === "webtech" || filters.type === "crawler") ? "The queue is empty. Add domains or pages to prepare the next scan." : "Choose a task below to configure processing.")
+  const processingBlocked = !filters.task ? ((filters.type === "webtech" || filters.type === "crawler" || filters.type === "brave") ? "The queue is empty. Add inputs to prepare the next task." : "Choose a task below to configure processing.")
     : inputs.selectedTotal === 0 ? "This task has no inputs to process."
     : !runState ? "Refresh to check Dagster status before processing."
     : runState.active ? "This task has an active Dagster run. Wait for it to finish, then refresh."
@@ -85,6 +86,11 @@ export default function AdminQueue({loaderData}: Route.ComponentProps) {
         {queue.label}<Badge variant={crawlCounts?.[queue.id] ? "default" : "outline"} aria-label={crawlCounts ? `${crawlCounts[queue.id]} queued ${crawlCounts[queue.id] === 1 ? "entry" : "entries"}` : "Queued entries unavailable"}>{crawlCounts ? crawlCounts[queue.id].toLocaleString() : "–"}</Badge>
       </TabsTrigger>)}
     </TabsList></Tabs>}
+    {filters.type === "brave" && (inputs.legacyTasks?.length ?? 0) > 0 && <details className="rounded-md border p-4">
+      <summary className="cursor-pointer text-sm font-medium">Retained legacy inputs ({inputs.legacyTasks.length} tasks)</summary>
+      <p className="my-3 text-sm text-muted-foreground">Earlier task selections remain available for recovery. New additions use the draft queue below.</p>
+      <ul className="flex flex-col gap-2 text-sm">{inputs.legacyTasks.map(task => <li key={task.task_id}><Link className="underline" to={queuePath(filters, {task: task.task_id, page: 1, search: ""})}>{task.task_id}</Link> · {Number(task.total).toLocaleString()} companies</li>)}</ul>
+    </details>}
     <section className="flex flex-col gap-4" aria-label="Queue inputs">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-col gap-1"><h2 className="text-lg font-semibold">{QUEUE_TYPES.find(queue => queue.id === filters.type)?.label} inputs</h2>
@@ -101,7 +107,7 @@ export default function AdminQueue({loaderData}: Route.ComponentProps) {
           <Button variant="ghost" nativeButton={false} render={<Link to={queuePath(filters, {task: "", search: "", page: 1, taskPage: 1})} />}>Reset</Button>
         </FieldGroup>
       </Form>
-      {(((filters.type !== "webtech" && filters.type !== "crawler") && !filters.task) || ((filters.type === "webtech" || filters.type === "crawler") && inputs.totalTasks > 1)) && <>
+      {(((filters.type !== "webtech" && filters.type !== "crawler" && filters.type !== "brave") && !filters.task) || ((filters.type === "webtech" || filters.type === "crawler" || filters.type === "brave") && inputs.totalTasks > 1)) && <>
         <h3 className="text-sm font-medium">Queues awaiting processing</h3>
         <Table><TableHeader><TableRow><TableHead>Task</TableHead><TableHead>Inputs</TableHead><TableHead>Last submission (UTC)</TableHead><TableHead>Processing</TableHead></TableRow></TableHeader>
           <TableBody>{inputs.tasks.map(task => <TableRow key={task.task_id}><TableCell>{task.task_id ? <Link className="font-mono text-xs underline" to={queuePath(filters, {task: task.task_id, page: 1, search: ""})}>{task.task_id}</Link> : "Legacy inputs without a task"}</TableCell><TableCell>{Number(task.total).toLocaleString()}</TableCell><TableCell>{task.submitted_at || "Not recorded"}</TableCell><TableCell>
@@ -117,19 +123,19 @@ export default function AdminQueue({loaderData}: Route.ComponentProps) {
       {filters.type === "crawler" && <p className="text-sm text-muted-foreground">These are task selections. <Link className="underline" to="/admin/crawls">Open saved crawler requests and browser settings</Link>.</p>}
       {filters.task && <div className="flex flex-col gap-2">
         <p className="text-sm"><strong>{inputs.selectedTotal.toLocaleString()} inputs</strong> in this task. Processing uses the whole task; search only filters the preview.</p>
-        <p className="text-sm text-muted-foreground">{(filters.type === "webtech" || filters.type === "crawler") ? "Inputs can be appended while the task is a draft. Dagster checks submissions and freezes the task when execution begins." : "This queue uses a fixed input selection. Adding to an open draft is currently available for Webtech."}</p>
+        <p className="text-sm text-muted-foreground">{(filters.type === "webtech" || filters.type === "crawler" || filters.type === "brave") ? "Inputs can be appended while the task is a draft. Dagster checks submissions and freezes the task when execution begins." : "This queue uses a fixed input selection."}</p>
       </div>}
       {runError && <Alert variant="destructive"><AlertTitle>Run status unavailable</AlertTitle><AlertDescription>{runError}</AlertDescription></Alert>}
-      {(filters.type !== "webtech" && filters.type !== "crawler") && runState && runState.runs.length > 0 && <div className="flex flex-col gap-2"><h3 className="text-sm font-medium">Recent task runs</h3>
+      {(filters.type !== "webtech" && filters.type !== "crawler" && filters.type !== "brave") && runState && runState.runs.length > 0 && <div className="flex flex-col gap-2"><h3 className="text-sm font-medium">Recent task runs</h3>
         {runState.runs.map(run => <div key={run.runId} className="flex flex-wrap items-center gap-3 text-sm"><Badge variant="outline">{run.status}</Badge><span>{run.job}</span>{run.runUrl && <a className="font-mono text-xs underline" href={run.runUrl} target="_blank" rel="noreferrer">{run.runId}</a>}</div>)}
       </div>}
       <p className="text-sm text-muted-foreground" role="status">{inputs.matching.toLocaleString()} matching inputs · Source: <code>{inputs.table}</code></p>
-      <Table><TableHeader><TableRow><TableHead>{filters.type === "brave" ? "Company" : filters.type === "ip-enrichment" ? "IP address" : "Domain / page"}</TableHead>{(filters.type !== "webtech" && filters.type !== "crawler") && <TableHead>Task</TableHead>}<TableHead>{filters.type === "brave" ? "Country / company ID" : "Source / record"}</TableHead><TableHead>Submitted (UTC)</TableHead></TableRow></TableHeader>
+      <Table><TableHeader><TableRow><TableHead>{filters.type === "brave" ? "Company" : filters.type === "ip-enrichment" ? "IP address" : "Domain / page"}</TableHead>{(filters.type !== "webtech" && filters.type !== "crawler" && filters.type !== "brave") && <TableHead>Task</TableHead>}<TableHead>Source / record</TableHead><TableHead>Submitted (UTC)</TableHead></TableRow></TableHeader>
         <TableBody>{inputs.rows.map(row => <TableRow key={`${row.task_id}:${row.input_id}`}>
           <TableCell className="max-w-lg whitespace-normal"><span className="font-medium">{row.target}</span><p className="break-all text-xs text-muted-foreground">{row.detail}</p></TableCell>
-          {(filters.type !== "webtech" && filters.type !== "crawler") && <TableCell className="max-w-64 whitespace-normal">{row.task_id ? <Link className="break-all font-mono text-xs underline" to={queuePath(filters, {task: row.task_id, page: 1})}>{row.task_id}</Link> : "No task"}</TableCell>}
+          {(filters.type !== "webtech" && filters.type !== "crawler" && filters.type !== "brave") && <TableCell className="max-w-64 whitespace-normal">{row.task_id ? <Link className="break-all font-mono text-xs underline" to={queuePath(filters, {task: row.task_id, page: 1})}>{row.task_id}</Link> : "No task"}</TableCell>}
           <TableCell className="max-w-xs whitespace-normal">{row.source}<p className="break-all text-xs text-muted-foreground">{row.source_record_id}</p></TableCell><TableCell>{row.submitted_at || "Not recorded"}</TableCell>
-        </TableRow>)}{!inputs.rows.length && <TableRow><TableCell colSpan={(filters.type === "webtech" || filters.type === "crawler") ? 3 : 4} className="h-24 text-center text-muted-foreground">No inputs match this selection.</TableCell></TableRow>}</TableBody>
+        </TableRow>)}{!inputs.rows.length && <TableRow><TableCell colSpan={(filters.type === "webtech" || filters.type === "crawler" || filters.type === "brave") ? 3 : 4} className="h-24 text-center text-muted-foreground">No inputs match this selection.</TableCell></TableRow>}</TableBody>
       </Table>
       <div className="flex items-center justify-between gap-3"><span className="text-sm text-muted-foreground">Page {filters.page} of {Math.max(1, Math.ceil(inputs.matching / QUEUE_PAGE_SIZE)).toLocaleString()}</span><div className="flex gap-2">
         {filters.page > 1 && <Button variant="outline" nativeButton={false} render={<Link to={queuePath(filters, {page: filters.page - 1})} />}>Previous</Button>}
@@ -138,17 +144,18 @@ export default function AdminQueue({loaderData}: Route.ComponentProps) {
     </section>
     <section className="flex flex-col gap-3" aria-label="Task history">
       <h2 className="text-lg font-semibold">Recent task history</h2>
-      <p className="text-sm text-muted-foreground">Latest processing run for each task{filters.type === "crawler" ? " across all crawl types" : ""}. Completed inputs are removed from Webtech and Crawler queues; results and history remain available.</p>
+      <p className="text-sm text-muted-foreground">Latest processing run for each task{filters.type === "crawler" ? " across all crawl types" : ""}. Completed draft inputs are removed from the queues; results and history remain available.</p>
       {historyError && <Alert variant="destructive"><AlertDescription>{historyError}</AlertDescription></Alert>}
-      <Table><TableHeader><TableRow><TableHead>Started (UTC)</TableHead>{(filters.type === "crawler" || filters.type === "webtech") && <TableHead>Source domains / websites</TableHead>}<TableHead>Task</TableHead>{filters.type === "crawler" && <TableHead>Crawl type</TableHead>}<TableHead>Processing status</TableHead><TableHead>Details</TableHead></TableRow></TableHeader>
+      <Table><TableHeader><TableRow><TableHead>Started (UTC)</TableHead>{(filters.type === "crawler" || filters.type === "webtech" || filters.type === "brave") && <TableHead>{filters.type === "brave" ? "Source companies" : "Source domains / websites"}</TableHead>}<TableHead>Task</TableHead>{filters.type === "crawler" && <TableHead>Crawl type</TableHead>}<TableHead>Processing status</TableHead><TableHead>Details</TableHead></TableRow></TableHeader>
         <TableBody>{history.map(task => <TableRow key={`${task.crawlType}:${task.taskId}`}>
           <TableCell>{task.startedAt ? task.startedAt.replace("T", " ").replace(/\.\d+Z$/, "") : "Not started"}</TableCell>
+          {filters.type === "brave" && <TableCell className="align-top"><QueueHistoryCompanies taskId={task.taskId} sources={task.sources} error={task.sourcesError} retryFailed={(task.failedPages ?? 0) > 0} /></TableCell>}
           {(filters.type === "crawler" || filters.type === "webtech") && <TableCell className="align-top"><QueueHistorySources type={filters.type} taskId={task.taskId} crawlType={task.crawlType} sources={task.sources} error={task.sourcesError} /></TableCell>}
-          <TableCell className="font-mono text-xs">{task.taskId}</TableCell>{filters.type === "crawler" && <TableCell>{CRAWL_QUEUES.find(queue => queue.id === task.crawlType)?.label}</TableCell>}<TableCell><Badge variant="outline">{task.outcome === "completed_with_errors" ? "Completed with errors" : task.outcome === "completed" ? "Completed" : task.status}</Badge>{task.failedPages != null && task.failedPages > 0 && <p className="text-xs text-muted-foreground">{task.failedPages} {filters.type === "crawler" ? "crawl errors" : "page errors"} · results saved</p>}{task.skippedPages != null && task.skippedPages > 0 && <p className="text-xs text-muted-foreground">{task.skippedPages} {task.skippedPages === 1 ? "input skipped" : "inputs skipped"}</p>}</TableCell>
+          <TableCell className="font-mono text-xs">{task.taskId}</TableCell>{filters.type === "crawler" && <TableCell>{CRAWL_QUEUES.find(queue => queue.id === task.crawlType)?.label}</TableCell>}<TableCell><Badge variant="outline">{task.outcome === "completed_with_errors" ? "Completed with errors" : task.outcome === "completed" ? "Completed" : task.status}</Badge>{task.failedPages != null && task.failedPages > 0 && <p className="text-xs text-muted-foreground">{task.failedPages} {filters.type === "crawler" ? "crawl errors" : filters.type === "brave" ? "search errors" : "page errors"} · results saved</p>}{task.skippedPages != null && task.skippedPages > 0 && <p className="text-xs text-muted-foreground">{task.skippedPages} {task.skippedPages === 1 ? "input skipped" : "inputs skipped"}</p>}</TableCell>
           <TableCell>{task.runUrl && <a className="underline" href={task.runUrl} target="_blank" rel="noreferrer">View in Dagster</a>}</TableCell>
-        </TableRow>)}{!history.length && !historyError && <TableRow><TableCell colSpan={filters.type === "crawler" ? 6 : filters.type === "webtech" ? 5 : 4}>No processing runs yet.</TableCell></TableRow>}</TableBody>
+        </TableRow>)}{!history.length && !historyError && <TableRow><TableCell colSpan={filters.type === "crawler" ? 6 : (filters.type === "webtech" || filters.type === "brave") ? 5 : 4}>No processing runs yet.</TableCell></TableRow>}</TableBody>
       </Table>
     </section>
-    {filters.task && searchParams.get("configure") === "1" && <QueueProcessSheet key={identity} filters={filters} total={inputs.selectedTotal} asset={inputs.asset} blockedReason={processingBlocked} onClose={() => configureProcessing(false)} />}
+    {filters.task && searchParams.get("configure") === "1" && <QueueProcessSheet legacyTask={inputs.legacyTask} key={identity} filters={filters} total={inputs.selectedTotal} asset={inputs.asset} blockedReason={processingBlocked} onClose={() => configureProcessing(false)} />}
   </div>;
 }

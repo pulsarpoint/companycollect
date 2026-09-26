@@ -5,7 +5,7 @@ type ImportProgress = {ok: true; runId: string; status: string; finished: boolea
 
 export interface QueueImportReceipt {runId: string; status: string; runUrl: string | null}
 
-export function useQueueSubmission(receipt: QueueImportReceipt | null, queue: "webtech" | "crawler" = "webtech") {
+export function useQueueSubmission(receipt: QueueImportReceipt | null, queue: "webtech" | "crawler" | "brave" = "webtech") {
   const progress = useFetcher<ImportProgress>();
   const state = progress.data?.ok && progress.data.runId === receipt?.runId ? progress.data : null;
   useEffect(() => {
@@ -16,14 +16,15 @@ export function useQueueSubmission(receipt: QueueImportReceipt | null, queue: "w
   return {state, error: progress.data?.ok === false ? progress.data.error : null};
 }
 
-export function QueueImportStatus({receipt, state, fallbackSearch = "", crawlType}: {
+export function QueueImportStatus({receipt, state, fallbackSearch = "", crawlType, type}: {
   receipt: QueueImportReceipt;
   state: ReturnType<typeof useQueueSubmission>["state"];
   fallbackSearch?: string;
   crawlType?: string;
+  type?: "brave";
 }) {
-  const queue = crawlType ? "crawler" : "webtech";
-  const label = crawlType ? "Crawler" : "Webtech";
+  const queue = type ?? (crawlType ? "crawler" : "webtech");
+  const label = type === "brave" ? "Brave" : crawlType ? "Crawler" : "Webtech";
   const completed = state?.status === "SUCCESS";
   const failed = state?.status === "FAILURE" || state?.status === "CANCELED";
   const params = new URLSearchParams();

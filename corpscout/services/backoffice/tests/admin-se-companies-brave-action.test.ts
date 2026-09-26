@@ -16,8 +16,8 @@ describe("Brave action on the companies list", () => {
   it("uses the submitted selection rather than page or URL filters", async () => {
     const selection = { mode: "ids", companyIds: ["5560004615"] };
     brave.launchSeCompanyBraveAnalysis.mockResolvedValue({ ok: true, taskId: "task", runId: "run", runUrl: "http://dagster/runs/run" });
-    expect(await submit({ action: "brave_analysis", selection })).toMatchObject({ data: { ok: true, runId: "run" } });
-    expect(brave.launchSeCompanyBraveAnalysis).toHaveBeenCalledWith(selection, expect.any(String));
+    expect(await submit({ action: "brave_analysis", selection, submissionId: "submission" })).toMatchObject({ data: { ok: true, runId: "run" } });
+    expect(brave.launchSeCompanyBraveAnalysis).toHaveBeenCalledWith(selection, expect.any(String), "submission");
   });
 
   it("rejects unsupported actions without launching", async () => {

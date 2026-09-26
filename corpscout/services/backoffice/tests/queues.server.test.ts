@@ -254,3 +254,23 @@ it.each(["true", "false", 1, 0])("rejects a nonboolean full crawl override: %j",
 it("does not enable full crawl all for jobs or basic info", () => {
   expect(() => parseQueueConfig(filters("crawler", "jobs"), JSON.stringify({...crawlConfig, full_crawl_all: true}))).toThrow("full crawls only");
 });
+
+it("keeps old Brave inputs discoverable without auto-selecting them as the current draft", async () => {
+  vi.mocked(chQuery).mockReset().mockResolvedValueOnce([]).mockResolvedValueOnce([{total: "0", tasks: "0"}])
+    .mockResolvedValueOnce([{total: "100", matching: "0", legacy: "100"}]).mockResolvedValueOnce([])
+    .mockResolvedValueOnce([{task_id: task, total: "100", submitted_at: ""}]);
+  const result = await loadQueueInputs(filters("brave"));
+  expect(result).toMatchObject({tasks: [], legacyTask: true, totalInputs: 0, selectedTotal: 100, legacyTasks: [{task_id: task, total: "100", submitted_at: ""}]});
+  expect(vi.mocked(chQuery).mock.calls[0][0]).not.toContain("company_brave_search_input");
+  expect(vi.mocked(chQuery).mock.calls[2][0]).toContain("company_brave_search_input");
+});
+
+it("reads Brave completion counts and retained companies after the input queue is cleared", async () => {
+  const {loadQueueHistory} = await import("~/lib/queues.server");
+  vi.mocked(listRuns).mockResolvedValue([{runId: "saved", status: "SUCCESS", startTime: 1000, tags: {
+    "processing/task_id": task, "brave/outcome": "completed_with_errors", "brave/failed_pages": "2", "brave/skipped_pages": "3",
+  }}] as never);
+  vi.mocked(chQuery).mockResolvedValue([{task_id: task, task_type: "brave", total: "10", complete: 1, preview: [["Company", "SE:123"]]}]);
+  expect(await loadQueueHistory(filters("brave"))).toEqual([expect.objectContaining({failedPages: 2, skippedPages: 3,
+    outcome: "completed_with_errors", sources: expect.objectContaining({total: "10"})})]);
+});

@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from urllib.parse import quote
 
 import dagster as dg
+from dagster._core.storage.tags import AUTO_RETRY_RUN_ID_TAG, WILL_RETRY_TAG
 import requests
 
 from dagster_v3.defs.common.llm_control import control_transaction
@@ -36,12 +37,19 @@ def reconcile_runs(instance: dg.DagsterInstance) -> int:
             continue
         active = [run for run in runs if not run.is_finished]
         run = active[0] if active else runs[0]
-        status = TERMINAL.get(run.status, "running" if run.status in {dg.DagsterRunStatus.STARTED,dg.DagsterRunStatus.CANCELING} else "queued")
+        awaiting_retry = any(
+            candidate.tags.get(WILL_RETRY_TAG) == "true"
+            and not candidate.tags.get(AUTO_RETRY_RUN_ID_TAG)
+            and candidate.status == dg.DagsterRunStatus.FAILURE
+            for candidate in runs
+        ) and row["stop_requested_at"] is None
+        finished = not active and not awaiting_retry
+        status = "queued" if awaiting_retry and not active else TERMINAL.get(run.status, "running" if run.status in {dg.DagsterRunStatus.STARTED,dg.DagsterRunStatus.CANCELING} else "queued")
         with control_transaction() as cursor:
             cursor.execute("""UPDATE processing.run_requests SET dagster_run_id=coalesce(dagster_run_id,%s),status=%s,
                 updated_at=now(),finished_at=CASE WHEN %s THEN now() ELSE NULL END,
-                last_error=CASE WHEN %s THEN NULL ELSE last_error END WHERE request_id=%s""",
-                (run.run_id,status,not active,not active,row["request_id"]))
+                last_error=CASE WHEN %s THEN NULL ELSE last_error END WHERE request_id=%s AND updated_at=%s""",
+                (run.run_id,status,finished,finished,row["request_id"],row["updated_at"]))
     return len(pending)
 
 

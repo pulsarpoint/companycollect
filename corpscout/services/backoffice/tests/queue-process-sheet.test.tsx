@@ -47,7 +47,7 @@ describe("Brave queue LLM selection", () => {
     expect(html).toContain("image and JSON response check");
     expect(html).toMatch(/<select[^>]*name="llm_profile_id"[^>]*required=""/);
     expect(html).toMatch(/<option[^>]*value=""[^>]*selected=""/);
-    expect(html.indexOf('name="llm_profile_id"')).toBeLessThan(html.indexOf('name="force"'));
+    expect(html.indexOf('name="llm_profile_id"')).toBeLessThan(html.indexOf('name="force_rescan"'));
     expect(html).toMatch(/<option[^>]*value="missing-key"[^>]*disabled=""/);
     for (const field of ["api", "model", "api_key", "api_key_encrypted"]) expect(html).not.toContain(`name="${field}"`);
   });
@@ -68,7 +68,7 @@ describe("Brave queue LLM selection", () => {
     const form = new OriginalFormData();
     for (const [key, value] of Object.entries(QUEUE_TEMPLATES.brave)) form.set(key, String(value));
     form.set("llm_profile_id", "123");
-    form.set("force", "true");
+    form.set("force_rescan", "true");
     form.set("execution_id", task);
     vi.stubGlobal("FormData", class extends OriginalFormData {
       constructor(source: FormData) { super(); source.forEach((value, key) => this.append(key, value)); }
@@ -78,7 +78,7 @@ describe("Brave queue LLM selection", () => {
     const [payload, options] = mocks.submit.mock.calls[0];
     expect(options).toEqual({method: "post", action: "/admin/queues/brave"});
     const config = JSON.parse(payload.config);
-    expect(config).toEqual({...QUEUE_TEMPLATES.brave, llm_profile_id: "123", force: true, execution_id: task});
+    expect(config).toEqual({...QUEUE_TEMPLATES.brave, llm_profile_id: "123", force_rescan: true, execution_id: task});
     for (const field of ["api", "model", "api_key", "api_key_encrypted", "llm"]) expect(config).not.toHaveProperty(field);
   });
 

@@ -12,6 +12,8 @@ import { Textarea } from "~/components/ui/textarea";
 import { NativeSelect, NativeSelectOption } from "~/components/ui/native-select";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "~/components/ui/sheet";
 
+const LEGACY_BRAVE = {llm_profile_id: "", force: false, rescan_old: false, query_type: "official_website", query_template: "Find the official website of {company_name}."};
+
 type LaunchResult = { ok: false; error: string } | { ok: true; runId: string; status: string; runUrl: string | null; taskId: string };
 
 const LABELS: Record<string, string> = {
@@ -24,8 +26,8 @@ const LABELS: Record<string, string> = {
   rate_limit_retry_seconds: "Rate limit retry delay (seconds)", transient_retry_seconds: "Transient error retry delay (seconds)",
 };
 
-export function QueueProcessSheet({filters, total, asset, blockedReason, llmProfileId, onClose}: {
-  filters: QueueFilters; total: number; asset: string; blockedReason?: string | null; llmProfileId?: string; onClose: () => void;
+export function QueueProcessSheet({legacyTask = false, filters, total, asset, blockedReason, llmProfileId, onClose}: {
+  legacyTask?: boolean; filters: QueueFilters; total: number; asset: string; blockedReason?: string | null; llmProfileId?: string; onClose: () => void;
 }) {
   const fetcher = useFetcher<LaunchResult>();
   const [requestId] = useState(() => crypto.randomUUID());
@@ -35,7 +37,7 @@ export function QueueProcessSheet({filters, total, asset, blockedReason, llmProf
   const busy = fetcher.state !== "idle";
   const done = fetcher.data?.ok === true ? fetcher.data : null;
   const error = busy ? null : localError ?? (fetcher.data?.ok === false ? fetcher.data.error : null);
-  const defaults = filters.type === "crawler" ? null : QUEUE_TEMPLATES[filters.type];
+  const defaults = filters.type === "crawler" ? null : filters.type === "brave" && legacyTask ? LEGACY_BRAVE : QUEUE_TEMPLATES[filters.type];
   const usesLlm = filters.type === "crawler" || filters.type === "brave";
 
   function readFields(form: HTMLFormElement) {
@@ -80,7 +82,7 @@ export function QueueProcessSheet({filters, total, asset, blockedReason, llmProf
             <p>Dagster will validate the stored task and prepare execution when this run starts.</p>
             {done.runUrl && <a className="underline" href={done.runUrl} target="_blank" rel="noreferrer">Open run and progress</a>}
           </AlertDescription></Alert> : <>
-            <p className="text-sm text-muted-foreground">{(filters.type === "webtech" || filters.type === "crawler")
+            <p className="text-sm text-muted-foreground">{(filters.type === "webtech" || filters.type === "crawler" || (filters.type === "brave" && !legacyTask))
               ? "Freshness is checked when execution is prepared. Recent inputs remain in the queue and are counted as skipped. A draft freezes when the results asset begins."
               : filters.type === "ip-enrichment" ? "GeoIP, ASN and RDAP are saved per address. Leave the RDAP request budget empty to process the full task."
               : filters.type === "brave" ? "Searches use the saved company inputs. Freshness and force options are evaluated during processing."
@@ -103,14 +105,14 @@ export function QueueProcessSheet({filters, total, asset, blockedReason, llmProf
               </FieldGroup> : <CrawlSettingsFields type={filters.crawlType} idPrefix="queue-crawl" initialProfileId={llmProfileId} />}
               <FieldGroup><Field><FieldLabel htmlFor="queue-execution">Execution ID (optional)</FieldLabel>
                 <Input id="queue-execution" name="execution_id" placeholder="Use the original execution ID to resume" />
-                <FieldDescription>{(filters.type === "webtech" || filters.type === "crawler") ? "For draft queues, leave empty to start or resume the saved execution. Pipeline failures retain their inputs. Fully processed tasks, including saved website errors, clear their inputs; add pages to a new queue to scan them again. Legacy tasks keep their existing execution rules." : "Leave empty for a new execution. To resume, use the original results run ID and its original settings."}</FieldDescription>
+                <FieldDescription>{(filters.type === "webtech" || filters.type === "crawler" || (filters.type === "brave" && !legacyTask)) ? "For draft queues, leave empty to start or resume the saved execution. Pipeline failures retain their inputs. Fully processed tasks, including saved errors, clear their inputs; add inputs to a new queue to scan them again. Legacy tasks keep their existing execution rules." : "Leave empty for a new execution. To resume, use the original results run ID and its original settings."}</FieldDescription>
               </Field></FieldGroup>
               <Button type="button" variant="outline" onClick={event => {
                 const form = event.currentTarget.form;
                 if (form && form.reportValidity()) { setJson(JSON.stringify(readFields(form), null, 2)); setManual(true); }
               }}>Edit all parameters as JSON</Button>
             </>}
-            <p className="text-xs text-muted-foreground">Results asset: <code>{asset}</code>. {(filters.type === "webtech" || filters.type === "crawler") ? "Inputs are removed when every page has a saved outcome or is skipped as recent. Website errors remain in results and history. Pipeline failures keep inputs for recovery. Use the processing profile to control this execution." : "Existing input rows are retained for retries."}</p>
+            <p className="text-xs text-muted-foreground">Results asset: <code>{asset}</code>. {(filters.type === "webtech" || filters.type === "crawler" || (filters.type === "brave" && !legacyTask)) ? "Inputs are removed when every input has a saved outcome or is skipped as recent. Individual errors remain in results and history. Pipeline failures keep inputs for recovery. Use the processing profile to control this execution." : "Existing input rows are retained for retries."}</p>
           </>}
           {!done && blockedReason && <Alert><AlertTitle>Processing unavailable</AlertTitle><AlertDescription>{blockedReason}</AlertDescription></Alert>}
           {error && <Alert variant="destructive"><AlertTitle>Could not start processing</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}

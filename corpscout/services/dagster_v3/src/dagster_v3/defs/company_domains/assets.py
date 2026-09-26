@@ -20,6 +20,8 @@ from dagster_v3.defs.common.clickhouse_queue import (
 )
 from dagster_v3.defs.common.processing import ProcessingResource, render_query
 from dagster_v3.defs.common.encrypted_llm import EncryptedLLMConfig
+from dagster_v3.defs.company_domains.queue_execution import run_draft
+from dagster_v3.defs.company_domains.queue_tables import PROCESSOR as DRAFT_PROCESSOR
 from dagster_v3.defs.company_domains.browser import (
     DEFAULT_BROWSER_API_URL,
     ROUTES,
@@ -65,6 +67,8 @@ class BraveSearchConfig(dg.Config):
     rescan_old: bool = Field(
         default=False, description="Rescan completed searches older than 30 days."
     )
+    force_rescan: bool = False
+    recent_days: int = Field(default=30, ge=1, le=3650)
     requests_per_route: int = Field(default=1, ge=1, le=8)
     input_batch_size: int = Field(default=100, ge=4, le=10_000)
     answer_timeout_seconds: int = Field(default=60, ge=1, le=600)
@@ -198,17 +202,16 @@ def prepare_execution(
 
 
 @dg.asset(
-    deps=["company_brave_search_input"],
+    deps=["company_brave_search_input", "company_brave_queue_input"],
     group_name="brave_domain_search",
     kinds={"python", "browser", "clickhouse"},
     pool="company_domains_brave",
     tags={"source": "brave", "country": "SE"},
     metadata={"dagster/table_name": RESULT_TABLE},
-    description="Search selected Swedish companies and save completed answers or errors directly "
-    "in company_brave_search_results. Existing outcomes are skipped unless force=true, or "
-    "rescan_old=true and the latest outcome is older than 30 days. Successful answers feed "
-    "se_company_brave_search_results_latest_success. Resume with execution_id; saved outcomes are never searched twice "
-    "within that execution, including forced executions.",
+    description="Search Swedish company drafts and save every answer or search error in ClickHouse. "
+    "Drafts freeze the selected query and LLM, skip recent successes unless force_rescan=true, "
+    "and preserve company history before clearing completed inputs. Resume a draft by task_id; "
+    "legacy fixed selections retain their force/rescan_old settings and execution_id recovery.",
 )
 def company_brave_search_results(
     context: dg.AssetExecutionContext,
@@ -220,6 +223,13 @@ def company_brave_search_results(
 ) -> dg.MaterializeResult:
     if config.input_batch_size < len(ROUTES) * config.requests_per_route:
         raise ValueError("input_batch_size must cover all configured request slots")
+    task_id = config.task_id or context.run.tags.get("processing/task_id")
+    if task_id is not None:
+        with processing.get_store() as store:
+            task = store.task(task_id)
+        if task is not None and task["processor"] == DRAFT_PROCESSOR:
+            return run_draft(context, config, clickhouse, processing_clickhouse,
+                             company_brave_browser, processing, task_id)
     execution = prepare_execution(context, config, clickhouse, processing)
     execution_id = execution["execution_id"]
     outcome_counts_sql = (
