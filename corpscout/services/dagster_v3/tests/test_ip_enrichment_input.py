@@ -89,7 +89,7 @@ def server():
             migrations = Path(__file__).resolve().parents[3] / "clickhouse/migrations"
             for name in (
                 "000433_corpscout_ip_enrichment.up.sql",
-                "000453_corpscout_ip_enrichment_queue_contract.up.sql",
+                "000456_corpscout_ip_enrichment_queue_contract.up.sql",
             ):
                 for statement in (
                     (migrations / name).read_text(encoding="utf-8").split(";")

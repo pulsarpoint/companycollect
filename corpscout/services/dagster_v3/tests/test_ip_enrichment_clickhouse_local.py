@@ -11,7 +11,7 @@ from tests.clickhouse_local import clickhouse_local_command, literal
 
 MIGRATIONS = Path(__file__).resolve().parents[3] / "clickhouse/migrations"
 MIGRATION = "000433_corpscout_ip_enrichment"
-QUEUE_MIGRATION = "000453_corpscout_ip_enrichment_queue_contract"
+QUEUE_MIGRATION = "000456_corpscout_ip_enrichment_queue_contract"
 IDENTITY = "concat(leftPad(toString(toUInt16(cityHash64(ip) % 256)), 3, '0'), ':', toJSONString(tuple(source_name, source_record_id, ip)))"
 
 

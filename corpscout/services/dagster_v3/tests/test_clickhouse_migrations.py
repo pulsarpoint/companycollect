@@ -464,7 +464,7 @@ EXPECTED_MIGRATIONS = (
     "000449_corpscout_queue_task_sources",
     "000450_corpscout_ip_registry_reference_data",
     "000451_corpscout_rdap_trie_registry_class_exclusion",
-    "000453_corpscout_ip_enrichment_queue_contract",
+    "000456_corpscout_ip_enrichment_queue_contract",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
