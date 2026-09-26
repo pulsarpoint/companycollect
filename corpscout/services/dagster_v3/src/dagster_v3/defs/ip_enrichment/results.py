@@ -478,8 +478,8 @@ def ip_enrichment_results(
             geolite2 = freshness(builds, datetime.now(UTC))
             if not geolite2.passed:
                 context.log.warning(
-                    "%s Older than %s days; replace the files by hand "
-                    "(docs/operations/ip-enrichment-draft-queue.md).",
+                    "%s Older than %s days; upload new files on the backoffice "
+                    "GeoLite2 page (docs/operations/ip-enrichment-draft-queue.md).",
                     geolite2.description,
                     MAX_AGE.days,
                 )

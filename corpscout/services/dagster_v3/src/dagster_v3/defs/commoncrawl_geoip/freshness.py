@@ -1,11 +1,11 @@
-"""GeoLite2 freshness: the files are replaced by hand, this check says when it is due.
+"""GeoLite2 freshness: the files are uploaded by hand, this check says when it is due.
 
 MaxMind publishes GeoLite2 twice a week; there is no MaxMind account here, so nothing
 downloads. The check reads the build epoch from each installed file's metadata and
 fails when either GeoLite2-City.mmdb or GeoLite2-ASN.mmdb is older than 14 days.
 ip_enrichment_results opens the files per run through MaxMindDatabaseResource, so a
-file replaced with mv is used by the next run without a restart; see
-docs/operations/ip-enrichment-draft-queue.md for the manual procedure.
+file installed by geolite2_install_job (install.py, an atomic rename) is used by the
+next run without a restart; see docs/operations/ip-enrichment-draft-queue.md.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -42,7 +42,7 @@ def freshness(times: dict[str, datetime], now: datetime) -> dg.AssetCheckResult:
         description=(
             "GeoLite2 databases are current."
             if not stale
-            else "Stale GeoLite2 databases, replace them by hand: "
+            else "Stale GeoLite2 databases, upload new files on the backoffice GeoLite2 page: "
             + ", ".join(
                 f"{edition} built {built.date().isoformat()}"
                 for edition, built in stale.items()
@@ -63,7 +63,7 @@ def freshness(times: dict[str, datetime], now: datetime) -> dg.AssetCheckResult:
     name=CHECK_KEY.name,
     description="Fails when GeoLite2-City.mmdb or GeoLite2-ASN.mmdb in "
     "MAXMIND_DATABASE_DIRECTORY was built more than 14 days ago (MaxMind publishes "
-    "twice a week; the files are updated by hand).",
+    "twice a week; new files are uploaded on the backoffice GeoLite2 page).",
     blocking=False,
 )
 def geolite2_databases_fresh(

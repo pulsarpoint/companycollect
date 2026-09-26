@@ -194,24 +194,41 @@ address — which is served next time by its own `found` marker in `rdap_ip_look
 Other addresses of the block get their own lookup. Details and queries:
 [ip-registry-reference-data.md](ip-registry-reference-data.md).
 
-## GeoLite2 (manual updates)
+## GeoLite2 (upload page)
 
-There is no MaxMind account, so the files are replaced by hand. `MAXMIND_DATABASE_DIRECTORY`
-on the Dagster host holds `GeoLite2-City.mmdb` and `GeoLite2-ASN.mmdb` directly. Procedure:
+There is no MaxMind account, so the owner downloads the files by hand and installs them
+from the backoffice: Admin → Settings → GeoLite2 (`/admin/settings/geolite2`).
+`MAXMIND_DATABASE_DIRECTORY` on the Dagster host holds `GeoLite2-City.mmdb` and
+`GeoLite2-ASN.mmdb` directly. Procedure:
 
-1. Download `GeoLite2-City.tar.gz` and `GeoLite2-ASN.tar.gz` from MaxMind (owner's browser
-   login), copy them to the host and extract:
-   `tar -xzf GeoLite2-City.tar.gz --strip-components=1 -C /tmp '*/GeoLite2-City.mmdb'`
-   (same for ASN).
-2. Move each file over the old one **with `mv`** (a rename; never `cp` over the existing
-   file — a running enrichment maps it): `mv /tmp/GeoLite2-City.mmdb "$DIR/GeoLite2-City.mmdb"`
-   (same for ASN), then `chown` to the Dagster service user.
-3. No restart: `ip_enrichment_results` opens the files per run. A running run keeps its old
-   inode until it ends; the next run uses the new files.
-4. Execute the check `geolite2_databases_fresh` (job `geolite2_freshness_job`, or launch
-   `ip_enrichment_results` with its checks): it fails when either build epoch is older than
+1. Download `GeoLite2-City_YYYYMMDD.tar.gz` and `GeoLite2-ASN_YYYYMMDD.tar.gz` from MaxMind
+   (owner's browser login).
+2. Upload one or both on the page (MaxMind's `.tar.gz` or a bare `GeoLite2-<edition>.mmdb`,
+   at most 200 MB each). The backoffice checks only the file name and size, stores each file
+   unchanged in bucket `geolite2` under `uploads/<uuid>/<file name>` (the bucket is created
+   on first use; the Dagster asset expires `uploads/` after 90 days by a lifecycle rule) and
+   launches `geolite2_install_job` with the uploaded keys. The page refreshes until the run
+   ends and links it in Dagster.
+3. The asset `geolite2_databases` (group `commoncrawl_geoip`) is the authority. For each
+   upload it extracts the single `GeoLite2-<edition>.mmdb` member (tar data filter; absolute
+   paths, `..` and links refused), requires `database_type == "GeoLite2-<edition>"` and
+   refuses a build older than the installed one (an equal build with the same bytes is a
+   no-op). Every upload is validated before anything is replaced; then each file is copied to
+   `.GeoLite2-<edition>.mmdb.<uuid>.tmp` in the same directory, fsynced, re-opened and moved
+   over the old file with `os.replace` (a rename: a running enrichment keeps its mapped old
+   inode). A refusal fails the run and replaces nothing. The files are owned by the Dagster
+   service user, mode 0644.
+4. No restart: `ip_enrichment_results` opens the files per run; the next run uses the new
+   files. The materialization metadata (`city_build`, `asn_build`, `city_sha256`,
+   `asn_sha256`, `installed`, `source_keys`, `fresh`, `city_age_days`, `asn_age_days`) is
+   what the page shows as installed.
+5. The check `geolite2_databases_fresh` (job `geolite2_freshness_job`, or launch
+   `ip_enrichment_results` with its checks) fails when either build epoch is older than
    14 days. Every results run also reports `geolite2_city_build`/`geolite2_asn_build` and
    warns when stale.
+
+Files replaced on the host by any other route are not reflected on the page until the next
+install run materializes the asset.
 
 ## The 2026-09 clean re-run
 
@@ -255,4 +272,6 @@ and the request budget, RIPE via REST and APNIC via whois `-r` without person ob
 root-object and NIR fallbacks, the real FPT answer), budget deferral and wait (resolver and loop), completion
 with partition purge, errors as published outcomes, budget resume, lost write and cleanup
 acknowledgements, changed-profile refusal. `tests/test_geolite2_freshness.py`: build times,
-14-day rule, check wiring.
+14-day rule, check wiring. `tests/test_geolite2_install.py` (disposable RustFS, MaxMind's test
+databases): archive and bare installs, atomic replace, older-build and edition refusals,
+unsafe archive members, validate-all-before-install, metadata, upload expiry rule.

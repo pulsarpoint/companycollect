@@ -15,8 +15,11 @@ source, then run `ip_enrichment_results` with the resulting task ID. See
 The manual `commoncrawl_geoip_update_available` check now reads conclusive City/ASN
 outcomes from `ip_enrichment_current` when reporting uncovered DNS IP buckets.
 
-The GeoLite2 files are replaced by hand (no MaxMind account); the check
-`geolite2_databases_fresh` on `ip_enrichment_results` (`freshness.py`, job
-`geolite2_freshness_job`) fails when either file is older than 14 days, and every results
-run reports the build dates. Procedure:
+The GeoLite2 files are downloaded by hand (no MaxMind account) and uploaded on the
+backoffice page Admin → Settings → GeoLite2, which stores them in bucket `geolite2` and
+launches `geolite2_install_job`. Its asset `geolite2_databases` (`install.py`) validates the
+uploads (edition, build not older than installed, safe archive member) and installs them by
+atomic rename into `MAXMIND_DATABASE_DIRECTORY`. The check `geolite2_databases_fresh` on
+`ip_enrichment_results` (`freshness.py`, job `geolite2_freshness_job`) fails when either file
+is older than 14 days, and every results run reports the build dates. Procedure:
 [ip-enrichment-draft-queue.md](../../../../../docs/operations/ip-enrichment-draft-queue.md).
