@@ -1,5 +1,7 @@
 import { legalFormOptionLabel } from "~/lib/se-legal-form";
-import { Checkbox } from "~/components/ui/checkbox";
+import { useState } from "react";
+import { ToggleGroup, ToggleGroupItem } from "~/components/ui/toggle-group";
+import { Field as FormField, FieldTitle, FieldSet, FieldLegend, FieldDescription, FieldGroup } from "~/components/ui/field";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import {
@@ -27,11 +29,11 @@ import {
   PROFILE_DATATYPES,
   PROFILE_SOURCE_VALUES,
   profileSourceLabel,
+  profileDatatypeLabel,
   selectValue,
   type SeCompanyInfoCorrectionsTableFilters,
   type SeCompanyInfoTableFilters,
   type TableView,
-  YES_NO_VALUES,
 } from "~/lib/se-company-info-filters";
 import {
   SE_INFO_CORRECTION_KINDS,
@@ -43,9 +45,9 @@ import {
  * button, mirroring `data-table/contract-filter-sheet.tsx`'s Sheet usage and
  * button-with-count.
  *
- * The sheet holds a plain GET `<Form>`: every field is a named input, Apply is
- * its submit, and the browser builds the next URL -- so the filters work with
- * no JavaScript state to keep in step, and `pageSize`/`sort`/`dir` ride along
+ * The sheet holds a GET `<Form>`: each availability control submits its one
+ * selected condition through a hidden input. Apply builds the next URL, and
+ * `pageSize`/`sort`/`dir` ride along
  * as hidden fields (a filter change deliberately resets `page`, but must never
  * silently reset the reviewer's page size or the column they sorted by).
  *
@@ -108,6 +110,41 @@ function ViewFields({ view }: { view: TableView }) {
       <input type="hidden" name="sort" value={view.sort} />
       <input type="hidden" name="dir" value={view.dir} />
     </>
+  );
+}
+
+function AvailabilityField({
+  name, label, value, presentValue, missingValue, booleanLabels = false,
+}: {
+  name: string;
+  label: string;
+  value: string;
+  presentValue: string;
+  missingValue: string;
+  booleanLabels?: boolean;
+}) {
+  const [selected, setSelected] = useState(value || ANY_FILTER_VALUE);
+  return (
+    <FormField orientation="horizontal" className="items-center justify-between gap-3">
+      <FieldTitle id={`availability-${presentValue}`}>{label}</FieldTitle>
+      <input type="hidden" name={name} value={selected === ANY_FILTER_VALUE ? "" : selected} />
+      <ToggleGroup
+        aria-labelledby={`availability-${presentValue}`}
+        variant="outline"
+        size="sm"
+        spacing={0}
+        value={[selected]}
+        onValueChange={(values) => { if (values[0]) setSelected(values[0]); }}
+      >
+        <ToggleGroupItem value={ANY_FILTER_VALUE} aria-label={`Any ${label}`}>Any</ToggleGroupItem>
+        <ToggleGroupItem value={presentValue} aria-label={`${booleanLabels ? "Yes" : "Has"} ${label}`}>
+          {booleanLabels ? "Yes" : "Has"}
+        </ToggleGroupItem>
+        <ToggleGroupItem value={missingValue} aria-label={`${booleanLabels ? "No" : "Missing"} ${label}`}>
+          {booleanLabels ? "No" : "Missing"}
+        </ToggleGroupItem>
+      </ToggleGroup>
+    </FormField>
   );
 }
 
@@ -177,42 +214,21 @@ export function SeCompanyInfoFilterFields({
           </SelectContent>
         </Select>
       </Field>
-      <Field label="Description">
-        <FilterSelect
-          name="description"
-          label="Description"
-          value={filters.description}
-          options={YES_NO_VALUES}
-        />
-      </Field>
-      <fieldset className="flex flex-col gap-1.5">
-        {/* The presence columns as a filter: checkboxes, because unlike the
-            single-choice selects above a reviewer may require several at once
-            -- and they AND together (each becomes its own `= 1` predicate), so
-            the description says "ALL" in as many words. Built by mapping the
-            catalog, like the columns themselves, so the group can never offer
-            a flag the table does not show. Each checkbox submits the same
-            `datatype` name with its own key as the value: the plain GET form
-            emits one repeated `?datatype=` param per ticked box. */}
-        <Label className="text-xs font-medium">Has data</Label>
-        <p className="text-xs text-muted-foreground">
-          Only companies that have ALL selected data.
-        </p>
-        {PROFILE_DATATYPES.map((datatype) => (
-          <label
-            key={datatype.key}
-            className="flex cursor-pointer items-center gap-2 text-sm"
-          >
-            <Checkbox
-              name="datatype"
-              value={datatype.key}
-              defaultChecked={filters.datatypes.includes(datatype.key)}
-              aria-label={`Has ${datatype.label}`}
-            />
-            {datatype.label}
-          </label>
-        ))}
-      </fieldset>
+      <AvailabilityField name="datatype" label="Publicly traded" booleanLabels
+        value={filters.datatypes.is_publicly_traded === "missing" ? "is_publicly_traded:missing" : filters.datatypes.is_publicly_traded === "has" ? "is_publicly_traded" : ""}
+        presentValue="is_publicly_traded" missingValue="is_publicly_traded:missing" />
+      <FieldSet>
+        <FieldLegend variant="label">Data availability</FieldLegend>
+        <FieldDescription>Companies must match all conditions. Missing means no data recorded in CompanyCollect.</FieldDescription>
+        <FieldGroup className="gap-3">
+          <AvailabilityField name="description" label="Description" value={filters.description} presentValue="yes" missingValue="no" />
+          {PROFILE_DATATYPES.filter(({key}) => key !== "is_publicly_traded").map(({key}) => (
+            <AvailabilityField key={key} name="datatype" label={profileDatatypeLabel(key)}
+              value={filters.datatypes[key] === "missing" ? `${key}:missing` : filters.datatypes[key] === "has" ? key : ""}
+              presentValue={key} missingValue={`${key}:missing`} />
+          ))}
+        </FieldGroup>
+      </FieldSet>
       <Field label="Source">
         {/* Which registers built the profile, in ANY datatype -- the same
             question the Sources column's letters answer, and the same

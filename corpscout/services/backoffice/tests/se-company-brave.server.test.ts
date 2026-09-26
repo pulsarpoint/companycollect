@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { launchSeCompanyBraveAnalysis } from "~/lib/se-company-brave.server";
-import { EMPTY_INFO_FILTERS, PROFILE_DATATYPES } from "~/lib/se-company-info-filters";
+import { EMPTY_INFO_FILTERS, PROFILE_DATATYPES, parseInfoFilters } from "~/lib/se-company-info-filters";
 
 const submissionId = "11111111-1111-4111-8111-111111111111";
 function options() {
@@ -32,7 +32,7 @@ describe("Swedish company Brave action", () => {
     const opts = options();
     await launchSeCompanyBraveAnalysis({ mode: "query", query: {
       companyId: "5560004615", name: "Alpha' OR 1=1 --", entity: "sole", status: "none",
-      legalForm: "49", description: "no", source: "esef", datatypes: PROFILE_DATATYPES.map((d) => d.key),
+      legalForm: "49", description: "no", source: "esef", datatypes: Object.fromEntries(PROFILE_DATATYPES.map((d) => [d.key, "has" as const])),
     }, excludedCompanyIds: ["198012345678", "198012345678"] }, "operator", submissionId, opts);
     const input = JSON.parse(String(opts.fetchImpl.mock.calls[1][1]?.body)).variables.executionParams.runConfigData.ops.company_brave_queue_input.config;
     expect(input).toMatchObject({
@@ -93,4 +93,16 @@ it("retries only failed-company membership through the normal draft import recei
   const config = JSON.parse(String(opts.fetchImpl.mock.calls[1][1]?.body)).variables.executionParams.runConfigData.ops.company_brave_queue_input.config;
   expect(config).toMatchObject({source_relation: "corpscout.company_brave_search_results", source_final: true,
     filters: {task_id: [submissionId], status: ["error"]}, country_code: "SE", queue_scope: "workspace:SE"});
+});
+
+
+it("passes both presence and absence through the Brave input submission", async () => {
+  const opts = options();
+  const query = parseInfoFilters(new URL("http://localhost/admin/se/companies?datatype=has_financial&datatype=has_domains:missing"));
+  await launchSeCompanyBraveAnalysis({mode: "query", query, excludedCompanyIds: ["5560004615"]}, "operator", submissionId, opts);
+  const input = JSON.parse(String(opts.fetchImpl.mock.calls[1][1]?.body)).variables.executionParams.runConfigData.ops.company_brave_queue_input.config;
+  expect(input.filters).toEqual({has_financial: ["1"], has_domains: ["0"]});
+  expect(input.excluded_company_ids).toEqual(["5560004615"]);
+  expect(input.select_all).toBe(true);
+  expect(input).not.toHaveProperty("max_companies");
 });

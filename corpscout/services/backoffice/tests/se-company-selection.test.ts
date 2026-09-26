@@ -60,7 +60,7 @@ describe("SE company selection", () => {
   it("clears a query when any applied filter changes, but preserves explicit picks", () => {
     const changes = {
       companyId: A, name: "Alpha", status: "inactive", legalForm: "none",
-      entity: "sole", description: "no", source: "wikidata", datatypes: ["has_people" as const],
+      entity: "sole", description: "no", source: "wikidata", datatypes: {has_people: "has" as const},
     };
     for (const [key, value] of Object.entries(changes)) {
       expect(selectionForSeCompanyFilters(all, { ...filters, [key]: value })).toBe(NO_COMPANIES_SELECTED);
@@ -68,4 +68,11 @@ describe("SE company selection", () => {
     const explicit: SeCompanySelection = { mode: "ids", companyIds: [A, B] };
     expect(selectionForSeCompanyFilters(explicit, EMPTY_INFO_FILTERS)).toBe(explicit);
   });
+});
+
+
+it("clears all-matching selection when a field changes from Has to Missing", () => {
+  const has = {...EMPTY_INFO_FILTERS, datatypes: {has_domains: "has" as const}};
+  const selection: SeCompanySelection = {mode: "query", query: has, excludedCompanyIds: []};
+  expect(selectionForSeCompanyFilters(selection, {...has, datatypes: {has_domains: "missing"}})).toBe(NO_COMPANIES_SELECTED);
 });

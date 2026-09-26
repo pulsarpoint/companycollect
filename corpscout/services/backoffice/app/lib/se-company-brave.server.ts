@@ -38,7 +38,9 @@ export async function launchSeCompanyBraveAnalysis(
     if (query.legalForm) filters.legal_form_code = [query.legalForm === NONE_FILTER_VALUE ? "" : query.legalForm];
     if (query.description) filters.has_description = [query.description === "yes" ? "1" : "0"];
     if (query.source && query.source !== "scb") filters[`source_${query.source}`] = ["1"];
-    for (const datatype of query.datatypes) filters[datatype] = ["1"];
+    for (const [datatype, presence] of Object.entries(query.datatypes)) {
+      filters[datatype] = [presence === "has" ? "1" : "0"];
+    }
     input.filters = filters;
     input.excluded_company_ids = [...selection.excludedCompanyIds].sort();
     input.select_all = true;
