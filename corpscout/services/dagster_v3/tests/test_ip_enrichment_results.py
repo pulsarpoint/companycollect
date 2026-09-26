@@ -1488,7 +1488,15 @@ def test_apnic_nir_allocation_objects_fall_back_to_rdap(environment, monkeypatch
             apnic_whois.network_object(apnic_whois.parse_answer(APNIC_JPNIC_ANSWER))
         )
     )
-    assert apnic_whois.nir_of("JPNIC-NET-JP-ERX", "") == "jpnic"
+    assert (
+        apnic_whois.nir_of("JPNIC-NET-JP-ERX", "Japan Network Information Center")
+        == "jpnic"
+    )
+    # NIR-style netnames on members' own objects are holders (seen on prod 2026-09-26).
+    assert apnic_whois.nir_of("IDNIC-TADULAKO-ID", "Universitas Tadulako") == ""
+    assert apnic_whois.nir_of("JPNIC-NET-JP", "") == ""
+    assert apnic_whois.nir_of("KIDC", "Korea Internet Data Center") == ""
+    assert apnic_whois.nir_of("SOLUSINET-ID", "PT iForte Global Internet") == ""
     assert (
         apnic_whois.nir_of("CIDR-BLK3-TW", "Taiwan Network Information Center")
         == "twnic"

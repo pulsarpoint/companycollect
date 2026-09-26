@@ -36,22 +36,14 @@ TOTAL_TIMEOUT = 60.0
 COMPLETE_MARKER = "% This query was served by"
 NETWORK_TYPES = ("inetnum", "inet6num")
 OBJECT_URL = "https://rdap.apnic.net/ip/{start}"
-# The NIRs' own allocation objects (not the holders' allocations the NIRs maintain).
-NIR_NETNAME_PREFIXES = {
-    "JPNIC": "jpnic",
-    "KRNIC": "krnic",
-    "TWNIC": "twnic",
-    "IDNIC": "idnic",
-    "CNNIC": "cnnic",
-    "IRINN": "irinn",
-    "VNNIC": "vnnic",
-}
-# Matched as substrings of the upper-cased first descr line. VNNIC spells its name both
-# ways in APNIC's database ("Centre" and, in the captured route object, "Center").
-NIR_DESCR_PHRASES = {
+# The NIRs' own allocation objects are recognised by their first descr line naming the NIR.
+# Netnames are not used: NIR members' own objects carry NIR-style netnames too (IDNIC
+# assigns "IDNIC-<HOLDER>-ID" to its members), and APNIC whois -r answers every NIR except
+# JPNIC with the holder's object. VNNIC spells its name both ways in APNIC's database.
+NIR_DESCR_NAMES = {
     "JAPAN NETWORK INFORMATION CENTER": "jpnic",
     "KOREA NETWORK INFORMATION CENTER": "krnic",
-    "KOREA INTERNET": "krnic",
+    "KOREA INTERNET & SECURITY AGENCY": "krnic",
     "TAIWAN NETWORK INFORMATION CENTER": "twnic",
     "INDONESIA NETWORK INFORMATION CENTER": "idnic",
     "CHINA INTERNET NETWORK INFORMATION CENTER": "cnnic",
@@ -97,13 +89,14 @@ def network_object(
 
 
 def nir_of(netname: str, descr: str) -> str:
-    """The NIR whose own allocation object this is, or '' for a holder's object."""
-    for prefix, nir in NIR_NETNAME_PREFIXES.items():
-        if netname.upper().startswith(prefix):
-            return nir
-    upper = descr.upper()
-    for phrase, nir in NIR_DESCR_PHRASES.items():
-        if phrase in upper:
+    """The NIR whose own allocation object this is, or '' for a holder's object.
+
+    Only the first descr line decides: it must begin with the NIR's name. ``netname`` is
+    kept for the call site and ignored (see NIR_DESCR_NAMES).
+    """
+    first = " ".join(descr.upper().split())
+    for name, nir in NIR_DESCR_NAMES.items():
+        if first.startswith(name):
             return nir
     return ""
 

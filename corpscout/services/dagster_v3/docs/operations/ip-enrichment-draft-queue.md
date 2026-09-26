@@ -125,8 +125,8 @@ the most specific `inetnum`/`inet6num` with contact handles only, followed by ro
 that are ignored. The holder name is the **first `descr` line** (APNIC objects rarely carry
 `org:`); further `descr` lines (addresses) and every contact handle are dropped; `status` is
 upper-cased and whitespace-collapsed. An answer that is an NIR's own allocation object —
-`netname` starting with `JPNIC`, `KRNIC`, `TWNIC`, `IDNIC`, `CNNIC`, `IRINN` or `VNNIC`, or a
-first `descr` naming the NIR — falls back to RDAP, which the IANA bootstrap routes to the
+its first `descr` line begins with the NIR's name (netnames are ignored: IDNIC members' own
+objects are named `IDNIC-<HOLDER>-ID`) — falls back to RDAP, which the IANA bootstrap routes to the
 NIR server; `mnt-by` alone decides nothing (FPT's `103.35.64.0/22` is maintained by
 `MAINT-VN-VNNIC` and is the holder's allocation). `apnic_whois: true` is part of the frozen
 profile. ARIN, LACNIC and AFRINIC stay on RDAP.
@@ -286,9 +286,8 @@ Classes regenerate per miss and at the daily refresh.
   reroute across passes.
 - `RdapClient._lookup` reaches into whoisit's private `_bootstrap` attribute, pinned in
   `uv.lock`; a whoisit upgrade needs re-verification.
-- The NIR-object rule matches a netname prefix, so a holder's own netname such as
-  `IDNIC-<HOLDER>-ID` could be misread as an NIR's own allocation and sent to RDAP
-  unnecessarily; to be verified in the Task 8 smoke run.
+- In practice only JPNIC space falls back to RDAP (sampled 2026-09-26); the other NIRs'
+  space is answered by whois with the holder's object.
 
 ## Validation
 

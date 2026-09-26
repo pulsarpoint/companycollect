@@ -173,9 +173,9 @@ object.
 **APNIC**, when `apnic_whois` is on, is asked over port-43 whois with `-r` (`apnic_whois.py`;
 the HTTP gateway `wq.apnic.net` does not honour `-r`): the holder name is the *first* `descr`
 line, since APNIC objects rarely carry `org:`; `status` is upper-cased and whitespace-collapsed.
-An answer that is an NIR's own allocation object (`netname` starting with
-`JPNIC`/`KRNIC`/`TWNIC`/`IDNIC`/`CNNIC`/`IRINN`/`VNNIC`, or a first `descr` naming one) falls back
-to RDAP, routed by the IANA bootstrap to the NIR's server; `mnt-by` alone never decides this (a
+An answer that is an NIR's own allocation object (its first `descr` line begins with the NIR's
+name, e.g. `Japan Network Information Center`; netnames are ignored because NIR members' own
+objects carry NIR-style netnames such as `IDNIC-TADULAKO-ID`) falls back to RDAP, routed by the IANA bootstrap to the NIR's server; `mnt-by` alone never decides this (a
 holder's own block, e.g. FPT's `103.35.64.0/22`, is maintained by `MAINT-VN-VNNIC`).
 
 **Cross-RIR redirects** are refused before any fetch, the same way a first URL to
@@ -215,6 +215,7 @@ every task, not just the one being processed — a `task_id` skip index is a can
 A miss deferred by a paused target registry after a cross-RIR redirect (e.g. ARIN → RIPE while
 RIPE is paused) repeats the ARIN redirect on the next pass; nothing remembers the reroute across
 passes. `RdapClient._lookup` reaches into whoisit's private `_bootstrap` attribute, pinned in
-`uv.lock`. The NIR-object rule matches a netname prefix, so a holder's own netname such as
-`IDNIC-<HOLDER>-ID` could be misread as an NIR's own allocation; to be verified in the Task 8
-smoke run.
+`uv.lock`. The NIR-object rule used to match netname prefixes; the 2026-09-26 bucket-0 smoke run showed
+it sending `IDNIC-<HOLDER>-ID` holder objects to RDAP (holder name lost), so it now reads only the
+first `descr` line. Sampled on 2026-09-26, `whois -r` answers with the NIR's own block only in
+JPNIC space; KRNIC, TWNIC, CNNIC, IRINN, VNNIC and IDNIC space come back as holder objects.
