@@ -137,7 +137,7 @@ writers) rather than silently skipped, and a registration that is not reusable i
 per-IP either — see the operations doc's "Known costs" for what that means for repeat lookups of
 the same address.
 
-## IP enrichment: page batching and registry budgets
+## IP enrichment: page batching, lanes and registry budgets
 
 `ip_enrichment_results` (`defs/ip_enrichment/enrichment.py`, `RdapEnricher`) resolves a page of
 addresses with a bounded number of ClickHouse round trips: one negative-cache read
@@ -190,19 +190,47 @@ REST search or whois `-r` and counted under the *target* registry (`reroutes_by_
 `individual` or `group`, nested included). RDAP requests made because a
 REST/whois answer was a catch-all or an NIR's own object are counted separately in
 `rdap_fallbacks_by_registry`, with persons under `"<rir>:fallback"` keys — a plain `ripe`/`apnic`
-key in `person_entities_by_registry` is a leak, not a fallback. `reroutes_by_registry` and
-`pauses_by_registry` (including the run-wide `bootstrap` key) round out the set.
+key in `person_entities_by_registry` is a leak, not a fallback. `reroutes_by_registry` (redirects re-sent through the target's direct endpoint),
+`pauses_by_registry` (including the run-wide `bootstrap` key), and per endpoint
+`requests_by_endpoint` / `pauses_by_endpoint` (`arin:direct`, `arin:proxy-1`, … — never a URL)
+round out the set.
 
-**The optional per-registry daily budget** (`registry_daily_budgets`, default `{}`) defers a miss
-of a registry at its limit rather than requesting or failing; the run waits only when a whole
-pass resolved nothing else, for an hour's share of the budget (`wait_for_registry_budget`). The
-24-hour usage window is seeded on start from `rdap_networks.fetched_at` of the last day, across
-every writer — including the legacy bucket worker below — which under-counts requests that
-stored no network (errors, not-founds, the redirected half of a reroute), since
-`rdap_ip_lookup_results` has no registry column. A RIPE `403`/`429` or an APNIC `%ERROR:2xx`
-additionally pauses that registry for `max(retry, 15 min)`, deferring its misses the same way; a
-failed IANA bootstrap pauses every miss under the key `bootstrap` with its own 60 s→900 s
-back-off. Both waits hold the `commoncrawl_rdap` pool slot.
+**Lanes (FETCH / COMMIT).** After the cache, trie and in-run hits, a page's misses are routed on
+the calling thread (`registry_for`, local) and grouped by registry; a thread pool runs one worker
+per endpoint of each registry — `<registry>:direct`, plus one per HTTP(S) proxy of a registry in
+`use_proxies`. FETCH (workers) is HTTP only: request, reroute (to RIPE REST / APNIC whois, or out
+of a proxy's registry to the target's direct endpoint), catch-all/NIR fallback, parents; it
+returns a `MissOutcome` (network + parents, error, "reused a network fetched earlier in this
+page", or deferred). COMMIT (the calling thread, page order) classifies, persists, remembers and
+writes markers, so the ClickHouse client is never shared and the storage order is the one-lane
+order. Each endpoint has its own `RdapClient`/session and a lock held for pacing plus the
+request (`registry_request_delays`, default `{"lacnic": 6.5}`, else `request_delay_seconds`);
+RIPE REST and APNIC whois are single clients used under their direct endpoint's lock.
+Counters, budgets, pauses and page state sit behind one state lock; log lines from workers are
+queued and emitted on the calling thread.
+
+**Proxies** are opt-in (`use_proxies`, only `PROXY_ALLOWED_REGISTRIES = {"arin", "afrinic"}`),
+HTTP(S) only, RDAP only; URLs come from the `RDAP_PROXIES` environment variable (JSON of URL
+lists per registry), never from run config, and never appear in logs or metadata. RIPE (AUP
+anti-avoidance clause) and APNIC (port-43 whois) always go direct; LACNIC too (per-address limit,
+API keys on request). A proxied client refuses any host outside its registry, so a redirect to
+another registry goes direct.
+
+**The optional daily budget** (`registry_daily_budgets`, default `{"afrinic": 4500}`: AFRINIC
+allows 5,000 queries per address and day) applies per endpoint, i.e. per source address. A miss
+whose endpoint is at its limit goes to another endpoint of the registry or is deferred rather
+than requested or failed; the run waits only when a whole pass resolved nothing else, for an
+hour's share of the first endpoint's budget (`wait_for_registry_budget`). The 24-hour usage
+window is seeded on start from `rdap_networks.fetched_at` of the last day, across every writer —
+including the legacy bucket worker below — and charged to every endpoint of the registry (the
+rows carry no source address); it under-counts requests that stored no network (errors,
+not-founds, the redirected half of a reroute), since `rdap_ip_lookup_results` has no registry
+column. A rate limit or block (RDAP `429`, LACNIC `403`, RIPE REST `403`/`429`, APNIC
+`%ERROR:2xx`) pauses the endpoint for its `Retry-After`, else `rate_limit_pause_seconds` (300)
+doubling up to `rate_limit_retry_seconds`, reset by a success; the address is deferred (no
+result, no marker) and the registry is deferred only when all its endpoints are paused or at
+their budget. A failed IANA bootstrap pauses every miss under the key `bootstrap` with its own
+60 s→900 s back-off. Both waits hold the `commoncrawl_rdap` pool slot.
 
 **The legacy bucket worker** (`commoncrawl_ip_rdap_networks`) keeps its per-IP RDAP lookups,
 RIPE and APNIC included, so it does consume personal data sets; it shares the daily budget
