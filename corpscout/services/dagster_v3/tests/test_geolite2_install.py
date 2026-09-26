@@ -8,6 +8,7 @@ real, readable MMDB.
 
 import hashlib
 import io
+import os
 import subprocess
 import tarfile
 import time
@@ -20,6 +21,7 @@ import maxminddb
 import pytest
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
+from dagster_v3.defs.commoncrawl_geoip import install as install_module
 from dagster_v3.defs.commoncrawl_geoip.install import (
     BUCKET,
     geolite2_databases,
@@ -95,17 +97,26 @@ def mmdb_bytes(edition: str, build_epoch: int) -> bytes:
     return bytes(data)
 
 
-def tar_gz(members: dict[str, bytes], *, symlink: str | None = None) -> bytes:
+def tar_gz(members: dict[str, bytes], *, special: bytes | None = None) -> bytes:
+    """An archive of regular members plus, optionally, one non-regular
+    ``GeoLite2-City.mmdb`` member of tar type ``special`` (link, device, ...)."""
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
         for name, body in members.items():
             info = tarfile.TarInfo(name)
             info.size = len(body)
             tar.addfile(info, io.BytesIO(body))
-        if symlink:
-            info = tarfile.TarInfo(symlink)
-            info.type = tarfile.SYMTYPE
-            info.linkname = "/etc/passwd"
+        if special is not None:
+            info = tarfile.TarInfo("GeoLite2-City_20260925/GeoLite2-City.mmdb")
+            info.type = special
+            if special in (tarfile.SYMTYPE, tarfile.LNKTYPE):
+                info.linkname = (
+                    "/etc/passwd"
+                    if special == tarfile.SYMTYPE
+                    else "GeoLite2-City_20260925/COPYRIGHT.txt"
+                )
+            else:
+                info.devmajor, info.devminor = 1, 3
             tar.addfile(info)
     return buffer.getvalue()
 
@@ -180,9 +191,11 @@ def snapshot(directory: Path) -> dict[str, bytes]:
     return {path.name: path.read_bytes() for path in sorted(directory.iterdir())}
 
 
-def test_the_job_selects_the_asset_and_never_retries():
+def test_the_job_selects_the_asset_never_retries_and_runs_one_at_a_time():
     assert geolite2_install_job.name == "geolite2_install_job"
     assert geolite2_install_job.tags["dagster/max_retries"] == "0"
+    # dagster.yaml defaults every pool to limit 1: installs are serialized.
+    assert geolite2_databases.op.pool == "geolite2_install"
 
 
 def test_installs_maxmind_archives_and_reports_both_editions(s3, tmp_path):
@@ -206,6 +219,7 @@ def test_installs_maxmind_archives_and_reports_both_editions(s3, tmp_path):
     assert values["city_sha256"] == hashlib.sha256(mmdb_bytes("City", NEW)).hexdigest()
     assert values["asn_sha256"] == hashlib.sha256(mmdb_bytes("ASN", NEW)).hexdigest()
     assert values["fresh"] is True
+    assert values["lifecycle_applied"] is True
     assert values["city_age_days"] == 1 and values["asn_age_days"] == 1
 
 
@@ -271,7 +285,17 @@ def test_edition_mismatch_is_refused(s3, tmp_path):
     [
         (tar_gz({"../GeoLite2-City.mmdb": b"x"}), "absolute paths, '..' and links"),
         (tar_gz({"/tmp/GeoLite2-City.mmdb": b"x"}), "absolute paths, '..' and links"),
-        (tar_gz({}, symlink="GeoLite2-City.mmdb"), "absolute paths, '..' and links"),
+        (tar_gz({}, special=tarfile.SYMTYPE), "absolute paths, '..' and links"),
+        (
+            tar_gz(
+                {"GeoLite2-City_20260925/COPYRIGHT.txt": b"x"},
+                special=tarfile.LNKTYPE,
+            ),
+            "absolute paths, '..' and links",
+        ),
+        (tar_gz({}, special=tarfile.CHRTYPE), "absolute paths, '..' and links"),
+        (tar_gz({}, special=tarfile.BLKTYPE), "absolute paths, '..' and links"),
+        (tar_gz({}, special=tarfile.FIFOTYPE), "absolute paths, '..' and links"),
         (
             tar_gz({"a/GeoLite2-City.mmdb": b"x", "b/GeoLite2-City.mmdb": b"y"}),
             "exactly one GeoLite2-City.mmdb, found 2",
@@ -325,3 +349,100 @@ def test_upload_prefix_expires_after_ninety_days(s3, tmp_path):
     assert rule["Filter"]["Prefix"] == "uploads/"
     # The upload object itself is kept.
     assert client.head_object(Bucket=BUCKET, Key=key)["ContentLength"] > 0
+
+
+def temp_files(directory: Path) -> list[str]:
+    return sorted(path.name for path in directory.glob(".GeoLite2-*.tmp"))
+
+
+def test_missing_upload_object_is_a_clean_failure(s3, tmp_path):
+    preinstall(tmp_path, OLD, OLD)
+    before = snapshot(tmp_path)
+    key = f"uploads/{uuid4()}/GeoLite2-City.mmdb"  # never uploaded
+
+    message = failure(install(s3, tmp_path, [("City", key)]))
+
+    assert f"Upload {key!r} is not in bucket geolite2" in message
+    assert snapshot(tmp_path) == before
+
+
+def test_failed_staged_verification_leaves_no_temp_file(s3, tmp_path, monkeypatch):
+    preinstall(tmp_path, OLD, OLD)
+    before = snapshot(tmp_path)
+    key = upload(s3, "GeoLite2-City.mmdb", mmdb_bytes("City", NEW))
+    real = install_module.sha256_of
+
+    def corrupting(path: Path) -> str:
+        return "0" * 64 if path.name.endswith(".tmp") else real(path)
+
+    monkeypatch.setattr(install_module, "sha256_of", corrupting)
+
+    message = failure(install(s3, tmp_path, [("City", key)]))
+
+    assert "does not match the upload" in message
+    assert temp_files(tmp_path) == []
+    assert snapshot(tmp_path) == before
+
+
+def test_stale_temp_files_are_swept_and_fresh_ones_kept(s3, tmp_path):
+    preinstall(tmp_path, OLD, OLD)
+    stale = tmp_path / ".GeoLite2-City.mmdb.dead-run.tmp"
+    fresh = tmp_path / ".GeoLite2-ASN.mmdb.live-run.tmp"
+    stale.write_bytes(b"x")
+    fresh.write_bytes(b"y")
+    two_hours_ago = time.time() - 7200
+    os.utime(stale, (two_hours_ago, two_hours_ago))
+    key = upload(s3, "GeoLite2-City.mmdb", mmdb_bytes("City", NEW))
+
+    assert install(s3, tmp_path, [("City", key)]).success
+
+    assert temp_files(tmp_path) == [fresh.name]
+
+
+def test_a_newer_concurrent_install_is_not_overwritten(s3, tmp_path, monkeypatch):
+    preinstall(tmp_path, OLD, OLD)
+    key = upload(s3, "GeoLite2-City.mmdb", mmdb_bytes("City", NEW))
+    newer = NOW - 3600
+    real_stage = install_module.stage
+
+    def stage_then_race(database, directory):
+        staged = real_stage(database, directory)
+        # Another install renames a newer build in while this one is staged.
+        (directory / "GeoLite2-City.mmdb").write_bytes(mmdb_bytes("City", newer))
+        return staged
+
+    monkeypatch.setattr(install_module, "stage", stage_then_race)
+
+    message = failure(install(s3, tmp_path, [("City", key)]))
+
+    assert "newer than this upload" in message
+    assert "Replaced in this run before stopping: none" in message
+    assert build_of(tmp_path / "GeoLite2-City.mmdb") == newer
+    assert temp_files(tmp_path) == []
+
+
+def test_lifecycle_failure_is_only_a_warning(s3, tmp_path, monkeypatch):
+    def refuse(self, rules, bucket=None):
+        raise RuntimeError("lifecycle not supported")
+
+    monkeypatch.setattr(ObjectStoreResource, "apply_lifecycle_rules", refuse)
+    key = upload(s3, "GeoLite2-City.mmdb", mmdb_bytes("City", NEW))
+
+    result = install(s3, tmp_path, [("City", key)])
+
+    assert result.success
+    assert metadata(result)["lifecycle_applied"] is False
+    assert build_of(tmp_path / "GeoLite2-City.mmdb") == NEW
+
+
+def test_an_unreadable_installed_edition_is_reported_not_raised(s3, tmp_path):
+    (tmp_path / "GeoLite2-ASN.mmdb").write_bytes(b"not an mmdb")
+    key = upload(s3, "GeoLite2-City.mmdb", mmdb_bytes("City", NEW))
+
+    result = install(s3, tmp_path, [("City", key)])
+
+    assert result.success
+    values = metadata(result)
+    assert values["installed"] == ["City"]
+    assert values["asn_build"] == values["asn_sha256"] == "unreadable"
+    assert values["fresh"] is False and "asn_age_days" not in values

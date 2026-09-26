@@ -17,6 +17,7 @@ import os
 import shutil
 import tarfile
 import tempfile
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -26,7 +27,10 @@ import dagster as dg
 import maxminddb
 from pydantic import Field
 
-from dagster_v3.defs.common.resources import ObjectStoreResource
+from dagster_v3.defs.common.resources import (
+    ObjectStoreResource,
+    is_missing_object_error,
+)
 from dagster_v3.defs.commoncrawl_geoip.freshness import freshness
 from dagster_v3.defs.commoncrawl_geoip.resources import MaxMindDatabaseResource
 
@@ -36,6 +40,10 @@ UPLOAD_RETENTION_DAYS = 90
 EDITIONS = ("City", "ASN")
 # A current GeoLite2-City.mmdb is ~60 MB; anything far larger is not a GeoLite2 file.
 MAX_MMDB_BYTES = 1024**3
+# Staged copies left by a run that died between staging and renaming.
+STALE_TEMP_SECONDS = 3600
+TEMP_GLOB = ".GeoLite2-*.mmdb.*.tmp"
+POOL = "geolite2_install"
 
 
 def database_type(edition: str) -> str:
@@ -132,7 +140,15 @@ def fetch_and_validate(
         raise dg.Failure(f"Upload key {upload.key!r} is not under {UPLOAD_PREFIX}.")
     local = workdir / upload.edition / name
     local.parent.mkdir(parents=True)
-    store.download_file(upload.key, local, bucket=BUCKET)
+    try:
+        store.download_file(upload.key, local, bucket=BUCKET)
+    except Exception as error:
+        if is_missing_object_error(error):
+            raise dg.Failure(
+                f"Upload {upload.key!r} is not in bucket {BUCKET} (missing object or "
+                "bucket); nothing was installed."
+            ) from error
+        raise
     if name.endswith(".tar.gz"):
         mmdb = extract_mmdb(local, upload.edition, workdir / upload.edition / "x")
     elif name.endswith(".mmdb"):
@@ -154,6 +170,32 @@ def installed_state(directory: Path, edition: str) -> tuple[int, str] | None:
     if not path.exists():
         return None
     return read_build(path, edition), sha256_of(path)
+
+
+def installed_state_or_none(
+    directory: Path, edition: str, log
+) -> tuple[int, str] | None:
+    """installed_state, treating an unreadable installed file as absent (logged)."""
+    try:
+        return installed_state(directory, edition)
+    except dg.Failure as error:
+        log.warning(
+            f"Unreadable installed {installed_name(edition)}: {error.description}"
+        )
+        return None
+
+
+def sweep_stale_temp_files(directory: Path, log, now: float | None = None) -> list[str]:
+    """Remove staged copies older than an hour (a run that died before renaming)."""
+    cutoff = (time.time() if now is None else now) - STALE_TEMP_SECONDS
+    removed = []
+    for path in directory.glob(TEMP_GLOB):
+        if path.is_file() and path.stat().st_mtime < cutoff:
+            path.unlink(missing_ok=True)
+            removed.append(path.name)
+    if removed:
+        log.warning(f"Removed stale staged GeoLite2 files: {removed}")
+    return removed
 
 
 def iso(epoch: int) -> str:
@@ -194,12 +236,8 @@ def install(databases: list[ValidatedDatabase], directory: Path, log) -> list[st
     """Refuse older builds, then stage every file before renaming any of them."""
     to_install = []
     for database in databases:
-        try:
-            current = installed_state(directory, database.edition)
-        except dg.Failure as error:
-            # A damaged installed file must not block its own replacement.
-            log.warning(f"Replacing an unreadable installed file: {error.description}")
-            current = None
+        # A damaged installed file must not block its own replacement.
+        current = installed_state_or_none(directory, database.edition, log)
         if current is not None:
             build, sha = current
             if database.build_epoch < build:
@@ -220,14 +258,29 @@ def install(databases: list[ValidatedDatabase], directory: Path, log) -> list[st
         for _, path in staged:
             path.unlink(missing_ok=True)
         raise
-    for database, path in staged:
-        os.replace(path, directory / installed_name(database.edition))
-        log.info(
-            f"Installed {installed_name(database.edition)} built {iso(database.build_epoch)}."
-        )
-    if staged:
-        _fsync_directory(directory)
-    return [database.edition for database, _ in staged]
+    replaced: list[str] = []
+    try:
+        for database, path in staged:
+            # Another install may have finished since the check above.
+            current = installed_state_or_none(directory, database.edition, log)
+            if current is not None and current[0] > database.build_epoch:
+                raise dg.Failure(
+                    f"{installed_name(database.edition)} is now built {iso(current[0])}, "
+                    f"newer than this upload ({iso(database.build_epoch)}); a concurrent "
+                    f"install? Replaced in this run before stopping: {replaced or 'none'}."
+                )
+            os.replace(path, directory / installed_name(database.edition))
+            replaced.append(database.edition)
+            log.info(
+                f"Installed {installed_name(database.edition)} built "
+                f"{iso(database.build_epoch)}."
+            )
+    finally:
+        for _, path in staged[len(replaced) :]:
+            path.unlink(missing_ok=True)
+        if replaced:
+            _fsync_directory(directory)
+    return replaced
 
 
 def upload_retention_rule() -> dict[str, object]:
@@ -241,6 +294,9 @@ def upload_retention_rule() -> dict[str, object]:
 
 @dg.asset(
     group_name="commoncrawl_geoip",
+    # The instance defaults every pool to limit 1 (dagster.yaml
+    # concurrency.pools.default_limit), so two install runs never overlap.
+    pool=POOL,
     kinds={"python", "s3", "maxmind"},
     description="GeoLite2-City.mmdb and GeoLite2-ASN.mmdb in MAXMIND_DATABASE_DIRECTORY, "
     "installed from files uploaded on the backoffice GeoLite2 settings page (bucket "
@@ -267,9 +323,7 @@ def geolite2_databases(
     if not directory.is_dir():
         raise dg.Failure(f"MAXMIND_DATABASE_DIRECTORY {directory} does not exist.")
 
-    geolite2_object_store.apply_lifecycle_rules(
-        [upload_retention_rule()], bucket=BUCKET
-    )
+    sweep_stale_temp_files(directory, context.log)
     with tempfile.TemporaryDirectory(prefix="geolite2-") as workdir:
         databases = [
             fetch_and_validate(upload, geolite2_object_store, Path(workdir))
@@ -277,14 +331,32 @@ def geolite2_databases(
         ]
         installed = install(databases, directory, context.log)
 
+    # Housekeeping only: a store without lifecycle support must not fail an install
+    # that has already happened.
+    try:
+        geolite2_object_store.apply_lifecycle_rules(
+            [upload_retention_rule()], bucket=BUCKET
+        )
+        lifecycle_applied = True
+    except Exception as error:
+        context.log.warning(f"Could not apply the uploads/ expiry rule: {error}")
+        lifecycle_applied = False
+
     metadata: dict[str, object] = {
         "installed": installed,
         "source_keys": [upload.key for upload in config.uploads],
+        "lifecycle_applied": lifecycle_applied,
     }
     builds = {}
     for edition in EDITIONS:
-        state = installed_state(directory, edition)
         prefix = edition.lower()
+        try:
+            state = installed_state(directory, edition)
+        except (dg.Failure, OSError) as error:
+            # Report what is on disk truthfully; the files were already renamed.
+            context.log.warning(f"Installed {installed_name(edition)}: {error}")
+            metadata[f"{prefix}_build"] = metadata[f"{prefix}_sha256"] = "unreadable"
+            continue
         metadata[f"{prefix}_build"] = iso(state[0]) if state else "missing"
         metadata[f"{prefix}_sha256"] = state[1] if state else "missing"
         if state:
