@@ -92,8 +92,10 @@ export async function uploadGeolite2(
 
 export interface InstalledEdition {
   edition: GeoLite2Edition;
-  /** ISO timestamp of the MMDB build, or null when the file is missing. */
+  /** ISO timestamp of the MMDB build, or null when the file is missing or unreadable. */
   build: string | null;
+  /** Why there is no build: the install run found no file, or one it could not read. */
+  problem: "missing" | "unreadable" | null;
   ageDays: number | null;
   stale: boolean;
   sha256: string | null;
@@ -109,8 +111,14 @@ export interface GeoLite2Status {
   lastRun: { runId: string; status: string; url: string | null; startTime: number | null } | null;
 }
 
+/** The asset writes "missing"/"unreadable" in place of a build or sha256. */
+function problemOf(value: unknown): "missing" | "unreadable" | null {
+  if (value === "unreadable") return "unreadable";
+  return typeof value === "string" && value !== "missing" ? null : "missing";
+}
+
 function text(value: unknown): string | null {
-  return typeof value === "string" && value !== "missing" ? value : null;
+  return problemOf(value) === null ? (value as string) : null;
 }
 
 /** The installed builds from the asset's latest materialization, and the latest install run. */
@@ -131,11 +139,13 @@ export async function loadGeolite2Status(
           : [],
         editions: (["City", "ASN"] as const).map((edition) => {
           const prefix = edition.toLowerCase();
-          const build = text(materialization.metadata[`${prefix}_build`]);
+          const rawBuild = materialization.metadata[`${prefix}_build`];
+          const build = text(rawBuild);
           const ageMs = build === null ? null : now.getTime() - Date.parse(build);
           return {
             edition,
             build,
+            problem: problemOf(rawBuild),
             ageDays: ageMs === null ? null : Math.floor(ageMs / DAY_MS),
             // Same rule as the Dagster check: stale when older than exactly 14 days.
             stale: ageMs === null || ageMs > GEOLITE2_MAX_AGE_DAYS * DAY_MS,

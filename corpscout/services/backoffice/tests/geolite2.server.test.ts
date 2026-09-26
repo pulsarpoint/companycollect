@@ -101,8 +101,12 @@ describe("object store", () => {
     expect(call.body).toBe(body);
     expect(call.headers["x-amz-content-sha256"]).toBe(createHash("sha256").update(body).digest("hex"));
     expect(call.headers["x-amz-date"]).toBe("20260926T100000Z");
-    expect(call.headers.Authorization).toMatch(
-      /^AWS4-HMAC-SHA256 Credential=access\/20260926\/us-east-1\/s3\/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=[0-9a-f]{64}$/,
+    // Pinned against botocore's S3SigV4Auth for the same request, key and clock
+    // (computed independently; see the Task 9 report, fix round 1).
+    expect(call.headers.Authorization).toBe(
+      "AWS4-HMAC-SHA256 Credential=access/20260926/us-east-1/s3/aws4_request, " +
+        "SignedHeaders=host;x-amz-content-sha256;x-amz-date, " +
+        "Signature=819d95a7d3af10607f2d668e0d7c770d256bb6c930af8faf58bde9611bcd2e85",
     );
   });
 
@@ -241,8 +245,8 @@ describe("loadGeolite2Status", () => {
       runId: "install-1",
       replaced: ["City"],
       editions: [
-        { edition: "City", build: "2026-09-25T10:00:00+00:00", ageDays: 1, stale: false, sha256: "a".repeat(64) },
-        { edition: "ASN", build: "2026-09-01T10:00:00+00:00", ageDays: 25, stale: true, sha256: "b".repeat(64) },
+        { edition: "City", build: "2026-09-25T10:00:00+00:00", problem: null, ageDays: 1, stale: false, sha256: "a".repeat(64) },
+        { edition: "ASN", build: "2026-09-01T10:00:00+00:00", problem: null, ageDays: 25, stale: true, sha256: "b".repeat(64) },
       ],
     });
     expect(status.lastRun).toEqual({
@@ -262,7 +266,21 @@ describe("loadGeolite2Status", () => {
       null,
     );
     const status = await loadGeolite2Status({ fetchImpl: missing.fetchImpl });
-    expect(status.installed?.editions[0]).toMatchObject({ edition: "City", build: null, ageDays: null, stale: true });
+    expect(status.installed?.editions[0]).toMatchObject({
+      edition: "City", build: null, problem: "missing", ageDays: null, stale: true,
+    });
+
+    const unreadable = statusResponder(
+      [
+        { __typename: "TextMetadataEntry", label: "city_build", text: "unreadable" },
+        { __typename: "TextMetadataEntry", label: "city_sha256", text: "unreadable" },
+      ],
+      null,
+    );
+    const damaged = await loadGeolite2Status({ fetchImpl: unreadable.fetchImpl });
+    expect(damaged.installed?.editions[0]).toMatchObject({
+      edition: "City", build: null, problem: "unreadable", sha256: null, stale: true,
+    });
   });
 });
 

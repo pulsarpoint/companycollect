@@ -117,7 +117,7 @@ export default function AdminGeolite2Settings({ loaderData, actionData }: Route.
                 status.installed.editions.map((edition) => (
                   <TableRow key={edition.edition}>
                     <TableCell className="font-medium">{edition.edition}</TableCell>
-                    <TableCell>{edition.build ? edition.build.slice(0, 10) : "Not installed"}</TableCell>
+                    <TableCell>{edition.build ? edition.build.slice(0, 10) : edition.problem === "unreadable" ? "Unreadable" : "Not installed"}</TableCell>
                     <TableCell className={edition.stale ? "font-medium text-destructive" : undefined}>
                       {edition.ageDays === null ? "—" : `${edition.ageDays} days`}
                     </TableCell>
@@ -156,7 +156,7 @@ export default function AdminGeolite2Settings({ loaderData, actionData }: Route.
               <p className="text-muted-foreground">None yet.</p>
             )}
             {launched && lastRun?.runId === launched && lastRun.status === "FAILURE" && (
-              <p className="text-destructive">The install was refused or failed. Nothing was replaced; the reason is in the Dagster run.</p>
+              <p className="text-destructive">The install was refused or failed. The reason is in the Dagster run.</p>
             )}
           </div>
         </section>
