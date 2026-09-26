@@ -28,6 +28,11 @@ noncanonical strings are rejected. `ip_version` and the 256-way hash `bucket`
 are materialized columns, so callers cannot accidentally supply inconsistent
 values. Private and loopback IPs are valid inputs and receive `not_global`
 lookup outcomes instead of external requests.
+`ip_scope` of a 6to4 (`2002::/16`) or IPv4-mapped (`::ffff:0:0/96`) address is the
+scope of the IPv4 it embeds, and its RDAP fields are that IPv4's registration (an IPv4
+`rdap_matched_cidr` on an IPv6 row); the embedded IPv4 is recomputed from `ip`
+(`ipaddress` `.sixtofour` / `.ipv4_mapped`), not stored. See
+[ip-enrichment-draft-queue.md](operations/ip-enrichment-draft-queue.md).
 
 ## Results and history
 

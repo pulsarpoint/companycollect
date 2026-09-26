@@ -2181,3 +2181,182 @@ def test_results_job_is_never_retried_by_the_run_retry_daemon():
     assert job.run_tags["dagster/max_retries"] == "0"
     # The GraphQL launch (backoffice, launchpad) merges the definition tags.
     assert job.tags["dagster/max_retries"] == "0"
+
+
+# --- Task 10: embedded IPv4 (6to4, IPv4-mapped) and Teredo --------------------------------
+
+TEREDO = "2001:0:4136:e378:8000:63bf:3fff:fdd2"
+
+
+def lookup_markers(env):
+    """(ip, status, error_code, bucket is ClickHouse's own) of every stored lookup marker."""
+    return env.client.execute(
+        """SELECT ip, lookup_status, error_code, bucket = toUInt16(cityHash64(ip) % 256)
+        FROM corpscout.rdap_ip_lookup_results FINAL ORDER BY ip"""
+    )
+
+
+def test_6to4_addresses_are_resolved_through_their_embedded_ipv4(environment):
+    env = environment
+    enricher = resolver(env)
+    resolved = enricher.resolve_page(page(env, "2002:808:808::1"))
+    assert env.calls == [
+        "8.8.8.8"
+    ]  # exactly one request, for the IPv4, to its registry
+    assert enricher.requests_by_registry == {"arin": 1}
+    found = resolved["2002:808:808::1"]
+    assert (
+        found["rdap_lookup_status"],
+        found["rdap_matched_cidr"],
+        found["rdap_start_address"],
+        found["rdap_end_address"],
+    ) == ("found", "8.8.8.0/24", "8.8.8.0", "8.8.8.255")
+    # The IPv4's marker, in the IPv4's bucket; none for the IPv6 address; IPv4 segments only.
+    assert lookup_markers(env) == [("8.8.8.8", "found", None, 1)]
+    assert env.client.execute(
+        "SELECT DISTINCT ip_version FROM corpscout.rdap_network_segments"
+    ) == [(4,)]
+    # Another 6to4 address of the same IPv4 /24: the in-run cache, no request.
+    resolved = enricher.resolve_page(page(env, "2002:808:807::1"))
+    assert resolved["2002:808:807::1"]["rdap_matched_cidr"] == "8.8.8.0/24"
+    assert env.calls == ["8.8.8.8"] and enricher.cache_hits == 1
+    assert enricher.embedded_ipv4_lookups == {"6to4": 2}
+    # A resume: the trie serves both another 6to4 address and the plain IPv4.
+    env.client.execute("SYSTEM RELOAD DICTIONARY corpscout.rdap_network_trie")
+    resumed = resolver(env)
+    resolved = resumed.resolve_page(page(env, "2002:808:806::1", "8.8.8.5"))
+    assert env.calls == ["8.8.8.8"] and resumed.cache_hits == 2
+    assert {ip: r["rdap_network_key"] for ip, r in resolved.items()} == {
+        "2002:808:806::1": "arin:TEST-8.8.8.8",
+        "8.8.8.5": "arin:TEST-8.8.8.8",
+    }
+
+
+def test_ipv4_mapped_addresses_are_resolved_through_their_ipv4(environment):
+    env = environment
+    enricher = resolver(env)
+    resolved = enricher.resolve_page(
+        page(
+            env,
+            "::ffff:9.9.9.9",
+            "::ffff:9.9.9.10",
+            "2002:909:909::1",  # the same IPv4 as a 6to4 address
+            "::ffff:10.0.0.1",
+            "2002:a00:1::1",  # 6to4 of a private IPv4
+        )
+    )
+    assert len(env.calls) == 1 and env.calls[0].startswith("9.9.9.")
+    assert {ip: r["rdap_lookup_status"] for ip, r in resolved.items()} == {
+        "::ffff:9.9.9.9": "found",
+        "::ffff:9.9.9.10": "found",
+        "2002:909:909::1": "found",
+        "::ffff:10.0.0.1": "not_global",
+        "2002:a00:1::1": "not_global",
+    }
+    assert resolved["::ffff:9.9.9.9"]["rdap_matched_cidr"] == "9.9.9.0/24"
+    assert enricher.embedded_ipv4_lookups == {"ipv4_mapped": 2, "6to4": 1}
+    # One IPv4 marker, for the requested IPv4 (the other came from the in-run cache,
+    # which writes none); none for the IPv6 forms; non-global addresses keep their own.
+    assert lookup_markers(env) == [
+        ("2002:a00:1::1", "not_global", None, 1),
+        (env.calls[0], "found", None, 1),
+        ("::ffff:10.0.0.1", "not_global", None, 1),
+    ]
+
+
+def test_teredo_is_special_and_unmapped_ipv6_stays_no_registry(
+    environment, monkeypatch
+):
+    env = environment
+    monkeypatch.setattr(RdapClient, "registry_for", lambda self, ip: "")
+    enricher = resolver(env)
+    resolved = enricher.resolve_page(page(env, TEREDO, "2c0f:ffff::1"))
+    assert env.calls == [] and enricher.requests == 0
+    assert outcome_of(resolved[TEREDO]) == ("not_global", None)
+    assert outcome_of(resolved["2c0f:ffff::1"]) == ("terminal_error", "no_registry")
+    assert (enricher.teredo_special, enricher.embedded_ipv4_lookups) == (1, {})
+
+
+def outcome_of(result):
+    return result["rdap_lookup_status"], result["rdap_error_code"]
+
+
+def test_6to4_address_in_ripe_space_uses_the_rest_path(environment, monkeypatch):
+    env = environment
+    rdap_calls = []
+    monkeypatch.setattr(
+        RdapClient,
+        "lookup_ip",
+        lambda self, ip: (rdap_calls.append(ip), response(ip))[1],
+    )
+    enricher = resolver(env)
+    resolved = enricher.resolve_page(page(env, "2002:501:101::1"))  # 5.1.1.1
+    assert env.calls == ["5.1.1.1"] and rdap_calls == []  # REST, never RDAP
+    found = resolved["2002:501:101::1"]
+    assert (found["rdap_rir"], found["rdap_name"], found["rdap_matched_cidr"]) == (
+        "ripe",
+        "RIPE-TEST-NET",
+        "5.1.1.0/24",
+    )
+    assert enricher.requests_by_registry == {"ripe": 1}
+    assert enricher.person_entities_by_registry == {}
+
+
+def test_embedded_ipv4_run_metadata_scope_and_geoip(environment):
+    env = environment
+    ips = ["2002:808:808::1", "::ffff:8.8.4.4", TEREDO, "::ffff:10.0.0.1"]
+    result = run(env, select(env, ips))
+    assert result.success
+    metadata = outcome(result)
+    assert metadata["completion_status"] == "completed"
+    assert metadata["embedded_ipv4_lookups"] == {"6to4": 1, "ipv4_mapped": 1}
+    assert metadata["teredo_special"] == 1
+    assert metadata["rdap_requests"] == 2
+    assert sorted(env.calls) == ["8.8.4.4", "8.8.8.8"]
+    assert env.client.execute(
+        """SELECT ip, ip_scope, city_lookup_status, asn_lookup_status, rdap_lookup_status,
+            rdap_matched_cidr FROM corpscout.ip_enrichment_current ORDER BY ip"""
+    ) == [
+        (TEREDO, "private", "not_global", "not_global", "not_global", None),
+        ("2002:808:808::1", "global", "found", "found", "found", "8.8.8.0/24"),
+        ("::ffff:10.0.0.1", "private", "not_global", "not_global", "not_global", None),
+        ("::ffff:8.8.4.4", "global", "found", "found", "found", "8.8.4.0/24"),
+    ]
+    # GeoIP looks the IPv6 address up as it is (MaxMind aliases it to the IPv4 tree).
+    assert "2002:808:808::1" in env.city.calls and "8.8.8.8" not in env.city.calls
+
+
+def test_maxmind_aliases_6to4_and_ipv4_mapped_to_the_ipv4_record():
+    """The vendored GeoLite2 test databases answer both forms with the IPv4's record."""
+    fixtures = Path(__file__).parent / "fixtures/geolite2"
+    checked_at = datetime.now(UTC)
+    with (
+        enrichment.maxminddb.open_database(
+            str(fixtures / "GeoLite2-City-Test.mmdb")
+        ) as city,
+        enrichment.maxminddb.open_database(
+            str(fixtures / "GeoLite2-ASN-Test.mmdb")
+        ) as asn,
+    ):
+
+        def geo(ip):
+            result = enrichment.geoip_result(
+                ip, city, asn, checked_at=checked_at, retry_seconds=60
+            )
+            return (
+                result["ip_scope"],
+                result["city_lookup_status"],
+                result["city_name"],
+                result["asn_lookup_status"],
+                result["asn"],
+            )
+
+        london = ("global", "found", "London", "not_found", None)
+        assert geo("81.2.69.160") == london
+        assert geo("2002:5102:45a0::1") == london
+        assert geo("::ffff:81.2.69.160") == london
+        linkoping = geo("89.160.20.112")
+        assert linkoping[1:] == ("found", "Linköping", "found", 29518)
+        assert geo("2002:59a0:1470::1") == linkoping
+        assert geo("::ffff:89.160.20.112") == linkoping
+        assert geo(TEREDO)[:2] == ("private", "not_global")

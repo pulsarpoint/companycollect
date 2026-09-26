@@ -137,10 +137,26 @@ transfers) answers on that registry's own RDAP server with a redirect to
 `rdap.db.ripe.net`/`rdap.apnic.net`. That redirect — and a first URL that lands on either host
 directly, when the bootstrap already resolves there — is refused before the target body is
 fetched; the miss is re-sent to the REST search or whois `-r` instead and counted under the
-target registry (`reroutes_by_registry`). An address with no exact bootstrap match
-(`registry_for` returns `''`: 6to4 `2002::/16`, unmapped space) is never requested: it gets a
-terminal `no_registry` marker, cached for `rdap_cache_days` like other terminal errors, so retry
-drafts do not turn it into a request each time.
+target registry (`reroutes_by_registry`). A global address with no exact bootstrap match
+(`registry_for` returns `''`: unmapped IPv6 space) is never requested: it gets a terminal
+`no_registry` marker, cached for `rdap_cache_days` like other terminal errors, so retry drafts
+do not turn it into a request each time.
+
+6to4 (`2002::/16`) and IPv4-mapped (`::ffff:0:0/96`) addresses carry an IPv4 address, found
+with Python's `ipaddress` (`.sixtofour`, `.ipv4_mapped`). When that IPv4 is global the address
+is resolved as the IPv4 through the normal path (registry routing, RIPE REST / APNIC whois,
+budgets, reroutes, caches): the IPv4 gets its own lookup marker, network, class row and
+segments, so the plain IPv4 and every other address embedding the same network reuse them, and
+the IPv6 row gets no marker or segment of its own. The result row, still keyed by the original
+`ip` and `input_id`, carries the IPv4's registry fields; the IPv4 `rdap_matched_cidr` (and
+start/end addresses) on an IPv6 row is the evidence, and the embedded IPv4 itself is
+recomputed from `ip` (there is no column for it). `ip_scope` of 2002::/16 and ::ffff:0:0/96
+rows is the embedded IPv4's scope, so `2002:0808:0808::1` is `global` and gets GeoIP and RDAP
+(MaxMind's databases alias both ranges to their IPv4 records, and the address is looked up as
+is), while `::ffff:10.0.0.1` stays `not_global`. Teredo (`2001::/32`) hides the client address:
+it stays `not_global` with no request. A page holding such addresses costs one extra ClickHouse
+query (the IPv4s' buckets). Run metadata counts `embedded_ipv4_lookups` by form (`6to4`,
+`ipv4_mapped`) and `teredo_special`.
 
 `registry_daily_budgets` (transport, default `{}`, keys are whoisit's names: `ripe`, `arin`,
 `apnic`, `lacnic`, `afrinic`, `jpnic`, `idnic`, `krnic`, `twnic`, `registro.br`) is an

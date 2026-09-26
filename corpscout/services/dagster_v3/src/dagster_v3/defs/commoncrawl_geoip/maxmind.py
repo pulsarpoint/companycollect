@@ -118,8 +118,11 @@ def build_geoip_enrichment(
     city_build_epoch: datetime,
     asn_build_epoch: datetime,
     enriched_at: datetime,
+    ip_scope: str | None = None,
 ) -> GeoIPEnrichment:
-    ip_scope = classify_ip_scope(address)
+    """``ip_scope`` overrides the address's own scope (an embedded IPv4's, for example)."""
+    if ip_scope is None:
+        ip_scope = classify_ip_scope(address)
     city_record = city_lookup.record if city_lookup is not None else None
     asn_record = asn_lookup.record if asn_lookup is not None else None
     continent = _section(city_record, "continent")

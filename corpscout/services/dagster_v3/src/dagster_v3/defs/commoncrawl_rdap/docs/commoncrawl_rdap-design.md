@@ -149,9 +149,18 @@ and its segments, in that order, so coverage and its class are durable before an
 to them.
 
 The registry of a miss is chosen from whoisit's already-loaded bootstrap data, with no HTTP
-request (`RdapClient.registry_for`); an address with no exact bootstrap match answers with a
-terminal `no_registry` marker (cached for `rdap_cache_days`) instead of a request, since
+request (`RdapClient.registry_for`); a global address with no exact bootstrap match answers
+with a terminal `no_registry` marker (cached for `rdap_cache_days`) instead of a request, since
 whoisit would otherwise pick a default endpoint at random.
+
+6to4 (`2002::/16`) and IPv4-mapped (`::ffff:0:0/96`) addresses never reach that point: when the
+IPv4 they embed (`ipaddress` `.sixtofour` / `.ipv4_mapped`) is global, `resolve_page` rewrites
+the row to that IPv4 before the page's ClickHouse round trips (plus one query for the IPv4s'
+buckets, computed in ClickHouse), so the IPv4's marker, network, class row and segments are
+written as for any IPv4 and the IPv6 row is answered with the IPv4's fields (no IPv6 marker,
+no IPv6 segments for an IPv4 network; the IPv4 is recomputed from `ip`). Their `ip_scope` is
+the embedded IPv4's. Teredo (`2001::/32`) stays `not_global` without a request. Counters:
+`embedded_ipv4_lookups` by form and `teredo_special`.
 
 **RIPE**, when `ripe_rest` is on, is asked over the RIPE Database REST search instead of RDAP
 (`ripe_rest.py`): the AUP caps the personal data sets (person and role objects) one source

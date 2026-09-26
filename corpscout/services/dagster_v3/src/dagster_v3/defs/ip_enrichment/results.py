@@ -523,6 +523,8 @@ def ip_enrichment_results(
             "rdap_fallbacks_by_registry": enricher.rdap_fallbacks_by_registry,
             "reroutes_by_registry": enricher.reroutes_by_registry,
             "pauses_by_registry": enricher.pauses_by_registry,
+            "embedded_ipv4_lookups": enricher.embedded_ipv4_lookups,
+            "teredo_special": enricher.teredo_special,
             **counts,
         }
         if counts["request_limit_reached"]:

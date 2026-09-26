@@ -27,13 +27,23 @@ exceeding it, and a rate-limited or blocked registry is paused for
 max(retry delay, 15 min) with its misses deferred the same way; the loop waits for the
 window only when nothing else remains. A failed IANA bootstrap defers every miss the same
 way (key "bootstrap", back-off 1 to 15 minutes) instead of storing an error per address.
+
+Addresses that carry an IPv4 address (6to4 2002::/16 and IPv4-mapped ::ffff:0:0/96,
+detected with ipaddress) are resolved through that IPv4 when it is global: the page row is
+rewritten to the IPv4 before the ClickHouse round trips, so the IPv4's marker, network,
+class row and segments are written as for any IPv4 and every cache is shared with the
+plain IPv4 and with other addresses embedding it. The IPv6 row gets the IPv4's registry
+fields (an IPv4 rdap_matched_cidr on an IPv6 row is the evidence; the IPv4 itself is
+recomputed from ip), and no marker or segment of its own. Its ip_scope, and so its GeoIP
+lookup, follows the embedded IPv4. Teredo 2001::/32 hides the client address: it stays
+not_global without any request and is only counted.
 """
 
 from collections import OrderedDict, deque
 from collections.abc import Callable, Mapping
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
-from ipaddress import ip_address, ip_network
+from ipaddress import IPv4Address, IPv6Address, ip_address, ip_network
 from time import monotonic, sleep
 from uuid import UUID
 
@@ -168,14 +178,43 @@ class IpEnrichmentResultsConfig(dg.Config):
         return budgets
 
 
+def embedded_ipv4(address) -> tuple[str, IPv4Address] | None:
+    """('6to4' | 'ipv4_mapped', IPv4) for an address that carries an IPv4 address, else None."""
+    if not isinstance(address, IPv6Address):
+        return None
+    if address.sixtofour is not None:
+        return "6to4", address.sixtofour
+    if address.ipv4_mapped is not None:
+        return "ipv4_mapped", address.ipv4_mapped
+    return None
+
+
+def ip_scope_of(address) -> str:
+    """The address's scope; for 6to4 and IPv4-mapped addresses the embedded IPv4's.
+
+    Python's ipaddress calls all of 2002::/16 non-global (IANA: "N/A"), whatever IPv4 it
+    carries; the embedded IPv4 decides instead, so 2002:0808:0808::1 is global.
+    """
+    embedded = embedded_ipv4(address)
+    return classify_ip_scope(embedded[1] if embedded else address)
+
+
 def geoip_result(ip, city_reader, asn_reader, *, checked_at, retry_seconds):
+    """City and ASN fields for ``ip``.
+
+    6to4 and IPv4-mapped addresses are looked up as they are: MaxMind's databases alias
+    both ranges to their IPv4 tree (verified with the vendored test databases), so the
+    record is the embedded IPv4's and the matched network lies inside 2002::/16 or
+    ::ffff:0:0/96.
+    """
     address = ip_address(ip)
+    scope = ip_scope_of(address)
     city_meta, asn_meta = city_reader.metadata(), asn_reader.metadata()
     errors = {}
     lookups = {}
     for component, reader in (("city", city_reader), ("asn", asn_reader)):
         lookups[component] = None
-        if classify_ip_scope(address) == "global":
+        if scope == "global":
             try:
                 lookups[component] = lookup_maxmind_record(reader, address)
             except ValueError, maxminddb.InvalidDatabaseError:
@@ -189,6 +228,7 @@ def geoip_result(ip, city_reader, asn_reader, *, checked_at, retry_seconds):
             city_build_epoch=datetime.fromtimestamp(city_meta.build_epoch, UTC),
             asn_build_epoch=datetime.fromtimestamp(asn_meta.build_epoch, UTC),
             enriched_at=checked_at,
+            ip_scope=scope,
         )
     )
     for key in ("ip", "ip_version", "bucket", "enriched_at"):
@@ -379,6 +419,10 @@ class RdapEnricher:
         self.pauses_by_registry: dict[str, int] = {}
         self.deferrals_by_registry: dict[str, int] = {}
         self.deferred: dict[str, int] = {}  # since the last reset_pass()
+        # Addresses answered through their embedded IPv4, by form ('6to4',
+        # 'ipv4_mapped'), and Teredo addresses left without a request.
+        self.embedded_ipv4_lookups: dict[str, int] = {}
+        self.teredo_special = 0
         # Registries resolved without personal data, and the RDAP hosts whose redirects
         # are re-sent to those paths instead of being followed.
         self._private = frozenset(
@@ -411,10 +455,45 @@ class RdapEnricher:
 
         An address is absent when it was deferred (its registry at its daily budget or
         paused, or the bootstrap paused) or when the run's max_requests budget ran out
-        (``budget_reached`` is then True).
+        (``budget_reached`` is then True). A 6to4 or IPv4-mapped address whose IPv4 is
+        global is resolved as that IPv4 and answered with its fields.
         """
-        addresses = {row["ip"]: ip_address(row["ip"]) for row in rows}
-        buckets = {row["ip"]: row["bucket"] for row in rows}
+        addresses: dict[str, IPv4Address | IPv6Address] = {}
+        buckets: dict[str, int] = {}
+        embedded: dict[str, tuple[str, str]] = {}  # page ip -> (form, IPv4 looked up)
+        for row in rows:
+            address = ip_address(row["ip"])
+            if isinstance(address, IPv6Address) and address.teredo is not None:
+                self.teredo_special += 1  # not_global below: the client is hidden
+            found = embedded_ipv4(address)
+            if found is not None and classify_ip_scope(found[1]) == "global":
+                embedded[row["ip"]] = (found[0], str(found[1]))
+                continue
+            addresses[row["ip"]] = address
+            buckets[row["ip"]] = row["bucket"]
+        if embedded:
+            # The IPv4's own bucket, as every other writer computes it: in ClickHouse.
+            missing = sorted(
+                {ipv4 for _, ipv4 in embedded.values() if ipv4 not in buckets}
+            )
+            if missing:
+                for ipv4, bucket in self.client.execute(
+                    "SELECT ip, toUInt16(cityHash64(ip) %% 256) FROM "
+                    "(SELECT arrayJoin(CAST(%(ips)s, 'Array(String)')) AS ip)",
+                    {"ips": missing},
+                ):
+                    addresses[ipv4] = ip_address(ipv4)
+                    buckets[ipv4] = bucket
+        results = self._resolve(addresses, buckets)
+        page = {row["ip"] for row in rows}
+        answered = {ip: result for ip, result in results.items() if ip in page}
+        for ip, (form, ipv4) in embedded.items():
+            if ipv4 in results:
+                answered[ip] = dict(results[ipv4])
+                self._count(self.embedded_ipv4_lookups, form)
+        return answered
+
+    def _resolve(self, addresses: dict, buckets: dict[str, int]) -> dict[str, dict]:
         results: dict[str, dict] = {}
         markers: list[tuple] = []
         pending: list[str] = []
@@ -811,11 +890,12 @@ class RdapEnricher:
                 return None
             self._bootstrap_failures = 0
             if registry == "":
-                # No exact bootstrap match (6to4 2002::/16, unmapped space): whoisit
-                # would send the query to a random registry (possibly RIPE's or APNIC's
-                # RDAP). Nothing is requested; a terminal marker is cached for
-                # rdap_cache_days like other terminal errors, so retry drafts do not
-                # re-queue it into a request every time.
+                # No exact bootstrap match (global IPv6 outside the bootstrap's
+                # prefixes; 6to4 and IPv4-mapped addresses never get here, they are
+                # resolved as their IPv4): whoisit would send the query to a random
+                # registry (possibly RIPE's or APNIC's RDAP). Nothing is requested; a
+                # terminal marker is cached for rdap_cache_days like other terminal
+                # errors, so retry drafts do not re-queue it into a request every time.
                 raise RdapClientError(
                     f"No registry is known for {ip}",
                     code="no_registry",
