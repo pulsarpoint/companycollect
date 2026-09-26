@@ -3,8 +3,8 @@ import { data, Form, redirect, useNavigation, useRevalidator } from "react-route
 import type { Route } from "./+types/admin-settings-geolite2";
 import { DagsterError } from "~/lib/dagster.server";
 import { ObjectStoreError } from "~/lib/object-store.server";
+import { GEOLITE2_MAX_AGE_DAYS } from "~/lib/geolite2";
 import {
-  GEOLITE2_MAX_AGE_DAYS,
   GeoLite2UploadError,
   loadGeolite2Status,
   uploadGeolite2,

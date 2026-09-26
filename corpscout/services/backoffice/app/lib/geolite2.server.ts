@@ -18,13 +18,15 @@ import {
   type DagsterOptions,
 } from "~/lib/dagster.server";
 import { ensureBucket, putObject, type ObjectStoreOptions } from "~/lib/object-store.server";
+import { GEOLITE2_MAX_AGE_DAYS } from "~/lib/geolite2";
+
+export { GEOLITE2_MAX_AGE_DAYS };
 
 export const GEOLITE2_BUCKET = "geolite2";
 export const GEOLITE2_ASSET = "geolite2_databases";
 export const GEOLITE2_INSTALL_JOB = "geolite2_install_job";
 export const GEOLITE2_MAX_BYTES = 200 * 1024 * 1024;
 /** Matches `freshness.py` MAX_AGE on the Dagster side. */
-export const GEOLITE2_MAX_AGE_DAYS = 14;
 const DAY_MS = 86_400_000;
 const NAME = /^GeoLite2-(City|ASN)(_\d{8})?\.(tar\.gz|mmdb)$/;
 
