@@ -205,7 +205,11 @@ page", or deferred). COMMIT (the calling thread, page order) classifies, persist
 writes markers, so the ClickHouse client is never shared and the storage order is the one-lane
 order. Each endpoint has its own `RdapClient`/session and a lock held for pacing plus the
 request (`registry_request_delays`, default `{"lacnic": 6.5}`, else `request_delay_seconds`);
-RIPE REST and APNIC whois are single clients used under their direct endpoint's lock.
+RIPE REST and APNIC whois are single clients used under their direct endpoint's lock. Every
+endpoint only fetches its own registry's hosts (APNIC's and RIPE's also the NIR servers); a
+redirect to another registry's host raises `RdapRedirect` and is re-sent through the target's
+direct endpoint (its pace, budget and pauses), fallbacks included, so no registry is ever
+asked at another registry's pace or outside its budget.
 Counters, budgets, pauses and page state sit behind one state lock; log lines from workers are
 queued and emitted on the calling thread.
 
@@ -217,7 +221,9 @@ API keys on request). A proxied client refuses any host outside its registry, so
 another registry goes direct.
 
 **The optional daily budget** (`registry_daily_budgets`, default `{"afrinic": 4500}`: AFRINIC
-allows 5,000 queries per address and day) applies per endpoint, i.e. per source address. A miss
+allows 5,000 queries per address and day; explicit maps merge over the defaults, AFRINIC stays
+within 1..5,000 and LACNIC's delay at 6 s or more) applies per endpoint, i.e. per source
+address, with a registry-wide cap of budget × distinct egress hosts when proxies are used. A miss
 whose endpoint is at its limit goes to another endpoint of the registry or is deferred rather
 than requested or failed; the run waits only when a whole pass resolved nothing else, for an
 hour's share of the first endpoint's budget (`wait_for_registry_budget`). The 24-hour usage
@@ -226,10 +232,12 @@ including the legacy bucket worker below — and charged to every endpoint of th
 rows carry no source address); it under-counts requests that stored no network (errors,
 not-founds, the redirected half of a reroute), since `rdap_ip_lookup_results` has no registry
 column. A rate limit or block (RDAP `429`, LACNIC `403`, RIPE REST `403`/`429`, APNIC
-`%ERROR:2xx`) pauses the endpoint for its `Retry-After`, else `rate_limit_pause_seconds` (300)
-doubling up to `rate_limit_retry_seconds`, reset by a success; the address is deferred (no
-result, no marker) and the registry is deferred only when all its endpoints are paused or at
-their budget. A failed IANA bootstrap pauses every miss under the key `bootstrap` with its own
+`%ERROR:2xx`) pauses the endpoint for max(`Retry-After`, back-off), the back-off being
+`rate_limit_pause_seconds` (300) doubling up to `rate_limit_retry_seconds` (an access denial at
+least that), reset by a success; a dead proxy (transport, timeout, 407/502/503/504) pauses the
+same way. The address is deferred (no result, no marker) and the registry is deferred only when
+all its endpoints are paused or at their budget; after 6 consecutive pauses on every endpoint,
+its addresses are stored as `retryable_error` so the run can finish. A failed IANA bootstrap pauses every miss under the key `bootstrap` with its own
 60 s→900 s back-off. Both waits hold the `commoncrawl_rdap` pool slot.
 
 **The legacy bucket worker** (`commoncrawl_ip_rdap_networks`) keeps its per-IP RDAP lookups,

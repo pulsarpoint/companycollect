@@ -174,8 +174,12 @@ but not the source address, so **every endpoint of the registry is charged with 
 them** (safe per address; after a proxied run a resume may wait longer than needed). The
 seed under-counts requests that stored no network — errors, not-founds and the redirected
 half of a reroute — because the lookup-marker table (`rdap_ip_lookup_results`) has no
-registry column. An explicit `registry_daily_budgets` (or `registry_request_delays`)
-**replaces** the default map: keep the `afrinic` (and `lacnic`) entries when you set others.
+registry column. An explicit `registry_daily_budgets` or `registry_request_delays` **merges
+over** the defaults (`{"arin": 1}` means `{"lacnic": 6.5, "arin": 1}`); LACNIC's delay may
+not go below 6 s and AFRINIC's budget must stay between 1 and 5,000 — the run config and the
+backoffice form refuse anything else. With AFRINIC proxies a registry-wide cap applies as
+well: the budget × the number of distinct egress hosts (direct + distinct proxy hostnames),
+so proxies that share an exit host cannot multiply the allowance.
 
 ## Lanes, pacing and proxies
 
@@ -193,9 +197,15 @@ slow or paused registry never holds up the others beyond the page; with `batch_s
 the lanes stay busy (recommended for the full run).
 
 Pacing is per endpoint: at most one request per `registry_request_delays[registry]` seconds
-(default `{"lacnic": 6.5}`), else `request_delay_seconds` (default 1.0). A reroute or
-fallback to RIPE or APNIC always uses that registry's direct endpoint and pace, whichever lane
-made it. The RIPE REST and APNIC whois clients are single instances used under their direct
+(default `{"lacnic": 6.5}`), else `request_delay_seconds` (default 1.0), counted from the
+endpoint's creation, so even its first request is paced. Every endpoint only fetches its own
+registry's RDAP hosts (APNIC's and RIPE's also the NIR servers `jpnic`/`idnic`/`krnic`/
+`twnic`): a redirect to another registry — ARIN → LACNIC, ARIN → AFRINIC, a RIPE fallback
+→ ARIN — is not followed but re-sent through the **target registry's direct endpoint**, with
+that registry's pace, daily budget and pauses (a paused or exhausted target defers the
+address). RIPE- or APNIC-managed space reached that way goes to REST/whois; inside a
+catch-all/NIR fallback the redirect is fetched as RDAP. Fallbacks obey pauses and budgets like
+every other request. The RIPE REST and APNIC whois clients are single instances used under their direct
 endpoint's lock, i.e. serialised per registry at its pace; every other endpoint has its own
 `RdapClient` and HTTP session. `max_requests` stays one run-wide total.
 
@@ -243,7 +253,17 @@ messages name the registry and list index only. The run logs `RDAP proxies: arin
 and publishes `requests_by_endpoint` keyed `arin:direct`, `arin:proxy-1`, … — never the URL.
 Budgets and pauses apply per endpoint, so a proxy multiplies a registry's throughput and its
 AFRINIC allowance by the number of source addresses; that is the point, and why only
-registries whose terms allow it are listed.
+registries whose terms allow it are listed. **Each AFRINIC proxy URL must be a distinct, stable
+egress IP** (no rotating pools, no two URLs leaving through the same address): AFRINIC counts
+per source IP, and two endpoints behind one exit would spend 2 × 4,500 of one address's 5,000.
+The code enforces only what it can see — budget × distinct proxy hostnames (+ direct) per
+registry — so a rotating or shared-exit proxy behind distinct hostnames is on the operator.
+
+A proxy that fails to carry a request (`transport_error`, a timeout, a connection error, or a
+`407`/`502`/`503`/`504` answer) pauses that proxy endpoint with the same back-off; the miss
+goes back to the lane for another endpoint, or is deferred to the next pass. Nothing is
+stored for it. Error messages of proxy endpoints are scrubbed of the proxy URL before they
+leave the request.
 
 ## Counters and how to read them
 
@@ -266,10 +286,13 @@ including the run-wide `bootstrap` key described next; `pauses_by_endpoint` and
 ## Pauses and a stalled bootstrap
 
 A rate limit or block — RDAP `429`, LACNIC `403`, a RIPE REST `403` or `429`, an APNIC whois
-`%ERROR:2xx` — pauses the **endpoint** that got it: for the registry's `Retry-After` when it
-sends one (1 s to 1 day), else for `rate_limit_pause_seconds` (default 300) doubling per
-consecutive limit up to `rate_limit_retry_seconds` (default 3600); the endpoint's next
-success resets the back-off. The rate-limited address is **deferred** (no result row, no
+`%ERROR:2xx` — pauses the **endpoint** that got it for `max(Retry-After, back-off)` (at most 1 day),
+the back-off being `rate_limit_pause_seconds` (default 300) doubling per consecutive pause up
+to `rate_limit_retry_seconds` (default 3600); an access denial (`403`, `%ERROR:201`) waits at
+least `rate_limit_retry_seconds`. The endpoint's next success resets the back-off. When
+**every** endpoint of a registry has paused 6 times in a row, that registry's addresses are
+no longer deferred in the pass: they are stored as `retryable_error` with the pause's code,
+so the run can finish (a retry draft asks again later). The rate-limited address is **deferred** (no result row, no
 marker) and re-walked in the next pass — it is no longer stored as a `retryable_error` —
 and so is the rest of the registry's lane, unless another endpoint of the registry is free
 to take it. A registry is deferred only when all its endpoints are paused or at their
