@@ -26,7 +26,8 @@ from dagster_v3.defs.commoncrawl_rdap.rdap import RdapLookupResponse
 # RDAP host -> whoisit's registry name ('ripe', 'arin', 'apnic', 'jpnic', ...), the same
 # names whoisit reports as `rir` in a parsed response.
 RIR_BY_HOST = {
-    urlsplit(url).netloc: name for name, url in BaseBootstrap.RIR_RDAP_ENDPOINTS.items()
+    urlsplit(url).hostname: name
+    for name, url in BaseBootstrap.RIR_RDAP_ENDPOINTS.items()
 }
 REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 MAX_REDIRECTS = 5
@@ -54,7 +55,9 @@ class RdapRedirect(RdapClientError):
     objects) is never fetched; ``registry`` names the target registry.
     """
 
-    def __init__(self, location: str, *, registry: str, status_code: int) -> None:
+    def __init__(
+        self, location: str, *, registry: str, status_code: int | None
+    ) -> None:
         super().__init__(
             f"RDAP redirect to {location}",
             code="cross_registry_redirect",
@@ -83,7 +86,9 @@ class RdapClient:
         # one to these hosts raises RdapRedirect instead; the target is never fetched.
         # Empty (the default) keeps whoisit's own request, which follows redirects. The
         # caller may change the set between requests.
-        self.reroute_hosts: frozenset[str] = frozenset(reroute_hosts)
+        self.reroute_hosts: frozenset[str] = frozenset(
+            host.lower() for host in reroute_hosts
+        )
 
     def lookup_ip(self, ip_address_or_network: str) -> RdapLookupResponse:
         return self._lookup(ip_address_or_network, rir=None)
@@ -108,7 +113,7 @@ class RdapClient:
             return ""
         if not exact_match:
             return ""
-        return RIR_BY_HOST.get(urlsplit(url).netloc, "")
+        return RIR_BY_HOST.get(url_host(url), "")
 
     def close(self) -> None:
         if self._owns_session:
@@ -178,14 +183,23 @@ class RdapClient:
         return _lookup_response(response, requested_rir=rir)
 
     def _get(self, url: str) -> Any:
-        """GET an RDAP URL following redirects by hand; whoisit's status mapping applies."""
+        """GET an RDAP URL following redirects by hand; whoisit's status mapping applies.
+
+        A rerouted host is refused before any fetch, whether it is the first URL (e.g.
+        whoisit's bootstrap sent the query there) or a redirect Location.
+        """
+        host = url_host(url)
+        if host in self.reroute_hosts:
+            raise RdapRedirect(
+                url, registry=RIR_BY_HOST.get(host, ""), status_code=None
+            )
         for _ in range(MAX_REDIRECTS + 1):
             response = http_request(self._session, url, allow_redirects=False)
             location = response.headers.get("Location")
             if response.status_code in REDIRECT_STATUSES and location:
                 response.close()
                 target = urljoin(url, location)
-                host = urlsplit(target).netloc.lower()
+                host = url_host(target)
                 if host in self.reroute_hosts:
                     raise RdapRedirect(
                         target,
@@ -216,6 +230,11 @@ class RdapClient:
                 retryable=True,
             ) from error
         self._ready = True
+
+
+def url_host(url: str) -> str:
+    """The lower-cased host of a URL, without port or credentials ('' when absent)."""
+    return (urlsplit(url).hostname or "").lower()
 
 
 def ip_resource_from_up_url(up_url: str) -> str:

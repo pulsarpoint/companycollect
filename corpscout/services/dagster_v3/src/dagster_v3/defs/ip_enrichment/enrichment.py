@@ -770,6 +770,15 @@ class RdapEnricher:
         try:
             # Inside the try: a bootstrap failure is a retryable outcome, not a crash.
             registry = self.rdap.registry_for(ip)
+            if registry == "":
+                # No exact bootstrap match: whoisit would send the query to a random
+                # registry (possibly RIPE's or APNIC's RDAP). Nothing is requested; the
+                # miss is retried after transient_retry_seconds.
+                raise RdapClientError(
+                    f"No registry is known for {ip}",
+                    code="no_registry",
+                    retryable=True,
+                )
             if self._blocked(registry):
                 self._defer(registry)
                 return None

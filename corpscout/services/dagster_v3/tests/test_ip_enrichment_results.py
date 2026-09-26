@@ -1518,8 +1518,11 @@ class HttpAnswer:
         return self._body
 
 
-def fake_rdap_http(monkeypatch, routes):
-    """Route RdapClient's HTTP through ``routes`` (url -> HttpAnswer); returns fetched URLs."""
+def fake_rdap_http(monkeypatch, routes, *, base="https://rdap.arin.net/registry/ip/"):
+    """Route RdapClient's HTTP through ``routes`` (url -> HttpAnswer); returns fetched URLs.
+
+    whoisit's bootstrap is stubbed to send every query to ``base``.
+    """
     fetched = []
 
     def http_request(session, url, **kwargs):
@@ -1529,7 +1532,7 @@ def fake_rdap_http(monkeypatch, routes):
 
     def whoisit_ip(query, *, rir, include_raw, session):
         # whoisit's own request (no rerouted hosts): follows redirects itself.
-        url = f"https://rdap.arin.net/registry/ip/{query}"
+        url = f"{base}{query}"
         for _ in range(rdap_client.MAX_REDIRECTS + 1):
             fetched.append(url)
             answer = routes[url]
@@ -1547,7 +1550,7 @@ def fake_rdap_http(monkeypatch, routes):
         "build_query",
         lambda *, query_type, query_value, rir=None: (
             "GET",
-            f"https://rdap.arin.net/registry/ip/{query_value}",
+            f"{base}{query_value}",
             True,
         ),
     )
@@ -1732,3 +1735,97 @@ def test_budget_keys_are_registry_names_and_the_cache_keeps_a_page(environment):
     enricher = resolver(environment, registry_daily_budgets={"arin": 3})
     enricher.seed_registry_usage([("ripe", 5.0), ("arin", 5.0)])
     assert set(enricher._sent) == {"arin"}
+
+
+def arin_rdap_body(ip, *, up=None):
+    """ARIN's RDAP answer for the /24 around ``ip``, optionally with an up link."""
+    body = dict(response(ip).raw_response)
+    links = [{"rel": "self", "href": f"https://rdap.arin.net/registry/ip/{ip}"}]
+    if up:
+        links.append({"rel": "up", "href": up})
+    body["links"] = links
+    return body
+
+
+def test_rerouted_host_is_refused_before_any_fetch(environment, monkeypatch):
+    # The bootstrap itself sends the query to RIPE's RDAP server: nothing is fetched.
+    monkeypatch.setattr(RdapClient, "lookup_ip", REAL_RDAP_LOOKUP_IP)
+    fetched = fake_rdap_http(
+        monkeypatch,
+        {"https://rdap.db.ripe.net/ip/45.10.1.1": HttpAnswer(200, body={})},
+        base="https://RDAP.db.ripe.net:443/ip/",
+    )
+    guarded = RdapClient(user_agent="test", reroute_hosts={"rdap.db.ripe.net"})
+    with pytest.raises(rdap_client.RdapRedirect) as raised:
+        guarded.lookup_ip("45.10.1.1")
+    assert raised.value.registry == "ripe" and raised.value.status_code is None
+    assert fetched == []
+    assert (
+        rdap_client.url_host("https://RDAP.APNIC.net:443/ip/1.0.0.1")
+        == "rdap.apnic.net"
+    )
+    # An address without an exact bootstrap match is never sent anywhere.
+    env = environment
+    rdap_calls = []
+    monkeypatch.setattr(
+        RdapClient,
+        "lookup_ip",
+        lambda self, ip: (rdap_calls.append(ip), response(ip))[1],
+    )
+    monkeypatch.setattr(RdapClient, "registry_for", lambda self, ip: "")
+    enricher = resolver(env)
+    resolved = enricher.resolve_page(page(env, "45.10.1.1"))
+    assert (
+        resolved["45.10.1.1"]["rdap_lookup_status"],
+        resolved["45.10.1.1"]["rdap_error_code"],
+    ) == ("retryable_error", "no_registry")
+    assert resolved["45.10.1.1"]["rdap_retry_after"] is not None
+    assert rdap_calls == [] and env.calls == [] and enricher.requests == 0
+    assert env.client.execute(
+        "SELECT ip, lookup_status, error_code FROM corpscout.rdap_ip_lookup_results_current"
+    ) == [("45.10.1.1", "retryable_error", "no_registry")]
+
+
+def test_redirects_to_apnic_are_answered_by_whois(environment, monkeypatch):
+    env = environment
+    arin = "https://rdap.arin.net/registry/ip/45.64.1.1"
+    apnic = "https://rdap.apnic.net/ip/45.64.1.1"
+    monkeypatch.setattr(RdapClient, "lookup_ip", REAL_RDAP_LOOKUP_IP)
+    fetched = fake_rdap_http(
+        monkeypatch, {arin: HttpAnswer(301, location=apnic), apnic: HttpAnswer(500)}
+    )
+    enricher = resolver(env)  # registry_for says arin for 45/8 (the fixture)
+    found = enricher.resolve_page(page(env, "45.64.1.1"))["45.64.1.1"]
+    assert fetched == [arin] and env.calls == ["45.64.1.1"]  # whois answered
+    assert (found["rdap_rir"], found["rdap_name"], found["rdap_registrant_names"]) == (
+        "apnic",
+        "APNIC-TEST-NET",
+        ["Test Holder Pty Ltd"],
+    )
+    assert enricher.reroutes_by_registry == {"apnic": 1}
+    assert enricher.requests_by_registry == {"arin": 1, "apnic": 1}
+    assert enricher.person_entities_by_registry == {}
+
+
+def test_parent_redirect_into_ripe_is_a_parent_failure_without_a_fetch(
+    environment, monkeypatch
+):
+    env = environment
+    direct = "https://rdap.arin.net/registry/ip/45.20.1.1"
+    parent = "https://rdap.arin.net/registry/ip/45.0.0.0/8"
+    ripe = "https://rdap.db.ripe.net/ip/45.0.0.0/8"
+    monkeypatch.setattr(RdapClient, "lookup_ip", REAL_RDAP_LOOKUP_IP)
+    fetched = fake_rdap_http(
+        monkeypatch,
+        {
+            direct: HttpAnswer(200, body=arin_rdap_body("45.20.1.1", up=parent)),
+            parent: HttpAnswer(301, location=ripe),
+            ripe: HttpAnswer(200, body=ripe_rdap_body("45.0.0.0", persons=4)),
+        },
+    )
+    enricher = resolver(env, parent_depth=1)
+    found = enricher.resolve_page(page(env, "45.20.1.1"))["45.20.1.1"]
+    assert found["rdap_lookup_status"] == "found" and found["rdap_rir"] == "arin"
+    assert fetched == [direct, parent]  # RIPE's body is never fetched
+    assert enricher.parent_failures == 1 and enricher.person_entities_by_registry == {}
+    assert env.client.execute("SELECT count() FROM corpscout.rdap_networks") == [(1,)]
