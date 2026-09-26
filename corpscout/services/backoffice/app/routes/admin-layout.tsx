@@ -80,7 +80,8 @@ function AdminBreadcrumbs() {
   const onDomainPromptsPage = pathname === "/admin/settings/domain-prompts";
   const onPeoplePromptsPage = pathname === "/admin/settings/people-prompts";
   const onBraveSearchesPage = pathname === "/admin/settings/brave-searches";
-  const onLlmSettingsPage = pathname === "/admin/settings/llms" || onPeoplePromptsPage || onDomainPromptsPage || onBraveSearchesPage;
+  const onGeolite2Page = pathname === "/admin/settings/geolite2";
+  const onLlmSettingsPage = pathname === "/admin/settings/llms" || onPeoplePromptsPage || onDomainPromptsPage || onBraveSearchesPage || onGeolite2Page;
   const onEsefPage = pathname === "/admin/esef";
   const onCompanyInfoPage = pathname.startsWith("/admin/se/company/");
   const onCompaniesPage =
@@ -329,7 +330,7 @@ function AdminBreadcrumbs() {
           </BreadcrumbItem>
           <BreadcrumbSeparator />
           <BreadcrumbItem>
-            <BreadcrumbPage>{onBraveSearchesPage ? "Brave searches" : onDomainPromptsPage ? "Domain prompts" : onPeoplePromptsPage ? "People prompts" : "LLMs"}</BreadcrumbPage>
+            <BreadcrumbPage>{onGeolite2Page ? "GeoLite2" : onBraveSearchesPage ? "Brave searches" : onDomainPromptsPage ? "Domain prompts" : onPeoplePromptsPage ? "People prompts" : "LLMs"}</BreadcrumbPage>
           </BreadcrumbItem>
         </BreadcrumbList>
       </Breadcrumb>

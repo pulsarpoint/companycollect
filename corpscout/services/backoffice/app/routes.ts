@@ -182,6 +182,7 @@ export default [
     route("general/roles", "routes/admin-general-roles.tsx"),
     route("settings/llms", "routes/admin-settings-llms.tsx"),
     route("settings/brave-searches", "routes/admin-settings-brave-searches.tsx"),
+    route("settings/geolite2", "routes/admin-settings-geolite2.tsx"),
     route("settings/people-prompts", "routes/admin-settings-people-prompts.tsx"),
     route("settings/domain-prompts", "routes/admin-settings-domain-prompts.tsx"),
     route("settings/llms/local", "routes/admin-settings-llms-local.tsx"),

@@ -125,6 +125,11 @@ const SETTINGS_NAVIGATION = [
     to: "/admin/settings/llms",
     icon: BrainCircuitIcon,
   },
+  {
+    title: "GeoLite2",
+    to: "/admin/settings/geolite2",
+    icon: GlobeIcon,
+  },
 ] as const;
 
 export function AdminSidebar() {

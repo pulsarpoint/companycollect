@@ -180,6 +180,37 @@ export const BACKOFFICE_ASSET_MATERIALIZATIONS_QUERY = /* GraphQL */ `
   }
 `;
 
+export const BACKOFFICE_ASSET_METADATA_QUERY = /* GraphQL */ `
+  query BackofficeAssetMetadata($assetKeys: [AssetKeyInput!]!, $limit: Int!) {
+    assetNodes(assetKeys: $assetKeys) {
+      id
+      assetMaterializations(limit: $limit) {
+        runId
+        timestamp
+        metadataEntries {
+          label
+          __typename
+          ... on TextMetadataEntry {
+            text
+          }
+          ... on IntMetadataEntry {
+            intValue
+          }
+          ... on FloatMetadataEntry {
+            floatValue
+          }
+          ... on BoolMetadataEntry {
+            boolValue
+          }
+          ... on JsonMetadataEntry {
+            jsonString
+          }
+        }
+      }
+    }
+  }
+`;
+
 export const BACKOFFICE_INSTIGATORS_QUERY = /* GraphQL */ `
   query BackofficeInstigators($repositorySelector: RepositorySelector!) {
     schedulesOrError(repositorySelector: $repositorySelector) {

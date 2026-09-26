@@ -424,6 +424,58 @@ export type BackofficeAssetMaterializationsQuery = {
   }>;
 };
 
+export type BackofficeAssetMetadataQueryVariables = Exact<{
+  assetKeys: Array<AssetKeyInput> | AssetKeyInput;
+  limit: number;
+}>;
+
+export type BackofficeAssetMetadataQuery = {
+  __typename: "Query";
+  assetNodes: Array<{
+    __typename: "AssetNode";
+    id: string;
+    assetMaterializations: Array<{
+      __typename: "MaterializationEvent";
+      runId: string;
+      timestamp: string;
+      metadataEntries: Array<
+        | { __typename: "AssetMetadataEntry"; label: string }
+        | {
+            __typename: "BoolMetadataEntry";
+            boolValue: boolean | null;
+            label: string;
+          }
+        | { __typename: "CodeReferencesMetadataEntry"; label: string }
+        | {
+            __typename: "FloatMetadataEntry";
+            floatValue: number | null;
+            label: string;
+          }
+        | {
+            __typename: "IntMetadataEntry";
+            intValue: number | null;
+            label: string;
+          }
+        | { __typename: "JobMetadataEntry"; label: string }
+        | { __typename: "JsonMetadataEntry"; jsonString: string; label: string }
+        | { __typename: "MarkdownMetadataEntry"; label: string }
+        | { __typename: "NotebookMetadataEntry"; label: string }
+        | { __typename: "NullMetadataEntry"; label: string }
+        | { __typename: "PathMetadataEntry"; label: string }
+        | { __typename: "PipelineRunMetadataEntry"; label: string }
+        | { __typename: "PoolMetadataEntry"; label: string }
+        | { __typename: "PythonArtifactMetadataEntry"; label: string }
+        | { __typename: "TableColumnLineageMetadataEntry"; label: string }
+        | { __typename: "TableMetadataEntry"; label: string }
+        | { __typename: "TableSchemaMetadataEntry"; label: string }
+        | { __typename: "TextMetadataEntry"; text: string; label: string }
+        | { __typename: "TimestampMetadataEntry"; label: string }
+        | { __typename: "UrlMetadataEntry"; label: string }
+      >;
+    }>;
+  }>;
+};
+
 export type BackofficeInstigatorsQueryVariables = Exact<{
   repositorySelector: RepositorySelector;
 }>;

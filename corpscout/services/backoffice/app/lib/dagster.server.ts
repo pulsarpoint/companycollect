@@ -21,6 +21,8 @@ import type {
   BackofficeAssetGroupQueryVariables,
   BackofficeAssetMaterializationsQuery,
   BackofficeAssetMaterializationsQueryVariables,
+  BackofficeAssetMetadataQuery,
+  BackofficeAssetMetadataQueryVariables,
   BackofficeInstigatorsQuery,
   BackofficeInstigatorsQueryVariables,
   BackofficeLaunchRunMutation,
@@ -38,6 +40,7 @@ import type {
 import {
   BACKOFFICE_ASSET_GROUP_QUERY,
   BACKOFFICE_ASSET_MATERIALIZATIONS_QUERY,
+  BACKOFFICE_ASSET_METADATA_QUERY,
   BACKOFFICE_INSTIGATORS_QUERY,
   BACKOFFICE_LAUNCH_RUN_MUTATION,
   BACKOFFICE_RUN_QUERY,
@@ -491,6 +494,58 @@ export async function assetMaterializations(
       ),
     })),
   );
+}
+
+/** A materialization with its metadata as plain values: text, numbers,
+ * booleans and parsed JSON. Other entry types are dropped. */
+export interface AssetMaterializationMetadata {
+  runId: string;
+  /** Milliseconds since the epoch, as Dagster reports materialization timestamps. */
+  timestamp: number;
+  metadata: Record<string, string | number | boolean | unknown>;
+}
+
+/** The newest materialization of `asset` with its metadata, or null when it
+ * never materialized. */
+export async function latestAssetMetadata(
+  asset: string,
+  options: DagsterOptions = {},
+): Promise<AssetMaterializationMetadata | null> {
+  const data = await graphql<
+    BackofficeAssetMetadataQuery,
+    BackofficeAssetMetadataQueryVariables
+  >(BACKOFFICE_ASSET_METADATA_QUERY, { assetKeys: [{ path: [asset] }], limit: 1 }, options);
+  const materialization = data.assetNodes[0]?.assetMaterializations[0];
+  if (!materialization) return null;
+  const metadata: Record<string, unknown> = {};
+  for (const entry of materialization.metadataEntries) {
+    switch (entry.__typename) {
+      case "TextMetadataEntry":
+        metadata[entry.label] = entry.text;
+        break;
+      case "IntMetadataEntry":
+        if (entry.intValue !== null) metadata[entry.label] = entry.intValue;
+        break;
+      case "FloatMetadataEntry":
+        if (entry.floatValue !== null) metadata[entry.label] = entry.floatValue;
+        break;
+      case "BoolMetadataEntry":
+        if (entry.boolValue !== null) metadata[entry.label] = entry.boolValue;
+        break;
+      case "JsonMetadataEntry":
+        try {
+          metadata[entry.label] = JSON.parse(entry.jsonString);
+        } catch {
+          metadata[entry.label] = entry.jsonString;
+        }
+        break;
+    }
+  }
+  return {
+    runId: materialization.runId,
+    timestamp: Number(materialization.timestamp),
+    metadata,
+  };
 }
 
 /**
