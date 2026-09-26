@@ -54,7 +54,7 @@ import json
 import threading
 from collections import OrderedDict, deque
 from collections.abc import Callable, Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from ipaddress import IPv4Address, IPv6Address, ip_address, ip_network
@@ -64,6 +64,7 @@ from uuid import UUID
 
 import dagster as dg
 import maxminddb
+import requests
 from netaddr import iprange_to_cidrs
 from pydantic import Field, field_validator
 
@@ -144,8 +145,23 @@ MAX_BOOTSTRAP_PAUSE_SECONDS = 900
 PROXY_ALLOWED_REGISTRIES = frozenset({"arin", "afrinic"})
 # Proxy URLs are secrets: JSON {"arin": ["http://user:pass@host:port", ...], ...}.
 RDAP_PROXIES_ENV = "RDAP_PROXIES"
-# Cross-registry redirects re-sent through another endpoint, per miss.
-MAX_REROUTES = 2
+# Cross-registry redirects re-sent through another endpoint, per request chain.
+MAX_REROUTES = 3
+# Safe defaults, merged under any explicit map: LACNIC allows 10 queries per minute per
+# address (403 beyond), AFRINIC 5,000 per address and day (24 h block, then permanent).
+DEFAULT_REQUEST_DELAYS = {"lacnic": 6.5}
+MIN_LACNIC_DELAY_SECONDS = 6.0
+DEFAULT_DAILY_BUDGETS = {"afrinic": 4500}
+MAX_AFRINIC_DAILY_BUDGET = 5000
+# APNIC's NIRs with their own RDAP servers: APNIC's (and RIPE's fallback) redirects to
+# them are followed on the same endpoint.
+NIR_REGISTRIES = frozenset({"jpnic", "idnic", "krnic", "twnic"})
+# On a proxy endpoint these mean the proxy (or its route) is down, not the registry.
+PROXY_DOWN_CODES = frozenset({"transport_error", "timeout"})
+PROXY_DOWN_STATUSES = frozenset({407, 502, 503, 504})
+# After this many consecutive pauses on every endpoint of a registry, its misses are
+# written as retryable_error instead of deferred, so the run can finish.
+MAX_CONSECUTIVE_PAUSES = 6
 
 
 def _registry_name(field: str, registry: str) -> str:
@@ -176,17 +192,19 @@ class IpEnrichmentResultsConfig(dg.Config):
         "proxy) of a registry without an entry in registry_request_delays.",
     )
     registry_request_delays: dict[str, float] = Field(
-        default_factory=lambda: {"lacnic": 6.5},
+        default_factory=lambda: dict(DEFAULT_REQUEST_DELAYS),
         description="Seconds between two requests of one endpoint, per registry (whoisit's "
-        "names). The default keeps LACNIC under its 10 queries per minute per address.",
+        "names), merged over the default {lacnic: 6.5}; LACNIC may not go below 6 s "
+        "(10 queries per minute per address).",
     )
     registry_daily_budgets: dict[str, int] = Field(
-        default_factory=lambda: {"afrinic": 4500},
+        default_factory=lambda: dict(DEFAULT_DAILY_BUDGETS),
         description="Optional rolling 24-hour request budget per endpoint (source address) "
         "of a registry, keyed by whoisit's registry names (ripe, arin, apnic, lacnic, "
-        "afrinic, jpnic, ...). A miss of an endpoint at its budget goes to another endpoint "
-        "or is deferred, never failed; the run waits when nothing else remains. The default "
-        "keeps AFRINIC under its 5,000 queries per address and day.",
+        "afrinic, jpnic, ...), merged over the default {afrinic: 4500}; AFRINIC must stay "
+        "between 1 and 5,000 (its per-address daily limit). A miss of an endpoint at its "
+        "budget goes to another endpoint or is deferred, never failed; the run waits when "
+        "nothing else remains.",
     )
     rate_limit_pause_seconds: int = Field(
         default=300,
@@ -224,23 +242,33 @@ class IpEnrichmentResultsConfig(dg.Config):
     @field_validator("registry_daily_budgets")
     @classmethod
     def positive_budgets(cls, value: dict[str, int]) -> dict[str, int]:
-        budgets = {}
+        budgets = dict(DEFAULT_DAILY_BUDGETS)
         for registry, budget in value.items():
             name = _registry_name("registry_daily_budgets", registry)
             if budget < 1:
                 raise ValueError("registry_daily_budgets needs budgets >= 1")
             budgets[name] = budget
+        if not 1 <= budgets["afrinic"] <= MAX_AFRINIC_DAILY_BUDGET:
+            raise ValueError(
+                f"registry_daily_budgets.afrinic must be 1..{MAX_AFRINIC_DAILY_BUDGET} "
+                "(AFRINIC blocks an address above 5,000 queries a day)"
+            )
         return budgets
 
     @field_validator("registry_request_delays")
     @classmethod
     def bounded_delays(cls, value: dict[str, float]) -> dict[str, float]:
-        delays = {}
+        delays = dict(DEFAULT_REQUEST_DELAYS)
         for registry, delay in value.items():
             name = _registry_name("registry_request_delays", registry)
             if not 0 <= delay <= 60:
                 raise ValueError("registry_request_delays needs 0 <= seconds <= 60")
             delays[name] = float(delay)
+        if delays["lacnic"] < MIN_LACNIC_DELAY_SECONDS:
+            raise ValueError(
+                f"registry_request_delays.lacnic must be >= {MIN_LACNIC_DELAY_SECONDS} s "
+                "(LACNIC allows 10 queries per minute per address)"
+            )
         return delays
 
     @field_validator("use_proxies")
@@ -512,10 +540,12 @@ class Endpoint:
     registry: str
     rdap: RdapClient
     delay: float
+    last_send: float  # creation time, so the first request is paced too
+    proxy: str | None = field(default=None, repr=False)  # a secret
     lock: threading.Lock = field(default_factory=threading.Lock)
-    last_send: float | None = None
     paused_until: float = float("-inf")
-    limits: int = 0  # consecutive rate limits, reset by a success
+    limits: int = 0  # consecutive pauses, reset by a success
+    last_code: str = ""  # code of the latest pause
 
 
 @dataclass(frozen=True)
@@ -567,8 +597,40 @@ class _RequestLimit(Exception):
     """The run's max_requests is reached; nothing was sent."""
 
 
+class _EndpointDown(Exception):
+    """A proxy endpoint failed to carry the request (transport, timeout, 407/502/503/504);
+    it is paused and the miss goes to another endpoint or the next pass."""
+
+
 def _pauses(error: RdapClientError) -> bool:
     return error.retryable and error.code in PAUSE_CODES
+
+
+def _proxy_down(error: RdapClientError) -> bool:
+    """A failure of the proxy or its route: transport, timeout, 407/502/503/504."""
+    if error.code in PROXY_DOWN_CODES or error.status_code in PROXY_DOWN_STATUSES:
+        return True
+    cause = error.__cause__
+    while cause is not None:
+        if isinstance(cause, requests.RequestException):
+            return True
+        cause = cause.__cause__
+    return False
+
+
+def _scrub(error: RdapClientError, endpoint: "Endpoint") -> None:
+    """Remove the proxy URL, host and credentials from a proxy endpoint's error."""
+    secret = endpoint.proxy or ""
+    parts = urlsplit(secret)
+    message = str(error)
+    for text in (secret, parts.netloc, parts.hostname or "", parts.password or ""):
+        if text:
+            message = message.replace(text, f"<{endpoint.name}>")
+    error.args = (message,)
+    # The chained library errors repeat the proxy details: drop them.
+    error.__cause__ = None
+    error.__context__ = None
+    error.__suppress_context__ = True
 
 
 class RdapEnricher:
@@ -647,8 +709,8 @@ class RdapEnricher:
         # 'ipv4_mapped'), and Teredo addresses left without a request.
         self.embedded_ipv4_lookups: dict[str, int] = {}
         self.teredo_special = 0
-        # Registries resolved without personal data, and the RDAP hosts whose redirects
-        # are re-sent to those paths instead of being followed.
+        # Registries resolved without personal data: a redirect into their space goes to
+        # REST/whois (each endpoint refuses other registries' hosts, see _endpoints_of).
         self._private = frozenset(
             name
             for name, enabled in (
@@ -656,9 +718,6 @@ class RdapEnricher:
                 ("apnic", config.apnic_whois),
             )
             if enabled
-        )
-        self._reroute_hosts = frozenset(
-            host for host, name in RIR_BY_HOST.items() if name in self._private
         )
         # Endpoints per registry, direct first; created on first use.
         self._endpoints: dict[str, list[Endpoint]] = {}
@@ -670,8 +729,11 @@ class RdapEnricher:
         self.recent: OrderedDict[str, NormalizedRdapNetwork] = OrderedDict()
         # Fresh network rows read from ClickHouse, keyed by network_key (calling thread).
         self.cached: OrderedDict[str, RdapNetwork] = OrderedDict()
-        # Monotonic send times per budgeted endpoint inside the rolling window, oldest first.
+        # Monotonic send times per budgeted endpoint inside the rolling window, oldest first,
+        # and per budgeted registry (the registry-wide cap of a proxied registry).
         self._sent: dict[str, deque[float]] = {}
+        self._sent_registry: dict[str, deque[float]] = {}
+        self._egress_hosts: dict[str, int] = {}
         # Never evict keys a page just loaded: a page needs at most batch_size keys.
         self._cached_cap = max(4096, 2 * config.batch_size)
 
@@ -824,8 +886,10 @@ class RdapEnricher:
             elif routed is not None:
                 misses.append(Miss(ip, addresses[ip], routed))
         # FETCH: HTTP only, in lanes; then COMMIT on this thread, in page order.
-        outcomes.update(self._fetch_misses(misses))
-        self._flush_notes()
+        try:
+            outcomes.update(self._fetch_misses(misses))
+        finally:
+            self._flush_notes()
         self._commit(order, outcomes, addresses, buckets, results, markers)
         if markers:
             self.client.execute(
@@ -889,20 +953,39 @@ class RdapEnricher:
                 delay = self.config.registry_request_delays.get(
                     registry, self.config.request_delay_seconds
                 )
+                # Every endpoint only fetches its own registry's hosts (APNIC's and RIPE's
+                # also their NIRs'): a redirect elsewhere is re-sent through the target's
+                # direct endpoint, with that registry's pace, budget and pauses. A direct
+                # endpoint may still fetch hosts no registry owns; a proxy may not.
+                own = {
+                    host
+                    for host, name in RIR_BY_HOST.items()
+                    if name == registry
+                    or (registry in {"apnic", "ripe"} and name in NIR_REGISTRIES)
+                }
+                direct = self.rdap.clone()
+                direct.reroute_hosts = frozenset(RIR_BY_HOST) - own
+                now = self._clock()
                 endpoints = [
-                    Endpoint(f"{registry}:direct", registry, self.rdap.clone(), delay)
+                    Endpoint(f"{registry}:direct", registry, direct, delay, now)
                 ]
-                hosts = {host for host, name in RIR_BY_HOST.items() if name == registry}
                 for number, url in enumerate(self._proxies.get(registry, ()), 1):
                     endpoints.append(
                         Endpoint(
                             f"{registry}:proxy-{number}",
                             registry,
-                            self.rdap.clone(proxy=url, only_hosts=hosts),
+                            self.rdap.clone(proxy=url, only_hosts=own),
                             delay,
+                            now,
+                            proxy=url,
                         )
                     )
                 self._endpoints[registry] = endpoints
+                # Distinct egress hosts (direct + proxy hostnames): the registry-wide cap
+                # when proxies share an exit.
+                self._egress_hosts[registry] = 1 + len(
+                    {urlsplit(url).hostname for url in self._proxies.get(registry, ())}
+                )
             return endpoints
 
     def _direct(self, registry: str) -> Endpoint:
@@ -924,49 +1007,105 @@ class RdapEnricher:
                     self._sent.setdefault(endpoint.name, deque()).append(
                         now - seconds_ago
                     )
+                self._sent_registry.setdefault(registry, deque()).append(
+                    now - seconds_ago
+                )
 
-    def _window(self, endpoint: Endpoint) -> deque[float]:
-        times = self._sent.setdefault(endpoint.name, deque())
+    def _trim(self, times: deque[float]) -> deque[float]:
         horizon = self._clock() - BUDGET_WINDOW_SECONDS
         while times and times[0] <= horizon:
             times.popleft()
         return times
 
+    def _window(self, endpoint: Endpoint) -> deque[float]:
+        return self._trim(self._sent.setdefault(endpoint.name, deque()))
+
+    def _registry_window(self, registry: str) -> deque[float]:
+        return self._trim(self._sent_registry.setdefault(registry, deque()))
+
+    def _registry_cap(self, registry: str) -> int | None:
+        """budget x distinct egress hosts for a proxied budgeted registry, else None."""
+        budget = self.config.registry_daily_budgets.get(registry)
+        if budget is None or not self._proxies.get(registry):
+            return None
+        return budget * self._egress_hosts.get(registry, 1)
+
     def _over_budget(self, endpoint: Endpoint) -> bool:
         budget = self.config.registry_daily_budgets.get(endpoint.registry)
-        return budget is not None and len(self._window(endpoint)) >= budget
+        if budget is None:
+            return False
+        if len(self._window(endpoint)) >= budget:
+            return True
+        cap = self._registry_cap(endpoint.registry)
+        return cap is not None and len(self._registry_window(endpoint.registry)) >= cap
+
+    def _charge(self, endpoint: Endpoint, stamp: float, sign: int) -> None:
+        """Count one request (sign +1), or take back one that was never sent (-1)."""
+        self.requests += sign
+        self._count(self.requests_by_endpoint, endpoint.name, sign)
+        if not self.requests_by_endpoint[endpoint.name]:
+            del self.requests_by_endpoint[endpoint.name]
+        if endpoint.registry in self.config.registry_daily_budgets:
+            for times in (
+                self._window(endpoint),
+                self._registry_window(endpoint.registry),
+            ):
+                if sign > 0:
+                    times.append(stamp)
+                elif stamp in times:
+                    times.remove(stamp)
 
     def _endpoint_blocked(self, endpoint: Endpoint) -> bool:
         """Paused after a rate limit, or at its daily budget: it sends nothing."""
         with self._lock:
             return endpoint.paused_until > self._clock() or self._over_budget(endpoint)
 
-    def _rate_limited(self, endpoint: Endpoint, error: RdapClientError) -> None:
-        """Pause the endpoint: Retry-After when sent, else doubling from rate_limit_pause_seconds."""
+    def _pause_endpoint(
+        self, endpoint: Endpoint, error: RdapClientError, answered: str
+    ) -> None:
+        """Pause the endpoint for max(Retry-After, back-off).
+
+        The back-off doubles from rate_limit_pause_seconds per consecutive pause up to
+        rate_limit_retry_seconds; an access denial waits at least rate_limit_retry_seconds.
+        ``answered`` (the registry whose server answered) keys pauses_by_registry.
+        """
         with self._lock:
             endpoint.limits += 1
+            endpoint.last_code = error.code
+            seconds = float(
+                min(
+                    self.config.rate_limit_retry_seconds,
+                    self.config.rate_limit_pause_seconds
+                    * 2 ** min(endpoint.limits - 1, 32),
+                )
+            )
             if error.retry_after is not None:
-                seconds = min(
-                    max(float(error.retry_after), 1.0), MAX_RETRY_AFTER_SECONDS
-                )
-            else:
-                seconds = float(
-                    min(
-                        self.config.rate_limit_retry_seconds,
-                        self.config.rate_limit_pause_seconds
-                        * 2 ** min(endpoint.limits - 1, 32),
-                    )
-                )
+                seconds = max(seconds, float(error.retry_after))
+            if error.code == "access_denied":
+                seconds = max(seconds, float(self.config.rate_limit_retry_seconds))
+            seconds = min(max(seconds, 1.0), MAX_RETRY_AFTER_SECONDS)
             endpoint.paused_until = max(endpoint.paused_until, self._clock() + seconds)
-            self._count(self.pauses_by_registry, endpoint.registry)
+            self._count(self.pauses_by_registry, answered)
             self._count(self.pauses_by_endpoint, endpoint.name)
         self._note(
             "warning",
-            "Registry endpoint %s is rate limiting or blocking (%s); paused for %.0f s",
+            "Registry endpoint %s is rate limiting, blocking or unreachable (%s); "
+            "paused for %.0f s",
             endpoint.name,
             error.code,
             seconds,
         )
+
+    def _gave_up(self, registry: str) -> str | None:
+        """The latest pause code when every endpoint of the registry has paused
+        MAX_CONSECUTIVE_PAUSES times in a row, else None."""
+        with self._lock:
+            endpoints = self._endpoints.get(registry) or []
+            if not endpoints or any(
+                e.limits < MAX_CONSECUTIVE_PAUSES for e in endpoints
+            ):
+                return None
+            return max(endpoints, key=lambda e: e.paused_until).last_code
 
     def _bootstrap_paused(self) -> bool:
         return self._paused_until.get(BOOTSTRAP, float("-inf")) > self._clock()
@@ -1009,6 +1148,12 @@ class RdapEnricher:
                     times[len(times) - budget + slots - 1]
                     + BUDGET_WINDOW_SECONDS
                     - now,
+                )
+            cap = self._registry_cap(endpoint.registry)
+            shared = self._registry_window(endpoint.registry)
+            if cap is not None and len(shared) >= cap:
+                wait = max(
+                    wait, shared[len(shared) - cap] + BUDGET_WINDOW_SECONDS - now
                 )
         return wait
 
@@ -1133,19 +1278,22 @@ class RdapEnricher:
                 for registry in queues
                 for endpoint in self._endpoints_of(registry)
             ]
-            with ThreadPoolExecutor(
+            pool = ThreadPoolExecutor(
                 max_workers=len(workers), thread_name_prefix="rdap-lane"
-            ) as pool:
+            )
+            try:
                 futures = [
                     pool.submit(self._lane, page, registry, endpoint)
                     for registry, endpoint in workers
                 ]
-                try:
-                    for future in futures:
-                        future.result()
-                except BaseException:
-                    page.stop.set()  # the other workers stop at their next miss
-                    raise
+                done, _ = wait(futures, return_when=FIRST_EXCEPTION)
+                for future in done:
+                    future.result()  # the first failure, as soon as it happens
+            except BaseException:
+                page.stop.set()  # the other workers stop at their next miss
+                raise
+            finally:
+                pool.shutdown(wait=True)
         else:
             self._sequential(page, misses)
         with self._lock:
@@ -1225,17 +1373,16 @@ class RdapEnricher:
         url: str | None = None,
         fallback: bool = False,
         gate: bool = False,
-        check: bool = True,
     ) -> RdapLookupResponse:
         """One paced request through an endpoint: 'rdap', 'ripe_rest' or 'apnic_whois'.
 
-        ``gate`` charges max_requests (raises _RequestLimit when reached), ``check``
-        refuses a paused endpoint or one at its budget (_Blocked); nothing is sent then.
-        The endpoint's lock is held for pacing and the request. A pause code pauses the
-        endpoint before the error is re-raised; a success resets its back-off. A fallback
-        request follows every RDAP redirect (it is the deliberate RDAP answer); any other
-        RDAP request raises RdapRedirect for a redirect to RIPE's or APNIC's RDAP server
-        (or, from a proxy, to any host outside its registry).
+        ``gate`` charges max_requests (raises _RequestLimit when reached); a paused
+        endpoint or one at its budget raises _Blocked. Nothing is sent then. The
+        endpoint's lock is held for pacing and the request. A redirect to another
+        registry's host raises RdapRedirect (a refusal before any fetch is not charged).
+        A pause code pauses the endpoint; a dead proxy pauses it and raises
+        _EndpointDown; a success resets its back-off. A proxy endpoint's errors are
+        scrubbed of the proxy URL. ``fallback`` marks the person entities of the answer.
         """
         registry = endpoint.registry
         if source != "rdap" and endpoint is not self._direct(registry):
@@ -1244,22 +1391,14 @@ class RdapEnricher:
             with self._lock:
                 if gate and self._budget_exhausted():
                     raise _RequestLimit
-                if check and self._endpoint_blocked(endpoint):
+                if self._endpoint_blocked(endpoint):
                     raise _Blocked
-                self.requests += 1
-                if registry in self.config.registry_daily_budgets:
-                    self._window(endpoint).append(self._clock())
-                self._count(self.requests_by_endpoint, endpoint.name)
-                if fallback:
-                    self._count(self.rdap_fallbacks_by_registry, registry)
-            if endpoint.last_send is not None and endpoint.delay > 0:
-                wait = endpoint.last_send + endpoint.delay - self._clock()
-                if wait > 0:
-                    self._sleep(wait)
-            endpoint.last_send = self._clock()
-            endpoint.rdap.reroute_hosts = (
-                frozenset() if fallback else self._reroute_hosts
-            )
+                stamp = self._clock()
+                self._charge(endpoint, stamp, +1)
+            wait_seconds = endpoint.last_send + endpoint.delay - self._clock()
+            if endpoint.delay > 0 and wait_seconds > 0:
+                self._sleep(wait_seconds)
+            previous, endpoint.last_send = endpoint.last_send, self._clock()
             try:
                 if rir is not None:
                     response = endpoint.rdap.lookup_up_url(target, rir=rir)
@@ -1271,16 +1410,31 @@ class RdapEnricher:
                     response = self.apnic.lookup_ip(target)
                 else:
                     response = endpoint.rdap.lookup_ip(target)
+            except RdapRedirect as redirect:
+                if redirect.status_code is None:  # refused before anything was sent
+                    with self._lock:
+                        self._charge(endpoint, stamp, -1)
+                    endpoint.last_send = previous
+                else:
+                    self._count(self.requests_by_registry, registry)
+                raise
             except RdapClientError as error:
+                answered = RIR_BY_HOST.get(error.host or "", registry)
                 if (
                     error.code == "access_denied"
                     and error.status_code == 403
-                    and registry in RATE_LIMIT_403_REGISTRIES
+                    and answered in RATE_LIMIT_403_REGISTRIES
                 ):
                     error.retryable = True
-                self._count(self.requests_by_registry, registry)
+                self._count(self.requests_by_registry, answered)
+                if endpoint.proxy is not None:
+                    down = _proxy_down(error)
+                    _scrub(error, endpoint)
+                    if down:
+                        self._pause_endpoint(endpoint, error, answered)
+                        raise _EndpointDown from None
                 if _pauses(error):
-                    self._rate_limited(endpoint, error)
+                    self._pause_endpoint(endpoint, error, answered)
                 raise
         with self._lock:
             endpoint.limits = 0
@@ -1292,11 +1446,67 @@ class RdapEnricher:
             self._count(self.person_entities_by_registry, key, persons)
         return response
 
+    def _chain(
+        self,
+        page: _Page,
+        miss: Miss,
+        first: Endpoint,
+        registry: str,
+        *,
+        fallback: bool,
+    ) -> tuple[RdapLookupResponse, str, str] | MissOutcome:
+        """Send one request, re-sending refused cross-registry redirects through the target
+        registry's direct endpoint (its pace, budget and pauses); (response, registry that
+        answered, source), or a deferred or reused outcome.
+
+        Only the miss's own first request (not a fallback) is charged to max_requests and
+        raises _Requeue when the lane's endpoint cannot carry it. RIPE- and APNIC-managed
+        space found by a redirect goes to REST/whois, except inside a fallback, which asks
+        RDAP (the redirect Location) all the way.
+        """
+        ip, address = miss.ip, miss.address
+        current, url = first, None
+        source = "rdap" if fallback else self._source(registry)
+        for hop in range(MAX_REROUTES + 1):
+            own = hop == 0 and not fallback
+            try:
+                response = self._send(
+                    current, ip, source=source, url=url, fallback=fallback, gate=own
+                )
+                return response, registry, source
+            except _Blocked, _EndpointDown:
+                if own:
+                    raise _Requeue from None
+                return MissOutcome(ip, registry=registry, deferred=True)
+            except RdapRedirect as redirect:
+                registry = redirect.registry or registry
+                self._count(self.reroutes_by_registry, registry)
+                if not fallback:
+                    matched = self._page_match(page, address)
+                    if matched is not None:
+                        return MissOutcome(
+                            ip, registry=registry, reused=matched[0], cidr=matched[1]
+                        )
+                current = self._direct(registry)
+                source = "rdap" if fallback else self._source(registry)
+                url = redirect.location if source == "rdap" else None
+            except RdapClientError as error:
+                if not _pauses(error):
+                    raise
+                if own:
+                    raise _Requeue from None
+                return MissOutcome(ip, registry=registry, deferred=True)
+        raise RdapClientError(
+            f"More than {MAX_REROUTES} cross-registry redirects",
+            code="query_error",
+            retryable=False,
+        )
+
     def _fetch(self, page: _Page, miss: Miss, endpoint: Endpoint) -> MissOutcome:
         """FETCH one miss through ``endpoint``: HTTP only, never ClickHouse.
 
-        Raises _Requeue when the endpoint itself cannot be used (paused, at its budget, or
-        rate limited by this request) and _RequestLimit at max_requests.
+        Raises _Requeue when the endpoint itself cannot be used (paused, at its budget,
+        rate limited by this request, or a dead proxy) and _RequestLimit at max_requests.
         """
         ip, address, registry = miss.ip, miss.address, miss.registry
         matched = self._page_match(page, address)
@@ -1305,41 +1515,10 @@ class RdapEnricher:
                 ip, registry=registry, reused=matched[0], cidr=matched[1]
             )
         try:
-            current, source, url = endpoint, self._source(registry), None
-            for hop in range(MAX_REROUTES + 1):
-                try:
-                    response = self._send(
-                        current, ip, source=source, url=url, gate=hop == 0
-                    )
-                    break
-                except _Blocked:
-                    if hop == 0:
-                        raise _Requeue from None
-                    return MissOutcome(ip, registry=registry, deferred=True)
-                except RdapRedirect as redirect:
-                    # Not followed on this endpoint: RIPE- or APNIC-managed space goes to
-                    # the no-personal path, any other registry to its direct endpoint.
-                    registry = redirect.registry or registry
-                    self._count(self.reroutes_by_registry, registry)
-                    matched = self._page_match(page, address)
-                    if matched is not None:
-                        return MissOutcome(
-                            ip, registry=registry, reused=matched[0], cidr=matched[1]
-                        )
-                    current, source = self._direct(registry), self._source(registry)
-                    url = redirect.location if source == "rdap" else None
-                except RdapClientError as error:
-                    if not _pauses(error):
-                        raise
-                    if hop == 0:
-                        raise _Requeue from error
-                    return MissOutcome(ip, registry=registry, deferred=True)
-            else:
-                raise RdapClientError(
-                    f"More than {MAX_REROUTES} cross-registry redirects",
-                    code="query_error",
-                    retryable=False,
-                )
+            answer = self._chain(page, miss, endpoint, registry, fallback=False)
+            if isinstance(answer, MissOutcome):
+                return answer
+            response, registry, source = answer
             direct = normalize_rdap_network(
                 response, fetched_at=datetime.now(UTC), segment_role="lookup_result"
             )
@@ -1348,8 +1527,8 @@ class RdapEnricher:
             ):
                 # RIPE's root object or APNIC's placeholder for unallocated / non-authoritative
                 # space, or an NIR's own allocation object: RDAP, routed by the IANA bootstrap
-                # (which redirects to the NIR server), knows the holder. One request past the
-                # budget at most.
+                # (which redirects to the NIR server), knows the holder. It is paced, budgeted
+                # and paused like any request, through the direct endpoints it reaches.
                 self._note(
                     "info",
                     "%s answer for %s is %s; asking RDAP",
@@ -1359,18 +1538,13 @@ class RdapEnricher:
                     if is_nir_object(response.raw_response)
                     else "a catch-all",
                 )
-                try:
-                    response = self._send(
-                        self._direct(registry),
-                        ip,
-                        source="rdap",
-                        fallback=True,
-                        check=False,
-                    )
-                except RdapClientError as error:
-                    if not _pauses(error):
-                        raise
-                    return MissOutcome(ip, registry=registry, deferred=True)
+                self._count(self.rdap_fallbacks_by_registry, registry)
+                answer = self._chain(
+                    page, miss, self._direct(registry), registry, fallback=True
+                )
+                if isinstance(answer, MissOutcome):
+                    return answer
+                response = answer[0]
                 direct = normalize_rdap_network(
                     response, fetched_at=datetime.now(UTC), segment_role="lookup_result"
                 )
@@ -1418,7 +1592,7 @@ class RdapEnricher:
                 )
             except _RequestLimit, _Blocked:
                 break
-            except (RdapClientError, ValueError) as error:
+            except (_EndpointDown, RdapClientError, ValueError) as error:
                 with self._lock:
                     self.parent_failures += 1
                 self._note(
@@ -1443,10 +1617,23 @@ class RdapEnricher:
         (where it is asked itself)."""
         reusable: dict[str, NormalizedRdapNetwork] = {}
         reused: list[MissOutcome] = []
+        gave_up: dict[str, int] = {}
         for ip in order:
             outcome = outcomes.get(ip)
             if outcome is None:  # deferred while routing, or max_requests reached
                 continue
+            code = self._gave_up(outcome.registry) if outcome.deferred else None
+            if code:
+                # Every endpoint of the registry paused MAX_CONSECUTIVE_PAUSES times in a
+                # row: stop deferring, so the run can finish; a retry draft asks again.
+                gave_up[outcome.registry] = gave_up.get(outcome.registry, 0) + 1
+                outcome.error = RdapClientError(
+                    f"{outcome.registry} keeps refusing requests",
+                    code=code,
+                    retryable=True,
+                )
+                outcome.checked_at = datetime.now(UTC)
+                outcome.deferred = False
             if outcome.deferred:
                 self._defer(outcome.registry)
             elif outcome.reused is not None:
@@ -1461,6 +1648,14 @@ class RdapEnricher:
                 markers.append(
                     self._marker(ip, addresses[ip], buckets[ip], results[ip])
                 )
+        for registry, count in gave_up.items():
+            self.log.warning(
+                "Registry %s paused %s times in a row on every endpoint; %s addresses "
+                "stored as retryable_error instead of deferred",
+                registry,
+                MAX_CONSECUTIVE_PAUSES,
+                count,
+            )
         for outcome in reused:
             source = reusable.get(outcome.reused)
             if source is None:  # a registry-level registration answers only its own IP

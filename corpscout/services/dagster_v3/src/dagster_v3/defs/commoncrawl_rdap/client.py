@@ -44,6 +44,7 @@ class RdapClientError(Exception):
         retryable: bool,
         status_code: int | None = None,
         retry_after: float | None = None,
+        host: str | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -51,6 +52,8 @@ class RdapClientError(Exception):
         self.status_code = status_code
         # Seconds the server asked the client to wait (Retry-After), when it sent one.
         self.retry_after = retry_after
+        # The host that answered (or failed), when the request was made by hand.
+        self.host = host
 
 
 class RdapRedirect(RdapClientError):
@@ -241,7 +244,11 @@ class RdapClient:
                 url, registry=RIR_BY_HOST.get(url_host(url), ""), status_code=None
             )
         for _ in range(MAX_REDIRECTS + 1):
-            response = http_request(self._session, url, allow_redirects=False)
+            try:
+                response = http_request(self._session, url, allow_redirects=False)
+            except QueryError as error:
+                error.host = url_host(url)
+                raise
             location = response.headers.get("Location")
             if response.status_code in REDIRECT_STATUSES and location:
                 response.close()
@@ -261,6 +268,7 @@ class RdapClient:
                 error.retry_after = retry_after_seconds(
                     response.headers.get("Retry-After")
                 )
+                error.host = url_host(url)
                 raise
         raise QueryError(f"More than {MAX_REDIRECTS} RDAP redirects from {url}")
 
@@ -377,6 +385,7 @@ def _client_error(
         retryable=retryable,
         status_code=status_code,
         retry_after=getattr(error, "retry_after", None),
+        host=getattr(error, "host", None),
     )
 
 
