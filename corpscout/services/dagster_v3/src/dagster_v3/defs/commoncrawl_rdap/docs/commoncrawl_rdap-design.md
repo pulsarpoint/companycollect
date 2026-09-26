@@ -223,7 +223,8 @@ another registry goes direct.
 **The optional daily budget** (`registry_daily_budgets`, default `{"afrinic": 4500}`: AFRINIC
 allows 5,000 queries per address and day; explicit maps merge over the defaults, AFRINIC stays
 within 1..5,000 and LACNIC's delay at 6 s or more) applies per endpoint, i.e. per source
-address, with a registry-wide cap of budget × distinct egress hosts when proxies are used. A miss
+address: one window for direct and one per distinct proxy hostname (proxy URLs on one host
+share it). A miss
 whose endpoint is at its limit goes to another endpoint of the registry or is deferred rather
 than requested or failed; the run waits only when a whole pass resolved nothing else, for an
 hour's share of the first endpoint's budget (`wait_for_registry_budget`). The 24-hour usage
@@ -236,8 +237,10 @@ column. A rate limit or block (RDAP `429`, LACNIC `403`, RIPE REST `403`/`429`, 
 `rate_limit_pause_seconds` (300) doubling up to `rate_limit_retry_seconds` (an access denial at
 least that), reset by a success; a dead proxy (transport, timeout, 407/502/503/504) pauses the
 same way. The address is deferred (no result, no marker) and the registry is deferred only when
-all its endpoints are paused or at their budget; after 6 consecutive pauses on every endpoint,
-its addresses are stored as `retryable_error` so the run can finish. A failed IANA bootstrap pauses every miss under the key `bootstrap` with its own
+all its endpoints are paused or at their budget. Once every endpoint has paused 6 times in a
+row and the run has waited for the registry after a pass that processed nothing, the next
+pass stores its still-deferred addresses as `retryable_error` so the run can finish; never in
+a pass where anything else progresses. A failed IANA bootstrap pauses every miss under the key `bootstrap` with its own
 60 s→900 s back-off. Both waits hold the `commoncrawl_rdap` pool slot.
 
 **The legacy bucket worker** (`commoncrawl_ip_rdap_networks`) keeps its per-IP RDAP lookups,

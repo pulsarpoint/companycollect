@@ -177,9 +177,9 @@ half of a reroute — because the lookup-marker table (`rdap_ip_lookup_results`)
 registry column. An explicit `registry_daily_budgets` or `registry_request_delays` **merges
 over** the defaults (`{"arin": 1}` means `{"lacnic": 6.5, "arin": 1}`); LACNIC's delay may
 not go below 6 s and AFRINIC's budget must stay between 1 and 5,000 — the run config and the
-backoffice form refuse anything else. With AFRINIC proxies a registry-wide cap applies as
-well: the budget × the number of distinct egress hosts (direct + distinct proxy hostnames),
-so proxies that share an exit host cannot multiply the allowance.
+backoffice form refuse anything else. The budget window belongs to the **egress**, not the
+endpoint: direct has one, and every proxy URL on the same hostname (compared
+case-insensitively) shares one, so two proxy URLs through one host get one budget between them.
 
 ## Lanes, pacing and proxies
 
@@ -256,13 +256,17 @@ AFRINIC allowance by the number of source addresses; that is the point, and why 
 registries whose terms allow it are listed. **Each AFRINIC proxy URL must be a distinct, stable
 egress IP** (no rotating pools, no two URLs leaving through the same address): AFRINIC counts
 per source IP, and two endpoints behind one exit would spend 2 × 4,500 of one address's 5,000.
-The code enforces only what it can see — budget × distinct proxy hostnames (+ direct) per
-registry — so a rotating or shared-exit proxy behind distinct hostnames is on the operator.
+The code enforces only what it can see — one budget window per proxy hostname — so distinct
+hostnames that leave through one exit IP, or a rotating pool, cannot be detected and are on
+the operator.
 
 A proxy that fails to carry a request (`transport_error`, a timeout, a connection error, or a
 `407`/`502`/`503`/`504` answer) pauses that proxy endpoint with the same back-off; the miss
 goes back to the lane for another endpoint, or is deferred to the next pass. Nothing is
-stored for it. Error messages of proxy endpoints are scrubbed of the proxy URL before they
+stored for it. A `502`/`503`/`504` through a proxy may equally be the registry's own outage —
+the two cannot be told apart — so a registry outage also pauses its proxy endpoints (and the
+direct endpoint, or the next pass, carries on). Error messages of proxy endpoints are
+scrubbed of the proxy URL, host, user name and password (case-insensitively) before they
 leave the request.
 
 ## Counters and how to read them
@@ -289,10 +293,13 @@ A rate limit or block — RDAP `429`, LACNIC `403`, a RIPE REST `403` or `429`, 
 `%ERROR:2xx` — pauses the **endpoint** that got it for `max(Retry-After, back-off)` (at most 1 day),
 the back-off being `rate_limit_pause_seconds` (default 300) doubling per consecutive pause up
 to `rate_limit_retry_seconds` (default 3600); an access denial (`403`, `%ERROR:201`) waits at
-least `rate_limit_retry_seconds`. The endpoint's next success resets the back-off. When
-**every** endpoint of a registry has paused 6 times in a row, that registry's addresses are
-no longer deferred in the pass: they are stored as `retryable_error` with the pause's code,
-so the run can finish (a retry draft asks again later). The rate-limited address is **deferred** (no result row, no
+least `rate_limit_retry_seconds`. The endpoint's next success resets the back-off. A registry
+is **given up** only when nothing else can progress: every endpoint of it has paused 6 times
+in a row **and** the run has already waited for it after a pass that processed nothing
+(`wait_for_registry_budget`). The pass after that wait asks once more, and whatever of that
+registry is still deferred is stored as `retryable_error` with the pause's code, so the run can
+finish (a retry draft asks again later). In a pass where other registries still progress,
+its addresses stay deferred and nothing is written. A success of the registry resets it. The rate-limited address is **deferred** (no result row, no
 marker) and re-walked in the next pass — it is no longer stored as a `retryable_error` —
 and so is the rest of the registry's lane, unless another endpoint of the registry is free
 to take it. A registry is deferred only when all its endpoints are paused or at their
