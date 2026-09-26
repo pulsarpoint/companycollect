@@ -20,6 +20,14 @@ from dagster_v3.defs.common.processing import ProcessingResource
 INPUT_RELATION = "corpscout.ip_enrichment_input"
 PROCESSOR_VERSION = "ip-enrichment-v1"
 
+# The entry identity, computed where the entries live: the address's 256-way bucket first,
+# so a task is walked bucket by bucket, then the JSON tuple of source, record and IP.
+# Migration 000453 enforces the same expression in its valid_identity CHECK.
+INPUT_ID_SQL = (
+    "concat(leftPad(toString(toUInt16(cityHash64({ip}) % 256)), 3, '0'), ':', "
+    "toJSONString(tuple({source}, {record}, {ip})))"
+)
+
 
 class IpEnrichmentInputConfig(dg.Config):
     task_id: str | None = Field(

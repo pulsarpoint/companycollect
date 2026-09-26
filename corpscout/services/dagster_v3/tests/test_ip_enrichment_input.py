@@ -86,13 +86,16 @@ def server():
             database="default",
         )
         with resource.get_connection() as client:
-            migration = (
-                Path(__file__).resolve().parents[3]
-                / "clickhouse/migrations/000433_corpscout_ip_enrichment.up.sql"
-            )
-            for statement in migration.read_text(encoding="utf-8").split(";"):
-                if statement.strip():
-                    client.execute(statement)
+            migrations = Path(__file__).resolve().parents[3] / "clickhouse/migrations"
+            for name in (
+                "000433_corpscout_ip_enrichment.up.sql",
+                "000453_corpscout_ip_enrichment_queue_contract.up.sql",
+            ):
+                for statement in (
+                    (migrations / name).read_text(encoding="utf-8").split(";")
+                ):
+                    if statement.strip():
+                        client.execute(statement)
             yield client, resource
     finally:
         subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False)
@@ -343,3 +346,37 @@ def test_inventory_search_and_exclusions_match_all_pages(
 def test_invalid_inventory_filters(config):
     with pytest.raises(ValidationError):
         IpEnrichmentInputConfig(**config)
+
+
+def test_entry_table_follows_the_queue_contract(database):
+    from clickhouse_driver.errors import ServerException
+
+    from dagster_v3.defs.ip_enrichment.input import INPUT_ID_SQL
+
+    client, _ = database
+    assert client.execute(
+        "SELECT engine, partition_key, sorting_key FROM system.tables WHERE database='corpscout' AND name='ip_enrichment_input'"
+    ) == [("MergeTree", "task_id", "task_id, input_id")]
+    identity = INPUT_ID_SQL.format(
+        ip="'8.8.8.8'", source="'manual'", record="'8.8.8.8'"
+    )
+    # input_id is the bucket-prefixed identity computed in ClickHouse, nothing else.
+    with pytest.raises(ServerException, match="valid_identity"):
+        client.execute(
+            f"INSERT INTO {INPUT_RELATION} (task_id,input_id,ip,source_name,source_record_id,source_run_id,submission_id) VALUES",
+            [("task", "017:x", "8.8.8.8", "manual", "8.8.8.8", "run", "submission")],
+        )
+    # Every row names its submission; the retry delete relies on it.
+    with pytest.raises(ServerException, match="valid_identity"):
+        client.execute(
+            f"INSERT INTO {INPUT_RELATION} (task_id,input_id,ip,source_name,source_record_id,source_run_id) "
+            f"SELECT 'task', {identity}, '8.8.8.8', 'manual', '8.8.8.8', 'run'"
+        )
+    client.execute(
+        f"INSERT INTO {INPUT_RELATION} (task_id,input_id,ip,source_name,source_record_id,source_run_id,submission_id) "
+        f"SELECT 'task', {identity}, '8.8.8.8', 'manual', '8.8.8.8', 'run', 'submission'"
+    )
+    [(input_id, bucket)] = client.execute(
+        f"SELECT input_id, bucket FROM {INPUT_RELATION}"
+    )
+    assert input_id == f"{bucket:03d}:" + '["manual","8.8.8.8","8.8.8.8"]'

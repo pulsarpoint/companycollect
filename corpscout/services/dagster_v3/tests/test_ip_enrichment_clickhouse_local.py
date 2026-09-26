@@ -11,19 +11,22 @@ from tests.clickhouse_local import clickhouse_local_command, literal
 
 MIGRATIONS = Path(__file__).resolve().parents[3] / "clickhouse/migrations"
 MIGRATION = "000433_corpscout_ip_enrichment"
+QUEUE_MIGRATION = "000453_corpscout_ip_enrichment_queue_contract"
+IDENTITY = "concat(leftPad(toString(toUInt16(cityHash64(ip) % 256)), 3, '0'), ':', toJSONString(tuple(source_name, source_record_id, ip)))"
 
 
 def test_ip_enrichment_history_current_and_rollback() -> None:
     up = (MIGRATIONS / f"{MIGRATION}.up.sql").read_text()
     down = (MIGRATIONS / f"{MIGRATION}.down.sql").read_text()
-    sql = """
+    sql = f"""
     SYSTEM STOP MERGES corpscout.ip_enrichment_results;
     INSERT INTO corpscout.ip_enrichment_input
-        (task_id, input_id, ip, source_name, source_record_id)
-    VALUES
-        ('00000000-0000-0000-0000-000000000001', 'dns:1', '8.8.8.8', 'dns', '1'),
-        ('00000000-0000-0000-0000-000000000002', 'crawl:2', '8.8.8.8', 'commoncrawl', '2');
-    SELECT count(), uniqExact(ip), uniqExact(source_name)
+        (task_id, input_id, ip, source_name, source_record_id, source_run_id, submission_id)
+    SELECT task_id, {IDENTITY}, ip, source_name, source_record_id, 'run', 'submission'
+    FROM (SELECT '00000000-0000-0000-0000-000000000001' AS task_id, '8.8.8.8' AS ip, 'dns' AS source_name, '1' AS source_record_id
+          UNION ALL
+          SELECT '00000000-0000-0000-0000-000000000002', '8.8.8.8', 'commoncrawl', '2');
+    SELECT count(), uniqExact(ip), uniqExact(source_name), countIf(input_id LIKE '___:%')
     FROM corpscout.ip_enrichment_input FORMAT JSONCompactEachRow;
 
     INSERT INTO corpscout.ip_enrichment_results
@@ -80,13 +83,20 @@ def test_ip_enrichment_history_current_and_rollback() -> None:
     SELECT country_iso_code, toString(completed_at), toString(city_data_result_id)
     FROM corpscout.ip_enrichment_current WHERE ip='8.8.8.8' FORMAT JSONCompactEachRow;
     SELECT count() FROM corpscout.ip_enrichment_results FINAL FORMAT JSONCompactEachRow;
+    TRUNCATE TABLE corpscout.ip_enrichment_input;
     """
+    queue_up = (MIGRATIONS / f"{QUEUE_MIGRATION}.up.sql").read_text()
+    queue_down = (MIGRATIONS / f"{QUEUE_MIGRATION}.down.sql").read_text()
     result = subprocess.run(
         clickhouse_local_command(),
         input=up
+        + queue_up
         + sql
-        + up
+        + queue_down
         + down
+        + up
+        + queue_up
+        + queue_down
         + down
         + """
         SELECT count() FROM system.tables WHERE database='corpscout' FORMAT JSONCompactEachRow;
@@ -97,8 +107,14 @@ def test_ip_enrichment_history_current_and_rollback() -> None:
         check=False,
     )
     assert result.returncode == 0, result.stderr
+    # The queue migration's inline `throwIf` gate is a bare SELECT with no FORMAT clause,
+    # so clickhouse-local prints its own scalar result (0, meaning "not violated") to
+    # stdout on every apply. It fires once per queue_up/queue_down application below: the
+    # first queue_up (before `sql`), then queue_down, queue_up, queue_down again during the
+    # round-trip idempotence check -- four bare `0` lines interleaved with the JSON rows.
     assert [json.loads(line) for line in result.stdout.splitlines()] == [
-        [2, 1, 2],
+        0,
+        [2, 1, 2, 2],
         [4],
         [
             None,
@@ -118,6 +134,9 @@ def test_ip_enrichment_history_current_and_rollback() -> None:
         ["GB", None, None],
         ["GB", "2026-09-04 00:00:00.000000", "00000000-0000-0000-0000-000000000006"],
         [7],
+        0,
+        0,
+        0,
         [0],
     ]
 
@@ -125,10 +144,14 @@ def test_ip_enrichment_history_current_and_rollback() -> None:
 @pytest.mark.parametrize("table", ["ip_enrichment_input", "ip_enrichment_results"])
 @pytest.mark.parametrize("ip", ["not-an-ip", "2001:4860:4860:0:0:0:0:8888"])
 def test_ip_enrichment_rejects_invalid_or_noncanonical_ips(table: str, ip: str) -> None:
-    up = (MIGRATIONS / f"{MIGRATION}.up.sql").read_text()
+    up = (MIGRATIONS / f"{MIGRATION}.up.sql").read_text() + (
+        MIGRATIONS / f"{QUEUE_MIGRATION}.up.sql"
+    ).read_text()
     if table == "ip_enrichment_input":
-        insert = f"""INSERT INTO corpscout.{table} (ip, input_id, source_name)
-        VALUES ({literal(ip)}, 'record:ip', 'dns');"""
+        insert = f"""INSERT INTO corpscout.{table}
+        (task_id, input_id, ip, source_name, source_record_id, source_run_id, submission_id)
+        SELECT 'task', {IDENTITY}, ip, source_name, source_record_id, 'run', 'submission'
+        FROM (SELECT {literal(ip)} AS ip, 'dns' AS source_name, 'record' AS source_record_id);"""
     else:
         insert = f"""INSERT INTO corpscout.{table} (ip, result_id)
         VALUES ({literal(ip)}, '00000000-0000-0000-0000-000000000001');"""
