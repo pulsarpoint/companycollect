@@ -8,7 +8,7 @@ Each task row has **Configure processing**, which selects the task and opens its
 | --- | --- | --- |
 | Webtech | `webtech_scan_input` | `webtech_scan_results_job` |
 | Brave | `company_brave_search_input` | `company_brave_search_job` |
-| IP enrichment | `ip_enrichment_input` | `ip_enrichment_results_job` |
+| IP enrichment | `ip_enrichment_input` (draft) | `ip_enrichment_results_job` |
 | Crawler | `website_crawl_task_domains`, by `crawl_type` | `website_full_crawl_results_job`, `website_jobs_crawl_results_job`, `website_site_info_results_job` |
 
 Crawler request presets remain on `/admin/crawls`. They are distinct from a task's frozen domain membership. Brave's input table does not record submission time, so its tasks sort by ID and the time column says “Not recorded.” Legacy inputs without task IDs remain visible but cannot be processed here.
@@ -17,9 +17,9 @@ Crawler request presets remain on `/admin/crawls`. They are distinct from a task
 
 Webtech draft submissions can be appended until its results asset begins. Freshness is checked during execution preparation, preserving skipped entries. The UI does not infer draft/frozen/completed PostgreSQL task state from input presence or run status: the asset validates task metadata and incomplete submissions when it begins. A queued Dagster run is not a confirmation that the task has frozen. Legacy Webtech tasks require default settings.
 
-Other processors retain their existing fixed input selection lifecycle. Existing source-page input-plus-processing actions are unchanged; this page provides separate processing of already prepared tasks. It does not yet provide input import, cancellation, cleanup or saved profile management.
+Brave retains its fixed input selection lifecycle. Existing source-page input-plus-processing actions are unchanged; this page provides separate processing of already prepared tasks. It does not yet provide input import, cancellation, cleanup or saved profile management.
 
-The sheet accepts an execution ID for resuming with original settings. Webtech draft queues reuse their saved execution by default. Fully processed tasks clear their input rows after every outcome is published, retaining task history and results. Website errors produce a “Completed with errors” history entry with an error count. Pipeline failures that leave work incomplete keep their inputs for recovery. Add failed pages to a new queue for another attempt. To rescan a completed task, add the pages to a new queue. Other processors use the original results run ID for resumption. Progress and errors are available through the linked Dagster run; Refresh updates the page's status.
+The sheet accepts an execution ID for resuming with original settings. Webtech draft queues reuse their saved execution by default. Fully processed tasks clear their input rows after every outcome is published, retaining task history and results. Website errors produce a “Completed with errors” history entry with an error count. Pipeline failures that leave work incomplete keep their inputs for recovery. Add failed pages to a new queue for another attempt. To rescan a completed task, add the pages to a new queue. Brave uses the original results run ID for resumption. Progress and errors are available through the linked Dagster run; Refresh updates the page's status.
 
 The action checks task membership in the chosen input table, blocks known active runs (including input runs), restricts parameter names and numeric ranges, and lets Dagster validate the asset config. It never accepts arbitrary jobs, assets, resources, tables or selection overrides. Request tags recover a retry after a lost launch acknowledgement. Check-plus-launch is serialized per task within a Backoffice instance; this is not a cross-instance distributed lock. Processor task locks and lifecycle validation remain authoritative.
 
@@ -72,3 +72,20 @@ resume on the crawler page are removed.
 
 Import status uses the same polling/status component as Webtech, with stable submission IDs
 for retries. A successful Dagster import clears the selection; an accepted launch alone does not.
+
+## IP enrichment drafts
+
+Admin → IP addresses → **Add to enrichment queue** imports the selection into
+`ip_enrichment_input` through `ip_enrichment_input_job` with a stable submission ID; the
+status component polls `/admin/ip-enrichment/queue-submissions/<runId>` and links the saved
+task. A successful import clears the selection; an accepted launch alone does not. The
+entry table is partitioned by task and read without `FINAL`.
+
+Queues → IP enrichment automatically selects the current draft; Start launches
+`ip_enrichment_results` with `task_id`. `batch_size`, `max_requests` and
+`request_delay_seconds` may change between resumes; the RDAP policy fields are frozen at
+Start. Lookup errors complete the task “with errors”; add the failed addresses to a new
+draft (`retry_failed_task_id`) to retry them. RIPE and APNIC are asked without personal data
+(REST search, whois `-r`); the per-registry request budget (`registry_daily_budgets`) is a
+Dagster launchpad setting, not a sheet field. The old one-shot `ip_enrichment_workflow` is
+removed.

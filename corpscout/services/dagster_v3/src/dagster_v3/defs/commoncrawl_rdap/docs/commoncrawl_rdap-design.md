@@ -136,3 +136,75 @@ nothing is excluded; a classification query failing is fail-closed (it fails the
 writers) rather than silently skipped, and a registration that is not reusable is never cached
 per-IP either — see the operations doc's "Known costs" for what that means for repeat lookups of
 the same address.
+
+## IP enrichment: page batching and registry budgets
+
+`ip_enrichment_results` (`defs/ip_enrichment/enrichment.py`, `RdapEnricher`) resolves a page of
+addresses with a bounded number of ClickHouse round trips: one negative-cache read
+(`rdap_ip_lookup_results_current`), one trie `dictGet`, one read of the uncached network rows
+the page needs (`rdap_networks_current`, never `raw_response`), and one insert of the page's
+lookup markers. Per miss it costs the registry-class context query
+(`registry.py::classify_registration`) before the network row, its class row (unless `unknown`)
+and its segments, in that order, so coverage and its class are durable before any result refers
+to them.
+
+The registry of a miss is chosen from whoisit's already-loaded bootstrap data, with no HTTP
+request (`RdapClient.registry_for`); an address with no exact bootstrap match answers with a
+retryable `no_registry` marker instead of a request, since whoisit would otherwise pick a
+default endpoint at random.
+
+**RIPE**, when `ripe_rest` is on, is asked over the RIPE Database REST search instead of RDAP
+(`ripe_rest.py`): the AUP caps the personal data sets (person and role objects) one source
+address may receive at 1,000 per 24 hours, and a RIPE RDAP `ip` answer embeds 1–5 person
+objects, so every one would count. The search sends `flags=no-referenced` together with
+`flags=no-personal` (both verified live on 2026-09-26 against `193.0.6.139`, which returned only
+an `inetnum` object) and returns the most specific `inetnum`/`inet6num` alone, no person or role
+object.
+
+**APNIC**, when `apnic_whois` is on, is asked over port-43 whois with `-r` (`apnic_whois.py`;
+the HTTP gateway `wq.apnic.net` does not honour `-r`): the holder name is the *first* `descr`
+line, since APNIC objects rarely carry `org:`; `status` is upper-cased and whitespace-collapsed.
+An answer that is an NIR's own allocation object (`netname` starting with
+`JPNIC`/`KRNIC`/`TWNIC`/`IDNIC`/`CNNIC`/`IRINN`/`VNNIC`, or a first `descr` naming one) falls back
+to RDAP, routed by the IANA bootstrap to the NIR's server; `mnt-by` alone never decides this (a
+holder's own block, e.g. FPT's `103.35.64.0/22`, is maintained by `MAINT-VN-VNNIC`).
+
+**Cross-RIR redirects** are refused before any fetch, the same way a first URL to
+`rdap.db.ripe.net`/`rdap.apnic.net` is refused: ERX/transferred space registered inside another
+registry's IANA /8 answers on that registry's own RDAP server with a redirect to RIPE's or
+APNIC's RDAP host, and `RdapClient` (`reroute_hosts`) raises `RdapRedirect` instead of following
+it, so the target body — and its person objects — is never fetched. The miss is re-sent to the
+REST search or whois `-r` and counted under the *target* registry (`reroutes_by_registry`).
+
+**Counters** are keyed by the registry that answered (`RdapLookupResponse.rir`):
+`requests_by_registry` and `person_entities_by_registry`. RDAP requests made because a
+REST/whois answer was a catch-all or an NIR's own object are counted separately in
+`rdap_fallbacks_by_registry`, with persons under `"<rir>:fallback"` keys — a plain `ripe`/`apnic`
+key in `person_entities_by_registry` is a leak, not a fallback. `reroutes_by_registry` and
+`pauses_by_registry` (including the run-wide `bootstrap` key) round out the set.
+
+**The optional per-registry daily budget** (`registry_daily_budgets`, default `{}`) defers a miss
+of a registry at its limit rather than requesting or failing; the run waits only when a whole
+pass resolved nothing else, for an hour's share of the budget (`wait_for_registry_budget`). The
+24-hour usage window is seeded on start from `rdap_networks.fetched_at` of the last day, across
+every writer — including the legacy bucket worker below — which under-counts requests that
+stored no network (errors, not-founds, the redirected half of a reroute), since
+`rdap_ip_lookup_results` has no registry column. A RIPE `403`/`429` or an APNIC `%ERROR:2xx`
+additionally pauses that registry for `max(retry, 15 min)`, deferring its misses the same way; a
+failed IANA bootstrap pauses every miss under the key `bootstrap` with its own 60 s→900 s
+back-off. Both waits hold the `commoncrawl_rdap` pool slot.
+
+**The legacy bucket worker** (`commoncrawl_ip_rdap_networks`) keeps its per-IP RDAP lookups,
+RIPE and APNIC included, so it does consume personal data sets; it shares the daily budget
+window only through the seed above, not through `registry_daily_budgets` itself.
+
+**Known costs and follow-ups:** the remaining/completion query in
+`defs/ip_enrichment/results.py` anti-joins by `bucket` (the results table's `ORDER BY (bucket,
+ip, result_id)`; `task_id` is not part of that key), so it scans a bucket's whole range across
+every task, not just the one being processed — a `task_id` skip index is a candidate follow-up.
+A miss deferred by a paused target registry after a cross-RIR redirect (e.g. ARIN → RIPE while
+RIPE is paused) repeats the ARIN redirect on the next pass; nothing remembers the reroute across
+passes. `RdapClient._lookup` reaches into whoisit's private `_bootstrap` attribute, pinned in
+`uv.lock`. The NIR-object rule matches a netname prefix, so a holder's own netname such as
+`IDNIC-<HOLDER>-ID` could be misread as an NIR's own allocation; to be verified in the Task 8
+smoke run.

@@ -1,19 +1,20 @@
 # Shared IP enrichment schema
 
 Migration `000433_corpscout_ip_enrichment` introduces two ClickHouse tables and
-one ordinary view in `corpscout`. The `ip_enrichment_input` Dagster asset prepares
-input batches from a list or a source relation. `ip_enrichment_results` processes
-a prepared task using the existing MaxMind mapping and RDAP network cache.
-The Workspace IP addresses page submits both steps through `ip_enrichment_workflow`.
-The legacy GeoIP table and writer were retired by migrations 434–435.
+one ordinary view in `corpscout`. Since migration `000453` the input table follows the
+shared processing queue contract: `ip_enrichment_input` appends to an open draft and
+`ip_enrichment_results` freezes and processes it (see
+[ip-enrichment-draft-queue.md](operations/ip-enrichment-draft-queue.md)). The Workspace IP
+addresses page adds to the draft; processing starts from the queue page.
+The legacy GeoIP table and writer were retired by migrations 434–435. Their imported rows
+were removed in the 2026-09 clean re-run; every row now comes from `ip-enrichment-v1`.
 
 ## Input
 
-`ip_enrichment_input` is an immutable batch of submissions, compatible with
-`ClickHouseInputQueue` and its `(input_id, task_id)` sorting key. A producer
-prepares the batch before registering it with the processing store. ClickHouse
-does not enforce unique keys: admission must reject duplicate `input_id` values
-within the task and producers must not append after admission.
+`ip_enrichment_input` is `MergeTree`, `PARTITION BY task_id`, `ORDER BY (task_id,
+input_id)`, read without `FINAL`. `input_id` is the bucket-prefixed JSON tuple of
+`source_name`, `source_record_id` and `ip`, computed and enforced in ClickHouse; the
+draft keeps one row per identity and a completed task drops its partition.
 
 Each row carries `ip`, `task_id`, `input_id`, `source_name`, `source_record_id`,
 `source_run_id`, optional `observed_at`, and `submitted_at`. A record containing
@@ -91,10 +92,12 @@ only their queried address). See `docs/operations/ip-registry-reference-data.md`
 
 ## Materializing the input asset
 
-Apply migration 000433 before using `ip_enrichment_input` (group `ip_enrichment`)
-or `ip_enrichment_input_job`. The asset uses the existing `clickhouse` and
-`processing` resources, including `PROCESSING_PG_URL`, just like Brave input
-selection. It prepares inputs only and does not perform GeoIP/RDAP lookups.
+Apply migrations 000433 and 000453 before using `ip_enrichment_input` (group
+`ip_enrichment`) or `ip_enrichment_input_job`. The asset appends to the open draft
+named by `queue_scope` (default `workspace`) with a stable `submission_id`, using the
+existing `clickhouse` and `processing` resources, including `PROCESSING_PG_URL`, just
+like Brave input selection. It prepares inputs only and does not perform GeoIP/RDAP
+lookups.
 
 Explicit list, as launchpad run configuration:
 
@@ -121,6 +124,15 @@ ops:
       max_rows: 10000
 ```
 
+Retry the failed addresses of an earlier task:
+
+```yaml
+ops:
+  ip_enrichment_input:
+    config:
+      retry_failed_task_id: "<task uuid>"
+```
+
 Use either `ips` or `source_relation`. Table filters use OR within each list and
 AND between columns. Selecting a whole relation requires `select_all: true` or
 an explicit `max_rows` limit. Set `source_final` only for tables supporting
@@ -138,16 +150,11 @@ pairs are combined, and non-public addresses are retained for explicit lookup
 outcomes. `max_rows` applies after this grouping, in IP/record order, so it caps
 submissions rather than necessarily distinct IPs.
 
-The materialization reports `task_id`, `selected_inputs`, and `selected_ips`.
-Pass that task UUID in `task_id` to resume or inspect the same selection.
-Re-materializing a completed selection leaves its rows unchanged, even if the
-source changed. A new selection requires a new task UUID (omitting `task_id`
-uses the processing task tag, root run ID on retry, or current run ID).
-Changing parameters under an existing task UUID is rejected. Interrupted
-selections cancel only their own outstanding insert and replace only their
-unconfirmed task rows before retrying. No input payloads are copied to PostgreSQL.
-
-`tests/test_ip_enrichment_input.py` exercises both modes and crash recovery using
+The materialization reports `task_id`, `submission_id`, `input_count` (rows this
+submission added) and `total`. Repeating a `submission_id` with the same selection is a
+no-op; a different selection under it is rejected; a failed import is retried by
+reselecting the source. New submissions after Start go to the next draft.
+`tests/test_ip_enrichment_input.py` exercises every mode and crash recovery using
 disposable ClickHouse and PostgreSQL servers.
 
 ## Materializing enrichment results
@@ -163,57 +170,31 @@ ops:
       batch_size: 250
       max_requests: 250
       request_delay_seconds: 1.0
+      registry_daily_budgets: {}
+      ripe_rest: true
+      apnic_whois: true
 ```
 
-The input batch must be fully prepared. The processor validates its table UUID,
-row count, unique input IDs, and upper bound against the saved selection. It uses
-the same task lock as input preparation and shares the legacy `commoncrawl_rdap`
-concurrency pool. Data stays in ClickHouse; PostgreSQL stores the selection
-manifest, while Dagster run tags pin the execution identity and lookup policy.
+The asset freezes the draft through the shared queue-contract lifecycle
+(`queue_execution.start_execution`), then walks each bucket's live remaining query
+(entries with no result of this execution) in pages, with a bounded number of
+ClickHouse round trips per page and one registry-class context query per miss. Outcomes
+are written through a `ResultBuffer`, flushed at the end of every pass. RDAP freshness is
+judged against the frozen execution's cache window, not wall-clock time at lookup. RIPE
+misses go to the RIPE Database REST search and APNIC misses to whois `-r`, both without
+personal data; an NIR's own object or a catch-all falls back to RDAP. An optional
+per-registry daily budget (`registry_daily_budgets`) defers a miss at its limit instead of
+requesting or failing, and the run waits only when nothing else remains. See
+[ip-enrichment-draft-queue.md](operations/ip-enrichment-draft-queue.md) for the full
+resolver, budget and pause behavior.
 
-Prerequisites are migration 000433, the existing RDAP tables and working
-`rdap_network_trie` dictionary, and City/ASN databases in
-`MAXMIND_DATABASE_DIRECTORY`. Missing storage or MaxMind files fails the run
-before processing. No runtime DDL is performed.
-
-Result and RDAP cache inserts use `async_insert=1` and `wait_for_async_insert=1`,
-matching Brave. Each write waits for ClickHouse to flush it before processing continues;
-network and segment writes complete before the lookup/result completion markers.
-ClickHouse can combine concurrent compatible inserts, but this sequential worker may
-still produce one-row flushes. Bulk input `INSERT SELECT` remains synchronous.
-
-Each input produces one result with task/input/execution identity and independent
-City, ASN, and RDAP outcomes. Non-public IPs receive `not_global` without external
-requests. An individual lookup failure does not discard the other components.
-GeoIP uses the installed database versions. RDAP reuses the most-specific known
-fresh registration, including registrations discovered earlier in this run.
-The default cache age is 30 days (`rdap_cache_days`). Coverage is best-known, not
-proof that a more-specific undiscovered registration does not exist.
-
-Network information includes `city_network`, `asn_network`, RDAP's inclusive
-`rdap_start_address`/`rdap_end_address`, and the exact `rdap_matched_cidr` containing
-the IP. Non-aligned RDAP ranges are decomposed into exact CIDR segments. New
-registrations, segments, and direct-IP lookup outcomes are also written to the
-existing `rdap_networks`, `rdap_network_segments`, and `rdap_ip_lookup_results`
-tables. Universal `/0` responses and ranges not containing the requested IP are
-rejected. Optional parent lookup depth defaults to one (`parent_depth`); parent
-failures are reported but do not discard a valid direct registration.
-
-`max_requests` bounds RDAP calls, including parent lookups. On exhaustion the run
-reports failure with saved progress and leaves remaining inputs unfinished. To
-continue, supply `execution_id` equal to the original results run UUID, along
-with the same `task_id` and lookup settings. Operational limits (`batch_size`,
-`max_requests`, and delay) can change on resume. Completed outcomes are skipped,
-including writes whose acknowledgement was lost. Result IDs are deterministic
-within the execution; fresh executions retain history with higher attempt numbers.
-
-Lookup errors are saved and reported as a failed run rather than a successful
-complete enrichment. Resume skips those saved outcomes. To retry them, start a
-new execution after `retry_after`; cached retryable RDAP errors observe that
-backoff. `force_rdap: true` in a new execution bypasses earlier RDAP cache/backoff.
-City/ASN errors can be retried in a new execution after correcting the database
-problem. Starting a new execution also adds result history for successful inputs
-in that task, with RDAP cache reuse unless forced.
+`max_requests` bounds RDAP calls, including parent lookups; reaching it flushes what was
+resolved and fails the run, leaving the task `selected` so re-running it resumes the same
+execution. RDAP or GeoIP lookup errors are saved and reported as a published outcome
+(`completed_with_errors`), not a pipeline failure; retry them by adding the addresses to a
+new draft (`retry_failed_task_id`). Completion drops the task's ClickHouse partition.
+`attempt` is always 1 — a retry is a new execution in a new draft, not a higher attempt
+number. Every run reports the installed GeoLite2 build dates in its metadata.
 
 `tests/test_ip_enrichment_results.py` uses real disposable ClickHouse/PostgreSQL
 storage and controlled MaxMind/RDAP responses to verify task isolation, both IP
@@ -252,8 +233,9 @@ page, or all addresses matching the applied search/version filters. Changing fil
 clears the selection. All-matching selection carries a compact filter plus explicit
 exclusions, and does not download the inventory into the browser or web server.
 
-`ip_enrichment_workflow` runs input preparation before results processing with one
-shared task UUID. Both selection modes use `source_relation: corpscout.commoncrawl_ip_addresses`.
+**Add to enrichment queue** launches `ip_enrichment_input_job` with a stable
+`submission_id` and `queue_scope: workspace`; processing is started from Queues → IP
+enrichment. Both selection modes use `source_relation: corpscout.commoncrawl_ip_addresses`.
 Individual selections use `filters.ip` with the checked addresses; all-matching
 selections use the applied search/version filters and exclusions. The application
 does not insert input rows itself. Table selection groups duplicate observations by canonical IP and
@@ -261,8 +243,6 @@ keeps the maximum `last_seen`. `ip_search` accepts an exact IP (canonicalized) o
 literal prefix matching the admin list. `excluded_ips` removes canonical IPs from
 that selection. The snapshot is frozen when the input step runs.
 
-The UI submits `max_requests: null` so the entire selected batch can be processed;
-the standalone worker default remains 250 requests. RDAP throttling, cache reuse,
-error reporting, history and interrupted-run resume behavior are unchanged. Large
-selections run in the background and the UI links to their Dagster run. Submission
-success means the run was accepted, not that enrichment has already completed.
+The queue sheet's template sends `max_requests: null` so the whole task is processed;
+the standalone asset default remains 250 requests. Large drafts run in the background
+and the queue page links to their Dagster run.

@@ -80,11 +80,11 @@ review the excluded-network report → 000451.
 - Each new direct RDAP registration costs one extra ClickHouse query (`REGISTRY_CONTEXT_SQL`,
   the classification round trip); a failure of that query fails the lookup (fail-closed), the
   same way a failed insert already does.
-- IP enrichment has no positive per-IP cache: a "found" answer is served again only through
-  `rdap_network_trie` (by CIDR) or the in-run LRU, never by a stored per-IP row. So an IP that
-  was answered by a registry-level or unallocated registration — which the trie now excludes and
-  the in-run cache never remembers — is looked up over RDAP again in every later task, once per
-  task, for as long as it falls inside `rdap_cache_days`.
+- IP enrichment serves an address answered by a registry-level or unallocated registration from
+  that address's own `found` marker in `rdap_ip_lookup_results` (per-address positive cache,
+  since the page-batched resolver); other addresses of the block are looked up over RDAP once
+  per task while they fall inside `rdap_cache_days`. The legacy bucket worker has no positive
+  per-IP cache and asks again.
 
 ## Useful queries
 
