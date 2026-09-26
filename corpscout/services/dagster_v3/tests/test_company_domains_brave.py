@@ -48,6 +48,8 @@ class BraveAPIFixture:
         self.verifications = []
         self.verification_result = {"ok": True}
         self.cancelled = set()
+        self.sessions = {}
+        self.closed_sessions = set()
         fixture = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -64,8 +66,17 @@ class BraveAPIFixture:
 
             def do_GET(self):
                 identifier = self.path.rsplit("/", 1)[-1]
-                result = fixture.results.get(identifier)
+                result = (fixture.sessions if "/browser/sessions/" in self.path else fixture.results).get(identifier)
                 self.reply(200 if result else 404, result or {})
+
+            def do_DELETE(self):
+                identifier = self.path.rsplit("/", 1)[-1]
+                session = fixture.sessions[identifier]
+                if self.headers.get("X-Browser-Execution-Id") != session["executionId"]:
+                    self.reply(409, {})
+                    return
+                fixture.closed_sessions.add(identifier)
+                self.reply(200, {})
 
             def do_POST(self):
                 if self.headers.get("Authorization") != "Bearer fixture-secret":
@@ -91,6 +102,12 @@ class BraveAPIFixture:
                 route, query = payload["route"], payload["query"]
                 with fixture.lock:
                     fixture.payloads.append(payload)
+                    if payload.get("session_id"):
+                        identifier = payload["session_id"]
+                        fixture.sessions[identifier] = {
+                            "requestId": f"brave-{identifier}",
+                            "executionId": f"execution-{identifier}",
+                        }
                     fixture.active[route] += 1
                     fixture.peak[route] = max(
                         fixture.peak[route], fixture.active[route]
@@ -210,6 +227,15 @@ def test_fast_routes_refill_while_a_slow_route_is_still_busy(brave_api, slots):
         )
     assert Counter(session_routes.values()) == {route: slots for route in brave.ROUTES}
     assert len(fixture.payloads) > len(session_routes)
+    assert fixture.closed_sessions == set(session_routes)
+
+
+def test_browser_cleanup_does_not_release_another_owner(brave_api):
+    fixture = brave_api()
+    identifier = uuid4().hex
+    fixture.sessions[identifier] = {"requestId": "another-owner", "executionId": "foreign"}
+    brave.BraveBrowserResource(**fixture.config).close_session(identifier)
+    assert fixture.closed_sessions == set()
 
 
 def test_one_company_failure_does_not_stop_remaining_queue(brave_api):
@@ -324,6 +350,7 @@ def test_agent_options_and_failure_details_cross_http_boundary(brave_api):
         **fixture.config,
         challenge_agent_max_runs=6,
         challenge_agent_model="z-ai/glm-5.3-flash",
+        max_requests_per_browser=20,
     )
     [result] = list(
         resource.iter_answers(
@@ -336,6 +363,7 @@ def test_agent_options_and_failure_details_cross_http_boundary(brave_api):
     assert result.challenge_runs == [{"state": "blocked"}]
     assert fixture.payloads[0]["challenge_agent_max_runs"] == 6
     assert fixture.payloads[0]["challenge_agent_model"] == "z-ai/glm-5.3-flash"
+    assert fixture.payloads[0]["max_requests_per_browser"] == 20
 
 
 def test_asset_serializes_runs_and_config_bounds_route_concurrency():
@@ -345,7 +373,7 @@ def test_asset_serializes_runs_and_config_bounds_route_concurrency():
     assert company_brave_search_results.op.pool == "company_domains_brave"
     assert BraveSearchConfig().requests_per_route == 1
     assert BraveSearchConfig().input_relation is None
-    assert BraveSearchConfig().input_batch_size == 100
+    assert BraveSearchConfig().input_batch_size == 500
     for invalid in [0, -1]:
         with pytest.raises(ValueError):
             BraveSearchConfig(requests_per_route=invalid)

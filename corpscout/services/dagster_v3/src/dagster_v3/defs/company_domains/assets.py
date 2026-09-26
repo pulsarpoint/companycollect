@@ -73,7 +73,7 @@ class BraveSearchConfig(dg.Config):
     force_rescan: bool = False
     recent_days: int = Field(default=30, ge=1, le=3650)
     requests_per_route: int = Field(default=1, ge=1, le=8)
-    input_batch_size: int = Field(default=100, ge=4, le=10_000)
+    input_batch_size: int = Field(default=500, ge=4, le=500, description="Durable Brave service batch; next batch starts after ClickHouse publication.")
     answer_timeout_seconds: int = Field(default=60, ge=1, le=600)
     progress_log_every: int = Field(default=100, ge=1, le=100_000)
     progress_log_interval_seconds: int = Field(default=30, ge=1, le=3600)

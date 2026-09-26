@@ -17,6 +17,7 @@ dependencies = [
     "websockets>=15,<17",
     "python-dotenv>=1,<2",
     "cryptography>=46,<51",
+    "psycopg[binary]>=3.2,<4",
 ]
 
 [project.scripts]

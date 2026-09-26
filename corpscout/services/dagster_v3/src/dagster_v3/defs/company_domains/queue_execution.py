@@ -1,24 +1,18 @@
 """Frozen Brave drafts; saved outcomes are the checkpoint for every company."""
 
 import json
-from contextlib import closing
 from datetime import datetime
-from uuid import UUID, uuid5
 
 import dagster as dg
 
 from dagster_v3.defs.common import queue_execution
 from dagster_v3.defs.common.clickhouse_queue import ClickHouseInputQueue
-from dagster_v3.defs.common.processing import render_query
-from dagster_v3.defs.company_domains.browser import CompanySearchInput
+from dagster_v3.defs.company_domains.batches import process_batches
 from dagster_v3.defs.company_domains.queue_tables import INPUT_RELATION, PROCESSOR
-from dagster_v3.defs.company_domains.result_writer import BraveResultWriter
 from dagster_v3.defs.company_domains.results import (
     RESULT_TABLE,
     repair_current_answers,
-    result_record,
 )
-
 
 REMAINING = f"""
 FROM {INPUT_RELATION}
@@ -182,7 +176,6 @@ def run_draft(
             run_id=context.run.run_id,
         )
         execution = task["config"]["execution"]
-        profile = execution["profile"]
         context.instance.add_run_tags(
             context.run.run_id,
             {
@@ -199,72 +192,49 @@ def run_draft(
                 raise ValueError(
                     "Frozen Brave inputs changed; restore the saved selection before resuming"
                 )
-            pending = {}
 
-            def companies():
-                after = ""
-                while True:
-                    with clickhouse.get_connection() as client:
-                        rows = remaining_inputs(
-                            client, task, limit=config.input_batch_size, after=after
-                        )
-                    if not rows:
-                        return
-                    for values in rows:
-                        request_id = str(
-                            uuid5(UUID(execution["execution_id"]), values["input_id"])
-                        )
-                        pending[request_id] = values
-                        yield CompanySearchInput(
-                            values["input_id"],
-                            values["company_name"],
-                            render_query(profile["query_template"], values),
-                            request_id,
-                            config.answer_timeout_seconds * 1000,
-                        )
-                    after = rows[-1]["input_id"]
-
-            with BraveResultWriter(
-                processing_clickhouse, max_items=200, max_seconds=5.0
-            ) as writer:
-
-                def save(result):
-                    if result.error_stage == "browser_service":
-                        raise RuntimeError(
-                            f"Brave browser service failed ({result.error_type}); resume this task"
-                        )
-                    record = result_record(
-                        result,
-                        pending[result.company.request_id],
-                        task_id=task_id,
-                        execution_id=execution["execution_id"],
-                        query_type=profile["query_type"],
-                        source_run_id=context.run.run_id,
-                        processor_version=PROCESSOR,
-                        search_id=profile.get("search_id", ""),
-                        search_name=profile.get("search_name", ""),
-                        search_revision=profile.get("search_revision", 0),
+            def read_counts():
+                with processing_clickhouse.get_connection() as client:
+                    [(remaining,)] = client.execute(
+                        "SELECT count()" + REMAINING, parameters(task)
                     )
-                    writer.save(record)
-                    del pending[result.company.request_id]
-
-                with closing(
-                    browser.iter_answers(
-                        companies(),
-                        requests_per_route=config.requests_per_route,
-                        on_result=save,
-                        llm=profile["llm"],
+                    [(succeeded, failed)] = client.execute(
+                        f"SELECT countIf(status='success'),countIf(status='error') FROM {RESULT_TABLE} FINAL "
+                        "WHERE task_id=%(task)s AND execution_id=%(execution)s",
+                        parameters(task),
                     )
-                ) as answers:
-                    count = 0
-                    for result in answers:
-                        count += 1
-                        if count == 1 or count % config.progress_log_every == 0:
-                            context.log.info(
-                                "Brave task %s: %s new results published",
-                                task_id,
-                                count,
-                            )
+                return {
+                    "processed": succeeded + failed,
+                    "succeeded": succeeded,
+                    "failed": failed,
+                    "skipped": task["total"] - remaining - succeeded - failed,
+                }
+
+            def load_inputs():
+                with processing_clickhouse.get_connection() as client:
+                    return remaining_inputs(client, task, limit=config.input_batch_size)
+
+            def confirm_results(result_ids):
+                with processing_clickhouse.get_connection() as client:
+                    [(count,)] = client.execute(
+                        f"SELECT uniqExact(result_id) FROM {RESULT_TABLE} FINAL "
+                        "WHERE task_id=%(task)s AND execution_id=%(execution)s AND result_id IN %(ids)s",
+                        {**parameters(task), "ids": tuple(result_ids)},
+                    )
+                if count != len(result_ids):
+                    raise RuntimeError(
+                        "Brave service results are not visible in Dagster's ClickHouse database"
+                    )
+
+            process_batches(
+                context,
+                config,
+                browser,
+                task,
+                load_inputs,
+                read_counts,
+                confirm_results,
+            )
             task = finish_execution(store, processing_clickhouse, task)
         metadata = queue_execution.complete_task(
             context,

@@ -4,6 +4,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
+import asyncio
+import psycopg2
 
 import dagster as dg
 import pytest
@@ -23,6 +25,7 @@ from dagster_v3.defs.company_domains.queue_execution import (
 from dagster_v3.defs.company_domains.result_writer import BraveResultWriter
 from dagster_v3.defs.company_domains.results import insert_results
 from tests.test_brave_clickhouse_results import materialize, record
+from tests.brave_batch_service import brave_batch_service as brave_batch_service
 from tests.test_company_domains_brave import LLM, brave_api as brave_api
 from tests.test_ip_enrichment_input import server as server
 from tests.test_processing_store import (
@@ -269,9 +272,10 @@ def test_freshness_failure_window_force_and_cleanup(database, store):
     assert len(remaining_inputs(client, forced, limit=10)) == 3
 
 
-def test_writer_batches_acknowledges_and_flushes_without_new_results(database):
+@pytest.mark.parametrize("flush_seconds", [0.0, 0.05])
+def test_writer_batches_acknowledges_and_flushes_without_new_results(database, flush_seconds):
     client, resource = database
-    with BraveResultWriter(resource, max_items=10, max_seconds=0.05) as writer:
+    with BraveResultWriter(resource, max_items=10, max_seconds=flush_seconds) as writer:
         with ThreadPoolExecutor(max_workers=4) as workers:
             list(workers.map(writer.save, [record(str(i)) for i in range(4)]))
         assert client.execute(
@@ -312,7 +316,7 @@ def test_original_default_answers_match_seeded_search(database, store):
 
 
 def test_draft_end_to_end_preserves_errors_and_resumes_without_browser_calls(
-    database, store, brave_api
+    database, store, brave_batch_service, monkeypatch
 ):
     client, resource = database
     processing, dsn = store
@@ -320,7 +324,8 @@ def test_draft_end_to_end_preserves_errors_and_resumes_without_browser_calls(
         "INSERT INTO corpscout.brave_draft_source VALUES ('1','One'),('2','Two')"
     )
     draft = add(resource, processing)
-    fixture = brave_api()
+    fixture = brave_batch_service(resource,dsn,draft["task_id"])
+    monkeypatch.setenv("LLM_CONTROL_PG_URL",dsn)
     fixture.responder = lambda p: (
         {"status": "error", "error_type": "NoAnswer", "error_stage": "answer"}
         if "Two" in p["query"]
@@ -328,7 +333,8 @@ def test_draft_end_to_end_preserves_errors_and_resumes_without_browser_calls(
     )
     with dg.DagsterInstance.ephemeral() as instance:
         result = materialize(
-            resource, dsn, fixture, instance, task_id=draft["task_id"], llm=LLM,
+            resource, dsn, fixture, instance, task_id=draft["task_id"], llm=fixture.llm,
+            tags={"llm/request_id":fixture.owner,"processing/task_id":draft["task_id"]},
             search_id="54d90187-85d5-45dc-9603-cd7c4a7d31d1",
             search_name="Official website", search_revision=1,
         )
@@ -339,7 +345,7 @@ def test_draft_end_to_end_preserves_errors_and_resumes_without_browser_calls(
         assert processing.task(draft["task_id"])["terminal_failed_count"] == 1
         assert client.execute(f"SELECT count() FROM {INPUT_RELATION}") == [(0,)]
         assert materialize(
-            resource, dsn, fixture, instance, task_id=draft["task_id"], llm=LLM
+            resource, dsn, fixture, instance, task_id=draft["task_id"], llm=fixture.llm
         ).success
         assert len(fixture.queries) == 2
 
@@ -361,6 +367,97 @@ def test_frozen_profile_rejects_changes_but_allows_transport_settings(database, 
     ):
         with pytest.raises(ValueError, match="frozen"):
             start(resource, processing, task_id, **change)
+
+
+def test_service_batches_wait_for_publication_and_recover_lost_write_ack(
+    database,store,brave_batch_service,monkeypatch,
+):
+    client,resource = database
+    processing,dsn = store
+    client.execute("INSERT INTO corpscout.brave_draft_source SELECT toString(number),concat('Company ',toString(number)) FROM numbers(9)")
+    task_id = add(resource,processing)["task_id"]
+    fixture = brave_batch_service(resource,dsn,task_id)
+    monkeypatch.setenv("LLM_CONTROL_PG_URL",dsn)
+    publish = fixture.queue.publisher.publish
+    completed_batches = []
+    failed_ack = False
+
+    async def publish_then_lose_ack(batch,records):
+        nonlocal failed_ack
+        await publish(batch,records)
+        if not failed_ack:
+            failed_ack = True
+            raise OSError("lost acknowledgement after durable insert")
+        completed_batches.append(str(batch.batch_id))
+
+    fixture.queue.publisher.publish = publish_then_lose_ack
+    ask = fixture.queue.ask
+
+    async def require_previous_batch_published(payload):
+        if len(fixture.batches) > 1:
+            assert fixture.batches[-2]["batch_id"] in completed_batches
+        return await ask(payload)
+
+    fixture.queue.ask = require_previous_batch_published
+    with dg.DagsterInstance.ephemeral() as instance:
+        result = materialize(resource,dsn,fixture,instance,task_id=task_id,llm=fixture.llm,input_batch_size=4,
+            tags={"llm/request_id":fixture.owner,"processing/task_id":task_id})
+        assert result.success
+    assert [len(batch["items"]) for batch in fixture.batches] == [4,4,1]
+    assert len(fixture.queries) == 9
+    assert client.execute("SELECT count(),uniqExact(result_id) FROM corpscout.company_brave_search_results") == [(9,9)]
+    assert client.execute("SELECT count() FROM corpscout.se_company_brave_search_results_latest_success FINAL") == [(9,)]
+    with psycopg2.connect(dsn) as connection,connection.cursor() as cursor:
+        cursor.execute("SELECT state,count(*) FROM processing.llm_external_requests GROUP BY state")
+        assert cursor.fetchall() == [("completed",9)]
+        cursor.execute("UPDATE processing.llm_external_requests SET state='submitted'")
+    # Reconcile a lost PostgreSQL completion acknowledgement using Brave's status field.
+    from dagster_v3.defs.common.llm_monitor import reconcile_external
+    monkeypatch.setenv("BROWSER_API_URL",fixture.config["api_url"])
+    monkeypatch.setenv("BROWSER_API_TOKEN",fixture.config["api_token"])
+    assert reconcile_external() == 9
+    with psycopg2.connect(dsn) as connection,connection.cursor() as cursor:
+        cursor.execute("SELECT state,count(*) FROM processing.llm_external_requests GROUP BY state")
+        assert cursor.fetchall() == [("completed",9)]
+
+
+def test_unfinished_service_batch_resumes_with_new_backoffice_owner(
+    database,store,brave_batch_service,monkeypatch,
+):
+    client,resource = database
+    processing,dsn = store
+    client.execute("INSERT INTO corpscout.brave_draft_source SELECT toString(number),concat('Company ',toString(number)) FROM numbers(4)")
+    task_id = add(resource,processing)["task_id"]
+    fixture = brave_batch_service(resource,dsn,task_id)
+    monkeypatch.setenv("LLM_CONTROL_PG_URL",dsn)
+    ask = fixture.queue.ask
+
+    async def interrupt_one(payload):
+        if payload.query == "Find the official website of Company 3.":
+            await asyncio.sleep(.2)
+            raise RuntimeError("interrupted before saving response")
+        return await ask(payload)
+
+    fixture.queue.ask = interrupt_one
+    with dg.DagsterInstance.ephemeral() as instance:
+        failed = materialize(resource,dsn,fixture,instance,task_id=task_id,llm=fixture.llm,
+            tags={"llm/request_id":fixture.owner,"processing/task_id":task_id})
+        assert not failed.success
+        assert len(fixture.queries) == 3
+        assert client.execute("SELECT count() FROM corpscout.company_brave_search_results") == [(0,)]
+        assert client.execute(f"SELECT count() FROM {INPUT_RELATION}") == [(4,)]
+        owner = str(uuid4())
+        with psycopg2.connect(dsn) as connection,connection.cursor() as cursor:
+            cursor.execute("UPDATE processing.run_requests SET finished_at=now(),status='failed'")
+            cursor.execute("INSERT INTO processing.run_requests(request_id,task_id,job_name) VALUES (%s,%s,'__ephemeral_asset_job__')",(owner,task_id))
+            cursor.execute("INSERT INTO processing.run_llm_dependencies VALUES (%s,%s,1,'browser')",(owner,fixture.llm["profile_id"]))
+        fixture.queue.ask = ask
+        resumed = materialize(resource,dsn,fixture,instance,task_id=task_id,llm=fixture.llm,
+            tags={"llm/request_id":owner,"processing/task_id":task_id})
+        assert resumed.success
+        assert len(fixture.batches) == 1
+        assert len(fixture.queries) == 4
+        assert client.execute("SELECT count(),uniqExact(result_id) FROM corpscout.company_brave_search_results") == [(4,4)]
 
 
 def test_writer_failure_releases_waiting_callbacks_and_keeps_inputs(

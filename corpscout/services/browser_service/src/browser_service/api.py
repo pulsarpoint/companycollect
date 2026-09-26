@@ -24,6 +24,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, HttpUrl, StrictBool
 
 from browser_service.brave import brave_router
+from browser_service.brave_batch_control import BraveAdmissionError
+from browser_service.brave_batch_results import BraveClickHouseSettings
 from browser_service.browser_api import browser_router
 from browser_service.browser_sessions import PersistentBrowserSession
 from browser_service.runtime import BrowserRuntimeSettings, BrowserService
@@ -51,6 +53,8 @@ def create_app(
     deepseek_api_key: str | None = None,
     openrouter_api_key: str | None = None,
     llm_encryption_key: str | None = None,
+    brave_clickhouse: BraveClickHouseSettings | None = None,
+    llm_control_pg_url: str | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -65,6 +69,10 @@ def create_app(
         version=version("corpscout-browser-service"),
         lifespan=lifespan,
     )
+
+    @app.exception_handler(BraveAdmissionError)
+    async def admission_denied(_, error: BraveAdmissionError) -> JSONResponse:
+        return JSONResponse(status_code=409,content={"detail":str(error)})
 
     @app.exception_handler(RequestValidationError)
     async def invalid_request(_, error: RequestValidationError) -> JSONResponse:
@@ -99,6 +107,8 @@ def create_app(
             openrouter_api_key=openrouter_api_key,
             llm_encryption_key=llm_encryption_key,
             authenticated=bool(api_token),
+            clickhouse=brave_clickhouse,
+            llm_control_pg_url=llm_control_pg_url,
         ),
         prefix="/v1/brave",
         dependencies=[Depends(authenticate)],

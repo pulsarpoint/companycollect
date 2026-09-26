@@ -46,10 +46,16 @@ def latest_run_activity_timestamp(
     run_id: str,
     fallback: float | None,
 ) -> float | None:
-    records = instance.get_records_for_run(run_id, limit=1, ascending=False).records
-    if not records:
-        return fallback
-    return records[0].timestamp
+    cursor = None
+    while True:
+        page = instance.get_records_for_run(run_id, cursor=cursor, limit=100, ascending=False)
+        for record in page.records:
+            # Observer heartbeats must not disguise a worker that stopped making progress.
+            if not record.event_log_entry.message.startswith("Brave progress |"):
+                return record.timestamp
+        if not page.has_more:
+            return fallback
+        cursor = page.cursor
 
 
 def post_alert(webhook_url: str, text: str) -> None:

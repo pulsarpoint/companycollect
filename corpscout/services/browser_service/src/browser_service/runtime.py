@@ -4,7 +4,7 @@ import asyncio
 import fcntl
 import logging
 import shutil
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from time import time
 from typing import Literal, TextIO
@@ -30,6 +30,13 @@ class BrowserRuntimeSettings(StrictModel):
 
 
 @dataclass(kw_only=True)
+class BraveBrowserUsage:
+    generation: str | None
+    requests_started: int
+    restart_after: int
+
+
+@dataclass(kw_only=True)
 class ActiveBrowserSession:
     id: str
     execution_id: str
@@ -39,6 +46,7 @@ class ActiveBrowserSession:
     cleanup: asyncio.Task | None = None
     recovery_error: str | None = None
     operation: dict | None = None
+    brave_usage: BraveBrowserUsage | None = None
 
 
 def copy_profile(source: Path, target: Path) -> None:
@@ -374,6 +382,9 @@ class BrowserService:
             if row
             else None,
             "operation": session.operation if session else None,
+            "brave_usage": asdict(session.brave_usage)
+            if session and session.brave_usage is not None
+            else None,
         }
 
     async def saved_snapshots(self) -> list[dict]:

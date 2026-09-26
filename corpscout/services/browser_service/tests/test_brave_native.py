@@ -6,12 +6,15 @@ import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import httpx
+from fastapi import FastAPI
 
 from browser_service.api import create_app
+from browser_service.brave import brave_router
+from browser_service.brave_batch_results import BraveClickHouseSettings
 from browser_service.browser_sessions import PersistentBrowserSession
 from browser_service.runtime import BrowserRuntimeSettings, BrowserService
 
@@ -47,6 +50,50 @@ onclick="sessionStorage.setItem('verified','yes');location.href='/'">Verify</but
     os.environ.get("BRAVE_NATIVE_TEST") == "1", "opt-in native Brave fixture"
 )
 class BraveNativeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_sqlite_batch_uses_native_browser_and_recycles_after_ten(self):
+        from test_brave_batches import payload
+        from test_llm_profile import KEY, profile_payload
+
+        self.agent_patch.stop()
+        batch = payload(12)
+        value = batch.model_dump(mode="json")
+        value["options"]["llm"] = profile_payload(
+            profile_id=value["options"]["llm"]["profile_id"],profile_revision=1,
+        )
+        app = FastAPI()
+        app.include_router(brave_router(
+            self.service,deepseek_api_key=None,openrouter_api_key=None,
+            llm_encryption_key=KEY,authenticated=True,
+            clickhouse=BraveClickHouseSettings(url="http://unused",username="test",password="test"),
+            llm_control_pg_url="postgresql://unused",
+        ),prefix="/v1/brave")
+        published = AsyncMock()
+        with patch("browser_service.brave_batches.ROUTES",("direct",)), \
+             patch("browser_service.brave_batch_control.BraveBatchControl.admit",new=AsyncMock()), \
+             patch("browser_service.brave_batch_control.BraveBatchControl.finish",new=AsyncMock()), \
+             patch("browser_service.brave_batch_results.BraveBatchPublisher.publish",new=published):
+            async with app.router.lifespan_context(app), httpx.AsyncClient(
+                transport=httpx.ASGITransport(app),base_url="http://test",
+            ) as http:
+                response = await http.post("/v1/brave/batches",json=value)
+                self.assertEqual(response.status_code,202,response.text)
+                async with asyncio.timeout(90):
+                    while True:
+                        state = (await http.post(f"/v1/brave/batches/{batch.batch_id}/heartbeat",json={
+                            "controller_id":str(batch.source_run_id),"owner_request_id":str(batch.owner_request_id),
+                        })).json()
+                        self.assertNotEqual(state["state"],"paused",state)
+                        if state["state"] == "completed":
+                            break
+                        await asyncio.sleep(.1)
+                self.assertEqual(state["succeeded"],12)
+                results = published.call_args.args[1]
+                self.assertEqual([record["query"] for record in results],[item.query for item in batch.items])
+                saved = [json.loads(path.read_text()) for path in (self.service.root/"brave-requests").glob("*/result.json")]
+                usages = sorted(saved,key=lambda result:result["fetched_at"])
+                self.assertEqual([result["browser_usage"]["requests_started"] for result in usages],list(range(1,11))+[1,2])
+                self.assertEqual(len({result["browser_usage"]["generation"] for result in usages}),2)
+
     async def asyncSetUp(self):
         self.temporary = TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
@@ -300,6 +347,10 @@ if(sessionStorage.getItem('verified') === 'yes') {
         self.assertEqual(result["status"], "success", result)
         self.assertEqual(result["answer"], "Answer: Find Novelic\nhttps://example.se/")
         self.assertEqual(len(result["challenge_runs"]), 1)
+        self.assertTrue(result["challenge_runs"][0]["access_cleared"])
+        self.assertTrue(result["captcha"]["presented"])
+        self.assertIsNotNone(result["captcha"]["detected_at"])
+        self.assertIsNotNone(result["captcha"]["confirmed_at"])
         self.assertEqual(len(self.agent_calls), 2)
         self.assertEqual(len([u for u in self.navigations if "/ask?" in u]), 2)
         self.assertFalse(self.service.active)
@@ -317,10 +368,15 @@ if(sessionStorage.getItem('verified') === 'yes') {
         self.assertEqual(result["status"], "blocked", result)
         self.assertEqual(result["error_type"], "AgentBudgetExhausted")
         self.assertEqual(len(result["challenge_runs"]), 3)
+        self.assertTrue(all(run["access_cleared"] is False for run in result["challenge_runs"]))
+        self.assertIsNone(result["captcha"]["confirmed_at"])
         self.assertEqual(result["answer"], "")
         disabled = (await self.ask("Disabled", challenge_agent_max_runs=0)).json()
         self.assertEqual(disabled["error_type"], "AgentBudgetExhausted")
         self.assertEqual(disabled["challenge_runs"], [])
+        self.assertTrue(disabled["captcha"]["presented"])
+        self.assertIsNotNone(disabled["captcha"]["detected_at"])
+        self.assertIsNone(disabled["captcha"]["confirmed_at"])
 
     async def test_auth_validation_capacity_and_cancellation_release(self):
         denied = await self.http.post(
@@ -378,7 +434,7 @@ if(sessionStorage.getItem('verified') === 'yes') {
             ]
         )
         await self.service.release(identifier)
-        direct = (await self.ask("Direct", session_id=identifier)).json()
+        direct = (await self.ask("Direct", session_id=identifier, max_requests_per_browser=1)).json()
         self.assertEqual(direct["status"], "success", direct)
         self.assertEqual(direct["session_id"], identifier)
         self.assertFalse(self.service.active)
@@ -396,9 +452,98 @@ if(sessionStorage.getItem('verified') === 'yes') {
         await self.service.release(identifier)
         self.assertNotIn("secret", (await self.http.get("/v1/server")).text)
 
+    async def test_browser_reuses_process_and_recycles_at_ten_or_twenty_requests(self):
+        for limit in (10, 20):
+            with self.subTest(limit=limit):
+                identifier = uuid4().hex
+                options = {"session_id": identifier}
+                if limit == 20:
+                    options["max_requests_per_browser"] = limit
+                execution, generation = None, None
+                for number in range(1, limit + 1):
+                    result = (await self.ask(f"Company {number}", **options)).json()
+                    self.assertEqual(result["status"], "success", result)
+                    self.assertEqual(result["answer"], f"Answer: Company {number}\nhttps://example.se/")
+                    usage = result["browser_usage"]
+                    self.assertEqual(usage["requests_started"], number)
+                    self.assertEqual(usage["restart_after"], limit)
+                    if number == 1:
+                        execution, generation = result["execution_id"], usage["generation"]
+                        await self.service.active[identifier].profile.context.add_cookies(
+                            [{"name": "recycle-test", "value": "retained", "url": "https://search.brave.com"}]
+                        )
+                        saved = self.service.root / "brave-requests" / result["request_id"] / "request.json"
+                        replay = await self.http.post("/v1/brave/ask", json=json.loads(saved.read_text()))
+                        self.assertEqual(replay.json(), result)
+                        self.assertEqual(self.service.snapshot(identifier)["brave_usage"]["requests_started"], 1)
+                        wrong_route = await self.ask(
+                            "Wrong route", session_id=identifier, route="crawl_proxy1",
+                            max_requests_per_browser=1,
+                        )
+                        self.assertEqual(wrong_route.status_code, 409)
+                        self.assertEqual(self.service.snapshot(identifier)["executionId"], execution)
+                    self.assertEqual(result["execution_id"], execution)
+                    self.assertEqual(usage["generation"], generation)
+                    self.assertEqual(identifier in self.service.active, number < limit)
+                restarted = (await self.ask("Next browser", **options)).json()
+                self.assertEqual(restarted["status"], "success", restarted)
+                self.assertEqual(restarted["browser_usage"]["requests_started"], 1)
+                self.assertNotEqual(restarted["execution_id"], execution)
+                self.assertNotEqual(restarted["browser_usage"]["generation"], generation)
+                self.assertTrue(any(
+                    cookie["name"] == "recycle-test"
+                    for cookie in await self.service.active[identifier].profile.context.cookies()
+                ))
+                self.agent_patch.stop()
+                await self.service.release(identifier)
+
+    async def test_reused_browser_rejects_parallel_queries_and_cancellation_closes_it(self):
+        identifier = uuid4().hex
+        pending = asyncio.create_task(self.ask(
+            "never_finished", session_id=identifier, request_id="reused-pending", answer_timeout_seconds=30
+        ))
+        async with asyncio.timeout(10):
+            while not self.service.active.get(identifier) or self.service.active[identifier].operation is None:
+                await asyncio.sleep(0.01)
+        other = await self.ask("Other", session_id=identifier)
+        self.assertEqual(other.status_code, 409, other.text)
+        self.assertEqual(self.service.snapshot(identifier)["brave_usage"]["requests_started"], 1)
+        await self.http.post("/v1/brave/requests/reused-pending/cancel")
+        with self.assertRaises(asyncio.CancelledError):
+            await pending
+        self.assertNotIn(identifier, self.service.active)
+        result = (await self.ask("Recovered", session_id=identifier)).json()
+        self.assertEqual(result["status"], "success", result)
+        self.assertEqual(result["browser_usage"]["requests_started"], 1)
+
+    async def test_failed_answers_count_and_broken_browser_restarts_before_limit(self):
+        identifier = uuid4().hex
+        failed = (await self.ask("empty", session_id=identifier)).json()
+        self.assertEqual(failed["status"], "error", failed)
+        self.assertEqual(failed["error_stage"], "copy", failed)
+        self.assertEqual(failed["browser_usage"]["requests_started"], 1)
+        result = (await self.ask("Good", session_id=identifier)).json()
+        self.assertEqual(result["browser_usage"]["requests_started"], 2)
+        self.assertEqual(result["execution_id"], failed["execution_id"])
+        await self.service.active[identifier].profile.context.close()
+        restarted = (await self.ask("After crash", session_id=identifier)).json()
+        self.assertEqual(restarted["status"], "success", restarted)
+        self.assertEqual(restarted["browser_usage"]["requests_started"], 1)
+        self.assertNotEqual(restarted["execution_id"], result["execution_id"])
+
     async def test_overall_timeout_retains_interrupted_agent_evidence(self):
         self.mode = "agent_timeout"
-        result = (await self.ask("Find timed-out company", timeout_seconds=2)).json()
+        pending = asyncio.create_task(self.ask("Find timed-out company", request_id="stats-timeout", timeout_seconds=5))
+        async with asyncio.timeout(10):
+            while not self.agent_calls:
+                await asyncio.sleep(0.01)
+        live = (await self.http.get("/v1/brave/requests/stats-timeout")).json()
+        self.assertTrue(live["operation"]["captcha"]["presented"])
+        self.assertIsNotNone(live["operation"]["captcha"]["detected_at"])
+        self.assertIsNone(live["operation"]["captcha"]["confirmed_at"])
+        self.assertEqual(live["operation"]["route"], "direct")
+        self.assertEqual(len(live["operation"]["challenge_runs"]), 1)
+        result = (await pending).json()
         self.assertEqual(result["error_type"], "TimeoutError", result)
         self.assertEqual(result["error_stage"], "captcha_agent")
         self.assertEqual(len(result["challenge_runs"]), 1)

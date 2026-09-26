@@ -38,6 +38,8 @@ def server():
             name,
             "-p",
             "127.0.0.1::9000",
+            "-p",
+            "127.0.0.1::8123",
             "-e",
             "CLICKHOUSE_USER=test",
             "-e",

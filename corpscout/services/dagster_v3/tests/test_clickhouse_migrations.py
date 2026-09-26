@@ -468,6 +468,8 @@ EXPECTED_MIGRATIONS = (
     "000453_corpscout_brave_draft_queue",
     "000454_corpscout_retire_brave_legacy_input",
     "000455_corpscout_brave_search_versions",
+    "000456_corpscout_brave_captcha_health",
+    "000457_remove_brave_captcha_health",
     "000458_corpscout_ip_enrichment_queue_contract",
 )
 
@@ -970,6 +972,7 @@ def test_clickhouse_migrations_have_down_files() -> None:
             or "CREATE TABLE IF NOT EXISTS" in sql
             or "CREATE OR REPLACE VIEW" in sql
             or "TRUNCATE TABLE IF EXISTS" in sql  # undo a data backfill
+            or "CREATE VIEW IF NOT EXISTS" in sql  # undo dropped views
             or "DROP DICTIONARY IF EXISTS" in sql
             or "DROP USER IF EXISTS" in sql
             or "RENAME TABLE" in sql  # the inverse of a rename is a rename

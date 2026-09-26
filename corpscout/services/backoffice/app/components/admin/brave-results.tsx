@@ -8,13 +8,23 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/com
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "~/components/ui/empty";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/ui/table";
 import { braveResultsPath, braveTaskResultsPath } from "~/lib/brave-results";
-import type { BraveResultsPage } from "~/lib/brave-results.server";
+import type { BraveCaptchaRequest, BraveResultsPage } from "~/lib/brave-results.server";
 import { seCompanyTabPath } from "~/lib/se-company-tabs";
+
+function captchaLabel(requests: BraveCaptchaRequest[] = []) {
+  if (requests.some(request => request.presented || request.attempts > 0)) return "Presented";
+  return requests.length && requests.every(request => request.presented === false) ? "Off" : "Not recorded";
+}
+
+function utcTime(value: string | null) {
+  return value ? new Date(value).toISOString().replace("T", " ").slice(0, 19) + " UTC" : "Not recorded";
+}
 
 export function BraveResults({ results, basePath, showCompany = false }: {
   results: BraveResultsPage; basePath: string; showCompany?: boolean;
 }) {
   const { rows, selected, total, succeeded, failed, page, totalPages } = results;
+  const captchaDetails = selected?.captcha_requests?.filter(request => request.presented || request.attempts > 0) ?? [];
   return <section className="flex min-w-0 flex-col gap-4" aria-label="Brave search results">
     <div className="flex flex-col gap-1">
       <h2 className="text-lg font-semibold">Brave results</h2>
@@ -25,7 +35,7 @@ export function BraveResults({ results, basePath, showCompany = false }: {
       <EmptyDescription>There are no saved search attempts for this selection. Skipped inputs do not produce a new answer.</EmptyDescription>
     </EmptyHeader></Empty> : <>
       <Table>
-        <TableHeader><TableRow><TableHead>Completed (UTC)</TableHead>{showCompany && <TableHead>Company</TableHead>}<TableHead>Question</TableHead><TableHead>Status</TableHead><TableHead>Result</TableHead><TableHead><span className="sr-only">Details</span></TableHead></TableRow></TableHeader>
+        <TableHeader><TableRow><TableHead>Completed (UTC)</TableHead>{showCompany && <TableHead>Company</TableHead>}<TableHead>Question</TableHead><TableHead>Status</TableHead><TableHead>CAPTCHA</TableHead><TableHead>Proxy route</TableHead><TableHead>Result</TableHead><TableHead><span className="sr-only">Details</span></TableHead></TableRow></TableHeader>
         <TableBody>{rows.map(row => <TableRow key={row.result_id} data-state={row.result_id === selected?.result_id ? "selected" : undefined}>
           <TableCell className="align-top">{row.completed_at.slice(0, 19)}</TableCell>
           {showCompany && <TableCell className="max-w-64 whitespace-normal align-top">
@@ -34,6 +44,8 @@ export function BraveResults({ results, basePath, showCompany = false }: {
           </TableCell>}
           <TableCell className="max-w-md whitespace-normal align-top"><p className="line-clamp-3">{row.query}</p><p className="text-xs text-muted-foreground">{row.search_name ? `${row.search_name} · version ${row.search_revision}` : row.query_type}</p></TableCell>
           <TableCell className="align-top"><Badge variant={row.status === "success" ? "secondary" : "destructive"}>{row.status === "success" ? "Successful" : "Failed"}</Badge></TableCell>
+          <TableCell className="align-top">{captchaLabel(row.captcha_requests)}</TableCell>
+          <TableCell className="align-top">{[...new Set(row.captcha_requests?.map(request => request.proxy_route).filter(Boolean))].join(", ") || "Not recorded"}</TableCell>
           <TableCell className="max-w-lg whitespace-normal align-top"><p className="line-clamp-3">{row.status === "error" ? row.error_type || "Search failed without a recorded reason." : row.answer_preview}</p>{row.status === "error" && row.error_stage && <p className="text-xs text-muted-foreground">Stage: {row.error_stage}</p>}</TableCell>
           <TableCell className="align-top"><Button variant="outline" size="sm" nativeButton={false}
             render={<Link to={`${braveResultsPath(basePath, page, row.result_id)}#brave-result`} />} aria-label={`View result for ${row.company_name} at ${row.completed_at}`}>View result</Button></TableCell>
@@ -64,6 +76,22 @@ export function BraveResults({ results, basePath, showCompany = false }: {
           <p>{selected.error_type || "No failure reason was recorded."}</p>
           {selected.error_stage && <p>Stage: {selected.error_stage}</p>}
         </AlertDescription></Alert>}
+        {captchaDetails.length === 0 ? <p className="text-sm text-muted-foreground">CAPTCHA: {captchaLabel(selected.captcha_requests)}</p> : <section className="flex flex-col gap-3" aria-label="CAPTCHA statistics">
+          <h3 className="font-medium">CAPTCHA</h3>
+          {captchaDetails.map(request =>
+            <dl key={request.external_request_id} className="grid gap-2 break-words text-sm sm:grid-cols-[auto_1fr]">
+              <dt>Browser request</dt><dd className="break-all">{request.external_request_id}</dd>
+              <dt>Presented</dt><dd>{request.presented === null ? "Not recorded" : request.presented ? "Yes" : "No"}</dd>
+              <dt>Detected at</dt><dd>{utcTime(request.detected_at)}{request.detection_source === "agent_start" && " (agent start)"}</dd>
+              <dt>Clearance</dt><dd>{request.presented ? request.cleared ? "Cleared" : "Not confirmed" : "—"}</dd>
+              <dt>Confirmed at</dt><dd>{utcTime(request.confirmed_at)}</dd>
+              <dt>Reported input tokens</dt><dd>{request.prompt_tokens?.toLocaleString() ?? "Not recorded"}</dd>
+              <dt>Reported output tokens</dt><dd>{request.completion_tokens?.toLocaleString() ?? "Not recorded"}</dd>
+              <dt>Assistant attempts</dt><dd>{request.attempts}</dd>
+              <dt>Model</dt><dd>{request.models.join(", ") || "Not recorded"}</dd>
+              <dt>Proxy route</dt><dd>{request.proxy_route || "Not recorded"}</dd>
+            </dl>)}
+        </section>}
         <section className="flex min-w-0 flex-col gap-2" aria-label="Answer"><h3 className="font-medium">Answer</h3>
           {selected.answer_text ? <div className="flex min-w-0 max-w-5xl flex-col gap-3 break-words leading-relaxed">
             <Markdown remarkPlugins={[remarkGfm]} skipHtml components={{

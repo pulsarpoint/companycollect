@@ -37,7 +37,7 @@ def test_format_stale_run_message_reports_event_inactivity() -> None:
 
 
 def test_latest_run_activity_uses_latest_event_timestamp() -> None:
-    event = SimpleNamespace(timestamp=1234.5)
+    event = SimpleNamespace(timestamp=1234.5, event_log_entry=SimpleNamespace(message="Worker saved results"))
     instance = SimpleNamespace(
         get_records_for_run=lambda *args, **kwargs: SimpleNamespace(records=[event])
     )
@@ -47,10 +47,21 @@ def test_latest_run_activity_uses_latest_event_timestamp() -> None:
 
 def test_latest_run_activity_falls_back_when_run_has_no_events() -> None:
     instance = SimpleNamespace(
-        get_records_for_run=lambda *args, **kwargs: SimpleNamespace(records=[])
+        get_records_for_run=lambda *args, **kwargs: SimpleNamespace(records=[], has_more=False)
     )
 
     assert alerts.latest_run_activity_timestamp(instance, "run-id", 1000.0) == 1000.0
+
+
+def test_progress_observer_does_not_hide_stalled_worker():
+    heartbeat = SimpleNamespace(timestamp=2000.0, event_log_entry=SimpleNamespace(message="Brave progress | speed=0.00"))
+    worker = SimpleNamespace(timestamp=1234.5, event_log_entry=SimpleNamespace(message="Saved result"))
+    pages = iter([
+        SimpleNamespace(records=[heartbeat] * 100, has_more=True, cursor="next-page"),
+        SimpleNamespace(records=[heartbeat, worker], has_more=False),
+    ])
+    instance = SimpleNamespace(get_records_for_run=lambda *a, **kw: next(pages))
+    assert alerts.latest_run_activity_timestamp(instance, "run-id", 1000.0) == 1234.5
 
 
 def test_post_alert_sends_slack_compatible_payload(monkeypatch) -> None:

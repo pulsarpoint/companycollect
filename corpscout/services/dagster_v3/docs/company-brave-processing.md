@@ -51,6 +51,7 @@ ops:
       query_template: "Find the official website of {company_name}."
       force_rescan: false
       recent_days: 30
+      input_batch_size: 500 # configurable, up to 500
       llm: # Backoffice supplies the verified profile and encrypted API key
         ...
 ```
@@ -93,6 +94,21 @@ Graceful cancellation stops admission and cancels only this run's browser reques
 Cancelled browser requests remain evidence and can receive deterministic retry IDs;
 they do not become completed company outcomes.
 
+## Browser reuse
+
+Each route worker keeps one browser open across sequential requests. The browser
+service counts actual searches and recycles the process after ten by default;
+cached result replays do not consume this budget. Set the
+`company_brave_browser` resource's `max_requests_per_browser` to 20 to use twenty.
+The browser service owns the default; an omitted resource setting leaves it intact.
+The saved profile and route remain the same across process restarts. Broken browsers
+and cancellation close early, and workers release their browser on exit using the
+current execution ID. Service idle expiry is the cleanup fallback.
+
+The service's request result JSON and live status expose `browser_usage` with the
+generation, request count and restart threshold. These values also appear in browser
+service logs; the request counter resets with a new browser generation.
+
 ## Publication, history and cleanup
 
 `corpscout.company_brave_search_results` stores every completed attempt, including
@@ -101,11 +117,31 @@ Deterministic result IDs survive retries. Use `FINAL` for exact counts before me
 The latest-attempt view includes failures; the latest-success projection preserves
 an older good answer when a newer search fails.
 
-One writer batches concurrent callbacks (up to 200 results or five seconds). Each
-browser worker waits until ClickHouse acknowledges its result before taking another
-company. Timed flushes also handle partial batches. A failed write stops processing;
-resume checks saved outcomes and reuses stable browser request IDs. There is no
-PostgreSQL response outbox.
+Dagster submits up to 500 remaining companies to `POST /v1/brave/batches`. The
+browser service commits them to `brave-queue.sqlite3` before acknowledging them.
+Four route workers (one per route by default) save each outcome in SQLite and
+immediately take another item. They retain the existing atomic request/result JSON
+and deterministic request IDs, including CAPTCHA observations.
+
+After every item has an outcome, the service bulk-publishes the batch directly to
+ClickHouse, repairs the successful-answer projection, and verifies every result ID.
+Publication retries reuse saved outcomes. Dagster polls the batch heartbeat every
+two seconds, logs processed/total, running, pending, successful, failed, published
+and entries/minute, then independently verifies the result IDs in its ClickHouse
+connection before sending the next batch. There is no overlap/refill between batches.
+Results become visible in company/history views when the batch is published; live
+progress is available in Dagster while it runs.
+
+The service checks PostgreSQL LLM admission before each request and every two
+seconds while a batch is active. It registers individual requests in the existing
+external-request ledger, so CAPTCHA collection and cancellation keep their IDs.
+A 60-second controller lease stops active requests and queued admission when the
+Dagster controller disappears. Cancellation and restarts retain completed SQLite
+outcomes; resume reconciles the unfinished service batch before selecting more
+ClickHouse inputs. A new Backoffice owner can resume only after the previous owner
+is stopped/finished and the new owner has the matching task/model dependency.
+Completed SQLite batches are retained for seven days and pruned on later submissions;
+unpublished batches are retained. PostgreSQL and ClickHouse history remain durable.
 
 Completion repairs the successful-answer projection, verifies no work remains and
 records counts. Before removing the completed task's input partition, the worker
@@ -118,7 +154,7 @@ An interrupted cleanup can be resumed; history and result rows are never purged.
 Start the same results job with `task_id`. The saved execution is recovered directly
 from PostgreSQL; the original Dagster run is not required. An optional `execution_id`
 must match that saved execution. Omit content settings to reuse the saved profile;
-transport settings such as concurrency, page size and timeouts may change. Dagster
+transport settings such as concurrency, page size and timeouts apply to newly submitted batches. An unfinished service batch retains its accepted configuration. Dagster
 run tags retain task/execution IDs and final outcome counts for Backoffice history.
 
 ## Retired fixed selections
@@ -133,6 +169,16 @@ shows companies found in saved outcomes, rather than claiming the complete origi
 input selection. `mode: publish` can still repair saved execution projections.
 
 ## Deployment
+
+Service-owned batches require the browser service's `BRAVE_CLICKHOUSE_URL`,
+`BRAVE_CLICKHOUSE_USER`, `BRAVE_CLICKHOUSE_PASSWORD`, and `LLM_CONTROL_PG_URL`.
+The ClickHouse publisher needs SELECT/INSERT on `company_brave_search_results`
+and `se_company_brave_search_results_latest_success`; PostgreSQL uses the existing
+`processing_worker` grants from migration 128. The encrypted LLM master key remains
+`BROWSER_LLM_ENCRYPTION_KEY`. No new central database migration is required.
+Deploy/configure the browser service before launching the updated Dagster definition.
+An existing per-request run must be stopped and resumed to switch it to batches.
+
 
 Apply ClickHouse migration **453** before deploying these definitions and Backoffice.
 It adds the partitioned input and company-membership tables.

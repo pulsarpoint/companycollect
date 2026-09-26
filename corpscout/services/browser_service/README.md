@@ -188,8 +188,21 @@ same global capacity limit and launches a headless browser by default. Headed re
 
 Optional `headless: true/false` selects the mode. `session_id` reopens a saved profile;
 omitting it creates a new identity. Results include `session_id` and `execution_id`.
-The browser closes after each query. Dagster reuses one session per route worker
-within a run, so sequential queries retain cookies without keeping Chromium open. Routes are `direct` and the
+With an explicit `session_id`, sequential queries reuse the running browser.
+`max_requests_per_browser` defaults to **10**; set it to **20** to recycle after
+twenty requests. The counter includes failed searches but excludes cached-result
+replays and rejected submissions. The browser closes after the limit; the next
+request starts a new process using the same saved profile and cookies. Broken
+browsers and cancellations close earlier. Requests without `session_id` close
+their browser when finished.
+
+`browser_usage` in live status and saved result JSON records the browser generation,
+`requests_started`, and `restart_after`. Session snapshots expose `brave_usage`, and
+service logs record each request's count and browser closure. Counters belong to the
+live browser process and reset when it restarts. Dagster retains one session per
+route worker and explicitly closes it when the worker exits; idle expiry handles
+lost clients. Override the service default through the Dagster browser resource's
+`max_requests_per_browser` setting. Routes are `direct` and the
 configured `crawl_proxy1`, `crawl_proxy2`, `crawl_proxy3`. Set the corresponding
 `BROWSER_CRAWL_PROXY1/2/3` environment variables in browser-service, or the
 `browser_service_crawl_proxy1/2/3` Ansible secrets. Proxy URLs are never accepted
@@ -296,3 +309,41 @@ BROWSER_NAVIGATION_NATIVE_TEST=1 CLOAKBROWSER_AUTO_UPDATE=false uv run python -m
 ```
 
 For a deployment using the already validated lockfile, run `ansible-playbook site.yml --skip-tags upgrade_browser` from `ansible/`. The inventory uses the crawler host's Tailscale/SSH name.
+
+
+## Durable Brave company batches
+
+`POST /v1/brave/batches` accepts up to 500 company inputs with a batch UUID, frozen
+execution/task IDs, controller run ID, registered LLM owner and encrypted options.
+It commits to `$BROWSER_STATE_DIR/brave-queue.sqlite3` (SQLite WAL, full synchronous
+commits) before returning 202. Each of four route workers by default saves a result
+locally before taking the next company, retaining the existing request JSON evidence.
+A batch is `completed` only after **all** outcomes are confirmed in ClickHouse.
+Individual search failures count as processed outcomes.
+
+- `GET /v1/brave/executions/{execution_id}/batch`: discover unfinished work for resume.
+- `GET /v1/brave/batches/{batch_id}`: safe counts/state; no credentials or result documents.
+- `POST /v1/brave/batches/{batch_id}/heartbeat`: renew controller lease and read progress.
+- `POST /v1/brave/batches/{batch_id}/resume`: resume saved work, preserving completed results.
+- `POST /v1/brave/batches/{batch_id}/cancel`: stop workers; retain resumable results.
+- `GET /v1/brave/batches/{batch_id}/result-ids`: bounded membership for independent publication verification.
+
+Heartbeat/resume/cancel bodies contain `controller_id` and `owner_request_id` UUIDs.
+Dagster heartbeats every two seconds and submits the next batch only after this one
+is published. A 60-second expired lease pauses work. Service restart also pauses
+unfinished batches until explicit resume. Completed SQLite batches are pruned after
+seven days on new submissions; unpublished data is retained. ClickHouse and
+PostgreSQL history are unaffected by local cache pruning.
+
+Configure `BRAVE_CLICKHOUSE_URL` (HTTP endpoint), `BRAVE_CLICKHOUSE_USER`,
+`BRAVE_CLICKHOUSE_PASSWORD`, and `LLM_CONTROL_PG_URL` in the service environment.
+The publisher needs SELECT/INSERT on `corpscout.company_brave_search_results` and
+`corpscout.se_company_brave_search_results_latest_success`. PostgreSQL uses the
+existing `processing_worker` admission/ledger grants. No database credentials are
+accepted in batch requests, and the destination tables are fixed in service code.
+
+The service checks LLM admission before every browser request and every two seconds
+while a batch runs; disabling a model or stopping its owner cancels active requests.
+Request IDs stay compatible with existing CAPTCHA statistics and Backoffice history.
+Publication failures retry the local results without repeating browser work. Dagster
+reports live progress during processing; company result views update on publication.

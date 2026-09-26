@@ -2,6 +2,22 @@ import { chQuery } from "~/lib/clickhouse.server";
 import { dagsterRunUrl } from "~/lib/dagster.server";
 import { BRAVE_RESULTS_PAGE_SIZE } from "~/lib/brave-results";
 import { QUEUE_UUID } from "~/lib/queues";
+import { llmControl } from "~/lib/llm-control.server";
+
+export interface BraveCaptchaRequest {
+  external_request_id: string;
+  presented: boolean | null;
+  detected_at: string | null;
+  detection_source: "page" | "agent_start" | null;
+  confirmed_at: string | null;
+  cleared: boolean | null;
+  attempts: number;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  models: string[];
+  proxy_route: string | null;
+  request_status: string;
+}
 
 export interface BraveResultSummary {
   result_id: string;
@@ -19,6 +35,7 @@ export interface BraveResultSummary {
   error_type: string;
   error_stage: string;
   answer_preview: string;
+  captcha_requests?: BraveCaptchaRequest[];
 }
 
 export interface BraveResultDetail extends BraveResultSummary {
@@ -78,6 +95,25 @@ export async function loadBraveResults(scope: BraveResultScope, search: URLSearc
     );
     if (!row) throw new Response("This Brave result was not found for this company or task.", { status: 404 });
     selected = { ...row, runUrl: row.source_run_id ? dagsterRunUrl(row.source_run_id) : null };
+  }
+  const ids = [...new Set([...rows.map(row => row.result_id), ...(selected ? [selected.result_id] : [])])];
+  if (ids.length) {
+    // A resumed execution may own the same browser request. Count its usage once,
+    // while preserving distinct canceled/retried browser requests for the result.
+    const { rows: requests } = await llmControl().query<{
+      brave_result_id: string; external_request_id: string; captcha_stats: Omit<BraveCaptchaRequest, "external_request_id">;
+    }>(`SELECT DISTINCT ON (external_request_id) brave_result_id,external_request_id,captcha_stats
+      FROM processing.llm_external_requests WHERE service='brave'
+        AND brave_result_id=ANY($1::uuid[]) AND captcha_stats IS NOT NULL
+      ORDER BY external_request_id,captcha_stats_updated_at DESC`, [ids]);
+    const byResult = new Map<string, BraveCaptchaRequest[]>();
+    for (const request of requests) {
+      const stats = byResult.get(request.brave_result_id) ?? [];
+      stats.push({...request.captcha_stats, external_request_id: request.external_request_id});
+      byResult.set(request.brave_result_id, stats);
+    }
+    for (const row of rows) row.captcha_requests = byResult.get(row.result_id) ?? [];
+    if (selected) selected.captcha_requests = byResult.get(selected.result_id) ?? [];
   }
   return { rows, selected, total, succeeded: Number(counts?.succeeded ?? 0), failed: Number(counts?.failed ?? 0), page, totalPages };
 }

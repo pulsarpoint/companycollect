@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import logging
+import socket
 from datetime import UTC, datetime
 from time import monotonic
 from typing import Annotated, Literal
@@ -186,6 +187,7 @@ class ChallengeAgent:
             "steps": [],
             "usage": {"prompt_tokens": 0, "completion_tokens": 0},
             "reason": None,
+            "error_code": None,
         }
 
     def check_session(self) -> None:
@@ -223,32 +225,52 @@ class ChallengeAgent:
             self.result.update(state="cancelled", reason="Agent request was cancelled")
             raise
         except TimeoutError:
-            self.result.update(state="timeout", reason="Agent time limit reached")
+            self.result.update(state="timeout", error_code="agent_timeout", reason="Agent time limit reached")
         except (BrowserSessionError, Error):
             self.result.update(
                 state="interrupted", reason="Browser session or page changed"
             )
         except httpx.HTTPStatusError as error:
-            LOGGER.warning(
-                "Challenge model request rejected (HTTP %s)", error.response.status_code
-            )
             self.result.update(
                 state="error",
+                error_code="provider_auth" if error.response.status_code in {401, 403}
+                else "provider_rate_limit" if error.response.status_code == 429
+                else "provider_unavailable" if error.response.status_code >= 500
+                else "provider_rejected",
                 reason=f"Model provider rejected the request (HTTP {error.response.status_code})",
             )
+        except httpx.TimeoutException:
+            self.result.update(state="error", error_code="model_timeout", reason="Model provider request timed out")
+        except httpx.HTTPError as error:
+            # Store categories only: exception messages can contain URLs or credentials.
+            cause = error
+            dns_failure = False
+            for _ in range(10):
+                if isinstance(cause, socket.gaierror):
+                    dns_failure = True
+                    break
+                cause = cause.__cause__ or cause.__context__
+                if cause is None:
+                    break
+            self.result.update(
+                state="error", error_code="model_dns" if dns_failure else "model_connection",
+                reason="Model provider DNS lookup failed" if dns_failure else "Could not connect to the model provider",
+            )
+        except json.JSONDecodeError:
+            self.result.update(state="error", error_code="invalid_json", reason="Model provider returned invalid JSON")
         except (
-            httpx.HTTPError,
             ValidationError,
             ValueError,
             KeyError,
             IndexError,
             TypeError,
-        ) as error:
-            LOGGER.warning("Challenge agent stopped (%s)", type(error).__name__)
+        ):
             self.result.update(
-                state="error", reason="Model request or action was invalid"
+                state="error", error_code="invalid_response", reason="Model response or action was invalid"
             )
         finally:
+            if self.result["error_code"] is not None:
+                LOGGER.warning("Challenge run %s failed: %s", self.result["runId"], self.result["error_code"])
             self.result["finishedAt"] = datetime.now(UTC).isoformat()
             self.result["elapsedSeconds"] = round(monotonic() - started, 3)
             self.save()

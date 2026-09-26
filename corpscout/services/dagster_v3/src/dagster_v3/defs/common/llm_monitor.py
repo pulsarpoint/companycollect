@@ -82,7 +82,10 @@ def reconcile_external() -> int:
                     state = "absent"
             else:
                 response.raise_for_status()
-                external_state = response.json().get("state")
+                payload = response.json()
+                external_state = payload.get("state")
+                if service == "brave" and payload.get("status") in {"success","error","blocked","interrupted"}:
+                    external_state = "canceled" if payload.get("error_type") == "Cancelled" or payload["status"] == "interrupted" else "completed"
                 if external_state in {"completed","succeeded","failed","cancelled","canceled"}:
                     state = {"succeeded":"completed","cancelled":"canceled"}.get(external_state,external_state)
                 elif cancel:

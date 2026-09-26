@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from pydantic import ValidationError
 
 from browser_service.api import create_app
+from browser_service.brave_batch_results import BraveClickHouseSettings
 from browser_service.runtime import BrowserRuntimeSettings, BrowserService
 
 
@@ -45,6 +46,15 @@ def main() -> None:
         parser.error("BROWSER_API_TOKEN is required when listening beyond localhost")
     logging.basicConfig(level=logging.INFO)
     try:
+        brave_clickhouse = None
+        if os.environ.get("BRAVE_CLICKHOUSE_URL"):
+            brave_clickhouse = BraveClickHouseSettings(
+                url=os.environ["BRAVE_CLICKHOUSE_URL"],
+                username=os.environ.get("BRAVE_CLICKHOUSE_USER", ""),
+                password=os.environ.get("BRAVE_CLICKHOUSE_PASSWORD", ""),
+            )
+            if not os.environ.get("LLM_CONTROL_PG_URL"):
+                parser.error("Brave batch publication requires LLM_CONTROL_PG_URL")
         settings = BrowserRuntimeSettings(
             max_browsers=args.max_browsers
             if args.max_browsers is not None
@@ -88,6 +98,8 @@ def main() -> None:
             deepseek_api_key=os.environ.get("DEEPSEEK"),
             openrouter_api_key=os.environ.get("OPENROUTER_API_KEY"),
             llm_encryption_key=os.environ.get("BROWSER_LLM_ENCRYPTION_KEY"),
+            brave_clickhouse=brave_clickhouse,
+            llm_control_pg_url=os.environ.get("LLM_CONTROL_PG_URL"),
         ),
         host=host,
         port=int(os.environ.get("BROWSER_PORT", "8081")),

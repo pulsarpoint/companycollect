@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import socket
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -181,3 +182,28 @@ class ChallengeAgentTests(unittest.IsolatedAsyncioTestCase):
             "cancelled",
         )
         self.cdp.detach.assert_awaited_once()
+
+    async def test_dns_failure_is_classified_without_exposing_exception_details(self):
+        def model(request):
+            try:
+                raise socket.gaierror(-3, "secret diagnostic")
+            except socket.gaierror as error:
+                raise httpx.ConnectError("private URL and credentials", request=request) from error
+
+        result = await self.run_model(model)
+        self.assertEqual(result["error_code"], "model_dns")
+        self.assertEqual(result["reason"], "Model provider DNS lookup failed")
+        self.assertNotIn("secret diagnostic", json.dumps(result))
+        self.assertNotIn("private URL", json.dumps(result))
+        self.cdp.send.assert_not_awaited()
+
+    async def test_invalid_json_and_network_timeout_have_distinct_codes(self):
+        result = await self.run_model(lambda _: httpx.Response(200, text="not-json"))
+        self.assertEqual(result["error_code"], "invalid_json")
+
+        def timeout(request):
+            raise httpx.ReadTimeout("secret", request=request)
+
+        result = await self.run_model(timeout)
+        self.assertEqual(result["error_code"], "model_timeout")
+        self.assertNotIn("secret", json.dumps(result))

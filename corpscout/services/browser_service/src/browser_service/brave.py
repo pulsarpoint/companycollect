@@ -3,10 +3,11 @@
 import asyncio
 import json
 import logging
+from contextlib import asynccontextmanager
+from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic
-from typing import Literal
 from urllib.parse import parse_qs, urlencode, urlsplit
 from uuid import uuid4
 
@@ -14,18 +15,26 @@ import httpx
 from fastapi import APIRouter, HTTPException
 from playwright.async_api import Error
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
-from pydantic import Field, field_validator, model_serializer
 
+from browser_service.brave_batch_control import BraveBatchControl
+from browser_service.brave_batch_results import (
+    BraveBatchPublisher,
+    BraveClickHouseSettings,
+)
+from browser_service.brave_batches import BraveBatchQueue, batch_router
+from browser_service.brave_models import BraveAskRequest
 from browser_service.browser import BrowserSession
-from browser_service.capture import StrictModel
 from browser_service.challenge_agent import ChallengeAgent
 from browser_service.llm_profile import (
-    EncryptedLLMProfile,
     LLMProfileError,
     VerifyLLMRequest,
     verify_llm,
 )
-from browser_service.runtime import ActiveBrowserSession, BrowserService
+from browser_service.runtime import (
+    ActiveBrowserSession,
+    BraveBrowserUsage,
+    BrowserService,
+)
 from browser_service.session_store import BrowserSessionError
 
 LOGGER = logging.getLogger(__name__)
@@ -37,36 +46,6 @@ COPY_CAPTURE_SCRIPT = """(() => {
         value: async (text) => { window.__companyBraveCopiedText = String(text); }
     });
 })();"""
-
-
-class BraveAskRequest(StrictModel):
-    request_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
-    session_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
-    query: str = Field(min_length=1, max_length=10000)
-    route: Literal["direct", "crawl_proxy1", "crawl_proxy2", "crawl_proxy3"] = "direct"
-    headless: bool | None = Field(default=None, strict=True)
-    page_timeout_seconds: float = Field(default=60, gt=0, le=300)
-    answer_timeout_seconds: float = Field(default=180, gt=0, le=600)
-    timeout_seconds: float = Field(default=900, gt=0, le=1800)
-    challenge_agent_max_runs: int = Field(default=3, ge=0, le=1000, strict=True)
-    challenge_agent_model: Literal["deepseek-flash", "z-ai/glm-5.3-flash"] = (
-        "deepseek-flash"
-    )
-    llm: EncryptedLLMProfile | None = None
-
-    @model_serializer(mode="wrap")
-    def serialize(self, handler):
-        value = handler(self)
-        if self.llm is None:
-            value.pop("llm", None)
-        return value
-
-    @field_validator("query")
-    @classmethod
-    def nonempty_query(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("Query must contain text")
-        return value
 
 
 class BraveStepError(Exception):
@@ -94,6 +73,7 @@ class BraveAsk:
         self.service, self.session, self.request = service, session, request
         self.directory, self.api_key = directory, api_key
         self.runs: list[dict] = []
+        self.captcha = {"presented": False, "detected_at": None, "confirmed_at": None}
         self.stage = "page_setup"
         self.tab: BrowserSession | None = None
 
@@ -104,6 +84,12 @@ class BraveAsk:
             "request_id": self.request.request_id,
             "stage": stage,
             "agent_runs": len(self.runs),
+            "route": self.request.route,
+            "captcha": self.captcha,
+            "challenge_runs": self.runs,
+            "browser_usage": asdict(self.session.brave_usage)
+            if self.session.brave_usage is not None
+            else None,
         }
         self.service.touch(self.session.id)
 
@@ -174,6 +160,12 @@ class BraveAsk:
                 await asyncio.sleep(min(0.25, max(0, deadline - monotonic())))
                 problem = await self.access_problem()
         while problem == "captcha":
+            self.captcha.update(
+                presented=True,
+                detected_at=self.captcha["detected_at"] or datetime.now(UTC).isoformat(),
+                confirmed_at=None,
+            )
+            write_result(self.directory / "captcha.json", self.captcha)
             self.progress("captcha")
             if len(self.runs) >= self.request.challenge_agent_max_runs:
                 raise BraveStepError("captcha", "AgentBudgetExhausted")
@@ -198,6 +190,8 @@ class BraveAsk:
                 else self.request.challenge_agent_model,
                 explicit_profile=self.request.llm is not None,
             )
+            self.runs.append(agent.result)
+            self.progress("captcha_agent")
             async with httpx.AsyncClient(
                 base_url=self.request.llm.base_url.rstrip("/") + "/"
                 if self.request.llm is not None
@@ -211,12 +205,19 @@ class BraveAsk:
                     result = await agent.run(http)
                 finally:
                     # Preserve attempts interrupted by the overall deadline as well.
-                    self.runs.append(agent.result)
                     write_result(
                         self.directory / "challenge-runs.json", {"runs": self.runs}
                     )
             # Model completion is only advisory; inspect the actual page again.
             problem = await self.access_problem()
+            # A navigation can interrupt the agent after access was restored.
+            # Persist the observed page outcome separately from the agent state.
+            result["access_cleared"] = problem is None
+            result["confirmed_at"] = datetime.now(UTC).isoformat() if problem is None else None
+            self.captcha["confirmed_at"] = result["confirmed_at"]
+            write_result(self.directory / "captcha.json", self.captcha)
+            agent.save()
+            write_result(self.directory / "challenge-runs.json", {"runs": self.runs})
             if problem == "captcha" and result["state"] in {
                 "error",
                 "interrupted",
@@ -348,6 +349,10 @@ class BraveAsk:
             "error_type": "",
             "error_stage": "",
             "challenge_runs": self.runs,
+            "captcha": self.captcha,
+            "browser_usage": asdict(self.session.brave_usage)
+            if self.session.brave_usage is not None
+            else None,
         }
         try:
             async with asyncio.timeout(self.request.timeout_seconds):
@@ -411,10 +416,25 @@ def brave_router(
     openrouter_api_key: str | None,
     llm_encryption_key: str | None = None,
     authenticated: bool = False,
+    clickhouse: BraveClickHouseSettings | None = None,
+    llm_control_pg_url: str | None = None,
 ) -> APIRouter:
-    router = APIRouter()
+    queue = None
+
+    @asynccontextmanager
+    async def lifespan(_):
+        if queue is not None:
+            queue.start()
+        try:
+            yield
+        finally:
+            if queue is not None:
+                await queue.close()
+
+    router = APIRouter(lifespan=lifespan)
     active: dict[str, ActiveBrowserSession | None] = {}
     tasks: dict[str, asyncio.Task] = {}
+    busy_sessions: set[str] = set()
 
     @router.post("/llm/verify")
     async def verify(payload: VerifyLLMRequest) -> dict:
@@ -467,16 +487,34 @@ def brave_router(
             )
         except LLMProfileError as error:
             raise HTTPException(422, str(error)) from error
+        identifier = payload.session_id or uuid4().hex
+        if identifier in busy_sessions:
+            raise HTTPException(
+                409, "This Brave browser is still busy", headers={"Retry-After": "1"}
+            )
+        busy_sessions.add(identifier)
         active[payload.request_id] = None
         task = asyncio.current_task()
         if task is not None:
             tasks[payload.request_id] = task
         session = None
-        identifier = payload.session_id or uuid4().hex
+        keep_open = False
         try:
+            previous = service.active.get(identifier)
+            if previous is not None and previous.brave_usage is not None:
+                if previous.profile.route != payload.route or (
+                    payload.headless is not None and previous.profile.headless != payload.headless
+                ):
+                    raise HTTPException(409, "Close this browser before changing its route or mode")
+                if (
+                    previous.profile.state != "running"
+                    or previous.brave_usage.requests_started >= payload.max_requests_per_browser
+                ):
+                    await service.release(identifier, execution_id=previous.execution_id)
             session = await service.claim(
                 identifier=identifier,
-                request_id=payload.request_id,
+                # A named route worker owns the browser across individual queries.
+                request_id=f"brave-{identifier}" if payload.session_id else payload.request_id,
                 domain="search.brave.com",
                 headless=payload.headless,
                 route=payload.route,
@@ -485,7 +523,33 @@ def brave_router(
             directory.mkdir(parents=True, mode=0o700)
             write_result(request_file, payload.model_dump())
             async with session.lock:
-                return await BraveAsk(service, session, payload, directory, key).run()
+                if session.brave_usage is None or (
+                    session.brave_usage.generation != session.profile.generation
+                ):
+                    session.brave_usage = BraveBrowserUsage(
+                        generation=session.profile.generation,
+                        requests_started=0,
+                        restart_after=payload.max_requests_per_browser,
+                    )
+                session.brave_usage.requests_started += 1
+                session.brave_usage.restart_after = payload.max_requests_per_browser
+                LOGGER.info(
+                    "Brave browser %s route=%s request=%s count=%s/%s generation=%s",
+                    identifier, payload.route, payload.request_id,
+                    session.brave_usage.requests_started,
+                    session.brave_usage.restart_after,
+                    session.brave_usage.generation,
+                )
+                result = await BraveAsk(service, session, payload, directory, key).run()
+                keep_open = (
+                    payload.session_id is not None
+                    and session.brave_usage.requests_started < payload.max_requests_per_browser
+                    and session.profile.state == "running"
+                    and result["error_type"] not in {
+                        "BrowserClosed", "BrowserError", "BrowserSessionError"
+                    }
+                )
+                return result
         except asyncio.CancelledError:
             if not result_file.exists():
                 directory.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -518,8 +582,18 @@ def brave_router(
         finally:
             try:
                 if session is not None:
-                    await service.release(session.id, execution_id=session.execution_id)
+                    if keep_open:
+                        service.touch(session.id, execution_id=session.execution_id)
+                    else:
+                        LOGGER.info(
+                            "Closing Brave browser %s after %s requests (limit=%s)",
+                            identifier,
+                            session.brave_usage.requests_started if session.brave_usage else 0,
+                            payload.max_requests_per_browser,
+                        )
+                        await service.release(session.id, execution_id=session.execution_id)
             finally:
+                busy_sessions.discard(identifier)
                 active.pop(payload.request_id, None)
                 tasks.pop(payload.request_id, None)
 
@@ -561,7 +635,13 @@ def brave_router(
                 "execution_id": session.execution_id if session else None,
             }
         if (directory / "request.json").exists():
-            return {"request_id": request_id, "status": "interrupted"}
+            saved = json.loads((directory / "request.json").read_text(encoding="utf-8"))
+            interrupted = {"request_id": request_id, "status": "interrupted", "route": saved["route"]}
+            for filename, key in (("captcha.json", "captcha"), ("challenge-runs.json", "challenge_runs")):
+                if (directory / filename).exists():
+                    value = json.loads((directory / filename).read_text(encoding="utf-8"))
+                    interrupted[key] = value["runs"] if key == "challenge_runs" else value
+            return interrupted
         raise HTTPException(404, "Unknown Brave request")
 
     def validate_request_id(request_id: str) -> None:
@@ -576,4 +656,10 @@ def brave_router(
         ):
             raise HTTPException(422, "Invalid request ID")
 
+    if authenticated and clickhouse is not None and llm_control_pg_url:
+        queue = BraveBatchQueue(
+            service,ask=ask,status=status,publisher=BraveBatchPublisher(clickhouse),
+            control=BraveBatchControl(llm_control_pg_url),
+        )
+    router.include_router(batch_router(queue))
     return router

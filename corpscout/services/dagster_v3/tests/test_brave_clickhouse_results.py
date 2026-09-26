@@ -95,10 +95,11 @@ def inputs(client, count):
     )
 
 
-def materialize(resource, dsn, fixture, instance, **config):
+def materialize(resource, dsn, fixture, instance, *, tags=None, **config):
     return dg.materialize(
         [assets.company_brave_search_results],
         instance=instance,
+        tags=tags,
         resources={
             "clickhouse": resource,
             "processing_clickhouse": resource,

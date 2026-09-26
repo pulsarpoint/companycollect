@@ -38,7 +38,7 @@ export const QUEUE_TEMPLATES: Record<Exclude<QueueType, "crawler">, Record<strin
 /** Limits mirror the deployed results assets and are shared by form and action validation. */
 export const QUEUE_NUMBER_LIMITS: Record<Exclude<QueueType, "crawler">, Record<string, [number, number, boolean?]>> = {
   webtech: { recent_days: [1, 3650] },
-  brave: { recent_days: [1, 3650], requests_per_route: [1, 8], input_batch_size: [4, 10000], answer_timeout_seconds: [1, 600], progress_log_every: [1, 100000], progress_log_interval_seconds: [1, 3600] },
+  brave: { recent_days: [1, 3650], requests_per_route: [1, 8], input_batch_size: [4, 500], answer_timeout_seconds: [1, 600], progress_log_every: [1, 100000], progress_log_interval_seconds: [1, 3600] },
   "ip-enrichment": { batch_size: [1, 10000], max_requests: [1, Number.MAX_SAFE_INTEGER], request_delay_seconds: [0, 60, true], parent_depth: [0, 5], rdap_cache_days: [1, Number.MAX_SAFE_INTEGER], rate_limit_retry_seconds: [1, Number.MAX_SAFE_INTEGER], transient_retry_seconds: [1, Number.MAX_SAFE_INTEGER] },
 };
 

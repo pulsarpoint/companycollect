@@ -82,6 +82,7 @@ class BraveBrowserResource(dg.ConfigurableResource):
     capacity_timeout_seconds: int = Field(default=120, gt=0)
     challenge_agent_max_runs: int | None = Field(default=None, ge=0, le=1000)
     challenge_agent_model: str | None = None
+    max_requests_per_browser: int | None = Field(default=None, ge=1, le=1000)
 
     def setup_for_execution(self, context: dg.InitResourceContext) -> None:
         parsed = urlsplit(self.api_url)
@@ -157,6 +158,29 @@ class BraveBrowserResource(dg.ConfigurableResource):
             # Termination still stops queue admission if a remote cleanup call fails.
             pass
 
+    def close_session(self, session_id: str) -> None:
+        """Release only this worker's retained browser, fenced by execution ID."""
+        try:
+            with Session(raise_for_status=False) as http:
+                http.headers["Authorization"] = f"Bearer {self.api_token}"
+                url = f"{self.api_url.rstrip('/')}/v1/browser/sessions/{session_id}"
+                response = http.get(url, timeout=(5, 10))
+                if response.status_code != 200:
+                    return
+                snapshot = response.json()
+                if (
+                    snapshot.get("requestId") == f"brave-{session_id}"
+                    and snapshot.get("executionId")
+                ):
+                    http.delete(
+                        url,
+                        headers={"X-Browser-Execution-Id": snapshot["executionId"]},
+                        timeout=(5, 20),
+                    )
+        except (RequestException, ValueError):
+            # Service idle expiry remains the fallback after transport failure.
+            return
+
     def ask(
         self,
         http: Session,
@@ -183,6 +207,8 @@ class BraveBrowserResource(dg.ConfigurableResource):
         }
         if session_id is not None:
             payload["session_id"] = session_id
+        if self.max_requests_per_browser is not None:
+            payload["max_requests_per_browser"] = self.max_requests_per_browser
         if llm is not None:
             payload["llm"] = llm
         if self.challenge_agent_max_runs is not None:
@@ -336,6 +362,7 @@ class BraveBrowserResource(dg.ConfigurableResource):
 
         def worker(route: str) -> None:
             session_id = uuid4().hex
+            used_browser = False
             try:
                 company = next_company()
                 if company is None:
@@ -344,6 +371,7 @@ class BraveBrowserResource(dg.ConfigurableResource):
                     http.headers["Authorization"] = f"Bearer {self.api_token}"
                     while company is not None and not stopped.is_set():
                         current = company
+                        used_browser = True
 
                         def track(request_id: str) -> None:
                             check_admission(llm or {}, owner, service="brave", external_request_id=request_id)
@@ -373,6 +401,8 @@ class BraveBrowserResource(dg.ConfigurableResource):
                     RuntimeError(f"Brave route {route} failed ({type(error).__name__})")
                 )
             finally:
+                if used_browser:
+                    self.close_session(session_id)
                 send(None)
 
         with ThreadPoolExecutor(

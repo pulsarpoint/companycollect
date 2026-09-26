@@ -63,3 +63,14 @@ it("pagination clears the selected result and selection preserves its page", () 
   expect(braveResultsPath(basePath, 2)).toBe(`${basePath}?page=2`);
   expect(braveResultsPath(basePath, 2, resultId)).toBe(`${basePath}?page=2&result=${resultId}`);
 });
+
+it("shows CAPTCHA, reported usage, confirmation time and proxy beside the request", () => {
+  const row = {...answer, captcha_requests: [{external_request_id: "browser-one", presented: true,
+    detected_at: "2026-09-26T10:00:00Z", detection_source: "page" as const, confirmed_at: "2026-09-26T10:00:10Z",
+    cleared: true, attempts: 2, prompt_tokens: 1200, completion_tokens: 100, models: ["model-one"],
+    proxy_route: "crawl_proxy1", request_status: "success"}]};
+  const html = render({...results, rows: [row], selected: row});
+  for (const text of ["CAPTCHA", "Presented", "Cleared", "1,200", "2026-09-26 10:00:10 UTC", "crawl_proxy1", "model-one"]) expect(html).toContain(text);
+  const historical = render({...results, selected: {...row, captcha_requests: [{...row.captcha_requests[0], confirmed_at: null}]}});
+  expect(historical).toContain("<dt>Confirmed at</dt><dd>Not recorded</dd>");
+});

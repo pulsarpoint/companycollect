@@ -38,3 +38,9 @@ browser_service_crawl_proxy3: "{{ lookup('ansible.builtin.env', 'BROWSER_CRAWL_P
 
 # Same encryption key used by Backoffice for per-execution LLM profiles.
 browser_service_llm_encryption_key: "{{ lookup('ansible.builtin.env', 'BROWSER_LLM_ENCRYPTION_KEY') }}"
+
+# Direct durable Brave batch publication and saved-model admission.
+browser_service_brave_clickhouse_url: "{{ lookup('ansible.builtin.env', 'BRAVE_CLICKHOUSE_URL') }}"
+browser_service_brave_clickhouse_user: "{{ lookup('ansible.builtin.env', 'BRAVE_CLICKHOUSE_USER') }}"
+browser_service_brave_clickhouse_password: "{{ lookup('ansible.builtin.env', 'BRAVE_CLICKHOUSE_PASSWORD') }}"
+browser_service_llm_control_pg_url: "{{ lookup('ansible.builtin.env', 'LLM_CONTROL_PG_URL') }}"

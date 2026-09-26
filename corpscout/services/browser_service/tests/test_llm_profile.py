@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from browser_service.api import create_app
 from browser_service.brave import BraveAsk, BraveAskRequest
 from browser_service.llm_profile import EncryptedLLMProfile, LLMProfileError
+from browser_service.runtime import ActiveBrowserSession
 
 KEY = "19" * 32
 API_KEY = "sk-private-browser-test-secret"
@@ -96,10 +97,10 @@ class ProfileApiTests(unittest.IsolatedAsyncioTestCase):
         self.sessions = {}
 
         async def claim(**kwargs):
-            session = SimpleNamespace(
+            session = ActiveBrowserSession(
                 id=kwargs["identifier"],
                 execution_id="execution-" + kwargs["request_id"],
-                profile=SimpleNamespace(id=kwargs["identifier"]),
+                profile=SimpleNamespace(id=kwargs["identifier"], generation="fixture", state="running"),
                 lock=asyncio.Lock(),
                 operation=None,
             )
@@ -111,6 +112,7 @@ class ProfileApiTests(unittest.IsolatedAsyncioTestCase):
 
         self.service = SimpleNamespace(
             root=self.root,
+            active=self.sessions,
             claim=AsyncMock(side_effect=claim),
             release=AsyncMock(side_effect=release),
         )
