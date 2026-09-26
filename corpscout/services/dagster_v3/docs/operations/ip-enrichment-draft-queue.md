@@ -3,7 +3,7 @@
 Backoffice **Admin → IP addresses → Add to enrichment queue** launches only
 `ip_enrichment_input_job`. There is one open draft per `queue_scope` (default `workspace`);
 table selections, explicit IP lists and "failed addresses of task X" append to it. Adding
-inputs never looks anything up. Since ClickHouse migration 453 the draft follows the shared
+inputs never looks anything up. Since ClickHouse migration 456 the draft follows the shared
 processing queue contract
 ([spec](../superpowers/specs/2026-09-24-shared-processing-queue-contract-design.md)), like
 Webtech and the crawler.
@@ -76,7 +76,12 @@ Imports and Start share the task's PostgreSQL advisory lock.
    after every pass and a further pass confirms nothing remains. A reached `max_requests`
    flushes what was resolved and fails the run with "budget reached"; the task stays
    `selected` and re-running it resumes (this is the pause-and-resume procedure: terminate
-   or let the run stop, change transport settings if needed, re-run the task);
+   or let the run stop, change transport settings if needed, re-run the task). Nobody
+   re-runs it automatically: `ip_enrichment_results_job` is tagged
+   `dagster/max_retries: "0"`, because `dagster.yaml`'s run retries (enabled,
+   `max_retries: 2`) relaunch any failed run — `dg.Failure(allow_retries=False)` only bypasses
+   op retry policies — and each relaunch would resume the same execution and spend another
+   `max_requests`. A crash or host restart likewise needs the operator's re-run;
 4. finishes when a pass finds nothing: counts succeeded/failed per bucket from the results
    (failed = any of City/ASN/RDAP in `retryable_error`/`terminal_error`), `skipped = total −
    succeeded − failed` (expected 0), marks the task `completed` (`completed_with_errors` in
@@ -89,7 +94,12 @@ cleanup. A run that loses its PostgreSQL connection over a multi-day execution f
 completion, not mid-pass; re-running the task finishes it cheaply, since every earlier pass's
 results are already stored. A changed profile is rejected; to re-look addresses up, add them
 to a new draft (`force_rdap: true` there bypasses caches; `retry_failed_task_id` selects the
-failures). History stays readable from run tags (`ip_enrichment/execution_id`,
+failures). A retry draft of **terminal** RDAP errors (`terminal_error`: `no_registry`,
+`range_mismatch`, `registry_catch_all`, `invalid_response`, …) is a no-op for them within
+`rdap_cache_days` of the failure: their markers are fresh and re-served without a request.
+Process such a draft with `force_rdap: true` to ask the registry again (it also bypasses
+the network cache for every other address of that draft, so keep the draft to the failures);
+retryable errors are asked again once their `retry_after` has passed. History stays readable from run tags (`ip_enrichment/execution_id`,
 `ip_enrichment/outcome`, `ip_enrichment/succeeded_pages`, `ip_enrichment/failed_pages`,
 `ip_enrichment/skipped_pages`).
 
@@ -128,8 +138,9 @@ transfers) answers on that registry's own RDAP server with a redirect to
 directly, when the bootstrap already resolves there — is refused before the target body is
 fetched; the miss is re-sent to the REST search or whois `-r` instead and counted under the
 target registry (`reroutes_by_registry`). An address with no exact bootstrap match
-(`registry_for` returns `''`) is never requested: it gets a retryable `no_registry` marker and
-is retried after `transient_retry_seconds`.
+(`registry_for` returns `''`: 6to4 `2002::/16`, unmapped space) is never requested: it gets a
+terminal `no_registry` marker, cached for `rdap_cache_days` like other terminal errors, so retry
+drafts do not turn it into a request each time.
 
 `registry_daily_budgets` (transport, default `{}`, keys are whoisit's names: `ripe`, `arin`,
 `apnic`, `lacnic`, `afrinic`, `jpnic`, `idnic`, `krnic`, `twnic`, `registro.br`) is an
@@ -149,7 +160,9 @@ the backoffice sheet; set it in the Dagster launchpad.
 ## Counters and how to read them
 
 `rdap_requests_by_registry` and `rdap_person_entities_by_registry` are keyed by the registry
-that answered (`RdapLookupResponse.rir`). A plain `ripe` or `apnic` key in
+that answered (`RdapLookupResponse.rir`). The person-entity counter counts person
+(`kind: individual`) and role (`kind: group`) vCards alike, nested ones included — RIPE's AUP
+counts both — so an answer that references only role objects is visible too. A plain `ripe` or `apnic` key in
 `rdap_person_entities_by_registry` means personal data leaked: stop the run. RDAP traffic
 sent because a REST/whois answer was a catch-all or an NIR's own object is counted
 separately in `rdap_fallbacks_by_registry` (RIPE's catch-all root, an APNIC NIR allocation),

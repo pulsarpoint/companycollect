@@ -1,7 +1,7 @@
 # Shared IP enrichment schema
 
 Migration `000433_corpscout_ip_enrichment` introduces two ClickHouse tables and
-one ordinary view in `corpscout`. Since migration `000453` the input table follows the
+one ordinary view in `corpscout`. Since migration `000456` the input table follows the
 shared processing queue contract: `ip_enrichment_input` appends to an open draft and
 `ip_enrichment_results` freezes and processes it (see
 [ip-enrichment-draft-queue.md](operations/ip-enrichment-draft-queue.md)). The Workspace IP
@@ -92,7 +92,7 @@ only their queried address). See `docs/operations/ip-registry-reference-data.md`
 
 ## Materializing the input asset
 
-Apply migrations 000433 and 000453 before using `ip_enrichment_input` (group
+Apply migrations 000433 and 000456 before using `ip_enrichment_input` (group
 `ip_enrichment`) or `ip_enrichment_input_job`. The asset appends to the open draft
 named by `queue_scope` (default `workspace`) with a stable `submission_id`, using the
 existing `clickhouse` and `processing` resources, including `PROCESSING_PG_URL`, just
@@ -190,9 +190,12 @@ resolver, budget and pause behavior.
 
 `max_requests` bounds RDAP calls, including parent lookups; reaching it flushes what was
 resolved and fails the run, leaving the task `selected` so re-running it resumes the same
-execution. RDAP or GeoIP lookup errors are saved and reported as a published outcome
-(`completed_with_errors`), not a pipeline failure; retry them by adding the addresses to a
-new draft (`retry_failed_task_id`). Completion drops the task's ClickHouse partition.
+execution. The job carries `dagster/max_retries: "0"`, so Dagster's run retries never
+relaunch it; resuming is the operator's re-run. RDAP or GeoIP lookup errors are saved and
+reported as a published outcome (`completed_with_errors`), not a pipeline failure; retry them
+by adding the addresses to a new draft (`retry_failed_task_id`; terminal RDAP errors are
+re-served from their markers within `rdap_cache_days` unless that draft is processed with
+`force_rdap: true`). Completion drops the task's ClickHouse partition.
 `attempt` is always 1 — a retry is a new execution in a new draft, not a higher attempt
 number. Every run reports the installed GeoLite2 build dates in its metadata.
 
@@ -224,6 +227,15 @@ SHA-256 fingerprint of all migrated fields cannot be found in the destination. I
 removes the temporary import view, legacy current view and legacy table. Its down migration
 can reconstruct the source snapshot from the preserved import history. The forward-only
 production ledger should use a new repair migration if restoration is needed.
+
+**2026-09-26 note (the 2026-09 clean re-run).** The imported rows (8.29M,
+`processor_version=legacy-geoip-import-v1`, task `cd603d91-…`) were truncated together with
+the rest of `ip_enrichment_results` (plan `2026-09-25-ip-enrichment-queue-contract.md`,
+Task 8). The paragraphs above describe the import as it was: 435's down migration now
+restores an **empty** `commoncrawl_ip_geoip`, since the preserved import history it
+reconstructs from is gone, and "newer results stay authoritative" and the fixed task UUID
+no longer apply. The only rollback of those rows is the ClickHouse B2 backup named in Task 8
+Step 2 (`rollback-backup.txt`).
 
 
 ## Workspace IP selection

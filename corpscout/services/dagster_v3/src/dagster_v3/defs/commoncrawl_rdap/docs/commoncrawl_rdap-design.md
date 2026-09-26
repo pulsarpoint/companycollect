@@ -150,8 +150,8 @@ to them.
 
 The registry of a miss is chosen from whoisit's already-loaded bootstrap data, with no HTTP
 request (`RdapClient.registry_for`); an address with no exact bootstrap match answers with a
-retryable `no_registry` marker instead of a request, since whoisit would otherwise pick a
-default endpoint at random.
+terminal `no_registry` marker (cached for `rdap_cache_days`) instead of a request, since
+whoisit would otherwise pick a default endpoint at random.
 
 **RIPE**, when `ripe_rest` is on, is asked over the RIPE Database REST search instead of RDAP
 (`ripe_rest.py`): the AUP caps the personal data sets (person and role objects) one source
@@ -177,7 +177,8 @@ it, so the target body — and its person objects — is never fetched. The miss
 REST search or whois `-r` and counted under the *target* registry (`reroutes_by_registry`).
 
 **Counters** are keyed by the registry that answered (`RdapLookupResponse.rir`):
-`requests_by_registry` and `person_entities_by_registry`. RDAP requests made because a
+`requests_by_registry` and `person_entities_by_registry` (person and role vCards, `kind`
+`individual` or `group`, nested included). RDAP requests made because a
 REST/whois answer was a catch-all or an NIR's own object are counted separately in
 `rdap_fallbacks_by_registry`, with persons under `"<rir>:fallback"` keys — a plain `ripe`/`apnic`
 key in `person_entities_by_registry` is a leak, not a fallback. `reroutes_by_registry` and
