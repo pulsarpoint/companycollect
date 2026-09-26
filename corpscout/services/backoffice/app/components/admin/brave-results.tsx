@@ -32,7 +32,7 @@ export function BraveResults({ results, basePath, showCompany = false }: {
             {row.country_code === "SE" ? <Link className="underline" to={braveResultsPath(seCompanyTabPath(row.company_id, "brave"), 1, row.result_id)}>{row.company_name}</Link> : row.company_name}
             <p className="text-xs text-muted-foreground">{row.country_code}:{row.company_id}</p>
           </TableCell>}
-          <TableCell className="max-w-md whitespace-normal align-top"><p className="line-clamp-3">{row.query}</p><p className="text-xs text-muted-foreground">{row.query_type}</p></TableCell>
+          <TableCell className="max-w-md whitespace-normal align-top"><p className="line-clamp-3">{row.query}</p><p className="text-xs text-muted-foreground">{row.search_name ? `${row.search_name} · version ${row.search_revision}` : row.query_type}</p></TableCell>
           <TableCell className="align-top"><Badge variant={row.status === "success" ? "secondary" : "destructive"}>{row.status === "success" ? "Successful" : "Failed"}</Badge></TableCell>
           <TableCell className="max-w-lg whitespace-normal align-top"><p className="line-clamp-3">{row.status === "error" ? row.error_type || "Search failed without a recorded reason." : row.answer_preview}</p>{row.status === "error" && row.error_stage && <p className="text-xs text-muted-foreground">Stage: {row.error_stage}</p>}</TableCell>
           <TableCell className="align-top"><Button variant="outline" size="sm" nativeButton={false}
@@ -50,7 +50,7 @@ export function BraveResults({ results, basePath, showCompany = false }: {
     {selected && <Card id="brave-result" className="scroll-mt-6">
       <CardHeader>
         <CardTitle>{selected.company_name}</CardTitle>
-        <CardDescription>{selected.country_code}:{selected.company_id} · {selected.completed_at.slice(0, 19)} UTC · {selected.query_type}</CardDescription>
+        <CardDescription>{selected.country_code}:{selected.company_id} · {selected.completed_at.slice(0, 19)} UTC · {selected.search_name ? `${selected.search_name} · version ${selected.search_revision}` : selected.query_type}</CardDescription>
       </CardHeader>
       <CardContent className="flex min-w-0 flex-col gap-5">
         <div className="flex flex-wrap items-center gap-3">

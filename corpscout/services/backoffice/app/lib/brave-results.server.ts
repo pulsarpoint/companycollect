@@ -10,6 +10,9 @@ export interface BraveResultSummary {
   company_id: string;
   company_name: string;
   query_type: string;
+  search_id: string;
+  search_name: string;
+  search_revision: number;
   query: string;
   status: "success" | "error";
   completed_at: string;
@@ -32,7 +35,7 @@ export interface BraveResultDetail extends BraveResultSummary {
 type BraveResultScope = { taskId: string } | { countryCode: string; companyId: string };
 
 const SUMMARY_COLUMNS = `toString(result_id) AS result_id, toString(task_id) AS task_id,
-  country_code, company_id, company_name, query_type, query, status,
+  country_code, company_id, company_name, query_type, search_id, search_name, search_revision, query, status,
   toString(completed_at) AS completed_at, error_type, error_stage,
   leftUTF8(answer_text, 240) AS answer_preview`;
 

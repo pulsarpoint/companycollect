@@ -4,6 +4,7 @@ import { PlayIcon } from "lucide-react";
 import { QUEUE_NUMBER_LIMITS, QUEUE_TEMPLATES, type QueueFilters } from "~/lib/queues";
 import { CrawlSettingsFields } from "~/components/admin/crawl-settings-fields";
 import { LlmProfileField } from "~/components/admin/llm-profile-field";
+import { BraveSearchField } from "~/components/admin/brave-search-field";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Button } from "~/components/ui/button";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "~/components/ui/field";
@@ -86,9 +87,10 @@ export function QueueProcessSheet({filters, total, asset, blockedReason, llmProf
             {manual ? <FieldGroup><Field><FieldLabel htmlFor="queue-json">Processing parameters (JSON)</FieldLabel>
               <Textarea id="queue-json" value={json} onChange={event => setJson(event.target.value)} className="min-h-80 font-mono" spellCheck={false} required />
               <FieldDescription>{usesLlm ? <>Use <code>llm_profile_id</code> for the selected saved LLM. Its configuration is resolved and checked before processing. API keys must not be included in this JSON.</> : "Only results-asset parameters. The task ID is fixed by your selection. Credentials belong in the service environment."}</FieldDescription>
+              {filters.type === "brave" && <FieldDescription>Keep <code>brave_search_id</code> and <code>brave_search_revision</code> from the selected search. Questions are managed in Brave searches settings.</FieldDescription>}
             </Field></FieldGroup> : <>
               {defaults ? <FieldGroup className="grid grid-cols-1 sm:grid-cols-2">
-                {Object.entries(defaults).map(([key, value]) => key === "llm_profile_id" ? <LlmProfileField key={key} idPrefix="queue-brave" label="Browser assistant LLM" initialProfileId={llmProfileId}
+                {Object.entries(defaults).map(([key, value]) => key === "brave_search_revision" ? null : key === "brave_search_id" ? <BraveSearchField key={key} taskId={filters.task} /> : key === "llm_profile_id" ? <LlmProfileField key={key} idPrefix="queue-brave" label="Browser assistant LLM" initialProfileId={llmProfileId}
                   description="The selected LLM controls Brave's browser and CAPTCHA assistant. Before processing starts, it must pass an image and JSON response check. If the check fails, the task stays in the queue." /> : <Field key={key} className={key === "query_template" ? "sm:col-span-2" : undefined}>
                   <FieldLabel htmlFor={`queue-${key}`}>{LABELS[key] ?? key}</FieldLabel>
                   {typeof value === "boolean" ? <NativeSelect id={`queue-${key}`} name={key} defaultValue={String(value)}>

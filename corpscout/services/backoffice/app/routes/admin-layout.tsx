@@ -79,7 +79,8 @@ function AdminBreadcrumbs() {
   const onGeneralRolesPage = pathname === "/admin/general/roles";
   const onDomainPromptsPage = pathname === "/admin/settings/domain-prompts";
   const onPeoplePromptsPage = pathname === "/admin/settings/people-prompts";
-  const onLlmSettingsPage = pathname === "/admin/settings/llms" || onPeoplePromptsPage || onDomainPromptsPage;
+  const onBraveSearchesPage = pathname === "/admin/settings/brave-searches";
+  const onLlmSettingsPage = pathname === "/admin/settings/llms" || onPeoplePromptsPage || onDomainPromptsPage || onBraveSearchesPage;
   const onEsefPage = pathname === "/admin/esef";
   const onCompanyInfoPage = pathname.startsWith("/admin/se/company/");
   const onCompaniesPage =
@@ -328,7 +329,7 @@ function AdminBreadcrumbs() {
           </BreadcrumbItem>
           <BreadcrumbSeparator />
           <BreadcrumbItem>
-            <BreadcrumbPage>{onDomainPromptsPage ? "Domain prompts" : onPeoplePromptsPage ? "People prompts" : "LLMs"}</BreadcrumbPage>
+            <BreadcrumbPage>{onBraveSearchesPage ? "Brave searches" : onDomainPromptsPage ? "Domain prompts" : onPeoplePromptsPage ? "People prompts" : "LLMs"}</BreadcrumbPage>
           </BreadcrumbItem>
         </BreadcrumbList>
       </Breadcrumb>

@@ -10,7 +10,7 @@ const resultId = "22222222-2222-4222-8222-222222222222";
 const basePath = "/admin/se/company/5565245619/brave";
 const answer: BraveResultDetail = {
   result_id: resultId, task_id: taskId, country_code: "SE", company_id: "5565245619", company_name: "Example AB",
-  query_type: "official_website", query: "Find the official website of Example AB.", status: "success",
+  query_type: "official_website", search_id: "", search_name: "", search_revision: 0, query: "Find the official website of Example AB.", status: "success",
   completed_at: "2026-09-25 16:54:13.512344", error_type: "", error_stage: "", answer_preview: "Preview only",
   answer_text: "The **official website** is [example.com](https://example.com).\n\nFull answer beyond the preview.",
   source_url: "https://search.brave.com/", route: "direct", elapsed_ms: 1500, attempt: 1, source_run_id: "run-1", execution_id: "execution-1",

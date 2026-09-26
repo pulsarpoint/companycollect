@@ -28,9 +28,9 @@ const profiles = [
 ];
 const task = "85fa92ee-12ad-4c01-ad1c-508f5c83b925";
 
-function render(type: QueueType = "brave", state = "idle", llmProfileId?: string) {
+function render(type: QueueType = "brave", state = "idle", llmProfileId?: string, frozen: object | null = null) {
   mocks.fetcher.mockReturnValueOnce({state, data: undefined, submit: mocks.submit})
-    .mockReturnValue({state: "idle", data: {profiles, error: null}, load: vi.fn()});
+    .mockReturnValue({state: "idle", data: {profiles, searches: [{searchId: task, name: "Official website", revision: 1, queryTemplate: "Find {company_name}"}], frozen, error: null}, load: vi.fn()});
   return renderToStaticMarkup(<MemoryRouter><QueueProcessSheet
     filters={parseQueueFilters(type, new URLSearchParams({task}))} total={4} asset="results"
     llmProfileId={llmProfileId} onClose={vi.fn()} /></MemoryRouter>);
@@ -40,9 +40,20 @@ beforeEach(() => { vi.resetAllMocks(); mocks.onSubmit = undefined; });
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("Brave queue LLM selection", () => {
+  it("shows the original question as read-only when resuming", () => {
+    const html = render("brave", "idle", "123", {search_name: "Original search", search_revision: 3, query_template: "Find jobs at {company_name}", query_type: "jobs"});
+    expect(html).toContain("Original search · version 3");
+    expect(html).toContain("Find jobs at Example AB");
+    expect(html).toMatch(/<input[^>]*name="brave_search_id"[^>]*value="saved"/);
+    expect(html).toMatch(/<input[^>]*name="brave_search_revision"[^>]*value="3"/);
+    expect(html).not.toMatch(/<select[^>]*name="brave_search_id"/);
+  });
   it("requires an initially empty saved-model choice before the other processing options", () => {
     const html = render();
     expect(html).toContain("Browser assistant LLM");
+    expect(html).toContain("Manage Brave searches");
+    expect(html).toMatch(/<select[^>]*name="brave_search_id"[^>]*required=""/);
+    expect(html).toContain("Official website · version 1");
     expect(html).toContain("browser and CAPTCHA assistant");
     expect(html).toContain("image and JSON response check");
     expect(html).toMatch(/<select[^>]*name="llm_profile_id"[^>]*required=""/);

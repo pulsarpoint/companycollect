@@ -28,6 +28,7 @@ WHERE task_id = %(task)s
  AND (%(force)s = 1 OR (country_code, company_id) NOT IN (
    SELECT country_code, company_id FROM {RESULT_TABLE} FINAL
    WHERE query_type = %(query_type)s
+     AND (%(search_id)s = '' OR (search_id = %(search_id)s AND search_revision = %(search_revision)s))
      AND completed_at >= toDateTime64(%(cutoff)s,6,'UTC')
      AND completed_at <= toDateTime64(%(started)s,6,'UTC')
      AND (country_code,company_id) IN (
@@ -44,6 +45,8 @@ def parameters(task: dict) -> dict:
         "execution": execution["execution_id"],
         "force": int(execution["profile"]["force_rescan"]),
         "query_type": execution["profile"]["query_type"],
+        "search_id": execution["profile"].get("search_id", ""),
+        "search_revision": execution["profile"].get("search_revision", 0),
         "cutoff": datetime.fromisoformat(execution["freshness_cutoff"]).strftime(
             "%Y-%m-%d %H:%M:%S.%f"
         ),
@@ -88,6 +91,18 @@ def start_execution(
         )
         for name in fields
     }
+    search_fields = ("search_id", "search_name", "search_revision")
+    if any(getattr(config, name) is not None for name in search_fields) or (
+        saved and "search_id" in saved["profile"]
+    ):
+        for name in search_fields:
+            profile[name] = (
+                saved["profile"].get(name)
+                if saved and name not in supplied
+                else getattr(config, name)
+            )
+        if any(profile[name] is None for name in search_fields):
+            raise ValueError("Saved Brave searches require an ID, name and revision")
     llm = config.llm.model_dump(exclude_none=True) if config.llm is not None else None
     if saved:
         original = saved["profile"]["llm"]
@@ -226,6 +241,9 @@ def run_draft(
                         query_type=profile["query_type"],
                         source_run_id=context.run.run_id,
                         processor_version=PROCESSOR,
+                        search_id=profile.get("search_id", ""),
+                        search_name=profile.get("search_name", ""),
+                        search_revision=profile.get("search_revision", 0),
                     )
                     writer.save(record)
                     del pending[result.company.request_id]

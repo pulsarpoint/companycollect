@@ -59,6 +59,7 @@ def database(server):
             for name in (
                 "000428_corpscout_brave_search_outcomes.up.sql",
                 "000453_corpscout_brave_draft_queue.up.sql",
+                "000455_corpscout_brave_search_versions.up.sql",
             )
         ),
     ):
@@ -278,6 +279,38 @@ def test_writer_batches_acknowledges_and_flushes_without_new_results(database):
         ) == [(4,)]
 
 
+def test_freshness_is_specific_to_search_and_revision(database, store):
+    client, resource = database
+    processing, _ = store
+    client.execute("INSERT INTO corpscout.brave_draft_source VALUES ('1','One'),('2','Two'),('3','Three')")
+    search_id = str(uuid4())
+    matching, older_version, another_search = [record(str(i), age=1) for i in range(1, 4)]
+    for row, saved_id, revision in ((matching, search_id, 2), (older_version, search_id, 1), (another_search, str(uuid4()), 2)):
+        row.update(search_id=saved_id, search_revision=revision, search_name="Website")
+    insert_results(client, [matching, older_version, another_search])
+    draft = add(resource, processing)
+    task = start(resource, processing, draft["task_id"], search_id=search_id, search_name="Website", search_revision=2)
+    assert [row["company_id"] for row in remaining_inputs(client, task, limit=10)] == ["2", "3"]
+    assert start(resource, processing, draft["task_id"])["config"] == task["config"]
+    with pytest.raises(ValueError, match="frozen"):
+        start(resource, processing, draft["task_id"], search_revision=3)
+
+
+def test_original_default_answers_match_seeded_search(database, store):
+    client, resource = database
+    processing, _ = store
+    client.execute("INSERT INTO corpscout.brave_draft_source VALUES ('1','One'),('2','Two')")
+    original = record("1", age=1)
+    original.update(company_name="One", query="Find the official website of One.")
+    custom = record("2", age=1)
+    columns = [name for name in original if not name.startswith("search_")]
+    client.execute(f"INSERT INTO corpscout.company_brave_search_results ({','.join(columns)}) VALUES",
+                   [tuple(row[name] for name in columns) for row in (original, custom)])
+    task = start(resource, processing, add(resource, processing)["task_id"],
+                 search_id="54d90187-85d5-45dc-9603-cd7c4a7d31d1", search_revision=1, search_name="Official website")
+    assert [row["company_id"] for row in remaining_inputs(client, task, limit=10)] == ["2"]
+
+
 def test_draft_end_to_end_preserves_errors_and_resumes_without_browser_calls(
     database, store, brave_api
 ):
@@ -295,10 +328,13 @@ def test_draft_end_to_end_preserves_errors_and_resumes_without_browser_calls(
     )
     with dg.DagsterInstance.ephemeral() as instance:
         result = materialize(
-            resource, dsn, fixture, instance, task_id=draft["task_id"], llm=LLM
+            resource, dsn, fixture, instance, task_id=draft["task_id"], llm=LLM,
+            search_id="54d90187-85d5-45dc-9603-cd7c4a7d31d1",
+            search_name="Official website", search_revision=1,
         )
         assert result.success
         assert len(fixture.queries) == 2
+        assert client.execute("SELECT DISTINCT search_name,search_revision FROM corpscout.company_brave_search_results") == [("Official website", 1)]
         assert processing.task(draft["task_id"])["status"] == "completed"
         assert processing.task(draft["task_id"])["terminal_failed_count"] == 1
         assert client.execute(f"SELECT count() FROM {INPUT_RELATION}") == [(0,)]

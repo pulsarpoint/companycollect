@@ -79,6 +79,9 @@ def record(
         "input_id": company,
         "attempt": 1,
         "processor_version": "brave-v2",
+        "search_id": "",
+        "search_revision": 0,
+        "search_name": "",
     }
 
 

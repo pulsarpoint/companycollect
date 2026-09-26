@@ -32,7 +32,7 @@ def migrate_results(
             if client.execute(f"EXISTS TABLE {relation}") != [(1,)]:
                 continue
             client.execute(
-                f"INSERT INTO {RESULT_TABLE} ({','.join(RESULT_COLUMNS)}) "
+                f"INSERT INTO {RESULT_TABLE} ({','.join(column for column in RESULT_COLUMNS if not column.startswith('search_'))}) "
                 "SELECT country_code,company_id,company_name,query_type,query,toUUID(result_id),"
                 "status,answer_text,completed_at,error_type,'',route,source_url,0,0,'[]',"
                 "toUUID(task_id),toUUID(task_id),source_run_id,input_id,attempt,processor_version "
@@ -101,6 +101,9 @@ def migrate_results(
                 "input_id": row["input_id"],
                 "attempt": row["attempt"],
                 "processor_version": row["processor"],
+                "search_id": previous.get("search_id", ""),
+                "search_revision": previous.get("search_revision", 0),
+                "search_name": previous.get("search_name", ""),
             }
             if not record["country_code"] or not record["company_id"]:
                 raise ValueError(

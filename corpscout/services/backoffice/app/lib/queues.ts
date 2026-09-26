@@ -19,9 +19,9 @@ export const ACTIVE_QUEUE_RUNS = ["QUEUED", "NOT_STARTED", "MANAGED", "STARTING"
 export const QUEUE_TEMPLATES: Record<Exclude<QueueType, "crawler">, Record<string, unknown>> = {
   webtech: { force_rescan: false, recent_days: 30 },
   brave: {
+    brave_search_id: "", brave_search_revision: 0,
     llm_profile_id: "",
-    force_rescan: false, recent_days: 30, query_type: "official_website",
-    query_template: "Find the official website of {company_name}.",
+    force_rescan: false, recent_days: 30,
 
   },
   "ip-enrichment": {

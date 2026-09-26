@@ -1,4 +1,5 @@
 import { loadBraveSourceSummaries } from "~/lib/brave-queue-history.server";
+import { BraveSearchError, resolveBraveSearch } from "~/lib/brave-searches.server";
 import { loadQueueSourceSummaries, type QueueHistoryReference, type QueueSourceSummary } from "~/lib/queue-history.server";
 import { createHash } from "node:crypto";
 import { CrawlLlmError, prepareCrawlSettings, verifySelectedLlm } from "~/lib/crawl-llm.server";
@@ -132,7 +133,7 @@ export async function loadQueueHistory(filters: QueueFilters) {
 const EXTRA_FIELDS = {
   // Envelope size stays a Dagster default: it is transport only, not a processing choice.
   webtech: ["execution_id", "force_rescan", "recent_days"],
-  brave: ["execution_id", "llm_profile_id", "force_rescan", "recent_days", "query_type", "query_template", "requests_per_route", "input_batch_size", "answer_timeout_seconds", "progress_log_every", "progress_log_interval_seconds"],
+  brave: ["execution_id", "llm_profile_id", "brave_search_id", "brave_search_revision", "force_rescan", "recent_days", "requests_per_route", "input_batch_size", "answer_timeout_seconds", "progress_log_every", "progress_log_interval_seconds"],
   "ip-enrichment": ["execution_id", "batch_size", "max_requests", "request_delay_seconds", "parent_depth", "rdap_cache_days", "force_rdap", "rate_limit_retry_seconds", "transient_retry_seconds"],
   crawler: ["execution_id", "full_crawl_all", "max_in_flight", "refresh_interval_days", "force_refresh", "challenge_agent_model", "challenge_agent_max_runs", "llm_profile_id", "max_pages", "max_model_calls", "page_selection", "instructions", "wait_timeout_seconds", "poll_interval_seconds"],
 } as const;
@@ -157,6 +158,10 @@ export function parseQueueConfig(filters: QueueFilters, serialized: string): Rec
   const booleanFields = ["full_crawl_all", "force_rescan", "force_rdap", "force_refresh"];
   for (const [key, entry] of Object.entries(config)) {
     if (entry === null && ["execution_id", "instructions", "max_requests"].includes(key)) continue;
+    if (key === "brave_search_revision") {
+      if (typeof entry !== "number" || !Number.isSafeInteger(entry) || entry < 0) throw new QueueRequestError("Invalid Brave search version.");
+      continue;
+    }
     if (key in numeric) {
       const [min, max, fractional] = numeric[key as keyof typeof numeric] as [number, number, boolean?];
       if (typeof entry !== "number" || !Number.isFinite(entry) || (!fractional && !Number.isSafeInteger(entry)) || entry < min || entry > max) throw new QueueRequestError(`${key} must be ${fractional ? "a number" : "an integer"} between ${min} and ${max}.`);
@@ -166,6 +171,10 @@ export function parseQueueConfig(filters: QueueFilters, serialized: string): Rec
   }
   if (filters.type === "brave" && (typeof config.llm_profile_id !== "string" || !config.llm_profile_id.trim() || config.llm_profile_id.length > 200)) {
     throw new QueueRequestError("Choose an LLM from LLM settings before starting Brave processing.");
+  }
+  if (filters.type === "brave" && (typeof config.brave_search_id !== "string" || (config.brave_search_id !== "saved" && !QUEUE_UUID.test(config.brave_search_id))
+      || typeof config.brave_search_revision !== "number" || !Number.isSafeInteger(config.brave_search_revision) || config.brave_search_revision < (config.brave_search_id === "saved" ? 0 : 1))) {
+    throw new QueueRequestError("Choose a saved Brave search before starting processing.");
   }
   if (filters.type === "crawler") {
     try { Object.assign(config, parseCrawlSettings(objectSettings(config), filters.crawlType)); }
@@ -208,12 +217,13 @@ export async function startQueueProcessing(filters: QueueFilters, serialized: st
       try {
         if (filters.type === "crawler") runtimeConfig = await prepareCrawlSettings(config);
         else {
-          const {llm_profile_id: profileId, ...settings} = config;
-          runtimeConfig = {...settings, llm: await verifySelectedLlm(profileId, "brave")};
+          const {llm_profile_id: profileId, brave_search_id: searchId, brave_search_revision: revision, ...settings} = config;
+          const search = await resolveBraveSearch(filters.task, searchId as string, revision as number);
+          runtimeConfig = {...settings, ...search, llm: await verifySelectedLlm(profileId, "brave")};
         }
       }
       catch (error) {
-        if (error instanceof CrawlLlmError) throw new QueueRequestError(error.message);
+        if (error instanceof CrawlLlmError || error instanceof BraveSearchError) throw new QueueRequestError(error.message);
         throw error;
       }
     }

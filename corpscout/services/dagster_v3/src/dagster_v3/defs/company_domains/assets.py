@@ -61,6 +61,9 @@ class BraveSearchConfig(dg.Config):
     query_template: str = Field(
         default="Find the official website of {company_name}.", min_length=1
     )
+    search_id: str | None = None
+    search_name: str | None = Field(default=None, min_length=1, max_length=120)
+    search_revision: int | None = Field(default=None, ge=1)
     force: bool = Field(
         default=False, description="Search again regardless of previous outcomes."
     )
@@ -80,7 +83,7 @@ class BraveSearchConfig(dg.Config):
     def named_relation(cls, value: str | None) -> str | None:
         return validate_relation(value) if value is not None else None
 
-    @field_validator("task_id", "execution_id")
+    @field_validator("task_id", "execution_id", "search_id")
     @classmethod
     def stable_task_id(cls, value: str | None) -> str | None:
         return str(UUID(value)) if value is not None else None
