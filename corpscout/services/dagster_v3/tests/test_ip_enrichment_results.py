@@ -3192,7 +3192,9 @@ def test_a_dead_proxy_is_paused_and_its_miss_requeued(environment, monkeypatch):
 def test_proxy_errors_are_scrubbed_of_the_proxy_url(environment, monkeypatch):
     def failing(self, ip):
         raise RdapClientError(
-            f"404 via {PROXY_A} (proxy-a.example)", code="not_found", retryable=False
+            f"404 via {PROXY_A} (PROXY-A.Example, login USER)",
+            code="not_found",
+            retryable=False,
         ) from ValueError(PROXY_A)
 
     monkeypatch.setattr(RdapClient, "lookup_ip", failing)
@@ -3201,7 +3203,10 @@ def test_proxy_errors_are_scrubbed_of_the_proxy_url(environment, monkeypatch):
     assert "s3cret" not in repr(proxy) and "proxy-a" not in repr(proxy)
     with pytest.raises(RdapClientError) as raised:
         enricher._send(proxy, "8.8.8.8")
-    assert "s3cret" not in str(raised.value) and "proxy-a" not in str(raised.value)
+    message = str(raised.value).lower()
+    assert (
+        "s3cret" not in message and "proxy-a" not in message and "user" not in message
+    )
     assert "arin:proxy-1" in str(raised.value) and raised.value.__cause__ is None
 
 
@@ -3210,26 +3215,43 @@ def test_proxies_sharing_an_exit_host_share_one_afrinic_budget(
 ):
     env = environment
     monkeypatch.setattr(RdapClient, "registry_for", lambda self, ip: "afrinic")
-    same_host = "http://other:pw@proxy-a.example:3130"
+    same_host = "http://other:pw@PROXY-A.example:3130"  # the host of PROXY_A, recased
     enricher = resolver(
         env,
         clock=lambda: 1000.0,
         use_proxies=["afrinic"],
         proxies={"afrinic": [PROXY_A, same_host]},
-        registry_daily_budgets={"afrinic": 1},
+        registry_daily_budgets={"afrinic": 30},
     )
-    ips = ("41.1.1.1", "41.2.2.2", "41.3.3.3", "41.4.4.4")
+    assert [e.egress for e in enricher._endpoints_of("afrinic")] == [
+        "afrinic:direct",
+        "afrinic:egress-1",
+        "afrinic:egress-1",
+    ]
+    ips = [f"41.1.{n}.1" for n in range(119)]
     resolved = enricher.resolve_page(page(env, *ips))
-    # Three endpoints but two egress hosts (direct + proxy-a.example): cap 2 x 1.
-    assert len(resolved) == 2 and enricher.deferred == {"afrinic": 2}
-    assert sum(enricher.requests_by_endpoint.values()) == 2
+    by_endpoint = enricher.requests_by_endpoint
+    shared = by_endpoint.get("afrinic:proxy-1", 0) + by_endpoint.get(
+        "afrinic:proxy-2", 0
+    )
+    # Two egresses, not three: the shared host and direct each stop at the budget.
+    assert shared <= 30 and by_endpoint["afrinic:direct"] <= 30
+    assert len(enricher._sent["afrinic:egress-1"]) == shared == 30
+    assert len(enricher._sent["afrinic:direct"]) == by_endpoint["afrinic:direct"] == 30
+    assert len(resolved) == 60 and enricher.deferred == {"afrinic": 59}
+    assert enricher.seconds_until_budget_frees() == pytest.approx(86_400)
 
 
-def test_a_registry_that_keeps_refusing_is_stored_as_retryable_error(
+def test_a_registry_that_keeps_refusing_is_given_up_only_after_an_empty_pass_wait(
     environment, monkeypatch
 ):
     env = environment
     clock = {"now": 0.0}
+    slept = []
+
+    def fake_sleep(seconds):
+        slept.append(seconds)
+        clock["now"] += seconds
 
     def limited(self, ip):
         env.calls.append(ip)
@@ -3238,25 +3260,44 @@ def test_a_registry_that_keeps_refusing_is_stored_as_retryable_error(
         )
 
     monkeypatch.setattr(RdapClient, "lookup_ip", limited)
-    enricher = resolver(env, clock=lambda: clock["now"])
-    for _ in range(enrichment.MAX_CONSECUTIVE_PAUSES - 1):
+    enricher = resolver(env, clock=lambda: clock["now"], sleep=fake_sleep)
+    for n in range(enrichment.MAX_CONSECUTIVE_PAUSES):
         enricher.reset_pass()
-        assert enricher.resolve_page(page(env, "8.8.8.8")) == {}
+        assert enricher.resolve_page(page(env, f"8.8.{n}.8")) == {}
         clock["now"] += enricher.seconds_until_budget_frees()
+    assert enricher._direct("arin").limits == enrichment.MAX_CONSECUTIVE_PAUSES
+    # A mixed pass: RIPE progresses while ARIN is paused out; ARIN stays deferred and
+    # nothing is written for it.
     enricher.reset_pass()
-    sixth = enricher.resolve_page(page(env, "8.8.8.8", "1.1.1.1"))
-    # The sixth consecutive pause: both addresses are stored, not deferred, and the
-    # still-paused registry sends nothing more.
-    assert {ip: outcome_of(r) for ip, r in sixth.items()} == {
+    mixed = enricher.resolve_page(page(env, "8.8.8.8", "5.1.1.1"))
+    assert set(mixed) == {"5.1.1.1"} and enricher.deferred == {"arin": 1}
+    # An empty pass: only ARIN remains, deferred; the loop waits for it ...
+    enricher.reset_pass()
+    assert enricher.resolve_page(page(env, "8.8.8.8")) == {}
+    assert enricher.wait_for_registry_budget() > 0 and slept
+    # ... and the next pass writes the error instead of deferring again.
+    after = enricher.resolve_page(page(env, "8.8.8.8", "1.1.1.1"))
+    assert {ip: outcome_of(r) for ip, r in after.items()} == {
         "8.8.8.8": ("retryable_error", "rate_limited"),
         "1.1.1.1": ("retryable_error", "rate_limited"),
     }
-    assert len(env.calls) == 6 and enricher.deferred == {}
+    assert enricher.deferred == {}
     assert sorted(
         env.client.execute(
             "SELECT ip, lookup_status FROM corpscout.rdap_ip_lookup_results FINAL"
         )
-    ) == [("1.1.1.1", "retryable_error"), ("8.8.8.8", "retryable_error")]
+    ) == [
+        ("1.1.1.1", "retryable_error"),
+        ("5.1.1.1", "found"),
+        ("8.8.8.8", "retryable_error"),
+    ]
+    # A success resets the give-up.
+    monkeypatch.setattr(RdapClient, "lookup_ip", lambda self, ip: response(ip))
+    clock["now"] += enricher.seconds_until_budget_frees() + 3600
+    enricher.reset_pass()
+    found = enricher.resolve_page(page(env, "9.9.9.9"))
+    assert found["9.9.9.9"]["rdap_lookup_status"] == "found"
+    assert enricher._empty_waits == {}
 
 
 def test_a_failing_lane_stops_the_others_early_and_notes_are_flushed(

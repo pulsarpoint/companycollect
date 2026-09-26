@@ -51,6 +51,7 @@ not_global without any request and is only counted.
 """
 
 import json
+import re
 import threading
 from collections import OrderedDict, deque
 from collections.abc import Callable, Mapping, Sequence
@@ -159,9 +160,12 @@ NIR_REGISTRIES = frozenset({"jpnic", "idnic", "krnic", "twnic"})
 # On a proxy endpoint these mean the proxy (or its route) is down, not the registry.
 PROXY_DOWN_CODES = frozenset({"transport_error", "timeout"})
 PROXY_DOWN_STATUSES = frozenset({407, 502, 503, 504})
-# After this many consecutive pauses on every endpoint of a registry, its misses are
-# written as retryable_error instead of deferred, so the run can finish.
+# A registry whose every endpoint has paused this many times in a row, and for which the
+# run already waited GIVE_UP_AFTER_EMPTY_WAITS times after a pass that processed nothing,
+# has its deferred misses written as retryable_error in the next pass, so the run can
+# finish; never in a pass where anything else still progresses.
 MAX_CONSECUTIVE_PAUSES = 6
+GIVE_UP_AFTER_EMPTY_WAITS = 1
 
 
 def _registry_name(field: str, registry: str) -> str:
@@ -544,6 +548,7 @@ class Endpoint:
     proxy: str | None = field(default=None, repr=False)  # a secret
     lock: threading.Lock = field(default_factory=threading.Lock)
     paused_until: float = float("-inf")
+    egress: str = ""  # budget window key: "<registry>:direct" or "<registry>:egress-N"
     limits: int = 0  # consecutive pauses, reset by a success
     last_code: str = ""  # code of the latest pause
 
@@ -623,9 +628,17 @@ def _scrub(error: RdapClientError, endpoint: "Endpoint") -> None:
     secret = endpoint.proxy or ""
     parts = urlsplit(secret)
     message = str(error)
-    for text in (secret, parts.netloc, parts.hostname or "", parts.password or ""):
-        if text:
-            message = message.replace(text, f"<{endpoint.name}>")
+    texts = {
+        secret,
+        parts.netloc,
+        parts.hostname or "",
+        parts.username or "",
+        parts.password or "",
+    }
+    for text in sorted((t for t in texts if t), key=len, reverse=True):
+        message = re.sub(
+            re.escape(text), f"<{endpoint.name}>", message, flags=re.IGNORECASE
+        )
     error.args = (message,)
     # The chained library errors repeat the proxy details: drop them.
     error.__cause__ = None
@@ -729,11 +742,12 @@ class RdapEnricher:
         self.recent: OrderedDict[str, NormalizedRdapNetwork] = OrderedDict()
         # Fresh network rows read from ClickHouse, keyed by network_key (calling thread).
         self.cached: OrderedDict[str, RdapNetwork] = OrderedDict()
-        # Monotonic send times per budgeted endpoint inside the rolling window, oldest first,
-        # and per budgeted registry (the registry-wide cap of a proxied registry).
+        # Monotonic send times per budgeted egress (Endpoint.egress: the direct address, or
+        # one proxy hostname shared by every proxy URL on it), oldest first.
         self._sent: dict[str, deque[float]] = {}
-        self._sent_registry: dict[str, deque[float]] = {}
-        self._egress_hosts: dict[str, int] = {}
+        # Consecutive waits after a pass that processed nothing, per deferred registry
+        # (reset by the registry's next success); see GIVE_UP_AFTER_EMPTY_WAITS.
+        self._empty_waits: dict[str, int] = {}
         # Never evict keys a page just loaded: a page needs at most batch_size keys.
         self._cached_cap = max(4096, 2 * config.batch_size)
 
@@ -967,9 +981,21 @@ class RdapEnricher:
                 direct.reroute_hosts = frozenset(RIR_BY_HOST) - own
                 now = self._clock()
                 endpoints = [
-                    Endpoint(f"{registry}:direct", registry, direct, delay, now)
+                    Endpoint(
+                        f"{registry}:direct",
+                        registry,
+                        direct,
+                        delay,
+                        now,
+                        egress=f"{registry}:direct",
+                    )
                 ]
+                # Proxy URLs on one hostname share one egress (and one budget window);
+                # the egress key numbers hostnames, it never names them.
+                egress: dict[str, str] = {}
                 for number, url in enumerate(self._proxies.get(registry, ()), 1):
+                    host = (urlsplit(url).hostname or "").lower()
+                    egress.setdefault(host, f"{registry}:egress-{len(egress) + 1}")
                     endpoints.append(
                         Endpoint(
                             f"{registry}:proxy-{number}",
@@ -977,15 +1003,11 @@ class RdapEnricher:
                             self.rdap.clone(proxy=url, only_hosts=own),
                             delay,
                             now,
+                            egress=egress[host],
                             proxy=url,
                         )
                     )
                 self._endpoints[registry] = endpoints
-                # Distinct egress hosts (direct + proxy hostnames): the registry-wide cap
-                # when proxies share an exit.
-                self._egress_hosts[registry] = 1 + len(
-                    {urlsplit(url).hostname for url in self._proxies.get(registry, ())}
-                )
             return endpoints
 
     def _direct(self, registry: str) -> Endpoint:
@@ -994,7 +1016,7 @@ class RdapEnricher:
     def seed_registry_usage(self, rows: list[tuple[str, float]]) -> None:
         """Requests any run made in the last day (registry, seconds ago), oldest first.
 
-        The rows name the registry, not the source address, so every endpoint of a
+        The rows name the registry, not the source address, so every egress of a
         budgeted registry is charged with all of them (never under-counted per address).
         """
         now = self._clock()
@@ -1003,13 +1025,8 @@ class RdapEnricher:
                 registry in self.config.registry_daily_budgets
                 and seconds_ago < BUDGET_WINDOW_SECONDS
             ):
-                for endpoint in self._endpoints_of(registry):
-                    self._sent.setdefault(endpoint.name, deque()).append(
-                        now - seconds_ago
-                    )
-                self._sent_registry.setdefault(registry, deque()).append(
-                    now - seconds_ago
-                )
+                for egress in {e.egress for e in self._endpoints_of(registry)}:
+                    self._sent.setdefault(egress, deque()).append(now - seconds_ago)
 
     def _trim(self, times: deque[float]) -> deque[float]:
         horizon = self._clock() - BUDGET_WINDOW_SECONDS
@@ -1018,26 +1035,12 @@ class RdapEnricher:
         return times
 
     def _window(self, endpoint: Endpoint) -> deque[float]:
-        return self._trim(self._sent.setdefault(endpoint.name, deque()))
-
-    def _registry_window(self, registry: str) -> deque[float]:
-        return self._trim(self._sent_registry.setdefault(registry, deque()))
-
-    def _registry_cap(self, registry: str) -> int | None:
-        """budget x distinct egress hosts for a proxied budgeted registry, else None."""
-        budget = self.config.registry_daily_budgets.get(registry)
-        if budget is None or not self._proxies.get(registry):
-            return None
-        return budget * self._egress_hosts.get(registry, 1)
+        """The rolling send times of the endpoint's egress (shared by proxies on one host)."""
+        return self._trim(self._sent.setdefault(endpoint.egress, deque()))
 
     def _over_budget(self, endpoint: Endpoint) -> bool:
         budget = self.config.registry_daily_budgets.get(endpoint.registry)
-        if budget is None:
-            return False
-        if len(self._window(endpoint)) >= budget:
-            return True
-        cap = self._registry_cap(endpoint.registry)
-        return cap is not None and len(self._registry_window(endpoint.registry)) >= cap
+        return budget is not None and len(self._window(endpoint)) >= budget
 
     def _charge(self, endpoint: Endpoint, stamp: float, sign: int) -> None:
         """Count one request (sign +1), or take back one that was never sent (-1)."""
@@ -1046,14 +1049,11 @@ class RdapEnricher:
         if not self.requests_by_endpoint[endpoint.name]:
             del self.requests_by_endpoint[endpoint.name]
         if endpoint.registry in self.config.registry_daily_budgets:
-            for times in (
-                self._window(endpoint),
-                self._registry_window(endpoint.registry),
-            ):
-                if sign > 0:
-                    times.append(stamp)
-                elif stamp in times:
-                    times.remove(stamp)
+            times = self._window(endpoint)
+            if sign > 0:
+                times.append(stamp)
+            elif stamp in times:
+                times.remove(stamp)
 
     def _endpoint_blocked(self, endpoint: Endpoint) -> bool:
         """Paused after a rate limit, or at its daily budget: it sends nothing."""
@@ -1096,15 +1096,24 @@ class RdapEnricher:
             seconds,
         )
 
-    def _gave_up(self, registry: str) -> str | None:
-        """The latest pause code when every endpoint of the registry has paused
-        MAX_CONSECUTIVE_PAUSES times in a row, else None."""
+    def _all_paused_out(self, registry: str) -> bool:
+        """Every endpoint of the registry has paused MAX_CONSECUTIVE_PAUSES times in a row."""
         with self._lock:
             endpoints = self._endpoints.get(registry) or []
-            if not endpoints or any(
-                e.limits < MAX_CONSECUTIVE_PAUSES for e in endpoints
-            ):
+            return bool(endpoints) and all(
+                e.limits >= MAX_CONSECUTIVE_PAUSES for e in endpoints
+            )
+
+    def _gave_up(self, registry: str) -> str | None:
+        """The latest pause code when the registry is given up, else None: every endpoint
+        paused out, and the run already waited for it after a pass that processed nothing
+        (GIVE_UP_AFTER_EMPTY_WAITS times), so a pass that still progresses never gives up."""
+        with self._lock:
+            if self._empty_waits.get(
+                registry, 0
+            ) < GIVE_UP_AFTER_EMPTY_WAITS or not self._all_paused_out(registry):
                 return None
+            endpoints = self._endpoints[registry]
             return max(endpoints, key=lambda e: e.paused_until).last_code
 
     def _bootstrap_paused(self) -> bool:
@@ -1149,12 +1158,6 @@ class RdapEnricher:
                     + BUDGET_WINDOW_SECONDS
                     - now,
                 )
-            cap = self._registry_cap(endpoint.registry)
-            shared = self._registry_window(endpoint.registry)
-            if cap is not None and len(shared) >= cap:
-                wait = max(
-                    wait, shared[len(shared) - cap] + BUDGET_WINDOW_SECONDS - now
-                )
         return wait
 
     def seconds_until_budget_frees(self) -> float:
@@ -1183,7 +1186,16 @@ class RdapEnricher:
             return max(0.0, min(waits)) if waits else 0.0
 
     def wait_for_registry_budget(self) -> float:
-        """Sleep, in slices of at most a minute, until a deferred registry frees slots."""
+        """Sleep, in slices of at most a minute, until a deferred registry frees slots.
+
+        The loop calls this only after a pass that processed nothing: each deferred
+        registry whose endpoints are all paused out counts one empty-pass wait, which
+        arms its give-up for the next pass (_gave_up).
+        """
+        with self._lock:
+            for registry in self.deferred:
+                if registry != BOOTSTRAP and self._all_paused_out(registry):
+                    self._empty_waits[registry] = self._empty_waits.get(registry, 0) + 1
         total = self.seconds_until_budget_frees()
         waited = 0.0
         while waited < total:
@@ -1438,6 +1450,7 @@ class RdapEnricher:
                 raise
         with self._lock:
             endpoint.limits = 0
+            self._empty_waits.pop(registry, None)
         answered = response.rir or registry
         self._count(self.requests_by_registry, answered)
         persons = person_entities(response.raw_response)
@@ -1624,8 +1637,9 @@ class RdapEnricher:
                 continue
             code = self._gave_up(outcome.registry) if outcome.deferred else None
             if code:
-                # Every endpoint of the registry paused MAX_CONSECUTIVE_PAUSES times in a
-                # row: stop deferring, so the run can finish; a retry draft asks again.
+                # Every endpoint of the registry paused out and the run already waited
+                # for it after an empty pass: stop deferring, so the run can finish; a
+                # retry draft asks again.
                 gave_up[outcome.registry] = gave_up.get(outcome.registry, 0) + 1
                 outcome.error = RdapClientError(
                     f"{outcome.registry} keeps refusing requests",
@@ -1650,8 +1664,8 @@ class RdapEnricher:
                 )
         for registry, count in gave_up.items():
             self.log.warning(
-                "Registry %s paused %s times in a row on every endpoint; %s addresses "
-                "stored as retryable_error instead of deferred",
+                "Registry %s paused %s+ times in a row on every endpoint, also after a "
+                "wait; %s addresses stored as retryable_error instead of deferred",
                 registry,
                 MAX_CONSECUTIVE_PAUSES,
                 count,
