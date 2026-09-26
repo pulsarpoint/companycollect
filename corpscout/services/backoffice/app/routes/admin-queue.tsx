@@ -1,4 +1,5 @@
 import { QueueHistoryCompanies } from "~/components/admin/queue-history-companies";
+import { braveTaskResultsPath } from "~/lib/brave-results";
 import { QueueHistorySources } from "~/components/admin/queue-history-sources";
 import { data, redirect, Form, Link, useNavigation, useRevalidator, useSearchParams } from "react-router";
 import { PlayIcon, RefreshCwIcon } from "lucide-react";
@@ -148,7 +149,10 @@ export default function AdminQueue({loaderData}: Route.ComponentProps) {
           {filters.type === "brave" && <TableCell className="align-top"><QueueHistoryCompanies taskId={task.taskId} sources={task.sources} error={task.sourcesError} retryFailed={(task.failedPages ?? 0) > 0} /></TableCell>}
           {(filters.type === "crawler" || filters.type === "webtech") && <TableCell className="align-top"><QueueHistorySources type={filters.type} taskId={task.taskId} crawlType={task.crawlType} sources={task.sources} error={task.sourcesError} /></TableCell>}
           <TableCell className="font-mono text-xs">{task.taskId}</TableCell>{filters.type === "crawler" && <TableCell>{CRAWL_QUEUES.find(queue => queue.id === task.crawlType)?.label}</TableCell>}<TableCell><Badge variant="outline">{task.outcome === "completed_with_errors" ? "Completed with errors" : task.outcome === "completed" ? "Completed" : task.status}</Badge>{task.failedPages != null && task.failedPages > 0 && <p className="text-xs text-muted-foreground">{task.failedPages} {filters.type === "crawler" ? "crawl errors" : filters.type === "brave" ? "search errors" : "page errors"} · results saved</p>}{task.skippedPages != null && task.skippedPages > 0 && <p className="text-xs text-muted-foreground">{task.skippedPages} {task.skippedPages === 1 ? "input skipped" : "inputs skipped"}</p>}</TableCell>
-          <TableCell>{task.runUrl && <a className="underline" href={task.runUrl} target="_blank" rel="noreferrer">View in Dagster</a>}</TableCell>
+          <TableCell><div className="flex flex-col items-start gap-2">
+            {filters.type === "brave" && <Button variant="outline" size="sm" nativeButton={false} render={<Link to={braveTaskResultsPath(task.taskId)} />}>View results</Button>}
+            {task.runUrl && <a className="underline" href={task.runUrl} target="_blank" rel="noreferrer">View in Dagster</a>}
+          </div></TableCell>
         </TableRow>)}{!history.length && !historyError && <TableRow><TableCell colSpan={filters.type === "crawler" ? 6 : (filters.type === "webtech" || filters.type === "brave") ? 5 : 4}>No processing runs yet.</TableCell></TableRow>}</TableBody>
       </Table>
     </section>

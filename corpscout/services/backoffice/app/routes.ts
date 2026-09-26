@@ -132,6 +132,7 @@ export default [
     ]),
     route("queues", "routes/admin-queues-index.tsx"),
     route("queues/:type", "routes/admin-queue.tsx"),
+    route("queues/brave/results/:taskId", "routes/admin-brave-results.tsx"),
     route("queues/:type/sources", "routes/admin-queue-sources.ts"),
     route("webtech", "routes/admin-webtech.tsx"),
     route("webtech/input", "routes/admin-webtech-input.tsx"),
@@ -203,6 +204,7 @@ export default [
         route(":documentId/llm", "routes/admin-se-company-esef-llm.tsx"),
       ]),
       route("domains", "routes/admin-se-company-domains.tsx"),
+      route("brave", "routes/admin-se-company-brave.tsx"),
       // Domain technology views with the company's associated-domain selector.
       route("technology", "routes/admin-se-company-technology-layout.tsx", [
         index("routes/admin-se-company-technology.tsx"),
