@@ -120,14 +120,14 @@ export default function AdminQueue({loaderData}: Route.ComponentProps) {
         <p className="text-sm text-muted-foreground">{isDraftQueue(filters.type) ? "Inputs can be appended while the task is a draft. Dagster checks submissions and freezes the task when execution begins." : "This queue uses a fixed input selection."}</p>
       </div>}
       {runError && <Alert variant="destructive"><AlertTitle>Run status unavailable</AlertTitle><AlertDescription>{runError}</AlertDescription></Alert>}
-      {(filters.type !== "webtech" && filters.type !== "crawler") && runState && runState.runs.length > 0 && <div className="flex flex-col gap-2"><h3 className="text-sm font-medium">Recent task runs</h3>
+      {!isDraftQueue(filters.type) && runState && runState.runs.length > 0 && <div className="flex flex-col gap-2"><h3 className="text-sm font-medium">Recent task runs</h3>
         {runState.runs.map(run => <div key={run.runId} className="flex flex-wrap items-center gap-3 text-sm"><Badge variant="outline">{run.status}</Badge><span>{run.job}</span>{run.runUrl && <a className="font-mono text-xs underline" href={run.runUrl} target="_blank" rel="noreferrer">{run.runId}</a>}</div>)}
       </div>}
       <p className="text-sm text-muted-foreground" role="status">{inputs.matching.toLocaleString()} matching inputs · Source: <code>{inputs.table}</code></p>
-      <Table><TableHeader><TableRow><TableHead>{filters.type === "brave" ? "Company" : filters.type === "ip-enrichment" ? "IP address" : "Domain / page"}</TableHead>{(filters.type !== "webtech" && filters.type !== "crawler") && <TableHead>Task</TableHead>}<TableHead>{filters.type === "brave" ? "Country / company ID" : "Source / record"}</TableHead><TableHead>Submitted (UTC)</TableHead></TableRow></TableHeader>
+      <Table><TableHeader><TableRow><TableHead>{filters.type === "brave" ? "Company" : filters.type === "ip-enrichment" ? "IP address" : "Domain / page"}</TableHead>{!isDraftQueue(filters.type) && <TableHead>Task</TableHead>}<TableHead>{filters.type === "brave" ? "Country / company ID" : "Source / record"}</TableHead><TableHead>Submitted (UTC)</TableHead></TableRow></TableHeader>
         <TableBody>{inputs.rows.map(row => <TableRow key={`${row.task_id}:${row.input_id}`}>
           <TableCell className="max-w-lg whitespace-normal"><span className="font-medium">{row.target}</span><p className="break-all text-xs text-muted-foreground">{row.detail}</p></TableCell>
-          {(filters.type !== "webtech" && filters.type !== "crawler") && <TableCell className="max-w-64 whitespace-normal">{row.task_id ? <Link className="break-all font-mono text-xs underline" to={queuePath(filters, {task: row.task_id, page: 1})}>{row.task_id}</Link> : "No task"}</TableCell>}
+          {!isDraftQueue(filters.type) && <TableCell className="max-w-64 whitespace-normal">{row.task_id ? <Link className="break-all font-mono text-xs underline" to={queuePath(filters, {task: row.task_id, page: 1})}>{row.task_id}</Link> : "No task"}</TableCell>}
           <TableCell className="max-w-xs whitespace-normal">{row.source}<p className="break-all text-xs text-muted-foreground">{row.source_record_id}</p></TableCell><TableCell>{row.submitted_at || "Not recorded"}</TableCell>
         </TableRow>)}{!inputs.rows.length && <TableRow><TableCell colSpan={isDraftQueue(filters.type) ? 3 : 4} className="h-24 text-center text-muted-foreground">No inputs match this selection.</TableCell></TableRow>}</TableBody>
       </Table>
