@@ -137,6 +137,7 @@ export default [
     route("webtech/input", "routes/admin-webtech-input.tsx"),
     route("crawler/queue-submissions/:runId", "routes/admin-crawl-queue-submission.ts"),
     route("webtech/queue-submissions/:runId", "routes/admin-webtech-queue-submission.ts"),
+    route("ip-enrichment/queue-submissions/:runId", "routes/admin-ip-enrichment-queue-submission.ts"),
     route("webtech/:domain", "routes/admin-webtech-domain.tsx"),
     route("webtech/:domain/scan", "routes/admin-webtech-scan.tsx"),
     route("common-crawl", "routes/admin-common-crawl.tsx"),

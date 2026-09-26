@@ -5,7 +5,10 @@ type ImportProgress = {ok: true; runId: string; status: string; finished: boolea
 
 export interface QueueImportReceipt {runId: string; status: string; runUrl: string | null}
 
-export function useQueueSubmission(receipt: QueueImportReceipt | null, queue: "webtech" | "crawler" = "webtech") {
+export type ImportQueue = "webtech" | "crawler" | "ip-enrichment";
+const LABELS: Record<ImportQueue, string> = {webtech: "Webtech", crawler: "Crawler", "ip-enrichment": "IP enrichment"};
+
+export function useQueueSubmission(receipt: QueueImportReceipt | null, queue: ImportQueue = "webtech") {
   const progress = useFetcher<ImportProgress>();
   const state = progress.data?.ok && progress.data.runId === receipt?.runId ? progress.data : null;
   useEffect(() => {
@@ -16,14 +19,15 @@ export function useQueueSubmission(receipt: QueueImportReceipt | null, queue: "w
   return {state, error: progress.data?.ok === false ? progress.data.error : null};
 }
 
-export function QueueImportStatus({receipt, state, fallbackSearch = "", crawlType}: {
+export function QueueImportStatus({receipt, state, fallbackSearch = "", crawlType, queue}: {
   receipt: QueueImportReceipt;
   state: ReturnType<typeof useQueueSubmission>["state"];
   fallbackSearch?: string;
   crawlType?: string;
+  queue?: ImportQueue;
 }) {
-  const queue = crawlType ? "crawler" : "webtech";
-  const label = crawlType ? "Crawler" : "Webtech";
+  const target: ImportQueue = queue ?? (crawlType ? "crawler" : "webtech");
+  const label = LABELS[target];
   const completed = state?.status === "SUCCESS";
   const failed = state?.status === "FAILURE" || state?.status === "CANCELED";
   const params = new URLSearchParams();
@@ -35,7 +39,7 @@ export function QueueImportStatus({receipt, state, fallbackSearch = "", crawlTyp
     <AlertDescription>
       <p>{completed ? "The selected inputs are saved in the draft queue. No processing has been started." : failed ? "Retry this import using the same submission, or inspect the run for details." : `Dagster status: ${state?.status ?? receipt.status}. Waiting for the inputs to be saved.`}</p>
       <div className="flex flex-wrap gap-4">
-        <Link className="underline" to={`/admin/queues/${queue}${params.size ? `?${params}` : ""}`}>Open {label} queue</Link>
+        <Link className="underline" to={`/admin/queues/${target}${params.size ? `?${params}` : ""}`}>Open {label} queue</Link>
         {receipt.runUrl && <a className="underline" href={receipt.runUrl} target="_blank" rel="noreferrer">View import run</a>}
       </div>
     </AlertDescription>

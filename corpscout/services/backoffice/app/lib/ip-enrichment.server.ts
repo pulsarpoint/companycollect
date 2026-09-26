@@ -1,11 +1,18 @@
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { isIP } from "node:net";
 import {
   dagsterRunUrl,
   launchRun,
+  listRuns,
+  runStatus,
   type DagsterOptions,
 } from "~/lib/dagster.server";
+import { QUEUE_UUID } from "~/lib/queues";
 import type { WorkspaceIpSelection } from "~/lib/workspace-ip-selection";
+
+const JOB = "ip_enrichment_input_job";
+const ASSET = "ip_enrichment_input";
+const submissions = new Map<string, Promise<unknown>>();
 
 export class IpEnrichmentSelectionError extends Error {}
 
@@ -83,15 +90,10 @@ export function parseIpEnrichmentSelection(
   );
 }
 
-export async function launchIpEnrichment(
-  value: unknown,
-  requestedBy: string,
-  options: DagsterOptions = {},
-) {
-  const selection = parseIpEnrichmentSelection(value);
-  const taskId = randomUUID();
+export function inputConfig(
+  selection: WorkspaceIpSelection,
+): Record<string, unknown> {
   const input: Record<string, unknown> = {
-    task_id: taskId,
     source_name: "backoffice:ip-addresses",
     source_relation: "corpscout.commoncrawl_ip_addresses",
     observed_at_column: "last_seen",
@@ -99,7 +101,7 @@ export async function launchIpEnrichment(
   if (selection.mode === "ips") {
     input.filters = { ip: selection.ips };
   } else {
-    // Dagster freezes the whole matching inventory in ClickHouse, independently of pagination.
+    // Dagster selects the whole matching inventory in ClickHouse, independently of pagination.
     Object.assign(input, {
       select_all: true,
       ip_search: selection.filters.search,
@@ -110,31 +112,99 @@ export async function launchIpEnrichment(
       excluded_ips: selection.excludedIps,
     });
   }
-  const run = await launchRun(
-    {
-      job: "ip_enrichment_workflow",
-      runConfig: {
-        ops: {
-          ip_enrichment_input: { config: input },
-          // Keep RDAP throttling/cache reuse, but process the complete submitted batch.
-          ip_enrichment_results: {
-            config: { task_id: taskId, max_requests: null },
-          },
-        },
-      },
+  return input;
+}
+
+/** Append the selection to the open workspace draft. Dagster chooses/creates the task atomically. */
+export async function addIpsToEnrichmentQueue(
+  value: unknown,
+  submissionId: string,
+  requestedBy: string,
+  options: DagsterOptions = {},
+) {
+  const selection = parseIpEnrichmentSelection(value);
+  if (!QUEUE_UUID.test(submissionId))
+    throw new IpEnrichmentSelectionError(
+      "Invalid submission ID. Reload the page.",
+    );
+  const config = {
+    ...inputConfig(selection),
+    queue_scope: "workspace",
+    submission_id: submissionId,
+  };
+  const fingerprint = createHash("sha256")
+    .update(JSON.stringify(config))
+    .digest("hex");
+  const previous = submissions.get(submissionId);
+  const pending = previous ? previous.then(submit, submit) : submit();
+  submissions.set(submissionId, pending);
+  try {
+    return await pending;
+  } finally {
+    if (submissions.get(submissionId) === pending)
+      submissions.delete(submissionId);
+  }
+
+  async function submit() {
+    const [existing] = await listRuns(
+      { job: JOB, limit: 1, tags: { "processing/submission_id": submissionId } },
+      options,
+    );
+    if (
+      existing &&
+      existing.tags["ip_enrichment/selection_sha256"] !== fingerprint
+    )
+      throw new IpEnrichmentSelectionError(
+        "This submission ID belongs to another selection.",
+      );
+    // Retry failed imports using the same durable receipt, not a new selection.
+    if (existing && !["FAILURE", "CANCELED"].includes(existing.status)) {
+      return {
+        ok: true as const,
+        runId: existing.runId,
+        status: existing.status,
+        runUrl: dagsterRunUrl(existing.runId, options.url),
+      };
+    }
+    const run = await launchRun({
+      job: JOB,
+      assetSelection: [ASSET],
+      runConfig: { ops: { [ASSET]: { config } } },
       tags: {
-        "processing/task_id": taskId,
-        "corpscout/trigger_source": "backoffice",
-        "corpscout/request_id": taskId,
+        "processing/submission_id": submissionId,
+        "ip_enrichment/selection_sha256": fingerprint,
         "corpscout/requested_by": requestedBy,
+        "backoffice/action": "add-ip-enrichment-input",
       },
-    },
-    options,
-  );
+    });
+    return {
+      ok: true as const,
+      ...run,
+      runUrl: dagsterRunUrl(run.runId, options.url),
+    };
+  }
+}
+
+export async function ipEnrichmentQueueSubmission(
+  runId: string,
+  options: DagsterOptions = {},
+) {
+  if (!QUEUE_UUID.test(runId))
+    throw new IpEnrichmentSelectionError("Invalid import run ID.");
+  const run = await runStatus(runId, options);
+  if (
+    run.jobName !== JOB ||
+    run.tags["backoffice/action"] !== "add-ip-enrichment-input"
+  )
+    throw new IpEnrichmentSelectionError(
+      "IP enrichment queue submission not found.",
+    );
+  const task = run.tags["processing/task_id"];
   return {
     ok: true as const,
-    ...run,
-    taskId,
-    runUrl: dagsterRunUrl(run.runId, options.url),
+    runId,
+    status: run.status,
+    finished: ["SUCCESS", "FAILURE", "CANCELED"].includes(run.status),
+    taskId: task && QUEUE_UUID.test(task) ? task : null,
   };
 }

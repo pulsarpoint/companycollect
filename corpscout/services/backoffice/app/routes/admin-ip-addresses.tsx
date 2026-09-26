@@ -4,9 +4,13 @@ import type { Route } from "./+types/admin-ip-addresses";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Checkbox } from "~/components/ui/checkbox";
 import {
+  addIpsToEnrichmentQueue,
   IpEnrichmentSelectionError,
-  launchIpEnrichment,
 } from "~/lib/ip-enrichment.server";
+import {
+  QueueImportStatus,
+  useQueueSubmission,
+} from "~/components/admin/queue-import-status";
 import {
   isIpSelected,
   selectIpAddresses,
@@ -128,8 +132,9 @@ export async function action({ request }: Route.ActionArgs) {
   }
   try {
     return data(
-      await launchIpEnrichment(
+      await addIpsToEnrichmentQueue(
         body.selection,
+        String(body.submissionId ?? ""),
         process.env.BACKOFFICE_OPERATOR?.trim() || "backoffice",
       ),
     );
@@ -144,7 +149,7 @@ export async function action({ request }: Route.ActionArgs) {
       {
         ok: false as const,
         error:
-          "Could not submit enrichment. Check Dagster for a submitted run before retrying.",
+          "Could not submit the queue import. Check Dagster for a submitted run before retrying.",
       },
       { status: 502 },
     );
@@ -159,15 +164,25 @@ export default function WorkspaceIpAddresses({
   loaderData,
 }: Route.ComponentProps) {
   const { rows, filters, after, next, hasMore } = loaderData;
-  const navigationBusy = useNavigation().state !== "idle";
-  const fetcher = useFetcher<typeof action>();
-  const submitting = fetcher.state !== "idle";
-  const busy = navigationBusy || submitting;
-  const filterKey = JSON.stringify(filters);
-  const [selectionState, setSelectionState] = useState<{
+  type SelectionState = {
     filterKey: string;
     selection: WorkspaceIpSelection;
-  }>({ filterKey, selection: { mode: "ips", ips: [] } });
+  };
+  const navigationBusy = useNavigation().state !== "idle";
+  const fetcher = useFetcher<typeof action>();
+  const receipt = fetcher.data?.ok ? fetcher.data : null;
+  const { state: importState, error: importError } = useQueueSubmission(
+    receipt,
+    "ip-enrichment",
+  );
+  const submitting =
+    fetcher.state !== "idle" || Boolean(receipt && !importState?.finished);
+  const busy = navigationBusy || submitting;
+  const filterKey = JSON.stringify(filters);
+  const [selectionState, setSelectionState] = useState<SelectionState>({
+    filterKey,
+    selection: { mode: "ips", ips: [] },
+  });
   const currentState =
     selectionState.filterKey === filterKey
       ? selectionState
@@ -176,22 +191,48 @@ export default function WorkspaceIpAddresses({
   const selection = currentState.selection;
   const setSelection = (selection: WorkspaceIpSelection) =>
     setSelectionState({ filterKey, selection });
-  const submittedState = useRef<typeof selectionState | null>(null);
-  const handledRun = useRef<string | null>(null);
+  const request = useRef<{ id: string; state: SelectionState } | null>(null);
+  const [retry, setRetry] = useState(false);
   useEffect(() => {
-    if (fetcher.data?.ok && handledRun.current !== fetcher.data.runId) {
-      handledRun.current = fetcher.data.runId;
+    if (importState?.status === "SUCCESS") {
+      // Only a saved import clears the selection; an accepted launch alone does not.
       setSelectionState((current) =>
-        current === submittedState.current
+        current === request.current?.state
           ? { ...current, selection: { mode: "ips", ips: [] } }
           : current,
       );
+      setRetry(false);
+    } else if (
+      importState?.status === "FAILURE" ||
+      importState?.status === "CANCELED" ||
+      fetcher.data?.ok === false
+    ) {
+      setRetry(true);
     }
-  }, [fetcher.data]);
+  }, [importState?.status, fetcher.data]);
   const pageSelected = rows.filter((row) =>
     isIpSelected(selection, row.ip),
   ).length;
   const hasSelection = selection.mode === "all" || selection.ips.length > 0;
+  const submitEnrichment = (again = false) => {
+    if (busy || (!again && !hasSelection)) return;
+    const id = again && request.current ? request.current.id : crypto.randomUUID();
+    const state = again && request.current ? request.current.state : currentState;
+    request.current = { id, state };
+    setRetry(false);
+    void fetcher.submit(
+      JSON.stringify({
+        action: "enrich",
+        selection: state.selection,
+        submissionId: id,
+      }),
+      {
+        method: "post",
+        encType: "application/json",
+        action: "/admin/ip-addresses",
+      },
+    );
+  };
   return (
     <div className="flex flex-col gap-6 p-4 md:p-6" aria-busy={busy}>
       <header className="flex flex-col gap-2">
@@ -239,28 +280,29 @@ export default function WorkspaceIpAddresses({
           </Button>
         </FieldGroup>
       </Form>
-      {fetcher.data && !submitting ? (
-        <Alert variant={fetcher.data.ok ? "default" : "destructive"}>
+      {receipt ? (
+        <QueueImportStatus
+          receipt={receipt}
+          state={importState}
+          queue="ip-enrichment"
+        />
+      ) : null}
+      {fetcher.data?.ok === false || importError ? (
+        <Alert variant="destructive">
           <AlertDescription>
-            {fetcher.data.ok ? (
-              <>
-                Enrichment submitted. GeoIP, ASN and RDAP will be processed in
-                the background.{" "}
-                {fetcher.data.runUrl ? (
-                  <a
-                    href={fetcher.data.runUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    View Dagster run
-                  </a>
-                ) : null}
-              </>
-            ) : (
-              fetcher.data.error
-            )}
+            {fetcher.data?.ok === false ? fetcher.data.error : importError}
           </AlertDescription>
         </Alert>
+      ) : null}
+      {retry && request.current ? (
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={busy}
+          onClick={() => submitEnrichment(true)}
+        >
+          Retry queue import
+        </Button>
       ) : null}
       <div className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-3">
@@ -294,25 +336,17 @@ export default function WorkspaceIpAddresses({
           <Button
             size="sm"
             disabled={busy || !hasSelection}
-            onClick={() => {
-              if (busy || !hasSelection) return;
-              submittedState.current = currentState;
-              void fetcher.submit(
-                JSON.stringify({ action: "enrich", selection }),
-                {
-                  method: "post",
-                  encType: "application/json",
-                  action: "/admin/ip-addresses",
-                },
-              );
-            }}
+            onClick={() => submitEnrichment()}
           >
-            {submitting ? "Submitting…" : "Enrich IP addresses"}
+            {submitting ? "Submitting…" : "Add to enrichment queue"}
           </Button>
         </div>
         <p className="text-muted-foreground text-xs">
-          Updates GeoIP location and ASN, and retrieves RDAP registration and
-          network details. Fresh RDAP results are reused.
+          Adds the selection to the open IP enrichment draft. Start processing
+          from{" "}
+          <Link to="/admin/queues/ip-enrichment">Queues → IP enrichment</Link>
+          ; GeoIP, ASN and RDAP are saved per address and fresh RDAP coverage
+          is reused.
         </p>
       </div>
       <div className="rounded-lg border">

@@ -50,7 +50,7 @@ export async function loadQueueInputs(filters: QueueFilters) {
   const matches = filters.search ? `(positionCaseInsensitiveUTF8(${def.target}, {search:String}) > 0
     OR positionCaseInsensitiveUTF8(${def.detail}, {search:String}) > 0)` : "1";
   const searchWhere = `${taskWhere} AND ${matches}`;
-  const inputOrder = filters.type === "crawler" ? "task_id, input_id" : "input_id, task_id";
+  const inputOrder = filters.type === "brave" ? "input_id, task_id" : "task_id, input_id";
   const [tasks, overview, counts, rows] = await Promise.all([
     chQuery<QueueTask>(`SELECT toString(task_id) AS task_id, toString(count()) AS total, max(${def.time}) AS submitted_at
       FROM ${def.from} WHERE ${def.where} AND toString(task_id) != '' GROUP BY task_id
@@ -99,14 +99,15 @@ export async function loadQueueHistory(filters: QueueFilters) {
     runs: await listRuns({job: queueDefinition(selection).job, limit: 50}),
   })));
   const references: QueueHistoryReference[] = [];
+  const OUTCOME_TAGS: Record<QueueFilters["type"], string | null> = {webtech: "webtech", crawler: "crawler", "ip-enrichment": "ip_enrichment", brave: null};
   const latest = new Map<string, {taskId: string; status: string; runUrl: string | null; startedAt: string | null; outcome: string | null; failedPages: number | null; skippedPages: number | null; crawlType: CrawlQueueType | null}>();
   for (const {runs, crawlType} of groups) for (const run of runs) {
     const taskId = run.tags["processing/task_id"];
     if (!taskId || !QUEUE_UUID.test(taskId)) continue;
     references.push({taskId, crawlType, executionId: run.tags["crawler/execution_id"] || run.runId});
     if (latest.has(`${crawlType}:${taskId}`)) continue;
-    const prefix = filters.type === "crawler" ? "crawler" : "webtech";
-    const outcome = run.status === "SUCCESS" && ["completed", "completed_with_errors"].includes(run.tags[`${prefix}/outcome`]) ? run.tags[`${prefix}/outcome`] : null;
+    const prefix = OUTCOME_TAGS[filters.type];
+    const outcome = prefix && run.status === "SUCCESS" && ["completed", "completed_with_errors"].includes(run.tags[`${prefix}/outcome`]) ? run.tags[`${prefix}/outcome`] : null;
     latest.set(`${crawlType}:${taskId}`, {taskId, crawlType, status: run.status, runUrl: dagsterRunUrl(run.runId), outcome,
       failedPages: outcome && /^\d+$/.test(run.tags[`${prefix}/failed_pages`] ?? "") ? Number(run.tags[`${prefix}/failed_pages`]) : null,
       skippedPages: outcome && /^\d+$/.test(run.tags[`${prefix}/skipped_pages`] ?? "") ? Number(run.tags[`${prefix}/skipped_pages`]) : null,

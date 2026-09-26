@@ -16,6 +16,10 @@ export const QUEUE_PAGE_SIZE = 25;
 export const QUEUE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const ACTIVE_QUEUE_RUNS = ["QUEUED", "NOT_STARTED", "MANAGED", "STARTING", "STARTED", "CANCELING"] as const;
 
+/** Queues on the shared processing queue contract: one open draft per scope, freeze at Start, partition purge. */
+export const DRAFT_QUEUES: readonly QueueType[] = ["webtech", "crawler", "ip-enrichment"];
+export function isDraftQueue(type: QueueType) { return DRAFT_QUEUES.includes(type); }
+
 export const QUEUE_TEMPLATES: Record<Exclude<QueueType, "crawler">, Record<string, unknown>> = {
   webtech: { force_rescan: false, recent_days: 30 },
   brave: {

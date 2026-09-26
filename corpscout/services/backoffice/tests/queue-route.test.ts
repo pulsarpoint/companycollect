@@ -50,3 +50,9 @@ it("does not count crawler queues for other queue types", async () => {
   expect((await load()).crawlCounts).toBeNull();
   expect(server.loadCrawlQueueCounts).not.toHaveBeenCalled();
 });
+
+it("selects the current IP enrichment draft like Webtech", async () => {
+  server.loadQueueInputs.mockResolvedValue({tasks: [{task_id: task}], selectedTotal: 2});
+  try { await loader({params: {type: "ip-enrichment"}, request: new Request("http://x/admin/queues/ip-enrichment")} as never); throw new Error("expected redirect"); }
+  catch (response) { expect((response as Response).headers.get("Location")).toBe(`/admin/queues/ip-enrichment?task=${task}`); }
+});

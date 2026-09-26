@@ -2,7 +2,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 const launch = vi.hoisted(() => vi.fn());
 vi.mock("~/lib/ip-enrichment.server", async (original) => ({
   ...(await original<object>()),
-  launchIpEnrichment: launch,
+  addIpsToEnrichmentQueue: launch,
 }));
 import { action } from "~/routes/admin-ip-addresses";
 
@@ -21,13 +21,12 @@ beforeEach(() => {
   launch.mockReset();
 });
 
-it("uses the submitted selection independently of page filters", async () => {
+it("uses the submitted selection and submission id independently of page filters", async () => {
   const selection = { mode: "ips", ips: ["8.8.8.8"] };
-  launch.mockResolvedValue({ ok: true, runId: "run", taskId: "task" });
-  expect(await submit({ action: "enrich", selection })).toMatchObject({
-    data: { ok: true, runId: "run" },
-  });
-  expect(launch).toHaveBeenCalledWith(selection, expect.any(String));
+  const submissionId = "11111111-1111-4111-8111-111111111111";
+  launch.mockResolvedValue({ ok: true, runId: "run", status: "QUEUED", runUrl: null });
+  expect(await submit({ action: "enrich", selection, submissionId })).toMatchObject({ data: { ok: true, runId: "run" } });
+  expect(launch).toHaveBeenCalledWith(selection, submissionId, expect.any(String));
 });
 it("rejects unsupported actions", async () => {
   expect(await submit({ action: "delete" })).toMatchObject({

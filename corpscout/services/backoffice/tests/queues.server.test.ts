@@ -242,3 +242,14 @@ it("preserves task status when source lookup fails", async () => {
   vi.mocked(chQuery).mockRejectedValueOnce(new Error("source storage offline"));
   expect(await loadQueueHistory(filters())).toEqual([expect.objectContaining({status: "FAILURE", sources: null, sourcesError: true})]);
 });
+
+it("reads the IP enrichment entry table in sort-key order without FINAL and maps its outcome tags", async () => {
+  vi.mocked(chQuery).mockResolvedValue([]);
+  await loadQueueInputs(filters("ip-enrichment"));
+  const sql = vi.mocked(chQuery).mock.calls.map(([query]) => query);
+  expect(sql.some(query => query.includes("FROM corpscout.ip_enrichment_input") && query.includes("ORDER BY task_id, input_id"))).toBe(true);
+  for (const query of sql) expect(query).not.toContain("ip_enrichment_input FINAL");
+  const {loadQueueHistory} = await import("~/lib/queues.server");
+  vi.mocked(listRuns).mockResolvedValue([{runId: "saved", status: "SUCCESS", startTime: null, tags: {"processing/task_id": task, "ip_enrichment/outcome": "completed_with_errors", "ip_enrichment/failed_pages": "3"}}] as never);
+  expect(await loadQueueHistory(filters("ip-enrichment"))).toEqual([expect.objectContaining({outcome: "completed_with_errors", failedPages: 3})]);
+});
