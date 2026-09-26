@@ -7,7 +7,7 @@ import { chQuery } from "~/lib/clickhouse.server";
 import { dagsterRunUrl, launchRun, listRuns } from "~/lib/dagster.server";
 import { objectSettings, parseCrawlSettings } from "~/lib/crawl-settings.server";
 import { assertWebtechAvailable } from "~/lib/webtech-maintenance.server";
-import { CRAWL_QUEUES, ACTIVE_QUEUE_RUNS, QUEUE_NUMBER_LIMITS, QUEUE_PAGE_SIZE, QUEUE_UUID, type CrawlQueueType, type QueueFilters } from "~/lib/queues";
+import { CRAWL_QUEUES, ACTIVE_QUEUE_RUNS, IP_ENRICHMENT_PROXY_REGISTRIES, QUEUE_NUMBER_LIMITS, QUEUE_PAGE_SIZE, QUEUE_UUID, type CrawlQueueType, type QueueFilters } from "~/lib/queues";
 
 export class QueueRequestError extends Error {}
 
@@ -135,9 +135,29 @@ const EXTRA_FIELDS = {
   // Envelope size stays a Dagster default: it is transport only, not a processing choice.
   webtech: ["execution_id", "force_rescan", "recent_days"],
   brave: ["execution_id", "llm_profile_id", "brave_search_id", "brave_search_revision", "force_rescan", "recent_days", "requests_per_route", "input_batch_size", "answer_timeout_seconds", "progress_log_every", "progress_log_interval_seconds"],
-  "ip-enrichment": ["execution_id", "batch_size", "max_requests", "request_delay_seconds", "parent_depth", "rdap_cache_days", "force_rdap", "rate_limit_retry_seconds", "transient_retry_seconds"],
+  "ip-enrichment": ["execution_id", "batch_size", "max_requests", "request_delay_seconds", "registry_request_delays", "registry_daily_budgets", "rate_limit_pause_seconds", "use_proxies", "parent_depth", "rdap_cache_days", "force_rdap", "rate_limit_retry_seconds", "transient_retry_seconds"],
   crawler: ["execution_id", "full_crawl_all", "max_in_flight", "refresh_interval_days", "force_refresh", "challenge_agent_model", "challenge_agent_max_runs", "llm_profile_id", "max_pages", "max_model_calls", "page_selection", "instructions", "wait_timeout_seconds", "poll_interval_seconds"],
 } as const;
+
+/** Per-registry maps and the proxy list; Dagster validates registry names authoritatively. */
+function registryMap(key: string, min: number, max: number, fractional: boolean) {
+  return (entry: unknown) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new QueueRequestError(`${key} must be an object of registry names to numbers.`);
+    for (const [registry, value] of Object.entries(entry)) {
+      if (!/^[a-z][a-z.]{1,31}$/.test(registry)) throw new QueueRequestError(`${key}: invalid registry name ${JSON.stringify(registry)}.`);
+      if (typeof value !== "number" || !Number.isFinite(value) || (!fractional && !Number.isSafeInteger(value)) || value < min || value > max) throw new QueueRequestError(`${key}.${registry} must be ${fractional ? "a number" : "an integer"} between ${min} and ${max}.`);
+    }
+  };
+}
+const IP_ENRICHMENT_STRUCTURED: Record<string, (entry: unknown) => void> = {
+  registry_request_delays: registryMap("registry_request_delays", 0, 60, true),
+  registry_daily_budgets: registryMap("registry_daily_budgets", 1, Number.MAX_SAFE_INTEGER, false),
+  use_proxies: entry => {
+    if (!Array.isArray(entry) || entry.some(registry => typeof registry !== "string" || !IP_ENRICHMENT_PROXY_REGISTRIES.includes(registry))) {
+      throw new QueueRequestError(`use_proxies may only list ${IP_ENRICHMENT_PROXY_REGISTRIES.join(", ")}; RIPE, APNIC and LACNIC always go direct. Proxy URLs belong in the service environment (RDAP_PROXIES).`);
+    }
+  },
+};
 
 export function parseQueueConfig(filters: QueueFilters, serialized: string): Record<string, unknown> & {task_id: string} {
   if (serialized.length > 30_000) throw new QueueRequestError("Processing parameters are too large.");
@@ -148,6 +168,7 @@ export function parseQueueConfig(filters: QueueFilters, serialized: string): Rec
   const allowed: readonly string[] = EXTRA_FIELDS[filters.type];
   for (const [key, entry] of Object.entries(config)) {
     if (!allowed.includes(key)) throw new QueueRequestError(`Unsupported processing parameter: ${key}.`);
+    if (filters.type === "ip-enrichment" && Object.hasOwn(IP_ENRICHMENT_STRUCTURED, key)) { IP_ENRICHMENT_STRUCTURED[key](entry); continue; }
     if (entry !== null && !["string", "number", "boolean"].includes(typeof entry)) throw new QueueRequestError(`Invalid value for ${key}.`);
   }
   if (config.execution_id != null && (typeof config.execution_id !== "string" || !QUEUE_UUID.test(config.execution_id))) throw new QueueRequestError("execution_id must be a UUID from the original execution.");
@@ -158,6 +179,7 @@ export function parseQueueConfig(filters: QueueFilters, serialized: string): Rec
   } : QUEUE_NUMBER_LIMITS[filters.type];
   const booleanFields = ["full_crawl_all", "force_rescan", "force_rdap", "force_refresh"];
   for (const [key, entry] of Object.entries(config)) {
+    if (filters.type === "ip-enrichment" && Object.hasOwn(IP_ENRICHMENT_STRUCTURED, key)) continue;
     if (entry === null && ["execution_id", "instructions", "max_requests"].includes(key)) continue;
     if (key === "brave_search_revision") {
       if (typeof entry !== "number" || !Number.isSafeInteger(entry) || entry < 0) throw new QueueRequestError("Invalid Brave search version.");

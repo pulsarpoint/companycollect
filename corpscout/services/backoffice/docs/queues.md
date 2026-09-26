@@ -82,10 +82,15 @@ task. A successful import clears the selection; an accepted launch alone does no
 entry table is partitioned by task and read without `FINAL`.
 
 Queues → IP enrichment automatically selects the current draft; Start launches
-`ip_enrichment_results` with `task_id`. `batch_size`, `max_requests` and
-`request_delay_seconds` may change between resumes; the RDAP policy fields are frozen at
-Start. Lookup errors complete the task “with errors”; add the failed addresses to a new
-draft (`retry_failed_task_id`) to retry them. RIPE and APNIC are asked without personal data
-(REST search, whois `-r`); the per-registry request budget (`registry_daily_budgets`) is a
-Dagster launchpad setting, not a sheet field. The old one-shot `ip_enrichment_workflow` is
-removed.
+`ip_enrichment_results` with `task_id`. The transport settings `batch_size`,
+`max_requests`, `request_delay_seconds`, `registry_request_delays`,
+`registry_daily_budgets`, `rate_limit_pause_seconds` and `use_proxies` may change between
+resumes; the RDAP policy fields are frozen at Start. The sheet shows the per-registry
+defaults explicitly (`registry_request_delays: {"lacnic": 6.5}`,
+`registry_daily_budgets: {"afrinic": 4500}`, per endpoint) and edits the maps and the proxy
+list as JSON; `use_proxies` accepts only `arin` and `afrinic`, and the proxy URLs themselves
+live in the Dagster environment (`RDAP_PROXIES`), never in the form. Lookup errors complete
+the task “with errors”; add the failed addresses to a new draft (`retry_failed_task_id`) to
+retry them. RIPE and APNIC are asked without personal data (REST search, whois `-r`). See
+the Dagster ops guide `docs/operations/ip-enrichment-draft-queue.md` for lanes, pauses and
+proxies. The old one-shot `ip_enrichment_workflow` is removed.
