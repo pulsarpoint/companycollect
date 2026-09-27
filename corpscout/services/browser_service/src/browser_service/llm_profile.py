@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import re
+from typing import Literal
 from urllib.parse import urlsplit
 
 import httpx
@@ -25,6 +26,9 @@ class EncryptedLLMProfile(StrictModel):
     provider: str = Field(min_length=1, max_length=100)
     base_url: str = Field(max_length=2048)
     model: str = Field(min_length=1, max_length=500)
+    reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     api_key_encrypted: str = Field(max_length=16384, repr=False)
 
     @field_validator("provider", "model")
@@ -76,7 +80,7 @@ class EncryptedLLMProfile(StrictModel):
                 base64.urlsafe_b64decode(part + "=" * (-len(part) % 4))
                 for part in parts[1:]
             ]
-            if len(nonce) != 12 or len(ciphertext) <= 16:
+            if len(nonce) != 12 or len(ciphertext) < 16:
                 raise LLMProfileError("Invalid encrypted LLM credential format")
             aad = (
                 "corpscout-crawler-llm:v1\0"
@@ -92,8 +96,8 @@ class EncryptedLLMProfile(StrictModel):
             raise LLMProfileError(
                 "Encrypted LLM credential could not be authenticated; check the shared encryption key and model configuration"
             ) from error
-        if not api_key.strip() or any(ord(char) < 32 for char in api_key):
-            raise LLMProfileError("Decrypted LLM credential is empty or invalid")
+        if (api_key != "" and not api_key.strip()) or len(api_key.encode()) > 8192 or any(ord(char) < 32 or ord(char) == 127 for char in api_key):
+            raise LLMProfileError("Decrypted LLM credential is invalid")
         return api_key
 
 
@@ -102,6 +106,8 @@ class VerifyLLMRequest(StrictModel):
 
 
 async def verify_llm(profile: EncryptedLLMProfile, encryption_key: str | None) -> dict:
+    if re.match(r"^typesafe/jev-\d", profile.model) or profile.model == "~typesafe/jev-latest":
+        return {"ok": False, "failure_kind": "capability", "error": "Jev cannot generate browser actions; choose a vision/text-generation model"}
     try:
         api_key = profile.decrypt_api_key(encryption_key)
     except LLMProfileError as error:
@@ -139,12 +145,13 @@ async def verify_llm(profile: EncryptedLLMProfile, encryption_key: str | None) -
             async with httpx.AsyncClient(
                 base_url=profile.base_url.rstrip("/") + "/",
                 timeout=30,
-                headers={"Authorization": f"Bearer {api_key}"},
+                headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
             ) as http:
                 response = await http.post(
                     "chat/completions",
                     json=completion_payload(
-                        profile.model, messages, explicit_profile=True
+                        profile.model, messages, explicit_profile=True,
+                        reasoning_effort=profile.reasoning_effort, base_url=profile.base_url,
                     ),
                 )
                 if response.is_error:
@@ -157,7 +164,7 @@ async def verify_llm(profile: EncryptedLLMProfile, encryption_key: str | None) -
                         reason += ": " + detail
                     return {
                         "ok": False,
-                        "error": reason.replace(api_key, "[REDACTED]")[:2000],
+                        "error": (reason.replace(api_key, "[REDACTED]") if api_key else reason)[:2000],
                         "failure_kind": "configuration" if response.status_code in {401,403,404} else
                             "transient" if response.status_code == 429 or response.status_code >= 500 else "capability",
                     }

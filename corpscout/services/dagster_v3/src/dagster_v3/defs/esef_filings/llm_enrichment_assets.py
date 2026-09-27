@@ -28,7 +28,9 @@ from pydantic import ConfigDict, Field
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.common.llm_control import guarded_http_client
-from dagster_v3.defs.common.encrypted_llm import EncryptedLLMConfig, redact_llm_error
+from dagster_v3.defs.common.encrypted_llm import EncryptedLLMConfig
+from dagster_v3.defs.common.llm_reasoning import reasoning_options
+from dagster_v3.defs.common.encrypted_llm import redact_llm_error
 from dagster_v3.defs.esef_filings import tables
 from dagster_v3.defs.esef_filings.llm_enrichment import (
     ENRICHMENT_EVIDENCE_SEGMENTS,
@@ -93,7 +95,8 @@ class EsefLlmEnrichmentConfig(dg.Config):
     profile_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
     profile_revision: int | None = Field(default=None, ge=1, exclude_if=lambda value: value is None)
     api_key_encrypted: str | None = Field(default=None, repr=False, max_length=16384,
-        pattern=r"^v1\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{23,}$")
+        pattern=r"^v1\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{22,}$")
+    reasoning_effort: str | None = Field(default=None, pattern=r"^(none|minimal|low|medium|high|xhigh|max)$", exclude_if=lambda value: value is None)
     temperature: float = Field(default=0, ge=0, le=2)
     prompt_version: str = Field(
         default=PROMPT_VERSION,
@@ -125,6 +128,7 @@ def build_esef_llm_client(config: EsefLlmEnrichmentConfig) -> OpenAI:
             provider=config.provider, model=config.model, base_url=config.base_url,
             api_key_encrypted=config.api_key_encrypted,
             profile_id=config.profile_id, profile_revision=config.profile_revision,
+            reasoning_effort=config.reasoning_effort,
         ) if config.api_key_encrypted is not None else None,
     )
 
@@ -151,7 +155,7 @@ def _openai_client(
             raise ValueError(f"No ESEF LLM API key: set {variable} on the Dagster host")
     return OpenAI(
         base_url=base_url.rstrip("/"),
-        api_key=api_key,
+        api_key=api_key, _enforce_credentials=bool(api_key),
         timeout=float(timeout_seconds),
         max_retries=2,
         http_client=guarded_http_client(encrypted_profile.model_dump() if encrypted_profile else None, float(timeout_seconds)),
@@ -234,6 +238,7 @@ class _PassRunParams:
     max_evidence_chars: int
     evidence_segments: Sequence[str]
     visible_section_types: Sequence[str]
+    model_request_options: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -298,6 +303,7 @@ def run_esef_llm_enrichment(
     provider: str = "deepseek",
     base_url: str = "https://api.deepseek.com",
     temperature: float = 0,
+    model_request_options: dict[str, Any] | None = None,
     prompt_version: str = PROMPT_VERSION,
     concurrency: int = 1,
     link_statuses: Sequence[str] = (LINK_STATUS_REGISTER_VERIFIED,),
@@ -377,6 +383,7 @@ def run_esef_llm_enrichment(
         provider=clean_provider,
         model=model,
         temperature=temperature,
+        model_request_options=model_request_options,
         refresh_existing=refresh_existing,
         reprocess_existing_without_model=reprocess_existing_without_model,
         max_evidence_chars=max_evidence_chars,
@@ -659,6 +666,9 @@ def _prepare_pass_documents(
             temperature=run.temperature,
             prompt_version=profile.prompt_version,
         )
+        if run.model_request_options is not None:
+            request_payload.pop("extra_body", None)
+            request_payload.update(run.model_request_options)
         request_bytes = enrichment_request_json_bytes(request_payload)
         request_sha256 = sha256(request_bytes).hexdigest()
         if (
@@ -1640,6 +1650,8 @@ def esef_document_company_information_clickhouse(
         model=config.model,
         base_url=config.base_url,
         temperature=config.temperature,
+        model_request_options=reasoning_options(config.base_url, config.reasoning_effort)
+            if config.profile_id or config.reasoning_effort is not None else None,
         prompt_version=config.prompt_version,
         concurrency=config.concurrency,
         source_run_id=context.run_id,

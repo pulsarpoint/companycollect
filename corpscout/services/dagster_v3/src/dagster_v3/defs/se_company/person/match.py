@@ -14,6 +14,7 @@ hand -- and saved-profile API keys are decrypted at client construction by
 
 import hashlib
 import json
+from dagster_v3.defs.common.llm_reasoning import reasoning_options
 import re
 from collections import defaultdict
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -142,7 +143,9 @@ def build_match_request(
         "max_tokens": request_max_tokens(candidates, profile),
         "response_format": {"type": "json_object"},
     }
-    if profile.provider.strip().casefold() == "deepseek":
+    if profile.profile_id or profile.reasoning_effort is not None:
+        request.update(reasoning_options(profile.base_url, profile.reasoning_effort))
+    elif profile.provider.strip().casefold() == "deepseek":
         request["extra_body"] = {"thinking": {"type": "disabled"}}
     return request
 

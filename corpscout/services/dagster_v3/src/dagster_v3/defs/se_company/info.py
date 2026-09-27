@@ -51,7 +51,8 @@ class LlmProfileConfig(dg.Config):
     profile_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
     profile_revision: int | None = Field(default=None, ge=1, exclude_if=lambda value: value is None)
     api_key_encrypted: str | None = Field(default=None, repr=False, max_length=16384,
-        pattern=r"^v1\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{23,}$")
+        pattern=r"^v1\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{22,}$")
+    reasoning_effort: str | None = Field(default=None, pattern=r"^(none|minimal|low|medium|high|xhigh|max)$", exclude_if=lambda value: value is None)
     temperature: float = Field(default=0, ge=0, le=2)
     # deepseek-v4-flash is a reasoning model: reasoning_content counts against
     # max_tokens, and the answer carries two summaries.
@@ -93,6 +94,7 @@ def build_llm_client(
             provider=profile.provider, model=profile.model, base_url=profile.base_url,
             api_key_encrypted=profile.api_key_encrypted,
             profile_id=profile.profile_id, profile_revision=profile.profile_revision,
+            reasoning_effort=profile.reasoning_effort,
         ).decrypt_api_key()
     else:
         variable = api_key_environment_variable or llm_api_key_variable(profile.provider)
@@ -101,7 +103,7 @@ def build_llm_client(
             raise ValueError(
                 f"No API key for LLM provider {profile.provider!r}: set {variable} on the "
                 "Dagster host, or run with resolve_multi_source_with_llm: false")
-    return OpenAI(base_url=profile.base_url.rstrip("/"), api_key=api_key,
+    return OpenAI(base_url=profile.base_url.rstrip("/"), api_key=api_key, _enforce_credentials=bool(api_key),
                   timeout=float(timeout_seconds), max_retries=2,
                   http_client=guarded_http_client(profile.model_dump() if profile.api_key_encrypted else None, float(timeout_seconds)))
 

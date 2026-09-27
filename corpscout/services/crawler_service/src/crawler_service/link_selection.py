@@ -6,6 +6,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from crawler_service.discovery import CrawlQueue
+from crawler_service.jev import JevClient
 from crawler_service.llm import ModelClient
 from crawler_service.models import (
     OBJECTIVES,
@@ -19,7 +20,7 @@ from crawler_service.storage import write_json
 
 
 async def assess_links(
-    queue: CrawlQueue, llm: ModelClient, root: Path, *, reserved_calls: int = 3
+    queue: CrawlQueue, llm: ModelClient, root: Path, *, reserved_calls: int = 3, decisions: JevClient | None = None
 ) -> list[dict]:
     errors = []
     for _ in range(queue.config.selection_batches_per_page):
@@ -42,7 +43,7 @@ async def assess_links(
         for correction in range(queue.config.max_corrections + 1):
             if llm.remaining <= reserved_calls:
                 break
-            reply = await llm.ask(
+            reply = await decisions.assess_links(queue, batch) if decisions is not None and "link_selection" in decisions.tasks else await llm.ask(
                 prompt,
                 (
                     RequestedContentSelection

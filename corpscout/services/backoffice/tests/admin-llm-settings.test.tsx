@@ -6,14 +6,14 @@ import {
 } from "react-router";
 import { describe, expect, it } from "vitest";
 import { AdminSidebar } from "~/components/admin/admin-sidebar";
-import { LlmSettingsWorkspace } from "~/components/admin/llm-settings-workspace";
+import { LlmSettingsWorkspace, LlmProfileForm } from "~/components/admin/llm-settings-workspace";
 import { SidebarProvider } from "~/components/ui/sidebar";
 import type { LlmProfile } from "~/lib/llm-settings.server";
 
 const profile: LlmProfile = {
   profileId: "profile-1", name: "DeepSeek production", provider: "DeepSeek",
   baseUrl: "https://api.deepseek.com", model: "deepseek-v4-flash",
-  isActive: true, revision: 1, state: "enabled", disabledReason: null, lastCheck: null, apiKeyAvailable: true,
+  reasoningEffort: null, isActive: true, revision: 1, state: "enabled", disabledReason: null, lastCheck: null, apiKeyAvailable: true,
   createdAt: "2026-08-20T12:00:00.000Z", updatedAt: "2026-08-20T12:00:00.000Z",
 };
 
@@ -52,36 +52,37 @@ describe("admin LLM settings", () => {
     expect(html).toContain("deepseek-v4-flash");
     expect(html).toContain("API keys are encrypted in the settings database");
     expect(html).toContain("Key saved");
-    expect(apiKeyInput(html)).toContain('required=""');
-    expect(apiKeyInput(html)).toContain('type="password"');
-    expect(apiKeyInput(html)).not.toContain("value=");
+    expect(apiKeyInput(html)).toBe("");
+    expect(html).toContain("Add new model");
+    expect(html).toContain("/admin/settings/llms?add=yes");
     expect(html).not.toContain("api_key_environment_variable");
-    // The parameters card is split into Remote / Local tabs.
-    expect(html).toContain("Remote");
+    expect(html).toContain("Models");
     expect(html).toContain("Local");
   });
 
   it("lets an edit retain its saved key without ever populating the password field", () => {
-    const html = renderWorkspace(<LlmSettingsWorkspace profiles={[profile]} editingProfile={profile} />);
+    const html = renderWorkspace(<LlmProfileForm editingProfile={profile} submittedValues={null} error="" />);
+    expect(html).toContain('action="/admin/settings/llms?edit=profile-1"');
     expect(html).toContain("Leave blank to keep the saved API key");
     expect(apiKeyInput(html)).toContain('type="password"');
     expect(apiKeyInput(html)).not.toContain("required=");
     expect(apiKeyInput(html)).not.toContain("value=");
   });
 
-  it("requires a key when editing a profile whose key is missing", () => {
+  it("allows keyless local profiles when creating or editing", () => {
     const missing = {...profile, apiKeyAvailable: false};
-    const html = renderWorkspace(<LlmSettingsWorkspace profiles={[missing]} editingProfile={missing} />);
-    expect(html).toContain("Key missing");
-    expect(apiKeyInput(html)).toContain('required=""');
+    const html = renderWorkspace(<LlmProfileForm editingProfile={missing} submittedValues={null} error="" />);
+    expect(html).toContain("API key (optional)");
+    expect(apiKeyInput(html)).not.toContain("required=");
     expect(html).not.toContain("Leave blank to keep the saved API key");
   });
 
   it("restores non-secret metadata after a save error while leaving the key blank", () => {
-    const html = renderWorkspace(<LlmSettingsWorkspace profiles={[]} editingProfile={null}
+    const html = renderWorkspace(<LlmProfileForm editingProfile={null}
       submittedValues={{profileId: "", name: "Invalid profile", provider: "Provider", baseUrl: "https://example.com", model: "model"}}
       error="Profile name is already in use." />);
     expect(html).toContain('value="Invalid profile"');
+    expect(html).toContain('action="/admin/settings/llms?add=yes"');
     expect(html).toContain("Profile name is already in use.");
     expect(apiKeyInput(html)).not.toContain("value=");
   });
@@ -151,4 +152,23 @@ describe("admin LLM settings", () => {
     expect(html).toContain('href="/admin/settings/llms"');
     expect(html).toContain('data-open=""');
   });
+});
+
+it("renders the saved effort and model presets", () => {
+  const html = renderWorkspace(<LlmProfileForm editingProfile={{...profile, reasoningEffort: "max"}} submittedValues={null} error="" />);
+  expect(html).toContain('value="max" selected=""');
+  expect(html).toContain("GLM 5.3 Flash");
+  expect(html).toContain("Jev 1.13");
+  expect(html).toContain("Provider default");
+  expect(html).toContain("Off");
+});
+
+it("marks Jev as a decision model without reasoning or default activation", () => {
+  const jev = {...profile, model: "typesafe/jev-1.13", isActive: false};
+  const html = renderWorkspace(<LlmSettingsWorkspace profiles={[jev]} editingProfile={null} />);
+  expect(html).toContain("Typed decisions");
+  expect(html).not.toContain("Use this LLM");
+  const form = renderWorkspace(<LlmProfileForm editingProfile={jev} submittedValues={null} error="" />);
+  expect(form).toContain("Not applicable");
+  expect(form).toContain("Save decision model");
 });

@@ -45,12 +45,11 @@ describe("crawl LLM selection", () => {
     expect(html).toContain('href="/admin/settings/llms"');
   });
 
-  it("disables a profile without a key and cannot restore that unavailable choice", () => {
+  it("allows selecting and restoring a profile without authentication", () => {
     const html = render("missing-key");
-    expect(html).toMatch(/<option[^>]*value="missing-key"[^>]*disabled=""/);
-    expect(html).toContain("API key unavailable");
-    expect(html).toMatch(/<option[^>]*value=""[^>]*selected=""/);
-    expect(html).not.toMatch(/<option[^>]*value="missing-key"[^>]*selected=""/);
+    expect(html).not.toMatch(/<option[^>]*value="missing-key"[^>]*disabled=""/);
+    expect(html).toContain("No API key");
+    expect(html).toMatch(/<option[^>]*value="missing-key"[^>]*selected=""/);
   });
 
   it("restores an explicitly supplied execution profile while still requiring a valid saved model", () => {
@@ -68,23 +67,32 @@ describe("crawl LLM selection", () => {
     expect(html).toContain("Reload LLMs");
   });
 
-  it("explains why processing is unavailable if no profile has credentials", () => {
-    mocks.fetcher.mockReturnValue({state: "idle", data: {profiles: [profiles[1]], error: null}, load: vi.fn()});
-    expect(render()).toContain("No saved LLM has an available API key");
+  it("explains when no enabled profiles exist", () => {
+    mocks.fetcher.mockReturnValue({state: "idle", data: {profiles: [], error: null}, load: vi.fn()});
+    expect(render()).toContain("No enabled LLM is available");
   });
 });
 
 describe("crawl LLM profile resource", () => {
   it("exposes only selection metadata, even if stored profiles contain credentials or environment names", async () => {
     mocks.listLlmProfiles.mockReturnValue(profiles.map(profile => ({...profile, apiKey: "do-not-send-this", apiKeyEnvironmentVariable: "SECRET_MODEL_KEY", baseUrl: "https://provider.invalid/v1", isActive: true})));
-    expect(await loader()).toEqual({profiles, error: null});
-    expect(JSON.stringify(await loader())).not.toContain("SECRET_MODEL_KEY");
-    expect(JSON.stringify(await loader())).not.toContain("do-not-send-this");
+    expect(await loader({request: new Request("http://backoffice/admin/crawls/llm-profiles")} as Parameters<typeof loader>[0])).toEqual({profiles, error: null});
+    expect(JSON.stringify(await loader({request: new Request("http://backoffice/admin/crawls/llm-profiles")} as Parameters<typeof loader>[0]))).not.toContain("SECRET_MODEL_KEY");
+    expect(JSON.stringify(await loader({request: new Request("http://backoffice/admin/crawls/llm-profiles")} as Parameters<typeof loader>[0]))).not.toContain("do-not-send-this");
+  });
+
+  it("lists Jev only for decision selection while processing stays text-only", async () => {
+    mocks.listLlmProfiles.mockResolvedValue([...profiles, {profileId: "jev", name: "Jev 1.13", model: "typesafe/jev-1.13", provider: "OpenRouter", apiKeyAvailable: true}]);
+    const selected = await loader({request: new Request("http://backoffice/admin/crawls/llm-profiles?role=decision")} as Parameters<typeof loader>[0]);
+    expect(selected.profiles.map(p => p.model)).toEqual(["typesafe/jev-1.13"]);
+    expect(mocks.listLlmProfiles).toHaveBeenCalledWith(false, true);
+    const processing = await loader({request: new Request("http://backoffice/admin/crawls/llm-profiles")} as Parameters<typeof loader>[0]);
+    expect(processing.profiles.map(p => p.model)).not.toContain("typesafe/jev-1.13");
   });
 
   it("returns a recoverable error without exposing database details", async () => {
     mocks.listLlmProfiles.mockImplementation(() => { throw new Error("private database path"); });
-    expect(await loader()).toEqual({profiles: [], error: "Could not load saved LLMs. Reload the list to try again."});
+    expect(await loader({request: new Request("http://backoffice/admin/crawls/llm-profiles")} as Parameters<typeof loader>[0])).toEqual({profiles: [], error: "Could not load saved LLMs. Reload the list to try again."});
   });
 });
 

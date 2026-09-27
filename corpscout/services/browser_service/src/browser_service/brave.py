@@ -169,7 +169,7 @@ class BraveAsk:
             self.progress("captcha")
             if len(self.runs) >= self.request.challenge_agent_max_runs:
                 raise BraveStepError("captcha", "AgentBudgetExhausted")
-            if not self.api_key:
+            if not self.api_key and self.request.llm is None:
                 raise BraveStepError("captcha", "AgentNotConfigured")
             run_number = len(self.runs) + 1
             (self.directory / f"captcha-{run_number}.html").write_text(
@@ -189,6 +189,8 @@ class BraveAsk:
                 if self.request.llm
                 else self.request.challenge_agent_model,
                 explicit_profile=self.request.llm is not None,
+                reasoning_effort=self.request.llm.reasoning_effort if self.request.llm is not None else None,
+                base_url=self.request.llm.base_url if self.request.llm is not None else None,
             )
             self.runs.append(agent.result)
             self.progress("captcha_agent")
@@ -198,7 +200,7 @@ class BraveAsk:
                 else "https://api.deepseek.com/"
                 if self.request.challenge_agent_model == "deepseek-flash"
                 else "https://openrouter.ai/api/v1/",
-                headers={"Authorization": f"Bearer {self.api_key}"},
+                headers={"Authorization": f"Bearer {self.api_key}"} if self.api_key else {},
                 timeout=60,
             ) as http:
                 try:
@@ -541,14 +543,18 @@ def brave_router(
                     session.brave_usage.generation,
                 )
                 result = await BraveAsk(service, session, payload, directory, key).run()
-                keep_open = (
+                if (
                     payload.session_id is not None
                     and session.brave_usage.requests_started < payload.max_requests_per_browser
                     and session.profile.state == "running"
                     and result["error_type"] not in {
                         "BrowserClosed", "BrowserError", "BrowserSessionError"
                     }
-                )
+                ):
+                    # Active work may outlast the idle deadline. Renew while the
+                    # operation lock still proves that this execution is busy.
+                    service.touch(session.id, execution_id=session.execution_id)
+                    keep_open = True
                 return result
         except asyncio.CancelledError:
             if not result_file.exists():
@@ -581,17 +587,14 @@ def brave_router(
             ) from error
         finally:
             try:
-                if session is not None:
-                    if keep_open:
-                        service.touch(session.id, execution_id=session.execution_id)
-                    else:
-                        LOGGER.info(
-                            "Closing Brave browser %s after %s requests (limit=%s)",
-                            identifier,
-                            session.brave_usage.requests_started if session.brave_usage else 0,
-                            payload.max_requests_per_browser,
-                        )
-                        await service.release(session.id, execution_id=session.execution_id)
+                if session is not None and not keep_open:
+                    LOGGER.info(
+                        "Closing Brave browser %s after %s requests (limit=%s)",
+                        identifier,
+                        session.brave_usage.requests_started if session.brave_usage else 0,
+                        payload.max_requests_per_browser,
+                    )
+                    await service.release(session.id, execution_id=session.execution_id)
             finally:
                 busy_sessions.discard(identifier)
                 active.pop(payload.request_id, None)

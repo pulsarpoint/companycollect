@@ -67,6 +67,44 @@ suite('PostgreSQL LLM lifecycle', () => {
     vi.stubEnv('CRAWLER_LLM_ENCRYPTION_KEY','cd'.repeat(32));
     await expect(getLlmProfileApiKey(id)).rejects.toThrow('could not be decrypted');
   });
+  it('saves keyless profiles and distinguishes absent credentials from a missing revision', async () => {
+    vi.stubEnv('CRAWLER_LLM_ENCRYPTION_KEY', '');
+    const id = await saveAndActivateLlmProfile({...input, apiKey: ''});
+    expect(await getLlmProfileApiKey(id)).toBe('');
+    expect((await getLlmProfile(id))?.apiKeyAvailable).toBe(false);
+    await saveAndActivateLlmProfile({...input, profileId: id, model: 'local-update', apiKey: ''});
+    expect(await getLlmProfileApiKey(id, 2)).toBe('');
+    await expect(getLlmProfileApiKey(id, 99)).rejects.toThrow('revision was not found');
+    await expect(getLlmProfileApiKey(randomUUID())).rejects.toThrow('revision was not found');
+    vi.stubEnv('CRAWLER_LLM_ENCRYPTION_KEY', 'ab'.repeat(32));
+    await saveAndActivateLlmProfile({...input, profileId: id});
+    expect(await getLlmProfileApiKey(id, 1)).toBe('');
+    expect(await getLlmProfileApiKey(id, 3)).toBe(secret);
+  });
+  it('pins reasoning to immutable revisions and rejects launches with changed or omitted effort', async () => {
+    const id = await saveAndActivateLlmProfile({...input, reasoningEffort:'high'});
+    expect((await getLlmProfile(id))?.reasoningEffort).toBe('high');
+    const envelope = {profile_id:id,profile_revision:1,provider:input.provider,base_url:'https://provider.example/v1',model:input.model,api_key_encrypted:'test-envelope',reasoning_effort:'high' as const};
+    vi.mocked(verifySelectedLlm).mockResolvedValue(envelope);
+    await expect(admitLlmRun('test_job',{llm:envelope})).resolves.not.toBeNull();
+    await expect(admitLlmRun('test_job',{llm:{...envelope,reasoning_effort:'none'}})).rejects.toThrow('configuration changed');
+    await expect(admitLlmRun('test_job',{llm:{...envelope,reasoning_effort:undefined}})).rejects.toThrow('configuration changed');
+    await expect(llmControl().query("UPDATE processing.llm_profile_revisions SET reasoning_effort='none' WHERE profile_id=$1",[id])).rejects.toThrow('immutable');
+    await saveAndActivateLlmProfile({...input,profileId:id,reasoningEffort:'none',apiKey:''});
+    expect((await getLlmProfile(id))?.reasoningEffort).toBe('none');
+    expect((await llmControl().query('SELECT reasoning_effort FROM processing.llm_profile_revisions WHERE profile_id=$1 ORDER BY revision',[id])).rows).toEqual([{reasoning_effort:'high'},{reasoning_effort:'none'}]);
+  });
+  it('keeps Jev available for settings without replacing the processing default', async () => {
+    const text = await saveAndActivateLlmProfile(input);
+    const jev = await saveAndActivateLlmProfile({...input,name:'Jev',provider:'OpenRouter',baseUrl:'https://openrouter.ai/api/v1',model:'typesafe/jev-1.13'});
+    expect((await listLlmProfiles()).map(p=>p.profileId)).toEqual([text]);
+    expect((await listLlmProfiles(true,true)).map(p=>p.profileId)).toContain(jev);
+    expect((await getLlmProfile(text))?.isActive).toBe(true);
+    expect((await getLlmProfile(jev))?.isActive).toBe(false);
+    await expect(activateLlmProfile(jev)).rejects.toThrow('decision');
+    await expect(saveAndActivateLlmProfile({...input,name:'Invalid Jev',baseUrl:'https://openrouter.ai/api/v1',model:'typesafe/jev-1.13',reasoningEffort:'high'})).rejects.toThrow('not supported');
+    await expect(saveAndActivateLlmProfile({...input,name:'Invalid DeepSeek',baseUrl:'https://api.deepseek.com',model:'deepseek-flash',reasoningEffort:'medium'})).rejects.toThrow('not supported');
+  });
   it('archives a model, removes it from all selections, and stops only its unfinished tasks', async () => {
     const id = await saveAndActivateLlmProfile(input);
     const other = await saveAndActivateLlmProfile({...input,name:'Other'});
@@ -114,7 +152,7 @@ suite('PostgreSQL LLM lifecycle', () => {
     await activateLlmProfile(first);
     expect((await listLlmProfiles()).find(p=>p.isActive)?.profileId).toBe(first);
   });
-  it.each(['','key\nsecret','x'.repeat(8193)])('rejects invalid credentials',async apiKey => {
+  it.each(['key\nsecret','x'.repeat(8193)])('rejects invalid credentials',async apiKey => {
     await expect(saveAndActivateLlmProfile({...input,apiKey})).rejects.toThrow('API key');
   });
   it.each(['file:///tmp/model','https://user:pass@example.org/v1','https://example.org?key=secret'])('rejects unsafe endpoints',async baseUrl => {

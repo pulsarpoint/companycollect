@@ -25,6 +25,7 @@ from crawler_service.brave_browser import BraveSearch, BraveSearchBlocked
 from crawler_service.browser_client import BrowserLeaseClient
 from crawler_service.captures import capture_metadata, save_capture, save_crawl_result
 from crawler_service.content import HtmlWindow
+from crawler_service.debug_trace import CURRENT_TRACE, trace_event, trace_http_hooks
 from crawler_service.discovery import (
     Candidate,
     CrawlQueue,
@@ -34,6 +35,7 @@ from crawler_service.discovery import (
 )
 from crawler_service.fetch import BrowserUnavailable, fetch_page, open_browser
 from crawler_service.human_control import HumanAssistanceExpired, HumanSession
+from crawler_service.jev import JevClient
 from crawler_service.link_selection import assess_links
 from crawler_service.llm import ModelBudgetExceeded, ModelClient, ModelUnavailable
 from crawler_service.models import (
@@ -68,18 +70,18 @@ technologies; interpretation belongs to later offline processing.
 
 
 async def select_next_page(
-    queue: CrawlQueue, llm: ModelClient, root: Path, manifest: dict
+    queue: CrawlQueue, llm: ModelClient, root: Path, manifest: dict, decisions: JevClient | None = None
 ) -> tuple[Candidate, str] | None:
     """Rank available candidates against the same caller request on every pass."""
     if queue.available() and llm.unavailable:
         raise ModelUnavailable("Navigation model unavailable")
     if queue.available() and llm.remaining <= 0:
         raise ModelBudgetExceeded("Navigation model budget exhausted")
-    manifest["errors"].extend(await assess_links(queue, llm, root, reserved_calls=0))
+    manifest["errors"].extend(await assess_links(queue, llm, root, reserved_calls=0, decisions=decisions))
     selected = queue.pick_for_instructions()
     while selected is None and queue.assessment_batch() and llm.remaining > 0:
         manifest["errors"].extend(
-            await assess_links(queue, llm, root, reserved_calls=0)
+            await assess_links(queue, llm, root, reserved_calls=0, decisions=decisions)
         )
         selected = queue.pick_for_instructions()
     if selected is None:
@@ -104,6 +106,7 @@ async def select_next_page(
                 else "no_promising_candidates"
             )
         )
+    trace_event("selection", "Selected next page" if selected else "No next page", details={"url": selected[0].url if selected else None, "reason": selected[1] if selected else manifest["stop_reason"], "candidates": len(queue.candidates), "visited": len(queue.visited), "model_calls_remaining": llm.remaining})
     return selected
 
 
@@ -115,6 +118,7 @@ async def collect_pages(
     human: HumanSession | None = None,
     search: BraveSearch | None = None,
     browser_client: BrowserLeaseClient | None = None,
+    decisions: JevClient | None = None,
 ) -> None:
     """Own browser lifetime and bounded traversal; publish each capture before ranking."""
     settings = queue.config
@@ -123,7 +127,7 @@ async def collect_pages(
     classify_first_page = not requested or manifest["site_info_requested"]
     if requested and queue.instructions is not None and not classify_first_page:
         assert llm is not None
-        selected = await select_next_page(queue, llm, root, manifest)
+        selected = await select_next_page(queue, llm, root, manifest, decisions)
         if selected is None:
             return
         candidate, focus = selected
@@ -161,6 +165,7 @@ async def collect_pages(
                 errors=[],
             )
             queue.visited.add(next_url)
+            trace_event("page", f"Page {page.page_id} selected · {focus}", details={"url": next_url, "selected_for": focus, "pages_attempted": len(manifest["pages"]), "page_limit": settings.max_pages})
             LOGGER.info("Fetching %s (%s)", next_url, focus)
             # Persist the attempted page even if the browser cannot recover.
             manifest["pages"].append(capture_metadata(page))
@@ -181,6 +186,7 @@ async def collect_pages(
                         >= settings.max_browser_restarts
                     ):
                         raise
+                    trace_event("browser", "Restarting browser after failed navigation", level="warning", details={"page_id": page.page_id, "attempt": page.attempts})
                     recovery = {
                         "page_id": page.page_id,
                         "failed_attempt": page.attempts,
@@ -240,6 +246,7 @@ async def collect_pages(
                     "navigation_root": candidate.navigation_root,
                 }
             write_json(root / "crawl-manifest.json", manifest)
+            trace_event("progress", f"Collected {sum(p["fetch_status"] == "fetched" for p in manifest["pages"])} pages · limit {settings.max_pages}", details={"page_id": page.page_id, "fetch_status": page.fetch_status, "pages_attempted": len(manifest["pages"]), "pages_collected": sum(p["fetch_status"] == "fetched" for p in manifest["pages"]), "page_limit": settings.max_pages, "links_found": len(links)})
             if classify_first_page and len(manifest["pages"]) == 1:
                 assert llm is not None
                 if page.fetch_status != "fetched":
@@ -263,8 +270,18 @@ async def collect_pages(
                     "profile": profile.model_dump(),
                     "scope": "first_page_only",
                 }
+                if decisions is not None and "site_eligibility" in decisions.tasks:
+                    eligibility = await decisions.site_eligibility(page.source_url, html)
+                    decision = eligibility["crawl_decision"]
+                    # Descriptions still require source-matched processing output.
+                    if profile.evidence_status != "source_matched":
+                        decision = "needs_review"
+                    manifest["site_gate"].update(decision=decision, decision_model=eligibility)
+                trace_event("decision", f"Site eligibility: {decision}", details=manifest["site_gate"])
                 if manifest["site_info_requested"] or decision != "continue_crawling":
                     manifest["site_info"] = site_information(profile, page.source_url)
+                    if decisions is not None and "site_eligibility" in decisions.tasks:
+                        manifest["site_info"].update(crawl_decision=decision, site_types=[eligibility["site_type"]], decision_model=eligibility)
                 # A one-page description is complete for any identified site type.
                 # The classification decision only gates deeper collection.
                 if (
@@ -276,7 +293,7 @@ async def collect_pages(
                 override = manifest["full_crawl_all"] and decision == "skip_crawling"
                 manifest["site_gate"]["overridden"] = override
                 if decision == "skip_crawling":
-                    manifest["site_gate"]["reason"] = "Excluded primary site type: " + ", ".join(profile.data["site_types"])
+                    manifest["site_gate"]["reason"] = "Excluded primary site type: " + ", ".join(manifest["site_info"]["site_types"])
                 if override:
                     manifest["site_gate"]["override_reason"] = "full_crawl_all"
                 # The override admits identified non-company sites, never failed,
@@ -291,7 +308,7 @@ async def collect_pages(
                     break
                 queue.site_profile = profile.data
                 if not requested:
-                    async with httpx.AsyncClient() as web_http:
+                    async with httpx.AsyncClient(event_hooks=trace_http_hooks("discovery_http")) as web_http:
                         inventory = await sitemap_urls(web_http, site_url, settings)
                     write_json(root / "sitemaps.json", inventory)
                     manifest["sitemap"] = {
@@ -350,7 +367,7 @@ async def collect_pages(
                     search=search,
                     human=human,
                 )
-            selected = await select_next_page(queue, llm, root, manifest)
+            selected = await select_next_page(queue, llm, root, manifest, decisions)
             if selected is None and manifest["stop_reason"] in {
                 "no_matching_candidates",
                 "source_page_budget",
@@ -368,7 +385,7 @@ async def collect_pages(
                 )
                 if queue.assessment_batch():
                     manifest["stop_reason"] = None
-                    selected = await select_next_page(queue, llm, root, manifest)
+                    selected = await select_next_page(queue, llm, root, manifest, decisions)
             if selected is None:
                 break
             candidate, focus = selected
@@ -392,6 +409,9 @@ async def crawl_company(
     human: HumanSession | None = None,
     search: BraveSearch | None = None,
     browser_client: BrowserLeaseClient | None = None,
+    decision_model: str | None = None,
+    decision_api_key: str | None = None,
+    decision_tasks: Sequence[str] = (),
 ) -> dict:
     """Save cleaned HTML and return its manifest; never extract company facts.
 
@@ -477,12 +497,13 @@ async def crawl_company(
         raise ValueError("max_candidates is smaller than the supplied page list")
     credential = "DEEPSEEK" if api == "deepseek" else "OPENROUTER_API_KEY"
     needs_model = pages is None or instructions is not None or site_info
-    key = (api_key or os.environ.get(credential)) if needs_model else None
-    if needs_model and not key:
+    key = (api_key if api_key is not None else os.environ.get(credential)) if needs_model else None
+    if needs_model and (key is None or (api_key is None and not key)):
         raise ValueError(f"Set {credential} or pass api_key for automatic discovery")
     destination = output_dir.resolve()
+    trace = CURRENT_TRACE.get()
     if destination.exists() and (
-        not destination.is_dir() or any(destination.iterdir())
+        not destination.is_dir() or any(path != (trace.directory if trace is not None else None) for path in destination.iterdir())
     ):
         raise ValueError(f"Output directory is not empty: {destination}")
     destination.mkdir(parents=True, exist_ok=True)
@@ -579,6 +600,7 @@ async def crawl_company(
                 if needs_model:
                     model_http = await stack.enter_async_context(
                         httpx.AsyncClient(
+                            event_hooks=trace_http_hooks("model_http"),
                             base_url=(base_url.rstrip("/") + "/")
                             if base_url is not None
                             else "https://api.deepseek.com/"
@@ -588,6 +610,13 @@ async def crawl_company(
                     )
                     assert key is not None
                     llm = ModelClient(model_http, key, settings, root, api=api)
+                decisions = None
+                if decision_model is not None:
+                    if llm is None or not decision_api_key:
+                        raise ValueError("Jev decisions require processing and decision model credentials")
+                    decision_http = await stack.enter_async_context(httpx.AsyncClient(event_hooks=trace_http_hooks("decision_http")))
+                    decisions = JevClient(decision_http, decision_api_key, decision_model, list(decision_tasks), llm)
+                    manifest["decision_routing"] = {"model": decision_model, "tasks": list(decision_tasks)}
                 await collect_pages(
                     root,
                     manifest,
@@ -596,6 +625,7 @@ async def crawl_company(
                     human=human,
                     search=search,
                     browser_client=browser_client,
+                    decisions=decisions,
                 )
         except BraveSearchBlocked as error:
             manifest["status"] = "failed"
@@ -709,6 +739,7 @@ async def crawl_company(
                     manifest["challenge_agent"] = human.challenge_agent_result
             write_json(root / "crawl-manifest.json", manifest)
             save_crawl_result(root, manifest, destination=destination)
+            trace_event("result", f"Crawl result: {manifest["status"]} · {manifest["stop_reason"]}", level="error" if manifest["status"] in {"failed", "needs_review"} else "info", details={"status": manifest["status"], "stop_reason": manifest["stop_reason"], "elapsed_seconds": manifest["elapsed_seconds"], "usage": manifest["usage"], "errors": manifest["errors"], "pages": len(manifest["pages"])})
         return manifest
 
 

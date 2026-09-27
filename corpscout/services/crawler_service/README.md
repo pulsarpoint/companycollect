@@ -694,13 +694,35 @@ LLM-reviewed draft for administrator approval, not independently verified catalo
 `POST /v1/llm/verify` accepts `{ "llm": { "provider": "…", "base_url": "…", "model": "…", "api_key_encrypted": "v1.…" } }`
 with the same bearer authentication as crawl submissions. It decrypts the credential and
 checks one bounded JSON completion, without starting a crawl or writing artifacts.
+For `typesafe/jev-1.13`, verification instead checks a typed choice through
+OpenRouter's Decisions API.
+Optional `preview_only: true` returns the exact provider request without making a
+model call. `include_exchange: true` adds the request body, full response body,
+HTTP status/content type, and elapsed milliseconds to an actual verification.
+Both modes work for completions and Jev decisions. Request headers are omitted and
+known credentials are redacted, including credentials echoed by provider errors.
 A crawl request can carry that same `llm` object; its endpoint, model and credentials
 then replace the service's default LLM routing, including old provider restrictions.
+
+To use Jev for discovery, supply a separate encrypted `decision_llm` profile and
+`decision_tasks: ["site_eligibility", "link_selection"]`, or select either step
+individually. `llm` remains the processing model for descriptions and extracted
+text. Site eligibility classifies the first page and decides whether full discovery
+is appropriate. Link selection decides which candidate pages to process and why.
+Basic crawls support only site eligibility; explicit page downloads support neither.
+Jev failures are reported instead of silently switching to the processing model.
+Both models share the configured call budget, and Jev decisions and token usage are
+recorded with the crawl artifacts. Backoffice's Crawl tab exposes these choices and
+named, profile-specific settings instead of arbitrary JSON overrides.
 
 Configure `CRAWLER_LLM_ENCRYPTION_KEY` as exactly 64 hexadecimal characters, matching
 Backoffice's master key and the browser service's `BROWSER_LLM_ENCRYPTION_KEY`.
 Backoffice stores provider keys encrypted in its settings database and supplies encrypted
 request profiles; the crawler does not need provider environment keys for those requests.
+A verified encrypted empty key explicitly selects no authentication for local or other
+OpenAI-compatible endpoints. Such calls omit Authorization and never fall back to
+provider credentials from the environment. The endpoint must be reachable from the
+crawler host; localhost addresses refer to that host.
 The Ansible setting is `crawler_service_llm_encryption_key` in ignored
 `ansible/secrets.yml`. The AES-256-GCM envelope binds provider, base URL and model;
 credentials are decrypted only for the outbound model request. Do not rotate the key while
@@ -731,3 +753,35 @@ Backoffice exposes **Full crawl all** on full-crawl settings. Dagster forwards i
 freezes it for the execution and includes it in freshness identity; changing it
 requires a new execution. Saved explicit pages in a full crawl also request the
 first-page eligibility check. Historical results are not rewritten.
+
+
+### Live crawl debugging
+
+Backoffice test crawls send `"debug": true`. Other REST submissions may opt in to
+this flag; it is off by default. Each attempt owns an append-only timeline at
+`jobs/<request_id>/attempts/<NNNN>/debug/events.jsonl`. Detailed, redacted payloads
+are stored beside it as `<event_id:08>.json`, so streaming a long trace does not
+repeatedly transmit prompts and HTML. Debug files are retained even with
+`save_artifacts=false`; disabling the ordinary artifacts does not disable debugging.
+
+The authenticated `GET /v1/crawls/<request_id>/debug` API accepts:
+
+- `attempt=N`, `after=<byte cursor>`, `limit=100`: page the saved timeline.
+- `stream=true`: stream `crawl-debug` SSE events from that same file, with a
+  status update every second. Reconnect using `Last-Event-ID: <attempt>:<cursor>`.
+  `crawl-debug-complete` signals the terminal status after remaining events drain.
+- `event=N`: fetch the complete saved event payload on demand.
+- `download=true`: export the timeline and all payloads as NDJSON.
+
+Events include UTC timestamps with milliseconds, elapsed time, HTTP durations,
+browser lease/navigation/release calls, model and Jev requests/responses, retries,
+site eligibility and link decisions, page counts/limits, diagnostic artifacts,
+application logs and exceptions. HTTP headers are omitted; known credentials,
+encrypted keys, cookie fields and signed URL credentials are redacted before
+writing. Screenshot binary data is omitted. Public HTML and model text are shown
+as escaped text in Backoffice. Concurrent jobs have separate trace contexts.
+
+Backoffice automatically opens the trace after submission. The Attempts table
+also has a Debug trace action. Request, attempt and selected event are URL
+parameters so a refresh can reopen the same data. Historical attempts without
+debug recording show an explicit unavailable message; logs cannot be reconstructed.

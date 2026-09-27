@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { llmControl, llmTransaction, stopLlmRuns } from "./llm-control.server";
+import { isDecisionModel, reasoningOptions, type ReasoningEffort } from "./llm-model-options";
 
 export const SETTINGS_DATABASE_PATH =
   process.env.BACKOFFICE_SETTINGS_DATABASE_PATH?.trim() ||
@@ -14,6 +15,7 @@ export interface LlmProfile {
   provider: string;
   baseUrl: string;
   model: string;
+  reasoningEffort: ReasoningEffort | null;
   isActive: boolean;
   revision: number;
   state: "enabled" | "disabled" | "archived";
@@ -30,6 +32,7 @@ export interface SaveLlmProfileInput {
   provider: string;
   baseUrl: string;
   model: string;
+  reasoningEffort?: string | null;
   apiKey?: string;
 }
 
@@ -92,8 +95,8 @@ export async function getLlmProfileApiKey(profileId: string, revision?: number):
   const {rows} = await llmControl().query(`SELECT r.api_key_encrypted FROM processing.llm_profiles p
     JOIN processing.llm_profile_revisions r ON r.profile_id=p.profile_id AND r.revision=coalesce($2,p.current_revision)
     WHERE p.profile_id=$1 AND p.state <> 'archived'`, [profileId, revision ?? null]);
-  if (!rows[0]?.api_key_encrypted) throw new LlmSettingsValidationError("The selected LLM API key is missing or the profile was removed.");
-  return decryptStoredApiKey(profileId, rows[0].api_key_encrypted);
+  if (!rows[0]) throw new LlmSettingsValidationError("The selected LLM revision was not found or the profile was removed.");
+  return rows[0].api_key_encrypted === null ? "" : decryptStoredApiKey(profileId, rows[0].api_key_encrypted);
 }
 
 const LOCAL_CODEX_SETTING_KEY = "local_codex_enabled";
@@ -176,7 +179,7 @@ function validatedBaseUrl(value: string): string {
 
 const PROFILE_QUERY = `SELECT p.profile_id AS "profileId", p.name, p.current_revision AS revision,
   p.state, p.disabled_reason AS "disabledReason", p.is_default AS "isActive",
-  r.provider, r.base_url AS "baseUrl", r.model,
+  r.provider, r.base_url AS "baseUrl", r.model, r.reasoning_effort AS "reasoningEffort",
   (r.api_key_encrypted IS NOT NULL) AS "apiKeyAvailable", p.created_at::text AS "createdAt", p.updated_at::text AS "updatedAt",
   (SELECT jsonb_build_object('ok',c.ok,'message',c.message,'target',c.target,'checkedAt',c.finished_at,
     'failureKind',c.failure_kind) FROM processing.llm_checks c WHERE c.profile_id=p.profile_id
@@ -184,10 +187,10 @@ const PROFILE_QUERY = `SELECT p.profile_id AS "profileId", p.name, p.current_rev
   FROM processing.llm_profiles p JOIN processing.llm_profile_revisions r
     ON r.profile_id=p.profile_id AND r.revision=p.current_revision`;
 
-export async function listLlmProfiles(includeDisabled = false): Promise<LlmProfile[]> {
+export async function listLlmProfiles(includeDisabled = false, includeDecisionModels = false): Promise<LlmProfile[]> {
   const {rows} = await llmControl().query(PROFILE_QUERY + ` WHERE p.state <> 'archived'
-    AND ($1 OR p.state='enabled') ORDER BY p.is_default DESC, lower(p.name),p.profile_id`, [includeDisabled]);
-  return rows;
+    AND ($1 OR p.state='enabled') ORDER BY p.created_at, p.profile_id`, [includeDisabled]);
+  return includeDecisionModels ? rows : rows.filter(profile => !isDecisionModel(profile.model));
 }
 
 export async function getLlmProfile(profileId: string): Promise<LlmProfile | null> {
@@ -202,6 +205,12 @@ export async function saveAndActivateLlmProfile(input: SaveLlmProfileInput): Pro
   const provider = requiredValue(input.provider, "Provider", 100);
   const baseUrl = validatedBaseUrl(input.baseUrl);
   const model = requiredValue(input.model, "Model", 200);
+  const reasoningEffort = input.reasoningEffort?.trim() || null;
+  if (!reasoningOptions(model, baseUrl).includes((reasoningEffort ?? "") as ReasoningEffort | ""))
+    throw new LlmSettingsValidationError("This reasoning effort is not supported by the selected model.");
+  const decisionModel = isDecisionModel(model);
+  if (decisionModel && !["https://openrouter.ai/api", "https://openrouter.ai/api/v1"].includes(baseUrl))
+    throw new LlmSettingsValidationError("Jev decisions use the OpenRouter base URL https://openrouter.ai/api/v1.");
   const apiKey = input.apiKey?.trim() ?? "";
   try {
     return await llmTransaction(async client => {
@@ -211,16 +220,15 @@ export async function saveAndActivateLlmProfile(input: SaveLlmProfileInput): Pro
         JOIN processing.llm_profile_revisions r ON r.profile_id=p.profile_id AND r.revision=p.current_revision
         WHERE p.profile_id=$1 FOR UPDATE OF p`, [profileId]);
       if (input.profileId && (!existing || existing.state === 'archived')) throw new LlmSettingsValidationError("LLM profile was not found.");
-      if (!apiKey && !existing?.api_key_encrypted) throw new LlmSettingsValidationError("API key is required.");
-      const encrypted = apiKey ? encryptStoredApiKey(profileId, apiKey) : existing.api_key_encrypted;
+      const encrypted = apiKey ? encryptStoredApiKey(profileId, apiKey) : existing?.api_key_encrypted ?? null;
       const revision = (existing?.current_revision ?? 0) + 1;
-      await client.query("UPDATE processing.llm_profiles SET is_default=false WHERE is_default");
+      if (!decisionModel) await client.query("UPDATE processing.llm_profiles SET is_default=false WHERE is_default");
       await client.query(`INSERT INTO processing.llm_profiles (profile_id,name,current_revision,is_default)
-        VALUES ($1,$2,$3,true) ON CONFLICT (profile_id) DO UPDATE SET name=$2,current_revision=$3,
-        state='enabled',is_default=true,disabled_reason=NULL,updated_at=now()`, [profileId,name,revision]);
+        VALUES ($1,$2,$3,$4) ON CONFLICT (profile_id) DO UPDATE SET name=$2,current_revision=$3,
+        state='enabled',is_default=$4,disabled_reason=NULL,updated_at=now()`, [profileId,name,revision,!decisionModel]);
       await client.query(`INSERT INTO processing.llm_profile_revisions
-        (profile_id,revision,provider,base_url,model,api_key_encrypted) VALUES ($1,$2,$3,$4,$5,$6)`,
-        [profileId,revision,provider,baseUrl,model,encrypted]);
+        (profile_id,revision,provider,base_url,model,api_key_encrypted,reasoning_effort) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        [profileId,revision,provider,baseUrl,model,encrypted,reasoningEffort]);
       return profileId;
     });
   } catch (error) {
@@ -235,6 +243,9 @@ export async function activateLlmProfile(profileId: string): Promise<void> {
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended('llm_catalog',0))");
     const {rows: [profile]} = await client.query("SELECT state FROM processing.llm_profiles WHERE profile_id=$1 FOR UPDATE", [profileId]);
     if (profile?.state !== 'enabled') throw new LlmSettingsValidationError("Test and enable this model before making it the default.");
+    const {rows: [revision]} = await client.query(`SELECT r.model FROM processing.llm_profile_revisions r
+      JOIN processing.llm_profiles p ON p.profile_id=r.profile_id AND p.current_revision=r.revision WHERE p.profile_id=$1`, [profileId]);
+    if (isDecisionModel(revision.model)) throw new LlmSettingsValidationError("Jev is a decision model and cannot be the default text-generation model.");
     await client.query("UPDATE processing.llm_profiles SET is_default=false WHERE is_default");
     await client.query("UPDATE processing.llm_profiles SET is_default=true,updated_at=now() WHERE profile_id=$1", [profileId]);
   });

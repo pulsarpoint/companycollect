@@ -11,6 +11,7 @@ done
 docker exec "$container" createdb -U postgres llm_lifecycle_test
 docker exec "$container" psql -v ON_ERROR_STOP=1 -U postgres -d llm_lifecycle_test -c 'CREATE SCHEMA processing' >/dev/null
 docker exec -i "$container" psql -v ON_ERROR_STOP=1 -U postgres -d llm_lifecycle_test < ../../database/migrations/000127_llm_lifecycle.up.sql >/dev/null
+docker exec -i "$container" psql -v ON_ERROR_STOP=1 -U postgres -d llm_lifecycle_test < ../../database/migrations/000131_llm_reasoning_effort.up.sql >/dev/null
 port=$(docker port "$container" 5432 | cut -d: -f2)
 export LLM_TEST_PG_URL="postgresql://postgres:test-only@127.0.0.1:$port/llm_lifecycle_test"
 pnpm exec vitest run tests/llm-settings.server.test.ts

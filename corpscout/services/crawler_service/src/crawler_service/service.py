@@ -4,6 +4,7 @@ import asyncio
 import fcntl
 import json
 import logging
+import traceback
 from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal, TextIO
@@ -17,6 +18,7 @@ from crawler_service.brave_browser import BraveSearch
 from crawler_service.browser_client import BrowserLeaseClient
 from crawler_service.crawl import crawl_company
 from crawler_service.crawl_history import CrawlHistory
+from crawler_service.debug_trace import CURRENT_TRACE, SECRET_FIELD, CrawlTrace, trace_event, trace_http_hooks
 from crawler_service.discovery import crawlable_url, normalize_url
 from crawler_service.human_control import HumanSession
 from crawler_service.llm_profile import EncryptedLLMProfile, LLMProfileError
@@ -44,12 +46,15 @@ class CrawlRequest(StrictModel):
     site_info: bool = False
     full_crawl_all: bool = Field(default=False, strict=True)
     save_artifacts: bool = True
+    debug: bool = Field(default=False, strict=True)
     crawl: bool | Literal["full"] | None = None
     api: Literal["deepseek", "openrouter"] = "deepseek"
     config: ResearchConfig | None = None
     llm: EncryptedLLMProfile | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    decision_llm: EncryptedLLMProfile | None = Field(default=None, exclude_if=lambda value: value is None)
+    decision_tasks: list[Literal["site_eligibility", "link_selection"]] = Field(default_factory=list, exclude_if=lambda value: not value)
     challenge_agent_max_runs: AgentRunBudget | None = None
     challenge_agent_model: AgentModel = "deepseek-flash"
     interactive: bool = False
@@ -76,6 +81,21 @@ class CrawlRequest(StrictModel):
 
     @model_validator(mode="after")
     def crawl_options(self):
+        if self.llm is not None and self.llm.is_decision_model:
+            raise ValueError("Jev is a typed decision model; choose a text-generation model for this crawl")
+        if bool(self.decision_tasks) != (self.decision_llm is not None):
+            raise ValueError("Select a Jev model and at least one decision step together")
+        if len(set(self.decision_tasks)) != len(self.decision_tasks):
+            raise ValueError("Decision steps must not be repeated")
+        if self.decision_llm is not None:
+            if not self.decision_llm.is_decision_model or self.decision_llm.base_url.rstrip("/") != "https://openrouter.ai/api/v1" or self.decision_llm.reasoning_effort is not None:
+                raise ValueError("Decision steps require a Jev model on OpenRouter without reasoning effort")
+            if self.llm is None:
+                raise ValueError("Select a processing LLM alongside Jev")
+            if "site_eligibility" in self.decision_tasks and self.pages is not None and not self.site_info:
+                raise ValueError("Site eligibility requires first-page classification")
+            if "link_selection" in self.decision_tasks and (self.crawl is False or self.site_info and self.crawl is None and self.pages is None and self.instructions is None or self.pages is not None and self.instructions is None):
+                raise ValueError("Link selection is not used for this crawl mode")
         if self.full_crawl_all and (self.crawl is False or (self.site_info and self.crawl is None and self.pages is None and self.instructions is None)):
             raise ValueError("full_crawl_all requires deeper collection, not site information alone")
         if self.crawl == "full" and (
@@ -148,6 +168,7 @@ class CrawlJob(StrictModel):
     challenge_agent_budget_exhausted: bool = False
     interactive: bool | None = None
     collected_pages: int = 0
+    debug_enabled: bool = False
     retry_of: str | None = None
     retry_of_attempt: int | None = None
     s3_state: Literal["not_configured", "pending", "uploaded"] = "not_configured"
@@ -379,6 +400,8 @@ class CrawlService:
             key_name = "DEEPSEEK" if request.api == "deepseek" else "OPENROUTER_API_KEY"
             if needs_model and not self.environment.get(key_name):
                 raise ServiceUnavailable(f"Configure {key_name} on the service")
+        if request.decision_llm is not None:
+            request.decision_llm.decrypt_api_key(self.environment)
         job = CrawlJob(
             request_id=request.request_id,
             state="queued",
@@ -389,6 +412,7 @@ class CrawlService:
             retry_of=retry_of,
             retry_of_attempt=retry_of_attempt,
             interactive=request.interactive,
+            debug_enabled=request.debug,
             challenge_agent_max_runs=(
                 request.challenge_agent_max_runs or self.challenge_agent_max_runs
             )
@@ -428,6 +452,7 @@ class CrawlService:
         job = self.jobs[request_id]
         if job.state in TERMINAL_STATES:
             return
+        trace_event("progress", values.get("reason") or state, details={"state": state, **values})
         updated = CrawlJob.model_validate(job.model_dump() | values | {"state": state})
         self.jobs[request_id] = updated
         self.persist(updated)
@@ -602,6 +627,10 @@ class CrawlService:
                 "DEEPSEEK" if request.api == "deepseek" else "OPENROUTER_API_KEY"
             )
         )
+        decision_api_key = request.decision_llm.decrypt_api_key(self.environment) if request.decision_llm is not None else None
+        trace = CURRENT_TRACE.get()
+        if trace is not None:
+            trace.secrets.update(key for key in (api_key, decision_api_key) if key)
         async with AsyncExitStack() as stack:
             search = self.search
             browser_client = None
@@ -640,6 +669,7 @@ class CrawlService:
             http = await stack.enter_async_context(
                 httpx.AsyncClient(
                     base_url=self.browser_url,
+                    event_hooks=trace_http_hooks("browser_http"),
                     headers={"Authorization": f"Bearer {self.browser_token}"}
                     if self.browser_token
                     else {},
@@ -685,6 +715,8 @@ class CrawlService:
                 else request.config,
                 api_key=api_key,
                 base_url=request.llm.base_url if request.llm is not None else None,
+                **({"decision_model": request.decision_llm.model, "decision_api_key": decision_api_key,
+                    "decision_tasks": request.decision_tasks} if request.decision_llm is not None else {}),
                 **({"human": human} if human is not None else {}),
                 **(
                     {"browser_client": browser_client}
@@ -728,6 +760,12 @@ class CrawlService:
                 ),
             )
             self.human_sessions[job.request_id] = human
+        trace = CrawlTrace(attempt, [value for name, value in self.environment.items() if SECRET_FIELD.search(name)]) if request.debug else None
+        trace_token = CURRENT_TRACE.set(trace)
+        if trace is not None:
+            logging.getLogger().addHandler(trace)
+            trace.event("crawl", "Crawl started", details={"request": request.model_dump(), "attempt": job.attempt,
+                        "queued_at": job.submitted_at, "started_at": job.started_at})
         try:
             execution = asyncio.create_task(self.run_scan(request, job, attempt, human))
             self.executions[job.request_id] = execution
@@ -755,6 +793,7 @@ class CrawlService:
                         "Available for interactive retry."
                     )
         except asyncio.CancelledError:
+            trace_event("crawl", "Crawl interrupted or cancelled", level="warning")
             job = self.jobs[job.request_id]
             if job.state == "cancelled":
                 self.finish_cancelled(job)
@@ -793,6 +832,7 @@ class CrawlService:
             self.persist(job)
             raise
         except Exception as error:
+            trace_event("crawl", f"Crawl failed ({type(error).__name__})", level="error", details={"error": str(error), "traceback": traceback.format_exc()})
             job = self.jobs[job.request_id]
             LOGGER.error(
                 "Crawl job %s failed (%s)", job.request_id, type(error).__name__
@@ -819,6 +859,12 @@ class CrawlService:
             self.jobs[job.request_id].challenge_agent_running = False
             self.executions.pop(job.request_id, None)
             self.human_sessions.pop(job.request_id, None)
+            if trace is not None:
+                trace.event("crawl", "Crawl execution ended", level="error" if self.jobs[job.request_id].state == "failed" else "info",
+                            details=self.jobs[job.request_id].model_dump())
+                logging.getLogger().removeHandler(trace)
+                trace.close()
+            CURRENT_TRACE.reset(trace_token)
         job.finished_at = utc_now()
         job.browser_available = False
         job.verification_available = False

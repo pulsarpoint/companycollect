@@ -21,8 +21,11 @@ class EncryptedLLMConfig(dg.Config):
     provider: str = Field(min_length=1, max_length=100)
     base_url: str = Field(min_length=1, max_length=2048)
     model: str = Field(min_length=1, max_length=200)
+    reasoning_effort: str | None = Field(
+        default=None, pattern=r"^(none|minimal|low|medium|high|xhigh|max)$", exclude_if=lambda value: value is None
+    )
     api_key_encrypted: str = Field(
-        pattern=r"^v1\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{23,}$",
+        pattern=r"^v1\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{22,}$",
         max_length=16384,
         repr=False,
     )
@@ -70,8 +73,8 @@ class EncryptedLLMConfig(dg.Config):
             api_key = AESGCM(bytes.fromhex(key)).decrypt(nonce, ciphertext, aad).decode("utf-8")
         except (ValueError, InvalidTag):
             raise ValueError("Encrypted LLM credential could not be authenticated; check the shared key and selected model configuration") from None
-        if not api_key.strip() or len(api_key.encode()) > 8192 or any(ord(char) < 32 or ord(char) == 127 for char in api_key):
-            raise ValueError("Decrypted LLM credential is empty or invalid")
+        if (api_key != "" and not api_key.strip()) or len(api_key.encode()) > 8192 or any(ord(char) < 32 or ord(char) == 127 for char in api_key):
+            raise ValueError("Decrypted LLM credential is invalid")
         return api_key
 
 

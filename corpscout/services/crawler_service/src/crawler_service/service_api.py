@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from crawler_service.llm_profile import LLMProfileError, VerifyLLMRequest, verify_llm
+from crawler_service.debug_trace import read_trace
 from crawler_service.service import (
     TERMINAL_STATES,
     AgentModel,
@@ -127,7 +128,10 @@ def create_app(
             raise HTTPException(
                 503, "Configure crawler API authentication to verify LLM profiles"
             )
-        return await verify_llm(request.llm, service.environment)
+        return await verify_llm(
+            request.llm, service.environment,
+            preview_only=request.preview_only, include_exchange=request.include_exchange,
+        )
 
     @app.get("/v1/crawls/status", dependencies=[Depends(authenticate)])
     async def statuses(
@@ -142,6 +146,7 @@ def create_app(
             state=state, domain=domain, source=source, limit=limit, offset=offset
         ) | {
             "revision": service.history.revision(),
+            "debug_available": True,
             "human_enabled": service.human_enabled,
             "challenge_agent_enabled": service.challenge_agent_enabled,
             "challenge_agent_max_runs": service.challenge_agent_max_runs,
@@ -183,6 +188,88 @@ def create_app(
         if request_id not in service.jobs:
             raise HTTPException(404, "Unknown crawl request")
         return service.jobs[request_id].model_copy(deep=True)
+
+    @app.get("/v1/crawls/{request_id}/debug", dependencies=[Depends(authenticate)])
+    async def debug_trace(
+        request_id: str,
+        http_request: Request,
+        attempt: Annotated[int | None, Query(ge=0)] = None,
+        after: Annotated[int, Query(ge=0)] = 0,
+        event: Annotated[int | None, Query(ge=1)] = None,
+        limit: Annotated[int, Query(ge=1, le=200)] = 100,
+        download: bool = False,
+        stream: bool = False,
+    ):
+        if request_id not in service.jobs:
+            raise HTTPException(404, "Unknown crawl request")
+        job = service.jobs[request_id]
+        number = job.attempt if attempt is None else attempt
+        # Before the worker starts, attempt zero follows the upcoming attempt.
+        if number == 0 and job.attempt > 0:
+            number = job.attempt
+        assert service.history is not None
+        snapshot = job.model_dump() if number == job.attempt else service.history.get(request_id, number)
+        if snapshot is None:
+            raise HTTPException(404, "Unknown crawl attempt")
+        directory = service.root / "jobs" / request_id / "attempts" / f"{number:04}"
+        headers = {"Cache-Control": "no-store"}
+        if stream:
+            supplied = http_request.headers.get("last-event-id", "")
+            if supplied:
+                previous_attempt, _, previous_cursor = supplied.partition(":")
+                if not previous_attempt.isdecimal() or not previous_cursor.isdecimal():
+                    raise HTTPException(400, "Invalid trace event cursor")
+                if int(previous_attempt) == number:
+                    after = max(after, int(previous_cursor))
+            try:
+                read_trace(directory, after, 1)
+            except ValueError as error:
+                raise HTTPException(400, str(error)) from error
+
+            async def follow_file() -> AsyncIterator[str]:
+                cursor, selected_attempt, folder = after, number, directory
+                while not await http_request.is_disconnected():
+                    current = service.jobs[request_id]
+                    if selected_attempt == 0 and current.attempt > 0:
+                        selected_attempt, cursor = current.attempt, 0
+                        folder = service.root / "jobs" / request_id / "attempts" / f"{selected_attempt:04}"
+                    status = current.model_dump() if selected_attempt == current.attempt else service.history.get(request_id, selected_attempt)
+                    batch = read_trace(folder, cursor, limit)
+                    cursor = batch["cursor"]
+                    data = batch | {"job": status, "attempt": selected_attempt,
+                                    "enabled": status.get("debug_enabled", False) or (folder / "debug").is_dir()}
+                    done = status["state"] in TERMINAL_STATES and not batch["has_more"]
+                    yield f"id: {selected_attempt}:{cursor}\nevent: {'crawl-debug-complete' if done else 'crawl-debug'}\ndata: {json.dumps(data)}\n\n"
+                    if done:
+                        break
+                    await asyncio.sleep(0.05 if batch["has_more"] else 1)
+            return StreamingResponse(follow_file(), media_type="text/event-stream", headers=headers | {"X-Accel-Buffering": "no"})
+        if event is not None:
+            path = directory / "debug" / f"{event:08}.json"
+            if not path.is_file():
+                raise HTTPException(404, "No details saved for this trace event")
+            return FileResponse(path, media_type="application/json", headers=headers)
+        if download:
+            def export():
+                cursor = 0
+                while True:
+                    batch = read_trace(directory, cursor, 100)
+                    for item in batch["events"]:
+                        if item["has_details"]:
+                            item["details"] = json.loads((directory / "debug" / f"{item['id']:08}.json").read_text(encoding="utf-8"))
+                        yield json.dumps(item, ensure_ascii=False) + "\n"
+                    cursor = batch["cursor"]
+                    if not batch["has_more"]:
+                        break
+            return StreamingResponse(export(), media_type="application/x-ndjson", headers=headers | {
+                "Content-Disposition": f'attachment; filename="crawl-{request_id}-{number}-debug.jsonl"',
+            })
+        try:
+            batch = read_trace(directory, after, limit)
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        return JSONResponse(batch | {"job": snapshot, "attempt": number,
+            "enabled": snapshot.get("debug_enabled", False) or (directory / "debug").is_dir()}, headers=headers)
 
     @app.post(
         "/v1/crawls/{request_id}/retry",

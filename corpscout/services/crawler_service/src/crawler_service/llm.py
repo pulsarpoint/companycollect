@@ -10,6 +10,7 @@ from typing import Literal
 
 import httpx
 
+from crawler_service.debug_trace import trace_event
 from crawler_service.models import ResearchConfig
 from crawler_service.storage import utc_now, write_json
 from crawler_service.technology_catalog import (
@@ -142,14 +143,7 @@ class ModelClient:
             "by_call": self.calls,
         }
 
-    async def ask(
-        self,
-        prompt: str,
-        schema: dict,
-        *,
-        task: str,
-        catalog: TechnologyCatalog | None = None,
-    ) -> ModelReply:
+    def initial_messages(self, prompt: str, schema: dict) -> list[dict]:
         messages: list[dict] = [
             {
                 "role": "system",
@@ -162,6 +156,78 @@ class ModelClient:
                 "\n\nRequired JSON Schema (validated by the application):\n"
                 + json.dumps(schema, ensure_ascii=False, sort_keys=True)
             )
+        return messages
+
+    def request_payload(
+        self, schema: dict, *, messages: list[dict], catalog: TechnologyCatalog | None
+    ) -> dict:
+        request: dict = {
+            "model": self.config.model,
+            "stream": False,
+            "max_tokens": self.config.max_output_tokens,
+            "messages": messages,
+            "response_format": {"type": self.json_mode},
+        }
+        if self.json_mode == "json_schema":
+            request["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "crawler_service",
+                    "strict": True,
+                    "schema": schema,
+                },
+            }
+        if self.api == "deepseek":
+            if self.config.reasoning_effort is not None:
+                request["thinking"] = {
+                    "type": "disabled"
+                    if self.config.reasoning_effort == "none"
+                    else "enabled"
+                }
+                if self.config.reasoning_effort != "none":
+                    request["reasoning_effort"] = self.config.reasoning_effort
+            if self.config.reasoning_effort == "none":
+                request["temperature"] = 0
+        elif self.api == "openrouter":
+            if self.config.reasoning_effort is not None:
+                request["temperature"] = 0
+                request["reasoning"] = (
+                    {"enabled": False}
+                    if self.config.reasoning_effort == "none"
+                    else {
+                        "enabled": True,
+                        "exclude": True,
+                        "effort": self.config.reasoning_effort,
+                    }
+                )
+            request["provider"] = {
+                **(
+                    {"only": [self.config.provider]}
+                    if self.config.provider is not None
+                    else {"sort": "latency"}
+                ),
+                "allow_fallbacks": self.config.provider is None,
+                "require_parameters": True,
+            }
+        elif self.config.reasoning_effort is not None:
+            request["temperature"] = 0
+            request["reasoning_effort"] = self.config.reasoning_effort
+        if catalog is not None:
+            request["tools"] = [
+                SEARCH_TECHNOLOGIES_TOOL,
+                LIST_TECHNOLOGY_CATEGORIES_TOOL,
+            ]
+        return request
+
+    async def ask(
+        self,
+        prompt: str,
+        schema: dict,
+        *,
+        task: str,
+        catalog: TechnologyCatalog | None = None,
+    ) -> ModelReply:
+        messages = self.initial_messages(prompt, schema)
         searches = []
         rounds = self.config.max_technology_tool_rounds if catalog is not None else 0
         for round_index in range(rounds + 1):
@@ -240,60 +306,7 @@ class ModelClient:
         catalog: TechnologyCatalog | None,
     ) -> ModelReply:
         async with self.semaphore:
-            request: dict = {
-                "model": self.config.model,
-                "stream": False,
-                "max_tokens": self.config.max_output_tokens,
-                "messages": messages,
-                "response_format": {"type": self.json_mode},
-            }
-            if self.json_mode == "json_schema":
-                request["response_format"] = {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "crawler_service",
-                        "strict": True,
-                        "schema": schema,
-                    },
-                }
-            if self.api == "deepseek":
-                if self.config.reasoning_effort is not None:
-                    request["thinking"] = {
-                        "type": "disabled"
-                        if self.config.reasoning_effort == "none"
-                        else "enabled"
-                    }
-                    request["reasoning_effort"] = self.config.reasoning_effort
-                if self.config.reasoning_effort == "none":
-                    request["temperature"] = 0
-            elif self.api == "openrouter":
-                if self.config.reasoning_effort is not None:
-                    request["temperature"] = 0
-                    request["reasoning"] = (
-                        {"enabled": False}
-                        if self.config.reasoning_effort == "none"
-                        else {
-                            "enabled": True,
-                            "exclude": True,
-                            "effort": self.config.reasoning_effort,
-                        }
-                    )
-                request["provider"] = {
-                    **(
-                        {"only": [self.config.provider]}
-                        if self.config.provider is not None
-                        else {"sort": "latency"}
-                    ),
-                    "allow_fallbacks": self.config.provider is None,
-                    "require_parameters": True,
-                }
-            elif self.config.reasoning_effort is not None:
-                request["temperature"] = 0
-            if catalog is not None:
-                request["tools"] = [
-                    SEARCH_TECHNOLOGIES_TOOL,
-                    LIST_TECHNOLOGY_CATEGORIES_TOOL,
-                ]
+            request = self.request_payload(schema, messages=messages, catalog=catalog)
             last_error = "Request did not complete"
             record: dict | None = None
             started = time.monotonic()
@@ -320,12 +333,13 @@ class ModelClient:
                             response = await self.client.post(
                                 "chat/completions",
                                 json=request,
-                                headers={"Authorization": f"Bearer {self.api_key}"},
+                                headers={"Authorization": f"Bearer {self.api_key}"} if self.api_key else {},
                                 timeout=self.config.model_timeout_seconds,
                             )
                         except httpx.HTTPError as error:
                             last_error = f"{type(error).__name__}: {self.api_name} transport failed"
                             record["error"] = last_error
+                            record["elapsed_seconds"] = round(time.monotonic() - started, 3)
                             self.record_call(record, request)
                         else:
                             record["http_status"] = response.status_code
@@ -338,11 +352,11 @@ class ModelClient:
                                 )
                                 record["error"] = last_error
                                 try:
-                                    error_payload = json.loads(
-                                        json.dumps(response.json()).replace(
+                                    error_payload = response.json()
+                                    if self.api_key:
+                                        error_payload = json.loads(json.dumps(error_payload).replace(
                                             json.dumps(self.api_key)[1:-1], "[REDACTED]"
-                                        )
-                                    )
+                                        ))
                                 except ValueError:
                                     error_payload = None
                                 if isinstance(error_payload, dict) and isinstance(
@@ -353,7 +367,7 @@ class ModelClient:
                                         "code": provider_error.get("code"),
                                         "message": str(
                                             provider_error.get("message", "")
-                                        ).replace(self.api_key, "[REDACTED]")[:2000],
+                                        )[:2000],
                                     }
                                 if response.status_code == 429:
                                     retry_after = response.headers.get(
@@ -384,11 +398,10 @@ class ModelClient:
                                     record["error"] = last_error
                                     self.record_call(record, request)
                                 else:
-                                    payload = json.loads(
-                                        json.dumps(payload).replace(
+                                    if self.api_key:
+                                        payload = json.loads(json.dumps(payload).replace(
                                             json.dumps(self.api_key)[1:-1], "[REDACTED]"
-                                        )
-                                    )
+                                        ))
                                     if not isinstance(payload, dict):
                                         payload = {
                                             "error": "Unexpected HTTP response envelope"
@@ -445,6 +458,7 @@ class ModelClient:
                                     self.consecutive_errors = 0
                                     return ModelReply(document, raw, None)
                         if attempt < self.config.max_http_attempts:
+                            trace_event("retry", f"Retrying {task} in {retry_delay}s", level="warning", details={"call_id": record["call_id"], "next_attempt": attempt + 1, "error": last_error})
                             await asyncio.sleep(retry_delay)
             except TimeoutError:
                 last_error = f"{self.api_name} exceeded {self.config.model_timeout_seconds:g}s total deadline"

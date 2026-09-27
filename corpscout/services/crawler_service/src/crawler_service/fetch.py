@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from crawler_service.debug_trace import trace_event
 from crawler_service.browser import BrowserUnavailable
 from crawler_service.browser_client import BrowserLeaseClient, BrowserPageClient
 from crawler_service.captures import page_inventory
@@ -55,6 +57,8 @@ async def fetch_page(
     human: HumanSession | None = None,
 ) -> tuple[str, list[dict]]:
     for attempt in range(1, config.page_attempts + 1):
+        started = time.monotonic()
+        trace_event("navigation", f"Navigate to {page.requested_url}", details={"page_id": page.page_id, "attempt": attempt, "timeout_seconds": config.page_timeout_seconds})
         page.attempts += 1
         page.fetched_at = utc_now()
         if human is not None:
@@ -69,6 +73,7 @@ async def fetch_page(
                     timeout_seconds=config.page_timeout_seconds,
                     check_robots_txt=config.check_robots_txt,
                 )
+            trace_event("navigation", f"Page received · HTTP {result.status_code}", duration_ms=round((time.monotonic() - started) * 1000, 1), details={"page_id": page.page_id, "url": result.url, "status": result.status_code, "html_characters": len(result.html or result.cleaned_html or ""), "redirects": result.redirects, "error": result.error})
             page.source_url = result.url
             page.status_code = result.status_code
             if human is not None:
@@ -188,6 +193,7 @@ async def fetch_page(
         except BrowserUnavailable:
             raise
         except Exception as error:  # Keep a failed page as a visible outcome and continue other candidates.
+            trace_event("navigation", "Page navigation failed", level="error", duration_ms=round((time.monotonic() - started) * 1000, 1), details={"page_id": page.page_id, "attempt": attempt, "error": f"{type(error).__name__}: {error}"})
             page.errors.append(f"{type(error).__name__}: {str(error)[:500]}")
             write_json(
                 output_dir / "fetches" / f"{page.page_id}-{page.attempts}.json",
@@ -197,6 +203,7 @@ async def fetch_page(
                 page.fetch_status = "failed"
                 raise BrowserUnavailable("Browser closed during page fetch") from error
         if attempt < config.page_attempts:
+            trace_event("retry", "Retrying page in 1 second", level="warning", details={"page_id": page.page_id, "next_attempt": attempt + 1})
             await asyncio.sleep(1)
     page.fetch_status = "failed"
     return "", []

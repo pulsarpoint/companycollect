@@ -56,6 +56,7 @@ from dagster_v3.defs.esef_filings.llm_enrichment_assets import (
 from dagster_v3.defs.esef_filings.publish import LINK_STATUS_REGISTER_VERIFIED
 from dagster_v3.defs.esef_filings.segment_assets import ESEF_DOCUMENT_BUCKET
 from dagster_v3.defs.common.encrypted_llm import EncryptedLLMConfig
+from dagster_v3.defs.common.llm_reasoning import reasoning_options
 
 GROUP_NAME = "esef"
 
@@ -82,7 +83,8 @@ class EsefPeopleExtractionConfig(dg.Config):
     profile_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
     profile_revision: int | None = Field(default=None, ge=1, exclude_if=lambda value: value is None)
     api_key_encrypted: str | None = Field(default=None, repr=False, max_length=16384,
-        pattern=r"^v1\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{23,}$")
+        pattern=r"^v1\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{22,}$")
+    reasoning_effort: str | None = Field(default=None, pattern=r"^(none|minimal|low|medium|high|xhigh|max)$", exclude_if=lambda value: value is None)
     temperature: float = Field(default=0, ge=0, le=2)
     prompt_version: str = Field(
         default=PEOPLE_PROMPT_VERSION,
@@ -120,6 +122,7 @@ def run_esef_people_extraction(
     provider: str = "deepseek",
     base_url: str = "https://api.deepseek.com",
     temperature: float = 0,
+    model_request_options: dict[str, Any] | None = None,
     prompt_version: str = PEOPLE_PROMPT_VERSION,
     concurrency: int = 1,
 ) -> dict[str, object]:
@@ -204,6 +207,7 @@ def run_esef_people_extraction(
         provider=clean_provider,
         model=model,
         temperature=temperature,
+        model_request_options=model_request_options,
         refresh_existing=refresh_existing,
         reprocess_existing_without_model=False,
         max_evidence_chars=max_evidence_chars,
@@ -464,6 +468,7 @@ def esef_document_people_extraction_clickhouse(
             provider=config.provider, model=config.model, base_url=config.base_url,
             api_key_encrypted=config.api_key_encrypted,
             profile_id=config.profile_id, profile_revision=config.profile_revision,
+            reasoning_effort=config.reasoning_effort,
         ) if config.api_key_encrypted is not None else None,
     )
     metadata = run_esef_people_extraction(
@@ -474,6 +479,8 @@ def esef_document_people_extraction_clickhouse(
         model=config.model,
         base_url=config.base_url,
         temperature=config.temperature,
+        model_request_options=reasoning_options(config.base_url, config.reasoning_effort)
+            if config.profile_id or config.reasoning_effort is not None else None,
         prompt_version=config.prompt_version,
         concurrency=config.concurrency,
         source_run_id=context.run_id,

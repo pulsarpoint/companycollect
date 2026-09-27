@@ -82,10 +82,11 @@ finish with needs_human and a short reason. No code, Markdown, or extra fields.
 
 
 def completion_payload(
-    model: str, messages: list[dict], *, explicit_profile: bool
+    model: str, messages: list[dict], *, explicit_profile: bool,
+    reasoning_effort: str | None = None, base_url: str | None = None,
 ) -> dict:
-    """Use provider defaults for a selected profile, including required reasoning."""
-    return {
+    """A saved profile owns reasoning; legacy assistant defaults remain unchanged."""
+    payload = {
         "model": model,
         **(
             {}
@@ -100,6 +101,18 @@ def completion_payload(
         "response_format": {"type": "json_object"},
         "messages": messages,
     }
+    if explicit_profile and reasoning_effort is not None:
+        host = urlsplit(base_url or "").hostname
+        if host == "api.deepseek.com":
+            payload["thinking"] = {"type": "disabled" if reasoning_effort == "none" else "enabled"}
+            if reasoning_effort != "none":
+                payload["reasoning_effort"] = reasoning_effort
+        elif host == "openrouter.ai":
+            payload["reasoning"] = {"enabled": False} if reasoning_effort == "none" else {"enabled": True, "effort": reasoning_effort}
+            payload["provider"] = {"require_parameters": True}
+        else:
+            payload["reasoning_effort"] = reasoning_effort
+    return payload
 
 
 async def perform_action(
@@ -162,6 +175,8 @@ class ChallengeAgent:
         timeout_seconds: int,
         model: str,
         explicit_profile: bool = False,
+        reasoning_effort: str | None = None,
+        base_url: str | None = None,
     ):
         self.service, self.session, self.tab_name = service, session, tab_name
         self.page: Page = service.tab(session, tab_name).page
@@ -169,6 +184,7 @@ class ChallengeAgent:
         self.origin = urlsplit(self.page.url)[:2]
         self.max_steps, self.timeout_seconds = max_steps, timeout_seconds
         self.explicit_profile = explicit_profile
+        self.reasoning_effort, self.base_url = reasoning_effort, base_url
         self.directory = service.root / "challenge-runs" / uuid4().hex
         self.directory.mkdir(parents=True, mode=0o700)
         self.result = {
@@ -176,7 +192,7 @@ class ChallengeAgent:
             "sessionId": session.id,
             "tab": tab_name,
             "model": model,
-            "reasoningEffort": None
+            "reasoningEffort": reasoning_effort
             if explicit_profile
             else "none"
             if model == "deepseek-flash"
@@ -338,6 +354,7 @@ class ChallengeAgent:
                         },
                     ],
                     explicit_profile=self.explicit_profile,
+                    reasoning_effort=self.reasoning_effort, base_url=self.base_url,
                 ),
             )
             response.raise_for_status()

@@ -25,7 +25,7 @@ KEY = "19" * 32
 API_KEY = "sk-private-crawler-test-secret"
 
 
-def profile_payload(**overrides):
+def profile_payload(*, api_key=API_KEY, **overrides):
     profile = {
         "provider": "openrouter",
         "base_url": "https://llm-fixture/v1",
@@ -40,7 +40,7 @@ def profile_payload(**overrides):
         + profile["model"]
     ).encode("utf-8")
     nonce = b"0123456789ab"
-    ciphertext = AESGCM(bytes.fromhex(KEY)).encrypt(nonce, API_KEY.encode(), aad)
+    ciphertext = AESGCM(bytes.fromhex(KEY)).encrypt(nonce, api_key.encode(), aad)
     encoded = [
         base64.urlsafe_b64encode(value).decode().rstrip("=")
         for value in (nonce, ciphertext)
@@ -132,6 +132,29 @@ class EncryptedProfileTests(unittest.TestCase):
 
 
 class ProfileServiceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_keyless_profile_verifies_and_crawls_without_environment_fallback(self):
+        from crawler_service.llm_profile import verify_llm
+
+        payload = profile_payload(api_key="", provider="local")
+        profile = EncryptedLLMProfile.model_validate(payload)
+        self.assertEqual(profile.decrypt_api_key({"CRAWLER_LLM_ENCRYPTION_KEY": KEY}), "")
+        with self.llm_response(api_key=""):
+            self.assertEqual(await verify_llm(profile, self.service.environment), {"ok": True})
+        with self.llm_response(status=401, api_key=""):
+            failure = await verify_llm(profile, self.service.environment)
+            self.assertIn("No allowed providers", failure["error"])
+        requested = []
+        async with self.app.router.lifespan_context(self.app):
+            with (
+                patch.dict("os.environ", {"OPENROUTER_API_KEY": "must-not-use-host-secret"}),
+                patch("crawler_service.crawl.open_browser", lambda *_args, **_: browser_responses({SITE: (HTML, [], 200, None)}, requested)),
+                self.llm_response(document=COMPANY, api_key=""),
+            ):
+                self.service.submit(CrawlRequest.model_validate({"request_id": "keyless-crawl", "url": SITE, "site_info": True, "llm": payload}), source="rest")
+                job = await asyncio.wait_for(self.service.wait("keyless-crawl"), timeout=5)
+            self.assertEqual(job.state, "completed")
+            self.assertEqual(requested, [SITE])
+
     def setUp(self):
         install_browser_api(self)
         self.temporary = TemporaryDirectory()
@@ -146,7 +169,7 @@ class ProfileServiceTests(unittest.IsolatedAsyncioTestCase):
         self.app = create_app(self.service, api_token="service-token")
         self.model_requests = []
 
-    def llm_response(self, status=200, document=None):
+    def llm_response(self, status=200, document=None, api_key=API_KEY):
         async def handle(client, request, **kwargs):
             if request.url.host not in {
                 "llm-fixture",
@@ -157,7 +180,7 @@ class ProfileServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(
                 request.url.path, {"/v1/chat/completions", "/api/v1/chat/completions"}
             )
-            self.assertEqual(request.headers["authorization"], f"Bearer {API_KEY}")
+            self.assertEqual(request.headers.get("authorization"), f"Bearer {api_key}" if api_key else None)
             self.model_requests.append(json.loads(request.content))
             if status != 200:
                 return httpx.Response(

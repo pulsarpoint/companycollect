@@ -7,6 +7,10 @@ function crawlerUrl(path: string) {
   return new URL(path, base);
 }
 
+export class CrawlerApiError extends Error {
+  constructor(message: string, readonly status: number) { super(message); }
+}
+
 export async function crawlerFetch(path: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers);
   const token = process.env.CRAWLER_API_TOKEN;
@@ -17,10 +21,10 @@ export async function crawlerFetch(path: string, init: RequestInit = {}) {
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     if (response.status === 422 && Array.isArray(body?.detail)) {
-      throw new Error(body.detail.map((issue: {loc?: unknown[]; msg?: string}) =>
-        `${issue.loc?.join(".") || "request"}: ${issue.msg || "Invalid value"}`).join("; "));
+      throw new CrawlerApiError(body.detail.map((issue: {loc?: unknown[]; msg?: string}) =>
+        `${issue.loc?.join(".") || "request"}: ${issue.msg || "Invalid value"}`).join("; "), response.status);
     }
-    throw new Error(typeof body?.detail === "string" ? body.detail : `Crawler returned HTTP ${response.status}.`);
+    throw new CrawlerApiError(typeof body?.detail === "string" ? body.detail : `Crawler returned HTTP ${response.status}.`, response.status);
   }
   return response;
 }

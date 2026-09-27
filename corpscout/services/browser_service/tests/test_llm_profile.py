@@ -22,7 +22,7 @@ KEY = "19" * 32
 API_KEY = "sk-private-browser-test-secret"
 
 
-def profile_payload(**overrides):
+def profile_payload(*, api_key=API_KEY, **overrides):
     profile = {
         "provider": "openrouter",
         "base_url": "https://llm-fixture/v1",
@@ -37,7 +37,7 @@ def profile_payload(**overrides):
         + profile["model"]
     ).encode()
     nonce = b"0123456789ab"
-    encrypted = AESGCM(bytes.fromhex(KEY)).encrypt(nonce, API_KEY.encode(), aad)
+    encrypted = AESGCM(bytes.fromhex(KEY)).encrypt(nonce, api_key.encode(), aad)
     return profile | {
         "api_key_encrypted": "v1."
         + ".".join(
@@ -139,7 +139,7 @@ class ProfileApiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result["failure_kind"], kind)
                 self.assertNotIn(API_KEY, json.dumps(result))
 
-    def model_reply(self, *, action=None, status=200, error=None):
+    def model_reply(self, *, action=None, status=200, error=None, api_key=API_KEY):
         original = httpx.AsyncClient.send
 
         async def send(client, request, **kwargs):
@@ -148,7 +148,7 @@ class ProfileApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 str(request.url), "https://llm-fixture/v1/chat/completions"
             )
-            self.assertEqual(request.headers["authorization"], "Bearer " + API_KEY)
+            self.assertEqual(request.headers.get("authorization"), "Bearer " + api_key if api_key else None)
             body = json.loads(request.content)
             self.model_requests.append(body)
             # This endpoint's GLM rejects forced reasoning settings.
@@ -181,6 +181,17 @@ class ProfileApiTests(unittest.IsolatedAsyncioTestCase):
             )
 
         return patch.object(httpx.AsyncClient, "send", send)
+
+    async def test_keyless_browser_profile_verifies_without_authorization(self):
+        from browser_service.llm_profile import verify_llm
+
+        profile = EncryptedLLMProfile.model_validate(profile_payload(api_key=""))
+        self.assertEqual(profile.decrypt_api_key(KEY), "")
+        with self.model_reply(api_key=""):
+            self.assertEqual(await verify_llm(profile, KEY), {"ok": True})
+        with self.model_reply(api_key="", status=404, error="Model not installed"):
+            result = await verify_llm(profile, KEY)
+            self.assertIn("Model not installed", result["error"])
 
     async def test_verify_requires_auth_and_checks_image_action_without_artifacts(self):
         async with self.client(authenticated=False) as client:

@@ -179,6 +179,7 @@ export default [
     route("browsers/settings", "routes/admin-browser-settings.tsx"),
     route("browser-sessions", "routes/admin-browser-profiles-redirect.ts"),
     route("crawls/events", "routes/admin-crawls-events.ts"),
+    route("crawls/debug", "routes/admin-crawls-debug.ts"),
     route("general/roles", "routes/admin-general-roles.tsx"),
     route("settings/llms", "routes/admin-settings-llms.tsx"),
     route("settings/brave-searches", "routes/admin-settings-brave-searches.tsx"),
