@@ -9,15 +9,12 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"sort"
-	"sync"
 	"time"
 
-	"provider_recon/internal/assemble"
 	"provider_recon/internal/definitions"
 	"provider_recon/internal/feeds"
-	"provider_recon/internal/model"
 	"provider_recon/internal/publish"
+	"provider_recon/internal/runner"
 )
 
 // registry is overridden in tests.
@@ -51,21 +48,6 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "usage: provider-recon validate|schema|collect|restore [flags]")
 }
 
-func loadDefinitions(dir string) ([]definitions.Definition, error) {
-	defs, err := definitions.LoadDir(dir)
-	if err != nil {
-		return nil, err
-	}
-	validators := map[string]definitions.ParamValidator{}
-	for name, c := range registry() {
-		validators[name] = c
-	}
-	if err := definitions.Validate(defs, validators); err != nil {
-		return nil, err
-	}
-	return defs, nil
-}
-
 func cmdValidate(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -73,7 +55,7 @@ func cmdValidate(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}
-	defs, err := loadDefinitions(*dir)
+	defs, err := runner.LoadDefinitions(*dir, registry)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -111,55 +93,17 @@ func cmdCollect(ctx context.Context, args []string, stdout, stderr io.Writer) in
 		return 64
 	}
 	logger := slog.New(slog.NewTextHandler(stderr, nil))
-
-	defs, err := loadDefinitions(*dir)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	if *only != "" {
-		var picked []definitions.Definition
-		for _, d := range defs {
-			if d.Slug == *only {
-				picked = append(picked, d)
-			}
-		}
-		if len(picked) == 0 {
-			fmt.Fprintf(stderr, "no definition with slug %q\n", *only)
-			return 1
-		}
-		defs = picked
-	}
-
 	store, err := openStore(ctx, *outDir)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-
-	now := time.Now().UTC().Truncate(time.Second)
-	outcomes := collectAll(ctx, uniqueFeeds(defs), registry(), feeds.NewFetcher(), *concurrency, logger)
-
-	docs := make([]model.Document, 0, len(defs))
-	for _, d := range defs {
-		prev, err := publish.LoadLatest(ctx, store, d.Slug)
-		if err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		doc, err := assemble.Build(d, outcomes, prev, now)
-		if err != nil {
-			fmt.Fprintf(stderr, "%s: %v\n", d.Slug, err)
-			return 1
-		}
-		docs = append(docs, doc)
-	}
-
-	scope := publish.Scope{Command: "collect"}
+	var providers []string
 	if *only != "" {
-		scope.Providers = []string{*only}
+		providers = []string{*only}
 	}
-	m, err := publish.PublishScoped(ctx, store, docs, now, scope)
+	cfg := runner.Config{DefinitionsDir: *dir, Registry: registry, Fetcher: feeds.NewFetcher(), Store: store, Concurrency: *concurrency, Logger: logger}
+	m, err := runner.Collect(ctx, cfg, providers, time.Now().UTC().Truncate(time.Second))
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -199,22 +143,7 @@ func cmdRestore(ctx context.Context, args []string, stdout, stderr io.Writer) in
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	prev, err := publish.LoadLatest(ctx, store, *slug)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	if prev == nil {
-		fmt.Fprintf(stderr, "no published document for %q\n", *slug)
-		return 1
-	}
-	now := time.Now().UTC().Truncate(time.Second)
-	doc, n, err := assemble.Restore(*prev, *collector, *since, now)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	m, err := publish.PublishScoped(ctx, store, []model.Document{doc}, now, publish.Scope{Command: "restore", Providers: []string{*slug}})
+	m, n, err := runner.Restore(ctx, runner.Config{Store: store}, *slug, *collector, *since, time.Now().UTC().Truncate(time.Second))
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -236,52 +165,4 @@ func openStore(ctx context.Context, outDir string) (publish.Store, error) {
 		return nil, err
 	}
 	return s, s.EnsureBucket(ctx)
-}
-
-// uniqueFeeds returns each feed reference once (by ID), sorted by ID.
-func uniqueFeeds(defs []definitions.Definition) []definitions.FeedRef {
-	seen := map[string]definitions.FeedRef{}
-	for _, d := range defs {
-		for _, f := range d.Feeds {
-			seen[f.ID()] = f
-		}
-	}
-	ids := make([]string, 0, len(seen))
-	for id := range seen {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	out := make([]definitions.FeedRef, len(ids))
-	for i, id := range ids {
-		out[i] = seen[id]
-	}
-	return out
-}
-
-func collectAll(ctx context.Context, refs []definitions.FeedRef, collectors map[string]feeds.Collector, f *feeds.Fetcher, limit int, logger *slog.Logger) map[string]assemble.FeedOutcome {
-	out := make(map[string]assemble.FeedOutcome, len(refs))
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, max(limit, 1))
-	for _, ref := range refs {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			start := time.Now()
-			res, err := collectors[ref.Collector].Collect(ctx, f, ref.Params)
-			if err != nil {
-				logger.Warn("collector failed", "collector", ref.ID(), "err", err)
-			} else {
-				logger.Info("collected", "collector", ref.ID(), "ranges", len(res.Ranges), "skipped", res.Skipped,
-					"version", res.SourceVersion, "took", time.Since(start).Round(time.Millisecond))
-			}
-			mu.Lock()
-			out[ref.ID()] = assemble.FeedOutcome{Result: res, Err: err}
-			mu.Unlock()
-		}()
-	}
-	wg.Wait()
-	return out
 }

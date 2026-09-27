@@ -34,6 +34,13 @@ const (
 // bgpCollectors publish announcements, not operator-published ranges.
 var bgpCollectors = map[string]bool{"ripestat_announced": true}
 
+// Restore failures, wrapped so callers can map them (the HTTP service does).
+var (
+	ErrUnknownCollector = errors.New("unknown collector")
+	ErrBadDate          = errors.New("invalid date")
+	ErrNothingToRestore = errors.New("nothing to restore")
+)
+
 // svcRange is a feed range with the service it belongs to.
 type svcRange struct {
 	svc  string
@@ -131,10 +138,10 @@ func Build(def definitions.Definition, outcomes map[string]FeedOutcome, prev *mo
 func Restore(doc model.Document, collectorID, removedSince string, now time.Time) (model.Document, int, error) {
 	st, ok := doc.Collection.Collectors[collectorID]
 	if !ok {
-		return doc, 0, fmt.Errorf("%s has no collector %q", doc.Slug, collectorID)
+		return doc, 0, fmt.Errorf("%s has no collector %q: %w", doc.Slug, collectorID, ErrUnknownCollector)
 	}
 	if _, err := time.Parse(model.DateLayout, removedSince); err != nil {
-		return doc, 0, fmt.Errorf("removed-since %q is not a YYYY-MM-DD date", removedSince)
+		return doc, 0, fmt.Errorf("removed-since %q is not a YYYY-MM-DD date: %w", removedSince, ErrBadDate)
 	}
 	cp, err := clone(doc)
 	if err != nil {
@@ -166,7 +173,7 @@ func Restore(doc model.Document, collectorID, removedSince string, now time.Time
 		}
 	}
 	if n == 0 {
-		return doc, 0, fmt.Errorf("%s %s has no grace-expired removals on or after %s; nothing to restore", doc.Slug, collectorID, removedSince)
+		return doc, 0, fmt.Errorf("%s %s has no grace-expired removals on or after %s: %w", doc.Slug, collectorID, removedSince, ErrNothingToRestore)
 	}
 	// A restore run is not a collection: no feed added, lost or removed
 	// anything, so every collector's churn is zero except the restored count.
