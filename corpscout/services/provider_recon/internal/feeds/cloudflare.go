@@ -39,6 +39,9 @@ func (c *Cloudflare) Collect(ctx context.Context, f *Fetcher, _ map[string]strin
 	if !feed.Success || feed.Result == nil {
 		return Result{}, errors.New("cloudflare: API reported success=false")
 	}
+	if len(feed.Result.IPv4) == 0 || len(feed.Result.IPv6) == 0 {
+		return Result{}, shapeErr("cloudflare: expected ipv4_cidrs and ipv6_cidrs, got %d and %d", len(feed.Result.IPv4), len(feed.Result.IPv6))
+	}
 	b := rangeBuilder{res: Result{SourceURL: c.URL, SourceVersion: "etag=" + feed.Result.ETag}}
 	for _, s := range append(feed.Result.IPv4, feed.Result.IPv6...) {
 		b.add(s, "CLOUDFLARE", "")

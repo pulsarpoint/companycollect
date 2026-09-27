@@ -53,6 +53,15 @@ func (c *Azure) Collect(ctx context.Context, f *Fetcher, _ map[string]string) (R
 	if err := json.Unmarshal(resp.Body, &feed); err != nil {
 		return Result{}, fmt.Errorf("azure: decode: %w", err)
 	}
+	names := map[string]bool{}
+	for _, v := range feed.Values {
+		names[v.Name] = true
+	}
+	for _, required := range []string{"AzureCloud", "AzureFrontDoor.Frontend"} {
+		if !names[required] {
+			return Result{}, shapeErr("azure: service tag %q missing from %s", required, url)
+		}
+	}
 	b := rangeBuilder{res: Result{SourceURL: url, SourceVersion: fmt.Sprintf("changeNumber=%d", feed.ChangeNumber)}}
 	for _, v := range feed.Values {
 		for _, p := range v.Properties.AddressPrefixes {

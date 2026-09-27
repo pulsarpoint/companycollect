@@ -42,6 +42,9 @@ func (c *AWS) Collect(ctx context.Context, f *Fetcher, _ map[string]string) (Res
 	if err := json.Unmarshal(resp.Body, &feed); err != nil {
 		return Result{}, fmt.Errorf("aws: decode: %w", err)
 	}
+	if len(feed.Prefixes) == 0 || len(feed.IPv6Prefixes) == 0 {
+		return Result{}, shapeErr("aws: expected prefixes and ipv6_prefixes, got %d and %d", len(feed.Prefixes), len(feed.IPv6Prefixes))
+	}
 	b := rangeBuilder{res: Result{SourceURL: c.URL, SourceVersion: "syncToken=" + feed.SyncToken}}
 	for _, p := range feed.Prefixes {
 		b.add(p.IPPrefix, p.Service, p.Region)

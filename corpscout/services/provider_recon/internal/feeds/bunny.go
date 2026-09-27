@@ -38,6 +38,9 @@ func (c *Bunny) Collect(ctx context.Context, f *Fetcher, _ map[string]string) (R
 		if err := json.Unmarshal(resp.Body, &ips); err != nil {
 			return Result{}, fmt.Errorf("bunny: %s is not a JSON list: %w", url, err)
 		}
+		if len(ips) == 0 {
+			return Result{}, shapeErr("bunny: %s returned an empty list", url)
+		}
 		for _, ip := range ips {
 			b.add(ip, "EDGE", "")
 		}

@@ -31,6 +31,9 @@ func (c *Fastly) Collect(ctx context.Context, f *Fetcher, _ map[string]string) (
 	if err := json.Unmarshal(resp.Body, &feed); err != nil {
 		return Result{}, fmt.Errorf("fastly: decode: %w", err)
 	}
+	if len(feed.Addresses) == 0 || len(feed.IPv6) == 0 {
+		return Result{}, shapeErr("fastly: expected addresses and ipv6_addresses, got %d and %d", len(feed.Addresses), len(feed.IPv6))
+	}
 	b := rangeBuilder{res: Result{SourceURL: c.URL, SourceVersion: bodyVersion(resp.Body)}}
 	for _, s := range append(feed.Addresses, feed.IPv6...) {
 		b.add(s, "FASTLY", "")

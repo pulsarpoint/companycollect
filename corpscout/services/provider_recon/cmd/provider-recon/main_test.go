@@ -48,7 +48,7 @@ func defsDir(t *testing.T, files map[string]string) string {
 }
 
 func TestCollectTwiceIsIdempotent(t *testing.T) {
-	withAWSServer(t, `{"syncToken":"1","prefixes":[{"ip_prefix":"52.84.0.0/15","region":"GLOBAL","service":"CLOUDFRONT"}],"ipv6_prefixes":[]}`)
+	withAWSServer(t, `{"syncToken":"1","prefixes":[{"ip_prefix":"52.84.0.0/15","region":"GLOBAL","service":"CLOUDFRONT"}],"ipv6_prefixes":[{"ipv6_prefix":"2600:9000::/28","region":"GLOBAL","service":"CLOUDFRONT"}]}`)
 	defs := defsDir(t, map[string]string{"aws.yaml": awsYAML})
 	out := t.TempDir()
 

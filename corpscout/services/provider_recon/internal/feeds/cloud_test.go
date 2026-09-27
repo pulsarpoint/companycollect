@@ -20,7 +20,7 @@ func TestAzureCollectFollowsDownloadLink(t *testing.T) {
 	mux.HandleFunc("/download/7/1/d/x/ServiceTags_Public_20260921.json", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"changeNumber":412,"cloud":"Public","values":[
 			{"name":"AzureFrontDoor.Frontend","properties":{"region":"","addressPrefixes":["13.107.246.0/24","2620:1ec:bdf::/48"]}},
-			{"name":"AppService.WestEurope","properties":{"region":"westeurope","addressPrefixes":["20.50.2.0/24"]}}]}`))
+			{"name":"AppService.WestEurope","properties":{"region":"westeurope","addressPrefixes":["20.50.2.0/24"]}},{"name":"AzureCloud","properties":{"region":"","addressPrefixes":["20.50.3.0/24"]}}]}`))
 	})
 
 	c := &Azure{
@@ -34,7 +34,7 @@ func TestAzureCollectFollowsDownloadLink(t *testing.T) {
 	if res.SourceVersion != "changeNumber=412" || !strings.HasSuffix(res.SourceURL, "ServiceTags_Public_20260921.json") {
 		t.Fatalf("version=%q url=%q", res.SourceVersion, res.SourceURL)
 	}
-	if len(res.Ranges) != 3 || res.Ranges[2].Tag != "AppService.WestEurope" || res.Ranges[2].Region != "westeurope" {
+	if len(res.Ranges) != 4 || res.Ranges[2].Tag != "AppService.WestEurope" || res.Ranges[2].Region != "westeurope" {
 		t.Fatalf("%+v", res.Ranges)
 	}
 }

@@ -49,8 +49,8 @@ func TestAWSEmptyFeedIsAnError(t *testing.T) {
 	srv := serveBody(`{"syncToken":"1","prefixes":[],"ipv6_prefixes":[]}`)
 	defer srv.Close()
 	_, err := (&AWS{URL: srv.URL}).Collect(context.Background(), testFetcher(srv), nil)
-	if !errors.Is(err, ErrEmptyFeed) {
-		t.Fatalf("err = %v, want ErrEmptyFeed", err)
+	if !errors.Is(err, ErrShape) {
+		t.Fatalf("err = %v, want ErrShape", err)
 	}
 }
 

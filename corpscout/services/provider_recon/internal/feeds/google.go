@@ -26,6 +26,7 @@ func collectGoogle(ctx context.Context, f *Fetcher, url, fixedTag string) (Resul
 		return Result{}, fmt.Errorf("google: decode: %w", err)
 	}
 	b := rangeBuilder{res: Result{SourceURL: url, SourceVersion: "syncToken=" + feed.SyncToken}}
+	v4, v6 := 0, 0
 	for _, p := range feed.Prefixes {
 		tag := fixedTag
 		if tag == "" {
@@ -34,8 +35,14 @@ func collectGoogle(ctx context.Context, f *Fetcher, url, fixedTag string) (Resul
 		raw := p.IPv4Prefix
 		if raw == "" {
 			raw = p.IPv6Prefix
+			v6++
+		} else {
+			v4++
 		}
 		b.add(raw, tag, p.Scope)
+	}
+	if v4 == 0 || v6 == 0 {
+		return Result{}, shapeErr("google: %s has %d IPv4 and %d IPv6 prefixes", url, v4, v6)
 	}
 	return finish(b.res)
 }

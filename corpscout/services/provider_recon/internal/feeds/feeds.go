@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/netip"
 	"strings"
 )
@@ -36,6 +37,15 @@ type Collector interface {
 
 // ErrEmptyFeed means a publication parsed but yielded no usable ranges.
 var ErrEmptyFeed = errors.New("feed returned no usable ranges")
+
+// ErrShape means a publication decoded but no longer has the structure the
+// collector relies on: a format change, never a legitimate shrink. The feed
+// goes stale instead of publishing a partial range set.
+var ErrShape = errors.New("feed shape changed")
+
+func shapeErr(format string, args ...any) error {
+	return fmt.Errorf("%w: %s", ErrShape, fmt.Sprintf(format, args...))
+}
 
 // Registry returns every production collector keyed by name.
 func Registry() map[string]Collector {

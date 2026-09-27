@@ -60,5 +60,15 @@ func (c *GitHub) Collect(ctx context.Context, f *Fetcher, _ map[string]string) (
 		res.Ranges = append(res.Ranges, ranges...)
 		res.Skipped += bad
 	}
+	hasPages := false
+	for _, r := range res.Ranges {
+		if r.Tag == "pages" {
+			hasPages = true
+			break
+		}
+	}
+	if !hasPages {
+		return Result{}, shapeErr("github: meta has no pages ranges")
+	}
 	return finish(res)
 }

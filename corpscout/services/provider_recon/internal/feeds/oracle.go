@@ -40,12 +40,19 @@ func (c *Oracle) Collect(ctx context.Context, f *Fetcher, _ map[string]string) (
 		return Result{}, fmt.Errorf("oracle: decode: %w", err)
 	}
 	b := rangeBuilder{res: Result{SourceURL: c.URL, SourceVersion: "last_updated=" + feed.LastUpdated}}
+	hasOCI := false
 	for _, r := range feed.Regions {
 		for _, cidr := range r.CIDRs {
 			for _, tag := range cidr.Tags {
+				if tag == "OCI" {
+					hasOCI = true
+				}
 				b.add(cidr.CIDR, tag, r.Region)
 			}
 		}
+	}
+	if !hasOCI {
+		return Result{}, shapeErr("oracle: no range carries the OCI tag")
 	}
 	return finish(b.res)
 }
