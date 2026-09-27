@@ -49,6 +49,8 @@ func Registry() map[string]Collector {
 		NewAzure(),
 		NewOracle(),
 		NewGitHub(),
+		NewGeofeed(),
+		NewRIPEstat(),
 	}
 	out := make(map[string]Collector, len(all))
 	for _, c := range all {
