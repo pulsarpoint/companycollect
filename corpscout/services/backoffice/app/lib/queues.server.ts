@@ -135,7 +135,7 @@ const EXTRA_FIELDS = {
   // Envelope size stays a Dagster default: it is transport only, not a processing choice.
   webtech: ["execution_id", "force_rescan", "recent_days"],
   brave: ["execution_id", "llm_profile_id", "brave_search_id", "brave_search_revision", "force_rescan", "recent_days", "requests_per_route", "input_batch_size", "answer_timeout_seconds", "progress_log_every", "progress_log_interval_seconds"],
-  "ip-enrichment": ["execution_id", "batch_size", "max_requests", "request_delay_seconds", "registry_request_delays", "registry_daily_budgets", "rate_limit_pause_seconds", "use_proxies", "parent_depth", "rdap_cache_days", "force_rdap", "rate_limit_retry_seconds", "transient_retry_seconds"],
+  "ip-enrichment": ["execution_id", "batch_size", "max_in_flight", "max_queue_per_registry", "max_requests", "request_delay_seconds", "registry_request_delays", "registry_daily_budgets", "rate_limit_pause_seconds", "use_proxies", "parent_depth", "rdap_cache_days", "force_rdap", "rate_limit_retry_seconds", "transient_retry_seconds"],
   crawler: ["execution_id", "full_crawl_all", "max_in_flight", "refresh_interval_days", "force_refresh", "challenge_agent_model", "challenge_agent_max_runs", "llm_profile_id", "max_pages", "max_model_calls", "page_selection", "instructions", "wait_timeout_seconds", "poll_interval_seconds"],
 } as const;
 
