@@ -1,4 +1,5 @@
-import { Link } from "react-router";
+import { isRouteErrorResponse, Link } from "react-router";
+import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/ui/table";
 import { flagFeed, rangeStatus, type FeedRun, type IndicatorRules, type IPRange } from "~/lib/provider-recon";
@@ -71,6 +72,19 @@ export function FeedTable({ feeds, rules }: { feeds: FeedRun[]; rules: Indicator
   );
 }
 
+/** Route error panel: keeps the admin shell and sidebar instead of a full-page crash. */
+export function ProviderFeedsError({ error }: { error: unknown }) {
+  const message = isRouteErrorResponse(error) ? String(error.data) : error instanceof Error ? error.message : "Unknown error";
+  return (
+    <div className="p-4 md:p-6">
+      <Alert variant="destructive">
+        <AlertTitle>Provider feeds unavailable</AlertTitle>
+        <AlertDescription>{message}</AlertDescription>
+      </Alert>
+    </div>
+  );
+}
+
 /** Missing and removed ranges with their lifecycle dates. */
 export function RangeTable({ rows }: { rows: { serviceKey: string; range: IPRange }[] }) {
   if (rows.length === 0) return <p className="text-sm text-muted-foreground">Every range is active.</p>;
@@ -92,7 +106,7 @@ export function RangeTable({ rows }: { rows: { serviceKey: string; range: IPRang
       </TableHeader>
       <TableBody>
         {rows.map(({ serviceKey, range }) => (
-          <TableRow key={`${serviceKey}/${range.cidr}/${range.first_seen ?? ""}`}>
+          <TableRow key={`${serviceKey}/${range.cidr}/${range.collector ?? "curated"}/${range.first_seen ?? ""}`}>
             <TableCell className="font-mono text-xs">{range.cidr}</TableCell>
             <TableCell className="text-sm">{serviceKey}</TableCell>
             <TableCell className="font-mono text-xs">{range.collector ?? "curated"}</TableCell>

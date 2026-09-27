@@ -53,8 +53,16 @@ export async function loadProviderDocument(slug: string, options: ObjectStoreOpt
   return getJson<ProviderDocument>(`providers/${slug}/latest.json`, options);
 }
 
+/** Display-only config: an unreadable rules object falls back to the defaults. */
 export async function loadIndicatorRules(options: ObjectStoreOptions = {}): Promise<IndicatorRules> {
-  return normalizeIndicatorRules(await getJson<unknown>(RULES_KEY, options));
+  try {
+    return normalizeIndicatorRules(await getJson<unknown>(RULES_KEY, options));
+  } catch (error) {
+    // By name, not instanceof: an instanceof SyntaxError check here changes tsc's
+    // check order and surfaces an unrelated narrowing error elsewhere.
+    if (error instanceof Error && error.name === "SyntaxError") return normalizeIndicatorRules(null);
+    throw error;
+  }
 }
 
 export async function saveIndicatorRules(rules: IndicatorRules, options: ObjectStoreOptions = {}): Promise<void> {

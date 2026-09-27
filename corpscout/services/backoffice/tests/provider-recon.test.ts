@@ -7,6 +7,7 @@ import {
   normalizeIndicatorRules,
   parseIndicatorRules,
   restoreCommand,
+  restoreOptions,
   serviceRangeCounts,
   type FeedRun,
   type ProviderDocument,
@@ -121,5 +122,28 @@ describe("ranges", () => {
     expect(restoreCommand("aws", "aws_ip_ranges", "2026-09-28")).toBe(
       "provider-recon restore -provider aws -collector aws_ip_ranges -removed-since 2026-09-28",
     );
+  });
+});
+
+describe("restoreOptions", () => {
+  it("offers one option per removal date, newest first, each counting what it would restore", () => {
+    const r = (cidr: string, removed_at: string, collector = "aws_ip_ranges", removal_action = "grace_expired") => ({
+      cidr, confidence: 1, source: "official_feed", collector, status: "removed", first_seen: "2026-06-01", last_seen: "2026-06-01", removed_at, removal_action,
+    });
+    const doc = {
+      slug: "aws",
+      services: [{ service_key: "aws.cloudfront", evidence: { ip_ranges: [
+        r("10.0.1.0/24", "2026-09-01"),
+        r("10.0.2.0/24", "2026-09-28"),
+        r("10.0.3.0/24", "2026-09-28"),
+        r("10.0.4.0/24", "2026-09-28", "aws_ip_ranges", "definition_removed"),
+        r("10.0.5.0/24", "2026-09-20", "google_goog"),
+      ] } }],
+    } as unknown as ProviderDocument;
+    expect(restoreOptions(doc)).toEqual([
+      { collector: "aws_ip_ranges", since: "2026-09-28", count: 2 },
+      { collector: "aws_ip_ranges", since: "2026-09-01", count: 3 },
+      { collector: "google_goog", since: "2026-09-20", count: 1 },
+    ]);
   });
 });

@@ -69,6 +69,11 @@ describe("provider-recon object store", () => {
     ]);
   });
 
+  it("falls back to default rules when the stored rules are not valid JSON", async () => {
+    const { fetchImpl } = recorder(() => new Response("{not json", { status: 200 }));
+    expect(await loadIndicatorRules({ fetchImpl })).toEqual(DEFAULT_INDICATOR_RULES);
+  });
+
   it("surfaces other HTTP errors", async () => {
     const { fetchImpl } = recorder(() => new Response("denied", { status: 403 }));
     await expect(loadRunIndex({ fetchImpl })).rejects.toThrow("HTTP 403");

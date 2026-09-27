@@ -262,6 +262,30 @@ export function attentionRanges(doc: ProviderDocument): { serviceKey: string; ra
   return out.sort((a, b) => rank(a.range) - rank(b.range) || when(b.range).localeCompare(when(a.range)) || a.range.cidr.localeCompare(b.range.cidr));
 }
 
+/**
+ * Restore choices per feed: one per distinct removal date of grace-expired
+ * ranges, newest first. restore brings back everything removed on or after
+ * its date, so the newest date is the narrowest undo; count is how many
+ * listed removals that option would cover.
+ */
+export function restoreOptions(doc: ProviderDocument): { collector: string; since: string; count: number }[] {
+  const byCollector = new Map<string, string[]>();
+  for (const s of doc.services) {
+    for (const r of s.evidence.ip_ranges ?? []) {
+      if (rangeStatus(r) !== "removed" || r.removal_action !== "grace_expired" || !r.collector || !r.removed_at) continue;
+      byCollector.set(r.collector, [...(byCollector.get(r.collector) ?? []), r.removed_at]);
+    }
+  }
+  const out: { collector: string; since: string; count: number }[] = [];
+  for (const collector of [...byCollector.keys()].sort()) {
+    const dates = byCollector.get(collector) ?? [];
+    for (const since of [...new Set(dates)].sort().reverse()) {
+      out.push({ collector, since, count: dates.filter((d) => d >= since).length });
+    }
+  }
+  return out;
+}
+
 export function restoreCommand(slug: string, collector: string, since: string): string {
   return `provider-recon restore -provider ${slug} -collector ${collector} -removed-since ${since}`;
 }

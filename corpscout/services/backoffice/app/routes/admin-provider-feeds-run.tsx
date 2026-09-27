@@ -1,14 +1,18 @@
 import { data, Link } from "react-router";
 import type { Route } from "./+types/admin-provider-feeds-run";
-import { FeedTable } from "~/components/admin/provider-feeds";
+import { FeedTable, ProviderFeedsError } from "~/components/admin/provider-feeds";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/components/ui/card";
 import type { KindDiff } from "~/lib/provider-recon";
 import { loadIndicatorRules, loadManifest } from "~/lib/provider-recon.server";
 
 export async function loader({ params }: Route.LoaderArgs) {
-  const [manifest, rules] = await Promise.all([loadManifest(params.runId), loadIndicatorRules()]);
+  const manifest = await loadManifest(params.runId);
   if (!manifest) throw data(`Run ${params.runId} not found.`, { status: 404 });
-  return { manifest, rules };
+  return { manifest, rules: await loadIndicatorRules() };
+}
+
+export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
+  return <ProviderFeedsError error={error} />;
 }
 
 export function meta({ params }: Route.MetaArgs) {
@@ -37,7 +41,7 @@ function DiffList({ kind, diff }: { kind: string; diff: KindDiff }) {
           <details key={label} className="text-sm">
             <summary>{label}: {count}</summary>
             {items.length > 0 ? (
-              <ul className="ml-4 font-mono text-xs">{items.map((item) => <li key={item}>{item}</li>)}</ul>
+              <ul className="ml-4 font-mono text-xs">{items.map((item, i) => <li key={i}>{item}</li>)}</ul>
             ) : (
               <p className="ml-4 text-xs text-muted-foreground">Counts only (new provider).</p>
             )}

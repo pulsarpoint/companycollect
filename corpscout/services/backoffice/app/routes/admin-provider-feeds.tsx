@@ -1,6 +1,6 @@
 import { data, Form, Link, redirect, useNavigation } from "react-router";
 import type { Route } from "./+types/admin-provider-feeds";
-import { FeedTable } from "~/components/admin/provider-feeds";
+import { FeedTable, ProviderFeedsError } from "~/components/admin/provider-feeds";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
@@ -9,15 +9,25 @@ import { Field, FieldDescription, FieldGroup, FieldLabel } from "~/components/ui
 import { Input } from "~/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/ui/table";
 import { ObjectStoreError } from "~/lib/object-store.server";
-import { flagFeed, parseIndicatorRules } from "~/lib/provider-recon";
+import { DEFAULT_INDICATOR_RULES, flagFeed, parseIndicatorRules } from "~/lib/provider-recon";
 import { loadIndicatorRules, loadRunIndex, saveIndicatorRules } from "~/lib/provider-recon.server";
 
 const RECENT_RUNS = 60;
 
 export async function loader() {
-  const [index, rules] = await Promise.all([loadRunIndex(), loadIndicatorRules()]);
-  const latestFull = index.runs.find((r) => r.scope.command === "collect" && !(r.scope.providers?.length)) ?? null;
-  return { runs: index.runs.slice(0, RECENT_RUNS), providers: index.providers, rules, latestFull };
+  try {
+    const [index, rules] = await Promise.all([loadRunIndex(), loadIndicatorRules()]);
+    const latestFull = index.runs.find((r) => r.scope.command === "collect" && !(r.scope.providers?.length)) ?? null;
+    return { runs: index.runs.slice(0, RECENT_RUNS), providers: index.providers, rules, latestFull, error: null as string | null };
+  } catch (error) {
+    // The object store is down or misconfigured: show it, keep the rules form usable.
+    const message = error instanceof Error ? error.message : String(error);
+    return { runs: [], providers: [] as string[], rules: DEFAULT_INDICATOR_RULES, latestFull: null, error: message };
+  }
+}
+
+export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
+  return <ProviderFeedsError error={error} />;
 }
 
 export async function action({ request }: Route.ActionArgs) {
@@ -28,8 +38,9 @@ export async function action({ request }: Route.ActionArgs) {
   try {
     await saveIndicatorRules(parsed.rules);
   } catch (error) {
-    if (error instanceof ObjectStoreError) return data({ error: error.message }, { status: 502 });
-    throw error;
+    // Any store failure (HTTP error, unreachable endpoint, missing credentials) is a 502 message.
+    const message = error instanceof ObjectStoreError || error instanceof Error ? error.message : String(error);
+    return data({ error: message }, { status: 502 });
   }
   return redirect("/admin/provider-feeds");
 }
@@ -39,7 +50,7 @@ export function meta() {
 }
 
 export default function AdminProviderFeeds({ loaderData, actionData }: Route.ComponentProps) {
-  const { runs, providers, rules, latestFull } = loaderData;
+  const { runs, providers, rules, latestFull, error } = loaderData;
   const busy = useNavigation().state === "submitting";
   return (
     <div className="flex flex-col gap-6 p-4 md:p-6">
@@ -50,6 +61,12 @@ export default function AdminProviderFeeds({ loaderData, actionData }: Route.Com
           with <code className="font-mono">provider-recon restore</code> (see a provider's page).
         </p>
       </header>
+      {error && (
+        <Alert variant="destructive">
+          <AlertTitle>Object store unavailable</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
       {actionData?.error && (
         <Alert variant="destructive">
           <AlertTitle>Rules not saved</AlertTitle>

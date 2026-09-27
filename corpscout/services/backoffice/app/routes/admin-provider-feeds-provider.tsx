@@ -1,15 +1,19 @@
 import { data, Link } from "react-router";
 import type { Route } from "./+types/admin-provider-feeds-provider";
-import { RangeTable, StatusBadge } from "~/components/admin/provider-feeds";
+import { ProviderFeedsError, RangeTable, StatusBadge } from "~/components/admin/provider-feeds";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/ui/table";
-import { attentionRanges, restoreCommand, serviceRangeCounts } from "~/lib/provider-recon";
+import { attentionRanges, restoreCommand, restoreOptions, serviceRangeCounts } from "~/lib/provider-recon";
 import { loadProviderDocument } from "~/lib/provider-recon.server";
 
 export async function loader({ params }: Route.LoaderArgs) {
   const doc = await loadProviderDocument(params.slug);
   if (!doc) throw data(`Provider ${params.slug} not found.`, { status: 404 });
   return { doc };
+}
+
+export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
+  return <ProviderFeedsError error={error} />;
 }
 
 export function meta({ params }: Route.MetaArgs) {
@@ -19,14 +23,7 @@ export function meta({ params }: Route.MetaArgs) {
 export default function AdminProviderFeedsProvider({ loaderData }: Route.ComponentProps) {
   const { doc } = loaderData;
   const attention = attentionRanges(doc);
-  // One restore command per feed, from the earliest grace-expired removal still listed.
-  const restores = new Map<string, string>();
-  for (const { range } of attention) {
-    if (range.status === "removed" && range.removal_action === "grace_expired" && range.collector && range.removed_at) {
-      const current = restores.get(range.collector);
-      if (!current || range.removed_at < current) restores.set(range.collector, range.removed_at);
-    }
-  }
+  const restores = restoreOptions(doc);
   return (
     <div className="flex flex-col gap-6 p-4 md:p-6">
       <header className="flex flex-col gap-1">
@@ -105,11 +102,17 @@ export default function AdminProviderFeedsProvider({ loaderData }: Route.Compone
           <CardDescription>Removed ranges stay here for 90 days; history keeps them forever.</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          {restores.size > 0 && (
+          {restores.length > 0 && (
             <div className="flex flex-col gap-1">
-              <p className="text-sm">If a removal was wrong, fix the collector, then run:</p>
-              {[...restores].map(([collector, since]) => (
-                <code key={collector} className="rounded bg-muted px-2 py-1 font-mono text-xs">{restoreCommand(doc.slug, collector, since)}</code>
+              <p className="text-sm">
+                If a removal was wrong, fix the collector, then run the command for its removal date. Each command restores everything
+                that feed removed on or after that date, so the newest date is the narrowest undo.
+              </p>
+              {restores.map(({ collector, since, count }) => (
+                <div key={`${collector}/${since}`} className="flex flex-wrap items-center gap-2">
+                  <code className="rounded bg-muted px-2 py-1 font-mono text-xs">{restoreCommand(doc.slug, collector, since)}</code>
+                  <span className="text-xs text-muted-foreground">up to {count} range{count === 1 ? "" : "s"}</span>
+                </div>
               ))}
             </div>
           )}
