@@ -1,0 +1,13 @@
+{
+  "syncToken": "1727400000",
+  "createDate": "2026-09-27-06-00-00",
+  "prefixes": [
+    {"ip_prefix": "52.84.0.0/15", "region": "GLOBAL", "service": "AMAZON", "network_border_group": "GLOBAL"},
+    {"ip_prefix": "52.84.0.0/15", "region": "GLOBAL", "service": "CLOUDFRONT", "network_border_group": "GLOBAL"},
+    {"ip_prefix": "3.5.140.1/22", "region": "ap-northeast-2", "service": "EC2", "network_border_group": "ap-northeast-2"},
+    {"ip_prefix": "not-a-cidr", "region": "eu-north-1", "service": "EC2", "network_border_group": "eu-north-1"}
+  ],
+  "ipv6_prefixes": [
+    {"ipv6_prefix": "2600:9000::/28", "region": "GLOBAL", "service": "CLOUDFRONT", "network_border_group": "GLOBAL"}
+  ]
+}
