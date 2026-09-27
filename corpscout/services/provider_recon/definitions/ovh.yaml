@@ -1,0 +1,29 @@
+# yaml-language-server: $schema=./schema.json
+slug: ovh
+display_name: OVHcloud
+category: hosting
+website: https://www.ovhcloud.com
+country: FR
+aliases: ["OVH", "OVHcloud", "OVH SAS"]
+provider_keys: ["ovh.net", "ovh.com"]
+services:
+  - key: ovh.hosting
+    display_name: OVHcloud servers and hosting
+    service_types: [hosting, iaas]
+    traits: [cloud_provider_ip]
+    asns:
+      - {asn: 16276}
+  - key: ovh.dns
+    display_name: OVHcloud DNS
+    service_types: [dns]
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "ovh.net"}
+  - key: ovh.email
+    display_name: OVHcloud email
+    service_types: [email]
+    dns_rules:
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "mail.ovh.net"}
+feeds:
+  - collector: ripestat_announced
+    params: {asn: "16276"}
+    tag_map: {BGP: ovh.hosting}

@@ -112,3 +112,10 @@ func TestUsage(t *testing.T) {
 		t.Fatalf("exit %d", code)
 	}
 }
+
+func TestRepoDefinitionsValidate(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run(context.Background(), []string{"validate", "-definitions", "../../definitions"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("repo definitions invalid:\n%s", stderr.String())
+	}
+}

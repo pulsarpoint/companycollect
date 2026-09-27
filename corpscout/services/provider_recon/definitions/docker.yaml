@@ -1,0 +1,11 @@
+# yaml-language-server: $schema=./schema.json
+slug: docker
+display_name: Docker
+category: saas
+country: US
+services:
+  - key: docker.domain-verification
+    display_name: Docker domain verification
+    service_types: [saas_verification]
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "docker-verification=", confidence: 0.85}

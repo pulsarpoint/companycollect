@@ -1,0 +1,11 @@
+# yaml-language-server: $schema=./schema.json
+slug: adobe
+display_name: Adobe
+category: saas
+country: US
+services:
+  - key: adobe.domain-verification
+    display_name: Adobe domain verification
+    service_types: [saas_verification]
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "adobe-idp-site-verification=", confidence: 0.9}

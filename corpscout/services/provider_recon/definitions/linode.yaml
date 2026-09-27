@@ -1,0 +1,22 @@
+# yaml-language-server: $schema=./schema.json
+slug: linode
+display_name: Akamai Cloud (Linode)
+category: cloud
+website: https://www.linode.com
+country: US
+aliases: ["Linode", "Akamai Connected Cloud"]
+provider_keys: ["linode.com"]
+services:
+  - key: linode.compute
+    display_name: Linode compute
+    service_types: [iaas]
+    traits: [cloud_provider_ip]
+  - key: linode.dns
+    display_name: Linode DNS
+    service_types: [dns]
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "linode.com"}
+feeds:
+  - collector: geofeed
+    params: {url: "https://geoip.linode.com/"}
+    tag_map: {GEOFEED: linode.compute}

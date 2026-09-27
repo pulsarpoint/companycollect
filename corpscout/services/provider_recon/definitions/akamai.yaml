@@ -1,0 +1,29 @@
+# yaml-language-server: $schema=./schema.json
+slug: akamai
+display_name: Akamai
+category: cdn
+website: https://www.akamai.com
+country: US
+aliases: ["Akamai", "Akamai Technologies"]
+provider_keys: ["akamai.net", "akamaiedge.net", "edgekey.net", "edgesuite.net", "akamaized.net", "akamaihd.net"]
+services:
+  - key: akamai.edge
+    display_name: Akamai edge
+    service_types: [cdn]
+    traits: [shared_infrastructure, origin_obscured]
+    note: "No official range feed. BGP coverage is partial: many edge servers sit inside ISP networks."
+    asns:
+      - {asn: 20940}
+      - {asn: 16625}
+    dns_rules:
+      - {record_type: CNAME, match_field: target, matcher_type: suffix, pattern: "edgekey.net"}
+      - {record_type: CNAME, match_field: target, matcher_type: suffix, pattern: "edgesuite.net"}
+      - {record_type: CNAME, match_field: target, matcher_type: suffix, pattern: "akamaiedge.net"}
+      - {record_type: CNAME, match_field: target, matcher_type: suffix, pattern: "akamaized.net"}
+feeds:
+  - collector: ripestat_announced
+    params: {asn: "20940"}
+    tag_map: {BGP: akamai.edge}
+  - collector: ripestat_announced
+    params: {asn: "16625"}
+    tag_map: {BGP: akamai.edge}

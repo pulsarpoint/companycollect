@@ -1,0 +1,13 @@
+# yaml-language-server: $schema=./schema.json
+slug: godaddy
+display_name: GoDaddy
+category: dns
+country: US
+aliases: ["GoDaddy"]
+provider_keys: ["domaincontrol.com"]
+services:
+  - key: godaddy.dns
+    display_name: GoDaddy DNS
+    service_types: [dns]
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "domaincontrol.com"}

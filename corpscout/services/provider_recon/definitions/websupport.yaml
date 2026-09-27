@@ -1,0 +1,13 @@
+# yaml-language-server: $schema=./schema.json
+slug: websupport
+display_name: Websupport
+category: hosting
+country: SE
+aliases: ["Websupport"]
+provider_keys: ["websupport.se"]
+services:
+  - key: websupport.email
+    display_name: Websupport email
+    service_types: [email]
+    dns_rules:
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "websupport.se"}

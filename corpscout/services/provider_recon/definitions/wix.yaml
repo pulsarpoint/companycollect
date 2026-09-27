@@ -1,0 +1,13 @@
+# yaml-language-server: $schema=./schema.json
+slug: wix
+display_name: Wix
+category: dns
+country: IL
+aliases: ["Wix"]
+provider_keys: ["wixdns.net"]
+services:
+  - key: wix.dns
+    display_name: Wix DNS
+    service_types: [dns]
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "wixdns.net"}

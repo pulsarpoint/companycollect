@@ -1,0 +1,11 @@
+# yaml-language-server: $schema=./schema.json
+slug: dropbox
+display_name: Dropbox
+category: saas
+country: US
+services:
+  - key: dropbox.domain-verification
+    display_name: Dropbox domain verification
+    service_types: [saas_verification]
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "dropbox-domain-verification=", confidence: 0.9}

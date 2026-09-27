@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=./schema.json
+slug: github
+display_name: GitHub
+category: paas
+website: https://github.com
+country: US
+aliases: ["GitHub", "GitHub, Inc."]
+provider_keys: ["github.io"]
+services:
+  - key: github.pages
+    display_name: GitHub Pages
+    service_types: [hosting]
+    dns_rules:
+      - {record_type: CNAME, match_field: target, matcher_type: suffix, pattern: "github.io"}
+feeds:
+  - collector: github_meta
+    tag_map:
+      pages: github.pages
+      # hooks, web, api, actions… are GitHub's own egress/infrastructure, not customer hosting.
+      "*": ""

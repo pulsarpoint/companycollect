@@ -1,0 +1,18 @@
+# yaml-language-server: $schema=./schema.json
+slug: ilait
+display_name: iLait
+category: hosting
+country: SE
+aliases: ["iLait"]
+provider_keys: ["ilait.se"]
+services:
+  - key: ilait.dns
+    display_name: iLait DNS
+    service_types: [dns]
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "ilait.se"}
+  - key: ilait.email
+    display_name: iLait email
+    service_types: [email]
+    dns_rules:
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "ilait.se"}

@@ -1,0 +1,52 @@
+# yaml-language-server: $schema=./schema.json
+slug: google
+display_name: Google
+category: cloud
+website: https://cloud.google.com
+country: US
+aliases: ["Google", "Google LLC", "Google Cloud", "Google Workspace"]
+provider_keys: ["google.com", "googlemail.com", "googledomains.com", "googlehosted.com", "appspot.com", "googleusercontent.com"]
+services:
+  - key: google.workspace-mail
+    display_name: Google Workspace (Gmail)
+    service_types: [email]
+    dns_rules:
+      # aspmx.l.google.com, smtp.google.com, alt*.aspmx.l.google.com
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "google.com", confidence: 0.95}
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "googlemail.com", confidence: 0.95}
+  - key: google.workspace-sending
+    display_name: Google Workspace outbound mail
+    service_types: [email_sending]
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: contains, pattern: "include:_spf.google.com"}
+  - key: google.site-verification
+    display_name: Google site verification
+    service_types: [saas_verification]
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "google-site-verification=", confidence: 0.95}
+  - key: google.cloud-dns
+    display_name: Google Cloud DNS
+    service_types: [dns]
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: regex, pattern: '^ns-cloud-[a-e][1-4]\.googledomains\.com$'}
+  - key: google.app-engine
+    display_name: Google App Engine / Sites custom domains
+    service_types: [paas]
+    dns_rules:
+      - {record_type: CNAME, match_field: target, matcher_type: suffix, pattern: "ghs.googlehosted.com"}
+      - {record_type: CNAME, match_field: target, matcher_type: suffix, pattern: "appspot.com"}
+  - key: google.cloud
+    display_name: Google Cloud
+    service_types: [iaas]
+    traits: [cloud_provider_ip]
+    ptr_rules:
+      - {matcher_type: suffix, pattern: "bc.googleusercontent.com", confidence: 0.9}
+  - key: google.frontend
+    display_name: Google front ends (Google-owned address space)
+    service_types: [hosting]
+    note: "goog.json is a superset of cloud.json; longest-prefix lookup lets cloud ranges win."
+feeds:
+  - collector: google_cloud
+    tag_map: {"Google Cloud": google.cloud}
+  - collector: google_goog
+    tag_map: {GOOG: google.frontend}

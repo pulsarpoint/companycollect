@@ -1,0 +1,18 @@
+# yaml-language-server: $schema=./schema.json
+slug: one-com
+display_name: One.com
+category: hosting
+country: DK
+aliases: ["One.com"]
+provider_keys: ["one.com"]
+services:
+  - key: one-com.dns
+    display_name: One.com DNS
+    service_types: [dns]
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "one.com"}
+  - key: one-com.email
+    display_name: One.com email
+    service_types: [email]
+    dns_rules:
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "one.com"}

@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=./schema.json
+slug: bunny
+display_name: bunny.net
+category: cdn
+website: https://bunny.net
+country: SI
+aliases: ["bunny.net", "BunnyCDN", "BunnyWay"]
+provider_keys: ["b-cdn.net", "bunny.net", "bunnycdn.com"]
+services:
+  - key: bunny.edge
+    display_name: bunny.net CDN
+    service_types: [cdn]
+    traits: [shared_infrastructure, origin_obscured]
+    dns_rules:
+      - {record_type: CNAME, match_field: target, matcher_type: suffix, pattern: "b-cdn.net"}
+    http_rules:
+      - {http_part: header, header_name: server, matcher_type: prefix, pattern: "bunnycdn", confidence: 0.95}
+feeds:
+  - collector: bunny_edge_servers
+    tag_map: {EDGE: bunny.edge}

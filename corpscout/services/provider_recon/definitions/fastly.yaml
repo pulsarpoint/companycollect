@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=./schema.json
+slug: fastly
+display_name: Fastly
+category: cdn
+website: https://www.fastly.com
+country: US
+aliases: ["Fastly", "Fastly, Inc."]
+provider_keys: ["fastly.net", "fastlylb.net"]
+services:
+  - key: fastly.edge
+    display_name: Fastly edge cloud
+    service_types: [cdn]
+    traits: [shared_infrastructure, origin_obscured]
+    asns:
+      - {asn: 54113}
+    dns_rules:
+      - {record_type: CNAME, match_field: target, matcher_type: suffix, pattern: "fastly.net"}
+      - {record_type: CNAME, match_field: target, matcher_type: suffix, pattern: "fastlylb.net"}
+    http_rules:
+      - {http_part: header, header_name: x-served-by, matcher_type: prefix, pattern: "cache-", confidence: 0.8}
+feeds:
+  - collector: fastly_public_ips
+    tag_map: {FASTLY: fastly.edge}

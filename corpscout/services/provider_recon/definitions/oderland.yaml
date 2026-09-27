@@ -1,0 +1,18 @@
+# yaml-language-server: $schema=./schema.json
+slug: oderland
+display_name: Oderland
+category: hosting
+country: SE
+aliases: ["Oderland"]
+provider_keys: ["oderland.com"]
+services:
+  - key: oderland.dns
+    display_name: Oderland DNS
+    service_types: [dns]
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "oderland.com"}
+  - key: oderland.email
+    display_name: Oderland email
+    service_types: [email]
+    dns_rules:
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "oderland.com"}

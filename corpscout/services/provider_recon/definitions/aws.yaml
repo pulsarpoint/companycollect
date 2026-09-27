@@ -1,0 +1,78 @@
+# yaml-language-server: $schema=./schema.json
+slug: aws
+display_name: Amazon Web Services
+category: cloud
+website: https://aws.amazon.com
+country: US
+aliases: ["AWS", "Amazon Web Services", "Amazon.com, Inc."]
+provider_keys: ["amazonaws.com", "amazonses.com", "cloudfront.net", "awsdns-*", "awsglobalaccelerator.com", "elasticbeanstalk.com"]
+services:
+  - key: aws.cloudfront
+    display_name: Amazon CloudFront
+    service_types: [cdn]
+    traits: [shared_infrastructure, origin_obscured]
+    dns_rules:
+      - {record_type: CNAME, match_field: target, matcher_type: suffix, pattern: "cloudfront.net"}
+    http_rules:
+      - {http_part: header, header_name: x-amz-cf-id, matcher_type: exists}
+    ptr_rules:
+      - {matcher_type: suffix, pattern: "cloudfront.net", confidence: 0.9}
+  - key: aws.global-accelerator
+    display_name: AWS Global Accelerator
+    service_types: [cdn]
+    dns_rules:
+      - {record_type: CNAME, match_field: target, matcher_type: suffix, pattern: "awsglobalaccelerator.com"}
+  - key: aws.ec2
+    display_name: Amazon EC2
+    service_types: [iaas]
+    traits: [cloud_provider_ip]
+    ptr_rules:
+      - {matcher_type: suffix, pattern: "compute.amazonaws.com", confidence: 0.9}
+  - key: aws.s3
+    display_name: Amazon S3
+    service_types: [hosting]
+    dns_rules:
+      - {record_type: CNAME, match_field: target, matcher_type: regex, pattern: '(^|\.)s3([.-][a-z0-9-]+)*\.amazonaws\.com$'}
+  - key: aws.api-gateway
+    display_name: Amazon API Gateway
+    service_types: [paas]
+    dns_rules:
+      - {record_type: CNAME, match_field: target, matcher_type: suffix, pattern: "execute-api.amazonaws.com"}
+  - key: aws.elastic-beanstalk
+    display_name: AWS Elastic Beanstalk
+    service_types: [paas]
+    dns_rules:
+      - {record_type: CNAME, match_field: target, matcher_type: suffix, pattern: "elasticbeanstalk.com"}
+  - key: aws.route53
+    display_name: Amazon Route 53
+    service_types: [dns]
+    dns_rules:
+      # NS hosts look like ns-123.awsdns-45.co.uk
+      - {record_type: NS, match_field: target, matcher_type: regex, pattern: '^ns-[0-9]+\.awsdns-[0-9]+\.(com|net|org|co\.uk)$'}
+  - key: aws.ses
+    display_name: Amazon SES
+    service_types: [email_sending]
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: contains, pattern: "include:amazonses.com"}
+      - {record_type: CNAME, match_field: target, matcher_type: suffix, pattern: "dkim.amazonses.com"}
+      - {record_type: TXT, match_field: name, matcher_type: prefix, pattern: "_amazonses.", confidence: 0.9}
+  - key: aws.other
+    display_name: Other AWS address space
+    service_types: [iaas]
+    traits: [cloud_provider_ip]
+feeds:
+  - collector: aws_ip_ranges
+    tag_map:
+      CLOUDFRONT: aws.cloudfront
+      GLOBALACCELERATOR: aws.global-accelerator
+      EC2: aws.ec2
+      S3: aws.s3
+      API_GATEWAY: aws.api-gateway
+      ROUTE53: aws.route53
+      # Health checkers and origin-facing CloudFront are AWS→customer traffic, not customer-facing endpoints.
+      ROUTE53_HEALTHCHECKS: ""
+      ROUTE53_HEALTHCHECKS_PUBLISHING: ""
+      CLOUDFRONT_ORIGIN_FACING: ""
+      AMAZON: aws.other
+      "*": aws.other
+    generic_tags: [AMAZON]

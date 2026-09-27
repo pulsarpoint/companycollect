@@ -1,0 +1,13 @@
+# yaml-language-server: $schema=./schema.json
+slug: glesys
+display_name: GleSYS
+category: hosting
+country: SE
+aliases: ["GleSYS"]
+provider_keys: ["glesys.se"]
+services:
+  - key: glesys.email
+    display_name: GleSYS email
+    service_types: [email]
+    dns_rules:
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "glesys.se"}

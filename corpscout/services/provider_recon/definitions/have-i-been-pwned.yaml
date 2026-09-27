@@ -1,0 +1,11 @@
+# yaml-language-server: $schema=./schema.json
+slug: have-i-been-pwned
+display_name: Have I Been Pwned
+category: security
+country: AU
+services:
+  - key: have-i-been-pwned.domain-verification
+    display_name: Have I Been Pwned domain verification
+    service_types: [saas_verification]
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "have-i-been-pwned-verification=", confidence: 0.85}

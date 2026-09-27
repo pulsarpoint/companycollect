@@ -1,0 +1,18 @@
+# yaml-language-server: $schema=./schema.json
+slug: svenska-domaner
+display_name: Svenska Domäner
+category: hosting
+country: SE
+aliases: ["Svenska Domäner"]
+provider_keys: ["svenskadomaner.se"]
+services:
+  - key: svenska-domaner.dns
+    display_name: Svenska Domäner DNS
+    service_types: [dns]
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "svenskadomaner.se"}
+  - key: svenska-domaner.email
+    display_name: Svenska Domäner email
+    service_types: [email]
+    dns_rules:
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "svenskadomaner.se"}

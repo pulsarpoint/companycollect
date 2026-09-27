@@ -1,0 +1,22 @@
+# yaml-language-server: $schema=./schema.json
+slug: oracle
+display_name: Oracle Cloud
+category: cloud
+website: https://www.oracle.com/cloud
+country: US
+aliases: ["Oracle", "Oracle Cloud Infrastructure", "OCI"]
+provider_keys: ["oraclecloud.com"]
+services:
+  - key: oracle.oci
+    display_name: OCI compute
+    service_types: [iaas]
+    traits: [cloud_provider_ip]
+  - key: oracle.object-storage
+    display_name: OCI Object Storage
+    service_types: [hosting]
+  - key: oracle.services-network
+    display_name: Oracle Services Network
+    service_types: [iaas]
+feeds:
+  - collector: oracle_public_ip_ranges
+    tag_map: {OCI: oracle.oci, OBJECT_STORAGE: oracle.object-storage, OSN: oracle.services-network}

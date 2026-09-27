@@ -1,0 +1,18 @@
+# yaml-language-server: $schema=./schema.json
+slug: hostinger
+display_name: Hostinger
+category: hosting
+country: LT
+aliases: ["Hostinger"]
+provider_keys: ["hostinger.com", "dns-parking.com"]
+services:
+  - key: hostinger.dns
+    display_name: Hostinger DNS
+    service_types: [dns]
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "dns-parking.com"}
+  - key: hostinger.email
+    display_name: Hostinger email
+    service_types: [email]
+    dns_rules:
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "hostinger.com"}

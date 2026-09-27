@@ -1,0 +1,11 @@
+# yaml-language-server: $schema=./schema.json
+slug: apple
+display_name: Apple
+category: saas
+country: US
+services:
+  - key: apple.domain-verification
+    display_name: Apple domain verification
+    service_types: [saas_verification]
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "apple-domain-verification=", confidence: 0.9}

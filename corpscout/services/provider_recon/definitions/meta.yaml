@@ -1,0 +1,11 @@
+# yaml-language-server: $schema=./schema.json
+slug: meta
+display_name: Meta
+category: saas
+country: US
+services:
+  - key: meta.domain-verification
+    display_name: Meta domain verification
+    service_types: [saas_verification]
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "facebook-domain-verification=", confidence: 0.9}

@@ -1,0 +1,28 @@
+# yaml-language-server: $schema=./schema.json
+slug: hetzner
+display_name: Hetzner
+category: hosting
+website: https://www.hetzner.com
+country: DE
+aliases: ["Hetzner", "Hetzner Online GmbH"]
+provider_keys: ["hetzner.com", "hetzner.de", "your-server.de"]
+services:
+  - key: hetzner.cloud
+    display_name: Hetzner servers and cloud
+    service_types: [hosting, iaas]
+    traits: [cloud_provider_ip]
+    asns:
+      - {asn: 24940}
+    ptr_rules:
+      - {matcher_type: suffix, pattern: "your-server.de", confidence: 0.9}
+  - key: hetzner.dns
+    display_name: Hetzner DNS
+    service_types: [dns]
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "ns.hetzner.com"}
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "ns.hetzner.de"}
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "your-server.de"}
+feeds:
+  - collector: ripestat_announced
+    params: {asn: "24940"}
+    tag_map: {BGP: hetzner.cloud}

@@ -1,0 +1,13 @@
+# yaml-language-server: $schema=./schema.json
+slug: inleed
+display_name: Inleed
+category: hosting
+country: SE
+aliases: ["Inleed"]
+provider_keys: ["inleed.net"]
+services:
+  - key: inleed.dns
+    display_name: Inleed DNS
+    service_types: [dns]
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "inleed.net"}

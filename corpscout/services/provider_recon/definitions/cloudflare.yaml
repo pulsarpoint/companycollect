@@ -1,0 +1,33 @@
+# yaml-language-server: $schema=./schema.json
+slug: cloudflare
+display_name: Cloudflare
+category: cdn
+website: https://www.cloudflare.com
+country: US
+aliases: ["Cloudflare", "Cloudflare, Inc."]
+provider_keys: ["cloudflare.com", "cloudflare.net"]
+services:
+  - key: cloudflare.dns
+    display_name: Cloudflare DNS
+    service_types: [dns]
+    dns_rules:
+      # <name>.ns.cloudflare.com — top-3 NS key on .se (1,751 domains in a 1/16 sample, 2026-09-27)
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "ns.cloudflare.com"}
+  - key: cloudflare.edge
+    display_name: Cloudflare proxy network
+    service_types: [cdn, ddos_protection, waf]
+    traits: [shared_infrastructure, origin_obscured]
+    asns:
+      - {asn: 13335}
+    dns_rules:
+      - {record_type: CNAME, match_field: target, matcher_type: suffix, pattern: "cdn.cloudflare.net"}
+    http_rules:
+      - {http_part: header, header_name: cf-ray, matcher_type: exists}
+  - key: cloudflare.email-routing
+    display_name: Cloudflare Email Routing
+    service_types: [email]
+    dns_rules:
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "mx.cloudflare.net"}
+feeds:
+  - collector: cloudflare_ips
+    tag_map: {CLOUDFLARE: cloudflare.edge}

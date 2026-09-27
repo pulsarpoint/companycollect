@@ -1,0 +1,11 @@
+# yaml-language-server: $schema=./schema.json
+slug: stripe
+display_name: Stripe
+category: saas
+country: US
+services:
+  - key: stripe.domain-verification
+    display_name: Stripe domain verification
+    service_types: [saas_verification]
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "stripe-verification=", confidence: 0.85}

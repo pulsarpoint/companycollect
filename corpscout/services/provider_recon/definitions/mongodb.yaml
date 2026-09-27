@@ -1,0 +1,11 @@
+# yaml-language-server: $schema=./schema.json
+slug: mongodb
+display_name: MongoDB
+category: saas
+country: US
+services:
+  - key: mongodb.domain-verification
+    display_name: MongoDB domain verification
+    service_types: [saas_verification]
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "mongodb-site-verification=", confidence: 0.9}

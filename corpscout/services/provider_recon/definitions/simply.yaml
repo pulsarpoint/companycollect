@@ -1,0 +1,18 @@
+# yaml-language-server: $schema=./schema.json
+slug: simply
+display_name: Simply.com
+category: hosting
+country: DK
+aliases: ["Simply.com"]
+provider_keys: ["simply.com"]
+services:
+  - key: simply.dns
+    display_name: Simply.com DNS
+    service_types: [dns]
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "simply.com"}
+  - key: simply.email
+    display_name: Simply.com email
+    service_types: [email]
+    dns_rules:
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "simply.com"}

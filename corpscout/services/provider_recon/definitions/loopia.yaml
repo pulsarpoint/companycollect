@@ -1,0 +1,19 @@
+# yaml-language-server: $schema=./schema.json
+slug: loopia
+display_name: Loopia
+category: hosting
+country: SE
+aliases: ["Loopia"]
+provider_keys: ["loopia.se", "loopiagroup.com"]
+services:
+  - key: loopia.dns
+    display_name: Loopia DNS
+    service_types: [dns]
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "loopia.se"}
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "loopiagroup.com"}
+  - key: loopia.email
+    display_name: Loopia email
+    service_types: [email]
+    dns_rules:
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "loopia.se"}

@@ -1,0 +1,18 @@
+# yaml-language-server: $schema=./schema.json
+slug: beebyte
+display_name: Beebyte
+category: hosting
+country: SE
+aliases: ["Beebyte"]
+provider_keys: ["beebyte.net", "beebyte.se"]
+services:
+  - key: beebyte.dns
+    display_name: Beebyte DNS
+    service_types: [dns]
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "beebyte.net"}
+  - key: beebyte.email
+    display_name: Beebyte email
+    service_types: [email]
+    dns_rules:
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "beebyte.se"}

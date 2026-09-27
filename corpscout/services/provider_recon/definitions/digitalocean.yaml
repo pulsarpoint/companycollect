@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=./schema.json
+slug: digitalocean
+display_name: DigitalOcean
+category: cloud
+website: https://www.digitalocean.com
+country: US
+aliases: ["DigitalOcean", "DigitalOcean, LLC"]
+provider_keys: ["digitalocean.com", "ondigitalocean.app"]
+services:
+  - key: digitalocean.droplets
+    display_name: DigitalOcean Droplets
+    service_types: [iaas]
+    traits: [cloud_provider_ip]
+  - key: digitalocean.dns
+    display_name: DigitalOcean DNS
+    service_types: [dns]
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "digitalocean.com"}
+  - key: digitalocean.app-platform
+    display_name: DigitalOcean App Platform
+    service_types: [paas]
+    dns_rules:
+      - {record_type: CNAME, match_field: target, matcher_type: suffix, pattern: "ondigitalocean.app"}
+feeds:
+  - collector: geofeed
+    params: {url: "https://digitalocean.com/geo/google.csv"}
+    tag_map: {GEOFEED: digitalocean.droplets}

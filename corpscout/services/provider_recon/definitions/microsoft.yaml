@@ -1,0 +1,73 @@
+# yaml-language-server: $schema=./schema.json
+slug: microsoft
+display_name: Microsoft
+category: cloud
+website: https://www.microsoft.com
+country: US
+aliases: ["Microsoft", "Microsoft Corporation", "Azure", "Microsoft 365"]
+provider_keys: ["outlook.com", "onmicrosoft.com", "microsoftonline.com", "azure-dns.com", "azure-dns.net", "azure-dns.org", "azure-dns.info", "azurewebsites.net", "azurefd.net", "azureedge.net", "azure.com", "windows.net"]
+services:
+  - key: microsoft.365-mail
+    display_name: Microsoft 365 (Exchange Online)
+    service_types: [email]
+    dns_rules:
+      - {record_type: MX, match_field: target, matcher_type: suffix, pattern: "mail.protection.outlook.com"}
+  - key: microsoft.365-sending
+    display_name: Microsoft 365 outbound mail
+    service_types: [email_sending]
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: contains, pattern: "include:spf.protection.outlook.com"}
+      # DKIM: selector1._domainkey CNAME selector1-<domain>._domainkey.<tenant>.onmicrosoft.com
+      - {record_type: CNAME, match_field: target, matcher_type: suffix, pattern: "onmicrosoft.com"}
+  - key: microsoft.365-verification
+    display_name: Microsoft 365 domain verification
+    service_types: [saas_verification]
+    dns_rules:
+      - {record_type: TXT, match_field: value, matcher_type: prefix, pattern: "ms=", confidence: 0.9}
+  - key: microsoft.365-dns
+    display_name: Microsoft 365 managed DNS
+    service_types: [dns]
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: suffix, pattern: "microsoftonline.com"}
+  - key: microsoft.azure-dns
+    display_name: Azure DNS
+    service_types: [dns]
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: regex, pattern: '^ns[1-4]-[0-9]+\.azure-dns\.(com|net|org|info)$'}
+  - key: microsoft.azure-front-door
+    display_name: Azure Front Door / Azure CDN
+    service_types: [cdn, waf]
+    traits: [shared_infrastructure, origin_obscured]
+    dns_rules:
+      - {record_type: CNAME, match_field: target, matcher_type: suffix, pattern: "azurefd.net"}
+      - {record_type: CNAME, match_field: target, matcher_type: suffix, pattern: "azureedge.net"}
+  - key: microsoft.azure-app-service
+    display_name: Azure App Service
+    service_types: [paas]
+    dns_rules:
+      - {record_type: CNAME, match_field: target, matcher_type: suffix, pattern: "azurewebsites.net"}
+  - key: microsoft.azure-storage
+    display_name: Azure Storage static websites
+    service_types: [hosting]
+    dns_rules:
+      - {record_type: CNAME, match_field: target, matcher_type: suffix, pattern: "web.core.windows.net"}
+      - {record_type: CNAME, match_field: target, matcher_type: suffix, pattern: "blob.core.windows.net"}
+  - key: microsoft.azure-cloud
+    display_name: Azure compute
+    service_types: [iaas]
+    traits: [cloud_provider_ip]
+    dns_rules:
+      - {record_type: CNAME, match_field: target, matcher_type: suffix, pattern: "cloudapp.azure.com"}
+feeds:
+  - collector: azure_service_tags
+    tag_map:
+      "AzureFrontDoor.Frontend": microsoft.azure-front-door
+      # Backend/FirstParty are Microsoft→origin traffic, not customer-facing.
+      "AzureFrontDoor.*": ""
+      "AppService*": microsoft.azure-app-service
+      "Storage*": microsoft.azure-storage
+      "AzureCloud*": microsoft.azure-cloud
+      # ~2,800 other service tags (monitoring, management planes…) are not
+      # customer-facing hosting; ignored rather than reported as unmapped.
+      "*": ""
+    generic_tags: ["AzureCloud*"]
