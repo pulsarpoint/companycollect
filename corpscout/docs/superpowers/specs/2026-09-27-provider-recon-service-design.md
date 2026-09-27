@@ -136,7 +136,7 @@ services/provider_recon/
   cmd: provider-recon collect [--provider aws] [--out dir]
        provider-recon validate
        provider-recon mine
-  (generated providers/<slug>.json → provider-recon-data git repo + S3)
+  (generated providers/<slug>/latest.json + history + changes/ → S3)
 ```
 
 ## First slice proposal
@@ -162,12 +162,13 @@ services/provider_recon/
      unknown-field errors, and every pattern/CIDR is quoted.
    - `provider-recon validate` also checks the files against a JSON Schema,
      which editors can use too.
-3. **Generated per-provider JSON lives in git (for diffs) and in S3 (for
-   consumers).**
-   - The git side is a **separate data repository** (`provider-recon-data`),
-     with its own push key, so the scheduled job's commits stay out of
-     corpscout history and away from in-progress work in the main tree.
-   - A provider's file is committed only when its content hash changes; the
-     commit message names the collectors and feed versions that changed.
-   - The same files go to S3, recording the data-repo commit id so every S3
-     version can be traced back to a diff.
+3. **Generated per-provider JSON lives in S3 only.** The owner chose S3 over a
+   git data repo for easier management. Diffs are produced by the service
+   itself rather than by git or bucket versioning:
+   - `providers/<slug>/latest.json`: the current document.
+   - `providers/<slug>/history/<collected_at>.json`: written only when the
+     content hash changes.
+   - `changes/<run_id>.json`: per-provider added/removed evidence (IP ranges,
+     rules, aliases) and the feed versions that moved.
+   - Change manifests are kept indefinitely (small); history pruning is deferred
+     until it matters.
