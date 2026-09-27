@@ -1,4 +1,6 @@
 from collections.abc import Iterable, Mapping
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from ipaddress import ip_network
 from typing import Any
 from urllib.parse import unquote, urljoin, urlsplit
@@ -41,11 +43,17 @@ class RdapClientError(Exception):
         code: str,
         retryable: bool,
         status_code: int | None = None,
+        retry_after: float | None = None,
+        host: str | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.retryable = retryable
         self.status_code = status_code
+        # Seconds the server asked the client to wait (Retry-After), when it sent one.
+        self.retry_after = retry_after
+        # The host that answered (or failed), when the request was made by hand.
+        self.host = host
 
 
 class RdapRedirect(RdapClientError):
@@ -75,9 +83,11 @@ class RdapClient:
         user_agent: str,
         session: requests.Session | None = None,
         reroute_hosts: Iterable[str] = (),
+        only_hosts: Iterable[str] | None = None,
     ) -> None:
         if user_agent.strip() == "":
             raise ValueError("user_agent must not be empty")
+        self._user_agent = user_agent.strip()
         self._owns_session = session is None
         self._session = session if session is not None else requests.Session()
         self._session.headers["User-Agent"] = user_agent.strip()
@@ -89,12 +99,51 @@ class RdapClient:
         self.reroute_hosts: frozenset[str] = frozenset(
             host.lower() for host in reroute_hosts
         )
+        # When set, only these hosts are fetched: the first URL or a redirect to any
+        # other host raises RdapRedirect (registry '' for a host no registry owns). A
+        # proxied client is restricted to its registry's hosts this way, so a redirect
+        # to another registry never goes through that registry's proxy.
+        self.only_hosts: frozenset[str] | None = (
+            None if only_hosts is None else frozenset(h.lower() for h in only_hosts)
+        )
+
+    def clone(
+        self, *, proxy: str | None = None, only_hosts: Iterable[str] | None = None
+    ) -> "RdapClient":
+        """A client with its own session and the same User-Agent and reroute hosts.
+
+        ``proxy`` (an http:// or https:// URL, credentials allowed) sends every request of
+        the new session through that proxy; environment proxy settings are then ignored
+        (trust_env off), so the proxy is the only egress.
+        """
+        session = requests.Session()
+        if proxy is not None:
+            session.trust_env = False
+            session.proxies = {"http": proxy, "https": proxy}
+        client = RdapClient(
+            user_agent=self._user_agent,
+            session=session,
+            reroute_hosts=self.reroute_hosts,
+            only_hosts=only_hosts,
+        )
+        client._owns_session = True
+        return client
 
     def lookup_ip(self, ip_address_or_network: str) -> RdapLookupResponse:
         return self._lookup(ip_address_or_network, rir=None)
 
     def lookup_up_url(self, up_url: str, *, rir: str) -> RdapLookupResponse:
         return self._lookup(ip_resource_from_up_url(up_url), rir=rir)
+
+    def lookup_url(
+        self, url: str, *, ip: str, rir: str | None = None
+    ) -> RdapLookupResponse:
+        """GET an RDAP ip URL as it is (e.g. a redirect Location another client refused).
+
+        Redirects are followed by hand with this client's host rules; ``rir`` names the
+        registry when the answer carries no self link.
+        """
+        return self._lookup(ip, rir=rir, url=url)
 
     def registry_for(self, ip_address_or_network: str) -> str:
         """The registry whoisit would ask for this address, or '' when it cannot tell.
@@ -124,14 +173,16 @@ class RdapClient:
         ip_address_or_network: str,
         *,
         rir: str | None,
+        url: str | None = None,
     ) -> RdapLookupResponse:
         self._ensure_bootstrapped()
         try:
-            if self.reroute_hosts:
+            if url is not None or self.reroute_hosts or self.only_hosts is not None:
                 # Redirects by hand, so one to a rerouted host is never followed.
-                _, url, _ = whoisit.build_query(
-                    query_type="ip", query_value=ip_address_or_network, rir=rir
-                )
+                if url is None:
+                    _, url, _ = whoisit.build_query(
+                        query_type="ip", query_value=ip_address_or_network, rir=rir
+                    )
                 raw = self._get(url)
                 if not isinstance(raw, Mapping):
                     raise ParseError("RDAP answer is not a JSON object")
@@ -188,19 +239,22 @@ class RdapClient:
         A rerouted host is refused before any fetch, whether it is the first URL (e.g.
         whoisit's bootstrap sent the query there) or a redirect Location.
         """
-        host = url_host(url)
-        if host in self.reroute_hosts:
+        if self._refused(url_host(url)):
             raise RdapRedirect(
-                url, registry=RIR_BY_HOST.get(host, ""), status_code=None
+                url, registry=RIR_BY_HOST.get(url_host(url), ""), status_code=None
             )
         for _ in range(MAX_REDIRECTS + 1):
-            response = http_request(self._session, url, allow_redirects=False)
+            try:
+                response = http_request(self._session, url, allow_redirects=False)
+            except QueryError as error:
+                error.host = url_host(url)
+                raise
             location = response.headers.get("Location")
             if response.status_code in REDIRECT_STATUSES and location:
                 response.close()
                 target = urljoin(url, location)
                 host = url_host(target)
-                if host in self.reroute_hosts:
+                if self._refused(host):
                     raise RdapRedirect(
                         target,
                         registry=RIR_BY_HOST.get(host, ""),
@@ -208,8 +262,20 @@ class RdapClient:
                     )
                 url = target
                 continue
-            return Query(self._session, "GET", url)._process_response(response)
+            try:
+                return Query(self._session, "GET", url)._process_response(response)
+            except QueryError as error:
+                error.retry_after = retry_after_seconds(
+                    response.headers.get("Retry-After")
+                )
+                error.host = url_host(url)
+                raise
         raise QueryError(f"More than {MAX_REDIRECTS} RDAP redirects from {url}")
+
+    def _refused(self, host: str) -> bool:
+        return host in self.reroute_hosts or (
+            self.only_hosts is not None and host not in self.only_hosts
+        )
 
     def _ensure_bootstrapped(self) -> None:
         if self._ready:
@@ -230,6 +296,24 @@ class RdapClient:
                 retryable=True,
             ) from error
         self._ready = True
+
+
+def retry_after_seconds(
+    value: str | None, *, now: datetime | None = None
+) -> float | None:
+    """Seconds of a Retry-After header (delta-seconds or an HTTP date); None when absent or unreadable."""
+    if value is None or not value.strip():
+        return None
+    text = value.strip()
+    if text.isdigit():
+        return float(text)
+    try:
+        when = parsedate_to_datetime(text)
+    except TypeError, ValueError:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return max(0.0, (when - (now or datetime.now(UTC))).total_seconds())
 
 
 def url_host(url: str) -> str:
@@ -300,6 +384,8 @@ def _client_error(
         code=code,
         retryable=retryable,
         status_code=status_code,
+        retry_after=getattr(error, "retry_after", None),
+        host=getattr(error, "host", None),
     )
 
 

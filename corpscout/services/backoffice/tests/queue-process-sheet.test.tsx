@@ -98,4 +98,23 @@ describe("Brave queue LLM selection", () => {
     expect(html).not.toContain('name="llm_profile_id"');
     expect(html).not.toContain("Browser assistant LLM");
   });
+
+  it("shows the IP enrichment per-registry defaults as JSON and submits them as objects", () => {
+    const html = render("ip-enrichment");
+    expect(html).toContain('value="{&quot;lacnic&quot;:6.5}"');
+    expect(html).toContain('value="{&quot;afrinic&quot;:4500}"');
+    expect(html).toContain('value="[]"');
+    const OriginalFormData = FormData;
+    const form = new OriginalFormData();
+    for (const [key, value] of Object.entries(QUEUE_TEMPLATES["ip-enrichment"])) {
+      form.set(key, value !== null && typeof value === "object" ? JSON.stringify(value) : String(value ?? ""));
+    }
+    form.set("use_proxies", '["arin"]');
+    vi.stubGlobal("FormData", class extends OriginalFormData {
+      constructor(source: FormData) { super(); source.forEach((value, key) => this.append(key, value)); }
+    });
+    mocks.onSubmit?.({preventDefault: vi.fn(), currentTarget: form} as unknown as Parameters<FormEventHandler<HTMLFormElement>>[0]);
+    const config = JSON.parse(mocks.submit.mock.calls[0][0].config);
+    expect(config).toEqual({...QUEUE_TEMPLATES["ip-enrichment"], use_proxies: ["arin"]});
+  });
 });

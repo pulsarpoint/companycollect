@@ -55,8 +55,9 @@ Imports and Start share the task's PostgreSQL advisory lock.
    `profile` (`force_rdap`, `rdap_cache_days`, `parent_depth`, `rate_limit_retry_seconds`,
    `transient_retry_seconds`, `ripe_rest`, `apnic_whois`, `processor_version`), `started_at` and
    `freshness_cutoff = started_at − rdap_cache_days`. `batch_size`, `max_requests`,
-   `request_delay_seconds` and `registry_daily_budgets` are transport settings and may
-   change between resumes. The default-draft slot is released at once, so new additions form the
+   `request_delay_seconds`, `registry_request_delays`, `registry_daily_budgets`,
+   `rate_limit_pause_seconds` and `use_proxies` are transport settings and may change
+   between resumes. The default-draft slot is released at once, so new additions form the
    next draft;
 2. loops until nothing remains. *Remaining* is a live query per bucket: the task's entries
    in that bucket whose `input_id` has no row in `ip_enrichment_results` for this execution
@@ -67,9 +68,10 @@ Imports and Start share the task's PostgreSQL advisory lock.
    insert. Freshness is judged against the frozen execution: a network or marker counts when
    its time is `>= freshness_cutoff`, a retryable error when `retry_after > started_at`;
    `force_rdap` skips both caches. Registry requests (RIPE through its REST search, APNIC
-   through whois `-r`, the others through RDAP) happen only for misses, paced by `request_delay_seconds`; a miss also
-   costs one registry-class context query, and networks fetched earlier in the run are reused
-   before any request. GeoIP City/ASN are read locally
+   through whois `-r`, the others through RDAP) happen only for misses, in parallel lanes per
+   registry, each endpoint paced on its own (see *Lanes, pacing and proxies*); a miss also
+   costs one registry-class context query, and networks fetched earlier in the run or page are
+   reused before any request. GeoIP City/ASN are read locally
    per address;
 3. stores outcomes through a `ResultBuffer` (500 rows or 5 seconds, acknowledged
    `async_insert`); the cursor never re-reads a page inside a pass, the buffer is flushed
@@ -158,20 +160,114 @@ it stays `not_global` with no request. A page holding such addresses costs one e
 query (the IPv4s' buckets). Run metadata counts `embedded_ipv4_lookups` by form (`6to4`,
 `ipv4_mapped`) and `teredo_special`.
 
-`registry_daily_budgets` (transport, default `{}`, keys are whoisit's names: `ripe`, `arin`,
-`apnic`, `lacnic`, `afrinic`, `jpnic`, `idnic`, `krnic`, `twnic`, `registro.br`) is an
-optional rolling 24-hour **request** budget per registry. The registry of a miss is resolved
-from whoisit's bootstrap data before the request (`RdapClient.registry_for`); a miss of a
-registry at its budget is deferred (no result row, no error), the run keeps processing
-everything else, and when a whole pass resolved nothing it sleeps until an hour's share of
-the budget frees (`wait_for_registry_budget`, logged every 10 minutes). The window is seeded
-on start from `rdap_networks.fetched_at` of the last day (every writer); the seed
-under-counts requests that stored no network — errors, not-founds and the redirected half of
-a reroute — because the lookup-marker table (`rdap_ip_lookup_results`) has no registry
-column. Proxy egress lanes were considered and dropped on 2026-09-26: they would not shorten a
-run (pacing is global), the no-personal-data paths make them unnecessary, and pooling a
-registry's allowance across addresses is the AUP's anti-avoidance case. The budget is not in
-the backoffice sheet; set it in the Dagster launchpad.
+`registry_daily_budgets` (transport, default `{"afrinic": 4500}`, keys are whoisit's names:
+`ripe`, `arin`, `apnic`, `lacnic`, `afrinic`, `jpnic`, `idnic`, `krnic`, `twnic`,
+`registro.br`) is an optional rolling 24-hour **request** budget per **endpoint** (source
+address: the direct one or one proxy) of a registry. The registry of a miss is resolved from
+whoisit's bootstrap data before the request (`RdapClient.registry_for`); a miss whose
+endpoint is at its budget goes to another endpoint of the registry, or is deferred (no result
+row, no error) when every endpoint is; the run keeps processing everything else, and when a
+whole pass resolved nothing it sleeps until an hour's share of the first endpoint's budget
+frees (`wait_for_registry_budget`, logged every 10 minutes). The window is seeded on start
+from `rdap_networks.fetched_at` of the last day (every writer); those rows name the registry
+but not the source address, so **every endpoint of the registry is charged with all of
+them** (safe per address; after a proxied run a resume may wait longer than needed). The
+seed under-counts requests that stored no network — errors, not-founds and the redirected
+half of a reroute — because the lookup-marker table (`rdap_ip_lookup_results`) has no
+registry column. An explicit `registry_daily_budgets` or `registry_request_delays` **merges
+over** the defaults (`{"arin": 1}` means `{"lacnic": 6.5, "arin": 1}`); LACNIC's delay may
+not go below 6 s and AFRINIC's budget must stay between 1 and 5,000 — the run config and the
+backoffice form refuse anything else. The budget window belongs to the **egress**, not the
+endpoint: direct has one, and every proxy URL on the same hostname (compared
+case-insensitively) shares one, so two proxy URLs through one host get one budget between them.
+
+## Lanes, pacing and proxies
+
+A page's misses are grouped by registry and fetched in parallel: one **lane** per registry
+(`arin`, `ripe`, `apnic`, `lacnic`, `afrinic`, …) with one worker per **endpoint** of it —
+`<registry>:direct` always, plus `<registry>:proxy-N` for each proxy of a registry in
+`use_proxies`. Workers only do HTTP (the request, a reroute to RIPE REST / APNIC whois or to
+another registry, the catch-all/NIR fallback, parents up to `parent_depth`) and hand back a
+plain outcome; the calling thread then stores the page in page order (class, network,
+segments, marker, result), so the ClickHouse client never leaves it. Before each request a
+worker checks the networks other lanes fetched earlier in the page, so one network is fetched
+once per page (two endpoints may still both fetch one in flight at the same moment; both
+writes are idempotent). A page returns when every lane's queue is drained or deferred, so a
+slow or paused registry never holds up the others beyond the page; with `batch_size: 1000`
+the lanes stay busy (recommended for the full run).
+
+Pacing is per endpoint: at most one request per `registry_request_delays[registry]` seconds
+(default `{"lacnic": 6.5}`), else `request_delay_seconds` (default 1.0), counted from the
+endpoint's creation, so even its first request is paced. Every endpoint only fetches its own
+registry's RDAP hosts (APNIC's and RIPE's also the NIR servers `jpnic`/`idnic`/`krnic`/
+`twnic`): a redirect to another registry — ARIN → LACNIC, ARIN → AFRINIC, a RIPE fallback
+→ ARIN — is not followed but re-sent through the **target registry's direct endpoint**, with
+that registry's pace, daily budget and pauses (a paused or exhausted target defers the
+address). RIPE- or APNIC-managed space reached that way goes to REST/whois; inside a
+catch-all/NIR fallback the redirect is fetched as RDAP. Fallbacks obey pauses and budgets like
+every other request. The RIPE REST and APNIC whois clients are single instances used under their direct
+endpoint's lock, i.e. serialised per registry at its pace; every other endpoint has its own
+`RdapClient` and HTTP session. `max_requests` stays one run-wide total.
+
+Recommended starting values for the full run (transport, change between resumes as needed):
+
+```json
+{"batch_size": 1000, "max_requests": null,
+ "registry_request_delays": {"ripe": 0.5, "apnic": 1.0, "arin": 1.0, "lacnic": 6.5, "afrinic": 1.0},
+ "registry_daily_budgets": {"afrinic": 4500}, "rate_limit_pause_seconds": 300}
+```
+
+Published limits behind the defaults:
+
+| Registry | Limit | Source | Default here |
+| --- | --- | --- | --- |
+| LACNIC | 10 queries per minute per source address, `403` when exceeded (an older staff post gives 100 per 5 minutes) | the server's own message "Rate Limit is maxed at 10 queries per 1 minutes", quoted in github.com/secynic/ipwhois issue 104 | 6.5 s between requests; a LACNIC `403` is read as a rate limit |
+| AFRINIC | 5,000 queries per source address per day; exceeding blocks the address for 24 h, 10 blocks in 3 months block it permanently | AFRINIC Whois FAQ (not verified verbatim) | 4,500 per endpoint per rolling day |
+| ARIN | no published numeric limit | — | `request_delay_seconds` |
+| RIPE | 1,000 personal data sets per address per day; queries unlimited within reasonable use, ≤ 3 connections | RIPE Database AUP | REST without personal data, direct only |
+
+LACNIC offers **API keys on request**; that, not more source addresses, is the sanctioned way
+to raise its limit.
+
+**Proxies** are opt-in per registry, HTTP(S) only, for RDAP requests only. Allowed registries:
+`PROXY_ALLOWED_REGISTRIES = {"arin", "afrinic"}` (`enrichment.py`); run config naming any
+other registry in `use_proxies` is refused at validation. RIPE (REST and any RDAP fallback)
+and APNIC (whois and any RDAP fallback) always go direct: RIPE's AUP treats pooling limits
+across addresses as a violation ("Anti-avoidance and Connected Persons"), and APNIC's port-43
+whois cannot use an HTTP proxy. LACNIC stays direct because it limits per source address and
+sells more throughput as an API key. A proxied client only talks to its own registry's hosts:
+a redirect elsewhere (to RIPE/APNIC → REST/whois, to LACNIC or any other host) is re-sent
+through that registry's direct endpoint, never through the proxy.
+
+Proxy URLs are secrets and live only in the Dagster environment (the code location's `.env`
+/ service environment), never in run config, logs, tags or metadata:
+
+```bash
+RDAP_PROXIES='{"arin": ["http://user:pass@proxy-1.example:3128", "https://user:pass@proxy-2.example:3129"], "afrinic": ["http://user:pass@proxy-3.example:3128"]}'
+```
+
+and then start the run with `"use_proxies": ["arin"]` (or `["arin", "afrinic"]`). A
+registry in `use_proxies` without a list in `RDAP_PROXIES` (or an unset/invalid
+`RDAP_PROXIES`, or a non-http(s) URL) fails the run before the task is frozen; error
+messages name the registry and list index only. The run logs `RDAP proxies: arin direct + 2`
+and publishes `requests_by_endpoint` keyed `arin:direct`, `arin:proxy-1`, … — never the URL.
+Budgets and pauses apply per endpoint, so a proxy multiplies a registry's throughput and its
+AFRINIC allowance by the number of source addresses; that is the point, and why only
+registries whose terms allow it are listed. **Each AFRINIC proxy URL must be a distinct, stable
+egress IP** (no rotating pools, no two URLs leaving through the same address): AFRINIC counts
+per source IP, and two endpoints behind one exit would spend 2 × 4,500 of one address's 5,000.
+The code enforces only what it can see — one budget window per proxy hostname — so distinct
+hostnames that leave through one exit IP, or a rotating pool, cannot be detected and are on
+the operator.
+
+A proxy that fails to carry a request (`transport_error`, a timeout, a connection error, or a
+`407`/`502`/`503`/`504` answer) pauses that proxy endpoint with the same back-off; the miss
+goes back to the lane for another endpoint, or is deferred to the next pass. Nothing is
+stored for it. A `502`/`503`/`504` through a proxy may equally be the registry's own outage —
+the two cannot be told apart — so a registry outage also pauses its proxy endpoints (and the
+direct endpoint, or the next pass, carries on). Error messages of proxy endpoints are
+scrubbed of the proxy URL, host, user name and password (case-insensitively) before they
+leave the request.
 
 ## Counters and how to read them
 
@@ -184,15 +280,31 @@ sent because a REST/whois answer was a catch-all or an NIR's own object is count
 separately in `rdap_fallbacks_by_registry` (RIPE's catch-all root, an APNIC NIR allocation),
 with its person entities under `"<rir>:fallback"` keys — that is expected, not a leak. A
 fallback's optional parent lookup is counted under the NIR's own key (`jpnic`, `idnic`, …),
-not `apnic`. `reroutes_by_registry` counts cross-RIR redirects re-sent to REST/whois, and
-`pauses_by_registry` counts rate-limit/block pauses per registry, including the run-wide
-`bootstrap` key described next.
+not `apnic`. `reroutes_by_registry` counts cross-RIR redirects that were not followed but re-sent through
+the target's direct endpoint (to REST/whois for RIPE/APNIC, or out of a proxy's registry),
+keyed by the target. `pauses_by_registry` counts rate-limit/block pauses per registry,
+including the run-wide `bootstrap` key described next; `pauses_by_endpoint` and
+`requests_by_endpoint` break pauses and requests down per endpoint (`arin:direct`,
+`arin:proxy-1`, …).
 
 ## Pauses and a stalled bootstrap
 
-A RIPE REST `403` or `429`, or an APNIC whois `%ERROR:2xx`, pauses that registry for
-`max(retry, 15 min)`; its misses are deferred (no result row, no marker) until the pause
-ends, the same as a budget deferral. A failed IANA bootstrap — which `registry_for` and every
+A rate limit or block — RDAP `429`, LACNIC `403`, a RIPE REST `403` or `429`, an APNIC whois
+`%ERROR:2xx` — pauses the **endpoint** that got it for `max(Retry-After, back-off)` (at most 1 day),
+the back-off being `rate_limit_pause_seconds` (default 300) doubling per consecutive pause up
+to `rate_limit_retry_seconds` (default 3600); an access denial (`403`, `%ERROR:201`) waits at
+least `rate_limit_retry_seconds`. The endpoint's next success resets the back-off. A registry
+is **given up** only when nothing else can progress: every endpoint of it has paused 6 times
+in a row **and** the run has already waited for it after a pass that processed nothing
+(`wait_for_registry_budget`). The pass after that wait asks once more, and whatever of that
+registry is still deferred is stored as `retryable_error` with the pause's code, so the run can
+finish (a retry draft asks again later). In a pass where other registries still progress,
+its addresses stay deferred and nothing is written. A success of the registry resets it. The rate-limited address is **deferred** (no result row, no
+marker) and re-walked in the next pass — it is no longer stored as a `retryable_error` —
+and so is the rest of the registry's lane, unless another endpoint of the registry is free
+to take it. A registry is deferred only when all its endpoints are paused or at their
+budget; other retryable errors (`remote_server`, `transport_error`, …) are still stored as
+`retryable_error` with `retry_after`. A failed IANA bootstrap — which `registry_for` and every
 lookup depend on — pauses the whole run instead, under the key `bootstrap`: every miss is
 deferred with no per-address error, back-off doubles from 60 s to a 900 s cap, and it resets
 on the first successful bootstrap. The run retries forever and never fails on its own; an
@@ -284,6 +396,12 @@ Classes regenerate per miss and at the daily refresh.
 - A miss deferred by a paused target registry after a cross-RIR redirect (e.g. ARIN → RIPE
   while RIPE is paused) repeats the ARIN redirect on the next pass; nothing remembers the
   reroute across passes.
+- A miss that reused a network another lane fetched in the same page is deferred to the next
+  pass when that network turns out registry-level (it answers only its own address); the next
+  pass asks for it itself.
+- The per-endpoint budget seed charges every endpoint with the registry's whole last-day usage
+  (the network table has no source-address column): safe, but after a proxied AFRINIC run a
+  resume within the day may idle longer than necessary.
 - `RdapClient._lookup` reaches into whoisit's private `_bootstrap` attribute, pinned in
   `uv.lock`; a whoisit upgrade needs re-verification.
 - In practice only JPNIC space falls back to RDAP (sampled 2026-09-26); the other NIRs'
@@ -297,7 +415,12 @@ filters, inventory search, the failed-results mode, freeze → next draft.
 `tests/test_ip_enrichment_results.py`: bounded round trips per page, frozen cache window,
 negative markers, registry classes per miss (trie exclusion, per-address marker), in-run reuse
 and the request budget, RIPE via REST and APNIC via whois `-r` without person objects (the
-root-object and NIR fallbacks, the real FPT answer), budget deferral and wait (resolver and loop), completion
+root-object and NIR fallbacks, the real FPT answer), budget deferral and wait (resolver and loop),
+lanes (concurrent registries, ClickHouse on the calling thread only, one fetch per network per
+page, the same commits as the one-lane reference), endpoint pauses (deferral, Retry-After,
+back-off and reset, LACNIC 403), per-endpoint AFRINIC budgets, proxies (allowed registries,
+`RDAP_PROXIES` parsing without echoing URLs, endpoints and pacing, redirects out of a proxy
+lane going direct, no URL in logs or metadata), completion
 with partition purge, errors as published outcomes, budget resume, lost write and cleanup
 acknowledgements, changed-profile refusal. `tests/test_geolite2_freshness.py`: build times,
 14-day rule, check wiring. `tests/test_geolite2_install.py` (disposable RustFS, MaxMind's test

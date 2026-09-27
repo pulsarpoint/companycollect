@@ -58,6 +58,30 @@ describe("queue processing", () => {
     await startQueueProcessing(filters("crawler", type), JSON.stringify(config), request, "operator");
     expect(launchRun).toHaveBeenCalledWith(expect.objectContaining({job: type === "jobs" ? "website_jobs_crawl_results_job" : "website_site_info_results_job"}));
   });
+  it("accepts the IP enrichment lane settings and refuses proxies outside ARIN and AFRINIC", () => {
+    const ip = filters("ip-enrichment");
+    expect(QUEUE_TEMPLATES["ip-enrichment"]).toMatchObject({registry_request_delays: {lacnic: 6.5}, registry_daily_budgets: {afrinic: 4500}, rate_limit_pause_seconds: 300, use_proxies: []});
+    const settings = {registry_request_delays: {lacnic: 6.5, arin: 0.5}, registry_daily_budgets: {afrinic: 4500, ripe: 10}, rate_limit_pause_seconds: 120, use_proxies: ["arin", "afrinic"]};
+    expect(parseQueueConfig(ip, JSON.stringify({...QUEUE_TEMPLATES["ip-enrichment"], ...settings}))).toEqual({...QUEUE_TEMPLATES["ip-enrichment"], ...settings, task_id: task});
+    for (const [key, value, message] of [
+      ["use_proxies", ["ripe"], "use_proxies may only list arin, afrinic"],
+      ["use_proxies", ["lacnic"], "use_proxies may only list"],
+      ["use_proxies", "arin", "use_proxies may only list"],
+      ["registry_request_delays", {lacnic: 61}, "registry_request_delays.lacnic must be a number between 0 and 60"],
+      ["registry_request_delays", [6.5], "registry_request_delays must be an object"],
+      ["registry_request_delays", {"RIPE NCC": 1}, "invalid registry name"],
+      ["registry_daily_budgets", {afrinic: 0}, "must be an integer between 1"],
+      ["registry_daily_budgets", {afrinic: 1.5}, "must be an integer"],
+      ["rate_limit_pause_seconds", 0, "rate_limit_pause_seconds must be an integer between 1"],
+      ["registry_request_delays", {lacnic: 5}, "registry_request_delays.lacnic must be between 6 and 60"],
+      ["registry_daily_budgets", {afrinic: 5001}, "registry_daily_budgets.afrinic must be between 1 and 5000"],
+    ] as const) expect(() => parseQueueConfig(ip, JSON.stringify({[key]: value}))).toThrow(message);
+    // Explicit maps merge over the safe defaults, as Dagster does.
+    expect(parseQueueConfig(ip, JSON.stringify({registry_request_delays: {arin: 1}, registry_daily_budgets: {ripe: 10}}))).toEqual({
+      registry_request_delays: {lacnic: 6.5, arin: 1}, registry_daily_budgets: {afrinic: 4500, ripe: 10}, task_id: task});
+    // Structured values stay limited to these keys.
+    expect(() => parseQueueConfig(ip, JSON.stringify({batch_size: {a: 1}}))).toThrow("Invalid value for batch_size");
+  });
   it.each(["task_id", "source_relation", "targets", "ops", "resources", "input_relation", "mode"])("rejects selection or workflow override %s", key => {
     expect(() => parseQueueConfig(filters(), JSON.stringify({[key]: "override"}))).toThrow("Unsupported processing parameter");
   });

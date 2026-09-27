@@ -23,7 +23,12 @@ const LABELS: Record<string, string> = {
   force_rdap: "Force RDAP lookup", rdap_cache_days: "RDAP cache window (days)", parent_depth: "RDAP parent depth",
   max_requests: "RDAP request budget", request_delay_seconds: "Request delay (seconds)",
   rate_limit_retry_seconds: "Rate limit retry delay (seconds)", transient_retry_seconds: "Transient error retry delay (seconds)",
+  registry_request_delays: "Request delay per registry (JSON, seconds)", registry_daily_budgets: "Daily request budget per endpoint (JSON)",
+  rate_limit_pause_seconds: "First rate-limit pause (seconds)", use_proxies: "Registries using RDAP_PROXIES (JSON list)",
 };
+
+/** Object and list defaults (per-registry maps, proxy list) are edited as JSON text. */
+function isStructured(value: unknown) { return value !== null && typeof value === "object"; }
 
 export function QueueProcessSheet({filters, total, asset, blockedReason, llmProfileId, onClose}: {
   filters: QueueFilters; total: number; asset: string; blockedReason?: string | null; llmProfileId?: string; onClose: () => void;
@@ -46,6 +51,7 @@ export function QueueProcessSheet({filters, total, asset, blockedReason, llmProf
       for (const [key, defaultValue] of Object.entries(defaults)) {
         const raw = String(values.get(key) ?? "");
         config[key] = typeof defaultValue === "boolean" ? raw === "true"
+          : isStructured(defaultValue) ? JSON.parse(raw)
           : typeof defaultValue === "number" ? Number(raw)
           : key === "max_requests" ? (raw.trim() ? Number(raw) : null) : raw;
       }
@@ -82,7 +88,7 @@ export function QueueProcessSheet({filters, total, asset, blockedReason, llmProf
             {done.runUrl && <a className="underline" href={done.runUrl} target="_blank" rel="noreferrer">Open run and progress</a>}
           </AlertDescription></Alert> : <>
             <p className="text-sm text-muted-foreground">{filters.type === "ip-enrichment"
-              ? "A draft freezes when the results asset begins. GeoIP, ASN and RDAP are saved per address in acknowledged batches; cached RDAP coverage is judged against the frozen start time and the cache window. Leave the RDAP request budget empty to process the whole task; a reached budget keeps the task resumable. RIPE and APNIC are asked without personal data (RIPE REST search, APNIC whois -r); per-registry budgets are a Dagster launchpad setting."
+              ? "A draft freezes when the results asset begins. GeoIP, ASN and RDAP are saved per address in acknowledged batches; cached RDAP coverage is judged against the frozen start time and the cache window. Leave the RDAP request budget empty to process the whole task; a reached budget keeps the task resumable. RIPE and APNIC are asked without personal data (RIPE REST search, APNIC whois -r). Each registry is asked in its own lane; delays and daily budgets apply per endpoint (the direct address, or one proxy). Only ARIN and AFRINIC may use the proxies configured in RDAP_PROXIES."
               : "Freshness is checked when execution is prepared. Recent inputs remain in the queue and are counted as skipped. A draft freezes when the results asset begins."}</p>
             {manual ? <FieldGroup><Field><FieldLabel htmlFor="queue-json">Processing parameters (JSON)</FieldLabel>
               <Textarea id="queue-json" value={json} onChange={event => setJson(event.target.value)} className="min-h-80 font-mono" spellCheck={false} required />
@@ -97,7 +103,7 @@ export function QueueProcessSheet({filters, total, asset, blockedReason, llmProf
                     <NativeSelectOption value="false">No</NativeSelectOption><NativeSelectOption value="true">Yes</NativeSelectOption>
                   </NativeSelect> : <Input id={`queue-${key}`} name={key} type={typeof value === "number" || value === null ? "number" : "text"}
                     min={filters.type === "crawler" ? undefined : QUEUE_NUMBER_LIMITS[filters.type][key]?.[0]} max={filters.type === "crawler" ? undefined : QUEUE_NUMBER_LIMITS[filters.type][key]?.[1]}
-                    defaultValue={value === null ? "" : String(value)} step={key === "request_delay_seconds" ? "any" : 1} required={value !== null}
+                    defaultValue={value === null ? "" : isStructured(value) ? JSON.stringify(value) : String(value)} step={key === "request_delay_seconds" ? "any" : 1} required={value !== null}
                     placeholder={key === "max_requests" ? "Unlimited" : undefined} />}
                 </Field>)}
               </FieldGroup> : <CrawlSettingsFields type={filters.crawlType} idPrefix="queue-crawl" initialProfileId={llmProfileId} />}
@@ -107,7 +113,9 @@ export function QueueProcessSheet({filters, total, asset, blockedReason, llmProf
               </Field></FieldGroup>
               <Button type="button" variant="outline" onClick={event => {
                 const form = event.currentTarget.form;
-                if (form && form.reportValidity()) { setJson(JSON.stringify(readFields(form), null, 2)); setManual(true); }
+                if (!form || !form.reportValidity()) return;
+                try { setJson(JSON.stringify(readFields(form), null, 2)); setManual(true); setLocalError(null); }
+                catch { setLocalError("Enter valid JSON parameters."); }
               }}>Edit all parameters as JSON</Button>
             </>}
             <p className="text-xs text-muted-foreground">Results asset: <code>{asset}</code>. {isDraftQueue(filters.type) ? "Inputs are removed when every input has a saved outcome or is skipped as recent. Individual errors remain in results and history. Pipeline failures keep inputs for recovery. Use the processing profile to control this execution." : "Existing input rows are retained for retries."}</p>
