@@ -30,6 +30,12 @@ class _API(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         polls = self.state["polls"] = self.state.get("polls", 0) + 1
+        if self.state.get("missing"):
+            self._send(404, {"error": "no such run"})
+            return
+        if polls <= self.state.get("fail_first", 0):
+            self._send(503, {"error": "restarting"})
+            return
         status = "running" if polls < 3 else self.state.get("final", "succeeded")
         self._send(200, {"run_id": "r1", "status": status, "changed": ["aws"], "unchanged_count": 36, "issues": []})
 
@@ -69,3 +75,30 @@ def test_wait_times_out(api) -> None:
     with pytest.raises(ProviderReconError, match="still running"):
         resource.wait_for_run("r1", timeout_s=5, poll_s=0, sleep=lambda _: None, clock=lambda: next(ticks))
 
+
+
+def test_wait_tolerates_transient_poll_failures(api) -> None:
+    resource, state = api
+    state["fail_first"] = 2
+    run = resource.wait_for_run("r1", poll_s=0, sleep=lambda _: None)
+    assert run["status"] == "succeeded"
+
+
+def test_wait_gives_up_after_consecutive_poll_failures(api) -> None:
+    resource, state = api
+    state["fail_first"] = 100
+    with pytest.raises(ProviderReconError, match="failed 5 times in a row"):
+        resource.wait_for_run("r1", poll_s=0, sleep=lambda _: None)
+
+
+def test_unreachable_service_counts_as_transient() -> None:
+    resource = ProviderReconResource(api_url="http://127.0.0.1:9", request_timeout_s=1)
+    with pytest.raises(ProviderReconError, match="failed 5 times in a row"):
+        resource.wait_for_run("r1", poll_s=0, sleep=lambda _: None)
+
+
+def test_lost_run_is_explained(api) -> None:
+    resource, state = api
+    state["missing"] = True
+    with pytest.raises(ProviderReconError, match="restarted or evicted"):
+        resource.wait_for_run("r1", poll_s=0, sleep=lambda _: None)
