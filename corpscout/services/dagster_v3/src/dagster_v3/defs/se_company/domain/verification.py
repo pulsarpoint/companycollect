@@ -9,6 +9,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from dagster_v3.defs.common.encrypted_llm import redact_llm_error
+from dagster_v3.defs.common.llm_reasoning import reasoning_options
 from dagster_v3.defs.se_company.domain.evidence import digest, json_text
 from dagster_v3.defs.se_company.info import LlmProfileConfig
 
@@ -47,7 +48,9 @@ def fingerprints(payload: str, profile: DomainVerificationProfile | None) -> dic
         "provider": profile.provider, "model": profile.model,
         "base_url": profile.base_url.rstrip("/"), "temperature": profile.temperature,
         "max_tokens": profile.max_tokens, "response_format": "json_object",
-        "thinking": "disabled" if profile.provider == "deepseek" else "default",
+        **({"reasoning_options": reasoning_options(profile.base_url, profile.reasoning_effort)}
+                         if profile.profile_id or profile.reasoning_effort is not None else
+                         {"thinking": "disabled" if profile.provider == "deepseek" else "default"}),
     })) if profile else ""
     return {"data_hash": data_hash, "prompt_hash": prompt_hash, "model_hash": model_hash,
             "input_hash": digest(json_text([data_hash, prompt_hash, model_hash]))}
@@ -119,7 +122,9 @@ def verify_domain(
             response_format={"type": "json_object"},
             messages=[{"role": "system", "content": CONTRACT + "\n\n" + profile.system_prompt},
                       {"role": "user", "content": payload}],
-            **({"extra_body": {"thinking": {"type": "disabled"}}} if profile.provider == "deepseek" else {}),
+            **(reasoning_options(profile.base_url, profile.reasoning_effort)
+               if profile.profile_id or profile.reasoning_effort is not None else
+               ({"extra_body": {"thinking": {"type": "disabled"}}} if profile.provider == "deepseek" else {})),
         )
     except Exception as exc:
         row["error"] = redact_llm_error(exc, client)[:4_000]

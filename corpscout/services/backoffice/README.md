@@ -55,19 +55,40 @@ Apply migration 426 for request/attempt identity in newer S3 paths; the existing
 `company_crawl_results` named collection supplies S3 access on the ClickHouse
 server. See the crawler's [ClickHouse mapping](../crawler_service/CLICKHOUSE.md).
 
-**New test crawl** submits an editable full-crawl JSON request from the Backoffice
-server to the crawler's authenticated `POST /v1/crawls`. Enable it for testing with
-`CRAWLER_TEST_SUBMIT_ENABLED=true`. The crawler validates the payload and queues it;
-its worker reserves a browser in the independent browser service via
+The **Crawl** tab at `/admin/crawls?tab=crawl` offers Basic info, Full crawl, Jobs,
+Specific pages and Custom discovery profiles. Enter a domain or URL, select a saved
+processing LLM, and configure page/model limits, site scope, page artifacts and
+browser/CAPTCHA options. Named controls cover fetching, model retries, discovery
+budgets and optional Brave search, with defaults and descriptions. Only settings
+used by the selected profile are offered; raw JSON overrides are rejected.
+Model and reasoning settings come from the saved LLM. Choose the processing LLM
+or a separate saved Jev model independently for site eligibility and link selection.
+Jev uses the Decisions API, while descriptions and search planning use the processing
+model. Both selected models are verified and encrypted before queuing; their calls
+share one budget and usage ledger. Specific pages does not use decision models. Basic info always collects one page, including shops and content sites.
+Discovery profiles default to company websites, with an explicit all-sites option.
+Specific pages collects supplied URLs directly without site classification. Custom
+discovery can restrict collection to supplied candidate URLs after classifying the
+website; leave that list empty to discover pages across the site.
+
+Enable submissions with `CRAWLER_TEST_SUBMIT_ENABLED=true`. Backoffice verifies the
+selected LLM, encrypts its API key and sends the request to the crawler's authenticated
+`POST /v1/crawls`. These individual tests use the REST queue; **Saved inputs** retains
+the existing Dagster batch controls. The crawler reserves a browser through
 `BROWSER_API_URL`/`BROWSER_API_TOKEN` configured **on the crawler**.
 
-The form starts with `crawl: "full"` and saved artifacts. Change `url`, add `config`
-overrides, or remove `crawl` to provide explicit `pages`/custom `instructions`.
-After submission, Backoffice shows the request ID and job state and filters live
-history to the submitted domain. Resubmitting the same request ID with the same
-request returns the existing job; a different request under that ID is rejected.
-Use a new ID for a different request or a fresh run. The crawler token never
-reaches the browser.
+Accepted submissions open **Attempts**, filtered to the submitted domain and REST
+source, with live status, a streamed debug timeline and links to saved results.
+Test crawls persist redacted per-attempt logs on the crawler; select an event to
+inspect the full request or response, or download the complete trace. The selected
+attempt and event are preserved in the URL. Deploy the crawler debug API before
+enabling the new form; its status response advertises `debug_available`.
+Each acknowledged submission
+allows a fresh crawl, even when earlier results exist. Retrying an uncertain
+submission with unchanged settings checks the same request ID before submitting
+again, avoiding duplicate work after a lost response. Neither the crawler token
+nor decrypted LLM keys reach the browser. Tab selection and filters are bookmarkable;
+existing `input_type` links continue to open Saved inputs.
 
 The **Browsers** workspace at `/admin/browsers` manages the independent browser
 service through `BROWSER_API_URL` and `BROWSER_API_TOKEN`; optionally set
@@ -538,7 +559,7 @@ Set `CRAWLER_LLM_ENCRYPTION_KEY` to the same 64 hexadecimal characters (32 rando
 in Backoffice, the crawler's `crawler_service_llm_encryption_key` Ansible secret, and
 the browser's `browser_service_llm_encryption_key` Ansible secret.
 Generate once with `openssl rand -hex 32`; keep it in ignored environment/secrets files.
-Provider API keys are encrypted in the Backoffice SQLite settings database. The master
+Provider API keys are encrypted in PostgreSQL `processing.llm_profile_revisions`. The master
 key is the only LLM secret that Backoffice needs in its environment. Save or replace a
 provider key through `/admin/settings/llms`; forms and API responses never return it.
 Each saved profile has a **Test** button. It uses the stored credentials for a bounded
@@ -564,6 +585,26 @@ an `llm` profile remain supported for existing integrations. Provider variables 
 and browser still serve those legacy integrations and manual CAPTCHA controls; migrating
 Backoffice profiles alone does not remove those dependencies.
 
+### Saved reasoning effort and Jev
+
+Apply PostgreSQL migration `000131_llm_reasoning_effort` before updating Backoffice.
+The settings form has presets for DeepSeek Flash, GLM 5.3 Flash through OpenRouter,
+and Jev 1.13. Reasoning is saved in each immutable profile revision; existing revisions
+have `NULL` (provider default). An explicit `none` means Off. DeepSeek Flash offers
+Low, High and Max; GLM offers Low, Medium and High. Custom models expose the common
+API levels; use Test to confirm the selected endpoint accepts the choice.
+
+Deploy the updated crawler, browser service and Dagster code before launching profiles
+with explicit reasoning. Tests and worker requests send the same provider-specific
+settings. Launch admission checks the effort against the saved revision, and model
+request caches include it. Credentials keep the existing v1 encrypted envelope.
+
+Jev is a decision model, available in Settings but excluded from processing selectors
+and default-model activation. Its Test button calls the crawler's verification endpoint,
+which uses OpenRouter `/api/alpha/decisions` and validates a typed choice. Jev does not
+have a reasoning-effort control. In the Crawl tab, it can handle site eligibility
+and link-selection decisions while the processing model produces descriptions.
+
 ### Brave browser assistant
 
 Brave queue processing uses the same saved-LLM selector and encrypted credential envelope.
@@ -581,3 +622,7 @@ A stopped legacy Brave execution can adopt a selected profile once on resume, pr
 its completed outcomes. That profile is then frozen for the execution, just like new runs.
 
 The company list's **Add to Brave queue** action prepares inputs only and links to the queue configuration, so it cannot start searches before an assistant model is selected and verified.
+
+LLM settings opens Add new model and Edit in a right-side sheet. API keys are optional for unauthenticated OpenAI-compatible endpoints. Blank keys on new profiles are stored as NULL; blank edits retain the saved key. Keyless requests carry an authenticated encrypted empty value so workers can distinguish them from missing credentials, and send no Authorization header or environment-key fallback. Local endpoints must be reachable from the worker host.
+
+**Test** opens a right-side sheet with the exact provider URL and request JSON, generated by the crawler without calling the model. **Run test** checks that saved revision and displays the complete provider response (including usage, reasoning when returned, and error bodies), HTTP status, and elapsed time. Known credentials are redacted, and request headers are excluded. Previews never record a check or change model state; actual tests retain the existing enable/disable policy. Full exchanges are displayed for the current test, while PostgreSQL retains the check summary.

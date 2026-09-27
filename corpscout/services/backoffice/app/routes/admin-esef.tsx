@@ -150,6 +150,7 @@ function selectedProfile(
       provider: LOCAL_CODEX_PROFILE_ID,
       baseUrl,
       model: LOCAL_CODEX_MODEL,
+      reasoningEffort: null,
       isActive: false, revision: 1, state: "enabled", disabledReason: null, lastCheck: null,
       apiKeyAvailable: true,
       createdAt: now,
@@ -378,6 +379,7 @@ export async function action({
         provider: profile.provider,
         model: profile.model,
         baseUrl: profile.baseUrl,
+        reasoningEffort: profile.reasoningEffort,
         profileRevision: "revision" in profile ? profile.revision : undefined,
         apiKeyEncrypted: behavior === "reprocess_existing_without_model" || profile.profileId === LOCAL_CODEX_PROFILE_ID ? null
           : encryptCrawlLlm(profile, await getLlmProfileApiKey(profile.profileId, profile.revision), process.env.CRAWLER_LLM_ENCRYPTION_KEY ?? "").api_key_encrypted,

@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { createMemoryRouter, Form, RouterProvider } from "react-router";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { LlmTestDetails } from "~/components/admin/llm-test-sheet";
 import { LlmSettingsWorkspace } from "~/components/admin/llm-settings-workspace";
 import type { LlmProfile } from "~/lib/llm-settings.server";
 
@@ -14,13 +15,13 @@ const profiles: LlmProfile[] = [
   {
     profileId: "first", name: "Primary model", provider: "openrouter",
     baseUrl: "https://openrouter.ai/api/v1", model: "example/primary",
-    isActive: true, revision: 1, state: "enabled", disabledReason: null, lastCheck: null, apiKeyAvailable: true,
+    reasoningEffort: null, isActive: true, revision: 1, state: "enabled", disabledReason: null, lastCheck: null, apiKeyAvailable: true,
     createdAt: "2026-09-25T12:00:00.000Z", updatedAt: "2026-09-25T12:00:00.000Z",
   },
   {
     profileId: "second", name: "Other model", provider: "openrouter",
     baseUrl: "https://openrouter.ai/api/v1", model: "example/other",
-    isActive: false, revision: 1, state: "enabled", disabledReason: null, lastCheck: null, apiKeyAvailable: false,
+    reasoningEffort: null, isActive: false, revision: 1, state: "enabled", disabledReason: null, lastCheck: null, apiKeyAvailable: false,
     createdAt: "2026-09-25T12:00:00.000Z", updatedAt: "2026-09-25T12:00:00.000Z",
   },
 ];
@@ -33,62 +34,38 @@ function render() {
   return renderToStaticMarkup(<RouterProvider router={router} />);
 }
 
-function testForms(html: string) {
-  return [...html.matchAll(/<form\b[^>]*aria-label="Test [^"]+"[^>]*>[\s\S]*?<\/form>/g)].map(match => match[0]);
-}
-
-beforeEach(() => {
-  vi.resetAllMocks();
-  mocks.fetcher.mockReturnValue({state: "idle", data: undefined, Form});
-});
-
 describe("saved LLM profile testing", () => {
-  it("posts only the saved profile identity and lets a missing key produce a server explanation", () => {
+  it("opens a model-specific preview instead of immediately posting a test", () => {
+    mocks.fetcher.mockReturnValue({state: "idle", data: undefined, Form});
     const html = render();
-    const forms = testForms(html);
-    expect(forms).toHaveLength(2);
-    forms.forEach((form, index) => {
-      expect(form).toContain('method="post"');
-      expect(form).toContain('action="/admin/settings/llms"');
-      expect([...form.matchAll(/<input\b[^>]*name="([^"]+)"/g)].map(match => match[1])).toEqual(["intent", "profile_id"]);
-      expect(form).toContain('name="intent" value="test"');
-      expect(form).toContain(`name="profile_id" value="${profiles[index].profileId}"`);
-      expect(form).not.toContain('disabled=""');
-    });
-    expect(html).toContain("Key missing");
-    expect(html).toContain("short text request");
-    expect(html).toContain("additional vision or CAPTCHA capabilities");
+    expect(html).toContain('/admin/settings/llms?test=first');
+    expect(html).toContain('/admin/settings/llms?test=second');
+    expect(html).not.toContain('name="intent" value="test"');
+    expect(html).toContain("No API key");
   });
-
-  it("shows pending feedback only for the profile being tested", () => {
-    mocks.fetcher.mockReturnValueOnce({state: "submitting", data: undefined, Form});
-    const html = render();
-    const forms = testForms(html);
-    expect(forms[0]).toContain("Testing…");
-    expect(forms[0]).toContain('disabled=""');
-    expect(forms[1]).toContain(">Test</button>");
-    expect(forms[1]).not.toContain('disabled=""');
-    expect(html).toContain("Testing the saved configuration for Primary model…");
-    expect(html).not.toContain("Testing the saved configuration for Other model…");
-    expect(html).toContain('role="status" aria-live="polite"');
-    expect(html).toContain('value="Primary model"');
+  const preview = {request: {method: "POST", url: "http://local/v1/chat/completions", body: {model: "local-model", messages: [{role: "user", content: "Test JSON"}]}}, response: null, elapsed_ms: null};
+  it("shows the request before running and full JSON usage and reasoning afterward", () => {
+    const before = renderToStaticMarkup(<LlmTestDetails preview={preview} result={null} testing={false} error="" />);
+    expect(before).toContain("Request preview");
+    expect(before).toContain("local-model");
+    expect(before).toContain("Run the test");
+    const body = JSON.stringify({choices: [{message: {content: "ok", reasoning_content: "reason ".repeat(1000)}}], usage: {total_tokens: 42}});
+    const after = renderToStaticMarkup(<LlmTestDetails preview={preview} testing={false} error="" result={{profileId: "first", ok: true, message: "Verified", checkedAt: "now", exchange: {...preview, response: {status: 200, content_type: "application/json", body}, elapsed_ms: 1234}}} />);
+    expect(after).toContain("Request sent");
+    expect(after).toContain("HTTP 200");
+    expect(after).toContain("1.23 s");
+    expect(after).toContain("total_tokens");
+    expect(after).toContain("reason ".repeat(1000));
   });
-
-  it("shows independent success and failure messages without a save error", () => {
-    for (const [index, ok] of [true, false].entries()) {
-      mocks.fetcher.mockReturnValueOnce({state: "idle", Form, data: {
-        testResult: {profileId: profiles[index].profileId, ok,
-          message: ok ? "The saved model returned valid JSON." : "Save an API key before testing this profile.",
-          checkedAt: "2026-09-25T12:01:00.000Z"}, values: null, error: "",
-      }});
-    }
-    const html = render();
-    expect(html).toContain("Test passed");
-    expect(html).toContain("The saved model returned valid JSON.");
-    expect(html).toContain("Test failed");
-    expect(html).toContain("Save an API key before testing this profile.");
-    expect(html.match(/role="status"/g)).toHaveLength(2);
-    expect(html).not.toContain("Could not save LLM profile");
-    expect(html).toContain('value="Primary model"');
+  it("shows pending feedback and renders non-JSON provider errors as text", () => {
+    const result = {profileId: "first", ok: false, message: "Provider failed", checkedAt: "now", exchange: {...preview, response: {status: 502, content_type: "text/html", body: '<script>alert("error")</script>'}, elapsed_ms: 200}};
+    const pending = renderToStaticMarkup(<LlmTestDetails preview={preview} result={result} testing error="" />);
+    expect(pending).toContain("Waiting for the model response");
+    expect(pending).not.toContain("HTTP 502");
+    const failed = renderToStaticMarkup(<LlmTestDetails preview={preview} result={result} testing={false} error="" />);
+    expect(failed).toContain("HTTP 502");
+    expect(failed).toContain("Test failed");
+    expect(failed).toContain("&lt;script&gt;");
+    expect(failed).not.toContain("<script>");
   });
 });

@@ -12,6 +12,7 @@ from uuid import uuid4
 import httpx
 
 from browser_service.api import create_app
+from browser_service.brave import BraveAsk, write_result
 from browser_service.browser_sessions import PersistentBrowserSession
 from browser_service.capture import PageCapture
 from browser_service.runtime import BrowserRuntimeSettings, BrowserService
@@ -117,6 +118,65 @@ class BrowserAPITests(unittest.IsolatedAsyncioTestCase):
 
     def execution_headers(self, identifier):
         return {"X-Browser-Execution-Id": self.service.active[identifier].execution_id}
+
+    async def test_long_brave_results_survive_idle_deadline_and_remain_reusable(self):
+        for error_type in ("", "TimeoutError"):
+            for limit in (1, 10):
+                with self.subTest(error_type=error_type, limit=limit):
+                    identifier = uuid4().hex
+                    request_id = uuid4().hex
+                    body = {
+                        "request_id": request_id,
+                        "session_id": identifier,
+                        "query": "Find Company",
+                        "max_requests_per_browser": limit,
+                    }
+                    result = {
+                        "request_id": request_id,
+                        "status": "error" if error_type else "success",
+                        "error_type": error_type,
+                        "error_stage": "captcha_agent" if error_type else "",
+                        "answer": "" if error_type else "https://example.se",
+                    }
+
+                    async def finish_long_request(
+                        _ask, *, identifier=identifier, request_id=request_id, result=result
+                    ):
+                        # A request may outlast the idle deadline while holding the lock.
+                        with self.service.store.connection:
+                            self.service.store.connection.execute(
+                                "UPDATE executions SET expires_at=0 WHERE session_id=?",
+                                (identifier,),
+                            )
+                        write_result(
+                            self.service.root / "brave-requests" / request_id / "result.json",
+                            result,
+                        )
+                        return result
+
+                    with patch.object(BraveAsk, "run", finish_long_request):
+                        response = await self.http.post("/v1/brave/ask", json=body)
+                    self.assertEqual(response.status_code, 200, response.text)
+                    self.assertEqual(response.json(), result)
+                    if limit == 1:
+                        self.assertNotIn(identifier, self.service.active)
+                    else:
+                        # get() rejects expired idle sessions: the finished request must
+                        # renew its lease before releasing its operation lock.
+                        session = self.service.get(identifier)
+                        generation = session.profile.generation
+                        with patch.object(BraveAsk, "run", AsyncMock(return_value=result)):
+                            next_response = await self.http.post(
+                                "/v1/brave/ask", json=body | {"request_id": uuid4().hex}
+                            )
+                        self.assertEqual(next_response.status_code, 200)
+                        self.assertEqual(session.profile.generation, generation)
+                        self.assertEqual(session.brave_usage.requests_started, 2)
+                    with patch.object(BraveAsk, "run", AsyncMock()) as search:
+                        replay = await self.http.post("/v1/brave/ask", json=body)
+                    self.assertEqual(replay.json(), result)
+                    search.assert_not_awaited()
+                    await self.service.release(identifier)
 
     async def reserve(self, name):
         import hashlib

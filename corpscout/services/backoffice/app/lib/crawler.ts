@@ -27,6 +27,9 @@ export interface CrawlAttempt {
   // "jetstream" appears only on history from the retired NATS input.
   source: "rest" | "jetstream" | "manual";
   submitted_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  debug_enabled?: boolean;
   updated_at: string;
   current_url: string | null;
   reason: string | null;
@@ -52,6 +55,7 @@ export interface CrawlAttempt {
   s3_event: {result?: {bucket: string; key: string}; page_count?: number} | null;
 }
 export interface CrawlSnapshot {
+  debug_available?: boolean;
   attempts: CrawlAttempt[];
   total: number;
   limit: number;

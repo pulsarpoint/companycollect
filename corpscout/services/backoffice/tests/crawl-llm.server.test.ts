@@ -3,10 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fixture from "./fixtures/crawl-llm-envelope.json";
 const mocks = vi.hoisted(() => ({getLlmProfile: vi.fn(), getLlmProfileApiKey: vi.fn(), crawlerFetch: vi.fn(), browserFetch: vi.fn()}));
 vi.mock("~/lib/llm-settings.server", async importOriginal => ({...await importOriginal<typeof import("~/lib/llm-settings.server")>(), getLlmProfile: mocks.getLlmProfile, getLlmProfileApiKey: mocks.getLlmProfileApiKey, recordLlmCheck: vi.fn()}));
-import { LlmSettingsValidationError } from "~/lib/llm-settings.server";
+import { LlmSettingsValidationError, recordLlmCheck } from "~/lib/llm-settings.server";
 vi.mock("~/lib/browser-service.server", () => ({browserFetch: mocks.browserFetch}));
 vi.mock("~/lib/crawler.server", () => ({crawlerFetch: mocks.crawlerFetch}));
-import { encryptCrawlLlm, prepareCrawlSettings, verifySelectedLlm, type EncryptedCrawlLlm } from "~/lib/crawl-llm.server";
+import { encryptCrawlLlm, prepareCrawlSettings, verifySelectedLlm, inspectLlmTest, type EncryptedCrawlLlm } from "~/lib/crawl-llm.server";
 
 const profile = {profileId: "profile-1", provider: fixture.llm.provider, baseUrl: fixture.llm.base_url, model: fixture.llm.model};
 function decrypt(llm: EncryptedCrawlLlm) {
@@ -49,6 +49,13 @@ describe("encrypted crawler credentials", () => {
 });
 
 describe("crawl preflight", () => {
+  it("verifies a keyless profile and preserves readable provider errors", async () => {
+    mocks.getLlmProfileApiKey.mockReturnValue("");
+    const llm = await verifySelectedLlm("profile-1", "crawler");
+    expect(decrypt(llm)).toBe("");
+    mocks.crawlerFetch.mockResolvedValue(new Response(JSON.stringify({ok: false, error: "Model not found", failure_kind: "configuration"})));
+    await expect(verifySelectedLlm("profile-1", "crawler")).rejects.toThrow("Model not found");
+  });
   it("verifies the exact selected profile and forwards only its encrypted key", async () => {
     const config = await prepareCrawlSettings({llm_profile_id: "profile-1", max_pages: 1});
     expect(mocks.getLlmProfile).toHaveBeenCalledWith("profile-1");
@@ -108,5 +115,81 @@ describe("Brave assistant preflight", () => {
   it("fails closed on browser transport errors", async () => {
     mocks.browserFetch.mockRejectedValue(new Error(fixture.api_key));
     await expect(verifySelectedLlm("profile-1", "brave")).rejects.toThrow("Could not verify the selected LLM through the Brave browser assistant");
+  });
+});
+
+it('preserves reasoning through verification and encrypted worker handoff', async () => {
+  mocks.getLlmProfile.mockReturnValue({...profile, reasoningEffort:'max'});
+  const config = await prepareCrawlSettings({llm_profile_id:'profile-1'});
+  expect(config.llm.reasoning_effort).toBe('max');
+  expect(decrypt(config.llm)).toBe(fixture.api_key);
+  expect(JSON.parse(mocks.crawlerFetch.mock.calls[0][1].body).llm.reasoning_effort).toBe('max');
+});
+
+it('allows Jev testing but excludes it from crawl and browser processing', async () => {
+  mocks.getLlmProfile.mockReturnValue({...profile, model:'typesafe/jev-1.13',baseUrl:'https://openrouter.ai/api/v1'});
+  await expect(verifySelectedLlm('profile-1', 'crawler', true)).resolves.toMatchObject({model:'typesafe/jev-1.13'});
+  await expect(verifySelectedLlm('profile-1', 'crawler')).rejects.toThrow('decision');
+  await expect(verifySelectedLlm('profile-1', 'brave', true)).rejects.toThrow('decision');
+  expect(mocks.browserFetch).not.toHaveBeenCalled();
+});
+
+it('verifies Jev for crawler decisions with encrypted credentials', async () => {
+  mocks.getLlmProfile.mockReturnValue({...profile, model: 'typesafe/jev-1.13', baseUrl: 'https://openrouter.ai/api/v1', state: 'enabled'});
+  const llm = await verifySelectedLlm('profile-1', 'crawler', false, 'decision');
+  expect(llm.model).toBe('typesafe/jev-1.13');
+  expect(decrypt(llm)).toBe(fixture.api_key);
+  expect(mocks.crawlerFetch).toHaveBeenCalledWith('/v1/llm/verify', expect.objectContaining({body: JSON.stringify({llm})}));
+});
+
+it('rejects non-decision and disabled models for Jev routing before network access', async () => {
+  await expect(verifySelectedLlm('profile-1', 'crawler', false, 'decision')).rejects.toThrow('Choose a saved Jev');
+  mocks.getLlmProfile.mockReturnValue({...profile, model: 'typesafe/jev-1.13', state: 'disabled'});
+  await expect(verifySelectedLlm('profile-1', 'crawler', false, 'decision')).rejects.toThrow('disabled');
+  expect(mocks.crawlerFetch).not.toHaveBeenCalled();
+});
+
+
+describe("model test inspection", () => {
+  const exchange = {
+    request: {method: "POST", url: "https://llm-fixture/v1/chat/completions", body: {model: "saved-model"}},
+    response: null, elapsed_ms: null,
+  };
+  beforeEach(() => { mocks.getLlmProfile.mockReturnValue({...profile, revision: 3, state: "disabled"}); });
+
+  it("previews the saved revision without recording a check or enabling the model", async () => {
+    mocks.crawlerFetch.mockResolvedValue(new Response(JSON.stringify({ok: true, exchange})));
+    expect(await inspectLlmTest("profile-1", 3, true)).toEqual(exchange);
+    expect(JSON.parse(mocks.crawlerFetch.mock.calls[0][1].body)).toMatchObject({preview_only: true, include_exchange: true});
+    expect(recordLlmCheck).not.toHaveBeenCalled();
+  });
+  it("rejects a changed or missing revision before contacting the service", async () => {
+    await expect(inspectLlmTest("profile-1", 2, false)).rejects.toThrow("configuration changed");
+    await expect(inspectLlmTest("profile-1", 0, false)).rejects.toThrow("Reopen Test");
+    expect(mocks.crawlerFetch).not.toHaveBeenCalled();
+  });
+  it("returns full output and redacts credentials echoed in JSON or text", async () => {
+    mocks.crawlerFetch.mockImplementation(async (_path, init) => {
+      const {llm} = JSON.parse(init.body);
+      return new Response(JSON.stringify({ok: true, exchange: {...exchange,
+        response: {status: 200, content_type: "application/json", body: JSON.stringify({reasoning: "x".repeat(6000), usage: {total_tokens: 42}, echoed: [fixture.api_key, llm.api_key_encrypted]})}, elapsed_ms: 120}}));
+    });
+    const result = await inspectLlmTest("profile-1", 3, false);
+    expect(result?.response?.body).toContain("x".repeat(6000));
+    expect(result?.response?.body).toContain("total_tokens");
+    expect(result?.response?.body).not.toContain(fixture.api_key);
+    expect(JSON.parse(result!.response!.body).echoed).toEqual(["[redacted]", "[redacted]"]);
+    expect(recordLlmCheck).toHaveBeenCalledWith(expect.anything(), "crawler", expect.any(String), true, expect.any(String), null, true);
+  });
+  it("preserves failed-provider details while retaining the disabling policy", async () => {
+    const failed = {...exchange, response: {status: 401, content_type: "application/json", body: '{"error":{"code":"invalid_key"}}'}, elapsed_ms: 35};
+    mocks.crawlerFetch.mockResolvedValue(new Response(JSON.stringify({ok: false, error: "Invalid credentials", failure_kind: "configuration", exchange: failed})));
+    await expect(inspectLlmTest("profile-1", 3, false)).rejects.toMatchObject({exchange: failed, message: expect.stringContaining("Model disabled")});
+    expect(recordLlmCheck).toHaveBeenCalledWith(expect.anything(), "crawler", expect.any(String), false, "Invalid credentials", "configuration");
+  });
+  it("does not record service errors from a preview", async () => {
+    mocks.crawlerFetch.mockRejectedValue(new Error("unavailable"));
+    await expect(inspectLlmTest("profile-1", 3, true)).rejects.toThrow("Could not verify");
+    expect(recordLlmCheck).not.toHaveBeenCalled();
   });
 });

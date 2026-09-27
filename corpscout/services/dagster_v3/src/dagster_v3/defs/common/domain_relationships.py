@@ -8,6 +8,8 @@ from hashlib import sha256
 from typing import Any
 from uuid import uuid4
 
+from dagster_v3.defs.common.llm_reasoning import reasoning_options
+
 from openai import OpenAI, OpenAIError
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -46,7 +48,9 @@ def model_settings(profile: LlmProfileConfig) -> str:
     return json_text({"provider": profile.provider, "model": profile.model,
                       "base_url": profile.base_url.rstrip("/"), "temperature": profile.temperature,
                       "max_tokens": profile.max_tokens, "response_format": "json_object",
-                      "thinking": "enabled" if profile.provider == "deepseek" else "default"})
+                      **({"reasoning_options": reasoning_options(profile.base_url, profile.reasoning_effort)}
+                         if profile.profile_id or profile.reasoning_effort is not None else
+                         {"thinking": "enabled" if profile.provider == "deepseek" else "default"})})
 
 
 def parse_relationship_answer(content: str, payload: Mapping[str, Any]) -> RelationshipAnswer:
@@ -103,7 +107,9 @@ def analyze_context(
             model=profile.model, temperature=profile.temperature, max_tokens=profile.max_tokens,
             response_format={"type": "json_object"},
             messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": input_json}],
-            **({"extra_body": {"thinking": {"type": "enabled"}}} if profile.provider == "deepseek" else {}),
+            **(reasoning_options(profile.base_url, profile.reasoning_effort)
+               if profile.profile_id or profile.reasoning_effort is not None else
+               ({"extra_body": {"thinking": {"type": "enabled"}}} if profile.provider == "deepseek" else {})),
         )
     except OpenAIError as exc:
         result.update(status="http_error", error_message=str(exc)[:4_000])

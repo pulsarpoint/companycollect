@@ -31,6 +31,7 @@ export interface EsefLlmRuntimeProfile {
   baseUrl: string;
   apiKeyEncrypted: string | null;
   profileRevision?: number;
+  reasoningEffort?: string | null;
   profileId?: string;
   temperature: number;
   promptVersion: string;
@@ -117,6 +118,7 @@ export async function launchEsefDocumentCompanyInformation(
               provider: input.llm.provider.trim(),
               model: input.llm.model.trim(),
               base_url: input.llm.baseUrl.trim(),
+              ...(input.llm.reasoningEffort ? {reasoning_effort: input.llm.reasoningEffort} : {}),
               ...(input.refreshBehavior === "reprocess_existing_without_model" ? {}
                 : input.llm.apiKeyEncrypted !== null
                   ? { api_key_encrypted: input.llm.apiKeyEncrypted, profile_id: input.llm.profileId, profile_revision: input.llm.profileRevision }

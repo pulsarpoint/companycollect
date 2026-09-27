@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { Form, Link, useFetcher, useRevalidator, useSearchParams } from "react-router";
+import { Form, Link, useFetcher, useNavigation, useRevalidator, useSearchParams } from "react-router";
 import { MonitorIcon, RefreshCwIcon } from "lucide-react";
 import { toast } from "sonner";
 import type { Route } from "./+types/admin-crawls";
 import { crawlAction, loadCrawls } from "~/lib/crawler.server";
 import { publishTestCrawl } from "~/lib/crawl-submit.server";
+import { crawlPageTab, CRAWL_TEST_PROFILES } from "~/lib/crawl-test";
 import { runChallengeAgent } from "~/lib/challenge-agent.server";
 import { CRAWL_STATES, isCrawlWaiting, type CrawlAttempt, type CrawlPublishReceipt } from "~/lib/crawler";
 import { CrawlBrowser } from "~/components/admin/crawl-browser";
+import { CrawlDebug } from "~/components/admin/crawl-debug";
 import { CrawlSubmit } from "~/components/admin/crawl-submit";
 import { CrawlProgress } from "~/components/admin/crawl-progress";
 import { loadCrawlProgress } from "~/lib/crawl-progress.server";
@@ -15,21 +17,22 @@ import { CrawlInputs } from "~/components/admin/crawl-inputs";
 import { loadCrawlInputs, startSavedCrawls } from "~/lib/crawl-inputs.server";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
-import { Button } from "~/components/ui/button";
+import { Button, buttonVariants } from "~/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "~/components/ui/empty";
 import { Field, FieldGroup, FieldLabel } from "~/components/ui/field";
 import { Input } from "~/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "~/components/ui/native-select";
 import { Toaster } from "~/components/ui/sonner";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
 
 export async function loader({request}: Route.LoaderArgs) {
   const submissionEnabled = process.env.CRAWLER_TEST_SUBMIT_ENABLED === "true";
   const search = new URL(request.url).searchParams;
-  const inputsPromise = loadCrawlInputs(search);
+  const inputsPromise = crawlPageTab(search) === "inputs" ? loadCrawlInputs(search) : Promise.resolve(null);
   const [crawls, inputs, progress] = await Promise.allSettled([
     loadCrawls(search), inputsPromise,
-    inputsPromise.then(inputs => loadCrawlProgress(inputs.type)),
+    inputsPromise.then(inputs => inputs ? loadCrawlProgress(inputs.type) : null),
   ]);
   return {
     snapshot: crawls.status === "fulfilled" ? crawls.value : null,
@@ -53,7 +56,7 @@ export async function action({request}: Route.ActionArgs) {
     catch (error) { return {error: error instanceof Error ? error.message : "Starting saved crawls failed."}; }
   }
   if (intent === "submit") {
-    try { return {error: null, intent, receipt: await publishTestCrawl(String(form.get("body") || ""))}; }
+    try { return {error: null, intent, receipt: await publishTestCrawl(form)}; }
     catch (error) { return {error: error instanceof Error ? error.message : "Crawl submission failed."}; }
   }
   const id = String(form.get("request_id") || "");
@@ -77,6 +80,10 @@ export function meta() { return [{title: "Crawler | CompanyCollect admin"}]; }
 export default function AdminCrawls({loaderData}: Route.ComponentProps) {
   const {snapshot, error, submissionEnabled} = loaderData;
   const [search, setSearch] = useSearchParams();
+  const tab = crawlPageTab(search);
+  const navigation = useNavigation();
+  const navigationState = useRef(navigation.state);
+  useEffect(() => {navigationState.current = navigation.state;}, [navigation.state]);
   const {revalidate, state: refreshState} = useRevalidator();
   const fetcher = useFetcher<typeof action>();
   const agentFetcher = useFetcher<typeof action>();
@@ -94,7 +101,7 @@ export default function AdminCrawls({loaderData}: Route.ComponentProps) {
 
   useEffect(() => {
     const timer = setInterval(() => {
-      if (document.visibilityState === "visible" && refreshState === "idle") void revalidate();
+      if (document.visibilityState === "visible" && refreshState === "idle" && navigationState.current === "idle") void revalidate();
     }, 5000);
     return () => clearInterval(timer);
   }, [revalidate, refreshState]);
@@ -106,7 +113,7 @@ export default function AdminCrawls({loaderData}: Route.ComponentProps) {
   useEffect(() => {
     const stream = new EventSource(`/admin/crawls/events?after=${initialRevision.current}`);
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
-    stream.onopen = () => {setLive(true); void revalidate();};
+    stream.onopen = () => {setLive(true); if (navigationState.current === "idle") void revalidate();};
     stream.onerror = () => setLive(false);
     stream.addEventListener("crawl-status", (event) => {
       const job = JSON.parse((event as MessageEvent).data) as CrawlAttempt;
@@ -114,7 +121,7 @@ export default function AdminCrawls({loaderData}: Route.ComponentProps) {
       if (job.challenge_agent_running) toast.info(`${job.domain}: CAPTCHA agent running`, {id: `${job.request_id}-attention`, description: job.reason || undefined});
       else if (isCrawlWaiting(job)) toast.warning(`${job.domain}: ${job.state.replaceAll("_", " ")}`, {id: `${job.request_id}-attention`, description: job.reason || "Human assistance is needed."});
       else toast.dismiss(`${job.request_id}-attention`);
-      if (!refreshTimer) refreshTimer = setTimeout(() => {refreshTimer = undefined; void revalidate();}, 300);
+      if (!refreshTimer) refreshTimer = setTimeout(() => {refreshTimer = undefined; if (navigationState.current === "idle") void revalidate();}, 300);
     });
     return () => {stream.close(); clearTimeout(refreshTimer);};
   }, [revalidate]);
@@ -145,24 +152,43 @@ export default function AdminCrawls({loaderData}: Route.ComponentProps) {
     <Toaster />
     <div className="flex items-start justify-between gap-4">
       <div><h1 className="text-2xl font-semibold">Crawler</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Choose a crawl type, activate saved inputs, and follow processing.</p></div>
+        <p className="mt-1 text-sm text-muted-foreground">Test a crawl profile, manage saved inputs, and inspect crawl attempts.</p></div>
       <div className="flex items-center gap-2"><Badge variant={live ? "secondary" : "outline"}>{live ? "Live" : "Reconnecting"}</Badge>
-        <CrawlSubmit enabled={submissionEnabled} onPublished={receipt => {
-          setSubmission(receipt);
-          setSearch({domain: new URL(receipt.url).hostname.replace(/^www\./, ""), source: "rest"});
-          void revalidate();
-        }} />
         <Button variant="outline" onClick={() => void revalidate()}><RefreshCwIcon data-icon="inline-start" />Refresh</Button></div>
     </div>
+    <Tabs value={tab} onValueChange={value => {const next = new URLSearchParams(search); next.set("tab", String(value)); setSearch(next);}}>
+      <TabsList aria-label="Crawler workspace" variant="line">
+        <TabsTrigger value="crawl">Crawl</TabsTrigger>
+        <TabsTrigger value="inputs">Saved inputs</TabsTrigger>
+        <TabsTrigger value="attempts">Attempts</TabsTrigger>
+      </TabsList>
+      <TabsContent value="crawl" keepMounted className="pt-4">
+        <CrawlSubmit enabled={submissionEnabled && snapshot?.debug_available === true} unavailableReason={submissionEnabled ? "The crawler service needs the debug-trace update before starting new test crawls. Existing crawls continue running." : undefined} initialProfile={CRAWL_TEST_PROFILES.find(item => item.value === search.get("input_type"))?.value} onPublished={receipt => {
+          setSubmission(receipt);
+          const next = new URLSearchParams(search);
+          next.set("tab", "attempts");
+          next.set("domain", new URL(receipt.url).hostname.replace(/^www\./, ""));
+          next.set("source", "rest");
+          next.set("debug_request", receipt.request_id);
+          next.delete("debug_attempt"); next.delete("debug_event");
+          next.delete("state"); next.delete("offset");
+          setSearch(next);
+        }} />
+      </TabsContent>
+      <TabsContent value="inputs" className="flex flex-col gap-6 pt-4">
     {loaderData.inputsError && <Alert variant="destructive"><AlertTitle>Crawl inputs unavailable</AlertTitle><AlertDescription>{loaderData.inputsError}</AlertDescription></Alert>}
     {loaderData.inputs && <CrawlInputs key={`${loaderData.inputs.type}:${loaderData.inputs.domain}:${loaderData.inputs.offset}`} snapshot={loaderData.inputs}><CrawlProgress snapshot={loaderData.progress} error={loaderData.progressError} /></CrawlInputs>}
-    <div className="border-t pt-6" id="crawl-attempts"><h2 className="text-lg font-semibold">Crawl attempts</h2><p className="text-sm text-muted-foreground">All crawl types and sources · Live requests, saved results, and failures available for retry.</p></div>
+      </TabsContent>
+      <TabsContent value="attempts" className="flex flex-col gap-6 pt-4">
+    {snapshot?.debug_available && search.get("debug_request") && <CrawlDebug key={`${search.get("debug_request")}:${search.get("debug_attempt") || ""}`} requestId={search.get("debug_request")!} attempt={search.get("debug_attempt") || ""} />}
+    <div id="crawl-attempts"><h2 className="text-lg font-semibold">Crawl attempts</h2><p className="text-sm text-muted-foreground">All crawl types and sources · Live requests, saved results, and failures available for retry.</p></div>
     {submission && <Alert><AlertTitle>Crawler accepted the request</AlertTitle>
-      <AlertDescription><p>{submission.request_id} · {submission.state.replaceAll("_", " ")}</p>
-        <p>The request is stored in the crawler queue. Its live status appears below.</p></AlertDescription>
+      <AlertDescription><p>{submission.request_id}</p>
+        <p>The request was accepted. Its live status and saved results appear below.</p></AlertDescription>
     </Alert>}
     {error && <Alert variant="destructive"><AlertTitle>Crawler unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
     <Form method="get" key={search.toString()}>
+      <input type="hidden" name="tab" value="attempts" />
       {[...search.entries()].filter(([key]) => key.startsWith("input_")).map(([key,value]) => <input key={key} type="hidden" name={key} value={value} />)}
       <FieldGroup className="flex-row flex-wrap items-end">
         <Field className="w-64"><FieldLabel htmlFor="crawl-domain">Domain</FieldLabel><Input id="crawl-domain" name="domain" defaultValue={search.get("domain") || ""} placeholder="e.g. melexis.com" /></Field>
@@ -184,9 +210,9 @@ export default function AdminCrawls({loaderData}: Route.ComponentProps) {
           <TableCell><div className="font-medium">{job.domain}</div><div className="max-w-56 truncate text-xs text-muted-foreground" title={job.request_id}>{job.request_id} · #{job.attempt}</div>{job.retry_of && <div className="text-xs text-muted-foreground">Retry of {job.retry_of} · #{job.retry_of_attempt}</div>}</TableCell>
           <TableCell><Badge variant={!job.challenge_agent_running && ["failed", "blocked", "captcha"].includes(job.state) ? "destructive" : "secondary"}>{job.challenge_agent_running ? "CAPTCHA agent running" : job.state === "failed" && collectedPages > 0 ? "partial · stopped" : job.state.replaceAll("_", " ")}</Badge>{job.challenge_agent_result && <Button size="sm" variant="link" onClick={() => {setSelected(job); setBrowserUrl(null); openedSession.current = null;}}>Agent result</Button>}</TableCell>
           <TableCell>{job.source}</TableCell><TableCell className="max-w-80 whitespace-normal text-sm">{job.reason || job.error || job.blocked_reason || "—"}{collectedPages > 0 && <div>{collectedPages} pages saved</div>}{job.state === "failed" && job.blocked_reason && job.current_url && <div className="break-all">Stopped at {job.current_url}</div>}</TableCell>
-          <TableCell title={job.s3_event?.result ? `s3://${job.s3_event.result.bucket}/${job.s3_event.result.key}` : job.s3_error || ""}>{job.s3_state === "uploaded" && job.s3_event?.result ? <Button size="sm" variant="link" render={<Link to={`/admin/crawls/results?${new URLSearchParams({path: `${job.s3_event.result.bucket}/${job.s3_event.result.key}`})}`} />}>S3 saved · View</Button> : job.s3_state === "uploaded" ? "S3 saved" : job.s3_state === "pending" ? "Upload pending" : "Local only"}</TableCell>
+          <TableCell title={job.s3_event?.result ? `s3://${job.s3_event.result.bucket}/${job.s3_event.result.key}` : job.s3_error || ""}>{job.s3_state === "uploaded" && job.s3_event?.result ? <Link className={buttonVariants({size: "sm", variant: "link"})} to={`/admin/crawls/results?${new URLSearchParams({path: `${job.s3_event.result.bucket}/${job.s3_event.result.key}`})}`}>S3 saved · View</Link> : job.s3_state === "uploaded" ? "S3 saved" : job.s3_state === "pending" ? "Upload pending" : "Local only"}</TableCell>
           <TableCell className="whitespace-nowrap text-xs">{new Date(job.updated_at).toLocaleString()}</TableCell>
-          <TableCell>{job.state === "failed" ? <div className="flex flex-col items-start gap-2">
+          <TableCell>{snapshot.debug_available && <Button size="sm" variant="outline" onClick={() => {const next = new URLSearchParams(search); next.set("debug_request", job.request_id); next.set("debug_attempt", String(job.attempt)); next.delete("debug_event"); setSearch(next);}}>Debug trace</Button>}{job.state === "failed" ? <div className="flex flex-col items-start gap-2">
             <fetcher.Form method="post" className="flex flex-col gap-2" onSubmit={event => {
               event.preventDefault();
               const form = new FormData(event.currentTarget);
@@ -215,5 +241,7 @@ export default function AdminCrawls({loaderData}: Route.ComponentProps) {
         <Button variant="outline" disabled={snapshot.offset + snapshot.limit >= snapshot.total} onClick={() => {const next = new URLSearchParams(search); next.set("offset", String(snapshot.offset + snapshot.limit)); setSearch(next);}}>Next</Button>
       </div></div>
     </>}
+      </TabsContent>
+    </Tabs>
   </div>;
 }

@@ -2,7 +2,7 @@ import { recentLlmRuns } from "~/lib/llm-runs.server";
 import { dagsterRunUrl } from "~/lib/dagster.server";
 import { redirect } from "react-router";
 import type { Route } from "./+types/admin-settings-llms";
-import { CrawlLlmError, verifySelectedLlm } from "~/lib/crawl-llm.server";
+import { CrawlLlmError, inspectLlmTest } from "~/lib/crawl-llm.server";
 import {
   LlmSettingsWorkspace,
   type LlmSettingsFormValues,
@@ -26,8 +26,18 @@ function formValue(form: FormData, name: string): string {
 export async function loader({ request }: Route.LoaderArgs) {
   const searchParams = new URL(request.url).searchParams;
   const editingProfileId = searchParams.get("edit")?.trim() ?? "";
+  const testingProfileId = searchParams.get("test")?.trim() ?? "";
+  const testingProfile = testingProfileId ? await getLlmProfile(testingProfileId) : null;
+  let testPreview = null;
+  let testPreviewError = testingProfileId && !testingProfile ? "This model was removed. Choose another model." : "";
+  if (testingProfile) {
+    try { testPreview = await inspectLlmTest(testingProfile.profileId, testingProfile.revision, true); }
+    catch (error) { testPreviewError = error instanceof CrawlLlmError ? error.message : "Could not load the test request. Check the crawler connection and try again."; }
+  }
   return {
-    profiles: await listLlmProfiles(true),
+    profiles: await listLlmProfiles(true, true),
+    testingProfile, testPreview, testPreviewError,
+    creating: searchParams.get("add") === "yes",
     runs: (await recentLlmRuns()).map(run => ({...run, runUrl: run.runId ? dagsterRunUrl(run.runId) ?? undefined : undefined})),
     editingProfile:
       editingProfileId === "" ? null : await getLlmProfile(editingProfileId),
@@ -42,15 +52,15 @@ export async function action({ request }: Route.ActionArgs) {
   if (intent === "test") {
     const profileId = formValue(form, "profile_id");
     try {
-      await verifySelectedLlm(profileId, "crawler", true);
+      const exchange = await inspectLlmTest(profileId, Number(formValue(form, "profile_revision")), false);
       return {
-        testResult: {profileId, ok: true, message: "Connection successful. The saved model and API key returned a valid test response.", checkedAt: new Date().toISOString()},
+        testResult: {profileId, exchange, ok: true, message: "Connection successful. The saved model configuration returned a valid test response.", checkedAt: new Date().toISOString()},
         values: null, error: "",
       };
     } catch (error) {
       return {
         testResult: {
-          profileId, ok: false,
+          profileId, exchange: error instanceof CrawlLlmError ? error.exchange : null, ok: false,
           message: error instanceof CrawlLlmError || error instanceof LlmSettingsValidationError
             ? error.message : "Could not test this model. Try again or check the service connection.",
           checkedAt: new Date().toISOString(),
@@ -65,6 +75,7 @@ export async function action({ request }: Route.ActionArgs) {
     provider: formValue(form, "provider"),
     baseUrl: formValue(form, "base_url"),
     model: formValue(form, "model"),
+    reasoningEffort: formValue(form, "reasoning_effort"),
   } : null;
 
   try {
@@ -108,6 +119,10 @@ export default function AdminLlmSettings({
   return (
     <LlmSettingsWorkspace
       profiles={loaderData.profiles}
+      testingProfile={loaderData.testingProfile}
+      testPreview={loaderData.testPreview}
+      testPreviewError={loaderData.testPreviewError}
+      creating={loaderData.creating}
       runs={loaderData.runs}
       editingProfile={loaderData.editingProfile}
       saved={loaderData.saved}

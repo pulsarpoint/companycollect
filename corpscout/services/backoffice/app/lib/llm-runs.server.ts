@@ -3,7 +3,7 @@ import { llmControl, llmTransaction } from "./llm-control.server";
 import { LlmSettingsValidationError } from "./llm-settings.server";
 import { verifySelectedLlm } from "./crawl-llm.server";
 
-type Dependency = { profileId: string; revision: number; purpose: string; provider: string; model: string; baseUrl: string };
+type Dependency = { profileId: string; revision: number; purpose: string; provider: string; model: string; baseUrl: string; reasoningEffort: string | null };
 export function llmDependencies(config: unknown, path = 'config'): Dependency[] {
   if (!config || typeof config !== 'object') return [];
   const value = config as Record<string, unknown>;
@@ -11,7 +11,7 @@ export function llmDependencies(config: unknown, path = 'config'): Dependency[] 
     if (typeof value.profile_id !== 'string' || !Number.isInteger(value.profile_revision))
       throw new LlmSettingsValidationError("This launch has no saved LLM revision. Select a model again before starting or resuming.");
     return [{profileId:value.profile_id,revision:Number(value.profile_revision),purpose:path,
-      provider:String(value.provider),model:String(value.model),baseUrl:String(value.base_url)}];
+      provider:String(value.provider),model:String(value.model),baseUrl:String(value.base_url),reasoningEffort:typeof value.reasoning_effort === "string" ? value.reasoning_effort : null}];
   }
   return Object.entries(value).flatMap(([key,child]) => llmDependencies(child, `${path}.${key}`));
 }
@@ -38,7 +38,7 @@ export async function admitLlmRun(job: string, config: unknown, tags: Record<str
       for (const d of dependencies.filter(d => d.profileId === id)) {
         const {rows:[revision]} = await client.query(`SELECT * FROM processing.llm_profile_revisions WHERE profile_id=$1 AND revision=$2`, [id,d.revision]);
         if (!revision || revision.invalidated_at || p.current_revision !== d.revision || revision.provider !== d.provider
-          || revision.base_url !== d.baseUrl || revision.model !== d.model) throw new LlmSettingsValidationError("The model configuration changed or failed validation. Start a new execution with a working model.");
+          || revision.base_url !== d.baseUrl || revision.model !== d.model || revision.reasoning_effort !== d.reasoningEffort) throw new LlmSettingsValidationError("The model configuration changed or failed validation. Start a new execution with a working model.");
       }
     }
     await client.query(`INSERT INTO processing.run_requests (request_id,task_id,job_name)

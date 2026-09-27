@@ -2,7 +2,10 @@
 
 import asyncio
 import base64
+import json
+import time
 import re
+from typing import Literal
 from urllib.parse import urlsplit
 
 import httpx
@@ -24,6 +27,9 @@ class EncryptedLLMProfile(StrictModel):
     provider: str = Field(max_length=100)
     base_url: str = Field(max_length=2048)
     model: str = Field(max_length=500)
+    reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     api_key_encrypted: str = Field(max_length=16384, repr=False)
 
     @field_validator("provider", "model")
@@ -75,7 +81,7 @@ class EncryptedLLMProfile(StrictModel):
                 base64.urlsafe_b64decode(part + "=" * (-len(part) % 4))
                 for part in parts[1:]
             ]
-            if len(nonce) != 12 or len(ciphertext) <= 16:
+            if len(nonce) != 12 or len(ciphertext) < 16:
                 raise LLMProfileError("Invalid encrypted LLM credential format")
             aad = (
                 "corpscout-crawler-llm:v1\0"
@@ -91,16 +97,22 @@ class EncryptedLLMProfile(StrictModel):
             raise LLMProfileError(
                 "Encrypted LLM credential could not be authenticated; check the shared encryption key and model configuration"
             ) from error
-        if not api_key.strip() or any(ord(char) < 32 for char in api_key):
-            raise LLMProfileError("Decrypted LLM credential is empty or invalid")
+        if (api_key != "" and not api_key.strip()) or len(api_key.encode()) > 8192 or any(ord(char) < 32 or ord(char) == 127 for char in api_key):
+            raise LLMProfileError("Decrypted LLM credential is invalid")
         return api_key
 
     def crawl_config(self, config: ResearchConfig | None) -> ResearchConfig:
+        if self.is_decision_model:
+            raise LLMProfileError("Jev is a typed decision model; choose a text-generation model for crawl processing")
         # The selected profile owns model routing; never inherit the old provider.only.
         return ResearchConfig.model_validate(
             (config.model_dump(exclude_unset=True) if config is not None else {})
-            | {"model": self.model, "provider": None, "reasoning_effort": None}
+            | {"model": self.model, "provider": None, "reasoning_effort": self.reasoning_effort}
         )
+
+    @property
+    def is_decision_model(self) -> bool:
+        return re.match(r"^typesafe/jev-\d", self.model) is not None or self.model == "~typesafe/jev-latest"
 
     @property
     def api(self) -> str:
@@ -113,38 +125,91 @@ class EncryptedLLMProfile(StrictModel):
 
 class VerifyLLMRequest(StrictModel):
     llm: EncryptedLLMProfile
+    preview_only: bool = False
+    include_exchange: bool = False
 
 
-async def verify_llm(profile: EncryptedLLMProfile, environment: dict[str, str]) -> dict:
+async def verify_llm(
+    profile: EncryptedLLMProfile, environment: dict[str, str], *,
+    preview_only: bool = False, include_exchange: bool = False,
+) -> dict:
     try:
         api_key = profile.decrypt_api_key(environment)
     except LLMProfileError as error:
         return {"ok": False, "error": str(error), "failure_kind": "service"}
+    exchange = {"request": None, "response": None, "elapsed_ms": None}
+
+    async def capture_request(request: httpx.Request) -> None:
+        exchange["request"] = {
+            "method": request.method, "url": str(request.url),
+            "body": json.loads(await request.aread()),
+        }
+
+    async def capture_response(response: httpx.Response) -> None:
+        await response.aread()
+        exchange["response"] = {
+            "status": response.status_code,
+            "content_type": response.headers.get("content-type", ""),
+            "body": response.text,
+        }
+
+    started = time.monotonic()
+    async with httpx.AsyncClient(
+        base_url=profile.base_url.rstrip("/") + "/", timeout=30,
+        event_hooks={"request": [capture_request], "response": [capture_response]}
+            if include_exchange and not preview_only else None,
+    ) as client:
+        if profile.is_decision_model:
+            result = await verify_jev(profile, api_key, client=client, preview_only=preview_only)
+        else:
+            result = await verify_completion(profile, api_key, client, preview_only=preview_only)
+    if include_exchange and not preview_only:
+        exchange["elapsed_ms"] = round((time.monotonic() - started) * 1000)
+        result["exchange"] = exchange
+    # Redact known credentials even when a provider echoes them inside nested JSON
+    # strings, error pages, or response metadata. No request headers are captured.
+    def redact(value):
+        if isinstance(value, str):
+            for secret in (api_key, profile.api_key_encrypted):
+                if secret:
+                    value = value.replace(secret, "[REDACTED]")
+                    value = value.replace(json.dumps(secret)[1:-1], "[REDACTED]")
+            return value
+        if isinstance(value, dict):
+            return {redact(key): redact(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [redact(item) for item in value]
+        return value
+    return redact(result)
+
+
+async def verify_completion(
+    profile: EncryptedLLMProfile, api_key: str, client: httpx.AsyncClient, *, preview_only: bool,
+) -> dict:
     config = profile.crawl_config(None).model_copy(
         update={
             "model_timeout_seconds": 30.0,
             "max_http_attempts": 1,
             "max_model_calls": 1,
-            "max_output_tokens": 2048,
+            "max_output_tokens": 8192 if profile.reasoning_effort not in {None, "none"} else 2048,
         }
     )
-    llm = None
+    llm = ModelClient(client, api_key, config, None, api=profile.api)
+    prompt = 'Return JSON with exactly one field: {"ok": true}.'
+    schema = {
+        "type": "object",
+        "properties": {"ok": {"type": "boolean", "const": True}},
+        "required": ["ok"],
+        "additionalProperties": False,
+    }
+    if preview_only:
+        return {"ok": True, "exchange": {"request": {
+            "method": "POST", "url": str(client.base_url.join("chat/completions")),
+            "body": llm.request_payload(schema, messages=llm.initial_messages(prompt, schema), catalog=None),
+        }, "response": None, "elapsed_ms": None}}
     try:
         async with asyncio.timeout(30):
-            async with httpx.AsyncClient(
-                base_url=profile.base_url.rstrip("/") + "/", timeout=30
-            ) as client:
-                llm = ModelClient(client, api_key, config, None, api=profile.api)
-                reply = await llm.ask(
-                    'Return JSON with exactly one field: {"ok": true}.',
-                    {
-                        "type": "object",
-                        "properties": {"ok": {"type": "boolean", "const": True}},
-                        "required": ["ok"],
-                        "additionalProperties": False,
-                    },
-                    task="llm_verification",
-                )
+            reply = await llm.ask(prompt, schema, task="llm_verification")
         if reply.error is None and reply.document == {"ok": True}:
             return {"ok": True}
         error_message = (
@@ -165,6 +230,41 @@ async def verify_llm(profile: EncryptedLLMProfile, environment: dict[str, str]) 
         provider_error = llm.calls[-1].get("provider_error", {}).get("message")
         if isinstance(provider_error, str) and provider_error:
             error_message += ": " + provider_error
-    return {"ok": False, "error": error_message.replace(api_key, "[REDACTED]")[:2000],
+    return {"ok": False, "error": (error_message.replace(api_key, "[REDACTED]") if api_key else error_message)[:2000],
             "failure_kind": "configuration" if status in {401,403,404} else
                 "transient" if status is None or status == 429 or status >= 500 else "capability"}
+
+
+async def verify_jev(
+    profile: EncryptedLLMProfile, api_key: str, *,
+    client: httpx.AsyncClient, preview_only: bool,
+) -> dict:
+    if profile.base_url.rstrip("/") not in {"https://openrouter.ai/api", "https://openrouter.ai/api/v1"}:
+        return {"ok": False, "failure_kind": "capability", "error": "Jev requires the OpenRouter Decisions API"}
+    if profile.reasoning_effort is not None:
+        return {"ok": False, "failure_kind": "capability", "error": "Reasoning effort does not apply to Jev decisions"}
+    url = "https://openrouter.ai/api/alpha/decisions"
+    body = {"model": profile.model, "state": {"status": "ready"}, "questions": {
+        "status": {"type": "choice", "instructions": "Read the status field in the state.",
+                   "criteria": {"ready": "The status is ready.", "not_ready": "The status is not ready."}}
+    }}
+    if preview_only:
+        return {"ok": True, "exchange": {"request": {"method": "POST", "url": url, "body": body},
+                                       "response": None, "elapsed_ms": None}}
+    try:
+        async with asyncio.timeout(30):
+            response = await client.post(
+                url, headers={"Authorization": f"Bearer {api_key}"} if api_key else {}, json=body,
+            )
+            if response.is_error:
+                return {"ok": False, "error": f"Jev provider rejected verification (HTTP {response.status_code})",
+                        "failure_kind": "configuration" if response.status_code in {401, 403, 404} else
+                        "transient" if response.status_code == 429 or response.status_code >= 500 else "capability"}
+            answer = response.json().get("answers", {}).get("status", {})
+            if answer.get("type") == "choice" and answer.get("choice") == "ready":
+                return {"ok": True}
+            return {"ok": False, "failure_kind": "capability", "error": "Jev did not return the expected typed decision"}
+    except (TimeoutError, httpx.HTTPError):
+        return {"ok": False, "failure_kind": "transient", "error": "Jev verification could not complete within 30 seconds"}
+    except (ValueError, AttributeError, TypeError):
+        return {"ok": False, "failure_kind": "capability", "error": "Jev returned an invalid Decisions API response"}

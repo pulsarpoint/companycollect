@@ -4,6 +4,7 @@ before, otherwise by the model in execute mode. Observations are persisted befor
 suggestion rows that cite them."""
 
 import json
+from dagster_v3.defs.common.llm_reasoning import reasoning_options
 import uuid
 from collections import defaultdict
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -204,6 +205,7 @@ def build_suggestion_request(context: CompanyContext, profile: LlmProfileConfig)
         "temperature": profile.temperature,
         "max_tokens": profile.max_tokens,
         "response_format": {"type": "json_object"},
+        **reasoning_options(profile.base_url, profile.reasoning_effort),
     }
 
 

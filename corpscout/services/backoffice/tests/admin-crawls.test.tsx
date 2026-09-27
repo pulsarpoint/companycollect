@@ -24,19 +24,37 @@ const failure: CrawlAttempt = {
   assistance_deadline: null, browser_available: false, verification_available: false, browser_session_id: null, retry_of: null, retry_of_attempt: null,
   s3_state: "uploaded", s3_error: null, s3_event: {result: {bucket: "crawls", key: "failed-one/attempts/0001/result.json.gz"}},
 };
-const snapshot: CrawlSnapshot = {attempts: [failure], total: 1, limit: 50, offset: 0, revision: 5, human_enabled: true};
+const snapshot: CrawlSnapshot = {debug_available: true, attempts: [failure], total: 1, limit: 50, offset: 0, revision: 5, human_enabled: true};
 
 beforeEach(() => vi.clearAllMocks());
 
 describe("crawler backoffice", () => {
+  it("opens the guided Crawl tab by default with the available profiles and advanced options", () => {
+    const element = <AdminCrawls {...({loaderData: {snapshot, error: null, submissionEnabled: true}} as Parameters<typeof AdminCrawls>[0])} />;
+    const router = createMemoryRouter([{path: "/admin/crawls", element}], {initialEntries: ["/admin/crawls"]});
+    const html = renderToStaticMarkup(<RouterProvider router={router} />);
+    for (const label of ["Crawler workspace", "Crawl a website", "Domain or website URL", "Crawler profile", "Processing LLM", "Basic info", "Full crawl", "Jobs", "Specific pages", "Custom discovery", "Model limits and retries", "Site eligibility decision", "Jev", "Browser and CAPTCHA options"]) expect(html).toContain(label);
+    expect(html).not.toContain("New test crawl");
+    expect(html).not.toContain("Configuration overrides (JSON)");
+    expect(html).not.toContain('id="crawl-attempts"');
+  });
+
+  it("does not load saved-input inventories or Dagster progress for the Crawl tab", async () => {
+    server.loadCrawls.mockResolvedValue(snapshot);
+    await loader({request: new Request("http://backoffice/admin/crawls?tab=crawl")} as Parameters<typeof loader>[0]);
+    expect(inputs.loadCrawlInputs).not.toHaveBeenCalled();
+    expect(progress.loadCrawlProgress).not.toHaveBeenCalled();
+    expect(publisher.publishTestCrawl).not.toHaveBeenCalled();
+  });
+
   it("shows the saved inventory separately from attempts with bounded manual controls", () => {
     const saved: CrawlInputsSnapshot = {stats: [{type: "site_info", total: 50, enabled: 49}], type: "site_info", domain: "", total: 50, offset: 0, limit: 25,
       rows: [{domain: "novelic.com", website_url: "https://novelic.com", enabled: true, priority: 50, headless: true, proxy_route: "direct", pages: [], page_mode: "discover", updated_at: failure.updated_at},
         {domain: "disabled.example", website_url: "https://disabled.example", enabled: false, priority: 40, headless: true, proxy_route: "direct", pages: [], page_mode: "discover", updated_at: failure.updated_at}]};
     const element = <AdminCrawls {...({loaderData: {snapshot, inputs: saved, error: null}} as Parameters<typeof AdminCrawls>[0])} />;
-    const router = createMemoryRouter([{path: "/admin/crawls", element}], {initialEntries: ["/admin/crawls"]});
+    const router = createMemoryRouter([{path: "/admin/crawls", element}], {initialEntries: ["/admin/crawls?input_type=site_info"]});
     const html = renderToStaticMarkup(<RouterProvider router={router} />);
-    for (const label of ["Basic info inputs", "Basic info only", "Saved domains", "Disabled", "Activate 1 shown", "Next inputs", "Crawl attempts", "Processing status"]) expect(html).toContain(label);
+    for (const label of ["Basic info inputs", "Basic info only", "Saved domains", "Disabled", "Activate 1 shown", "Next inputs", "Processing status"]) expect(html).toContain(label);
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Activate<span[^>]*> disabled.example<\/span>/);
     expect(html).toContain('role="tablist"');
     expect(html).not.toContain('id="input-captcha-model"');
@@ -58,7 +76,7 @@ describe("crawler backoffice", () => {
     const saved = {stats: [{type: "site_info", total: 50, enabled: 50}], type: "site_info", domain: "", rows: [], total: 50, offset: 0, limit: 25};
     inputs.loadCrawlInputs.mockResolvedValue(saved);
     server.loadCrawls.mockRejectedValue(new Error("Crawler unavailable"));
-    const result = await loader({request: new Request("http://backoffice/admin/crawls")} as Parameters<typeof loader>[0]);
+    const result = await loader({request: new Request("http://backoffice/admin/crawls?tab=inputs")} as Parameters<typeof loader>[0]);
     expect(result.inputs).toEqual(saved);
     expect(result.error).toBe("Crawler unavailable");
     expect(inputs.startSavedCrawls).not.toHaveBeenCalled();
@@ -78,7 +96,7 @@ describe("crawler backoffice", () => {
   it("shows saved partial data and the stopping URL on an older failed attempt", () => {
     const partial = {...failure, collected_pages: 0, current_url: "https://frame.work/laptop16?tab=specs", s3_event: {...failure.s3_event, page_count: 47}};
     const element = <AdminCrawls {...({loaderData: {snapshot: {...snapshot, attempts: [partial]}, error: null}} as Parameters<typeof AdminCrawls>[0])} />;
-    const router = createMemoryRouter([{path: "/admin/crawls", element}], {initialEntries: ["/admin/crawls"]});
+    const router = createMemoryRouter([{path: "/admin/crawls", element}], {initialEntries: ["/admin/crawls?tab=attempts"]});
     const html = renderToStaticMarkup(<RouterProvider router={router} />);
     expect(html).toContain("partial · stopped");
     expect(html).toContain("47");
@@ -148,10 +166,11 @@ describe("crawler backoffice", () => {
   it("submits test requests through the test-crawl submitter, not a crawler action", async () => {
     const receipt = {request_id: "test-one", url: "https://novelic.com/", state: "queued"};
     publisher.publishTestCrawl.mockResolvedValue(receipt);
-    const body = JSON.stringify({request_id: "test-one", url: "novelic.com", crawl: "full"});
-    const request = new Request("http://backoffice/admin/crawls", {method: "POST", headers: {Origin: "http://backoffice"}, body: new URLSearchParams({intent: "submit", body})});
+    const request = new Request("http://backoffice/admin/crawls", {method: "POST", headers: {Origin: "http://backoffice"}, body: new URLSearchParams({intent: "submit", url: "novelic.com", crawl_profile: "full"})});
     expect(await action({request} as Parameters<typeof action>[0])).toEqual({error: null, intent: "submit", receipt});
-    expect(publisher.publishTestCrawl).toHaveBeenCalledWith(body);
+    expect(publisher.publishTestCrawl).toHaveBeenCalledWith(expect.any(FormData));
+    expect(publisher.publishTestCrawl.mock.calls[0][0].get("url")).toBe("novelic.com");
+    expect(publisher.publishTestCrawl.mock.calls[0][0].get("crawl_profile")).toBe("full");
     expect(server.crawlAction).not.toHaveBeenCalled();
   });
 
@@ -165,7 +184,7 @@ describe("crawler backoffice", () => {
     const paused = {...failure, state: "captcha" as const, verification_available: true,
       reason: "Brave searches are paused. Start verification.", blocked_reason: "brave_captcha"};
     const element = <AdminCrawls {...({loaderData: {snapshot: {...snapshot, attempts: [paused]}, error: null}} as Parameters<typeof AdminCrawls>[0])} />;
-    const router = createMemoryRouter([{path: "/admin/crawls", element}], {initialEntries: ["/admin/crawls"]});
+    const router = createMemoryRouter([{path: "/admin/crawls", element}], {initialEntries: ["/admin/crawls?tab=attempts"]});
     const html = renderToStaticMarkup(<RouterProvider router={router} />);
     expect(html).toContain("Start verification");
     expect(html).toContain("Brave searches are paused");
@@ -186,7 +205,7 @@ describe("crawler backoffice", () => {
 
   it("shows saved failure, archive status, filters and interactive retry", () => {
     const element = <AdminCrawls {...({loaderData: {snapshot, error: null}} as Parameters<typeof AdminCrawls>[0])} />;
-    const router = createMemoryRouter([{path: "/admin/crawls", element}], {initialEntries: ["/admin/crawls"]});
+    const router = createMemoryRouter([{path: "/admin/crawls", element}], {initialEntries: ["/admin/crawls?tab=attempts"]});
     const html = renderToStaticMarkup(<RouterProvider router={router} />);
     for (const label of ["melexis.com", "captcha", "S3 saved", "Retry interactively", "All statuses", "REST", "SQLite history"]) expect(html).toContain(label);
     expect(html).toContain("/admin/crawls/results?path=crawls%2Ffailed-one%2Fattempts%2F0001%2Fresult.json.gz");
