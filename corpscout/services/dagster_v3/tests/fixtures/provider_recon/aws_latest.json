@@ -1,0 +1,33 @@
+{
+  "version": "provider-recon/v1",
+  "slug": "aws",
+  "display_name": "Amazon Web Services",
+  "category": "cloud",
+  "website": "https://aws.amazon.com",
+  "country": "US",
+  "aliases": ["AWS"],
+  "provider_keys": ["amazonaws.com", "cloudfront.net"],
+  "services": [
+    {
+      "service_key": "aws.cloudfront",
+      "display_name": "Amazon CloudFront",
+      "service_types": ["cdn"],
+      "traits": ["origin_obscured", "shared_infrastructure"],
+      "evidence": {
+        "ip_ranges": [
+          {"cidr": "52.84.0.0/15", "feed_tag": "CLOUDFRONT", "region": "GLOBAL", "confidence": 1, "source": "official_feed", "collector": "aws_ip_ranges", "source_url": "https://ip-ranges.amazonaws.com/ip-ranges.json", "source_version": "syncToken=1", "status": "active", "first_seen": "2026-09-27", "last_seen": "2026-09-28"},
+          {"cidr": "2600:9000::/28", "feed_tag": "CLOUDFRONT", "confidence": 1, "source": "official_feed", "collector": "aws_ip_ranges", "status": "missing", "first_seen": "2026-09-27", "last_seen": "2026-09-27", "missing_since": "2026-09-28"},
+          {"cidr": "13.32.0.0/15", "feed_tag": "CLOUDFRONT", "confidence": 1, "source": "official_feed", "collector": "aws_ip_ranges", "status": "removed", "first_seen": "2026-06-01", "last_seen": "2026-06-10", "missing_since": "2026-06-11", "removed_at": "2026-06-18", "removal_action": "grace_expired"},
+          {"cidr": "13.32.0.0/15", "feed_tag": "CLOUDFRONT", "confidence": 1, "source": "official_feed", "collector": "aws_ip_ranges", "status": "active", "first_seen": "2026-07-01", "last_seen": "2026-09-28", "restored_at": ""}
+        ],
+        "asns": [{"asn": 16509, "confidence": 0.6, "source": "curated", "status": "active", "first_seen": "2026-09-27", "last_seen": "2026-09-28"}],
+        "dns_rules": [{"record_type": "CNAME", "match_field": "target", "matcher_type": "suffix", "pattern": "cloudfront.net", "confidence": 1, "priority": 100, "source": "curated", "status": "active", "first_seen": "2026-09-27", "last_seen": "2026-09-28"}],
+        "http_rules": [{"http_part": "header", "header_name": "x-amz-cf-id", "matcher_type": "exists", "pattern": "", "confidence": 1, "priority": 100, "source": "curated", "status": "removed", "first_seen": "2026-09-27", "last_seen": "2026-09-27", "removed_at": "2026-09-28", "removal_action": "definition_removed"}],
+        "ptr_rules": [{"matcher_type": "suffix", "pattern": "cloudfront.net", "confidence": 0.9, "source": "curated", "status": "active", "first_seen": "2026-09-27", "last_seen": "2026-09-28"}],
+        "certificate_identities": []
+      }
+    }
+  ],
+  "collection": {"collected_at": "2026-09-28T03:12:05Z", "collectors": {}, "content_hash": "sha256:abc"},
+  "candidates": []
+}
