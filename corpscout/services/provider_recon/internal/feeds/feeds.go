@@ -46,6 +46,9 @@ func Registry() map[string]Collector {
 		NewCloudflare(),
 		NewFastly(),
 		NewBunny(),
+		NewAzure(),
+		NewOracle(),
+		NewGitHub(),
 	}
 	out := make(map[string]Collector, len(all))
 	for _, c := range all {
