@@ -39,6 +39,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return cmdSchema(args[1:], stderr)
 	case "collect":
 		return cmdCollect(ctx, args[1:], stdout, stderr)
+	case "restore":
+		return cmdRestore(ctx, args[1:], stdout, stderr)
 	default:
 		usage(stderr)
 		return 64
@@ -46,7 +48,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "usage: provider-recon validate|schema|collect [flags]")
+	fmt.Fprintln(w, "usage: provider-recon validate|schema|collect|restore [flags]")
 }
 
 func loadDefinitions(dir string) ([]definitions.Definition, error) {
@@ -153,7 +155,11 @@ func cmdCollect(ctx context.Context, args []string, stdout, stderr io.Writer) in
 		docs = append(docs, doc)
 	}
 
-	m, err := publish.Publish(ctx, store, docs, now)
+	scope := publish.Scope{Command: "collect"}
+	if *only != "" {
+		scope.Providers = []string{*only}
+	}
+	m, err := publish.PublishScoped(ctx, store, docs, now, scope)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -169,6 +175,51 @@ func cmdCollect(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	if len(m.CollectorIssues) > 0 {
 		return 2
 	}
+	return 0
+}
+
+// cmdRestore undoes wrong removals. Fix the collector first, restore, then
+// collect: ranges the feed lists again continue their original timeline.
+func cmdRestore(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("restore", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	slug := fs.String("provider", "", "provider slug")
+	collector := fs.String("collector", "", "collector id as listed in the manifest, e.g. aws_ip_ranges")
+	since := fs.String("removed-since", "", "restore ranges removed on or after this day (YYYY-MM-DD)")
+	outDir := fs.String("out", "", "use this local directory instead of S3")
+	if err := fs.Parse(args); err != nil {
+		return 64
+	}
+	if *slug == "" || *collector == "" || *since == "" {
+		fmt.Fprintln(stderr, "restore needs -provider, -collector and -removed-since")
+		return 64
+	}
+	store, err := openStore(ctx, *outDir)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	prev, err := publish.LoadLatest(ctx, store, *slug)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if prev == nil {
+		fmt.Fprintf(stderr, "no published document for %q\n", *slug)
+		return 1
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	doc, n, err := assemble.Restore(*prev, *collector, *since, now)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	m, err := publish.PublishScoped(ctx, store, []model.Document{doc}, now, publish.Scope{Command: "restore", Providers: []string{*slug}})
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "restored %d ranges for %s %s (run %s)\n", n, *slug, *collector, m.RunID)
 	return 0
 }
 
