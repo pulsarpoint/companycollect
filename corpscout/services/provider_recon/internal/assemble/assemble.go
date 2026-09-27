@@ -253,8 +253,19 @@ func applyFeed(doc *model.Document, index map[string]int, defined map[string]boo
 
 	live := map[string]svcRange{}
 	var liveKeys []string
+	// Removed instances first seen today are revived by a same-day return
+	// (see reconcile): one (service, CIDR, collector, first_seen) per range.
+	sameDay := map[string]svcRange{}
+	var sameDayKeys []string
 	for _, p := range prevItems {
 		if p.item.Status == model.StatusRemoved {
+			if k := p.svc + "|" + p.item.CIDR; p.item.FirstSeen == today {
+				if _, dup := sameDay[k]; !dup {
+					sameDay[k] = p
+					sameDayKeys = append(sameDayKeys, k)
+					continue
+				}
+			}
 			appendRange(doc, index, p)
 			continue
 		}
@@ -274,12 +285,22 @@ func applyFeed(doc *model.Document, index map[string]int, defined map[string]boo
 				churn.Reappeared++
 			}
 			delete(live, k)
+		} else if p, ok := sameDay[k]; ok {
+			o.item.Lifecycle = p.item.Lifecycle
+			o.item.RemovedAt, o.item.RemovalAction = "", ""
+			churn.Reappeared++
+			delete(sameDay, k)
 		} else {
 			o.item.Lifecycle = model.Lifecycle{FirstSeen: today}
 			churn.Added++
 		}
 		o.item.Status, o.item.LastSeen, o.item.MissingSince = model.StatusActive, today, ""
 		appendRange(doc, index, o)
+	}
+	for _, k := range sameDayKeys {
+		if p, ok := sameDay[k]; ok {
+			appendRange(doc, index, p)
+		}
 	}
 
 	var missing []svcRange
@@ -403,12 +424,24 @@ func reconcile[T any](prev, cur []T, key func(T) string, parts func(*T) (*model.
 	out := make([]T, 0, len(cur))
 	live := map[string]T{}
 	var liveKeys []string
+	// A removed instance first seen today is revived by a same-day re-add:
+	// two instances with one (key, first_seen) would be indistinguishable
+	// downstream (ClickHouse keys on it) and the removed twin would win.
+	sameDay := map[string]T{}
+	var sameDayKeys []string
 	for _, p := range prev {
 		l, pv := parts(&p)
 		if pv.Source != model.SourceCurated {
 			continue
 		}
 		if l.Status == model.StatusRemoved {
+			if k := key(p); l.FirstSeen == today {
+				if _, dup := sameDay[k]; !dup {
+					sameDay[k] = p
+					sameDayKeys = append(sameDayKeys, k)
+					continue
+				}
+			}
 			out = append(out, p)
 			continue
 		}
@@ -425,11 +458,21 @@ func reconcile[T any](prev, cur []T, key func(T) string, parts func(*T) (*model.
 			pl, _ := parts(&p)
 			*l = *pl
 			delete(live, k)
+		} else if p, ok := sameDay[k]; ok {
+			pl, _ := parts(&p)
+			*l = *pl
+			l.RemovedAt, l.RemovalAction = "", ""
+			delete(sameDay, k)
 		} else {
 			*l = model.Lifecycle{FirstSeen: today}
 		}
 		l.Status, l.LastSeen, l.MissingSince = model.StatusActive, today, ""
 		out = append(out, c)
+	}
+	for _, k := range sameDayKeys {
+		if p, ok := sameDay[k]; ok {
+			out = append(out, p)
+		}
 	}
 	for _, k := range liveKeys {
 		p, ok := live[k]

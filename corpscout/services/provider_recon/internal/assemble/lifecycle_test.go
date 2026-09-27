@@ -459,3 +459,27 @@ func TestRestoreRevivesOnlyTheLatestRemovedInstance(t *testing.T) {
 		}
 	}
 }
+
+func TestSameDayCuratedReaddRevivesTheInstance(t *testing.T) {
+	withRule := lcDef()
+	withRule.Services[0].DNSRules = []definitions.DNSRuleDef{{RecordType: "CNAME", MatchField: "target", MatcherType: "suffix", Pattern: "cloudfront.net", Priority: 100}}
+	a := run(t, withRule, cidrs(1), nil, 0)
+	b := run(t, lcDef(), cidrs(1), &a, 0)  // removed the same day it first appeared
+	c := run(t, withRule, cidrs(1), &b, 0) // re-added the same day
+	rules := c.Services[0].Evidence.DNSRules
+	if len(rules) != 1 || rules[0].Status != model.StatusActive || rules[0].RemovedAt != "" || rules[0].FirstSeen != dstr(0) {
+		t.Fatalf("same-day re-add must revive the one instance, got %+v", rules)
+	}
+}
+
+func TestSameDayFeedReaddRevivesTheInstance(t *testing.T) {
+	a := run(t, lcDef(), cidrs(1), nil, 0)
+	noFeed := lcDef()
+	noFeed.Feeds = nil
+	b := run(t, noFeed, nil, &a, 0) // feed dropped the same day: range definition_removed
+	c := run(t, lcDef(), cidrs(1), &b, 0)
+	rs := ranges(c, "10.0.0.0/24")
+	if len(rs) != 1 || rs[0].Status != model.StatusActive || rs[0].FirstSeen != dstr(0) {
+		t.Fatalf("same-day re-add must revive the one instance, got %+v", rs)
+	}
+}
