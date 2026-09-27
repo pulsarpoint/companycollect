@@ -1601,6 +1601,7 @@ git commit -m "feat(provider_recon): reconcile evidence lifecycles with grace pe
   - `func RunID(now time.Time, command string) string`
   - `HistoryKey(slug, runID string) string` (signature change)
   - `func PublishScoped(ctx, store, docs, now, scope Scope) (Manifest, error)`; `Publish` = `PublishScoped` with `Scope{Command: "collect"}`.
+  - `const IndexKey = "changes/index.json"`, `type RunSummary`, `type RunIndex struct{ Runs []RunSummary; Providers []string }`. Every publish prepends its run (newest first, capped at 400) and merges its provider slugs. This is the one object the backoffice reads to list runs and providers.
 
 - [ ] **Step 1: Write the failing tests** — `internal/publish/lifecycle_test.go`
 
@@ -1609,6 +1610,7 @@ package publish
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -1674,6 +1676,38 @@ func TestDiffLastSeenAloneIsNotAnUpdate(t *testing.T) {
 	c.Region = "eu-north-1"
 	if d := Diff(&old, lcDoc(t, c)).Evidence["ip_ranges"]; len(d.Updated) != 1 {
 		t.Fatalf("region change not reported as updated: %+v", d)
+	}
+}
+
+func TestPublishMaintainsRunIndex(t *testing.T) {
+	ctx := context.Background()
+	store := FSStore{Root: t.TempDir()}
+	t1 := time.Date(2026, 9, 27, 6, 0, 0, 0, time.UTC)
+	a := lcDoc(t, ip("10.0.1.0/24", "active", "2026-09-27"))
+	b := lcDoc(t, ip("10.0.2.0/24", "active", "2026-09-27"))
+	b.Slug = "bws"
+	if _, err := Publish(ctx, store, []model.Document{a}, t1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PublishScoped(ctx, store, []model.Document{b}, t1.Add(time.Hour), Scope{Command: "collect", Providers: []string{"bws"}}); err != nil {
+		t.Fatal(err)
+	}
+	raw, ok, err := store.Get(ctx, IndexKey)
+	if err != nil || !ok {
+		t.Fatalf("index missing: %v", err)
+	}
+	var idx RunIndex
+	if err := json.Unmarshal(raw, &idx); err != nil {
+		t.Fatal(err)
+	}
+	if len(idx.Runs) != 2 || idx.Runs[0].RunID != "20260927T070000Z-collect" || idx.Runs[1].RunID != "20260927T060000Z-collect" {
+		t.Fatalf("runs = %+v", idx.Runs)
+	}
+	if strings.Join(idx.Providers, ",") != "aws,bws" {
+		t.Fatalf("providers = %v", idx.Providers)
+	}
+	if r := idx.Runs[0]; len(r.Changed) != 1 || r.Changed[0] != "bws" || len(r.Feeds) != 1 || r.Scope.Providers[0] != "bws" {
+		t.Fatalf("summary = %+v", r)
 	}
 }
 
@@ -1952,6 +1986,84 @@ type FeedRun struct {
 }
 ```
 
+Add after `FeedRun`:
+```go
+// IndexKey is the run index the backoffice reads: recent runs, newest first,
+// and every provider slug ever published.
+const IndexKey = "changes/index.json"
+
+const maxIndexedRuns = 400
+
+// RunSummary is one run in the index.
+type RunSummary struct {
+	RunID          string    `json:"run_id"`
+	PublishedAt    time.Time `json:"published_at"`
+	Scope          Scope     `json:"scope"`
+	Changed        []string  `json:"changed"`
+	UnchangedCount int       `json:"unchanged_count"`
+	Issues         int       `json:"issues"`
+	Feeds          []FeedRun `json:"feeds"`
+}
+
+// RunIndex lists recent runs and all provider slugs.
+type RunIndex struct {
+	Runs      []RunSummary `json:"runs"`
+	Providers []string     `json:"providers"`
+}
+
+func updateIndex(ctx context.Context, store Store, m Manifest, docs []model.Document) error {
+	var idx RunIndex
+	raw, ok, err := store.Get(ctx, IndexKey)
+	if err != nil {
+		return err
+	}
+	if ok {
+		if err := json.Unmarshal(raw, &idx); err != nil {
+			return fmt.Errorf("decode %s: %w", IndexKey, err)
+		}
+	}
+	changed := make([]string, 0, len(m.Changed))
+	for _, c := range m.Changed {
+		changed = append(changed, c.Slug)
+	}
+	summary := RunSummary{RunID: m.RunID, PublishedAt: m.PublishedAt, Scope: m.Scope, Changed: changed,
+		UnchangedCount: len(m.Unchanged), Issues: len(m.CollectorIssues), Feeds: m.Feeds}
+	runs := []RunSummary{summary}
+	for _, r := range idx.Runs {
+		if r.RunID != m.RunID {
+			runs = append(runs, r)
+		}
+	}
+	if len(runs) > maxIndexedRuns {
+		runs = runs[:maxIndexedRuns]
+	}
+	slugs := map[string]bool{}
+	for _, s := range idx.Providers {
+		slugs[s] = true
+	}
+	for _, d := range docs {
+		slugs[d.Slug] = true
+	}
+	idx.Runs, idx.Providers = runs, make([]string, 0, len(slugs))
+	for s := range slugs {
+		idx.Providers = append(idx.Providers, s)
+	}
+	sort.Strings(idx.Providers)
+	body, err := json.MarshalIndent(idx, "", "  ")
+	if err != nil {
+		return err
+	}
+	return store.Put(ctx, IndexKey, append(body, '\n'), "application/json")
+}
+```
+
+In `PublishScoped`, directly after the manifest `Put` (phase 2) and before the `latest.json` loop, add:
+```go
+	if err := updateIndex(ctx, store, m, sorted); err != nil {
+		return m, err
+	}
+```
+
 In `Manifest`, add after `RunID`:
 ```go
 	Scope           Scope            `json:"scope"`
@@ -2004,7 +2116,7 @@ Expected: PASS. The new tests pass, and the existing `publish_test.go` passes un
 
 ```bash
 git add services/provider_recon/internal/publish
-git commit -m "feat(provider_recon): lifecycle transitions, run scope and per-feed churn in the change manifest"
+git commit -m "feat(provider_recon): lifecycle transitions, run scope, per-feed churn and a run index"
 ```
 
 ---
