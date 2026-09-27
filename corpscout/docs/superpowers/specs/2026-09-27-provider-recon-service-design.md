@@ -102,8 +102,14 @@ the later ClickHouse load can then rank, expire and explain each item.
   a DNS provider key to this provider.
 - **`candidates`** holds unreviewed evidence (AI, mining). It is kept separate
   from `evidence` and never used for detection until applied.
-- Output is deterministic: sorted arrays and a content hash, so an unchanged
-  feed produces an unchanged file and diffs show real changes.
+- Output is deterministic: sorted arrays and a content hash.
+  - The hash covers identity + evidence only. It excludes the `collection`
+    block and each item's `source_version`, so a feed that republishes
+    identical ranges under a new sync token does not create history.
+  - Items carry `collector`, `source`, `source_url` and `source_version`, but
+    no per-item timestamp. Fetch times live in `collection.collectors`.
+    (The example above shows `collected_at` on an item; the implementation
+    drops it for this reason.)
 
 ## Collection procedures (by trust level)
 
