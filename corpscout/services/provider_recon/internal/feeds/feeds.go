@@ -41,6 +41,11 @@ var ErrEmptyFeed = errors.New("feed returned no usable ranges")
 func Registry() map[string]Collector {
 	all := []Collector{
 		NewAWS(),
+		NewGoogleCloud(),
+		NewGoogleGoog(),
+		NewCloudflare(),
+		NewFastly(),
+		NewBunny(),
 	}
 	out := make(map[string]Collector, len(all))
 	for _, c := range all {
