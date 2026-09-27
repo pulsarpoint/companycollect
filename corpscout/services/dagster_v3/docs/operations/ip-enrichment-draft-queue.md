@@ -209,9 +209,10 @@ registry may still both fetch one at the same moment; both writes are idempotent
 **Back-pressure** (transport settings, change between resumes as needed):
 - `max_in_flight` (default 5,000): the run stops reading pages while this many rows wait on the
   lanes (queued, being fetched, waiting for another miss's fetch or for their commit).
-- `max_queue_per_registry` (default 2,000): a lane holds at most this many queued misses; a
-  further miss of that registry is **deferred** (no result, no marker) and re-walked next pass,
-  so the reader never blocks on one registry. 2,000 queued LACNIC misses are ~5.5 h of work
+- `max_queue_per_registry` (default 2,000): a lane holds at most this many queued misses,
+  counting the misses waiting on an in-flight fetch of their /24; a further miss of that
+  registry is **deferred** (no result, no marker) and re-walked next pass, so the reader never
+  blocks on one registry. 2,000 queued LACNIC misses are ~5.5 h of work
   at a 10 s delay (~3.6 h at the 6.5 s default).
 
 At the end of a pass the run waits for the lanes to drain (the progress line keeps logging),
@@ -222,7 +223,12 @@ later passes reuse what earlier passes fetched. The progress line (at most once 
 `in_flight=` and `queued=` (per-registry queue depth); run metadata adds
 `max_queue_depth_by_registry`. A failure or termination stops the lanes (each worker finishes
 its request, ≤ ~60 s), commits what they already fetched and stores the buffered results;
-queued misses stay remaining for the resume.
+queued misses stay remaining for the resume. Two exceptions, both safe because the resume asks
+again: if a commit group itself failed (a ClickHouse error mid-group), nothing more is
+committed in that run — its networks may not be durable, so nothing may be answered from them —
+and only results already written are flushed; and a termination that lands while a commit
+group is being written loses that group's outcomes (up to 200 fetched answers), which the
+resume fetches again. The failure path starts on a fresh ClickHouse connection.
 
 Pacing is per endpoint: at most one request per `registry_request_delays[registry]` seconds
 (default `{"lacnic": 6.5}`), else `request_delay_seconds` (default 1.0), counted from the
@@ -241,15 +247,15 @@ Recommended starting values for the full run (transport, change between resumes 
 
 ```json
 {"batch_size": 1000, "max_requests": null,
- "max_in_flight": 5000, "max_queue_per_registry": 2000,
+ "max_in_flight": 5000, "max_queue_per_registry": 500,
  "registry_request_delays": {"ripe": 0.5, "apnic": 1.0, "arin": 1.0, "lacnic": 10, "afrinic": 1.0},
  "registry_daily_budgets": {"afrinic": 4500}, "rate_limit_pause_seconds": 300}
 ```
 
-For the full run: `max_queue_per_registry` 2,000 keeps LACNIC's backlog to one ~5.5-hour pass
-tail while the other lanes run at their own pace; lower it (e.g. 500) for shorter pass tails
-and more passes, raise `max_in_flight` only if the fast lanes idle while the reader waits
-(watch `in_flight=` against `queued=` in the progress line).
+For the full run: `max_queue_per_registry` 500 keeps LACNIC's backlog to a ~1.4-hour pass tail
+(500 × 10 s) while the other lanes run at their own pace, at the cost of more passes; raise it
+for fewer, longer passes, and raise `max_in_flight` only if the fast lanes idle while the
+reader waits (watch `in_flight=` against `queued=` in the progress line).
 
 Published limits behind the defaults:
 
@@ -430,9 +436,10 @@ Classes regenerate per miss and at the daily refresh.
 - A miss deferred by a paused target registry after a cross-RIR redirect (e.g. ARIN → RIPE
   while RIPE is paused) repeats the ARIN redirect on the next pass; nothing remembers the
   reroute across passes.
-- A miss that reused a network another lane fetched is deferred to the next pass when that
-  network turns out registry-level (it answers only its own address); the next pass asks for
-  it itself. (A miss that waited on a /24 fetch is asked at once instead.)
+- A miss that reused a network another lane fetched, which then turns out registry-level (it
+  answers only its own address) or has left the reuse index, is queued again as a miss of its
+  own and asked in the same pass; so is a miss that waited on a /24 fetch the network does not
+  cover.
 - `max_queue_per_registry` is one number for every registry; a per-registry map would let
   LACNIC's backlog be bounded without bounding the others.
 - The per-endpoint budget seed charges every endpoint with the registry's whole last-day usage

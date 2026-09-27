@@ -225,12 +225,12 @@ busiest registry's misses at its pace. Deduplication across pages: rows of an ad
 flight wait on it; a miss of the same registry and /24 (IPv4) or /48 (IPv6) as one in flight waits
 for that fetch and is answered from its network when the network is reusable and holds it (else it
 is queued as a miss of its own); a queued miss first checks the networks these lanes fetched
-(a reuse of one not committed yet waits for that commit; one that turned out registry-level is
-deferred); an admitted miss first checks the committed reusable networks of the run
+(a reuse of one not committed yet waits for that commit; if it turned out registry-level, or has
+left the index, the miss is queued again as its own); an admitted miss first checks the committed reusable networks of the run
 (4,096 kept). **Back-pressure**: the reader stops reading pages while `max_in_flight` rows
 (default 5,000; queued, fetching, waiting for another fetch or for their commit) wait on the
-lanes, and a lane holds at most `max_queue_per_registry` misses (default 2,000): a further miss of
-that registry is deferred (no result, no marker) and re-walked next pass instead of blocking the
+lanes, and a lane holds at most `max_queue_per_registry` misses (default 2,000; misses waiting on
+an in-flight /24 count too): a further miss of that registry is deferred (no result, no marker) and re-walked next pass instead of blocking the
 reader. Both are transport settings. At the end of a pass the lanes are drained, then the pass
 logic is unchanged (deferred entries re-walked, an empty pass waits, give-up rules,
 `max_requests`); the network trie is reloaded between passes when networks were written.
@@ -238,7 +238,10 @@ logic is unchanged (deferred entries re-walked, an empty pass waits, give-up rul
 where the time goes. `resolve_page()` runs the same lanes for one page and drains them before
 returning, committing in admission order: the per-page reference the tests compare the pipeline
 against. A failure or termination commits what the workers already fetched and flushes the
-result buffer; queued misses stay remaining for the resume.
+result buffer; queued misses stay remaining for the resume. After a failed commit group nothing
+more is committed (its networks may be in the in-run indexes without being durable), and a
+termination during a group's INSERTs loses that group; the resume asks for both again. Networks
+are indexed without their `raw_response`.
 
 **Proxies** are opt-in (`use_proxies`, only `PROXY_ALLOWED_REGISTRIES = {"arin", "afrinic"}`),
 HTTP(S) only, RDAP only; URLs come from the `RDAP_PROXIES` environment variable (JSON of URL
