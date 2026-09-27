@@ -62,7 +62,7 @@ import re
 import threading
 from collections import OrderedDict, deque
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from ipaddress import IPv4Address, IPv6Address, ip_address, ip_network
 from time import monotonic, perf_counter, sleep
@@ -628,7 +628,9 @@ class _NetworkIndex:
         return len(self._items)
 
     def add(self, normalized: NormalizedRdapNetwork) -> None:
-        network = normalized.network
+        """Index a network without its raw_response (the JSON is never needed again)."""
+        network = replace(normalized.network, raw_response="")
+        normalized = replace(normalized, network=network)
         try:
             first = ip_address(network.start_address)
             last = ip_address(network.end_address)
@@ -907,6 +909,12 @@ class RdapEnricher:
         self._awaiting: dict[str, list[MissOutcome]] = {}
         self._seq = 0
         self._rows_in_flight = 0  # page rows of the pending lookups
+        # Lookups waiting on an in-flight leader, per registry: they count toward the
+        # registry's max_queue_per_registry like queued misses.
+        self._waiters_by_registry: dict[str, int] = {}
+        # A commit group failed part-way: what it staged may not be durable, so nothing
+        # more is committed in this run (stop_lanes then commits nothing; a resume redoes it).
+        self._commit_failed = False
 
     def close(self) -> None:
         self.stop_lanes()
@@ -959,7 +967,12 @@ class RdapEnricher:
             )
         answered: list[tuple[dict, dict]] = []
         try:
-            if commit:
+            if commit and self._commit_failed:
+                self.log.warning(
+                    "A registry commit failed; the fetched outcomes are not stored "
+                    "(the resume asks for them again)"
+                )
+            elif commit:
                 with self._lock:
                     outcomes, lanes.outcomes = lanes.outcomes, []
                     for queue in lanes.queues.values():
@@ -975,6 +988,7 @@ class RdapEnricher:
             self._groups.clear()
             self._awaiting.clear()
             self._rows_in_flight = 0
+            self._waiters_by_registry.clear()
             self._lanes = None
             self._flush_notes()
         return answered
@@ -1048,7 +1062,8 @@ class RdapEnricher:
                         break
                     group = lanes.outcomes[:COMMIT_BATCH]
                     del lanes.outcomes[:COMMIT_BATCH]
-                    lanes.ready_since = self._clock() if lanes.outcomes else None
+                    if not lanes.outcomes:  # the rest keeps its age: due within 2 s
+                        lanes.ready_since = None
                 answered += self._commit(group)
         finally:
             self._flush_notes()
@@ -1073,11 +1088,16 @@ class RdapEnricher:
                 # Every pending lookup should be queued, fetching, awaiting its commit or
                 # waiting for one that is: nothing is left to wait for.
                 self.log.warning(
-                    "%s registry lookups had nothing left to wait for; left for the next pass",
+                    "%s registry lookups had nothing left to wait for; deferred to the next pass",
                     len(self._pending),
                 )
                 for lookup in list(self._pending.values()):
-                    self._drop(lookup)
+                    self._defer(lookup.registry)
+                    self._forget(lookup)
+                    lookup.waiters = []
+                self._groups.clear()
+                self._awaiting.clear()
+                self._waiters_by_registry.clear()
 
     def resolve_page(self, rows: list[dict]) -> dict[str, dict]:
         """Registry fields per address of one page, with lanes of its own drained before it
@@ -1256,15 +1276,16 @@ class RdapEnricher:
             return
         lookup.group = _group_of(registry, lookup.address)
         leader = self._groups.get(lookup.group)
-        if leader is not None:
-            leader.waiters.append(lookup)
-            return
         endpoints = self._endpoints_of(registry)
         with self._cv:
             queue = lanes.queues.setdefault(registry, deque())
-            refused = self._registry_blocked(registry) or (
-                len(queue) >= self.config.max_queue_per_registry
-            )
+            waiting = self._waiters_by_registry.get(registry, 0)
+            full = len(queue) + waiting >= self.config.max_queue_per_registry
+            refused = full or (leader is None and self._registry_blocked(registry))
+            if leader is not None and not refused:
+                leader.waiters.append(lookup)
+                self._waiters_by_registry[registry] = waiting + 1
+                return
             if not refused:
                 queue.append(Miss(lookup.ip, lookup.address, registry))
                 if len(queue) > self.max_queue_depth_by_registry.get(registry, 0):
@@ -2026,10 +2047,20 @@ class RdapEnricher:
             lookup = self._pending.get(outcome.ip)
             return lookup.seq if lookup is not None else 0
 
+        if self._commit_failed:
+            raise RuntimeError(
+                "an earlier registry commit failed; nothing more is stored"
+            )
         batch = _Batch()
-        for outcome in sorted(outcomes, key=order):
-            self._settle(outcome, batch)
-        return self._write(batch)
+        try:
+            for outcome in sorted(outcomes, key=order):
+                self._settle(outcome, batch)
+            return self._write(batch)
+        except BaseException:
+            # Networks of this group may be in recent/known without being durable: a reuse
+            # of them must never be stored as found.
+            self._commit_failed = True
+            raise
 
     def _settle(self, outcome: MissOutcome, batch: _Batch) -> None:
         """Decide one outcome into ``batch``: coverage, class and segments before the marker
@@ -2069,9 +2100,15 @@ class RdapEnricher:
             if waiting:
                 self._awaiting.setdefault(key, []).append(outcome)
                 return
-            if source is None:  # a registry-level registration answers only its own IP
-                self._defer(outcome.registry)
-                self._release(lookup, batch, None)
+            if source is None:
+                # A registry-level registration answers only its own IP, and an evicted
+                # network is unknown here: the miss asks for itself, keeping its waiters.
+                if (
+                    lookup.group is not None
+                    and self._groups.get(lookup.group) is lookup
+                ):
+                    del self._groups[lookup.group]
+                self._to_lane(lookup, batch)
                 return
             self.cache_hits += 1
             result = rdap_result(
@@ -2128,6 +2165,7 @@ class RdapEnricher:
         if result is not None:
             self._answer(batch, lookup.rows, result)
         waiters, lookup.waiters = lookup.waiters, []
+        self._unwait(lookup.registry, len(waiters))
         for waiter in waiters:
             cidr = matching_cidr(network, waiter.address) if network else None
             if cidr is None:
@@ -2152,8 +2190,18 @@ class RdapEnricher:
         reached or the lanes stopped; they stay remaining for the next run."""
         self._forget(lookup)
         waiters, lookup.waiters = lookup.waiters, []
+        self._unwait(lookup.registry, len(waiters))
         for waiter in waiters:
             self._drop(waiter)
+
+    def _unwait(self, registry: str, count: int) -> None:
+        if count:
+            with self._lock:
+                left = self._waiters_by_registry.get(registry, 0) - count
+                if left > 0:
+                    self._waiters_by_registry[registry] = left
+                else:
+                    self._waiters_by_registry.pop(registry, None)
 
     def _forget(self, lookup: _Lookup) -> None:
         """No longer pending: out of the pending map, its group and the in-flight rows."""

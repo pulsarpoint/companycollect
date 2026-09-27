@@ -346,9 +346,18 @@ def run_ip_enrichment(
             processed["pass"] = 0
             enricher.reset_pass()
             if enricher.networks_written > written_at_reload:
-                # Networks fetched in earlier passes serve this pass's addresses too.
-                client.execute("SYSTEM RELOAD DICTIONARY corpscout.rdap_network_trie")
+                # Networks fetched in earlier passes serve this pass's addresses too; a
+                # failed reload only costs reuse (recent still serves the newest ones).
                 written_at_reload = enricher.networks_written
+                try:
+                    client.execute(
+                        "SYSTEM RELOAD DICTIONARY corpscout.rdap_network_trie"
+                    )
+                except Exception as error:
+                    context.log.warning(
+                        "Could not reload the RDAP network trie between passes: %r",
+                        error,
+                    )
             rows: list[dict] = []
             for rows in remaining_pages(client, task, buckets, size=config.batch_size):
                 emit(enricher.submit(rows))
@@ -384,6 +393,12 @@ def run_ip_enrichment(
                 counts["budget_waits"] += 1
                 counts["budget_wait_seconds"] += enricher.wait_for_registry_budget()
     except BaseException:
+        # A termination can interrupt a query mid-answer: start the failure path on a fresh
+        # connection (clickhouse_driver reconnects on the next query).
+        try:
+            client.disconnect()
+        except Exception:  # the failure path reconnects anyway
+            pass
         # Stop the lanes, keep what they already fetched and what was resolved before the
         # failure; a commit or flush error must not mask the original exception.
         try:

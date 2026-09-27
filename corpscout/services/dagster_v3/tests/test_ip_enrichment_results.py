@@ -3534,6 +3534,17 @@ def test_a_full_registry_queue_defers_its_misses_to_the_next_pass(
     assert env.client.execute(
         "SELECT ip FROM corpscout.rdap_ip_lookup_results WHERE ip LIKE '9.9.%'"
     ) == [("9.9.1.1",)]
+    # Waiters count toward the cap: with 2 slots, the queued miss and its /24 waiter
+    # fill the lane and the next miss is deferred.
+    capped = resolver(env, concurrent=False, max_queue_per_registry=2)
+    capped.start_lanes()
+    try:
+        assert capped.submit(page(env, "9.8.1.1", "9.8.1.2", "9.8.2.1")) == []
+        assert capped.deferred == {"arin": 1} and capped.in_flight == 2
+        answered = capped.drain()
+    finally:
+        capped.stop_lanes()
+    assert sorted(row["ip"] for row, _ in answered) == ["9.8.1.1", "9.8.1.2"]
 
 
 def test_misses_of_one_network_on_later_pages_wait_for_its_fetch(
@@ -3786,3 +3797,233 @@ def test_commits_are_grouped_not_one_insert_per_address(environment, monkeypatch
     assert (
         kinds["negative"] == kinds["trie"] == len(pages)
     )  # the reader's bound per page
+
+
+# --- Task 12 fix round 1 ------------------------------------------------------------------
+
+
+def test_a_failed_commit_group_stores_no_reuse_of_its_networks(
+    environment, monkeypatch
+):
+    env = environment
+
+    def wide(self, ip):
+        env.calls.append(ip)
+        if ip.startswith("8.8."):
+            return response(ip, start="8.8.0.0", end="8.8.255.255")
+        return response(ip)
+
+    monkeypatch.setattr(RdapClient, "lookup_ip", wide)
+    execute = Client.execute
+    failed = []
+
+    def failing(self, query, *args, **kwargs):
+        if query == RDAP_NETWORK_INSERT_SQL and not failed:
+            failed.append(query)
+            raise ConnectionError("network insert lost")
+        return execute(self, query, *args, **kwargs)
+
+    monkeypatch.setattr(Client, "execute", failing)
+    orphans = """SELECT count() FROM corpscout.ip_enrichment_results
+        WHERE rdap_network_key IS NOT NULL
+          AND rdap_network_key NOT IN (SELECT network_key FROM corpscout.rdap_networks)"""
+    ips = ["8.8.8.8", "8.8.100.1", "8.8.200.1", "1.1.1.1"]
+    task = select(env, ips)
+    assert not run(env, task, batch_size=1).success and failed
+    # Nothing that reuses the lost network was stored as found, and no result refers to a
+    # network that is not stored.
+    assert env.client.execute(orphans) == [(0,)]
+    resumed = run(env, task, batch_size=1)
+    assert resumed.success and outcome(resumed)["completion_status"] == "completed"
+    assert env.client.execute(orphans) == [(0,)]
+    assert env.client.execute(
+        "SELECT count(), uniqExact(input_id) FROM corpscout.ip_enrichment_results FINAL"
+    ) == [(4, 4)]
+
+
+def test_after_a_failed_commit_the_stop_stores_no_reuse_of_its_network(
+    environment, monkeypatch
+):
+    env = environment
+    monkeypatch.setattr(
+        RdapClient,
+        "lookup_ip",
+        lambda self, ip: (
+            env.calls.append(ip),
+            response(ip, start="8.8.0.0", end="8.8.255.255"),
+        )[1],
+    )
+    # One outcome per group: the network's own outcome fails alone, its reuse stays
+    # waiting for the stop.
+    monkeypatch.setattr(enrichment, "COMMIT_BATCH", 1)
+    enricher = resolver(env, clock=lambda: 0.0)
+    enricher.start_lanes()
+    try:
+        assert enricher.submit(page(env, "8.8.8.8", "8.8.100.1")) == []
+        wait_until(lambda: len(enricher._lanes.outcomes) == 2)
+        assert enricher._lanes.outcomes[1].reused == "arin:TEST-8.8.8.8"
+        execute = Client.execute
+
+        def failing(self, query, *args, **kwargs):
+            if query == RDAP_NETWORK_INSERT_SQL:
+                raise ConnectionError("network insert lost")
+            return execute(self, query, *args, **kwargs)
+
+        monkeypatch.setattr(Client, "execute", failing)
+        with pytest.raises(ConnectionError):
+            enricher.collect(force=True)
+        monkeypatch.setattr(Client, "execute", execute)
+        # The reuse would be answered from a network that was never stored: not stored.
+        assert enricher.stop_lanes(commit=True) == []
+    finally:
+        enricher.stop_lanes()
+    assert env.calls == ["8.8.8.8"]
+    for table in ("rdap_networks", "rdap_ip_lookup_results"):
+        assert env.client.execute(f"SELECT count() FROM corpscout.{table}") == [(0,)]
+
+
+def registry_level(ip):
+    return response(
+        ip,
+        start="103.0.0.0",
+        end="103.255.255.255",
+        handle="103.0.0.0 - 103.255.255.255",
+        name="APNIC-AP",
+    )
+
+
+def test_a_registry_level_answer_does_not_defer_other_queued_misses(
+    environment, monkeypatch
+):
+    env = environment
+    seed_reference_data(env.client)
+    monkeypatch.setattr(
+        RdapClient,
+        "lookup_ip",
+        lambda self, ip: (env.calls.append(ip), registry_level(ip))[1],
+    )
+    enricher = resolver(env)
+    ips = ("103.35.64.49", "103.15.66.50", "103.20.1.1")
+    resolved = enricher.resolve_page(page(env, *ips))
+    # The later misses first reuse the fetched /8; once it is registry-level they are
+    # queued again as misses of their own, never deferred.
+    assert set(resolved) == set(ips) and enricher.deferred == {}
+    assert sorted(env.calls) == sorted(ips) and enricher.registry_level_responses == 3
+    assert {r["rdap_matched_cidr"] for r in resolved.values()} == {"103.0.0.0/8"}
+    assert sorted(
+        env.client.execute("SELECT ip FROM corpscout.rdap_ip_lookup_results FINAL")
+    ) == sorted((ip,) for ip in ips)
+
+
+def test_a_waiter_outside_its_leaders_network_is_asked_itself(environment, monkeypatch):
+    env = environment
+
+    def split(self, ip):
+        env.calls.append(ip)
+        low = int(ip.rsplit(".", 1)[1]) < 128
+        return response(
+            ip,
+            start="8.8.8.0" if low else "8.8.8.128",
+            end="8.8.8.127" if low else "8.8.8.255",
+        )
+
+    monkeypatch.setattr(RdapClient, "lookup_ip", split)
+    enricher = resolver(env)
+    resolved = enricher.resolve_page(page(env, "8.8.8.8", "8.8.8.200"))
+    assert env.calls == ["8.8.8.8", "8.8.8.200"]
+    assert {ip: r["rdap_matched_cidr"] for ip, r in resolved.items()} == {
+        "8.8.8.8": "8.8.8.0/25",
+        "8.8.8.200": "8.8.8.128/25",
+    }
+    assert env.client.execute(
+        "SELECT ip FROM corpscout.rdap_ip_lookup_results FINAL ORDER BY ip"
+    ) == [("8.8.8.200",), ("8.8.8.8",)]
+
+
+def test_waiters_of_a_failed_leader_are_requeued_and_attach_to_the_first(
+    environment, monkeypatch
+):
+    env = environment
+
+    def arin(self, ip):
+        env.calls.append(ip)
+        if ip == "9.9.9.1":
+            raise RdapClientError("gone", code="not_found", retryable=False)
+        return response(ip)
+
+    monkeypatch.setattr(RdapClient, "lookup_ip", arin)
+    enricher = resolver(env)
+    resolved = enricher.resolve_page(page(env, "9.9.9.1", "9.9.9.2", "9.9.9.3"))
+    # 9.9.9.2 is queued again and asked; 9.9.9.3 waits on it and reuses its network.
+    assert env.calls == ["9.9.9.1", "9.9.9.2"]
+    assert {ip: r["rdap_lookup_status"] for ip, r in resolved.items()} == {
+        "9.9.9.1": "not_found",
+        "9.9.9.2": "found",
+        "9.9.9.3": "found",
+    }
+    assert enricher.cache_hits == 1 and enricher.in_flight == 0
+    assert env.client.execute(
+        "SELECT ip FROM corpscout.rdap_ip_lookup_results FINAL ORDER BY ip"
+    ) == [("9.9.9.1",), ("9.9.9.2",)]
+
+
+def test_waiters_of_a_deferred_leader_are_deferred_each(environment, monkeypatch):
+    env = environment
+
+    def limited(self, ip):
+        env.calls.append(ip)
+        raise RdapClientError(
+            "rate limit", code="rate_limited", retryable=True, status_code=429
+        )
+
+    monkeypatch.setattr(RdapClient, "lookup_ip", limited)
+    enricher = resolver(env, clock=lambda: 0.0)
+    assert enricher.resolve_page(page(env, "9.9.9.1", "9.9.9.2", "9.9.9.3")) == {}
+    # The leader was rate limited; its waiters, queued again, meet the paused registry.
+    assert env.calls == ["9.9.9.1"] and enricher.deferred == {"arin": 3}
+    assert enricher.in_flight == 0
+    assert env.client.execute(
+        "SELECT count() FROM corpscout.rdap_ip_lookup_results"
+    ) == [(0,)]
+
+
+def test_waiters_of_a_registry_level_leader_are_requeued(environment, monkeypatch):
+    env = environment
+    seed_reference_data(env.client)
+
+    def arin(self, ip):
+        env.calls.append(ip)
+        if ip == "103.35.64.49":
+            return registry_level(ip)
+        return response(ip, start="103.35.64.0", end="103.35.64.255")
+
+    monkeypatch.setattr(RdapClient, "lookup_ip", arin)
+    enricher = resolver(env)
+    resolved = enricher.resolve_page(
+        page(env, "103.35.64.49", "103.35.64.50", "103.35.64.51")
+    )
+    # .49 answers only itself; .50 is asked, .51 waits on .50 and reuses its /24.
+    assert env.calls == ["103.35.64.49", "103.35.64.50"]
+    assert {ip: r["rdap_matched_cidr"] for ip, r in resolved.items()} == {
+        "103.35.64.49": "103.0.0.0/8",
+        "103.35.64.50": "103.35.64.0/24",
+        "103.35.64.51": "103.35.64.0/24",
+    }
+    assert enricher.registry_level_responses == 1 and enricher.deferred == {}
+    assert env.client.execute(
+        "SELECT ip FROM corpscout.rdap_ip_lookup_results FINAL ORDER BY ip"
+    ) == [("103.35.64.49",), ("103.35.64.50",)]
+
+
+def test_an_ipv6_waiter_shares_its_48(environment):
+    env = environment
+    enricher = resolver(env)
+    resolved = enricher.resolve_page(
+        page(env, "2001:4860:1::1", "2001:4860:1:ffff::2", "2001:4860:2::1")
+    )
+    # One /48 waits on its leader; another /48 of the same /32 reuses the fetched network.
+    assert env.calls == ["2001:4860:1::1"] and enricher.cache_hits == 2
+    assert {r["rdap_matched_cidr"] for r in resolved.values()} == {"2001:4860::/32"}
+    assert env.client.execute(
+        "SELECT ip FROM corpscout.rdap_ip_lookup_results FINAL"
+    ) == [("2001:4860:1::1",)]
