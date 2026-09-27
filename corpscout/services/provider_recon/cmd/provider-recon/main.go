@@ -38,6 +38,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return cmdCollect(ctx, args[1:], stdout, stderr)
 	case "restore":
 		return cmdRestore(ctx, args[1:], stdout, stderr)
+	case "serve":
+		return cmdServe(ctx, args[1:], stdout, stderr)
 	default:
 		usage(stderr)
 		return 64
@@ -45,7 +47,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "usage: provider-recon validate|schema|collect|restore [flags]")
+	fmt.Fprintln(w, "usage: provider-recon validate|schema|collect|restore|serve [flags]")
 }
 
 func cmdValidate(args []string, stdout, stderr io.Writer) int {
