@@ -18,6 +18,7 @@ from dagster_v3.defs.commoncrawl_geoip.resources import MaxMindDatabaseResource
 from dagster_v3.defs.commoncrawl_rdap import client as rdap_client
 from dagster_v3.defs.commoncrawl_rdap import apnic_whois, ripe_rest
 from dagster_v3.defs.commoncrawl_rdap.assets import (
+    RDAP_LOOKUP_INSERT_SQL,
     RDAP_NETWORK_INSERT_SQL,
     RDAP_SEGMENT_INSERT_SQL,
 )
@@ -835,23 +836,29 @@ def test_run_metadata_publishes_reroutes_and_fallbacks(environment, monkeypatch)
 
 def test_a_failure_mid_pass_still_stores_the_buffered_results(environment, monkeypatch):
     env = environment
-    resolve = RdapEnricher.resolve_page
+    submit = RdapEnricher.submit
     pages = []
 
     def failing_second_page(self, rows):
         pages.append(rows)
         if len(pages) == 2:
+            # The first page's miss is fetched (not necessarily committed) by now.
+            deadline = time.monotonic() + 20
+            while self._lanes.fetching or any(self._lanes.queues.values()):
+                assert time.monotonic() < deadline
+                time.sleep(0.01)
             raise RuntimeError("resolver failed")
-        return resolve(self, rows)
+        return submit(self, rows)
 
-    monkeypatch.setattr(RdapEnricher, "resolve_page", failing_second_page)
+    monkeypatch.setattr(RdapEnricher, "submit", failing_second_page)
     task = select(env, ["1.1.1.1", "8.8.8.8"])
     assert not run(env, task, batch_size=1).success
-    # The first page was only buffered (1 row < 500, < 5 s) when the second failed.
+    # The first page was fetched, and at most buffered, when the second failed: the
+    # failure path commits it and stores the buffer.
     assert env.client.execute(
         "SELECT count() FROM corpscout.ip_enrichment_results FINAL"
     ) == [(1,)]
-    monkeypatch.setattr(RdapEnricher, "resolve_page", resolve)
+    monkeypatch.setattr(RdapEnricher, "submit", submit)
     assert run(env, task).success and len(env.calls) == 2
 
 
@@ -2904,7 +2911,9 @@ def test_lanes_commit_the_same_outcomes_in_the_same_order_as_one_lane(
 
     def recording(self, query, *args, **kwargs):
         if query in (RDAP_NETWORK_INSERT_SQL, RDAP_SEGMENT_INSERT_SQL):
-            written.append((query == RDAP_NETWORK_INSERT_SQL, args[0][0][0]))
+            # One INSERT per commit group: record every row, in order.
+            for row in args[0]:
+                written.append((query == RDAP_NETWORK_INSERT_SQL, row[0]))
         return execute(self, query, *args, **kwargs)
 
     monkeypatch.setattr(Client, "execute", recording)
@@ -3336,3 +3345,444 @@ def test_a_failing_lane_stops_the_others_early_and_notes_are_flushed(
         enricher.resolve_page(page(env, "8.8.8.8", "5.1.1.1", "5.2.2.2", "5.3.3.3"))
     assert ripe_calls == ["5.1.1.1"]
     assert ("queued before the failure",) in lines
+
+
+# --- Task 12: long-lived lanes across pages (pipeline) ---------------------------------------
+
+
+def designed_pages(order):
+    """remaining_pages yielding the remaining rows in ``order`` (the real anti-join decides
+    what remains), so a test chooses which addresses share a page."""
+    real = results.remaining_pages
+
+    def pages(client, task, buckets, *, size):
+        rows = {
+            row["ip"]: row
+            for chunk in real(client, task, buckets, size=10_000)
+            for row in chunk
+        }
+        ordered = [rows[ip] for ip in order if ip in rows]
+        for start in range(0, len(ordered), size):
+            yield ordered[start : start + size]
+
+    return pages
+
+
+def wait_until(condition, seconds=20.0):
+    deadline = time.monotonic() + seconds
+    while not condition():
+        assert time.monotonic() < deadline, "condition not reached"
+        time.sleep(0.01)
+
+
+def lane_threads():
+    return [t for t in threading.enumerate() if t.name.startswith("rdap-lane")]
+
+
+def test_a_slow_lacnic_lane_does_not_hold_up_the_other_registries(
+    environment, monkeypatch
+):
+    env = environment
+    # A scaled clock: one fake second is 50 real ms, so the lanes really run in parallel
+    # and pacing sleeps really wait (LACNIC 6.5 s, ARIN 1 s between requests).
+    scale = 0.05
+    origin = time.perf_counter()
+
+    def now():
+        return (time.perf_counter() - origin) / scale
+
+    monkeypatch.setattr(enrichment, "monotonic", now)
+    monkeypatch.setattr(
+        enrichment, "sleep", lambda seconds: time.sleep(seconds * scale)
+    )
+    monkeypatch.setattr(
+        RdapClient,
+        "registry_for",
+        lambda self, ip: "lacnic" if ip.startswith("200.") else "arin",
+    )
+    sent = {}
+    lock = threading.Lock()
+
+    def lookup(self, ip):
+        with lock:
+            sent[ip] = now()
+        return response(ip)
+
+    monkeypatch.setattr(RdapClient, "lookup_ip", lookup)
+    committed = {}
+    execute = Client.execute
+
+    def recording(self, query, *args, **kwargs):
+        value = execute(self, query, *args, **kwargs)
+        if query == RDAP_LOOKUP_INSERT_SQL:
+            stamp = now()  # one commit group, one time
+            for row in args[0]:
+                committed[row[1]] = stamp
+        return value
+
+    monkeypatch.setattr(Client, "execute", recording)
+    lacnic = [f"200.1.{n}.1" for n in range(1, 5)]
+    arin = [f"8.8.{n}.1" for n in range(1, 17)]
+    # Two pages whose slowest lane is LACNIC (2 misses, 13 s each), then three ARIN pages
+    # (4 misses, 4 s each): draining per page takes 13 + 13 + 3 x 4 = 38 s; lanes that run
+    # across pages take LACNIC's 4 x 6.5 = 26 s while ARIN's 16 s run alongside.
+    order = lacnic[:2] + arin[:2] + lacnic[2:] + arin[2:]
+    monkeypatch.setattr(results, "remaining_pages", designed_pages(order))
+    result = run(
+        env, select(env, lacnic + arin), batch_size=4, request_delay_seconds=1.0
+    )
+    assert result.success
+    metadata = outcome(result)
+    assert metadata["completion_status"] == "completed" and metadata["written"] == 20
+    assert metadata["requests_by_endpoint"] == {"lacnic:direct": 4, "arin:direct": 16}
+    lacnic_times = sorted(sent[ip] for ip in lacnic)
+    # Every ARIN address was asked while LACNIC was still working (and committed no later
+    # than LACNIC's last group; how soon depends on ClickHouse's latency) ...
+    assert max(sent[ip] for ip in arin) < lacnic_times[-1]
+    assert max(committed[ip] for ip in arin) <= max(committed[ip] for ip in lacnic)
+    # ... so the whole run took about LACNIC's own workload, not the sum over pages.
+    assert all(b - a >= 6.4 for a, b in zip(lacnic_times, lacnic_times[1:]))
+    assert max(sent.values()) - min(sent.values()) < 32
+    assert metadata["max_queue_depth_by_registry"]["lacnic"] >= 1
+
+
+def test_the_reader_stops_at_max_in_flight_until_the_lanes_catch_up(
+    environment, monkeypatch
+):
+    env = environment
+    assert {"max_in_flight", "max_queue_per_registry"} <= set(
+        results.TRANSPORT_SETTINGS
+    )
+    config = IpEnrichmentResultsConfig(task_id=str(uuid4()))
+    assert (config.max_in_flight, config.max_queue_per_registry) == (5000, 2000)
+    release, entered = threading.Event(), threading.Event()
+
+    def arin(self, ip):
+        env.calls.append(ip)
+        entered.set()
+        assert release.wait(20)
+        return response(ip)
+
+    monkeypatch.setattr(RdapClient, "lookup_ip", arin)
+    submit = RdapEnricher.submit
+    admitted = []  # misses in flight when each page was admitted
+
+    def counting(self, rows):
+        admitted.append(self.in_flight)
+        return submit(self, rows)
+
+    monkeypatch.setattr(RdapEnricher, "submit", counting)
+    seen = {}
+
+    def watcher():
+        assert entered.wait(20)
+        time.sleep(0.5)  # time enough for the reader to read on, were it not held
+        seen["pages"] = len(admitted)
+        release.set()
+
+    thread = threading.Thread(target=watcher)
+    thread.start()
+    ips = [f"8.8.{n}.1" for n in range(1, 6)]
+    result = run(env, select(env, ips), batch_size=1, max_in_flight=2)
+    thread.join()
+    assert result.success and outcome(result)["written"] == 5
+    # The first request hangs: pages 1 and 2 are in flight, page 3 waits for them.
+    assert seen["pages"] == 2 and len(admitted) == 5
+    assert all(count < 2 for count in admitted)
+    assert sorted(env.calls) == sorted(ips)
+
+
+def test_a_full_registry_queue_defers_its_misses_to_the_next_pass(
+    environment, monkeypatch
+):
+    env = environment
+
+    def slow(self, ip):
+        env.calls.append(ip)
+        time.sleep(0.2)  # the page is admitted long before the lane frees a slot
+        return response(ip)
+
+    monkeypatch.setattr(RdapClient, "lookup_ip", slow)
+    ips = [f"8.8.{n}.1" for n in range(1, 4)]
+    result = run(env, select(env, ips), batch_size=10, max_queue_per_registry=1)
+    assert result.success
+    metadata = outcome(result)
+    assert metadata["completion_status"] == "completed" and metadata["written"] == 3
+    # One page, a lane of one slot: at least one miss is deferred (no result, no
+    # marker), and the next pass (no wait: others progressed) resolves it.
+    assert metadata["rdap_deferrals_by_registry"]["arin"] >= 1
+    assert metadata["budget_waits"] == 0
+    assert metadata["max_queue_depth_by_registry"] == {"arin": 1}
+    assert sorted(env.calls) == ips  # each asked once
+    assert env.client.execute(
+        "SELECT count() FROM corpscout.ip_enrichment_results"
+    ) == [(3,)]  # no row for a deferral, no duplicate
+    assert env.client.execute(
+        "SELECT lookup_status, count() FROM corpscout.rdap_ip_lookup_results GROUP BY 1"
+    ) == [("found", 3)]
+    # Deterministically, with the sequential reference: the lane holds one miss, the
+    # page's two others are deferred at admission.
+    enricher = resolver(env, concurrent=False, max_queue_per_registry=1)
+    enricher.start_lanes()
+    try:
+        assert enricher.submit(page(env, "9.9.1.1", "9.9.2.1", "9.9.3.1")) == []
+        assert enricher.deferred == {"arin": 2} and enricher.in_flight == 1
+        answered = enricher.drain()
+    finally:
+        enricher.stop_lanes()
+    assert [row["ip"] for row, _ in answered] == ["9.9.1.1"]
+    assert env.client.execute(
+        "SELECT ip FROM corpscout.rdap_ip_lookup_results WHERE ip LIKE '9.9.%'"
+    ) == [("9.9.1.1",)]
+
+
+def test_misses_of_one_network_on_later_pages_wait_for_its_fetch(
+    environment, monkeypatch
+):
+    env = environment
+    gate = threading.Event()
+
+    def arin(self, ip):
+        env.calls.append(ip)
+        assert gate.wait(20)
+        return response(ip, start="8.8.0.0", end="8.8.255.255")
+
+    monkeypatch.setattr(RdapClient, "lookup_ip", arin)
+    enricher = resolver(env)
+    enricher.start_lanes()
+    try:
+        assert enricher.submit(page(env, "8.8.8.8")) == []
+        wait_until(lambda: env.calls == ["8.8.8.8"])  # in flight
+        # Later pages: the same address, its /24 (both wait for the fetch) and another /24
+        # of the same network (queued; its worker finds the fetched network first).
+        assert enricher.submit(page(env, "8.8.8.8", "8.8.8.9")) == []
+        assert enricher.submit(page(env, "8.8.100.1")) == []
+        # Four rows in flight (8.8.8.8 twice), one of them queued.
+        assert enricher.in_flight == 4 and enricher.queue_depths() == {"arin": 1}
+        gate.set()
+        answered = enricher.drain()
+        # Committed: a later page is answered by the in-run cache at admission.
+        later = enricher.submit(page(env, "8.8.200.1"))
+    finally:
+        enricher.stop_lanes()
+    assert env.calls == ["8.8.8.8"] and enricher.requests == 1
+    assert sorted(row["ip"] for row, _ in answered) == [
+        "8.8.100.1",
+        "8.8.8.8",
+        "8.8.8.8",
+        "8.8.8.9",
+    ]
+    assert {result["rdap_network_key"] for _, result in answered + later} == {
+        "arin:TEST-8.8.8.8"
+    }
+    assert {row["ip"]: r["rdap_matched_cidr"] for row, r in answered + later} == {
+        "8.8.8.8": "8.8.0.0/16",
+        "8.8.8.9": "8.8.0.0/16",
+        "8.8.100.1": "8.8.0.0/16",
+        "8.8.200.1": "8.8.0.0/16",
+    }
+    assert enricher.cache_hits == 3  # the /24 waiter, the reuse and the in-run cache
+    assert env.client.execute(
+        "SELECT ip FROM corpscout.rdap_ip_lookup_results FINAL"
+    ) == [("8.8.8.8",)]
+    assert not lane_threads()
+
+
+def test_the_pipeline_stores_what_draining_every_page_stores(environment, monkeypatch):
+    env = environment
+
+    def arin(self, ip):
+        env.calls.append(ip)
+        if ip == "9.9.9.9":
+            raise RdapClientError(
+                "unavailable", code="remote_server", retryable=True, status_code=503
+            )
+        found = response(ip)
+        if ip == "1.1.1.1":
+            found.raw_response["links"] = [
+                {"rel": "up", "href": "https://rdap.arin.net/registry/ip/1.0.0.0/8"}
+            ]
+        return found
+
+    monkeypatch.setattr(RdapClient, "lookup_ip", arin)
+    monkeypatch.setattr(
+        RdapClient,
+        "lookup_up_url",
+        lambda self, url, *, rir: response(
+            "1.0.0.1", start="1.0.0.0", end="1.255.255.255"
+        ),
+    )
+    ips = [
+        "8.8.8.8",
+        "8.8.8.9",
+        "8.8.4.4",
+        "5.1.1.1",
+        "5.1.1.2",
+        "202.1.1.1",
+        "202.1.1.2",
+        "1.1.1.1",
+        "9.9.9.9",
+        "10.0.0.1",
+        "2002:808:808::1",
+        "::ffff:5.1.1.3",
+        "2001:4860::8888",
+    ]
+
+    def snapshot(result):
+        metadata = outcome(result)
+        return (
+            env.client.execute(
+                """SELECT ip, rdap_lookup_status, rdap_network_key, rdap_matched_cidr,
+                    rdap_error_code, rdap_rir FROM corpscout.ip_enrichment_current ORDER BY ip"""
+            ),
+            env.client.execute(
+                """SELECT ip, lookup_status, network_key, error_code
+                FROM corpscout.rdap_ip_lookup_results FINAL ORDER BY ip"""
+            ),
+            env.client.execute(
+                "SELECT network_key FROM corpscout.rdap_networks FINAL ORDER BY 1"
+            ),
+            env.client.execute(
+                "SELECT network_key, cidr FROM corpscout.rdap_network_segments FINAL ORDER BY 1, 2"
+            ),
+            sorted(env.calls),
+            {
+                key: metadata[key]
+                for key in (
+                    "completion_status",
+                    "written",
+                    "rdap_requests",
+                    "rdap_cache_hits",
+                    "rdap_requests_by_registry",
+                    "embedded_ipv4_lookups",
+                )
+            },
+        )
+
+    pipeline = snapshot(run(env, select(env, ips), batch_size=3))
+    for table in (
+        "ip_enrichment_results",
+        "rdap_networks",
+        "rdap_network_segments",
+        "rdap_ip_lookup_results",
+        "rdap_network_registry_class",
+    ):
+        env.client.execute(f"TRUNCATE TABLE corpscout.{table}")
+    env.calls.clear()
+    # The per-page reference: the same lanes, drained before the next page is read.
+    submit = RdapEnricher.submit
+    monkeypatch.setattr(
+        RdapEnricher, "submit", lambda self, rows: submit(self, rows) + self.drain()
+    )
+    per_page = snapshot(run(env, select(env, ips), batch_size=3))
+    assert pipeline == per_page
+    current, markers, networks, _, calls, metadata = pipeline
+    assert len(current) == len(ips) and metadata["completion_status"] == (
+        "completed_with_errors"
+    )
+    assert ("9.9.9.9", "retryable_error", None, None, "remote_server", None) in current
+    assert "arin:TEST-1.0.0.1" in {key for (key,) in networks}  # the parent
+
+
+def test_a_terminated_run_commits_what_was_fetched_and_resumes(
+    environment, monkeypatch
+):
+    env = environment
+    gate = threading.Event()
+
+    def arin(self, ip):
+        env.calls.append(ip)
+        if len(env.calls) == 3:  # in flight when the run is terminated
+            assert gate.wait(20)
+        return response(ip)
+
+    monkeypatch.setattr(RdapClient, "lookup_ip", arin)
+    submit = RdapEnricher.submit
+    pages = []
+
+    def terminated(self, rows):
+        pages.append(rows)
+        if len(pages) == 5:
+            wait_until(lambda: len(env.calls) == 3)
+            threading.Timer(0.3, gate.set).start()
+            raise dg.DagsterExecutionInterruptedError("terminated")
+        return submit(self, rows)
+
+    monkeypatch.setattr(RdapEnricher, "submit", terminated)
+    ips = [f"8.8.{n}.1" for n in range(1, 7)]
+    task = select(env, ips)
+    assert not run(env, task, batch_size=1).success
+    # Requests 1-2 done, 3 finished while the lanes stopped: all three committed; the
+    # queued 4th was dropped, pages 5-6 never admitted.
+    assert env.client.execute(
+        "SELECT count() FROM corpscout.ip_enrichment_results"
+    ) == [(3,)]
+    assert env.client.execute(
+        "SELECT count() FROM corpscout.rdap_ip_lookup_results"
+    ) == [(3,)]
+    assert len(env.calls) == 3 and not lane_threads()
+    assert task_row(env, task)["status"] == "selected"
+    monkeypatch.setattr(RdapEnricher, "submit", submit)
+    resumed = run(env, task, batch_size=1)
+    assert resumed.success and outcome(resumed)["completion_status"] == "completed"
+    # Nothing fetched was lost (asked twice) and nothing was stored twice.
+    assert sorted(env.calls) == sorted(ips)
+    assert env.client.execute(
+        "SELECT count(), uniqExact(input_id) FROM corpscout.ip_enrichment_results"
+    ) == [(6, 6)]
+
+
+def test_commits_are_grouped_not_one_insert_per_address(environment, monkeypatch):
+    env = environment
+    inserts = []
+    queries = []
+    execute = Client.execute
+    tables = {
+        RDAP_NETWORK_INSERT_SQL: "networks",
+        RDAP_SEGMENT_INSERT_SQL: "segments",
+        RDAP_LOOKUP_INSERT_SQL: "markers",
+    }
+
+    def recording(self, query, *args, **kwargs):
+        queries.append(query)
+        if query in tables:
+            inserts.append((tables[query], len(args[0])))
+        return execute(self, query, *args, **kwargs)
+
+    first = [f"8.{n // 200 + 1}.{n % 200}.1" for n in range(450)]
+    rows = page(env, *first)
+    monkeypatch.setattr(Client, "execute", recording)
+    # Per page: committed once the lanes are idle, COMMIT_BATCH outcomes per group.
+    assert enrichment.COMMIT_BATCH == 200
+    resolved = resolver(env, max_requests=None).resolve_page(rows)
+    assert len(resolved) == 450
+    assert [n for kind, n in inserts if kind == "networks"] == [200, 200, 50]
+    assert [n for kind, n in inserts if kind == "markers"] == [200, 200, 50]
+    assert len([kind for kind, _ in inserts if kind == "segments"]) == 3
+    assert query_kinds(queries)["context"] == 450  # the classification read per miss
+    # Pipelined over three pages with a clock that never makes a group due by age: at
+    # most one group per page besides the full ones, never one INSERT per address.
+    second = [f"9.{n // 200 + 1}.{n % 200}.1" for n in range(450)]
+    pages = [page(env, *second[start : start + 150]) for start in (0, 150, 300)]
+    inserts.clear()
+    queries.clear()
+    enricher = resolver(env, clock=lambda: 0.0, max_requests=None)
+    enricher.start_lanes()
+    answered = []
+    try:
+        for rows in pages:
+            answered += enricher.submit(rows)
+            answered += enricher.collect()
+        answered += enricher.drain()
+    finally:
+        enricher.stop_lanes()
+    assert len(answered) == 450
+    networks = [n for kind, n in inserts if kind == "networks"]
+    markers = [n for kind, n in inserts if kind == "markers"]
+    assert sum(networks) == sum(markers) == 450
+    assert len(networks) <= 450 // 200 + 1 + len(pages)
+    assert len(markers) <= 450 // 200 + 1 + len(pages)
+    kinds = query_kinds(queries)
+    assert (
+        kinds["negative"] == kinds["trie"] == len(pages)
+    )  # the reader's bound per page

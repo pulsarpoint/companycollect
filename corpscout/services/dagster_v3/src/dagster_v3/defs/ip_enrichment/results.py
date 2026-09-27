@@ -2,9 +2,10 @@
 
 Remaining work is a live ClickHouse query per 256-way bucket (entries without a result
 of this execution; each query anti-joins one primary-key range of the results table),
-every page costs a fixed number of ClickHouse round trips whatever its size, outcomes
-are stored in acknowledged micro-batches, and completion counts come from the results
-table. Nothing about a page is persisted, so a resume is the same loop again. Entries
+every page costs a fixed number of ClickHouse round trips whatever its size, registry
+misses are fetched by long-lived per-registry lanes across pages (a pipeline) and
+committed in groups, outcomes are stored in acknowledged micro-batches, and completion
+counts come from the results table. Nothing about a page is persisted, so a resume is the same loop again. Entries
 a registry budget, a registry pause or a failed bootstrap deferred stay remaining; when
 a whole pass resolved nothing else the run waits for the earliest window, then walks
 again.
@@ -51,10 +52,12 @@ from dagster_v3.defs.ip_enrichment.input import (
 )
 
 LOOKUP_STATUSES = ("city_lookup_status", "asn_lookup_status", "rdap_lookup_status")
-# Page size, request budgets, pacing, pauses and proxies are transport: they may change
-# between resumes.
+# Page size, pipeline bounds, request budgets, pacing, pauses and proxies are transport:
+# they may change between resumes.
 TRANSPORT_SETTINGS = (
     "batch_size",
+    "max_in_flight",
+    "max_queue_per_registry",
     "max_requests",
     "request_delay_seconds",
     "registry_request_delays",
@@ -250,14 +253,19 @@ def run_ip_enrichment(
 ) -> dict:
     """Walk the task bucket by bucket until a whole pass finds nothing remaining.
 
-    A page's outcomes enter the buffer together and the cursor moves past the page, so
-    a page is never read twice inside a pass; the buffer is flushed at the end of every
-    pass and a further pass confirms that nothing remains. A reached max_requests
-    budget flushes what was resolved and stops; the rest stays remaining for the
-    resume. A pass that resolved nothing while entries were deferred (a registry at its
-    budget or paused, or the bootstrap paused) waits for the earliest window and walks
-    again. Whatever is buffered when the loop fails is still stored. Progress is logged
-    at most once a minute (``clock`` is injectable) and at the end of every pass.
+    A pipeline on this thread: each page is admitted (its cache answers are recorded at
+    once, its misses go to the enricher's long-lived registry lanes) and the outcomes the
+    lanes fetched meanwhile are committed, so a slow registry delays only its own
+    addresses. The reader stops reading pages while ``max_in_flight`` misses are in flight.
+    The cursor only moves forward, so a page is never read twice inside a pass; at the end
+    of a pass the lanes are drained (every miss answered or deferred) and the buffer is
+    flushed, and a further pass confirms that nothing remains. A reached max_requests
+    commits what was fetched, flushes and stops; the rest stays remaining for the resume.
+    A pass that resolved nothing while entries were deferred (a registry at its budget or
+    paused, or the bootstrap paused) waits for the earliest window and walks again. When
+    the loop fails (or the run is terminated) the lanes are stopped, what they already
+    fetched is committed and the buffer is still stored. Progress is logged at most once a
+    minute (``clock`` is injectable) and at the end of every pass.
     """
     execution = task["config"]["execution"]
     execution_uuid = UUID(execution["execution_id"])
@@ -268,6 +276,7 @@ def run_ip_enrichment(
         "budget_waits": 0,
         "budget_wait_seconds": 0.0,
     }
+    processed = {"pass": 0}
 
     def flush(records: list[dict]) -> None:
         store_results(client, records)
@@ -289,7 +298,7 @@ def run_ip_enrichment(
         last_log = now
         context.log.info(
             "IP enrichment execution=%s pages=%s written=%s buffered=%s bucket=%s "
-            "rdap_requests=%s cache_hits=%s deferred=%s",
+            "rdap_requests=%s cache_hits=%s deferred=%s in_flight=%s queued=%s",
             execution["execution_id"],
             counts["pages"],
             counts["written"],
@@ -298,53 +307,73 @@ def run_ip_enrichment(
             enricher.requests,
             enricher.cache_hits,
             enricher.deferred,
+            enricher.in_flight,
+            enricher.queue_depths(),
         )
 
+    def record(row: dict, rdap: dict) -> dict:
+        checked_at = datetime.now(UTC)
+        return {
+            "ip": row["ip"],
+            "result_id": str(uuid5(execution_uuid, row["input_id"])),
+            "task_id": str(task["task_id"]),
+            "execution_id": execution["execution_id"],
+            "input_id": row["input_id"],
+            "source_run_id": context.run.run_id,
+            "processor_version": PROCESSOR_VERSION,
+            "attempt": 1,
+            "completed_at": checked_at,
+            **geoip_result(
+                row["ip"],
+                city_reader,
+                asn_reader,
+                checked_at=checked_at,
+                retry_seconds=config.transient_retry_seconds,
+            ),
+            **rdap,
+        }
+
+    def emit(answered: list[tuple[dict, dict]]) -> None:
+        """Buffer the results of committed rows (their coverage is already stored)."""
+        records = [record(row, rdap) for row, rdap in answered]
+        buffer.add(records)
+        processed["pass"] += len(records)
+
+    written_at_reload = enricher.networks_written
+    enricher.start_lanes()
     try:
         while True:
-            processed = 0
+            processed["pass"] = 0
             enricher.reset_pass()
+            if enricher.networks_written > written_at_reload:
+                # Networks fetched in earlier passes serve this pass's addresses too.
+                client.execute("SYSTEM RELOAD DICTIONARY corpscout.rdap_network_trie")
+                written_at_reload = enricher.networks_written
             rows: list[dict] = []
             for rows in remaining_pages(client, task, buckets, size=config.batch_size):
-                rdap = enricher.resolve_page(rows)
-                records = []
-                for row in rows:
-                    if row["ip"] not in rdap:
-                        continue  # deferred, or the request budget ran out
-                    checked_at = datetime.now(UTC)
-                    records.append(
-                        {
-                            "ip": row["ip"],
-                            "result_id": str(uuid5(execution_uuid, row["input_id"])),
-                            "task_id": str(task["task_id"]),
-                            "execution_id": execution["execution_id"],
-                            "input_id": row["input_id"],
-                            "source_run_id": context.run.run_id,
-                            "processor_version": PROCESSOR_VERSION,
-                            "attempt": 1,
-                            "completed_at": checked_at,
-                            **geoip_result(
-                                row["ip"],
-                                city_reader,
-                                asn_reader,
-                                checked_at=checked_at,
-                                retry_seconds=config.transient_retry_seconds,
-                            ),
-                            **rdap[row["ip"]],
-                        }
-                    )
-                buffer.add(records)
-                processed += len(records)
+                emit(enricher.submit(rows))
+                emit(enricher.collect())
                 counts["pages"] += 1
                 progress(rows)
+                # Back-pressure: read the next page only once the lanes caught up.
+                while (
+                    enricher.in_flight >= config.max_in_flight
+                    and not enricher.budget_reached
+                ):
+                    emit(enricher.collect(wait=1.0))
+                    progress(rows)
                 if enricher.budget_reached:
-                    buffer.flush()
-                    counts["request_limit_reached"] = True
-                    progress(rows, force=True)
-                    return counts
-            buffer.flush()  # an unacknowledged batch fails the run; the resume re-reads its rows
+                    break
+            for answered in enricher.draining():  # the lanes finish this pass's misses
+                emit(answered)
+                progress(rows)
+            # An unacknowledged batch fails the run; the resume re-reads its rows.
+            buffer.flush()
             progress(rows, force=True)
-            if processed == 0:
+            if enricher.budget_reached:
+                counts["request_limit_reached"] = True
+                return counts
+            if processed["pass"] == 0:
                 if not enricher.deferred:
                     return counts
                 context.log.warning(
@@ -355,7 +384,15 @@ def run_ip_enrichment(
                 counts["budget_waits"] += 1
                 counts["budget_wait_seconds"] += enricher.wait_for_registry_budget()
     except BaseException:
-        # Keep what was resolved before the failure; a flush error must not mask it.
+        # Stop the lanes, keep what they already fetched and what was resolved before the
+        # failure; a commit or flush error must not mask the original exception.
+        try:
+            emit(enricher.stop_lanes(commit=True))
+        except Exception as error:  # the original exception is re-raised below
+            context.log.warning(
+                "Could not commit the fetched registry outcomes after a failure: %r",
+                error,
+            )
         try:
             buffer.flush()
         except Exception as error:  # the original exception is re-raised below
@@ -365,6 +402,8 @@ def run_ip_enrichment(
                 error,
             )
         raise
+    finally:
+        enricher.stop_lanes()
 
 
 def finish_ip_execution(store, client, task: dict) -> dict:
@@ -548,6 +587,7 @@ def ip_enrichment_results(
             "reroutes_by_registry": enricher.reroutes_by_registry,
             "pauses_by_registry": enricher.pauses_by_registry,
             "pauses_by_endpoint": enricher.pauses_by_endpoint,
+            "max_queue_depth_by_registry": enricher.max_queue_depth_by_registry,
             "embedded_ipv4_lookups": enricher.embedded_ipv4_lookups,
             "teredo_special": enricher.teredo_special,
             **counts,
