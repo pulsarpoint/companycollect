@@ -226,6 +226,8 @@ type Churn struct {
 	Missing    int `json:"missing"`
 	Removed    int `json:"removed"`
 	Purged     int `json:"purged"`
+	// Restored counts ranges put back by restore; only restore runs set it.
+	Restored int `json:"restored,omitempty"`
 }
 
 // CollectorStatus reports one feed's outcome for this provider in this run.

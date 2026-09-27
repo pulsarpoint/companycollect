@@ -133,3 +133,17 @@ func TestPublishScopedManifestHasScopeAndFeeds(t *testing.T) {
 		t.Fatalf("restore run id %q collides with collect run %q", a.RunID, m.RunID)
 	}
 }
+
+func TestDiffKeepsOverlappingFeedsApart(t *testing.T) {
+	goog := ip("34.0.0.0/15", "active", "2026-09-27")
+	goog.Collector = "google_goog"
+	cloud := ip("34.0.0.0/15", "active", "2026-09-27")
+	cloud.Collector = "google_cloud"
+	old := lcDoc(t, goog, cloud)
+	gone := goog
+	gone.Status, gone.MissingSince = "missing", "2026-09-28"
+	d := Diff(&old, lcDoc(t, gone, cloud)).Evidence["ip_ranges"]
+	if d.MissingCount != 1 || len(d.Missing) != 1 {
+		t.Fatalf("one of two overlapping instances went missing but the diff shows %+v", d)
+	}
+}

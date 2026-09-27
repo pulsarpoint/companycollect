@@ -185,6 +185,9 @@ func addItems[T any](set itemSet, svc string, items []T, key func(T) string, par
 	for _, it := range items {
 		l, p := parts(&it)
 		label := svc + " " + key(it)
+		// Identity includes provenance: two feeds (or a curated entry and a
+		// feed) can hold the same CIDR in one service with the same first_seen.
+		id := label + " [" + string(p.Source) + "/" + p.Collector + "] @" + l.FirstSeen
 		e := entry{label: label, status: l.Status, action: l.RemovalAction}
 		l.LastSeen = ""
 		p.SourceVersion = ""
@@ -193,6 +196,6 @@ func addItems[T any](set itemSet, svc string, items []T, key func(T) string, par
 		}
 		canon, _ := json.Marshal(it)
 		e.canon = string(canon)
-		set[label+" @"+l.FirstSeen] = e
+		set[id] = e
 	}
 }

@@ -409,3 +409,53 @@ func TestOverlappingFeedsKeepOneInstancePerCollector(t *testing.T) {
 		}
 	}
 }
+
+func TestRestoreResetsChurnAndCountsRestored(t *testing.T) {
+	def := lcDef()
+	def.Feeds = append(def.Feeds, definitions.FeedRef{Collector: "other_feed", TagMap: map[string]string{"X": "aws.cloudfront"}})
+	with := func(drop ...int) map[string]FeedOutcome {
+		out := cidrs(10, drop...)
+		out["other_feed"] = FeedOutcome{Result: feeds.Result{Ranges: []feeds.Range{r("192.0.2.0/24", "X", "")}}}
+		return out
+	}
+	d0 := run(t, def, with(), nil, 0)
+	d1 := run(t, def, with(0, 1), &d0, 1)
+	d8 := run(t, def, with(0, 1), &d1, 8)
+	restored, n, err := Restore(d8, "aws_ip_ranges", dstr(8), day(8))
+	if err != nil || n != 2 {
+		t.Fatalf("restore: n=%d err=%v", n, err)
+	}
+	if c := restored.Collection.Collectors["aws_ip_ranges"].Churn; c != (model.Churn{Restored: 2}) {
+		t.Fatalf("restored feed churn = %+v, want only Restored=2", c)
+	}
+	if c := restored.Collection.Collectors["other_feed"].Churn; c != (model.Churn{}) {
+		t.Fatalf("untouched feed churn = %+v, want zero", c)
+	}
+}
+
+func TestRestoreRevivesOnlyTheLatestRemovedInstance(t *testing.T) {
+	d0 := run(t, lcDef(), cidrs(10), nil, 0)
+	d1 := run(t, lcDef(), cidrs(10, 0), &d0, 1)
+	d8 := run(t, lcDef(), cidrs(10, 0), &d1, 8)    // instance A (first day 0) removed on day 8
+	d9 := run(t, lcDef(), cidrs(10), &d8, 9)       // instance B starts on day 9
+	d10 := run(t, lcDef(), cidrs(10, 0), &d9, 10)  // B missing since day 10
+	d17 := run(t, lcDef(), cidrs(10, 0), &d10, 17) // B removed on day 17
+	restored, n, err := Restore(d17, "aws_ip_ranges", dstr(8), day(17))
+	if err != nil || n != 1 {
+		t.Fatalf("restore: n=%d err=%v", n, err)
+	}
+	for _, x := range ranges(restored, "10.0.0.0/24") {
+		switch x.FirstSeen {
+		case dstr(0):
+			if x.Status != model.StatusRemoved {
+				t.Fatalf("older instance A was revived across the day 8→9 gap: %+v", x.Lifecycle)
+			}
+		case dstr(9):
+			if x.Status != model.StatusActive || x.RestoredAt != dstr(17) {
+				t.Fatalf("latest instance B not restored: %+v", x.Lifecycle)
+			}
+		default:
+			t.Fatalf("unexpected instance %+v", x.Lifecycle)
+		}
+	}
+}

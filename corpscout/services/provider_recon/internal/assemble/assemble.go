@@ -144,27 +144,39 @@ func Restore(doc model.Document, collectorID, removedSince string, now time.Time
 	n := 0
 	for i := range cp.Services {
 		rs := cp.Services[i].Evidence.IPRanges
-		live := map[string]bool{}
-		for _, r := range rs {
-			if r.Collector == collectorID && r.Status != model.StatusRemoved {
-				live[r.CIDR] = true
+		// Only the newest instance of a CIDR can come back: reviving an older
+		// one would merge validity intervals across a real gap, and a live
+		// newest instance means the range is already back.
+		newest := map[string]int{}
+		for j, r := range rs {
+			if r.Collector != collectorID {
+				continue
+			}
+			if k, seen := newest[r.CIDR]; !seen || newerInstance(r, rs[k]) {
+				newest[r.CIDR] = j
 			}
 		}
-		for j := range rs {
+		for _, j := range newest {
 			r := &rs[j]
-			if r.Collector != collectorID || r.Status != model.StatusRemoved || r.RemovalAction != model.ActionGraceExpired ||
-				r.RemovedAt < removedSince || live[r.CIDR] {
+			if r.Status != model.StatusRemoved || r.RemovalAction != model.ActionGraceExpired || r.RemovedAt < removedSince {
 				continue
 			}
 			r.Status, r.RemovedAt, r.RemovalAction, r.MissingSince, r.RestoredAt = model.StatusActive, "", "", "", today
-			live[r.CIDR] = true
 			n++
 		}
 	}
 	if n == 0 {
 		return doc, 0, fmt.Errorf("%s %s has no grace-expired removals on or after %s; nothing to restore", doc.Slug, collectorID, removedSince)
 	}
+	// A restore run is not a collection: no feed added, lost or removed
+	// anything, so every collector's churn is zero except the restored count.
+	for id, cs := range cp.Collection.Collectors {
+		cs.Churn = model.Churn{}
+		cp.Collection.Collectors[id] = cs
+	}
+	st = cp.Collection.Collectors[collectorID]
 	st.Items = countLive(&cp, collectorID)
+	st.Churn = model.Churn{Restored: n}
 	cp.Collection.Collectors[collectorID] = st
 	model.Normalize(&cp)
 	hash, err := model.ContentHash(cp)
@@ -173,6 +185,18 @@ func Restore(doc model.Document, collectorID, removedSince string, now time.Time
 	}
 	cp.Collection.ContentHash = hash
 	return cp, n, nil
+}
+
+// newerInstance orders instances of one CIDR: later first_seen wins, then a
+// live instance over a removed one, then the later removal.
+func newerInstance(a, b model.IPRange) bool {
+	if a.FirstSeen != b.FirstSeen {
+		return a.FirstSeen > b.FirstSeen
+	}
+	if (a.Status == model.StatusRemoved) != (b.Status == model.StatusRemoved) {
+		return a.Status != model.StatusRemoved
+	}
+	return a.RemovedAt > b.RemovedAt
 }
 
 func applyFeed(doc *model.Document, index map[string]int, defined map[string]bool, ref definitions.FeedRef,
