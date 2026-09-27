@@ -1,0 +1,326 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "ASNDef": {
+      "properties": {
+        "asn": {
+          "type": "integer"
+        },
+        "confidence": {
+          "type": "number"
+        },
+        "source_url": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "asn"
+      ]
+    },
+    "CertIdentityDef": {
+      "properties": {
+        "identity_type": {
+          "type": "string"
+        },
+        "identity_value": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "number"
+        },
+        "source_url": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "identity_type",
+        "identity_value"
+      ]
+    },
+    "DNSRuleDef": {
+      "properties": {
+        "record_type": {
+          "type": "string"
+        },
+        "match_field": {
+          "type": "string"
+        },
+        "matcher_type": {
+          "type": "string"
+        },
+        "pattern": {
+          "type": "string"
+        },
+        "case_sensitive": {
+          "type": "boolean"
+        },
+        "confidence": {
+          "type": "number"
+        },
+        "priority": {
+          "type": "integer"
+        },
+        "source_url": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "record_type",
+        "match_field",
+        "matcher_type"
+      ]
+    },
+    "FeedRef": {
+      "properties": {
+        "collector": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "tag_map": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "generic_tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "collector",
+        "tag_map"
+      ]
+    },
+    "HTTPRuleDef": {
+      "properties": {
+        "http_part": {
+          "type": "string"
+        },
+        "header_name": {
+          "type": "string"
+        },
+        "matcher_type": {
+          "type": "string"
+        },
+        "pattern": {
+          "type": "string"
+        },
+        "path_scope": {
+          "type": "string"
+        },
+        "case_sensitive": {
+          "type": "boolean"
+        },
+        "confidence": {
+          "type": "number"
+        },
+        "priority": {
+          "type": "integer"
+        },
+        "source_url": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "http_part",
+        "matcher_type"
+      ]
+    },
+    "IPRangeDef": {
+      "properties": {
+        "cidr": {
+          "type": "string"
+        },
+        "region": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "number"
+        },
+        "source_url": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "cidr"
+      ]
+    },
+    "PTRRuleDef": {
+      "properties": {
+        "matcher_type": {
+          "type": "string"
+        },
+        "pattern": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "number"
+        },
+        "source_url": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "matcher_type",
+        "pattern"
+      ]
+    },
+    "ServiceDef": {
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "display_name": {
+          "type": "string"
+        },
+        "service_types": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "traits": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "note": {
+          "type": "string"
+        },
+        "ip_ranges": {
+          "items": {
+            "$ref": "#/$defs/IPRangeDef"
+          },
+          "type": "array"
+        },
+        "asns": {
+          "items": {
+            "$ref": "#/$defs/ASNDef"
+          },
+          "type": "array"
+        },
+        "dns_rules": {
+          "items": {
+            "$ref": "#/$defs/DNSRuleDef"
+          },
+          "type": "array"
+        },
+        "http_rules": {
+          "items": {
+            "$ref": "#/$defs/HTTPRuleDef"
+          },
+          "type": "array"
+        },
+        "ptr_rules": {
+          "items": {
+            "$ref": "#/$defs/PTRRuleDef"
+          },
+          "type": "array"
+        },
+        "certificate_identities": {
+          "items": {
+            "$ref": "#/$defs/CertIdentityDef"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "key",
+        "display_name",
+        "service_types"
+      ]
+    }
+  },
+  "properties": {
+    "slug": {
+      "type": "string"
+    },
+    "display_name": {
+      "type": "string"
+    },
+    "category": {
+      "type": "string"
+    },
+    "website": {
+      "type": "string"
+    },
+    "country": {
+      "type": "string"
+    },
+    "aliases": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "provider_keys": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "services": {
+      "items": {
+        "$ref": "#/$defs/ServiceDef"
+      },
+      "type": "array"
+    },
+    "feeds": {
+      "items": {
+        "$ref": "#/$defs/FeedRef"
+      },
+      "type": "array"
+    }
+  },
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "slug",
+    "display_name",
+    "category",
+    "services"
+  ]
+}

@@ -1,0 +1,34 @@
+slug: example
+display_name: Example Cloud
+category: CLOUD
+country: se
+aliases: ["Example", "Example AB", "example"]
+provider_keys: ["Example.COM.", "example-dns-*"]
+services:
+  - key: example.cdn
+    display_name: Example CDN
+    service_types: [cdn, ddos_protection]
+    traits: [shared_infrastructure]
+    ip_ranges:
+      - {cidr: "192.0.2.0/24", note: "documentation range"}
+    asns:
+      - {asn: 64500}
+    dns_rules:
+      - {record_type: cname, match_field: TARGET, matcher_type: Suffix, pattern: "CDN.Example.com."}
+    http_rules:
+      - {http_part: header, header_name: X-Example-Id, matcher_type: exists}
+    ptr_rules:
+      - {matcher_type: suffix, pattern: "edge.example.com", confidence: 0.9}
+  - key: example.dns
+    display_name: Example DNS
+    service_types: [dns]
+    dns_rules:
+      - {record_type: NS, match_field: target, matcher_type: regex, pattern: '^ns[0-9]+\.Example\.com$'}
+feeds:
+  - collector: fake_feed
+    tag_map:
+      EDGE: example.cdn
+      "EDGE_*": example.cdn
+      HEALTH: ""
+      ALL: example.cdn
+    generic_tags: [ALL]
