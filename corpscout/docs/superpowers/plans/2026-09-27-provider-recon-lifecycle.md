@@ -2,19 +2,19 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Evidence is never deleted the moment it disappears. Every item carries `active → missing → removed` with dates and a removal action. There is a grace period per feed, a mass-removal gate that freezes expiry until `provider-recon accept` or recovery, and per-collector shape checks. The change manifest gains lifecycle transitions, churn statistics and run scope.
+**Goal:** Evidence is never deleted the moment it disappears. Every item carries `active → missing → removed` with dates and a removal action, and there is a grace period per feed and per-collector shape checks. `provider-recon restore` undoes wrong removals. The change manifest gains lifecycle transitions, per-feed churn and run scope, so the backoffice can flag unusual updates. Nothing blocks on a threshold.
 
 **Architecture:**
 - `model` gains an embedded `Lifecycle` on every evidence item. `LastSeen` is excluded from the content hash.
 - `feeds` gains shape checks (`ErrShape`).
-- `definitions` gains per-feed `removal_grace_days`, `mass_removal_percent` and duplicate-feed rejection.
-- `assemble.Build` is rewritten to reconcile the previous document with this run's observations. It adds `assemble.Accept`.
+- `definitions` gains per-feed `removal_grace_days` and duplicate-feed rejection.
+- `assemble.Build` is rewritten to reconcile the previous document with this run's observations. It adds `assemble.Restore`.
 - `publish` diffs lifecycle transitions and writes `scope` and `feeds` into the manifest.
-- The CLI gains `accept`.
+- The CLI gains `restore`.
 
 **Tech Stack:** Go 1.25, stdlib `testing` + `httptest` (as slice 1). No new dependencies.
 
-**Spec:** `docs/superpowers/specs/2026-09-27-provider-recon-service-design.md`, sections "Evidence lifecycle and removal", "Collector shape checks" and "Change manifest additions".
+**Spec:** `docs/superpowers/specs/2026-09-27-provider-recon-service-design.md`, sections "Evidence lifecycle and removal" (including "No blocking gate"), "Collector shape checks" and "Change manifest additions".
 
 ## Global Constraints
 
@@ -22,11 +22,13 @@
   - Run `go`/`make` commands from there.
   - Run `git` commands from the `corpscout` root and commit by explicit path only, never `git add -A`.
   - Conventional Commits, each ending with `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>`.
-- Status values are exactly `active`, `missing`, `removed`. Removal actions are exactly `grace_expired`, `accepted`, `definition_removed`. Lifecycle dates are UTC days, `2006-01-02`.
-- Defaults: `removal_grace_days` 7, and the Azure feed sets 14. `mass_removal_percent` 20. Removed items are retained in `latest.json` for 90 days (`RemovedRetentionDays`).
+- Status values are exactly `active`, `missing`, `removed`. Removal actions are exactly `grace_expired`, `definition_removed`. Lifecycle dates are UTC days, `2006-01-02`. `restored_at` marks a range put back by `restore`.
+- Defaults: `removal_grace_days` 7, and the Azure feed sets 14. Removed items are retained in `latest.json` for 90 days (`RemovedRetentionDays`).
+- **No blocking threshold.** A large drop is never held; it follows the grace period like any removal and is visible in the manifest's per-feed churn.
+- `restore` only restores `grace_expired` removals. `definition_removed` is never restored, because the definition is the source of truth.
 - Only a successful fetch marks items missing, and expiry only runs on a successful fetch. A failed fetch carries every item unchanged (`stale`).
 - A removed item that reappears starts a new instance (new `first_seen`). The removed instance is kept.
-- Collector statuses are `ok | held | stale | failed`. `held`, `stale` and `failed` are collector issues, and `collect` exits 2 when there are any.
+- Collector statuses are `ok | stale | failed`. `stale` and `failed` are collector issues, and `collect` exits 2 when there are any.
 - Run id format: `<YYYYMMDDTHHMMSSZ>-<command>`. History keys use the run id.
 - No PulsarProtect imports. Network tests stay behind `-tags live`; S3 tests behind `PROVIDER_RECON_S3_IT=1`.
 
@@ -34,7 +36,7 @@
 
 1. **A feed that fails for longer than the grace period and then recovers still lacking a range.** The range was missing before the outage. Expected: nothing expires during the outage; the first successful run afterwards applies grace on calendar days since `missing_since`. *(Task 4: `TestLifecycleNoExpiryWhileFeedFails`.)*
 2. **The same CIDR removed, then re-added, then removed again within the 90-day retention.** Expected: separate instances, each with its own interval; no merging, no duplicate identity collisions in the diff. *(Task 4: `TestLifecycleReaddAfterRemovalStartsNewInstance`; Task 5: diff identity includes `first_seen`.)*
-3. **`accept` on a feed with nothing missing and not held.** Expected: error, nothing published. `accept` right after a `collect` in the same second must not overwrite that run's manifest. *(Task 4: `TestAcceptWithNothingToAcceptFails`; Task 6: run ids carry the command.)*
+3. **`restore` with nothing to restore, a bad date, or a range that was already re-added as a new instance.** Expected: an error for nothing/bad date and nothing published; a range that already has a live successor is left alone. `restore` right after a `collect` in the same second must not overwrite that run's manifest. *(Task 4: `TestRestoreRespectsSinceReasonAndSuccessors`, `TestRestoreErrors`; Task 6: run ids carry the command.)*
 4. **A document published by slice 1 (items without lifecycle fields).** Expected: upgraded to `active` since that run's day, with no crash and no spurious removals. *(Task 4: `TestLegacyPreviousDocumentIsUpgraded`.)*
 5. **Two feeds in one provider publishing the same CIDR for the same service** (Google goog + cloud). Expected: both instances kept (one per collector); one failing leaves the other untouched. *(Task 4: `TestOverlappingFeedsKeepOneInstancePerCollector`.)*
 
@@ -43,17 +45,17 @@
 ## File Structure
 
 ```
-internal/model/document.go        + Lifecycle, statuses/actions, DateLayout, Churn, Service.RemovedAt, CollectorStatus hold/churn fields
+internal/model/document.go        + Lifecycle (with RestoredAt), statuses/actions, DateLayout, Churn, Service.RemovedAt, CollectorStatus.Churn
 internal/feeds/feeds.go           + ErrShape, shapeErr
 internal/feeds/{aws,google,cloudflare,fastly,bunny,azure,oracle,github}.go   shape checks
 internal/feeds/shape_test.go      new
-internal/definitions/types.go     + RemovalGraceDays, MassRemovalPercent, Grace(), MassRemovalThreshold(), defaults
-internal/definitions/validate.go  + range checks, duplicate feed ids
-internal/assemble/assemble.go     rewritten: reconciliation, hold, retention, upgrade, Accept
+internal/definitions/types.go     + RemovalGraceDays, Grace(), default
+internal/definitions/validate.go  + range check, duplicate feed ids
+internal/assemble/assemble.go     rewritten: reconciliation, retention, upgrade, Restore
 internal/assemble/lifecycle_test.go   new
-internal/publish/diff.go          rewritten: lifecycle transitions
+internal/publish/diff.go          rewritten: lifecycle transitions (incl. restored)
 internal/publish/publish.go       + Scope, FeedRun, RunID, PublishScoped; history keyed by run id
-cmd/provider-recon/main.go        + accept command, scoped collect
+cmd/provider-recon/main.go        + restore command, scoped collect
 definitions/microsoft.yaml        azure removal_grace_days: 14
 README.md                         lifecycle section
 ```
@@ -68,11 +70,11 @@ README.md                         lifecycle section
 
 **Interfaces:**
 - Produces:
-  - Constants `StatusActive`, `StatusMissing`, `StatusRemoved`; `ActionGraceExpired`, `ActionAccepted`, `ActionDefinitionRemoved`; `DateLayout = "2006-01-02"`
-  - `type Lifecycle struct{ Status, FirstSeen, LastSeen, MissingSince, RemovedAt, RemovalAction string }`, embedded (no field name) in `IPRange`, `ASN`, `DNSRule`, `HTTPRule`, `PTRRule`, `CertificateIdentity`
+  - Constants `StatusActive`, `StatusMissing`, `StatusRemoved`; `ActionGraceExpired`, `ActionDefinitionRemoved`; `DateLayout = "2006-01-02"`
+  - `type Lifecycle struct{ Status, FirstSeen, LastSeen, MissingSince, RemovedAt, RemovalAction, RestoredAt string }`, embedded (no field name) in `IPRange`, `ASN`, `DNSRule`, `HTTPRule`, `PTRRule`, `CertificateIdentity`
   - `Service.RemovedAt string`
   - `type Churn struct{ Added, Reappeared, Missing, Removed, Purged int }`
-  - `CollectorStatus` additions: `Held bool`, `HeldSince`, `HeldReason string`, `Churn Churn`
+  - `CollectorStatus` addition: `Churn Churn`
   - `ContentHash` ignores `Lifecycle.LastSeen`
 
 - [ ] **Step 1: Write the failing test** (append to `internal/model/document_test.go`)
@@ -118,7 +120,6 @@ const (
 // Removal actions.
 const (
 	ActionGraceExpired      = "grace_expired"
-	ActionAccepted          = "accepted"
 	ActionDefinitionRemoved = "definition_removed"
 )
 
@@ -134,6 +135,8 @@ type Lifecycle struct {
 	MissingSince  string `json:"missing_since,omitempty"`
 	RemovedAt     string `json:"removed_at,omitempty"`
 	RemovalAction string `json:"removal_action,omitempty"`
+	// RestoredAt records that restore undid a wrong removal of this instance.
+	RestoredAt string `json:"restored_at,omitempty"`
 }
 
 // hashView drops LastSeen: it advances every day without the evidence changing.
@@ -169,12 +172,9 @@ type Churn struct {
 	Purged     int `json:"purged"`
 }
 ```
-In `CollectorStatus`, change the `Status` comment to `// ok | held | stale | failed` and append:
+In `CollectorStatus`, append:
 ```go
-	Held       bool   `json:"held,omitempty"`
-	HeldSince  string `json:"held_since,omitempty"`
-	HeldReason string `json:"held_reason,omitempty"`
-	Churn      Churn  `json:"churn"`
+	Churn Churn `json:"churn"`
 ```
 
 In `ContentHash`, next to each `...Provenance = ...Provenance.hashView()` line, add the matching lifecycle line. For example, for IP ranges:
@@ -426,21 +426,19 @@ git commit -m "feat(provider_recon): collector shape checks turn format changes 
 
 **Interfaces:**
 - Produces:
-  - `FeedRef.RemovalGraceDays int` (yaml `removal_grace_days,omitempty`) and `FeedRef.MassRemovalPercent int` (yaml `mass_removal_percent,omitempty`)
-  - `const DefaultRemovalGraceDays = 7`, `const DefaultMassRemovalPercent = 20`
-  - `func (f FeedRef) Grace() int`, `func (f FeedRef) MassRemovalThreshold() int`
+  - `FeedRef.RemovalGraceDays int` (yaml `removal_grace_days,omitempty`)
+  - `const DefaultRemovalGraceDays = 7`
+  - `func (f FeedRef) Grace() int`
 
 - [ ] **Step 1: Write the failing tests** (append to `definitions_test.go`)
 
 ```go
-func TestFeedLifecycleDefaults(t *testing.T) {
-	var f FeedRef
-	if f.Grace() != 7 || f.MassRemovalThreshold() != 20 {
-		t.Fatalf("defaults = %d/%d", f.Grace(), f.MassRemovalThreshold())
+func TestFeedGraceDefault(t *testing.T) {
+	if g := (FeedRef{}).Grace(); g != 7 {
+		t.Fatalf("default grace = %d", g)
 	}
-	f = FeedRef{RemovalGraceDays: 14, MassRemovalPercent: 35}
-	if f.Grace() != 14 || f.MassRemovalThreshold() != 35 {
-		t.Fatalf("explicit = %d/%d", f.Grace(), f.MassRemovalThreshold())
+	if g := (FeedRef{RemovalGraceDays: 14}).Grace(); g != 14 {
+		t.Fatalf("explicit grace = %d", g)
 	}
 }
 
@@ -459,7 +457,6 @@ func TestValidateFeedLifecycleSettings(t *testing.T) {
 	}{
 		{"negative grace", feed(func(f *FeedRef) { f.RemovalGraceDays = -1 }), "removal_grace_days: must be between 1 and 365"},
 		{"huge grace", feed(func(f *FeedRef) { f.RemovalGraceDays = 400 }), "removal_grace_days: must be between 1 and 365"},
-		{"percent over 100", feed(func(f *FeedRef) { f.MassRemovalPercent = 101 }), "mass_removal_percent: must be between 1 and 100"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -494,18 +491,11 @@ In `types.go`, add to `FeedRef` after `GenericTags`:
 	// RemovalGraceDays is how long a range may be missing from successful
 	// fetches before it is marked removed. 0 means DefaultRemovalGraceDays.
 	RemovalGraceDays int `yaml:"removal_grace_days,omitempty"`
-	// MassRemovalPercent holds the whole feed (expiry frozen until accept or
-	// recovery) when more than this share of its active ranges disappears in
-	// one run. 0 means DefaultMassRemovalPercent.
-	MassRemovalPercent int `yaml:"mass_removal_percent,omitempty"`
 ```
 Add, after the `FeedRef` type:
 ```go
-// Lifecycle defaults for feed ranges.
-const (
-	DefaultRemovalGraceDays   = 7
-	DefaultMassRemovalPercent = 20
-)
+// DefaultRemovalGraceDays applies when a feed sets no removal_grace_days.
+const DefaultRemovalGraceDays = 7
 
 // Grace returns the feed's removal grace period in days.
 func (f FeedRef) Grace() int {
@@ -514,24 +504,12 @@ func (f FeedRef) Grace() int {
 	}
 	return DefaultRemovalGraceDays
 }
-
-// MassRemovalThreshold returns the percentage of active ranges whose
-// disappearance in one run holds the feed.
-func (f FeedRef) MassRemovalThreshold() int {
-	if f.MassRemovalPercent > 0 {
-		return f.MassRemovalPercent
-	}
-	return DefaultMassRemovalPercent
-}
 ```
 
 In `validate.go`, `validateFeed`, add before the `GenericTags` loop:
 ```go
 	if f.RemovalGraceDays < 0 || f.RemovalGraceDays > 365 {
 		p.add(d, path+".removal_grace_days", "must be between 1 and 365 (omit for the default %d)", DefaultRemovalGraceDays)
-	}
-	if f.MassRemovalPercent < 0 || f.MassRemovalPercent > 100 {
-		p.add(d, path+".mass_removal_percent", "must be between 1 and 100 (omit for the default %d)", DefaultMassRemovalPercent)
 	}
 ```
 In `validateProvider`, replace the feed loop with:
@@ -557,12 +535,12 @@ Expected: PASS; `37 definitions valid`; `rg removal_grace_days definitions/schem
 
 ```bash
 git add services/provider_recon/internal/definitions services/provider_recon/definitions/schema.json
-git commit -m "feat(provider_recon): per-feed grace period and mass-removal threshold, reject duplicate feeds"
+git commit -m "feat(provider_recon): per-feed removal grace period, reject duplicate feeds"
 ```
 
 ---
 
-### Task 4: Reconciling assemble.Build and assemble.Accept
+### Task 4: Reconciling assemble.Build and assemble.Restore
 
 **Files:**
 - Replace: `internal/assemble/assemble.go` (full content below)
@@ -570,11 +548,11 @@ git commit -m "feat(provider_recon): per-feed grace period and mass-removal thre
 
 **Interfaces:**
 - Consumes:
-  - `model.Lifecycle`, statuses/actions, `DateLayout`, `Churn`, the `CollectorStatus` hold fields (Task 1)
-  - `FeedRef.Grace()`, `FeedRef.MassRemovalThreshold()` (Task 3)
+  - `model.Lifecycle`, statuses/actions, `DateLayout`, `Churn` (Task 1)
+  - `FeedRef.Grace()` (Task 3)
 - Produces:
   - `Build(def, outcomes, prev, now)` with the same signature; now reconciles lifecycles.
-  - `func Accept(doc model.Document, collectorID string, now time.Time) (model.Document, int, error)`
+  - `func Restore(doc model.Document, collectorID, removedSince string, now time.Time) (model.Document, int, error)`
   - `const RemovedRetentionDays = 90`
 
 - [ ] **Step 1: Write the failing tests** — `internal/assemble/lifecycle_test.go`
@@ -765,66 +743,98 @@ func TestLifecycleNoExpiryWhileFeedFails(t *testing.T) {
 	}
 }
 
-func TestMassRemovalHoldsExpiry(t *testing.T) {
+func TestLargeDropIsNotBlockedAndFollowsGrace(t *testing.T) {
 	d0 := run(t, lcDef(), cidrs(10), nil, 0)
 	d1 := run(t, lcDef(), cidrs(10, 0, 1, 2, 3, 4), &d0, 1)
 	st := d1.Collection.Collectors["aws_ip_ranges"]
-	if st.Status != "held" || !st.Held || st.HeldSince != dstr(1) || !strings.Contains(st.HeldReason, "5 of 10") {
-		t.Fatalf("status = %+v", st)
+	if st.Status != "ok" || st.Churn.Missing != 5 || st.Items != 10 {
+		t.Fatalf("day1 status = %+v", st)
 	}
-	d20 := run(t, lcDef(), cidrs(10, 0, 1, 2, 3, 4), &d1, 20)
-	if st := d20.Collection.Collectors["aws_ip_ranges"]; st.Status != "held" || st.HeldSince != dstr(1) {
-		t.Fatalf("hold did not persist: %+v", st)
-	}
-	if one(t, d20, "10.0.0.0/24").Status != model.StatusMissing {
-		t.Fatal("expired while the feed was held")
+	d8 := run(t, lcDef(), cidrs(10, 0, 1, 2, 3, 4), &d1, 8)
+	if st := d8.Collection.Collectors["aws_ip_ranges"]; st.Churn.Removed != 5 || st.Items != 5 {
+		t.Fatalf("day8 status = %+v", st)
 	}
 }
 
-func TestHoldClearsWhenFeedRecovers(t *testing.T) {
+func TestRestoreUndoesWrongRemovals(t *testing.T) {
 	d0 := run(t, lcDef(), cidrs(10), nil, 0)
 	d1 := run(t, lcDef(), cidrs(10, 0, 1, 2, 3, 4), &d0, 1)
-	d2 := run(t, lcDef(), cidrs(10), &d1, 2)
-	st := d2.Collection.Collectors["aws_ip_ranges"]
-	if st.Status != "ok" || st.Held || st.Churn.Reappeared != 5 {
-		t.Fatalf("status = %+v", st)
-	}
-}
-
-func TestAcceptRemovesMissingAndClearsHold(t *testing.T) {
-	d0 := run(t, lcDef(), cidrs(10), nil, 0)
-	d1 := run(t, lcDef(), cidrs(10, 0, 1, 2, 3, 4), &d0, 1)
-	acc, n, err := Accept(d1, "aws_ip_ranges", day(1))
+	d8 := run(t, lcDef(), cidrs(10, 0, 1, 2, 3, 4), &d1, 8)
+	restored, n, err := Restore(d8, "aws_ip_ranges", dstr(8), day(8))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if n != 5 {
-		t.Fatalf("accepted %d, want 5", n)
+		t.Fatalf("restored %d, want 5", n)
 	}
-	rm := one(t, acc, "10.0.0.0/24")
-	if rm.Status != model.StatusRemoved || rm.RemovalAction != model.ActionAccepted || rm.RemovedAt != dstr(1) {
-		t.Fatalf("accepted range = %+v", rm.Lifecycle)
+	got := one(t, restored, "10.0.0.0/24").Lifecycle
+	want := model.Lifecycle{Status: model.StatusActive, FirstSeen: dstr(0), LastSeen: dstr(0), RestoredAt: dstr(8)}
+	if got != want {
+		t.Fatalf("restored lifecycle = %+v, want %+v", got, want)
 	}
-	st := acc.Collection.Collectors["aws_ip_ranges"]
-	if st.Held || st.Status != "ok" || st.Items != 5 {
-		t.Fatalf("status after accept = %+v", st)
+	if st := restored.Collection.Collectors["aws_ip_ranges"]; st.Items != 10 {
+		t.Fatalf("items after restore = %d", st.Items)
 	}
-	if acc.Collection.ContentHash == d1.Collection.ContentHash {
-		t.Fatal("accept must change the content hash")
+	if restored.Collection.ContentHash == d8.Collection.ContentHash {
+		t.Fatal("restore must change the content hash")
 	}
-	d2 := run(t, lcDef(), cidrs(10, 0, 1, 2, 3, 4), &acc, 2)
-	if st := d2.Collection.Collectors["aws_ip_ranges"]; st.Status != "ok" || st.Churn.Missing != 0 {
-		t.Fatalf("run after accept = %+v", st)
+	// The collector is fixed and the feed lists the ranges again: the
+	// timeline continues from the original first_seen, nothing is "added".
+	d9 := run(t, lcDef(), cidrs(10), &restored, 9)
+	if st := d9.Collection.Collectors["aws_ip_ranges"]; st.Churn.Added != 0 || st.Churn.Missing != 0 {
+		t.Fatalf("run after restore churn = %+v", st.Churn)
+	}
+	if l := one(t, d9, "10.0.0.0/24").Lifecycle; l.FirstSeen != dstr(0) || l.LastSeen != dstr(9) || l.RestoredAt != dstr(8) {
+		t.Fatalf("lifecycle after restore + collect = %+v", l)
 	}
 }
 
-func TestAcceptWithNothingToAcceptFails(t *testing.T) {
-	d0 := run(t, lcDef(), cidrs(3), nil, 0)
-	if _, _, err := Accept(d0, "aws_ip_ranges", day(0)); err == nil {
-		t.Fatal("accept on a clean feed must fail")
+func TestRestoreRespectsSinceReasonAndSuccessors(t *testing.T) {
+	d0 := run(t, lcDef(), cidrs(10), nil, 0)
+	d1 := run(t, lcDef(), cidrs(10, 0), &d0, 1)
+	d8 := run(t, lcDef(), cidrs(10, 0, 1), &d1, 8) // 10.0.0 removed on day 8, 10.0.1 missing since day 8
+	d15 := run(t, lcDef(), cidrs(10, 0, 1), &d8, 15)
+	// 10.0.1 was removed on day 15. 10.0.0 came back as a new instance on day 16.
+	d16 := run(t, lcDef(), cidrs(10, 1), &d15, 16)
+
+	if _, _, err := Restore(d16, "aws_ip_ranges", dstr(16), day(16)); err == nil {
+		t.Fatal("nothing was removed on or after day 16; restore must fail")
 	}
-	if _, _, err := Accept(d0, "nope", day(0)); err == nil {
-		t.Fatal("accept on an unknown collector must fail")
+	restored, n, err := Restore(d16, "aws_ip_ranges", dstr(8), day(16))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("restored %d, want only 10.0.1 (10.0.0 already has a live successor)", n)
+	}
+	if l := one(t, restored, "10.0.1.0/24").Lifecycle; l.Status != model.StatusActive || l.RestoredAt != dstr(16) {
+		t.Fatalf("10.0.1 = %+v", l)
+	}
+	for _, x := range ranges(restored, "10.0.0.0/24") {
+		if x.FirstSeen == dstr(0) && x.Status != model.StatusRemoved {
+			t.Fatalf("the old 10.0.0 instance must stay removed next to its successor: %+v", x.Lifecycle)
+		}
+	}
+
+	withRule := lcDef()
+	withRule.Services[0].DNSRules = []definitions.DNSRuleDef{{RecordType: "CNAME", MatchField: "target", MatcherType: "suffix", Pattern: "cloudfront.net", Priority: 100}}
+	r0 := run(t, withRule, cidrs(1), nil, 0)
+	r1 := run(t, lcDef(), cidrs(1), &r0, 1) // the rule is definition_removed
+	if _, _, err := Restore(r1, "aws_ip_ranges", dstr(0), day(1)); err == nil {
+		t.Fatal("definition removals are never restored; nothing else was removed, so restore must fail")
+	}
+}
+
+func TestRestoreErrors(t *testing.T) {
+	d0 := run(t, lcDef(), cidrs(3), nil, 0)
+	if _, _, err := Restore(d0, "nope", dstr(0), day(0)); err == nil {
+		t.Fatal("unknown collector must fail")
+	}
+	if _, _, err := Restore(d0, "aws_ip_ranges", "2026/09/27", day(0)); err == nil {
+		t.Fatal("a malformed date must fail")
+	}
+	if _, _, err := Restore(d0, "aws_ip_ranges", dstr(0), day(0)); err == nil {
+		t.Fatal("a clean feed has nothing to restore")
 	}
 }
 
@@ -965,7 +975,7 @@ func TestOverlappingFeedsKeepOneInstancePerCollector(t *testing.T) {
 - [ ] **Step 2: Run to verify failure**
 
 Run: `go test ./internal/assemble/`
-Expected: FAIL (`undefined: Accept`, …).
+Expected: FAIL (`undefined: Restore`, …).
 
 - [ ] **Step 3: Replace** `internal/assemble/assemble.go`
 
@@ -1017,9 +1027,8 @@ type svcRange struct {
 // Curated evidence follows the definition: an item deleted there is removed
 // at once. Feed ranges follow the feed: a range absent from a successful
 // fetch goes missing, and is removed once its grace period has passed. A
-// failed fetch changes nothing (stale). A run that loses more than the feed's
-// mass-removal threshold holds the feed: missing ranges stay missing until the
-// feed recovers or Accept is run.
+// failed fetch changes nothing (stale). No threshold blocks a large drop; it
+// shows up in the collector's churn, and Restore undoes a wrong removal.
 func Build(def definitions.Definition, outcomes map[string]FeedOutcome, prev *model.Document, now time.Time) (model.Document, error) {
 	today := now.UTC().Format(model.DateLayout)
 	prev = upgrade(prev)
@@ -1075,7 +1084,7 @@ func Build(def definitions.Definition, outcomes map[string]FeedOutcome, prev *mo
 			outcome = FeedOutcome{Err: errors.New("collector did not run")}
 		}
 		if outcome.Err == nil {
-			doc.Collection.Collectors[id] = applyFeed(&doc, index, defined, ref, outcome.Result, prevItems, prevStatus, today, now)
+			doc.Collection.Collectors[id] = applyFeed(&doc, index, defined, ref, outcome.Result, prevItems, today, now)
 		} else {
 			doc.Collection.Collectors[id] = carryForward(&doc, index, prevItems, prevStatus, outcome.Err, now)
 		}
@@ -1096,12 +1105,18 @@ func Build(def definitions.Definition, outcomes map[string]FeedOutcome, prev *mo
 	return doc, nil
 }
 
-// Accept marks every missing range of one feed removed now (action accepted)
-// and clears the feed's hold. It returns how many ranges it removed.
-func Accept(doc model.Document, collectorID string, now time.Time) (model.Document, int, error) {
+// Restore undoes wrong removals: every range of one feed that grace expiry
+// removed on or after removedSince (YYYY-MM-DD) goes back to active, with
+// RestoredAt recording the correction. Definition removals are never
+// restored, and neither is an instance whose range already came back as a new
+// live instance. It returns how many ranges it restored.
+func Restore(doc model.Document, collectorID, removedSince string, now time.Time) (model.Document, int, error) {
 	st, ok := doc.Collection.Collectors[collectorID]
 	if !ok {
 		return doc, 0, fmt.Errorf("%s has no collector %q", doc.Slug, collectorID)
+	}
+	if _, err := time.Parse(model.DateLayout, removedSince); err != nil {
+		return doc, 0, fmt.Errorf("removed-since %q is not a YYYY-MM-DD date", removedSince)
 	}
 	cp, err := clone(doc)
 	if err != nil {
@@ -1110,20 +1125,26 @@ func Accept(doc model.Document, collectorID string, now time.Time) (model.Docume
 	today := now.UTC().Format(model.DateLayout)
 	n := 0
 	for i := range cp.Services {
-		for j := range cp.Services[i].Evidence.IPRanges {
-			r := &cp.Services[i].Evidence.IPRanges[j]
-			if r.Collector == collectorID && r.Status == model.StatusMissing {
-				retire(&r.Lifecycle, model.ActionAccepted, today)
-				n++
+		rs := cp.Services[i].Evidence.IPRanges
+		live := map[string]bool{}
+		for _, r := range rs {
+			if r.Collector == collectorID && r.Status != model.StatusRemoved {
+				live[r.CIDR] = true
 			}
 		}
+		for j := range rs {
+			r := &rs[j]
+			if r.Collector != collectorID || r.Status != model.StatusRemoved || r.RemovalAction != model.ActionGraceExpired ||
+				r.RemovedAt < removedSince || live[r.CIDR] {
+				continue
+			}
+			r.Status, r.RemovedAt, r.RemovalAction, r.MissingSince, r.RestoredAt = model.StatusActive, "", "", "", today
+			live[r.CIDR] = true
+			n++
+		}
 	}
-	if n == 0 && !st.Held {
-		return doc, 0, fmt.Errorf("%s %s has no missing ranges and is not held; nothing to accept", doc.Slug, collectorID)
-	}
-	st.Held, st.HeldSince, st.HeldReason = false, "", ""
-	if st.Status == "held" {
-		st.Status = "ok"
+	if n == 0 {
+		return doc, 0, fmt.Errorf("%s %s has no grace-expired removals on or after %s; nothing to restore", doc.Slug, collectorID, removedSince)
 	}
 	st.Items = countLive(&cp, collectorID)
 	cp.Collection.Collectors[collectorID] = st
@@ -1137,7 +1158,7 @@ func Accept(doc model.Document, collectorID string, now time.Time) (model.Docume
 }
 
 func applyFeed(doc *model.Document, index map[string]int, defined map[string]bool, ref definitions.FeedRef,
-	res feeds.Result, prevItems []svcRange, prevStatus model.CollectorStatus, today string, now time.Time) model.CollectorStatus {
+	res feeds.Result, prevItems []svcRange, today string, now time.Time) model.CollectorStatus {
 	id := ref.ID()
 	source, confidence := model.SourceOfficialFeed, officialConfidence
 	if bgpCollectors[ref.Collector] {
@@ -1183,7 +1204,6 @@ func applyFeed(doc *model.Document, index map[string]int, defined map[string]boo
 
 	live := map[string]svcRange{}
 	var liveKeys []string
-	prevActive := 0
 	for _, p := range prevItems {
 		if p.item.Status == model.StatusRemoved {
 			appendRange(doc, index, p)
@@ -1194,9 +1214,6 @@ func applyFeed(doc *model.Document, index map[string]int, defined map[string]boo
 			liveKeys = append(liveKeys, k)
 		}
 		live[k] = p
-		if p.item.Status == model.StatusActive {
-			prevActive++
-		}
 	}
 
 	var churn model.Churn
@@ -1216,7 +1233,6 @@ func applyFeed(doc *model.Document, index map[string]int, defined map[string]boo
 		appendRange(doc, index, o)
 	}
 
-	newlyMissing := 0
 	var missing []svcRange
 	sort.Strings(liveKeys)
 	for _, k := range liveKeys {
@@ -1232,40 +1248,23 @@ func applyFeed(doc *model.Document, index map[string]int, defined map[string]boo
 		}
 		if p.item.Status == model.StatusActive {
 			p.item.Status, p.item.MissingSince = model.StatusMissing, today
-			newlyMissing++
 			churn.Missing++
 		}
 		missing = append(missing, p)
 	}
-
-	held, heldSince, heldReason := prevStatus.Held, prevStatus.HeldSince, prevStatus.HeldReason
-	if prevActive > 0 && newlyMissing*100 > ref.MassRemovalThreshold()*prevActive {
-		if !held {
-			heldSince = today
-		}
-		held = true
-		heldReason = fmt.Sprintf("%d of %d active ranges disappeared in one run", newlyMissing, prevActive)
-	}
-	if len(missing) == 0 {
-		held, heldSince, heldReason = false, "", ""
-	}
 	for _, p := range missing {
-		if !held && daysBetween(p.item.MissingSince, today) >= ref.Grace() {
+		if daysBetween(p.item.MissingSince, today) >= ref.Grace() {
 			retire(&p.item.Lifecycle, model.ActionGraceExpired, today)
 			churn.Removed++
 		}
 		appendRange(doc, index, p)
 	}
 
-	status := "ok"
-	if held {
-		status = "held"
-	}
 	success := now
 	return model.CollectorStatus{
-		Status: status, SourceURL: res.SourceURL, SourceVersion: res.SourceVersion,
+		Status: "ok", SourceURL: res.SourceURL, SourceVersion: res.SourceVersion,
 		Items: countLive(doc, id), FetchedAt: now, LastSuccessAt: &success, SkippedLines: res.Skipped,
-		UnmappedTags: sortedKeys(unmapped), Held: held, HeldSince: heldSince, HeldReason: heldReason, Churn: churn,
+		UnmappedTags: sortedKeys(unmapped), Churn: churn,
 	}
 }
 
@@ -1279,8 +1278,7 @@ func carryForward(doc *model.Document, index map[string]int, prevItems []svcRang
 			items++
 		}
 	}
-	status := model.CollectorStatus{Status: "failed", FetchedAt: now, Error: cause.Error(),
-		Held: prevStatus.Held, HeldSince: prevStatus.HeldSince, HeldReason: prevStatus.HeldReason}
+	status := model.CollectorStatus{Status: "failed", FetchedAt: now, Error: cause.Error()}
 	if prevStatus.LastSuccessAt == nil {
 		return status
 	}
@@ -1581,7 +1579,7 @@ Expected: PASS. Both the new lifecycle tests and every existing `assemble_test.g
 
 ```bash
 git add services/provider_recon/internal/assemble
-git commit -m "feat(provider_recon): reconcile evidence lifecycles with grace period, mass-removal hold and accept"
+git commit -m "feat(provider_recon): reconcile evidence lifecycles with grace period, retention and restore"
 ```
 
 ---
@@ -1596,7 +1594,7 @@ git commit -m "feat(provider_recon): reconcile evidence lifecycles with grace pe
 **Interfaces:**
 - Consumes: the Task 1 lifecycle; `assemble` is not imported.
 - Produces:
-  - `KindDiff` gains `Missing`, `Reappeared`, `Purged`, `Updated` lists with their `*Count` fields; the existing `Added`/`Removed`/`AddedCount`/`RemovedCount`/`Truncated` are kept.
+  - `KindDiff` gains `Missing`, `Reappeared`, `Restored`, `Purged`, `Updated` lists with their `*Count` fields; the existing `Added`/`Removed`/`AddedCount`/`RemovedCount`/`Truncated` are kept.
   - `type Scope struct{ Command string; Providers []string }`
   - `type FeedRun struct{ Slug, Collector, Status string; Items int; Churn model.Churn; UnmappedTags []string; Error string }`
   - `Manifest` gains `Scope Scope` and `Feeds []FeedRun`.
@@ -1641,11 +1639,14 @@ func ip(cidr, status, first string) model.IPRange {
 
 func TestDiffListsLifecycleTransitions(t *testing.T) {
 	old := lcDoc(t, ip("10.0.1.0/24", "active", "2026-09-01"), ip("10.0.2.0/24", "missing", "2026-09-01"),
-		ip("10.0.3.0/24", "active", "2026-09-01"), ip("10.0.4.0/24", "removed", "2026-06-01"))
+		ip("10.0.3.0/24", "active", "2026-09-01"), ip("10.0.4.0/24", "removed", "2026-06-01"),
+		ip("10.0.6.0/24", "removed", "2026-09-01"))
 	gone := ip("10.0.3.0/24", "removed", "2026-09-01")
 	gone.RemovalAction = model.ActionGraceExpired
+	back := ip("10.0.6.0/24", "active", "2026-09-01")
+	back.RestoredAt = "2026-09-27"
 	cur := lcDoc(t, ip("10.0.1.0/24", "missing", "2026-09-01"), ip("10.0.2.0/24", "active", "2026-09-01"),
-		gone, ip("10.0.5.0/24", "active", "2026-09-27"))
+		gone, ip("10.0.5.0/24", "active", "2026-09-27"), back)
 	d := Diff(&old, cur).Evidence["ip_ranges"]
 	check := func(name string, got []string, want string) {
 		t.Helper()
@@ -1658,6 +1659,7 @@ func TestDiffListsLifecycleTransitions(t *testing.T) {
 	check("removed", d.Removed, "aws.cloudfront 10.0.3.0/24 (grace_expired)")
 	check("purged", d.Purged, "aws.cloudfront 10.0.4.0/24")
 	check("added", d.Added, "aws.cloudfront 10.0.5.0/24")
+	check("restored", d.Restored, "aws.cloudfront 10.0.6.0/24")
 }
 
 func TestDiffLastSeenAloneIsNotAnUpdate(t *testing.T) {
@@ -1680,7 +1682,7 @@ func TestPublishScopedManifestHasScopeAndFeeds(t *testing.T) {
 	store := FSStore{Root: t.TempDir()}
 	now := time.Date(2026, 9, 27, 6, 0, 0, 0, time.UTC)
 	d := lcDoc(t, ip("10.0.1.0/24", "active", "2026-09-27"))
-	d.Collection.Collectors["aws_ip_ranges"] = model.CollectorStatus{Status: "held", Items: 1, HeldReason: "x"}
+	d.Collection.Collectors["aws_ip_ranges"] = model.CollectorStatus{Status: "stale", Items: 1, Error: "status 503"}
 	m, err := PublishScoped(ctx, store, []model.Document{d}, now, Scope{Command: "collect", Providers: []string{"aws"}})
 	if err != nil {
 		t.Fatal(err)
@@ -1688,21 +1690,21 @@ func TestPublishScopedManifestHasScopeAndFeeds(t *testing.T) {
 	if m.RunID != "20260927T060000Z-collect" || m.Scope.Command != "collect" || len(m.Scope.Providers) != 1 {
 		t.Fatalf("manifest scope = %+v run=%s", m.Scope, m.RunID)
 	}
-	if len(m.Feeds) != 1 || m.Feeds[0].Status != "held" || m.Feeds[0].Collector != "aws_ip_ranges" {
+	if len(m.Feeds) != 1 || m.Feeds[0].Status != "stale" || m.Feeds[0].Collector != "aws_ip_ranges" {
 		t.Fatalf("feeds = %+v", m.Feeds)
 	}
-	if len(m.CollectorIssues) != 1 || m.CollectorIssues[0].Status != "held" {
+	if len(m.CollectorIssues) != 1 || m.CollectorIssues[0].Status != "stale" || m.CollectorIssues[0].Error != "status 503" {
 		t.Fatalf("issues = %+v", m.CollectorIssues)
 	}
 	if _, ok, _ := store.Get(ctx, HistoryKey("aws", m.RunID)); !ok {
 		t.Fatal("history not keyed by run id")
 	}
-	a, err := PublishScoped(ctx, store, []model.Document{d}, now, Scope{Command: "accept", Providers: []string{"aws"}})
+	a, err := PublishScoped(ctx, store, []model.Document{d}, now, Scope{Command: "restore", Providers: []string{"aws"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.RunID == m.RunID || !strings.HasSuffix(a.RunID, "-accept") {
-		t.Fatalf("accept run id %q collides with collect run %q", a.RunID, m.RunID)
+	if a.RunID == m.RunID || !strings.HasSuffix(a.RunID, "-restore") {
+		t.Fatalf("restore run id %q collides with collect run %q", a.RunID, m.RunID)
 	}
 }
 ```
@@ -1729,17 +1731,20 @@ const maxListed = 1000
 
 // KindDiff is one evidence kind's lifecycle transitions in a run. Items are
 // labelled "<service> <key>"; removals carry the action in parentheses;
-// purged means the item left the document (retention, or an alias/key edit).
+// restored means restore undid a removal; purged means the item left the
+// document (retention, or an alias/key edit).
 type KindDiff struct {
 	Added           []string `json:"added,omitempty"`
 	Missing         []string `json:"missing,omitempty"`
 	Reappeared      []string `json:"reappeared,omitempty"`
+	Restored        []string `json:"restored,omitempty"`
 	Removed         []string `json:"removed,omitempty"`
 	Purged          []string `json:"purged,omitempty"`
 	Updated         []string `json:"updated,omitempty"`
 	AddedCount      int      `json:"added_count"`
 	MissingCount    int      `json:"missing_count"`
 	ReappearedCount int      `json:"reappeared_count"`
+	RestoredCount   int      `json:"restored_count"`
 	RemovedCount    int      `json:"removed_count"`
 	PurgedCount     int      `json:"purged_count"`
 	UpdatedCount    int      `json:"updated_count"`
@@ -1747,7 +1752,7 @@ type KindDiff struct {
 }
 
 func (d KindDiff) empty() bool {
-	return d.AddedCount+d.MissingCount+d.ReappearedCount+d.RemovedCount+d.PurgedCount+d.UpdatedCount == 0
+	return d.AddedCount+d.MissingCount+d.ReappearedCount+d.RestoredCount+d.RemovedCount+d.PurgedCount+d.UpdatedCount == 0
 }
 
 // VersionChange is a feed version before and after the run.
@@ -1803,7 +1808,7 @@ func Diff(old *model.Document, cur model.Document) ProviderChange {
 }
 
 func diffKind(before, after itemSet, list bool) KindDiff {
-	var added, missing, reappeared, removed, purged, updated []string
+	var added, missing, reappeared, restored, removed, purged, updated []string
 	for id, a := range after {
 		b, ok := before[id]
 		switch {
@@ -1815,6 +1820,8 @@ func diffKind(before, after itemSet, list bool) KindDiff {
 			missing = append(missing, a.label)
 		case b.status == model.StatusMissing && a.status == model.StatusActive:
 			reappeared = append(reappeared, a.label)
+		case b.status == model.StatusRemoved && a.status == model.StatusActive:
+			restored = append(restored, a.label)
 		case b.status != model.StatusRemoved && a.status == model.StatusRemoved:
 			removed = append(removed, a.label+" ("+a.action+")")
 		case b.canon != a.canon:
@@ -1827,18 +1834,19 @@ func diffKind(before, after itemSet, list bool) KindDiff {
 		}
 	}
 	d := KindDiff{AddedCount: len(added), MissingCount: len(missing), ReappearedCount: len(reappeared),
-		RemovedCount: len(removed), PurgedCount: len(purged), UpdatedCount: len(updated)}
+		RestoredCount: len(restored), RemovedCount: len(removed), PurgedCount: len(purged), UpdatedCount: len(updated)}
 	if !list {
 		return d
 	}
-	var t [6]bool
+	var t [7]bool
 	d.Added, t[0] = capList(added)
 	d.Missing, t[1] = capList(missing)
 	d.Reappeared, t[2] = capList(reappeared)
-	d.Removed, t[3] = capList(removed)
-	d.Purged, t[4] = capList(purged)
-	d.Updated, t[5] = capList(updated)
-	d.Truncated = t[0] || t[1] || t[2] || t[3] || t[4] || t[5]
+	d.Restored, t[3] = capList(restored)
+	d.Removed, t[4] = capList(removed)
+	d.Purged, t[5] = capList(purged)
+	d.Updated, t[6] = capList(updated)
+	d.Truncated = t[0] || t[1] || t[2] || t[3] || t[4] || t[5] || t[6]
 	return d
 }
 
@@ -1911,7 +1919,7 @@ func addItems[T any](set itemSet, svc string, items []T, key func(T) string, par
 
 Replace the `HistoryKey` function with:
 ```go
-// RunID names a run: its time plus the command, so an accept right after a
+// RunID names a run: its time plus the command, so a restore right after a
 // collect never overwrites that run's objects.
 func RunID(now time.Time, command string) string {
 	return now.UTC().Format(RunIDLayout) + "-" + command
@@ -1927,7 +1935,7 @@ Add after `CollectorIssue`:
 ```go
 // Scope says what produced a run.
 type Scope struct {
-	Command   string   `json:"command"`             // collect | accept
+	Command   string   `json:"command"`             // collect | restore
 	Providers []string `json:"providers,omitempty"` // empty: every definition
 }
 
@@ -1986,15 +1994,6 @@ In the loop body:
 		}
 ```
 
-Held collectors have an empty `Error`. So that the issue line says why, set `Error: st.HeldReason` when `st.Status == "held"`:
-```go
-				issue := CollectorIssue{Slug: doc.Slug, Collector: id, Status: st.Status, Error: st.Error}
-				if st.Status == "held" {
-					issue.Error = st.HeldReason
-				}
-				m.CollectorIssues = append(m.CollectorIssues, issue)
-```
-(Use this form in place of the one-line append above.)
 
 - [ ] **Step 5: Run to verify pass**
 
@@ -2010,16 +2009,16 @@ git commit -m "feat(provider_recon): lifecycle transitions, run scope and per-fe
 
 ---
 
-### Task 6: `accept` command and scoped collect
+### Task 6: `restore` command and scoped collect
 
 **Files:**
 - Modify: `cmd/provider-recon/main.go`
 - Modify test: `cmd/provider-recon/main_test.go`. Add a v6 prefix to the AWS body in `TestCollectTwiceIsIdempotent`, because the Task 2 shape check needs it. Add the new tests below.
 
 **Interfaces:**
-- Consumes: `assemble.Accept` (Task 4); `publish.PublishScoped`, `publish.Scope` (Task 5).
+- Consumes: `assemble.Build`, `assemble.Restore` (Task 4); `publish.PublishScoped`, `publish.Scope` (Task 5).
 - Produces:
-  - `provider-recon accept -provider <slug> -collector <id> [-out dir]`. Exit 0 on success, 1 on error, 64 on usage.
+  - `provider-recon restore -provider <slug> -collector <id> -removed-since <YYYY-MM-DD> [-out dir]`. Exit 0 on success, 1 on error, 64 on usage.
   - `collect` passes `Scope{Command:"collect", Providers:[slug]}` when `-provider` is given.
 
 - [ ] **Step 1: Write the failing tests**
@@ -2044,69 +2043,102 @@ func awsBody(v4 int) string {
 	return b.String()
 }
 
-func TestHeldFeedAcceptFlow(t *testing.T) {
-	var body atomic.Value
-	body.Store(awsBody(10))
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(body.Load().(string))) }))
-	defer srv.Close()
-	orig := registry
-	registry = func() map[string]feeds.Collector { return map[string]feeds.Collector{"aws_ip_ranges": &feeds.AWS{URL: srv.URL}} }
-	defer func() { registry = orig }()
+// seedRemoval publishes, into out, an aws document whose range 10.0.9.0/24
+// was removed by grace expiry two days ago, using the real Build and Publish.
+func seedRemoval(t *testing.T, out string) string {
+	t.Helper()
+	def := definitions.Definition{Slug: "aws", DisplayName: "Amazon Web Services", Category: "cloud",
+		Services: []definitions.ServiceDef{{Key: "aws.cloudfront", DisplayName: "CloudFront", ServiceTypes: []string{"cdn"}}},
+		Feeds:    []definitions.FeedRef{{Collector: "aws_ip_ranges", TagMap: map[string]string{"CLOUDFRONT": "aws.cloudfront"}}}}
+	outcome := func(n int) map[string]assemble.FeedOutcome {
+		var rs []feeds.Range
+		for i := 0; i < n; i++ {
+			rs = append(rs, feeds.Range{Prefix: netip.MustParsePrefix(fmt.Sprintf("10.0.%d.0/24", i)), Tag: "CLOUDFRONT"})
+		}
+		rs = append(rs, feeds.Range{Prefix: netip.MustParsePrefix("2600:9000::/28"), Tag: "CLOUDFRONT"})
+		return map[string]assemble.FeedOutcome{"aws_ip_ranges": {Result: feeds.Result{Ranges: rs}}}
+	}
+	ctx := context.Background()
+	store := publish.FSStore{Root: out}
+	start := time.Now().UTC().AddDate(0, 0, -10)
+	var prev *model.Document
+	for _, step := range []struct{ day, ranges int }{{0, 10}, {1, 9}, {8, 9}} {
+		at := start.AddDate(0, 0, step.day)
+		doc, err := assemble.Build(def, outcome(step.ranges), prev, at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := publish.Publish(ctx, store, []model.Document{doc}, at); err != nil {
+			t.Fatal(err)
+		}
+		prev = &doc
+	}
+	return start.AddDate(0, 0, 8).Format(model.DateLayout)
+}
 
+func TestRestoreThenCollectContinuesTheTimeline(t *testing.T) {
+	withAWSServer(t, awsBody(10))
 	defs := defsDir(t, map[string]string{"aws.yaml": awsYAML})
 	out := t.TempDir()
-	collect := func() (int, string) {
-		var stdout, stderr bytes.Buffer
-		code := run(context.Background(), []string{"collect", "-definitions", defs, "-out", out}, &stdout, &stderr)
-		return code, stdout.String() + stderr.String()
-	}
-
-	if code, log := collect(); code != 0 {
-		t.Fatalf("first collect exit %d: %s", code, log)
-	}
-	body.Store(awsBody(4)) // 6 of 11 ranges vanish: above the 20% threshold
-	code, log := collect()
-	if code != 2 || !strings.Contains(log, "issue aws aws_ip_ranges held") {
-		t.Fatalf("shrunk collect exit %d: %s", code, log)
-	}
+	removedOn := seedRemoval(t, out)
 
 	var stdout, stderr bytes.Buffer
-	if code := run(context.Background(), []string{"accept", "-provider", "aws", "-collector", "aws_ip_ranges", "-out", out}, &stdout, &stderr); code != 0 {
-		t.Fatalf("accept exit %d: %s", code, stderr.String())
+	args := []string{"restore", "-provider", "aws", "-collector", "aws_ip_ranges", "-removed-since", removedOn, "-out", out}
+	if code := run(context.Background(), args, &stdout, &stderr); code != 0 {
+		t.Fatalf("restore exit %d: %s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "accepted 6 removals for aws aws_ip_ranges") {
-		t.Fatalf("accept stdout = %s", stdout.String())
+	if !strings.Contains(stdout.String(), "restored 1 ranges for aws aws_ip_ranges") {
+		t.Fatalf("restore stdout = %s", stdout.String())
 	}
-	if code, log := collect(); code != 0 || !strings.Contains(log, "0 changed, 1 unchanged") {
-		t.Fatalf("collect after accept exit %d: %s", code, log)
+
+	stdout.Reset()
+	if code := run(context.Background(), []string{"collect", "-definitions", defs, "-out", out}, &stdout, &stderr); code != 0 {
+		t.Fatalf("collect after restore exit %d: %s", code, stderr.String())
+	}
+	doc, err := publish.LoadLatest(context.Background(), publish.FSStore{Root: out}, "aws")
+	if err != nil || doc == nil {
+		t.Fatalf("latest: %v %v", doc, err)
+	}
+	var found []model.IPRange
+	for _, s := range doc.Services {
+		for _, r := range s.Evidence.IPRanges {
+			if r.CIDR == "10.0.9.0/24" {
+				found = append(found, r)
+			}
+		}
+	}
+	if len(found) != 1 || found[0].Status != model.StatusActive || found[0].RestoredAt == "" ||
+		found[0].FirstSeen != time.Now().UTC().AddDate(0, 0, -10).Format(model.DateLayout) {
+		t.Fatalf("10.0.9.0/24 after restore + collect = %+v", found)
 	}
 }
 
-func TestAcceptUsageAndErrors(t *testing.T) {
+func TestRestoreUsageAndErrors(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := run(context.Background(), []string{"accept", "-provider", "aws"}, &stdout, &stderr); code != 64 {
-		t.Fatalf("missing -collector: exit %d", code)
+	if code := run(context.Background(), []string{"restore", "-provider", "aws", "-collector", "x"}, &stdout, &stderr); code != 64 {
+		t.Fatalf("missing -removed-since: exit %d", code)
 	}
-	if code := run(context.Background(), []string{"accept", "-provider", "aws", "-collector", "x", "-out", t.TempDir()}, &stdout, &stderr); code != 1 {
+	args := []string{"restore", "-provider", "aws", "-collector", "x", "-removed-since", "2026-09-27", "-out", t.TempDir()}
+	if code := run(context.Background(), args, &stdout, &stderr); code != 1 {
 		t.Fatalf("no published document: exit %d", code)
 	}
 }
 ```
-Add `"fmt"` and `"sync/atomic"` to the test imports.
+Add to the test imports: `"fmt"`, `"net/netip"`, `"time"`, `"provider_recon/internal/assemble"`, `"provider_recon/internal/definitions"`, `"provider_recon/internal/model"`, `"provider_recon/internal/publish"`.
 
 - [ ] **Step 2: Run to verify failure**
 
 Run: `go test ./cmd/provider-recon/`
-Expected: FAIL. `TestHeldFeedAcceptFlow` fails because accept is an unknown command (exit 64); `TestAcceptUsageAndErrors` fails on its second case.
+Expected: FAIL. `restore` is an unknown command (exit 64), so both new tests fail.
 
 - [ ] **Step 3: Implement** in `cmd/provider-recon/main.go`
 
 In `run`, add the case:
 ```go
-	case "accept":
-		return cmdAccept(ctx, args[1:], stdout, stderr)
+	case "restore":
+		return cmdRestore(ctx, args[1:], stdout, stderr)
 ```
-Change `usage` to print `usage: provider-recon validate|schema|collect|accept [flags]`.
+Change `usage` to print `usage: provider-recon validate|schema|collect|restore [flags]`.
 
 In `cmdCollect`, replace `m, err := publish.Publish(ctx, store, docs, now)` with:
 ```go
@@ -2119,17 +2151,20 @@ In `cmdCollect`, replace `m, err := publish.Publish(ctx, store, docs, now)` with
 
 Add the command:
 ```go
-func cmdAccept(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("accept", flag.ContinueOnError)
+// cmdRestore undoes wrong removals. Fix the collector first, restore, then
+// collect: ranges the feed lists again continue their original timeline.
+func cmdRestore(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("restore", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	slug := fs.String("provider", "", "provider slug")
 	collector := fs.String("collector", "", "collector id as listed in the manifest, e.g. aws_ip_ranges")
+	since := fs.String("removed-since", "", "restore ranges removed on or after this day (YYYY-MM-DD)")
 	outDir := fs.String("out", "", "use this local directory instead of S3")
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}
-	if *slug == "" || *collector == "" {
-		fmt.Fprintln(stderr, "accept needs -provider and -collector")
+	if *slug == "" || *collector == "" || *since == "" {
+		fmt.Fprintln(stderr, "restore needs -provider, -collector and -removed-since")
 		return 64
 	}
 	store, err := openStore(ctx, *outDir)
@@ -2147,17 +2182,17 @@ func cmdAccept(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		return 1
 	}
 	now := time.Now().UTC().Truncate(time.Second)
-	doc, n, err := assemble.Accept(*prev, *collector, now)
+	doc, n, err := assemble.Restore(*prev, *collector, *since, now)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	m, err := publish.PublishScoped(ctx, store, []model.Document{doc}, now, publish.Scope{Command: "accept", Providers: []string{*slug}})
+	m, err := publish.PublishScoped(ctx, store, []model.Document{doc}, now, publish.Scope{Command: "restore", Providers: []string{*slug}})
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "accepted %d removals for %s %s (run %s)\n", n, *slug, *collector, m.RunID)
+	fmt.Fprintf(stdout, "restored %d ranges for %s %s (run %s)\n", n, *slug, *collector, m.RunID)
 	return 0
 }
 ```
@@ -2171,7 +2206,7 @@ Expected: PASS.
 
 ```bash
 git add services/provider_recon/cmd
-git commit -m "feat(provider_recon): accept command and scoped collect runs"
+git commit -m "feat(provider_recon): restore command and scoped collect runs"
 ```
 
 ---
@@ -2200,25 +2235,29 @@ Nothing disappears the moment a feed stops listing it. Every item has a
 `status`:
 - `active`
 - `missing`: absent from a successful fetch since `missing_since`
-- `removed`: with `removed_at` and a `removal_action` of `grace_expired`,
-  `accepted` or `definition_removed`
+- `removed`: with `removed_at` and a `removal_action` of `grace_expired` or
+  `definition_removed`
 
 Items also carry `first_seen` and `last_seen`.
 
 - A missing range is removed after the feed's `removal_grace_days`
   (default 7; Azure 14). While a feed fails, nothing moves.
-- If more than `mass_removal_percent` (default 20) of a feed's ranges vanish
-  in one run, the feed is **held**:
-  - `collect` exits 2 and the manifest lists it;
-  - the ranges stay missing until the feed recovers, or until someone runs
-    `bin/provider-recon accept -provider <slug> -collector <id>`.
-- `accept` also confirms removals early on a feed that isn't held.
+- No threshold blocks a large drop. Every run's per-feed churn is in the
+  change manifest, and the backoffice highlights unusual updates.
+- A wrong removal is undone with:
+
+  ```bash
+  bin/provider-recon restore -provider <slug> -collector <id> -removed-since <YYYY-MM-DD>
+  ```
+
+  It sets `restored_at`, and restores only grace-expired removals. Fix the
+  collector first, then restore, then collect.
 - Removed items stay in `latest.json` for 90 days. History objects keep them
   forever.
 ````
 Add to the `## Commands` block:
 ```bash
-bin/provider-recon accept -provider aws -collector aws_ip_ranges   # accept held/missing removals
+bin/provider-recon restore -provider aws -collector aws_ip_ranges -removed-since 2026-10-03   # undo wrong removals
 ```
 
 - [ ] **Step 3: Real runs, locally and on S3**

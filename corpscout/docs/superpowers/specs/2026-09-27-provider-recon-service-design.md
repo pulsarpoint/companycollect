@@ -189,7 +189,8 @@ lifecycle:
 | `status` | `active` → `missing` → `removed` (a missing item that reappears goes back to `active`) |
 | `first_seen` / `last_seen` | UTC days of the first and latest successful observation |
 | `missing_since` | first successful fetch that no longer contained the item |
-| `removed_at`, `removal_action` | when and why: `grace_expired`, `accepted`, `definition_removed` |
+| `removed_at`, `removal_action` | when and why: `grace_expired`, `definition_removed` |
+| `restored_at` | set when `restore` undid a wrong removal |
 
 Rules:
 - **Grace period per feed.** `removal_grace_days` in the definition; default
@@ -203,15 +204,19 @@ Rules:
 - **Curated items** removed from a definition are removed at once
   (`definition_removed`). So is every item of a service or feed dropped from
   the definition.
-- **Mass-removal gate.** `mass_removal_percent` (default 20). When more than
-  that share of a feed's active ranges goes missing in one run, the feed is
-  `held`:
-  - the items are still flagged missing, but their grace clock is frozen;
-  - the hold clears by itself when the ranges come back, or with
-    `provider-recon accept -provider <slug> -collector <id>`, which marks the
-    missing ranges removed with action `accepted`.
-- **Early acceptance.** `accept` also works on a feed that isn't held, to
-  confirm removals before the grace period ends.
+- **No blocking gate** (owner, 2026-09-27). A fixed "more than N% vanished"
+  hold is arbitrary, and a block that waits on a person turns a guess into an
+  outage. Instead:
+  - every run's per-feed churn goes into the change manifest;
+  - the backoffice shows it with adjustable warning rules (display only);
+  - because nothing is physically deleted, a wrong removal is undone with
+    `provider-recon restore -provider <slug> -collector <id> -removed-since <YYYY-MM-DD>`.
+- **What restore does.** Ranges removed by grace expiry on or after that day
+  go back to `active`, with `restored_at` recording the correction.
+  Removals caused by definition edits are not restored: the definition is
+  the source of truth. The usual order is fix the collector → `restore` →
+  `collect`: restored ranges that the feed lists again continue their
+  original timeline, and ones it still lacks go missing again.
 - **Retention.** Removed items stay in `latest.json` for 90 days, then drop
   out. History objects and the ClickHouse timeline keep them forever.
 - **Content hash.** Status transitions change the hash, and so history and
@@ -248,11 +253,12 @@ shrinking. Checks:
 
 ### Change manifest additions
 
-- `scope`: the command (`collect` or `accept`) and the selected providers.
+- `scope`: the command (`collect` or `restore`) and the selected providers.
 - `feeds`: every feed's status, item count, per-run churn (added / missing /
   reappeared / removed / purged) and unmapped tags. The churn is what the
   hold thresholds get calibrated from.
 - Evidence diffs list lifecycle transitions: `added`, `missing`,
   `reappeared`, `removed` (with action), `purged`, `updated`.
-- Run ids carry the command (`<YYYYMMDDTHHMMSSZ>-collect`), so an `accept`
+- Evidence diffs also list `restored` items.
+- Run ids carry the command (`<YYYYMMDDTHHMMSSZ>-collect`), so a `restore`
   right after a run can't overwrite that run's manifest.
