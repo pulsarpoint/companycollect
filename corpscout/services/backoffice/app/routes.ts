@@ -171,6 +171,11 @@ export default [
     route("technology-proposals", "routes/admin-technology-proposals.tsx"),
     route("technology-proposals/:proposalId", "routes/admin-technology-proposal.tsx"),
     route("technologies/:slug", "routes/admin-technology-detail.tsx"),
+    // provider-recon runs, per-feed churn and warnings (display only), and
+    // each provider's missing/removed ranges.
+    route("provider-feeds", "routes/admin-provider-feeds.tsx"),
+    route("provider-feeds/runs/:runId", "routes/admin-provider-feeds-run.tsx"),
+    route("provider-feeds/providers/:slug", "routes/admin-provider-feeds-provider.tsx"),
     route("crawls", "routes/admin-crawls.tsx"),
     route("crawls/llm-profiles", "routes/admin-crawl-llm-profiles.ts"),
     route("crawls/results", "routes/admin-crawl-result.tsx"),
