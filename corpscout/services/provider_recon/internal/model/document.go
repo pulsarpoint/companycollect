@@ -58,6 +58,41 @@ func (p Provenance) hashView() Provenance {
 	return p
 }
 
+// Item statuses.
+const (
+	StatusActive  = "active"
+	StatusMissing = "missing"
+	StatusRemoved = "removed"
+)
+
+// Removal actions.
+const (
+	ActionGraceExpired      = "grace_expired"
+	ActionDefinitionRemoved = "definition_removed"
+)
+
+// DateLayout is the day resolution of lifecycle dates (UTC).
+const DateLayout = "2006-01-02"
+
+// Lifecycle is an evidence item's observed life. An item that reappears after
+// being removed is a new instance with its own FirstSeen.
+type Lifecycle struct {
+	Status        string `json:"status"`
+	FirstSeen     string `json:"first_seen"`
+	LastSeen      string `json:"last_seen"`
+	MissingSince  string `json:"missing_since,omitempty"`
+	RemovedAt     string `json:"removed_at,omitempty"`
+	RemovalAction string `json:"removal_action,omitempty"`
+	// RestoredAt records that restore undid a wrong removal of this instance.
+	RestoredAt string `json:"restored_at,omitempty"`
+}
+
+// hashView drops LastSeen: it advances every day without the evidence changing.
+func (l Lifecycle) hashView() Lifecycle {
+	l.LastSeen = ""
+	return l
+}
+
 // IPRange is an address block operated for a service.
 type IPRange struct {
 	CIDR       string  `json:"cidr"`
@@ -66,6 +101,7 @@ type IPRange struct {
 	Confidence float64 `json:"confidence"`
 	Note       string  `json:"note,omitempty"`
 	Provenance
+	Lifecycle
 }
 
 // Key identifies the item for sorting and diffs.
@@ -77,6 +113,7 @@ type ASN struct {
 	Confidence float64 `json:"confidence"`
 	Note       string  `json:"note,omitempty"`
 	Provenance
+	Lifecycle
 }
 
 // Key identifies the item for sorting and diffs.
@@ -93,6 +130,7 @@ type DNSRule struct {
 	Priority      int     `json:"priority"`
 	Note          string  `json:"note,omitempty"`
 	Provenance
+	Lifecycle
 }
 
 // Key identifies the item for sorting and diffs.
@@ -112,6 +150,7 @@ type HTTPRule struct {
 	Priority      int     `json:"priority"`
 	Note          string  `json:"note,omitempty"`
 	Provenance
+	Lifecycle
 }
 
 // Key identifies the item for sorting and diffs.
@@ -126,6 +165,7 @@ type PTRRule struct {
 	Confidence  float64 `json:"confidence"`
 	Note        string  `json:"note,omitempty"`
 	Provenance
+	Lifecycle
 }
 
 // Key identifies the item for sorting and diffs.
@@ -138,6 +178,7 @@ type CertificateIdentity struct {
 	Confidence    float64 `json:"confidence"`
 	Note          string  `json:"note,omitempty"`
 	Provenance
+	Lifecycle
 }
 
 // Key identifies the item for sorting and diffs.
@@ -172,7 +213,19 @@ type Service struct {
 	DisplayName  string   `json:"display_name"`
 	ServiceTypes []string `json:"service_types"`
 	Traits       []string `json:"traits"`
-	Evidence     Evidence `json:"evidence"`
+	// RemovedAt is set when the service was dropped from the definition; the
+	// service stays until its removed items are purged.
+	RemovedAt string   `json:"removed_at,omitempty"`
+	Evidence  Evidence `json:"evidence"`
+}
+
+// Churn counts one run's lifecycle transitions for one feed.
+type Churn struct {
+	Added      int `json:"added"`
+	Reappeared int `json:"reappeared"`
+	Missing    int `json:"missing"`
+	Removed    int `json:"removed"`
+	Purged     int `json:"purged"`
 }
 
 // CollectorStatus reports one feed's outcome for this provider in this run.
@@ -186,6 +239,7 @@ type CollectorStatus struct {
 	Error         string     `json:"error,omitempty"`
 	UnmappedTags  []string   `json:"unmapped_tags,omitempty"`
 	SkippedLines  int        `json:"skipped_lines,omitempty"`
+	Churn         Churn      `json:"churn"`
 }
 
 // Collection is run metadata. It is excluded from the content hash.
@@ -253,7 +307,8 @@ func Marshal(doc Document) ([]byte, error) {
 }
 
 // ContentHash hashes identity and evidence only. The collection block,
-// per-item source versions and feed-derived items' source URLs are excluded,
+// per-item source versions, the lifecycle's last_seen and feed-derived items'
+// source URLs are excluded,
 // so re-running collectors against unchanged feed content yields the same
 // hash even when a feed's sync token or file name moved.
 func ContentHash(doc Document) (string, error) {
@@ -270,21 +325,27 @@ func ContentHash(doc Document) (string, error) {
 		e := &view.Services[i].Evidence
 		for j := range e.IPRanges {
 			e.IPRanges[j].Provenance = e.IPRanges[j].Provenance.hashView()
+			e.IPRanges[j].Lifecycle = e.IPRanges[j].Lifecycle.hashView()
 		}
 		for j := range e.ASNs {
 			e.ASNs[j].Provenance = e.ASNs[j].Provenance.hashView()
+			e.ASNs[j].Lifecycle = e.ASNs[j].Lifecycle.hashView()
 		}
 		for j := range e.DNSRules {
 			e.DNSRules[j].Provenance = e.DNSRules[j].Provenance.hashView()
+			e.DNSRules[j].Lifecycle = e.DNSRules[j].Lifecycle.hashView()
 		}
 		for j := range e.HTTPRules {
 			e.HTTPRules[j].Provenance = e.HTTPRules[j].Provenance.hashView()
+			e.HTTPRules[j].Lifecycle = e.HTTPRules[j].Lifecycle.hashView()
 		}
 		for j := range e.PTRRules {
 			e.PTRRules[j].Provenance = e.PTRRules[j].Provenance.hashView()
+			e.PTRRules[j].Lifecycle = e.PTRRules[j].Lifecycle.hashView()
 		}
 		for j := range e.CertificateIdentities {
 			e.CertificateIdentities[j].Provenance = e.CertificateIdentities[j].Provenance.hashView()
+			e.CertificateIdentities[j].Lifecycle = e.CertificateIdentities[j].Lifecycle.hashView()
 		}
 	}
 	for j := range view.Candidates {

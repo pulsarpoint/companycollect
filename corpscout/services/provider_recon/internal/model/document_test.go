@@ -133,3 +133,23 @@ func TestContentHashIgnoresFeedSourceURLButNotCuratedOnes(t *testing.T) {
 		t.Fatal("a curated rule's reference URL is definition content and must change the hash")
 	}
 }
+
+func TestContentHashIgnoresLastSeenButNotStatus(t *testing.T) {
+	d := sampleDoc()
+	for i := range d.Services[1].Evidence.IPRanges {
+		d.Services[1].Evidence.IPRanges[i].Lifecycle = Lifecycle{Status: StatusActive, FirstSeen: "2026-09-27", LastSeen: "2026-09-27"}
+	}
+	base, err := ContentHash(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Services[1].Evidence.IPRanges[0].LastSeen = "2026-10-15"
+	if got, _ := ContentHash(d); got != base {
+		t.Fatal("hash changed when only last_seen advanced")
+	}
+	d.Services[1].Evidence.IPRanges[0].Status = StatusMissing
+	d.Services[1].Evidence.IPRanges[0].MissingSince = "2026-10-15"
+	if got, _ := ContentHash(d); got == base {
+		t.Fatal("hash must change when an item goes missing")
+	}
+}
