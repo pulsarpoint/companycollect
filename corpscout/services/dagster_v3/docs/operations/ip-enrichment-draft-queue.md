@@ -56,22 +56,23 @@ Imports and Start share the task's PostgreSQL advisory lock.
    `transient_retry_seconds`, `ripe_rest`, `apnic_whois`, `processor_version`), `started_at` and
    `freshness_cutoff = started_at − rdap_cache_days`. `batch_size`, `max_requests`,
    `request_delay_seconds`, `registry_request_delays`, `registry_daily_budgets`,
-   `rate_limit_pause_seconds` and `use_proxies` are transport settings and may change
-   between resumes. The default-draft slot is released at once, so new additions form the
+   `rate_limit_pause_seconds`, `use_proxies`, `max_in_flight` and `max_queue_per_registry`
+   are transport settings and may change between resumes. The default-draft slot is released at once, so new additions form the
    next draft;
 2. loops until nothing remains. *Remaining* is a live query per bucket: the task's entries
    in that bucket whose `input_id` has no row in `ip_enrichment_results` for this execution
    (`bucket = b AND task_id AND execution_id`, one primary-key range). Pages of `batch_size`
    follow an `input_id` cursor inside the bucket; each page costs one negative-cache read
    (`rdap_ip_lookup_results_current`), one trie `dictGet`, one read of the network rows the
-   page needs (never `raw_response`), one insert of lookup markers and a share of one result
-   insert. Freshness is judged against the frozen execution: a network or marker counts when
+   page needs (never `raw_response`), one insert of the markers it answers itself and a
+   share of one result insert; the misses' network, class, segment and marker rows are
+   written per commit group of up to 200 outcomes, one INSERT per table. Freshness is judged against the frozen execution: a network or marker counts when
    its time is `>= freshness_cutoff`, a retryable error when `retry_after > started_at`;
    `force_rdap` skips both caches. Registry requests (RIPE through its REST search, APNIC
-   through whois `-r`, the others through RDAP) happen only for misses, in parallel lanes per
-   registry, each endpoint paced on its own (see *Lanes, pacing and proxies*); a miss also
-   costs one registry-class context query, and networks fetched earlier in the run or page are
-   reused before any request. GeoIP City/ASN are read locally
+   through whois `-r`, the others through RDAP) happen only for misses, in long-lived parallel
+   lanes per registry fed across pages, each endpoint paced on its own (see *Lanes, pacing
+   and proxies*); a miss also costs one registry-class context query, and networks fetched
+   earlier in the run are reused before any request. GeoIP City/ASN are read locally
    per address;
 3. stores outcomes through a `ResultBuffer` (500 rows or 5 seconds, acknowledged
    `async_insert`); the cursor never re-reads a page inside a pass, the buffer is flushed
@@ -183,18 +184,51 @@ case-insensitively) shares one, so two proxy URLs through one host get one budge
 
 ## Lanes, pacing and proxies
 
-A page's misses are grouped by registry and fetched in parallel: one **lane** per registry
-(`arin`, `ripe`, `apnic`, `lacnic`, `afrinic`, …) with one worker per **endpoint** of it —
+Misses are fetched in parallel by long-lived **lanes**, one per registry (`arin`, `ripe`,
+`apnic`, `lacnic`, `afrinic`, …) with one worker thread per **endpoint** of it —
 `<registry>:direct` always, plus `<registry>:proxy-N` for each proxy of a registry in
-`use_proxies`. Workers only do HTTP (the request, a reroute to RIPE REST / APNIC whois or to
-another registry, the catch-all/NIR fallback, parents up to `parent_depth`) and hand back a
-plain outcome; the calling thread then stores the page in page order (class, network,
-segments, marker, result), so the ClickHouse client never leaves it. Before each request a
-worker checks the networks other lanes fetched earlier in the page, so one network is fetched
-once per page (two endpoints may still both fetch one in flight at the same moment; both
-writes are idempotent). A page returns when every lane's queue is drained or deferred, so a
-slow or paused registry never holds up the others beyond the page; with `batch_size: 1000`
-the lanes stay busy (recommended for the full run).
+`use_proxies`. The lanes start once per run and are fed across pages (a pipeline): the run
+reads a page, records what the caches answer, queues the misses on their lanes and goes on to
+the next page while the lanes work; outcomes are committed as they arrive. So a slow registry
+— LACNIC at 10 queries a minute — delays only its own addresses: throughput is about the sum
+of the lanes' allowed paces, and a run takes about the busiest registry's misses at its pace
+(before 2026-09-27 every page waited for its slowest lane: ~10 LACNIC misses × 10 s per
+1,000-address page, about 1 request/s in all). Workers only do HTTP (the request, a reroute
+to RIPE REST / APNIC whois or to another registry, the catch-all/NIR fallback, parents up to
+`parent_depth`) and hand back a plain outcome; the calling thread stores outcomes in groups of
+up to 200 (or every 2 s, or when the lanes are idle) — network, class, segment and marker rows,
+one INSERT per table per group, then the results through the result buffer — so the ClickHouse
+client never leaves it.
+
+Deduplication: rows of an address already in flight wait for it; a miss of the same registry
+and /24 (IPv4) or /48 (IPv6) as one in flight waits for that fetch (answered from its network
+when that is reusable and holds it, else asked itself); before each request a worker checks
+the networks the run's lanes fetched, so one network is fetched once (two endpoints of one
+registry may still both fetch one at the same moment; both writes are idempotent).
+
+**Back-pressure** (transport settings, change between resumes as needed):
+- `max_in_flight` (default 5,000): the run stops reading pages while this many rows wait on the
+  lanes (queued, being fetched, waiting for another miss's fetch or for their commit).
+- `max_queue_per_registry` (default 2,000): a lane holds at most this many queued misses,
+  counting the misses waiting on an in-flight fetch of their /24; a further miss of that
+  registry is **deferred** (no result, no marker) and re-walked next pass, so the reader never
+  blocks on one registry. 2,000 queued LACNIC misses are ~5.5 h of work
+  at a 10 s delay (~3.6 h at the 6.5 s default).
+
+At the end of a pass the run waits for the lanes to drain (the progress line keeps logging),
+so a pass ends with the slowest lane's queue tail; pass logic is otherwise unchanged
+(deferred entries re-walked, a pass that processed nothing waits, give-up rules,
+`max_requests`). The network trie is reloaded between passes when networks were written, so
+later passes reuse what earlier passes fetched. The progress line (at most once a minute) adds
+`in_flight=` and `queued=` (per-registry queue depth); run metadata adds
+`max_queue_depth_by_registry`. A failure or termination stops the lanes (each worker finishes
+its request, ≤ ~60 s), commits what they already fetched and stores the buffered results;
+queued misses stay remaining for the resume. Two exceptions, both safe because the resume asks
+again: if a commit group itself failed (a ClickHouse error mid-group), nothing more is
+committed in that run — its networks may not be durable, so nothing may be answered from them —
+and only results already written are flushed; and a termination that lands while a commit
+group is being written loses that group's outcomes (up to 200 fetched answers), which the
+resume fetches again. The failure path starts on a fresh ClickHouse connection.
 
 Pacing is per endpoint: at most one request per `registry_request_delays[registry]` seconds
 (default `{"lacnic": 6.5}`), else `request_delay_seconds` (default 1.0), counted from the
@@ -213,9 +247,15 @@ Recommended starting values for the full run (transport, change between resumes 
 
 ```json
 {"batch_size": 1000, "max_requests": null,
- "registry_request_delays": {"ripe": 0.5, "apnic": 1.0, "arin": 1.0, "lacnic": 6.5, "afrinic": 1.0},
+ "max_in_flight": 5000, "max_queue_per_registry": 500,
+ "registry_request_delays": {"ripe": 0.5, "apnic": 1.0, "arin": 1.0, "lacnic": 10, "afrinic": 1.0},
  "registry_daily_budgets": {"afrinic": 4500}, "rate_limit_pause_seconds": 300}
 ```
+
+For the full run: `max_queue_per_registry` 500 keeps LACNIC's backlog to a ~1.4-hour pass tail
+(500 × 10 s) while the other lanes run at their own pace, at the cost of more passes; raise it
+for fewer, longer passes, and raise `max_in_flight` only if the fast lanes idle while the
+reader waits (watch `in_flight=` against `queued=` in the progress line).
 
 Published limits behind the defaults:
 
@@ -396,9 +436,12 @@ Classes regenerate per miss and at the daily refresh.
 - A miss deferred by a paused target registry after a cross-RIR redirect (e.g. ARIN → RIPE
   while RIPE is paused) repeats the ARIN redirect on the next pass; nothing remembers the
   reroute across passes.
-- A miss that reused a network another lane fetched in the same page is deferred to the next
-  pass when that network turns out registry-level (it answers only its own address); the next
-  pass asks for it itself.
+- A miss that reused a network another lane fetched, which then turns out registry-level (it
+  answers only its own address) or has left the reuse index, is queued again as a miss of its
+  own and asked in the same pass; so is a miss that waited on a /24 fetch the network does not
+  cover.
+- `max_queue_per_registry` is one number for every registry; a per-registry map would let
+  LACNIC's backlog be bounded without bounding the others.
 - The per-endpoint budget seed charges every endpoint with the registry's whole last-day usage
   (the network table has no source-address column): safe, but after a proxied AFRINIC run a
   resume within the day may idle longer than necessary.
@@ -417,7 +460,10 @@ negative markers, registry classes per miss (trie exclusion, per-address marker)
 and the request budget, RIPE via REST and APNIC via whois `-r` without person objects (the
 root-object and NIR fallbacks, the real FPT answer), budget deferral and wait (resolver and loop),
 lanes (concurrent registries, ClickHouse on the calling thread only, one fetch per network per
-page, the same commits as the one-lane reference), endpoint pauses (deferral, Retry-After,
+page, the same commits as the one-lane reference), the pipeline (a slow LACNIC lane not holding
+up ARIN on a scaled clock, the reader stopping at `max_in_flight`, a full lane deferring to the
+next pass, one fetch for a network across pages, the same rows/markers/networks as draining
+every page, termination committing what was fetched, grouped commits), endpoint pauses (deferral, Retry-After,
 back-off and reset, LACNIC 403), per-endpoint AFRINIC budgets, proxies (allowed registries,
 `RDAP_PROXIES` parsing without echoing URLs, endpoints and pacing, redirects out of a proxy
 lane going direct, no URL in logs or metadata), completion

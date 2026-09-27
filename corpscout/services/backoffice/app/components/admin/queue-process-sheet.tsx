@@ -25,6 +25,7 @@ const LABELS: Record<string, string> = {
   rate_limit_retry_seconds: "Rate limit retry delay (seconds)", transient_retry_seconds: "Transient error retry delay (seconds)",
   registry_request_delays: "Request delay per registry (JSON, seconds)", registry_daily_budgets: "Daily request budget per endpoint (JSON)",
   rate_limit_pause_seconds: "First rate-limit pause (seconds)", use_proxies: "Registries using RDAP_PROXIES (JSON list)",
+  max_in_flight: "Registry misses in flight", max_queue_per_registry: "Queued misses per registry",
 };
 
 /** Object and list defaults (per-registry maps, proxy list) are edited as JSON text. */

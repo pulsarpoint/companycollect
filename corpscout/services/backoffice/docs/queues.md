@@ -83,7 +83,9 @@ entry table is partitioned by task and read without `FINAL`.
 
 Queues → IP enrichment automatically selects the current draft; Start launches
 `ip_enrichment_results` with `task_id`. The transport settings `batch_size`,
-`max_requests`, `request_delay_seconds`, `registry_request_delays`,
+`max_in_flight` (default 5,000 registry misses in flight before the reader waits),
+`max_queue_per_registry` (default 2,000 queued misses per registry lane; beyond it a miss
+is deferred to the next pass), `max_requests`, `request_delay_seconds`, `registry_request_delays`,
 `registry_daily_budgets`, `rate_limit_pause_seconds` and `use_proxies` may change between
 resumes; the RDAP policy fields are frozen at Start. The sheet shows the per-registry
 defaults explicitly (`registry_request_delays: {"lacnic": 6.5}`,

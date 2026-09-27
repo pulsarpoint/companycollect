@@ -22,13 +22,20 @@ that answered
 rdap_fallbacks_by_registry and their person entities under "<rir>:fallback" keys, so a
 plain "ripe" or "apnic" key in person_entities_by_registry means personal data leaked.
 
-Lanes: a page's misses are fetched in parallel, one lane per registry and one worker per
-endpoint of it (direct, plus one per HTTP(S) proxy of a registry in use_proxies). The
-FETCH phase (workers) does HTTP only: requests, reroutes, fallbacks and parents, into a
-plain MissOutcome. The COMMIT phase (the calling thread, page order) classifies, persists,
-remembers and writes markers: the ClickHouse client is never used by a worker. Every
+Lanes: misses are fetched by long-lived lanes, one per registry with one worker thread per
+endpoint of it (direct, plus one per HTTP(S) proxy of a registry in use_proxies), started
+once per run and fed across pages (a pipeline): a slow registry delays only its own
+addresses. The FETCH phase (workers) does HTTP only: requests, reroutes, fallbacks and
+parents, into a plain MissOutcome on one results list. The calling thread reads pages
+(ClickHouse cache, trie and marker reads), sends their misses to the lanes and COMMITs
+outcomes in groups (classify, persist, remember, markers; one INSERT per table per group):
+the ClickHouse client is never used by a worker. A miss whose /24 (IPv4) or /48 (IPv6) of
+the same registry is already in flight waits for that fetch instead of asking again; a
+reader bounded by max_in_flight and a queue bounded by max_queue_per_registry (beyond it the
+miss is deferred to the next pass) keep a slow registry from growing without end. Every
 endpoint is paced on its own (registry_request_delays, else request_delay_seconds) and
 reroutes/fallbacks to RIPE or APNIC use their direct endpoint, whatever lane made them.
+resolve_page() runs the same lanes for one page and drains them (the per-page reference).
 
 An optional rolling 24-hour request budget per endpoint (registry_daily_budgets) sends a
 miss to another endpoint or defers it instead of exceeding it. A rate-limited or blocked
@@ -54,12 +61,11 @@ import json
 import re
 import threading
 from collections import OrderedDict, deque
-from collections.abc import Callable, Mapping, Sequence
-from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
-from dataclasses import asdict, dataclass, field
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from ipaddress import IPv4Address, IPv6Address, ip_address, ip_network
-from time import monotonic, sleep
+from time import monotonic, perf_counter, sleep
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -166,6 +172,20 @@ PROXY_DOWN_STATUSES = frozenset({407, 502, 503, 504})
 # finish; never in a pass where anything else still progresses.
 MAX_CONSECUTIVE_PAUSES = 6
 GIVE_UP_AFTER_EMPTY_WAITS = 1
+# Pipeline: outcomes are committed in groups of up to COMMIT_BATCH, or once the oldest has
+# waited COMMIT_SECONDS, or when the lanes have nothing left to fetch.
+COMMIT_BATCH = 200
+COMMIT_SECONDS = 2.0
+# In-flight misses of one registry wait for a fetch of the same /24 (IPv4) or /48 (IPv6).
+GROUP_PREFIX = {4: 24, 6: 48}
+# Networks fetched in this run, checked before any request (committed reusable ones by the
+# reader, fetched ones by the workers).
+RECENT_CAP = 4096
+KNOWN_CAP = 4096
+# Real seconds: a worker re-checks a paused endpoint, the reader re-checks its lanes.
+IDLE_WAIT_SECONDS = 0.5
+# Real seconds the lanes get to finish their current request when they are stopped.
+STOP_SECONDS = 60.0
 
 
 def _registry_name(field: str, registry: str) -> str:
@@ -215,6 +235,20 @@ class IpEnrichmentResultsConfig(dg.Config):
         ge=1,
         description="First pause of an endpoint that is rate limited or blocked without a "
         "Retry-After; it doubles per consecutive limit up to rate_limit_retry_seconds.",
+    )
+    max_in_flight: int = Field(
+        default=5000,
+        ge=1,
+        le=1_000_000,
+        description="Registry misses in flight (queued, fetching or awaiting their commit) "
+        "above which the run stops reading new pages until the lanes catch up.",
+    )
+    max_queue_per_registry: int = Field(
+        default=2000,
+        ge=1,
+        le=1_000_000,
+        description="Queued misses per registry lane; a further miss of a full lane is "
+        "deferred to the next pass (no result, no marker) instead of blocking the reader.",
     )
     use_proxies: list[str] = Field(
         default_factory=list,
@@ -565,7 +599,7 @@ class MissOutcome:
     """What the FETCH phase learned about one miss; only the COMMIT phase stores anything.
 
     Exactly one of: ``direct`` (a validated registration, with ``cidr`` and the fetched
-    ``parents``), ``error``, ``reused`` (the network key another miss of this page
+    ``parents``), ``error``, ``reused`` (the key of a network another miss of this run
     fetched, with ``cidr``) or ``deferred`` (``registry`` could not be asked).
     """
 
@@ -580,14 +614,111 @@ class MissOutcome:
     deferred: bool = False
 
 
-@dataclass
-class _Page:
-    """Lane state of one page, shared by its workers under the enricher's state lock."""
+class _NetworkIndex:
+    """Normalized networks by key, most recent last, bounded; ``match`` pre-checks the range
+    as integers before the exact segment test, so a lookup over thousands stays cheap."""
 
-    queues: dict[str, deque[Miss]]
-    outcomes: dict[str, MissOutcome] = field(default_factory=dict)
-    fetched: list[NormalizedRdapNetwork] = field(default_factory=list)
+    def __init__(self, cap: int):
+        self._cap = cap
+        self._items: OrderedDict[
+            str, tuple[NormalizedRdapNetwork, int | None, int, int]
+        ] = OrderedDict()
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+    def add(self, normalized: NormalizedRdapNetwork) -> None:
+        """Index a network without its raw_response (the JSON is never needed again)."""
+        network = replace(normalized.network, raw_response="")
+        normalized = replace(normalized, network=network)
+        try:
+            first = ip_address(network.start_address)
+            last = ip_address(network.end_address)
+            bounds = (first.version, int(first), int(last))
+        except ValueError:
+            bounds = (None, 0, 0)  # unparsable range: always tested segment by segment
+        self._items[network.network_key] = (normalized, *bounds)
+        self._items.move_to_end(network.network_key)
+        while len(self._items) > self._cap:
+            self._items.popitem(last=False)
+
+    def get(self, key: str) -> NormalizedRdapNetwork | None:
+        item = self._items.get(key)
+        return item[0] if item is not None else None
+
+    def discard(self, key: str) -> None:
+        self._items.pop(key, None)
+
+    def match(self, address) -> tuple[NormalizedRdapNetwork, str] | None:
+        """(normalized, cidr) of the most specific (then newest) network holding ``address``."""
+        value = int(address)
+        return _best_match(
+            (
+                normalized
+                for normalized, version, first, last in self._items.values()
+                if version is None
+                or (version == address.version and first <= value <= last)
+            ),
+            address,
+        )
+
+
+@dataclass(eq=False)
+class _Lookup:
+    """One address the lanes resolve: a page IP, or the IPv4 a 6to4/IPv4-mapped row carries.
+
+    ``rows`` are the page rows it answers, with their embedded form ('6to4',
+    'ipv4_mapped' or None); ``waiters`` are lookups of the same registry and /24 (/48)
+    that wait for this one's fetch. Calling thread only.
+    """
+
+    ip: str
+    address: IPv4Address | IPv6Address
+    bucket: int
+    seq: int
+    rows: list[tuple[dict, str | None]]
+    registry: str = ""
+    group: tuple | None = None
+    waiters: list["_Lookup"] = field(default_factory=list)
+
+
+@dataclass(eq=False)
+class _Lanes:
+    """Lane state shared by the workers and the calling thread, all under the state lock.
+
+    One per run (start_lanes) or per page (resolve_page, ``per_page``: commits only once
+    the lanes are idle, in admission order, like the per-page implementation).
+    """
+
+    concurrent: bool
+    per_page: bool = False
+    queues: dict[str, deque[Miss]] = field(default_factory=dict)
+    outcomes: list[MissOutcome] = field(default_factory=list)  # FETCH -> COMMIT
+    ready_since: float | None = (
+        None  # clock time the oldest uncommitted outcome arrived
+    )
+    fetching: int = 0  # misses a worker took and has not handed back yet
+    threads: list[threading.Thread] = field(default_factory=list)
+    started: set[str] = field(default_factory=set)  # registries with workers
     stop: threading.Event = field(default_factory=threading.Event)
+    error: BaseException | None = None
+    # Networks fetched by this lane set, for reuse before a request; non-reusable ones
+    # leave at their commit.
+    known: _NetworkIndex = field(default_factory=lambda: _NetworkIndex(KNOWN_CAP))
+    # Network keys fetched but not committed yet (a reuse of them waits for the commit).
+    uncommitted: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass
+class _Batch:
+    """What one commit group (or a page's admission) writes, and the rows it answers."""
+
+    networks: list[tuple] = field(default_factory=list)
+    classes: list[tuple] = field(default_factory=list)
+    segments: list[tuple] = field(default_factory=list)
+    markers: list[tuple] = field(default_factory=list)
+    answered: list[tuple[dict, dict]] = field(default_factory=list)
+    gave_up: dict[str, int] = field(default_factory=dict)
 
 
 class _Requeue(Exception):
@@ -646,14 +777,29 @@ def _scrub(error: RdapClientError, endpoint: "Endpoint") -> None:
     error.__suppress_context__ = True
 
 
-class RdapEnricher:
-    """Resolve registry coverage for a page of addresses with a bounded number of round trips.
+def _group_of(registry: str, address) -> tuple[str, int, int]:
+    """The in-flight group of a miss: its registry and /24 (IPv4) or /48 (IPv6)."""
+    bits = 32 if address.version == 4 else 128
+    return (
+        registry,
+        address.version,
+        int(address) >> (bits - GROUP_PREFIX[address.version]),
+    )
 
-    Misses are fetched in parallel lanes, one per registry, with one worker per endpoint
-    of the registry (direct, plus one per configured proxy); the ClickHouse client is used
-    only on the calling thread, which stores the outcomes in page order (COMMIT) once every
-    lane has drained its queue or deferred it. ``concurrent=False`` fetches the misses one
-    at a time in page order on the calling thread (the sequential reference).
+
+class RdapEnricher:
+    """Resolve registry coverage for pages of addresses with a bounded number of round trips.
+
+    Pipeline use (the results loop): start_lanes(), then per page submit(rows) (answers
+    what the caches answer and sends the misses to the lanes) and collect() (commits the
+    outcomes fetched so far), drain() at the end of a pass, stop_lanes() at the end of the
+    run or on failure. Each call returns (page row, registry fields) pairs. resolve_page()
+    does the same for one page with its own lanes, drained before it returns.
+
+    Misses are fetched by lanes, one per registry, with one worker thread per endpoint of
+    the registry (direct, plus one per configured proxy); the ClickHouse client is used
+    only on the calling thread. ``concurrent=False`` fetches the misses one at a time in
+    admission order on the calling thread (the sequential reference).
     """
 
     def __init__(
@@ -689,9 +835,11 @@ class RdapEnricher:
         if missing:
             raise ValueError(f"use_proxies names {missing} without proxies")
         self._proxies = {name: tuple(proxies[name]) for name in config.use_proxies}
-        # Guards every counter, budget window, pause and page field below; never held
+        # Guards every counter, budget window, pause and lane field below; never held
         # while waiting for an endpoint lock (an endpoint lock may be held when taking it).
+        # The condition (same lock) wakes workers on new misses and the reader on outcomes.
         self._lock = threading.RLock()
+        self._cv = threading.Condition(self._lock)
         self._notes: list[tuple[str, str, tuple]] = []
         self.requests = 0
         self.cache_hits = 0
@@ -718,6 +866,8 @@ class RdapEnricher:
         self.pauses_by_endpoint: dict[str, int] = {}
         self.deferrals_by_registry: dict[str, int] = {}
         self.deferred: dict[str, int] = {}  # since the last reset_pass()
+        # The deepest each registry's lane queue got in this run.
+        self.max_queue_depth_by_registry: dict[str, int] = {}
         # Addresses answered through their embedded IPv4, by form ('6to4',
         # 'ipv4_mapped'), and Teredo addresses left without a request.
         self.embedded_ipv4_lookups: dict[str, int] = {}
@@ -737,9 +887,9 @@ class RdapEnricher:
         # The run-wide bootstrap pause (monotonic time) and its back-off.
         self._paused_until: dict[str, float] = {}
         self._bootstrap_failures = 0
-        # Reusable networks fetched over HTTP in this run, checked before any request.
-        # Read and written on the calling thread only (COMMIT runs after the lanes).
-        self.recent: OrderedDict[str, NormalizedRdapNetwork] = OrderedDict()
+        # Reusable networks committed in this run, checked before a miss is sent to a lane.
+        # Calling thread only (written by COMMIT, read by the reader).
+        self.recent = _NetworkIndex(RECENT_CAP)
         # Fresh network rows read from ClickHouse, keyed by network_key (calling thread).
         self.cached: OrderedDict[str, RdapNetwork] = OrderedDict()
         # Monotonic send times per budgeted egress (Endpoint.egress: the direct address, or
@@ -750,67 +900,271 @@ class RdapEnricher:
         self._empty_waits: dict[str, int] = {}
         # Never evict keys a page just loaded: a page needs at most batch_size keys.
         self._cached_cap = max(4096, 2 * config.batch_size)
+        # Pipeline bookkeeping, calling thread only: the running lanes, every admitted
+        # lookup until it is answered, deferred or dropped (by IP), the in-flight group
+        # leaders, and reuses waiting for the commit of the network they reuse.
+        self._lanes: _Lanes | None = None
+        self._pending: dict[str, _Lookup] = {}
+        self._groups: dict[tuple, _Lookup] = {}
+        self._awaiting: dict[str, list[MissOutcome]] = {}
+        self._seq = 0
+        self._rows_in_flight = 0  # page rows of the pending lookups
+        # Lookups waiting on an in-flight leader, per registry: they count toward the
+        # registry's max_queue_per_registry like queued misses.
+        self._waiters_by_registry: dict[str, int] = {}
+        # A commit group failed part-way: what it staged may not be durable, so nothing
+        # more is committed in this run (stop_lanes then commits nothing; a resume redoes it).
+        self._commit_failed = False
 
     def close(self) -> None:
+        self.stop_lanes()
         for endpoints in self._endpoints.values():
             for endpoint in endpoints:
                 endpoint.rdap.close()
 
-    # --- page resolution -------------------------------------------------------
+    # --- pipeline ----------------------------------------------------------------
 
-    def resolve_page(self, rows: list[dict]) -> dict[str, dict]:
-        """Registry fields per address of the page.
+    @property
+    def in_flight(self) -> int:
+        """Page rows whose miss is not answered, deferred or dropped yet (queued, fetching,
+        waiting for another miss's fetch, or awaiting its commit). Rows, not lookups: rows
+        of one address that is in flight wait on it without a lookup of their own."""
+        return self._rows_in_flight
 
-        An address is absent when it was deferred (its registry at its daily budget or
-        paused, rate limited, or the bootstrap paused) or when the run's max_requests
-        budget ran out (``budget_reached`` is then True). A 6to4 or IPv4-mapped address
-        whose IPv4 is global is resolved as that IPv4 and answered with its fields.
+    def queue_depths(self) -> dict[str, int]:
+        """Misses queued per registry lane right now (not counting those being fetched)."""
+        with self._lock:
+            lanes = self._lanes
+            if lanes is None:
+                return {}
+            return {registry: len(q) for registry, q in lanes.queues.items() if q}
+
+    def start_lanes(self) -> None:
+        """Start the run's lanes; workers start per registry at its first miss."""
+        if self._lanes is not None:
+            raise RuntimeError("the lanes are already running")
+        self._lanes = _Lanes(concurrent=self._concurrent)
+
+    def stop_lanes(self, *, commit: bool = False) -> list[tuple[dict, dict]]:
+        """Stop the workers (each finishes its current request, at most STOP_SECONDS in
+        all); with ``commit``, store what they fetched. Queued misses are dropped: they stay
+        remaining for the next run. Returns the rows the committed outcomes answer."""
+        lanes = self._lanes
+        if lanes is None:
+            return []
+        with self._cv:
+            lanes.stop.set()
+            self._cv.notify_all()
+        deadline = perf_counter() + STOP_SECONDS
+        for thread in lanes.threads:
+            thread.join(max(0.0, deadline - perf_counter()))
+        busy = [thread.name for thread in lanes.threads if thread.is_alive()]
+        if busy:
+            self.log.warning(
+                "Registry lanes still busy after %.0f s, left behind: %s",
+                STOP_SECONDS,
+                busy,
+            )
+        answered: list[tuple[dict, dict]] = []
+        try:
+            if commit and self._commit_failed:
+                self.log.warning(
+                    "A registry commit failed; the fetched outcomes are not stored "
+                    "(the resume asks for them again)"
+                )
+            elif commit:
+                with self._lock:
+                    outcomes, lanes.outcomes = lanes.outcomes, []
+                    for queue in lanes.queues.values():
+                        queue.clear()
+                for start in range(0, len(outcomes), COMMIT_BATCH):
+                    answered += self._commit(outcomes[start : start + COMMIT_BATCH])
+        finally:
+            with self._lock:
+                lanes.outcomes = []
+                for queue in lanes.queues.values():
+                    queue.clear()
+            self._pending.clear()
+            self._groups.clear()
+            self._awaiting.clear()
+            self._rows_in_flight = 0
+            self._waiters_by_registry.clear()
+            self._lanes = None
+            self._flush_notes()
+        return answered
+
+    def submit(self, rows: list[dict]) -> list[tuple[dict, dict]]:
+        """Admit a page: rows the caches answer now, with their registry fields.
+
+        Misses go to their registry's lane (or wait for an in-flight fetch of their /24);
+        their rows come back from collect() or drain() once committed. A row is never
+        answered when its address was deferred (registry paused, at its budget, its lane
+        full, or the bootstrap paused) or max_requests ran out (``budget_reached``). A 6to4
+        or IPv4-mapped address whose IPv4 is global is resolved as that IPv4.
         """
+        self._require_lanes()
         addresses: dict[str, IPv4Address | IPv6Address] = {}
         buckets: dict[str, int] = {}
-        embedded: dict[str, tuple[str, str]] = {}  # page ip -> (form, IPv4 looked up)
+        rows_of: dict[str, list[tuple[dict, str | None]]] = {}
+        embedded: set[str] = set()
         for row in rows:
             address = ip_address(row["ip"])
             if isinstance(address, IPv6Address) and address.teredo is not None:
                 self.teredo_special += 1  # not_global below: the client is hidden
             found = embedded_ipv4(address)
             if found is not None and classify_ip_scope(found[1]) == "global":
-                embedded[row["ip"]] = (found[0], str(found[1]))
+                ip, form = str(found[1]), found[0]
+                embedded.add(ip)
+            else:
+                ip, form = row["ip"], None
+                addresses[ip] = address
+                buckets[ip] = row["bucket"]
+            pending = self._pending.get(ip)
+            if pending is not None:  # the same address is in flight: wait for it
+                pending.rows.append((row, form))
+                self._rows_in_flight += 1
                 continue
-            addresses[row["ip"]] = address
-            buckets[row["ip"]] = row["bucket"]
-        if embedded:
-            # The IPv4's own bucket, as every other writer computes it: in ClickHouse.
-            missing = sorted(
-                {ipv4 for _, ipv4 in embedded.values() if ipv4 not in buckets}
-            )
-            if missing:
-                for ipv4, bucket in self.client.execute(
-                    "SELECT ip, toUInt16(cityHash64(ip) %% 256) FROM "
-                    "(SELECT arrayJoin(CAST(%(ips)s, 'Array(String)')) AS ip)",
-                    {"ips": missing},
-                ):
-                    addresses[ipv4] = ip_address(ipv4)
-                    buckets[ipv4] = bucket
-        results = self._resolve(addresses, buckets)
-        page = {row["ip"] for row in rows}
-        answered = {ip: result for ip, result in results.items() if ip in page}
-        for ip, (form, ipv4) in embedded.items():
-            if ipv4 in results:
-                answered[ip] = dict(results[ipv4])
-                self._count(self.embedded_ipv4_lookups, form)
+            rows_of.setdefault(ip, []).append((row, form))
+        # The IPv4's own bucket, as every other writer computes it: in ClickHouse.
+        missing = sorted(ip for ip in embedded if ip in rows_of and ip not in buckets)
+        if missing:
+            for ipv4, bucket in self.client.execute(
+                "SELECT ip, toUInt16(cityHash64(ip) %% 256) FROM "
+                "(SELECT arrayJoin(CAST(%(ips)s, 'Array(String)')) AS ip)",
+                {"ips": missing},
+            ):
+                addresses[ipv4] = ip_address(ipv4)
+                buckets[ipv4] = bucket
+        try:
+            return self._admit({ip: addresses[ip] for ip in rows_of}, buckets, rows_of)
+        finally:
+            self._flush_notes()
+
+    def collect(
+        self, *, wait: float = 0.0, force: bool = False
+    ) -> list[tuple[dict, dict]]:
+        """Commit the outcomes that are due: COMMIT_BATCH of them, the oldest waiting
+        COMMIT_SECONDS, the lanes idle, or ``force``. Waits up to ``wait`` real seconds for
+        one to become due. Re-raises a worker's failure. Returns the rows answered."""
+        lanes = self._require_lanes()
+        if not lanes.concurrent:
+            self._pump(lanes)
+        answered: list[tuple[dict, dict]] = []
+        try:
+            with self._cv:
+                if wait > 0 and lanes.error is None and not self._due(lanes, force):
+                    self._cv.wait(wait)
+            while True:
+                with self._cv:
+                    if lanes.error is not None:
+                        raise lanes.error
+                    if not self._due(lanes, force):
+                        break
+                    group = lanes.outcomes[:COMMIT_BATCH]
+                    del lanes.outcomes[:COMMIT_BATCH]
+                    if not lanes.outcomes:  # the rest keeps its age: due within 2 s
+                        lanes.ready_since = None
+                answered += self._commit(group)
+        finally:
+            self._flush_notes()
         return answered
 
-    def _resolve(self, addresses: dict, buckets: dict[str, int]) -> dict[str, dict]:
+    def drain(self) -> list[tuple[dict, dict]]:
+        """Collect until every admitted miss is answered, deferred or dropped (the end of a
+        pass); at max_requests the queued misses are dropped. Returns the rows answered."""
+        return [pair for answered in self.draining() for pair in answered]
+
+    def draining(self) -> Iterator[list[tuple[dict, dict]]]:
+        """drain() one step at a time (at most IDLE_WAIT_SECONDS each), so the caller can
+        store results and log progress while a slow lane finishes."""
+        lanes = self._require_lanes()
+        while self._pending:
+            if self.budget_reached:
+                self._drop_queued(lanes)
+            yield self.collect(wait=IDLE_WAIT_SECONDS)
+            with self._lock:
+                idle = self._idle(lanes) and not lanes.outcomes
+            if self._pending and idle:
+                # Every pending lookup should be queued, fetching, awaiting its commit or
+                # waiting for one that is: nothing is left to wait for.
+                self.log.warning(
+                    "%s registry lookups had nothing left to wait for; deferred to the next pass",
+                    len(self._pending),
+                )
+                for lookup in list(self._pending.values()):
+                    self._defer(lookup.registry)
+                    self._forget(lookup)
+                    lookup.waiters = []
+                self._groups.clear()
+                self._awaiting.clear()
+                self._waiters_by_registry.clear()
+
+    def resolve_page(self, rows: list[dict]) -> dict[str, dict]:
+        """Registry fields per address of one page, with lanes of its own drained before it
+        returns (the per-page reference of the pipeline; commits in admission order).
+
+        An address is absent when it was deferred or when max_requests ran out
+        (``budget_reached`` is then True).
+        """
+        if self._lanes is not None:
+            raise RuntimeError("resolve_page runs its own lanes; the run's are running")
+        self._lanes = _Lanes(concurrent=self._concurrent, per_page=True)
+        try:
+            answered = self.submit(rows)
+            answered += self.drain()
+        finally:
+            self.stop_lanes()
+        return {row["ip"]: result for row, result in answered}
+
+    def _require_lanes(self) -> _Lanes:
+        if self._lanes is None:
+            raise RuntimeError("start_lanes() first")
+        return self._lanes
+
+    def _idle(self, lanes: _Lanes) -> bool:
+        """Nothing queued and nothing being fetched (state lock held)."""
+        return lanes.fetching == 0 and not any(lanes.queues.values())
+
+    def _due(self, lanes: _Lanes, force: bool) -> bool:
+        """Outcomes wait for a full group, their age, or idle lanes (state lock held)."""
+        if not lanes.outcomes:
+            return False
+        if force or self._idle(lanes):
+            return True
+        if lanes.per_page:
+            return False
+        return len(lanes.outcomes) >= COMMIT_BATCH or (
+            lanes.ready_since is not None
+            and self._clock() - lanes.ready_since >= COMMIT_SECONDS
+        )
+
+    def _emit(self, lanes: _Lanes, outcomes: Iterable[MissOutcome]) -> None:
+        """Hand outcomes to the calling thread (state lock held)."""
+        outcomes = list(outcomes)
+        if outcomes and not lanes.outcomes:
+            lanes.ready_since = self._clock()
+        lanes.outcomes.extend(outcomes)
+        self._cv.notify_all()
+
+    # --- page admission (calling thread) -------------------------------------------
+
+    def _admit(
+        self,
+        addresses: dict,
+        buckets: dict[str, int],
+        rows_of: dict[str, list[tuple[dict, str | None]]],
+    ) -> list[tuple[dict, dict]]:
+        batch = _Batch()
         results: dict[str, dict] = {}
-        markers: list[tuple] = []
         pending: list[str] = []
         for ip, address in addresses.items():
             if classify_ip_scope(address) != "global":
                 results[ip] = rdap_result(
                     status="not_global", checked_at=datetime.now(UTC)
                 )
-                markers.append(self._marker(ip, address, buckets[ip], results[ip]))
+                batch.markers.append(
+                    self._marker(ip, address, buckets[ip], results[ip])
+                )
             else:
                 pending.append(ip)
         if pending and not self.config.force_rdap:
@@ -877,39 +1231,83 @@ class RdapEnricher:
                     cidr=cidr,
                 )
                 self.cache_hits += 1
-        # Misses: in-run cache, then registry routing (local bootstrap data), both here.
-        order: list[str] = []
-        misses: list[Miss] = []
-        outcomes: dict[str, MissOutcome] = {}
+        for ip, result in results.items():
+            self._answer(batch, rows_of[ip], result)
+        # Misses: the in-run cache, then registry routing (local bootstrap data), then the
+        # lanes; all on this thread.
         for ip in pending:
-            recent = self._recent_match(addresses[ip])
+            recent = self.recent.match(addresses[ip])
             if recent is not None:  # fetched earlier in this run: no HTTP, no marker
                 normalized, cidr = recent
                 self.cache_hits += 1
-                results[ip] = rdap_result(
-                    status="found",
-                    checked_at=normalized.network.fetched_at,
-                    network=normalized.network,
-                    cidr=cidr,
+                self._answer(
+                    batch,
+                    rows_of[ip],
+                    rdap_result(
+                        status="found",
+                        checked_at=normalized.network.fetched_at,
+                        network=normalized.network,
+                        cidr=cidr,
+                    ),
                 )
                 continue
-            order.append(ip)
             routed = self._route(ip)
+            if routed is None:  # deferred: the bootstrap is paused
+                continue
+            self._seq += 1
+            lookup = _Lookup(ip, addresses[ip], buckets[ip], self._seq, rows_of[ip])
+            self._pending[ip] = lookup
+            self._rows_in_flight += len(lookup.rows)
             if isinstance(routed, MissOutcome):
-                outcomes[ip] = routed
-            elif routed is not None:
-                misses.append(Miss(ip, addresses[ip], routed))
-        # FETCH: HTTP only, in lanes; then COMMIT on this thread, in page order.
-        try:
-            outcomes.update(self._fetch_misses(misses))
-        finally:
-            self._flush_notes()
-        self._commit(order, outcomes, addresses, buckets, results, markers)
-        if markers:
-            self.client.execute(
-                RDAP_LOOKUP_INSERT_SQL, markers, settings=WRITE_SETTINGS
+                self._settle(routed, batch)
+            else:
+                lookup.registry = routed
+                self._to_lane(lookup, batch)
+        return self._write(batch)
+
+    def _to_lane(self, lookup: _Lookup, batch: _Batch) -> None:
+        """Send a miss to its registry's lane, or let it wait for an in-flight fetch of its
+        group; deferred when every endpoint of the registry is paused or at its budget, or
+        when the lane is full; dropped at max_requests or when the lanes stop."""
+        lanes = self._require_lanes()
+        registry = lookup.registry
+        if self.budget_reached or lanes.stop.is_set():
+            self._drop(lookup)
+            return
+        lookup.group = _group_of(registry, lookup.address)
+        leader = self._groups.get(lookup.group)
+        endpoints = self._endpoints_of(registry)
+        with self._cv:
+            queue = lanes.queues.setdefault(registry, deque())
+            waiting = self._waiters_by_registry.get(registry, 0)
+            full = len(queue) + waiting >= self.config.max_queue_per_registry
+            refused = full or (leader is None and self._registry_blocked(registry))
+            if leader is not None and not refused:
+                leader.waiters.append(lookup)
+                self._waiters_by_registry[registry] = waiting + 1
+                return
+            if not refused:
+                queue.append(Miss(lookup.ip, lookup.address, registry))
+                if len(queue) > self.max_queue_depth_by_registry.get(registry, 0):
+                    self.max_queue_depth_by_registry[registry] = len(queue)
+                self._cv.notify_all()
+        if refused:
+            self._settle(
+                MissOutcome(lookup.ip, registry=registry, deferred=True), batch
             )
-        return results
+            return
+        self._groups[lookup.group] = lookup
+        if lanes.concurrent and registry not in lanes.started:
+            lanes.started.add(registry)
+            for endpoint in endpoints:
+                thread = threading.Thread(
+                    target=self._worker,
+                    args=(lanes, registry, endpoint),
+                    name=f"rdap-lane-{endpoint.name}",
+                    daemon=True,
+                )
+                lanes.threads.append(thread)
+                thread.start()
 
     def _markers_of(self, ips, addresses, buckets):
         return self.client.execute(
@@ -1060,6 +1458,11 @@ class RdapEnricher:
         with self._lock:
             return endpoint.paused_until > self._clock() or self._over_budget(endpoint)
 
+    def _registry_blocked(self, registry: str) -> bool:
+        """Every endpoint of the registry is paused or at its budget."""
+        with self._lock:
+            return all(self._endpoint_blocked(e) for e in self._endpoints_of(registry))
+
     def _pause_endpoint(
         self, endpoint: Endpoint, error: RdapClientError, answered: str
     ) -> None:
@@ -1143,7 +1546,8 @@ class RdapEnricher:
             )
 
     def reset_pass(self) -> None:
-        self.deferred = {}
+        with self._lock:
+            self.deferred = {}
 
     def _endpoint_wait(self, endpoint: Endpoint, deferred: int, now: float) -> float:
         wait = max(0.0, endpoint.paused_until - now)
@@ -1165,7 +1569,8 @@ class RdapEnricher:
 
         A registry waits for its first endpoint to free: the end of that endpoint's pause,
         or for an endpoint at its budget an hour's share of the budget (at least one
-        request), so the pass that follows is worth its ClickHouse queries.
+        request), so the pass that follows is worth its ClickHouse queries. A registry
+        deferred only because its lane was full waits 0.
         """
         with self._lock:
             now = self._clock()
@@ -1272,104 +1677,114 @@ class RdapEnricher:
             )
         return registry
 
-    def _fetch_misses(self, misses: list[Miss]) -> dict[str, MissOutcome]:
-        """Fetch every miss: one lane per registry, one worker per endpoint of it.
+    def _worker(self, lanes: _Lanes, registry: str, endpoint: Endpoint) -> None:
+        """A lane's worker thread: a failure stops every lane and reaches the reader."""
+        try:
+            self._lane(lanes, registry, endpoint)
+        except BaseException as error:  # handed to the calling thread, which re-raises
+            with self._cv:
+                if lanes.error is None:
+                    lanes.error = error
+                lanes.stop.set()
+                self._cv.notify_all()
 
-        A miss still queued when its lane stops is deferred (every endpoint of the
-        registry is paused or at its budget), unless max_requests stopped the lanes.
-        """
-        if not misses:
-            return {}
-        queues: dict[str, deque[Miss]] = {}
-        for miss in misses:
-            queues.setdefault(miss.registry, deque()).append(miss)
-        page = _Page(queues=queues)
-        if self._concurrent:
-            workers = [
-                (registry, endpoint)
-                for registry in queues
-                for endpoint in self._endpoints_of(registry)
-            ]
-            pool = ThreadPoolExecutor(
-                max_workers=len(workers), thread_name_prefix="rdap-lane"
-            )
-            try:
-                futures = [
-                    pool.submit(self._lane, page, registry, endpoint)
-                    for registry, endpoint in workers
-                ]
-                done, _ = wait(futures, return_when=FIRST_EXCEPTION)
-                for future in done:
-                    future.result()  # the first failure, as soon as it happens
-            except BaseException:
-                page.stop.set()  # the other workers stop at their next miss
-                raise
-            finally:
-                pool.shutdown(wait=True)
-        else:
-            self._sequential(page, misses)
-        with self._lock:
-            outcomes = dict(page.outcomes)
-            leftovers = [miss for queue in queues.values() for miss in queue]
-        if not self.budget_reached:
-            for miss in leftovers:
-                outcomes[miss.ip] = MissOutcome(
-                    miss.ip, registry=miss.registry, deferred=True
-                )
-        return outcomes
-
-    def _lane(self, page: _Page, registry: str, endpoint: Endpoint) -> None:
-        """One worker: take the registry's misses until the queue is empty, the endpoint
-        is paused or at its budget, or max_requests is reached."""
-        queue = page.queues[registry]
-        while not page.stop.is_set():
-            with self._lock:
-                if self.budget_reached or not queue or self._endpoint_blocked(endpoint):
+    def _lane(self, lanes: _Lanes, registry: str, endpoint: Endpoint) -> None:
+        """One worker: take the registry's misses until the lanes stop or max_requests is
+        reached; wait while the queue is empty or the endpoint is paused or at its budget."""
+        queue = lanes.queues[registry]
+        while True:
+            with self._cv:
+                miss = self._take(lanes, queue, registry, endpoint)
+                if miss is None:
                     return
-                miss = queue.popleft()
             try:
-                outcome = self._fetch(page, miss, endpoint)
+                outcome = self._fetch(lanes, miss, endpoint)
             except _Requeue:
-                with self._lock:
+                with self._cv:
                     queue.appendleft(miss)  # another endpoint may take it
+                    lanes.fetching -= 1
+                    self._cv.notify_all()
                 continue
             except _RequestLimit:
-                with self._lock:
+                with self._cv:
                     queue.appendleft(miss)
+                    lanes.fetching -= 1
                     self.budget_reached = True
+                    self._cv.notify_all()
+                return
+            except BaseException:
+                with self._cv:
+                    lanes.fetching -= 1
+                raise
+            with self._cv:
+                lanes.fetching -= 1
+                self._emit(lanes, [outcome])
+
+    def _take(
+        self, lanes: _Lanes, queue: deque[Miss], registry: str, endpoint: Endpoint
+    ) -> Miss | None:
+        """The next miss for ``endpoint`` (state lock held), or None to stop. When every
+        endpoint of the registry is paused or at its budget, the queue is deferred."""
+        while True:
+            if lanes.stop.is_set() or self.budget_reached:
+                return None
+            if queue and not self._endpoint_blocked(endpoint):
+                lanes.fetching += 1
+                return queue.popleft()
+            if queue and self._registry_blocked(registry):
+                self._defer_queue(lanes, queue, registry)
+                continue
+            self._cv.wait(IDLE_WAIT_SECONDS)
+
+    def _defer_queue(self, lanes: _Lanes, queue: deque[Miss], registry: str) -> None:
+        """Every endpoint of the registry is paused or at its budget: its queued misses are
+        deferred (state lock held)."""
+        self._emit(
+            lanes,
+            [MissOutcome(miss.ip, registry=registry, deferred=True) for miss in queue],
+        )
+        queue.clear()
+
+    def _pump(self, lanes: _Lanes) -> None:
+        """concurrent=False: the same FETCH on the calling thread, one miss at a time in
+        admission order, until nothing is queued or max_requests is reached."""
+        while not self.budget_reached:
+            heads = [
+                (self._pending[queue[0].ip].seq, registry)
+                for registry, queue in lanes.queues.items()
+                if queue
+            ]
+            if not heads:
+                return
+            registry = min(heads)[1]
+            queue = lanes.queues[registry]
+            endpoint = next(
+                (
+                    e
+                    for e in self._endpoints_of(registry)
+                    if not self._endpoint_blocked(e)
+                ),
+                None,
+            )
+            if endpoint is None:
+                with self._lock:
+                    self._defer_queue(lanes, queue, registry)
+                continue
+            try:
+                outcome = self._fetch(lanes, queue[0], endpoint)
+            except _Requeue:
+                continue
+            except _RequestLimit:
+                self.budget_reached = True
                 return
             with self._lock:
-                page.outcomes[miss.ip] = outcome
+                queue.popleft()
+                self._emit(lanes, [outcome])
 
-    def _sequential(self, page: _Page, misses: list[Miss]) -> None:
-        """The same FETCH, one miss at a time in page order, on the calling thread."""
-        for miss in misses:
-            queue = page.queues[miss.registry]
-            while not self.budget_reached:
-                endpoint = next(
-                    (
-                        e
-                        for e in self._endpoints_of(miss.registry)
-                        if not self._endpoint_blocked(e)
-                    ),
-                    None,
-                )
-                if endpoint is None:
-                    break  # stays queued: deferred
-                try:
-                    page.outcomes[miss.ip] = self._fetch(page, miss, endpoint)
-                except _Requeue:
-                    continue
-                except _RequestLimit:
-                    self.budget_reached = True
-                    break
-                queue.remove(miss)
-                break
-
-    def _page_match(self, page: _Page, address) -> tuple[str, str] | None:
-        """(network_key, cidr) of the most specific network fetched in this page for ``address``."""
+    def _known_match(self, lanes: _Lanes, address) -> tuple[str, str] | None:
+        """(network_key, cidr) of the most specific network these lanes fetched for ``address``."""
         with self._lock:
-            found = _best_match(page.fetched, address)
+            found = lanes.known.match(address)
         if found is None:
             return None
         normalized, cidr = found
@@ -1461,7 +1876,7 @@ class RdapEnricher:
 
     def _chain(
         self,
-        page: _Page,
+        lanes: _Lanes,
         miss: Miss,
         first: Endpoint,
         registry: str,
@@ -1495,7 +1910,7 @@ class RdapEnricher:
                 registry = redirect.registry or registry
                 self._count(self.reroutes_by_registry, registry)
                 if not fallback:
-                    matched = self._page_match(page, address)
+                    matched = self._known_match(lanes, address)
                     if matched is not None:
                         return MissOutcome(
                             ip, registry=registry, reused=matched[0], cidr=matched[1]
@@ -1515,20 +1930,20 @@ class RdapEnricher:
             retryable=False,
         )
 
-    def _fetch(self, page: _Page, miss: Miss, endpoint: Endpoint) -> MissOutcome:
+    def _fetch(self, lanes: _Lanes, miss: Miss, endpoint: Endpoint) -> MissOutcome:
         """FETCH one miss through ``endpoint``: HTTP only, never ClickHouse.
 
         Raises _Requeue when the endpoint itself cannot be used (paused, at its budget,
         rate limited by this request, or a dead proxy) and _RequestLimit at max_requests.
         """
         ip, address, registry = miss.ip, miss.address, miss.registry
-        matched = self._page_match(page, address)
-        if matched is not None:  # another miss of this page fetched it: no HTTP
+        matched = self._known_match(lanes, address)
+        if matched is not None:  # another miss of these lanes fetched it: no HTTP
             return MissOutcome(
                 ip, registry=registry, reused=matched[0], cidr=matched[1]
             )
         try:
-            answer = self._chain(page, miss, endpoint, registry, fallback=False)
+            answer = self._chain(lanes, miss, endpoint, registry, fallback=False)
             if isinstance(answer, MissOutcome):
                 return answer
             response, registry, source = answer
@@ -1553,7 +1968,7 @@ class RdapEnricher:
                 )
                 self._count(self.rdap_fallbacks_by_registry, registry)
                 answer = self._chain(
-                    page, miss, self._direct(registry), registry, fallback=True
+                    lanes, miss, self._direct(registry), registry, fallback=True
                 )
                 if isinstance(answer, MissOutcome):
                     return answer
@@ -1578,8 +1993,10 @@ class RdapEnricher:
             return MissOutcome(
                 ip, registry=registry, error=error, checked_at=datetime.now(UTC)
             )
-        with self._lock:
-            page.fetched.append(direct)  # later misses of any lane reuse it
+        key = direct.network.network_key
+        with self._lock:  # later misses of any lane reuse it; its commit is awaited
+            lanes.known.add(direct)
+            lanes.uncommitted[key] = lanes.uncommitted.get(key, 0) + 1
         outcome = MissOutcome(ip, registry=registry, direct=direct, cidr=cidr)
         self._fetch_parents(outcome, endpoint)
         return outcome
@@ -1621,26 +2038,50 @@ class RdapEnricher:
             outcome.parents.append(parent)
             current = parent
 
-    # --- COMMIT (calling thread, page order) -------------------------------------
+    # --- COMMIT (calling thread) ---------------------------------------------------
 
-    def _commit(self, order, outcomes, addresses, buckets, results, markers) -> None:
-        """Store the page's outcomes in page order: coverage, class and segments before the
-        marker that refers to them. A miss that reused a network fetched in this page is
-        answered once that network is known to be reusable, else deferred to the next pass
-        (where it is asked itself)."""
-        reusable: dict[str, NormalizedRdapNetwork] = {}
-        reused: list[MissOutcome] = []
-        gave_up: dict[str, int] = {}
-        for ip in order:
-            outcome = outcomes.get(ip)
-            if outcome is None:  # deferred while routing, or max_requests reached
-                continue
-            code = self._gave_up(outcome.registry) if outcome.deferred else None
+    def _commit(self, outcomes: list[MissOutcome]) -> list[tuple[dict, dict]]:
+        """Store one group of outcomes, in admission order, with one INSERT per table."""
+
+        def order(outcome: MissOutcome) -> int:
+            lookup = self._pending.get(outcome.ip)
+            return lookup.seq if lookup is not None else 0
+
+        if self._commit_failed:
+            raise RuntimeError(
+                "an earlier registry commit failed; nothing more is stored"
+            )
+        batch = _Batch()
+        try:
+            for outcome in sorted(outcomes, key=order):
+                self._settle(outcome, batch)
+            return self._write(batch)
+        except BaseException:
+            # Networks of this group may be in recent/known without being durable: a reuse
+            # of them must never be stored as found.
+            self._commit_failed = True
+            raise
+
+    def _settle(self, outcome: MissOutcome, batch: _Batch) -> None:
+        """Decide one outcome into ``batch``: coverage, class and segments before the marker
+        that refers to them. A reuse of a network fetched but not committed yet waits for
+        that commit; it is answered when the network is reusable, else deferred to the next
+        pass (where it is asked itself)."""
+        lookup = self._pending.get(outcome.ip)
+        lanes = self._lanes
+        if lookup is None:  # dropped meanwhile (max_requests, or the lanes stopped)
+            if outcome.direct is not None:  # nothing is stored: its reuses are deferred
+                self._fetch_settled(outcome.direct.network.network_key, False, batch)
+            return
+        if outcome.deferred:
+            code = self._gave_up(outcome.registry)
             if code:
                 # Every endpoint of the registry paused out and the run already waited
                 # for it after an empty pass: stop deferring, so the run can finish; a
                 # retry draft asks again.
-                gave_up[outcome.registry] = gave_up.get(outcome.registry, 0) + 1
+                batch.gave_up[outcome.registry] = (
+                    batch.gave_up.get(outcome.registry, 0) + 1
+                )
                 outcome.error = RdapClientError(
                     f"{outcome.registry} keeps refusing requests",
                     code=code,
@@ -1648,21 +2089,159 @@ class RdapEnricher:
                 )
                 outcome.checked_at = datetime.now(UTC)
                 outcome.deferred = False
-            if outcome.deferred:
-                self._defer(outcome.registry)
-            elif outcome.reused is not None:
-                reused.append(outcome)
-            elif outcome.error is not None:
-                results[ip] = self._error_result(outcome)
-                markers.append(
-                    self._marker(ip, addresses[ip], buckets[ip], results[ip])
-                )
+        if outcome.deferred:
+            self._defer(outcome.registry)
+            self._release(lookup, batch, None)
+        elif outcome.reused is not None:
+            key = outcome.reused
+            with self._lock:
+                waiting = lanes is not None and lanes.uncommitted.get(key, 0) > 0
+                source = lanes.known.get(key) if lanes is not None else None
+            if waiting:
+                self._awaiting.setdefault(key, []).append(outcome)
+                return
+            if source is None:
+                # A registry-level registration answers only its own IP, and an evicted
+                # network is unknown here: the miss asks for itself, keeping its waiters.
+                if (
+                    lookup.group is not None
+                    and self._groups.get(lookup.group) is lookup
+                ):
+                    del self._groups[lookup.group]
+                self._to_lane(lookup, batch)
+                return
+            self.cache_hits += 1
+            result = rdap_result(
+                status="found",
+                checked_at=source.network.fetched_at,
+                network=source.network,
+                cidr=outcome.cidr,
+            )
+            self._release(lookup, batch, result, source)
+        elif outcome.error is not None:
+            result = self._error_result(outcome)
+            batch.markers.append(
+                self._marker(lookup.ip, lookup.address, lookup.bucket, result)
+            )
+            self._release(lookup, batch, result)
+        else:
+            result, reusable = self._commit_found(outcome, batch)
+            batch.markers.append(
+                self._marker(lookup.ip, lookup.address, lookup.bucket, result)
+            )
+            direct = outcome.direct
+            self._release(lookup, batch, result, direct if reusable else None)
+            self._fetch_settled(direct.network.network_key, reusable, batch)
+
+    def _fetch_settled(self, key: str, reusable: bool, batch: _Batch) -> None:
+        """A fetched network is committed (or dropped): a non-reusable one leaves the
+        lanes' reuse index, and once no fetch of it is pending, its parked reuses settle."""
+        lanes = self._lanes
+        if lanes is None:
+            return
+        with self._lock:
+            left = lanes.uncommitted.get(key, 0) - 1
+            if left > 0:
+                lanes.uncommitted[key] = left
             else:
-                results[ip] = self._commit_found(outcome, reusable)
-                markers.append(
-                    self._marker(ip, addresses[ip], buckets[ip], results[ip])
-                )
-        for registry, count in gave_up.items():
+                lanes.uncommitted.pop(key, None)
+            if not reusable:
+                lanes.known.discard(key)
+        if left <= 0:
+            for parked in self._awaiting.pop(key, []):
+                self._settle(parked, batch)
+
+    def _release(
+        self,
+        lookup: _Lookup,
+        batch: _Batch,
+        result: dict | None,
+        network: NormalizedRdapNetwork | None = None,
+    ) -> None:
+        """Finish a lookup: answer its rows (unless deferred), then its group's waiters:
+        from ``network`` (a reusable registration) when it holds them, else each is sent
+        to the lane as a miss of its own."""
+        self._forget(lookup)
+        if result is not None:
+            self._answer(batch, lookup.rows, result)
+        waiters, lookup.waiters = lookup.waiters, []
+        self._unwait(lookup.registry, len(waiters))
+        for waiter in waiters:
+            cidr = matching_cidr(network, waiter.address) if network else None
+            if cidr is None:
+                self._to_lane(waiter, batch)
+                continue
+            self.cache_hits += 1
+            self._forget(waiter)
+            self._answer(
+                batch,
+                waiter.rows,
+                rdap_result(
+                    status="found",
+                    checked_at=network.network.fetched_at,
+                    network=network.network,
+                    cidr=cidr,
+                ),
+            )
+            # Its own waiters were never attached: a group has one leader at a time.
+
+    def _drop(self, lookup: _Lookup) -> None:
+        """Forget a lookup and its waiters without an answer or a deferral: max_requests was
+        reached or the lanes stopped; they stay remaining for the next run."""
+        self._forget(lookup)
+        waiters, lookup.waiters = lookup.waiters, []
+        self._unwait(lookup.registry, len(waiters))
+        for waiter in waiters:
+            self._drop(waiter)
+
+    def _unwait(self, registry: str, count: int) -> None:
+        if count:
+            with self._lock:
+                left = self._waiters_by_registry.get(registry, 0) - count
+                if left > 0:
+                    self._waiters_by_registry[registry] = left
+                else:
+                    self._waiters_by_registry.pop(registry, None)
+
+    def _forget(self, lookup: _Lookup) -> None:
+        """No longer pending: out of the pending map, its group and the in-flight rows."""
+        if self._pending.pop(lookup.ip, None) is lookup:
+            self._rows_in_flight -= len(lookup.rows)
+        if lookup.group is not None and self._groups.get(lookup.group) is lookup:
+            del self._groups[lookup.group]
+
+    def _drop_queued(self, lanes: _Lanes) -> None:
+        """At max_requests: the queued misses are dropped (not deferred), as the loop stops."""
+        with self._lock:
+            misses = [miss for queue in lanes.queues.values() for miss in queue]
+            for queue in lanes.queues.values():
+                queue.clear()
+        for miss in misses:
+            lookup = self._pending.get(miss.ip)
+            if lookup is not None:
+                self._drop(lookup)
+
+    def _answer(
+        self, batch: _Batch, rows: list[tuple[dict, str | None]], result: dict
+    ) -> None:
+        for row, form in rows:
+            batch.answered.append((row, dict(result)))
+            if form is not None:
+                self._count(self.embedded_ipv4_lookups, form)
+
+    def _write(self, batch: _Batch) -> list[tuple[dict, dict]]:
+        """One INSERT per table, in the order that keeps every reference durable first:
+        networks, their classes, their segments (the trie source), then the markers.
+        The caller stores the answered rows' results only after this returns."""
+        for sql, rows in (
+            (RDAP_NETWORK_INSERT_SQL, batch.networks),
+            (REGISTRY_CLASS_INSERT_SQL, batch.classes),
+            (RDAP_SEGMENT_INSERT_SQL, batch.segments),
+            (RDAP_LOOKUP_INSERT_SQL, batch.markers),
+        ):
+            if rows:
+                self.client.execute(sql, rows, settings=WRITE_SETTINGS)
+        for registry, count in batch.gave_up.items():
             self.log.warning(
                 "Registry %s paused %s+ times in a row on every endpoint, also after a "
                 "wait; %s addresses stored as retryable_error instead of deferred",
@@ -1670,18 +2249,7 @@ class RdapEnricher:
                 MAX_CONSECUTIVE_PAUSES,
                 count,
             )
-        for outcome in reused:
-            source = reusable.get(outcome.reused)
-            if source is None:  # a registry-level registration answers only its own IP
-                self._defer(outcome.registry)
-                continue
-            self.cache_hits += 1
-            results[outcome.ip] = rdap_result(
-                status="found",
-                checked_at=source.network.fetched_at,
-                network=source.network,
-                cidr=outcome.cidr,
-            )
+        return batch.answered
 
     def _error_result(self, outcome: MissOutcome) -> dict:
         error, checked_at = outcome.error, outcome.checked_at
@@ -1707,16 +2275,15 @@ class RdapEnricher:
             retry_after=retry_after,
         )
 
-    def _commit_found(self, outcome: MissOutcome, reusable: dict) -> dict:
+    def _commit_found(self, outcome: MissOutcome, batch: _Batch) -> tuple[dict, bool]:
         direct = outcome.direct
         # Coverage and its class are durable before any exact-IP outcome refers to them.
         # A registry-level or unallocated registration is stored for this address only:
         # the trie excludes it by class (migration 000451) and the in-run cache never holds it.
         classification = classify_registration(self.client, direct.network)
-        self._persist(direct, classification)
+        self._stage(direct, batch, classification)
         if classification.reusable:
-            self._remember(direct)
-            reusable[direct.network.network_key] = direct
+            self.recent.add(direct)
         else:
             self.registry_level_responses += 1
             self.log.info(
@@ -1726,51 +2293,34 @@ class RdapEnricher:
                 outcome.ip,
             )
         for parent in outcome.parents:
-            self._persist(parent)
-        return rdap_result(
+            self._stage(parent, batch)
+        result = rdap_result(
             status="found",
             checked_at=direct.network.fetched_at,
             network=direct.network,
             cidr=outcome.cidr,
         )
+        return result, classification.reusable
 
-    def _persist(
+    def _stage(
         self,
         normalized: NormalizedRdapNetwork,
+        batch: _Batch,
         classification: RegistryClassification | None = None,
     ) -> None:
-        self.client.execute(
-            RDAP_NETWORK_INSERT_SQL,
-            [normalized.network.clickhouse_values()],
-            settings=WRITE_SETTINGS,
-        )
+        batch.networks.append(normalized.network.clickhouse_values())
         if classification is not None and classification.registry_class != "unknown":
             # The class row lands before the segments: the trie source (migration 000451)
             # never sees a segment whose class it does not know.
-            self.client.execute(
-                REGISTRY_CLASS_INSERT_SQL,
-                [
-                    classification.clickhouse_values(
-                        normalized.network.network_key, normalized.network.fetched_at
-                    )
-                ],
-                settings=WRITE_SETTINGS,
+            batch.classes.append(
+                classification.clickhouse_values(
+                    normalized.network.network_key, normalized.network.fetched_at
+                )
             )
-        self.client.execute(
-            RDAP_SEGMENT_INSERT_SQL,
-            [segment.clickhouse_values() for segment in normalized.segments],
-            settings=WRITE_SETTINGS,
+        batch.segments.extend(
+            segment.clickhouse_values() for segment in normalized.segments
         )
         self.networks_written += 1
-
-    def _remember(self, normalized: NormalizedRdapNetwork) -> None:
-        self.recent[normalized.network.network_key] = normalized
-        self.recent.move_to_end(normalized.network.network_key)
-        if len(self.recent) > 1024:
-            self.recent.popitem(last=False)
-
-    def _recent_match(self, address):
-        return _best_match(self.recent.values(), address)
 
     def _marker(self, ip, address, bucket, result) -> tuple:
         return (

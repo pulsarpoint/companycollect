@@ -142,11 +142,12 @@ the same address.
 `ip_enrichment_results` (`defs/ip_enrichment/enrichment.py`, `RdapEnricher`) resolves a page of
 addresses with a bounded number of ClickHouse round trips: one negative-cache read
 (`rdap_ip_lookup_results_current`), one trie `dictGet`, one read of the uncached network rows
-the page needs (`rdap_networks_current`, never `raw_response`), and one insert of the page's
-lookup markers. Per miss it costs the registry-class context query
-(`registry.py::classify_registration`) before the network row, its class row (unless `unknown`)
-and its segments, in that order, so coverage and its class are durable before any result refers
-to them.
+the page needs (`rdap_networks_current`, never `raw_response`), and one insert of the markers
+the page answers itself (non-global addresses, `no_registry`). Per miss it costs the
+registry-class context query (`registry.py::classify_registration`); the network rows, their
+class rows (unless `unknown`), their segments and the misses' markers are written per commit
+group (up to 200 outcomes, see *Pipeline*), one INSERT per table in that order, so coverage and
+its class are durable before any marker or result refers to them.
 
 The registry of a miss is chosen from whoisit's already-loaded bootstrap data, with no HTTP
 request (`RdapClient.registry_for`); a global address with no exact bootstrap match answers
@@ -196,22 +197,51 @@ key in `person_entities_by_registry` is a leak, not a fallback. `reroutes_by_reg
 round out the set.
 
 **Lanes (FETCH / COMMIT).** After the cache, trie and in-run hits, a page's misses are routed on
-the calling thread (`registry_for`, local) and grouped by registry; a thread pool runs one worker
-per endpoint of each registry — `<registry>:direct`, plus one per HTTP(S) proxy of a registry in
+the calling thread (`registry_for`, local) and queued on their registry's lane; each lane has one
+worker thread per endpoint — `<registry>:direct`, plus one per HTTP(S) proxy of a registry in
 `use_proxies`. FETCH (workers) is HTTP only: request, reroute (to RIPE REST / APNIC whois, or out
 of a proxy's registry to the target's direct endpoint), catch-all/NIR fallback, parents; it
-returns a `MissOutcome` (network + parents, error, "reused a network fetched earlier in this
-page", or deferred). COMMIT (the calling thread, page order) classifies, persists, remembers and
-writes markers, so the ClickHouse client is never shared and the storage order is the one-lane
-order. Each endpoint has its own `RdapClient`/session and a lock held for pacing plus the
+returns a `MissOutcome` (network + parents, error, "reused a network these lanes fetched", or
+deferred) on one results list. COMMIT (the calling thread) classifies, persists, remembers and
+writes markers, so the ClickHouse client is never shared. Each endpoint has its own `RdapClient`/session and a lock held for pacing plus the
 request (`registry_request_delays`, default `{"lacnic": 6.5}`, else `request_delay_seconds`);
 RIPE REST and APNIC whois are single clients used under their direct endpoint's lock. Every
 endpoint only fetches its own registry's hosts (APNIC's and RIPE's also the NIR servers); a
 redirect to another registry's host raises `RdapRedirect` and is re-sent through the target's
 direct endpoint (its pace, budget and pauses), fallbacks included, so no registry is ever
 asked at another registry's pace or outside its budget.
-Counters, budgets, pauses and page state sit behind one state lock; log lines from workers are
+Counters, budgets, pauses and lane state sit behind one state lock; log lines from workers are
 queued and emitted on the calling thread.
+
+**Pipeline (lanes across pages).** The lanes are long-lived: `start_lanes()` once per run,
+workers per registry at its first miss, `stop_lanes()` at the run's end, failure or termination
+(each worker finishes its current request, at most 60 s in all). The results loop is a pipeline
+on the calling thread: `submit(page)` answers what the caches answer at once and queues the
+misses, `collect()` commits the outcomes fetched meanwhile — in groups of up to 200, once the
+oldest has waited 2 s, or when the lanes are idle, never one INSERT per address — and
+`drain()` finishes a pass. So a slow registry (LACNIC at 10 queries a minute) delays only its
+own addresses; throughput is about the sum of the lanes' paces and a run takes about the
+busiest registry's misses at its pace. Deduplication across pages: rows of an address already in
+flight wait on it; a miss of the same registry and /24 (IPv4) or /48 (IPv6) as one in flight waits
+for that fetch and is answered from its network when the network is reusable and holds it (else it
+is queued as a miss of its own); a queued miss first checks the networks these lanes fetched
+(a reuse of one not committed yet waits for that commit; if it turned out registry-level, or has
+left the index, the miss is queued again as its own); an admitted miss first checks the committed reusable networks of the run
+(4,096 kept). **Back-pressure**: the reader stops reading pages while `max_in_flight` rows
+(default 5,000; queued, fetching, waiting for another fetch or for their commit) wait on the
+lanes, and a lane holds at most `max_queue_per_registry` misses (default 2,000; misses waiting on
+an in-flight /24 count too): a further miss of that registry is deferred (no result, no marker) and re-walked next pass instead of blocking the
+reader. Both are transport settings. At the end of a pass the lanes are drained, then the pass
+logic is unchanged (deferred entries re-walked, an empty pass waits, give-up rules,
+`max_requests`); the network trie is reloaded between passes when networks were written.
+`max_queue_depth_by_registry` (run metadata) and the progress line's `in_flight=`/`queued=` show
+where the time goes. `resolve_page()` runs the same lanes for one page and drains them before
+returning, committing in admission order: the per-page reference the tests compare the pipeline
+against. A failure or termination commits what the workers already fetched and flushes the
+result buffer; queued misses stay remaining for the resume. After a failed commit group nothing
+more is committed (its networks may be in the in-run indexes without being durable), and a
+termination during a group's INSERTs loses that group; the resume asks for both again. Networks
+are indexed without their `raw_response`.
 
 **Proxies** are opt-in (`use_proxies`, only `PROXY_ALLOWED_REGISTRIES = {"arin", "afrinic"}`),
 HTTP(S) only, RDAP only; URLs come from the `RDAP_PROXIES` environment variable (JSON of URL

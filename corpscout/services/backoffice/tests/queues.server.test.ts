@@ -75,7 +75,14 @@ describe("queue processing", () => {
       ["rate_limit_pause_seconds", 0, "rate_limit_pause_seconds must be an integer between 1"],
       ["registry_request_delays", {lacnic: 5}, "registry_request_delays.lacnic must be between 6 and 60"],
       ["registry_daily_budgets", {afrinic: 5001}, "registry_daily_budgets.afrinic must be between 1 and 5000"],
+      ["max_in_flight", 0, "max_in_flight"],
+      ["max_in_flight", 1.5, "max_in_flight"],
+      ["max_queue_per_registry", 1000001, "max_queue_per_registry"],
     ] as const) expect(() => parseQueueConfig(ip, JSON.stringify({[key]: value}))).toThrow(message);
+    // The pipeline bounds are plain transport numbers.
+    expect(QUEUE_TEMPLATES["ip-enrichment"]).toMatchObject({max_in_flight: 5000, max_queue_per_registry: 2000});
+    expect(parseQueueConfig(ip, JSON.stringify({max_in_flight: 10000, max_queue_per_registry: 500}))).toEqual({
+      max_in_flight: 10000, max_queue_per_registry: 500, task_id: task});
     // Explicit maps merge over the safe defaults, as Dagster does.
     expect(parseQueueConfig(ip, JSON.stringify({registry_request_delays: {arin: 1}, registry_daily_budgets: {ripe: 10}}))).toEqual({
       registry_request_delays: {lacnic: 6.5, arin: 1}, registry_daily_budgets: {afrinic: 4500, ripe: 10}, task_id: task});

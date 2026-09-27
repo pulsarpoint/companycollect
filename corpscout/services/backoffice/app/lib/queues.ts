@@ -31,6 +31,9 @@ export const QUEUE_TEMPLATES: Record<Exclude<QueueType, "crawler">, Record<strin
   "ip-enrichment": {
     force_rdap: false, rdap_cache_days: 30, parent_depth: 1,
     batch_size: 250, max_requests: null, request_delay_seconds: 1,
+    // Pipeline bounds: misses in flight before the reader waits, and per registry lane
+    // before a further miss of that registry is deferred to the next pass.
+    max_in_flight: 5000, max_queue_per_registry: 2000,
     // Per registry, mirroring the Dagster defaults (explicit maps merge over them): LACNIC
     // allows 10 queries per minute per address, AFRINIC 5,000 per address and day
     // (budgets apply per endpoint).
@@ -47,7 +50,7 @@ export const IP_ENRICHMENT_PROXY_REGISTRIES: readonly string[] = ["arin", "afrin
 export const QUEUE_NUMBER_LIMITS: Record<Exclude<QueueType, "crawler">, Record<string, [number, number, boolean?]>> = {
   webtech: { recent_days: [1, 3650] },
   brave: { recent_days: [1, 3650], requests_per_route: [1, 8], input_batch_size: [4, 500], answer_timeout_seconds: [1, 600], progress_log_every: [1, 100000], progress_log_interval_seconds: [1, 3600] },
-  "ip-enrichment": { batch_size: [1, 10000], max_requests: [1, Number.MAX_SAFE_INTEGER], request_delay_seconds: [0, 60, true], parent_depth: [0, 5], rdap_cache_days: [1, Number.MAX_SAFE_INTEGER], rate_limit_pause_seconds: [1, Number.MAX_SAFE_INTEGER], rate_limit_retry_seconds: [1, Number.MAX_SAFE_INTEGER], transient_retry_seconds: [1, Number.MAX_SAFE_INTEGER] },
+  "ip-enrichment": { batch_size: [1, 10000], max_in_flight: [1, 1000000], max_queue_per_registry: [1, 1000000], max_requests: [1, Number.MAX_SAFE_INTEGER], request_delay_seconds: [0, 60, true], parent_depth: [0, 5], rdap_cache_days: [1, Number.MAX_SAFE_INTEGER], rate_limit_pause_seconds: [1, Number.MAX_SAFE_INTEGER], rate_limit_retry_seconds: [1, Number.MAX_SAFE_INTEGER], transient_retry_seconds: [1, Number.MAX_SAFE_INTEGER] },
 };
 
 export interface QueueFilters {
