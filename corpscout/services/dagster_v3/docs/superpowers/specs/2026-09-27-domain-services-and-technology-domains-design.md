@@ -214,6 +214,25 @@ country appears automatically.
   - A match on a cloud provider → `iaas`/`paas` with the service tag.
   - No match → `hosting` keyed by the RDAP owner from the existing trie.
 
+## Historical attribution (owner, 2026-09-27)
+
+Provider evidence comes from `provider_recon`
+(`docs/superpowers/specs/2026-09-27-provider-recon-service-design.md`). That
+service replaces the `custom/service_providers.json` idea above.
+
+Every range has a validity window. `domain_services` is computed by joining
+each DNS record's seen window (A/AAAA/CNAME/NS/MX) with the evidence valid in
+that window, so the result carries its own `first_seen`/`last_seen`. That
+answers questions like "company X used Azure a year ago for three months".
+
+- **IP lookup.** The current-state `ip_trie` dictionary only answers "now".
+  The historical pass uses an interval join per hash bucket instead: IPv4 as
+  UInt32 start/end, IPv6 as UInt128.
+- **No snapshots.** Company history is a view, and re-running detection with
+  better definitions reclassifies all of history.
+- **Before the range timeline starts** (2026-09-27), the earliest known ranges
+  are used.
+
 ## Removals (after cut-over is verified)
 
 - Tables: `technology_adoption`, `technology_companies`,

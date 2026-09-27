@@ -178,3 +178,81 @@ services/provider_recon/
      rules, aliases) and the feed versions that moved.
    - Change manifests are kept indefinitely (small); history pruning is deferred
      until it matters.
+
+## Evidence lifecycle and removal (owner, 2026-09-27)
+
+Nothing is deleted the moment it disappears. Every evidence item carries a
+lifecycle:
+
+| field | meaning |
+|---|---|
+| `status` | `active` → `missing` → `removed` (a missing item that reappears goes back to `active`) |
+| `first_seen` / `last_seen` | UTC days of the first and latest successful observation |
+| `missing_since` | first successful fetch that no longer contained the item |
+| `removed_at`, `removal_action` | when and why: `grace_expired`, `accepted`, `definition_removed` |
+
+Rules:
+- **Grace period per feed.** `removal_grace_days` in the definition; default
+  7, and 14 for Azure because it publishes weekly.
+- **Only successful fetches mark items missing.** While a feed fails, nothing
+  becomes missing or removed; the collector is `stale`.
+- **Missing items still count for detection** during the grace period.
+- **A removed item that comes back starts a new instance** (new `first_seen`).
+  The removed instance stays, so validity intervals are never merged across a
+  gap.
+- **Curated items** removed from a definition are removed at once
+  (`definition_removed`). So is every item of a service or feed dropped from
+  the definition.
+- **Mass-removal gate.** `mass_removal_percent` (default 20). When more than
+  that share of a feed's active ranges goes missing in one run, the feed is
+  `held`:
+  - the items are still flagged missing, but their grace clock is frozen;
+  - the hold clears by itself when the ranges come back, or with
+    `provider-recon accept -provider <slug> -collector <id>`, which marks the
+    missing ranges removed with action `accepted`.
+- **Early acceptance.** `accept` also works on a feed that isn't held, to
+  confirm removals before the grace period ends.
+- **Retention.** Removed items stay in `latest.json` for 90 days, then drop
+  out. History objects and the ClickHouse timeline keep them forever.
+- **Content hash.** Status transitions change the hash, and so history and
+  change entries are written. The daily `last_seen` update does not.
+- **Upgrade from slice 1.** Items published before lifecycle tracking are
+  treated as active since the run that published them.
+
+### Full timeline, not snapshots
+
+The ClickHouse stage stores every range with its validity window
+(`first_seen` → `removed_at`, or open while active/missing). Detection joins
+each DNS record's seen window with the ranges valid during that window. A
+company's provider history ("Azure App Service 2025-06 → 2025-09") is then a
+view over its domains. There are no per-company snapshots: snapshots can't
+cover the time before they started, and they freeze today's knowledge instead
+of being recomputable from better definitions.
+
+**Limit.** The range timeline starts at the first collection (2026-09-27).
+Older DNS records are attributed with the earliest ranges we hold. That is
+reliable for the big clouds, whose address space rarely changes hands, and
+weaker for small hosters. Public archives of AWS range history exist, if
+backfill ever matters.
+
+### Collector shape checks
+
+Each collector checks the structure it depends on, and reports a mismatch as
+`feed shape changed`. The feed then goes `stale` instead of silently
+shrinking. Checks:
+- AWS: both `prefixes` and `ipv6_prefixes`.
+- Azure: `AzureCloud` and `AzureFrontDoor.Frontend`.
+- Google, Cloudflare, Fastly, Bunny: IPv4 and IPv6 both present.
+- Oracle: an `OCI` tag.
+- GitHub: `pages`.
+
+### Change manifest additions
+
+- `scope`: the command (`collect` or `accept`) and the selected providers.
+- `feeds`: every feed's status, item count, per-run churn (added / missing /
+  reappeared / removed / purged) and unmapped tags. The churn is what the
+  hold thresholds get calibrated from.
+- Evidence diffs list lifecycle transitions: `added`, `missing`,
+  `reappeared`, `removed` (with action), `purged`, `updated`.
+- Run ids carry the command (`<YYYYMMDDTHHMMSSZ>-collect`), so an `accept`
+  right after a run can't overwrite that run's manifest.
