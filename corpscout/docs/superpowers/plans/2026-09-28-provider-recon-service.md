@@ -7,7 +7,7 @@
 **Architecture:**
 - A new `internal/runner` package holds the collect and restore operations. The CLI and the service both call it, so nothing is duplicated.
 - A new `internal/server` package:
-  - an HTTP API with bearer auth
+  - an HTTP API without authentication for now (owner, 2026-09-28); it listens only on companycollect's Tailscale address
   - a one-operation-at-a-time lock
   - background collects with an in-memory run registry (the last 50 runs)
   - synchronous restores
@@ -28,11 +28,10 @@
   - `POST /v1/collect` with `{"providers":[...]}` (optional): returns 202 `{run_id,status}`. 409 while any operation runs; 400 for an unknown provider or bad JSON.
   - `GET /v1/runs/{run_id}`: 200 with the run, or 404.
   - `POST /v1/restore` with `{provider,collector,removed_since}`: synchronous. 200 `{run_id,restored,…}`. 404 when there is no document or no such collector, 422 when there is nothing to restore, 400 for a bad date or missing fields, 409 while an operation runs.
-  - `/v1/*` requires `Authorization: Bearer <PROVIDER_RECON_API_TOKEN>`, else 401.
+  - No authentication for now (owner decision, 2026-09-28). Exposure is limited by listening only on companycollect's Tailscale address, `100.85.212.113:8095`.
 - A service run id equals the manifest run id (`<YYYYMMDDTHHMMSSZ>-collect` / `-restore`). Two runs of the same command never share an id.
 - `serve` configuration comes from the environment:
-  - `PROVIDER_RECON_API_TOKEN`: required, at least 32 characters
-  - `PROVIDER_RECON_LISTEN`: default `:8095`
+  - `PROVIDER_RECON_LISTEN`: default `:8095`; the deployment sets `100.85.212.113:8095`
   - `PROVIDER_RECON_DEFINITIONS`: default `definitions`
   - `CORPSCOUT_S3_*`, and `PROVIDER_RECON_BUCKET` (default `provider-recon`)
 - Deployment target: host `companycollect` (Linux x86_64). Ansible connects as `graovic` with passwordless sudo, and the service runs as the unprivileged `provider-recon` account.
@@ -41,15 +40,14 @@
   - Env file: `/etc/corpscout-provider-recon/provider-recon.env` (root 0600)
   - Unit: `/etc/systemd/system/provider-recon.service`
 - S3 endpoint for the service and for ClickHouse: `http://rustfs.taileb086.ts.net:9000` (full hostname, per the host-name rule).
-- Secrets never go into git, logs, argv or a migration. Tasks that touch them set `no_log: true`. The named collection is created from stdin with `--log_queries=0`.
-- The control machine keeps the API token in `services/provider_recon/.env` (gitignored). Plan B copies it into the Dagster server's `.env`.
+- The S3 keys never go into git, logs, argv or a migration. Tasks that touch them set `no_log: true`. The named collection is created from stdin with `--log_queries=0`.
 
 ## Review Focus
 
 1. **A collect request while a collect runs, and a restore while a collect runs.** Expected: 409 naming the active run id; nothing started. *(Task 2: `TestCollectWhileRunningIs409`.)*
 2. **Two runs finishing in the same second.** Expected: distinct run ids; the second never overwrites the first run's registry entry or manifest. *(Task 2: `TestSequentialRunsGetDistinctIDs`.)*
 3. **A collect that fails** (store write error). Expected: the run ends `failed` with the error text, and the lock is released so the next collect starts. *(Task 2: `TestFailedCollectReleasesTheLock`.)*
-4. **A missing or wrong token; a token shorter than 32 characters at startup.** Expected: 401 on `/v1/*`, `/healthz` still 200; `serve` refuses to start. *(Task 2: `TestAuthRequired`; Task 3: `TestServeRefusesWeakToken`.)*
+4. **Exposure without auth.** Expected: the unit listens only on the Tailscale address, never on `0.0.0.0` or the LAN. *(Task 4 Step 4: `ss -ltn` shows `100.85.212.113:8095` only.)*
 5. **Restore error mapping.** No document → 404, unknown collector → 404, nothing to restore → 422, bad date → 400. *(Task 2: `TestRestoreErrorMapping`.)*
 
 ---
@@ -60,7 +58,7 @@
 internal/assemble/assemble.go          + ErrUnknownCollector, ErrBadDate, ErrNothingToRestore (wrapped)
 internal/runner/runner.go              LoadDefinitions, SelectProviders, UniqueFeeds, CollectFeeds, Collect, Restore
 internal/runner/runner_test.go
-internal/server/server.go              API, run registry, lock, auth
+internal/server/server.go              API, run registry, single-operation lock
 internal/server/server_test.go
 cmd/provider-recon/main.go             uses runner; + serve command
 cmd/provider-recon/serve.go            serve command
@@ -449,7 +447,7 @@ git commit -m "refactor(provider_recon): shared runner for collect and restore, 
 - Consumes: `runner.Config`, `runner.Collect`, `runner.Restore`, `runner.LoadDefinitions`, `runner.SelectProviders`, the runner and assemble sentinel errors (Task 1); `publish.RunID`, `publish.CollectorIssue`.
 - Produces (package `provider_recon/internal/server`):
   - `type Run struct{…}` (JSON as below)
-  - `func New(cfg runner.Config, token string) *Server`
+  - `func New(cfg runner.Config) *Server`
   - `func (s *Server) Handler() http.Handler`
   - `func (s *Server) Wait()`, which blocks until background runs finish
   - `Server.Now func() time.Time`, exported for tests
@@ -480,8 +478,6 @@ import (
 	"provider_recon/internal/publish"
 	"provider_recon/internal/runner"
 )
-
-const token = "0123456789abcdef0123456789abcdef"
 
 const awsYAML = `slug: aws
 display_name: Amazon Web Services
@@ -539,7 +535,7 @@ func newHarness(t *testing.T, store publish.Store, block bool) *harness {
 		Store:          store,
 		Concurrency:    2,
 	}
-	h.srv = New(cfg, token)
+	h.srv = New(cfg)
 	h.api = httptest.NewServer(h.srv.Handler())
 	t.Cleanup(func() {
 		if h.release != nil {
@@ -555,7 +551,7 @@ func newHarness(t *testing.T, store publish.Store, block bool) *harness {
 	return h
 }
 
-func (h *harness) do(t *testing.T, method, path string, body any, auth bool) (*http.Response, map[string]any) {
+func (h *harness) do(t *testing.T, method, path string, body any) (*http.Response, map[string]any) {
 	t.Helper()
 	var buf bytes.Buffer
 	if body != nil {
@@ -564,9 +560,6 @@ func (h *harness) do(t *testing.T, method, path string, body any, auth bool) (*h
 		}
 	}
 	req, _ := http.NewRequest(method, h.api.URL+path, &buf)
-	if auth {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -581,7 +574,7 @@ func (h *harness) waitFor(t *testing.T, runID string) map[string]any {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		_, run := h.do(t, "GET", "/v1/runs/"+runID, nil, true)
+		_, run := h.do(t, "GET", "/v1/runs/"+runID, nil)
 		if run["status"] != "running" {
 			return run
 		}
@@ -591,30 +584,17 @@ func (h *harness) waitFor(t *testing.T, runID string) map[string]any {
 	return nil
 }
 
-func TestAuthRequired(t *testing.T) {
+func TestHealthz(t *testing.T) {
 	h := newHarness(t, publish.FSStore{Root: t.TempDir()}, false)
-	if res, _ := h.do(t, "GET", "/healthz", nil, false); res.StatusCode != 200 {
-		t.Fatalf("healthz = %d", res.StatusCode)
-	}
-	if res, _ := h.do(t, "POST", "/v1/collect", nil, false); res.StatusCode != 401 {
-		t.Fatalf("collect without token = %d", res.StatusCode)
-	}
-	req, _ := http.NewRequest("GET", h.api.URL+"/v1/runs/x", nil)
-	req.Header.Set("Authorization", "Bearer wrong")
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	res.Body.Close()
-	if res.StatusCode != 401 {
-		t.Fatalf("wrong token = %d", res.StatusCode)
+	if res, body := h.do(t, "GET", "/healthz", nil); res.StatusCode != 200 || body["ok"] != true {
+		t.Fatalf("healthz = %d %v", res.StatusCode, body)
 	}
 }
 
 func TestCollectRunsInTheBackgroundAndReportsTheManifest(t *testing.T) {
 	store := publish.FSStore{Root: t.TempDir()}
 	h := newHarness(t, store, false)
-	res, started := h.do(t, "POST", "/v1/collect", map[string]any{}, true)
+	res, started := h.do(t, "POST", "/v1/collect", map[string]any{})
 	if res.StatusCode != 202 || started["status"] != "running" {
 		t.Fatalf("start = %d %v", res.StatusCode, started)
 	}
@@ -630,11 +610,10 @@ func TestCollectRunsInTheBackgroundAndReportsTheManifest(t *testing.T) {
 
 func TestCollectRejectsUnknownProviderAndBadJSON(t *testing.T) {
 	h := newHarness(t, publish.FSStore{Root: t.TempDir()}, false)
-	if res, body := h.do(t, "POST", "/v1/collect", map[string]any{"providers": []string{"nope"}}, true); res.StatusCode != 400 {
+	if res, body := h.do(t, "POST", "/v1/collect", map[string]any{"providers": []string{"nope"}}); res.StatusCode != 400 {
 		t.Fatalf("unknown provider = %d %v", res.StatusCode, body)
 	}
 	req, _ := http.NewRequest("POST", h.api.URL+"/v1/collect", bytes.NewBufferString(`{"providers":`))
-	req.Header.Set("Authorization", "Bearer "+token)
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -647,12 +626,12 @@ func TestCollectRejectsUnknownProviderAndBadJSON(t *testing.T) {
 
 func TestCollectWhileRunningIs409(t *testing.T) {
 	h := newHarness(t, publish.FSStore{Root: t.TempDir()}, true)
-	_, started := h.do(t, "POST", "/v1/collect", nil, true)
-	res, body := h.do(t, "POST", "/v1/collect", nil, true)
+	_, started := h.do(t, "POST", "/v1/collect", nil)
+	res, body := h.do(t, "POST", "/v1/collect", nil)
 	if res.StatusCode != 409 || body["run_id"] != started["run_id"] {
 		t.Fatalf("second collect = %d %v", res.StatusCode, body)
 	}
-	res, _ = h.do(t, "POST", "/v1/restore", map[string]any{"provider": "aws", "collector": "aws_ip_ranges", "removed_since": "2026-09-28"}, true)
+	res, _ = h.do(t, "POST", "/v1/restore", map[string]any{"provider": "aws", "collector": "aws_ip_ranges", "removed_since": "2026-09-28"})
 	if res.StatusCode != 409 {
 		t.Fatalf("restore during collect = %d", res.StatusCode)
 	}
@@ -666,14 +645,14 @@ func TestSequentialRunsGetDistinctIDs(t *testing.T) {
 	h := newHarness(t, publish.FSStore{Root: t.TempDir()}, false)
 	fixed := time.Date(2026, 9, 28, 5, 0, 0, 0, time.UTC)
 	h.srv.Now = func() time.Time { return fixed }
-	_, a := h.do(t, "POST", "/v1/collect", nil, true)
+	_, a := h.do(t, "POST", "/v1/collect", nil)
 	h.waitFor(t, a["run_id"].(string))
-	_, b := h.do(t, "POST", "/v1/collect", nil, true)
+	_, b := h.do(t, "POST", "/v1/collect", nil)
 	h.waitFor(t, b["run_id"].(string))
 	if a["run_id"] == b["run_id"] {
 		t.Fatalf("two runs share id %v", a["run_id"])
 	}
-	if _, first := h.do(t, "GET", "/v1/runs/"+a["run_id"].(string), nil, true); first["status"] != "succeeded" {
+	if _, first := h.do(t, "GET", "/v1/runs/"+a["run_id"].(string), nil); first["status"] != "succeeded" {
 		t.Fatalf("first run entry overwritten: %v", first)
 	}
 }
@@ -686,19 +665,19 @@ func (failingStore) Put(context.Context, string, []byte, string) error {
 
 func TestFailedCollectReleasesTheLock(t *testing.T) {
 	h := newHarness(t, failingStore{publish.FSStore{Root: t.TempDir()}}, false)
-	_, started := h.do(t, "POST", "/v1/collect", nil, true)
+	_, started := h.do(t, "POST", "/v1/collect", nil)
 	run := h.waitFor(t, started["run_id"].(string))
 	if run["status"] != "failed" || run["error"] == "" {
 		t.Fatalf("run = %v", run)
 	}
-	if res, _ := h.do(t, "POST", "/v1/collect", nil, true); res.StatusCode != 202 {
+	if res, _ := h.do(t, "POST", "/v1/collect", nil); res.StatusCode != 202 {
 		t.Fatalf("lock not released: %d", res.StatusCode)
 	}
 }
 
 func TestUnknownRunIs404(t *testing.T) {
 	h := newHarness(t, publish.FSStore{Root: t.TempDir()}, false)
-	if res, _ := h.do(t, "GET", "/v1/runs/20260928T050000Z-collect", nil, true); res.StatusCode != 404 {
+	if res, _ := h.do(t, "GET", "/v1/runs/20260928T050000Z-collect", nil); res.StatusCode != 404 {
 		t.Fatalf("status = %d", res.StatusCode)
 	}
 }
@@ -737,7 +716,7 @@ func TestRestoreSucceeds(t *testing.T) {
 	store := publish.FSStore{Root: t.TempDir()}
 	removedOn := seedRemoval(t, store)
 	h := newHarness(t, store, false)
-	res, body := h.do(t, "POST", "/v1/restore", map[string]any{"provider": "aws", "collector": "aws_ip_ranges", "removed_since": removedOn}, true)
+	res, body := h.do(t, "POST", "/v1/restore", map[string]any{"provider": "aws", "collector": "aws_ip_ranges", "removed_since": removedOn})
 	if res.StatusCode != 200 || body["status"] != "succeeded" || body["restored"] != float64(1) {
 		t.Fatalf("restore = %d %v", res.StatusCode, body)
 	}
@@ -750,7 +729,7 @@ func TestRestoreErrorMapping(t *testing.T) {
 	store := publish.FSStore{Root: t.TempDir()}
 	h := newHarness(t, store, false)
 	req := func(provider, collector, since string) int {
-		res, _ := h.do(t, "POST", "/v1/restore", map[string]any{"provider": provider, "collector": collector, "removed_since": since}, true)
+		res, _ := h.do(t, "POST", "/v1/restore", map[string]any{"provider": provider, "collector": collector, "removed_since": since})
 		return res.StatusCode
 	}
 	if got := req("aws", "aws_ip_ranges", "2026-09-28"); got != 404 {
@@ -789,12 +768,10 @@ package server
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -829,8 +806,7 @@ type Run struct {
 
 // Server holds the run registry and the single-operation lock.
 type Server struct {
-	cfg   runner.Config
-	token []byte
+	cfg runner.Config
 	// Now is the clock (tests pin it).
 	Now func() time.Time
 
@@ -841,9 +817,10 @@ type Server struct {
 	wg     sync.WaitGroup
 }
 
-// New returns a server for cfg; every /v1 request must carry token.
-func New(cfg runner.Config, token string) *Server {
-	return &Server{cfg: cfg, token: []byte(token), Now: time.Now, runs: map[string]*Run{}}
+// New returns a server for cfg. There is no authentication (owner decision,
+// 2026-09-28); the deployment listens only on the Tailscale address.
+func New(cfg runner.Config) *Server {
+	return &Server{cfg: cfg, Now: time.Now, runs: map[string]*Run{}}
 }
 
 // Wait blocks until background collects have finished.
@@ -855,21 +832,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	})
-	mux.Handle("POST /v1/collect", s.auth(http.HandlerFunc(s.collect)))
-	mux.Handle("GET /v1/runs/{id}", s.auth(http.HandlerFunc(s.getRun)))
-	mux.Handle("POST /v1/restore", s.auth(http.HandlerFunc(s.restore)))
+	mux.HandleFunc("POST /v1/collect", s.collect)
+	mux.HandleFunc("GET /v1/runs/{id}", s.getRun)
+	mux.HandleFunc("POST /v1/restore", s.restore)
 	return mux
-}
-
-func (s *Server) auth(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if !ok || subtle.ConstantTimeCompare([]byte(got), s.token) != 1 {
-			writeError(w, http.StatusUnauthorized, "missing or invalid bearer token")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 // begin takes the lock and registers a running operation with a run id no
@@ -1034,7 +1000,7 @@ Expected: PASS, including under `-race`.
 
 ```bash
 git add services/provider_recon/internal/server
-git commit -m "feat(provider_recon): HTTP API for collect, run status and restore"
+git commit -m "feat(provider_recon): HTTP API for collect, run status and restore (no auth for now)"
 ```
 
 ---
@@ -1043,7 +1009,7 @@ git commit -m "feat(provider_recon): HTTP API for collect, run status and restor
 
 **Files:**
 - Create: `cmd/provider-recon/serve.go`, `cmd/provider-recon/serve_test.go`
-- Modify: `cmd/provider-recon/main.go` (dispatch `serve`, usage), `.gitignore` (add `.env`)
+- Modify: `cmd/provider-recon/main.go` (dispatch `serve`, usage)
 
 **Interfaces:**
 - Consumes: `server.New`, `runner.LoadDefinitions`, `openStore`, `registry` (Tasks 1–2).
@@ -1057,23 +1023,10 @@ package main
 import (
 	"bytes"
 	"context"
-	"strings"
 	"testing"
 )
 
-func TestServeRefusesWeakToken(t *testing.T) {
-	t.Setenv("PROVIDER_RECON_API_TOKEN", "short")
-	var stdout, stderr bytes.Buffer
-	if code := run(context.Background(), []string{"serve", "-out", t.TempDir(), "-definitions", "../../definitions"}, &stdout, &stderr); code != 1 {
-		t.Fatalf("exit %d", code)
-	}
-	if !strings.Contains(stderr.String(), "PROVIDER_RECON_API_TOKEN") {
-		t.Fatalf("stderr = %s", stderr.String())
-	}
-}
-
 func TestServeRefusesInvalidDefinitions(t *testing.T) {
-	t.Setenv("PROVIDER_RECON_API_TOKEN", strings.Repeat("x", 32))
 	var stdout, stderr bytes.Buffer
 	if code := run(context.Background(), []string{"serve", "-out", t.TempDir(), "-definitions", t.TempDir()}, &stdout, &stderr); code != 1 {
 		t.Fatalf("exit %d: %s", code, stderr.String())
@@ -1081,7 +1034,6 @@ func TestServeRefusesInvalidDefinitions(t *testing.T) {
 }
 
 func TestServeStopsOnContextCancel(t *testing.T) {
-	t.Setenv("PROVIDER_RECON_API_TOKEN", strings.Repeat("x", 32))
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan int, 1)
 	var stdout, stderr bytes.Buffer
@@ -1098,7 +1050,7 @@ func TestServeStopsOnContextCancel(t *testing.T) {
 - [ ] **Step 2: Run to verify failure**
 
 Run: `go test ./cmd/provider-recon/ -run TestServe`
-Expected: FAIL (`serve` is unknown → exit 64).
+Expected: FAIL (`serve` is unknown → exit 64, not 1/0).
 
 - [ ] **Step 3: Implement**
 
@@ -1142,11 +1094,6 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}
-	token := os.Getenv("PROVIDER_RECON_API_TOKEN")
-	if len(token) < 32 {
-		fmt.Fprintln(stderr, "PROVIDER_RECON_API_TOKEN must be set to at least 32 characters")
-		return 1
-	}
 	if _, err := runner.LoadDefinitions(*dir, registry); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -1158,7 +1105,7 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	}
 	logger := slog.New(slog.NewTextHandler(stderr, nil))
 	api := server.New(runner.Config{DefinitionsDir: *dir, Registry: registry, Fetcher: feeds.NewFetcher(),
-		Store: store, Concurrency: 4, Logger: logger}, token)
+		Store: store, Concurrency: 4, Logger: logger})
 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -1190,10 +1137,6 @@ In `main.go`:
 - Add `case "serve": return cmdServe(ctx, args[1:], stdout, stderr)`.
 - Change the usage text to `validate|schema|collect|restore|serve`.
 
-Append to `services/provider_recon/.gitignore`:
-```
-/.env
-```
 
 - [ ] **Step 4: Run to verify pass**
 
@@ -1203,7 +1146,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add services/provider_recon/cmd services/provider_recon/.gitignore
+git add services/provider_recon/cmd
 git commit -m "feat(provider_recon): serve command with graceful shutdown"
 ```
 
@@ -1283,7 +1226,9 @@ provider_recon_definitions_dir: "{{ provider_recon_deploy_dir }}/definitions"
 provider_recon_config_dir: /etc/corpscout-provider-recon
 provider_recon_env_file: "{{ provider_recon_config_dir }}/provider-recon.env"
 
-provider_recon_listen: ":8095"
+# companycollect's Tailscale address (`tailscale ip -4`): the API has no auth
+# for now, so it must not listen on the LAN or 0.0.0.0.
+provider_recon_listen: "100.85.212.113:8095"
 provider_recon_bucket: provider-recon
 provider_recon_s3_endpoint: http://rustfs.taileb086.ts.net:9000
 
@@ -1292,16 +1237,14 @@ provider_recon_s3_endpoint: http://rustfs.taileb086.ts.net:9000
 provider_recon_clickhouse_container: clickhouse-clickhouse-1
 provider_recon_named_collection: provider_recon
 
-# Secrets come from the control machine's environment, never from git.
-provider_recon_api_token: "{{ lookup('ansible.builtin.env', 'PROVIDER_RECON_API_TOKEN') }}"
+# S3 keys come from the control machine's environment, never from git.
 provider_recon_s3_access_key: "{{ lookup('ansible.builtin.env', 'CORPSCOUT_S3_ACCESS_KEY') }}"
 provider_recon_s3_secret_key: "{{ lookup('ansible.builtin.env', 'CORPSCOUT_S3_SECRET_KEY') }}"
 ```
 
 `roles/provider_recon/templates/provider-recon.env.j2`:
 ```
-# MANAGED BY ANSIBLE (roles/provider_recon). Root-only: contains secrets.
-PROVIDER_RECON_API_TOKEN={{ provider_recon_api_token }}
+# MANAGED BY ANSIBLE (roles/provider_recon). Root-only: contains the S3 keys.
 PROVIDER_RECON_LISTEN={{ provider_recon_listen }}
 PROVIDER_RECON_DEFINITIONS={{ provider_recon_definitions_dir }}
 PROVIDER_RECON_BUCKET={{ provider_recon_bucket }}
@@ -1369,17 +1312,15 @@ WantedBy=multi-user.target
 `roles/provider_recon/tasks/main.yml`:
 ```yaml
 ---
-- name: Require the secrets on the control machine
+- name: Require the S3 keys on the control machine
   ansible.builtin.assert:
     that:
-      - provider_recon_api_token | length >= 32
       - provider_recon_s3_access_key | length > 0
       - provider_recon_s3_secret_key | length > 0
-      - (provider_recon_api_token ~ provider_recon_s3_access_key ~ provider_recon_s3_secret_key) is not search("[\\x00-\\x1f\\x7f'\\\\]")
+      - (provider_recon_s3_access_key ~ provider_recon_s3_secret_key) is not search("[\\x00-\\x1f\\x7f'\\\\]")
     fail_msg: >-
-      Export PROVIDER_RECON_API_TOKEN (>= 32 chars), CORPSCOUT_S3_ACCESS_KEY and
-      CORPSCOUT_S3_SECRET_KEY (no control characters, quotes or backslashes)
-      before running this playbook; see README.md.
+      Export CORPSCOUT_S3_ACCESS_KEY and CORPSCOUT_S3_SECRET_KEY (no control
+      characters, quotes or backslashes) before running this playbook; see README.md.
   delegate_to: localhost
   become: false
   run_once: true
@@ -1555,7 +1496,7 @@ WantedBy=multi-user.target
 
 - name: Wait for the health check
   ansible.builtin.uri:
-    url: "http://127.0.0.1{{ provider_recon_listen }}/healthz"
+    url: "http://{{ provider_recon_listen }}/healthz"
     status_code: 200
   register: provider_recon_health
   retries: 15
@@ -1571,7 +1512,8 @@ WantedBy=multi-user.target
 
 Builds `provider-recon` for linux/amd64 and runs `provider-recon serve` as the
 systemd unit `provider-recon.service` on `companycollect` (user
-`provider-recon`, port 8095). It also creates the ClickHouse named collection
+`provider-recon`). The API has no authentication for now, so it listens only on
+companycollect's Tailscale address, `100.85.212.113:8095`. It also creates the ClickHouse named collection
 `provider_recon`, which the S3-engine table `provider_recon_documents_s3`
 reads through.
 
@@ -1585,11 +1527,7 @@ Installed:
 ## Deploy
 
 ```bash
-cd services/provider_recon
-# One-time: the API token shared with Dagster (PROVIDER_RECON_API_TOKEN there too).
-[ -f .env ] || printf 'PROVIDER_RECON_API_TOKEN=%s\n' "$(openssl rand -hex 32)" > .env
-cd ansible
-export PROVIDER_RECON_API_TOKEN="$(sed -n 's/^PROVIDER_RECON_API_TOKEN=//p' ../.env)"
+cd services/provider_recon/ansible
 export CORPSCOUT_S3_ACCESS_KEY="$(sed -n 's/^CORPSCOUT_S3_ACCESS_KEY=//p' ../../backoffice/.env)"
 export CORPSCOUT_S3_SECRET_KEY="$(sed -n 's/^CORPSCOUT_S3_SECRET_KEY=//p' ../../backoffice/.env)"
 export LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
@@ -1604,9 +1542,8 @@ credentials, use `ALTER NAMED COLLECTION provider_recon SET …` by hand.
 
 ```bash
 curl -s http://companycollect.taileb086.ts.net:8095/healthz
-TOKEN="$(sed -n 's/^PROVIDER_RECON_API_TOKEN=//p' ../.env)"
-curl -s -X POST -H "Authorization: Bearer $TOKEN" http://companycollect.taileb086.ts.net:8095/v1/collect
-curl -s -H "Authorization: Bearer $TOKEN" http://companycollect.taileb086.ts.net:8095/v1/runs/<run_id>
+curl -s -X POST http://companycollect.taileb086.ts.net:8095/v1/collect
+curl -s http://companycollect.taileb086.ts.net:8095/v1/runs/<run_id>
 journalctl -u provider-recon -n 50
 ```
 ````
@@ -1621,16 +1558,15 @@ Expected:
 Then, from the control machine:
 ```bash
 curl -s http://companycollect.taileb086.ts.net:8095/healthz
-TOKEN="$(sed -n 's/^PROVIDER_RECON_API_TOKEN=//p' services/provider_recon/.env)"
-RUN=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" http://companycollect.taileb086.ts.net:8095/v1/collect | jq -r .run_id); echo $RUN
-sleep 20; curl -s -H "Authorization: Bearer $TOKEN" "http://companycollect.taileb086.ts.net:8095/v1/runs/$RUN" | jq '{status, changed: (.changed|length), unchanged_count, issues: (.issues|length)}'
-curl -s -o /dev/null -w "%{http_code}\n" -X POST http://companycollect.taileb086.ts.net:8095/v1/collect
+RUN=$(curl -s -X POST http://companycollect.taileb086.ts.net:8095/v1/collect | jq -r .run_id); echo $RUN
+sleep 20; curl -s "http://companycollect.taileb086.ts.net:8095/v1/runs/$RUN" | jq '{status, changed: (.changed|length), unchanged_count, issues: (.issues|length)}'
+ssh companycollect 'ss -ltnH | grep ":8095 "'
 ssh companycollect "docker exec clickhouse-clickhouse-1 clickhouse-client -q \"SELECT name FROM system.named_collections WHERE name='provider_recon'; SELECT count() FROM s3(provider_recon, filename='providers/*/latest.json', format='JSONAsString')\""
 ```
 Expected:
 - `{"ok":true}`
 - the run `succeeded` with 0 issues, and `changed + unchanged_count = 37`
-- the unauthenticated POST returns `401`
+- `ss` shows exactly one listener, `100.85.212.113:8095`
 - ClickHouse lists `provider_recon` and counts `37` documents through the collection
 
 - [ ] **Step 5: Commit**

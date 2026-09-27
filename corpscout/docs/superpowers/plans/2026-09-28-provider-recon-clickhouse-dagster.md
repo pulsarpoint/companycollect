@@ -45,7 +45,7 @@ Those tables form the permanent range and rule timeline that historical detectio
   - certificate: `identity_type identity_value`
   - asn: `AS<n>`
 - **Addresses:** `range_start`/`range_end` are `IPv6`, with IPv4 mapped as `::ffff:a.b.c.d`.
-- **Service:** reached at `http://companycollect.taileb086.ts.net:8095` (full hostname). The token comes from `PROVIDER_RECON_API_TOKEN` in the Dagster server's `.env`.
+- **Service:** reached at `http://companycollect.taileb086.ts.net:8095` (full hostname; the service listens only on the Tailscale address). No authentication for now (owner decision, 2026-09-28).
 - **Schedule:** `provider_recon_daily`, cron `12 3 * * *` UTC, `DefaultScheduleStatus.STOPPED`. Start it on the instance after the first verified run.
 - Commit by explicit path from the `corpscout` root (the tree carries unrelated in-progress work). Conventional Commits, each ending with `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>`.
 - Deploys and one-off launches follow `docs/deployment-runbook.md` and the memory recipes (worktree deploy recipe, the server one-off `dg launch` recipe, the deploy lock). Order: **migrate → deploy code → materialize.**
@@ -649,7 +649,7 @@ git commit -m "feat(dagster): provider-recon loader SQL normalising S3 documents
 **Interfaces:**
 - Produces:
   - `class ProviderReconError(Exception)`
-  - `class ProviderReconResource(dg.ConfigurableResource)`, with fields `api_url` (default `http://companycollect.taileb086.ts.net:8095`), `api_token`, `request_timeout_s`
+  - `class ProviderReconResource(dg.ConfigurableResource)`, with fields `api_url` (default `http://companycollect.taileb086.ts.net:8095`) and `request_timeout_s`
   - `start_collect(providers=()) -> dict`
   - `get_run(run_id) -> dict`
   - `wait_for_run(run_id, *, timeout_s=3600, poll_s=10, sleep=time.sleep, clock=time.monotonic) -> dict`
@@ -667,8 +667,6 @@ import pytest
 
 from dagster_v3.defs.provider_recon.resource import ProviderReconError, ProviderReconResource
 
-TOKEN = "t" * 40
-
 
 class _API(BaseHTTPRequestHandler):
     state: dict = {}
@@ -682,7 +680,6 @@ class _API(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
     def do_POST(self) -> None:
-        self.state.setdefault("auth", []).append(self.headers.get("Authorization"))
         length = int(self.headers.get("Content-Length") or 0)
         self.state.setdefault("bodies", []).append(json.loads(self.rfile.read(length) or b"{}"))
         if self.state.get("busy"):
@@ -705,7 +702,7 @@ def api():
     server = HTTPServer(("127.0.0.1", 0), _API)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    yield ProviderReconResource(api_url=f"http://127.0.0.1:{server.server_port}", api_token=TOKEN), _API.state
+    yield ProviderReconResource(api_url=f"http://127.0.0.1:{server.server_port}"), _API.state
     server.shutdown()
 
 
@@ -713,7 +710,6 @@ def test_start_and_wait_until_succeeded(api) -> None:
     resource, state = api
     started = resource.start_collect(["aws"])
     assert started["run_id"] == "r1"
-    assert state["auth"] == [f"Bearer {TOKEN}"]
     assert state["bodies"] == [{"providers": ["aws"]}]
     run = resource.wait_for_run("r1", poll_s=0, sleep=lambda _: None)
     assert run["status"] == "succeeded" and state["polls"] == 3
@@ -732,9 +728,6 @@ def test_wait_times_out(api) -> None:
     with pytest.raises(ProviderReconError, match="still running"):
         resource.wait_for_run("r1", timeout_s=5, poll_s=0, sleep=lambda _: None, clock=lambda: next(ticks))
 
-
-def test_token_is_not_in_repr() -> None:
-    assert TOKEN not in repr(ProviderReconResource(api_token=TOKEN))
 ```
 
 - [ ] **Step 2: Run to verify failure**
@@ -752,7 +745,6 @@ from collections.abc import Callable, Sequence
 
 import dagster as dg
 import requests
-from pydantic import Field
 
 # Full tailnet name: bare hostnames break on the dagster host (memory: short hostnames).
 DEFAULT_API_URL = "http://companycollect.taileb086.ts.net:8095"
@@ -767,16 +759,12 @@ class ProviderReconResource(dg.ConfigurableResource):
     """Starts provider-recon collects and polls them to completion."""
 
     api_url: str = DEFAULT_API_URL
-    api_token: str = Field(repr=False)
     request_timeout_s: float = 30.0
-
-    def _headers(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {self.api_token}"}
 
     def start_collect(self, providers: Sequence[str] = ()) -> dict:
         body = {"providers": list(providers)} if providers else {}
         response = requests.post(
-            f"{self.api_url}/v1/collect", json=body, headers=self._headers(), timeout=self.request_timeout_s
+            f"{self.api_url}/v1/collect", json=body, timeout=self.request_timeout_s
         )
         if response.status_code == 409:
             raise ProviderReconError(f"provider-recon is busy with run {response.json().get('run_id')}")
@@ -786,7 +774,7 @@ class ProviderReconResource(dg.ConfigurableResource):
 
     def get_run(self, run_id: str) -> dict:
         response = requests.get(
-            f"{self.api_url}/v1/runs/{run_id}", headers=self._headers(), timeout=self.request_timeout_s
+            f"{self.api_url}/v1/runs/{run_id}", timeout=self.request_timeout_s
         )
         if response.status_code != 200:
             raise ProviderReconError(f"run {run_id}: HTTP {response.status_code} {response.text}")
@@ -814,7 +802,7 @@ class ProviderReconResource(dg.ConfigurableResource):
 - [ ] **Step 4: Run to verify pass**
 
 Run: `uv run pytest tests/test_provider_recon_resource.py -q`
-Expected: 4 PASS.
+Expected: 3 PASS.
 
 - [ ] **Step 5: Commit**
 
@@ -889,7 +877,7 @@ def succeeded(issues=()):
 
 
 def test_documents_asset_reports_run_and_passes_check() -> None:
-    recon = FakeRecon(api_token="t" * 40, final=succeeded())
+    recon = FakeRecon(final=succeeded())
     with dg.build_asset_context() as context:
         result = assets.provider_recon_documents(context, provider_recon=recon, clickhouse=FakeClickhouse(37))
     assert result.metadata["run_id"] == "20260928T031200Z-collect"
@@ -899,7 +887,7 @@ def test_documents_asset_reports_run_and_passes_check() -> None:
 
 def test_documents_asset_warns_on_feed_issues() -> None:
     issue = {"slug": "aws", "collector": "aws_ip_ranges", "status": "stale", "error": "status 503"}
-    recon = FakeRecon(api_token="t" * 40, final=succeeded([issue]))
+    recon = FakeRecon(final=succeeded([issue]))
     with dg.build_asset_context() as context:
         result = assets.provider_recon_documents(context, provider_recon=recon, clickhouse=FakeClickhouse(37))
     check = result.check_results[0]
@@ -908,7 +896,7 @@ def test_documents_asset_warns_on_feed_issues() -> None:
 
 
 def test_documents_asset_fails_when_run_fails() -> None:
-    recon = FakeRecon(api_token="t" * 40, final={"run_id": "x", "status": "failed", "error": "put failed", "changed": [], "unchanged_count": 0, "issues": []})
+    recon = FakeRecon(final={"run_id": "x", "status": "failed", "error": "put failed", "changed": [], "unchanged_count": 0, "issues": []})
     with dg.build_asset_context() as context, pytest.raises(dg.Failure, match="put failed"):
         assets.provider_recon_documents(context, provider_recon=recon, clickhouse=FakeClickhouse(37))
 
@@ -1065,14 +1053,14 @@ defs = dg.Definitions(
     assets=[provider_recon_documents, provider_recon_clickhouse],
     jobs=[provider_recon_job],
     schedules=[provider_recon_daily],
-    resources={"provider_recon": ProviderReconResource(api_token=dg.EnvVar("PROVIDER_RECON_API_TOKEN"))},
+    resources={"provider_recon": ProviderReconResource()},
 )
 ```
 
 - [ ] **Step 4: Run to verify pass**
 
 Run: `uv run pytest tests/test_provider_recon_assets.py tests/test_provider_recon_resource.py tests/test_provider_recon_sql.py tests/test_clickhouse_migrations.py -q && uv run dg check defs`
-Expected: PASS; `dg check defs` reports all definitions load. If `dg check defs` needs `PROVIDER_RECON_API_TOKEN` at load time, it does not, because `EnvVar` resolves at run time. If it does complain, add the variable to the local `.env` template with a placeholder and ledger it.
+Expected: PASS; `dg check defs` reports all definitions load.
 
 - [ ] **Step 5: Commit**
 
@@ -1095,21 +1083,14 @@ ssh companycollect "docker exec clickhouse-clickhouse-1 clickhouse-client -q \"S
 ```
 Expected: `37`, plus the five objects.
 
-- [ ] **Step 2: Add the token to the Dagster server environment**
+- [ ] **Step 2: Deploy dagster_v3**
 
-Append `PROVIDER_RECON_API_TOKEN=<the value in services/provider_recon/.env>` to the server-owned `/opt/companycollect/corpscout/dagster_v3/.env` on the `dagster` host. Keep the ownership and mode the file already has. If the permission classifier blocks the write, hand the owner the one-line command. Confirm without printing the value:
-```bash
-ssh dagster "sudo grep -c '^PROVIDER_RECON_API_TOKEN=' /opt/companycollect/corpscout/dagster_v3/.env"
-```
-
-- [ ] **Step 3: Deploy dagster_v3**
-
-Follow the worktree deploy recipe (memory: pristine worktree, dbt-state refresh, deploy lock at `/run/lock/corpscout-dagster-deploy`). Then confirm the code location loads the new assets:
+Follow the worktree deploy recipe (memory: pristine worktree, dbt-state refresh, deploy lock at `/run/lock/corpscout-dagster-deploy`). The Dagster host must reach `http://companycollect.taileb086.ts.net:8095/healthz` (check with `ssh dagster curl -s …`). Then confirm the code location loads the new assets:
 ```bash
 ssh dagster "cd /opt/companycollect/corpscout/dagster_v3 && sudo -n env PATH=/opt/companycollect/corpscout/dagster_v3/.venv/bin:/usr/local/bin:/usr/bin:/bin ./.venv/bin/dg list defs 2>/dev/null | grep -c provider_recon"
 ```
 
-- [ ] **Step 4: First run on the server**
+- [ ] **Step 3: First run on the server**
 
 Launch the job once with the server one-off recipe:
 ```bash
@@ -1129,6 +1110,6 @@ Expected:
 - rules for dns/http/ptr/asn
 - the 52.84.1.1 lookup returns `aws | aws.cloudfront`
 
-- [ ] **Step 5: Start the schedule**
+- [ ] **Step 4: Start the schedule**
 
 Start `provider_recon_daily` on the instance (UI, or `dagster schedule start` per the runbook). Record in memory that it is running.

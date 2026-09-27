@@ -278,8 +278,9 @@ HTTP API run as the systemd unit `provider-recon.service` on **companycollect**
 | `GET /v1/runs/{run_id}` | `running` / `succeeded` / `failed`, with changed providers, unchanged count and collector issues. The last 50 runs are kept in memory. |
 | `POST /v1/restore` `{provider, collector, removed_since}` | Synchronous. 200 `{run_id, restored}`. 404 when there is no document, 422 when there is nothing to restore, 409 while a collect runs. |
 
-- **Auth:** bearer token (`PROVIDER_RECON_API_TOKEN`) on `/v1/*`.
-- **Address:** listens on `:8095`. Dagster reaches it at
+- **Auth:** none for now (owner, 2026-09-28). To limit exposure, the service
+  listens only on companycollect's Tailscale address (`100.85.212.113:8095`).
+- **Address:** Dagster reaches it at
   `http://companycollect.taileb086.ts.net:8095` (FQDN, per the host-name rule).
 - **Run ids:** the service run id is the manifest run id, so a Dagster run, the
   S3 change file and the backoffice all name the same run.
