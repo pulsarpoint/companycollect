@@ -296,3 +296,51 @@ func TestRestoreErrorMapping(t *testing.T) {
 		}
 	}
 }
+
+// ctxStore fails writes on a cancelled context, as the S3 SDK does.
+type ctxStore struct{ publish.FSStore }
+
+func (s ctxStore) Put(ctx context.Context, key string, body []byte, ct string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.FSStore.Put(ctx, key, body, ct)
+}
+
+func TestRestoreCompletesWhenTheClientDisconnects(t *testing.T) {
+	store := ctxStore{publish.FSStore{Root: t.TempDir()}}
+	removedOn := seedRemoval(t, store)
+	h := newHarness(t, store, false)
+	body := bytes.NewBufferString(`{"provider":"aws","collector":"aws_ip_ranges","removed_since":"` + removedOn + `"}`)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // the caller has already gone away
+	req := httptest.NewRequest("POST", "/v1/restore", body).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	h.srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("restore on a cancelled request = %d %s", rec.Code, rec.Body.String())
+	}
+	doc, err := publish.LoadLatest(context.Background(), store, "aws")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range doc.Services {
+		for _, r := range s.Evidence.IPRanges {
+			if r.CIDR == "10.0.9.0/24" && r.Status != model.StatusActive {
+				t.Fatalf("latest.json not restored: %+v", r.Lifecycle)
+			}
+		}
+	}
+}
+
+func TestDuplicateProvidersAreCollectedOnce(t *testing.T) {
+	h := newHarness(t, publish.FSStore{Root: t.TempDir()}, false)
+	_, started := h.do(t, "POST", "/v1/collect", map[string]any{"providers": []string{"aws", "aws"}})
+	if fmt.Sprint(started["providers"]) != "[aws]" {
+		t.Fatalf("run providers = %v", started["providers"])
+	}
+	run := h.waitFor(t, started["run_id"].(string))
+	if fmt.Sprint(run["changed"]) != "[aws]" {
+		t.Fatalf("changed = %v", run["changed"])
+	}
+}

@@ -289,7 +289,7 @@ HTTP API run as the systemd unit `provider-recon.service` on **companycollect**
 ### ClickHouse reads the bucket directly
 
 - **Named collection.** `provider_recon` points at
-  `http://rustfs:9000/provider-recon/`. It is created by the deploy playbook
+  `http://rustfs.taileb086.ts.net:9000/provider-recon/` (FQDN, per the host-name rule). It is created by the deploy playbook
   from stdin with query logging off; the credentials never appear in a
   migration.
 - **S3 table.** `provider_recon_documents_s3` (engine S3, `JSONAsString`) maps

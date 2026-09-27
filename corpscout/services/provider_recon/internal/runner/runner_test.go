@@ -94,3 +94,13 @@ func TestRestoreErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestCollectDeduplicatesProviders(t *testing.T) {
+	m, err := Collect(context.Background(), testConfig(t), []string{"aws", "aws"}, time.Date(2026, 9, 28, 5, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.Changed) != 1 || len(m.Feeds) != 1 || len(m.Scope.Providers) != 1 {
+		t.Fatalf("changed=%d feeds=%d scope=%v", len(m.Changed), len(m.Feeds), m.Scope.Providers)
+	}
+}

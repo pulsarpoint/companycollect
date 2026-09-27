@@ -146,7 +146,8 @@ func (s *Server) collect(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	run, now, busy := s.begin("collect", body.Providers)
+	providers := runner.UniqueSlugs(body.Providers)
+	run, now, busy := s.begin("collect", providers)
 	if run == nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "an operation is already running", "run_id": busy})
 		return
@@ -155,7 +156,7 @@ func (s *Server) collect(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer s.wg.Done()
 		// Detached from the request: the client polls; shutdown waits via Wait.
-		m, err := runner.Collect(context.Background(), s.cfg, body.Providers, now)
+		m, err := runner.Collect(context.Background(), s.cfg, providers, now)
 		s.finish(run, m, 0, err)
 	}()
 	writeJSON(w, http.StatusAccepted, s.snapshot(run))
@@ -191,7 +192,9 @@ func (s *Server) restore(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "an operation is already running", "run_id": busy})
 		return
 	}
-	m, n, err := runner.Restore(r.Context(), s.cfg, body.Provider, body.Collector, body.RemovedSince, now)
+	// Not cancelled with the request: once the lock is taken the publish must
+	// finish, or history/manifest could record a restore latest.json never got.
+	m, n, err := runner.Restore(context.WithoutCancel(r.Context()), s.cfg, body.Provider, body.Collector, body.RemovedSince, now)
 	s.finish(run, m, n, err)
 	switch {
 	case err == nil:

@@ -59,6 +59,22 @@ func LoadDefinitions(dir string, registry func() map[string]feeds.Collector) ([]
 	return defs, nil
 }
 
+// UniqueSlugs drops repeated slugs, keeping first-seen order; nil stays nil.
+func UniqueSlugs(slugs []string) []string {
+	if slugs == nil {
+		return nil
+	}
+	seen := make(map[string]bool, len(slugs))
+	out := make([]string, 0, len(slugs))
+	for _, s := range slugs {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // SelectProviders returns the definitions for slugs, or all when slugs is empty.
 func SelectProviders(defs []definitions.Definition, slugs []string) ([]definitions.Definition, error) {
 	if len(slugs) == 0 {
@@ -69,7 +85,7 @@ func SelectProviders(defs []definitions.Definition, slugs []string) ([]definitio
 		bySlug[d.Slug] = d
 	}
 	out := make([]definitions.Definition, 0, len(slugs))
-	for _, s := range slugs {
+	for _, s := range UniqueSlugs(slugs) {
 		d, ok := bySlug[s]
 		if !ok {
 			return nil, fmt.Errorf("%w: %q", ErrUnknownProvider, s)
@@ -82,6 +98,7 @@ func SelectProviders(defs []definitions.Definition, slugs []string) ([]definitio
 // Collect runs the selected providers' feeds and publishes at now; the
 // manifest's run id is publish.RunID(now, "collect").
 func Collect(ctx context.Context, cfg Config, providers []string, now time.Time) (publish.Manifest, error) {
+	providers = UniqueSlugs(providers)
 	defs, err := LoadDefinitions(cfg.DefinitionsDir, cfg.Registry)
 	if err != nil {
 		return publish.Manifest{}, err
