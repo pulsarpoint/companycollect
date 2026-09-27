@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS corpscout.provider_recon_documents_s3
 ENGINE = S3(provider_recon, filename = 'providers/*/latest.json', format = 'JSONAsString');
 
 -- Providers and their services as last published. Upserted by the Dagster
--- asset provider_recon_clickhouse; read with FINAL.
+-- asset provider_recon_clickhouse, read with FINAL.
 CREATE TABLE IF NOT EXISTS corpscout.provider_services
 (
     provider_slug LowCardinality(String),
