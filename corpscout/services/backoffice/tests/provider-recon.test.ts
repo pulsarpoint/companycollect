@@ -12,7 +12,7 @@ import {
   type ProviderDocument,
 } from "~/lib/provider-recon";
 
-function feed(partial: Partial<FeedRun> & { churn?: Partial<FeedRun["churn"]> }): FeedRun {
+function feed(partial: Omit<Partial<FeedRun>, "churn"> & { churn?: Partial<FeedRun["churn"]> }): FeedRun {
   return normalizeFeedRun({ slug: "aws", collector: "aws_ip_ranges", status: "ok", items: 100, ...partial });
 }
 

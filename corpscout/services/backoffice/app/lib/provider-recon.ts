@@ -160,7 +160,7 @@ export interface FeedFlag {
 const EMPTY_CHURN: Churn = { added: 0, reappeared: 0, missing: 0, removed: 0, purged: 0 };
 
 /** Fill fields that older manifests (before lifecycle tracking) lack. */
-export function normalizeFeedRun(raw: Partial<FeedRun> & { churn?: Partial<Churn> }): FeedRun {
+export function normalizeFeedRun(raw: Omit<Partial<FeedRun>, "churn"> & { churn?: Partial<Churn> }): FeedRun {
   return {
     slug: raw.slug ?? "",
     collector: raw.collector ?? "",
