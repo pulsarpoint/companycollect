@@ -109,3 +109,27 @@ func TestContentHashIgnoresRunMetadataAndSourceVersions(t *testing.T) {
 		t.Fatalf("hash %q lacks sha256: prefix", base)
 	}
 }
+
+func TestContentHashIgnoresFeedSourceURLButNotCuratedOnes(t *testing.T) {
+	base, err := ContentHash(sampleDoc())
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved := sampleDoc()
+	for i := range moved.Services[1].Evidence.IPRanges {
+		moved.Services[1].Evidence.IPRanges[i].SourceURL = "https://download.example/ServiceTags_Public_20260928.json"
+	}
+	if got, _ := ContentHash(moved); got != base {
+		t.Fatal("hash changed when only a feed item's source URL changed (weekly Azure file name)")
+	}
+
+	curated := sampleDoc()
+	curated.Services[0].Evidence.DNSRules = []DNSRule{{RecordType: "NS", MatchField: "target", MatcherType: "suffix", Pattern: "x.com",
+		Confidence: 1, Priority: 100, Provenance: Provenance{Source: SourceCurated, SourceURL: "https://a.example"}}}
+	h1, _ := ContentHash(curated)
+	curated.Services[0].Evidence.DNSRules[0].SourceURL = "https://b.example"
+	h2, _ := ContentHash(curated)
+	if h1 == h2 {
+		t.Fatal("a curated rule's reference URL is definition content and must change the hash")
+	}
+}

@@ -46,6 +46,18 @@ type Provenance struct {
 	SourceVersion string `json:"source_version,omitempty"`
 }
 
+// hashView drops the parts of provenance that move without the evidence
+// changing: the source version always, and the source URL of feed-derived
+// items (Azure's download file is renamed every week). A curated item's URL
+// is definition content and stays.
+func (p Provenance) hashView() Provenance {
+	p.SourceVersion = ""
+	if p.Source != SourceCurated {
+		p.SourceURL = ""
+	}
+	return p
+}
+
 // IPRange is an address block operated for a service.
 type IPRange struct {
 	CIDR       string  `json:"cidr"`
@@ -240,10 +252,10 @@ func Marshal(doc Document) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// ContentHash hashes identity and evidence only. The collection block and
-// per-item source versions are excluded, so re-running collectors against
-// unchanged feed content yields the same hash even when a feed's sync token
-// moved.
+// ContentHash hashes identity and evidence only. The collection block,
+// per-item source versions and feed-derived items' source URLs are excluded,
+// so re-running collectors against unchanged feed content yields the same
+// hash even when a feed's sync token or file name moved.
 func ContentHash(doc Document) (string, error) {
 	raw, err := json.Marshal(doc)
 	if err != nil {
@@ -257,26 +269,26 @@ func ContentHash(doc Document) (string, error) {
 	for i := range view.Services {
 		e := &view.Services[i].Evidence
 		for j := range e.IPRanges {
-			e.IPRanges[j].SourceVersion = ""
+			e.IPRanges[j].Provenance = e.IPRanges[j].Provenance.hashView()
 		}
 		for j := range e.ASNs {
-			e.ASNs[j].SourceVersion = ""
+			e.ASNs[j].Provenance = e.ASNs[j].Provenance.hashView()
 		}
 		for j := range e.DNSRules {
-			e.DNSRules[j].SourceVersion = ""
+			e.DNSRules[j].Provenance = e.DNSRules[j].Provenance.hashView()
 		}
 		for j := range e.HTTPRules {
-			e.HTTPRules[j].SourceVersion = ""
+			e.HTTPRules[j].Provenance = e.HTTPRules[j].Provenance.hashView()
 		}
 		for j := range e.PTRRules {
-			e.PTRRules[j].SourceVersion = ""
+			e.PTRRules[j].Provenance = e.PTRRules[j].Provenance.hashView()
 		}
 		for j := range e.CertificateIdentities {
-			e.CertificateIdentities[j].SourceVersion = ""
+			e.CertificateIdentities[j].Provenance = e.CertificateIdentities[j].Provenance.hashView()
 		}
 	}
 	for j := range view.Candidates {
-		view.Candidates[j].SourceVersion = ""
+		view.Candidates[j].Provenance = view.Candidates[j].Provenance.hashView()
 	}
 	Normalize(&view)
 	b, err := json.Marshal(view)

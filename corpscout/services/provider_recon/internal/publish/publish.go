@@ -54,34 +54,33 @@ func LoadLatest(ctx context.Context, store Store, slug string) (*model.Document,
 	return &d, nil
 }
 
-// Publish writes history (only on a content-hash change) and then latest
-// (always) for every document, then the run's change manifest. History is
-// written before latest, so an interrupted run is re-detected as a change next
-// time rather than lost.
+// Publish runs in three phases so an interrupted run is always re-detected:
+// (1) history objects for every changed provider, (2) the run's change
+// manifest, (3) every latest.json. latest.json is what the next run compares
+// against, so until phase 3 completes every change of this run is reported
+// again next time rather than lost from the manifest stream.
 func Publish(ctx context.Context, store Store, docs []model.Document, now time.Time) (Manifest, error) {
 	m := Manifest{RunID: now.UTC().Format(RunIDLayout), PublishedAt: now.UTC(),
 		Changed: []ProviderChange{}, Unchanged: []string{}, CollectorIssues: []CollectorIssue{}}
 	sorted := append([]model.Document(nil), docs...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Slug < sorted[j].Slug })
-	for _, doc := range sorted {
+
+	bodies := make([][]byte, len(sorted))
+	for i, doc := range sorted {
 		prev, err := LoadLatest(ctx, store, doc.Slug)
 		if err != nil {
 			return m, err
 		}
-		body, err := model.Marshal(doc)
-		if err != nil {
+		if bodies[i], err = model.Marshal(doc); err != nil {
 			return m, err
 		}
 		if prev == nil || prev.Collection.ContentHash != doc.Collection.ContentHash {
 			m.Changed = append(m.Changed, Diff(prev, doc))
-			if err := store.Put(ctx, HistoryKey(doc.Slug, now), body, "application/json"); err != nil {
+			if err := store.Put(ctx, HistoryKey(doc.Slug, now), bodies[i], "application/json"); err != nil {
 				return m, err
 			}
 		} else {
 			m.Unchanged = append(m.Unchanged, doc.Slug)
-		}
-		if err := store.Put(ctx, LatestKey(doc.Slug), body, "application/json"); err != nil {
-			return m, err
 		}
 		ids := make([]string, 0, len(doc.Collection.Collectors))
 		for id := range doc.Collection.Collectors {
@@ -94,9 +93,19 @@ func Publish(ctx context.Context, store Store, docs []model.Document, now time.T
 			}
 		}
 	}
+
 	mb, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return m, err
 	}
-	return m, store.Put(ctx, ChangesKey(m.RunID), append(mb, '\n'), "application/json")
+	if err := store.Put(ctx, ChangesKey(m.RunID), append(mb, '\n'), "application/json"); err != nil {
+		return m, err
+	}
+
+	for i, doc := range sorted {
+		if err := store.Put(ctx, LatestKey(doc.Slug), bodies[i], "application/json"); err != nil {
+			return m, err
+		}
+	}
+	return m, nil
 }

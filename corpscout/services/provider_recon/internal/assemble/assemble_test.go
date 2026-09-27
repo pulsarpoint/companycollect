@@ -199,3 +199,26 @@ func TestBuildBGPSourceAndConfidence(t *testing.T) {
 		t.Fatalf("%+v", ip)
 	}
 }
+
+func TestBuildKeepsGenericRangeWhenOnlyAnIgnoredTagRepeatsIt(t *testing.T) {
+	def := definitions.Definition{
+		Slug: "microsoft", DisplayName: "Microsoft", Category: "cloud",
+		Services: []definitions.ServiceDef{{Key: "microsoft.azure-cloud", DisplayName: "Azure", ServiceTypes: []string{"iaas"}}},
+		Feeds: []definitions.FeedRef{{
+			Collector:   "azure_service_tags",
+			TagMap:      map[string]string{"AzureCloud*": "microsoft.azure-cloud", "*": ""},
+			GenericTags: []string{"AzureCloud*"},
+		}},
+	}
+	outcomes := map[string]FeedOutcome{"azure_service_tags": {Result: feeds.Result{Ranges: []feeds.Range{
+		r("20.50.0.0/24", "AzureCloud.westeurope", "westeurope"),
+		r("20.50.0.0/24", "AzureMonitor", ""),
+	}}}}
+	doc, err := Build(def, outcomes, nil, t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := doc.Services[0].Evidence.IPRanges; len(got) != 1 || got[0].CIDR != "20.50.0.0/24" {
+		t.Fatalf("umbrella range dropped because an ignored tag repeated it: %+v", got)
+	}
+}

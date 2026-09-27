@@ -3,9 +3,11 @@ package publish
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -121,5 +123,37 @@ func TestDiffFeedVersions(t *testing.T) {
 	b, _ := json.Marshal(ch)
 	if len(b) == 0 {
 		t.Fatal("change does not marshal")
+	}
+}
+
+// failingStore fails every Put whose key contains failOn.
+type failingStore struct {
+	FSStore
+	failOn string
+}
+
+func (s failingStore) Put(ctx context.Context, key string, body []byte, ct string) error {
+	if s.failOn != "" && strings.Contains(key, s.failOn) {
+		return errors.New("injected put failure")
+	}
+	return s.FSStore.Put(ctx, key, body, ct)
+}
+
+func TestInterruptedPublishIsRedetectedForEveryProvider(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	a := doc(t, "52.84.0.0/15")
+	b := doc(t, "13.32.0.0/15")
+	b.Slug = "bws"
+
+	if _, err := Publish(ctx, failingStore{FSStore{Root: root}, "providers/bws/"}, []model.Document{a, b}, t0); err == nil {
+		t.Fatal("expected the injected failure to surface")
+	}
+	m, err := Publish(ctx, FSStore{Root: root}, []model.Document{a, b}, t0.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.Changed) != 2 {
+		t.Fatalf("after an interrupted run, changes were lost from the manifest stream: changed=%d unchanged=%v", len(m.Changed), m.Unchanged)
 	}
 }

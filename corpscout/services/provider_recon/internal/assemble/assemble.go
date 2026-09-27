@@ -113,10 +113,18 @@ func applyFeed(doc *model.Document, index map[string]int, ref definitions.FeedRe
 	if bgpCollectors[ref.Collector] {
 		source, confidence = model.SourceBGP, bgpConfidence
 	}
+	// Only a tag that resolves to one of this provider's services claims a
+	// prefix away from the umbrella tag. Ignored ("") and unmapped tags do not,
+	// or the prefix would vanish from the provider entirely.
 	specific := map[netip.Prefix]bool{}
 	for _, r := range res.Ranges {
-		if !ref.IsGeneric(r.Tag) {
-			specific[r.Prefix] = true
+		if ref.IsGeneric(r.Tag) {
+			continue
+		}
+		if svcKey, ok := ref.ResolveTag(r.Tag); ok && svcKey != "" {
+			if _, known := index[svcKey]; known {
+				specific[r.Prefix] = true
+			}
 		}
 	}
 	unmapped := map[string]bool{}
