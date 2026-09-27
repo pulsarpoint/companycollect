@@ -1,0 +1,28 @@
+---
+provider_recon_service_name: provider-recon
+provider_recon_service_user: provider-recon
+provider_recon_service_group: provider-recon
+
+provider_recon_source_dir: "{{ playbook_dir }}/.."
+provider_recon_local_binary: "{{ provider_recon_source_dir }}/bin/provider-recon-linux-amd64"
+
+provider_recon_deploy_dir: /opt/companycollect/corpscout/provider_recon
+provider_recon_binary: "{{ provider_recon_deploy_dir }}/bin/provider-recon"
+provider_recon_definitions_dir: "{{ provider_recon_deploy_dir }}/definitions"
+provider_recon_config_dir: /etc/corpscout-provider-recon
+provider_recon_env_file: "{{ provider_recon_config_dir }}/provider-recon.env"
+
+# companycollect's Tailscale address (`tailscale ip -4`): the API has no auth
+# for now, so it must not listen on the LAN or 0.0.0.0.
+provider_recon_listen: "100.85.212.113:8095"
+provider_recon_bucket: provider-recon
+provider_recon_s3_endpoint: http://rustfs.taileb086.ts.net:9000
+
+# ClickHouse runs in Docker on the same host; the named collection lets the
+# S3-engine table read the bucket without credentials in migrations.
+provider_recon_clickhouse_container: clickhouse-clickhouse-1
+provider_recon_named_collection: provider_recon
+
+# S3 keys come from the control machine's environment, never from git.
+provider_recon_s3_access_key: "{{ lookup('ansible.builtin.env', 'CORPSCOUT_S3_ACCESS_KEY') }}"
+provider_recon_s3_secret_key: "{{ lookup('ansible.builtin.env', 'CORPSCOUT_S3_SECRET_KEY') }}"

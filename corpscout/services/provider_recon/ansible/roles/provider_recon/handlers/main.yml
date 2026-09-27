@@ -1,0 +1,8 @@
+---
+- name: Restart provider-recon
+  ansible.builtin.systemd_service:
+    name: "{{ provider_recon_service_name }}"
+    enabled: true
+    state: restarted
+    daemon_reload: true
+  when: not ansible_check_mode

@@ -1,0 +1,7 @@
+---
+- name: Deploy the provider-recon service
+  hosts: provider_recon_hosts
+  become: true
+  gather_facts: true
+  roles:
+    - provider_recon

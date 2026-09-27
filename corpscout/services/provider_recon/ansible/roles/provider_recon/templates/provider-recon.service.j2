@@ -1,0 +1,40 @@
+# MANAGED BY ANSIBLE (roles/provider_recon).
+[Unit]
+Description=Corpscout provider-recon API (provider IP ranges and evidence)
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+User={{ provider_recon_service_user }}
+Group={{ provider_recon_service_group }}
+WorkingDirectory={{ provider_recon_deploy_dir }}
+EnvironmentFile={{ provider_recon_env_file }}
+ExecStart={{ provider_recon_binary }} serve
+
+Restart=on-failure
+RestartSec=10s
+# A running collect gets time to finish before the unit is killed.
+TimeoutStopSec=120s
+KillMode=control-group
+UMask=0077
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectKernelLogs=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
