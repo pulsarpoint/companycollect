@@ -5,6 +5,7 @@ import hmac
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated
 
 import httpx
@@ -21,12 +22,18 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from crawler_service.llm_profile import LLMProfileError, VerifyLLMRequest, verify_llm
+from crawler_service.company_lookup import (
+    CompanyLookupBatchRequest,
+    CompanyLookupOptions,
+    CompanyLookupRequest,
+)
 from crawler_service.debug_trace import read_trace
+from crawler_service.llm_profile import LLMProfileError, VerifyLLMRequest, verify_llm
 from crawler_service.service import (
     TERMINAL_STATES,
     AgentModel,
     AgentRunBudget,
+    CrawlBatchRequest,
     CrawlJob,
     CrawlRequest,
     CrawlService,
@@ -110,6 +117,67 @@ def create_app(
         response.headers["Location"] = f"/v1/crawls/{job.request_id}"
         return job
 
+    @app.post("/v1/company-lookups", response_model=CrawlJob, status_code=202,
+              dependencies=[Depends(authenticate)])
+    async def company_lookup(request: CompanyLookupRequest, response: Response) -> CrawlJob:
+        crawl_request = CrawlRequest(
+            **request.model_dump(exclude={"domain", "country", "skip_if_mapped", "max_pages"}),
+            url=f"https://{request.domain}/", company_lookup=CompanyLookupOptions(country=request.country, skip_if_mapped=request.skip_if_mapped, max_pages=request.max_pages),
+            debug=True, site_info=True,
+        )
+        return await submit(crawl_request, response)
+
+    @app.post("/v1/crawl-batches", status_code=202, dependencies=[Depends(authenticate)])
+    async def crawl_batch(request: CrawlBatchRequest):
+        try:
+            return service.submit_crawl_batch(request)
+        except RequestConflict as error:
+            raise HTTPException(409, str(error)) from error
+        except ServiceUnavailable as error:
+            raise HTTPException(503, str(error)) from error
+        except LLMProfileError as error:
+            raise HTTPException(422, str(error)) from error
+
+    @app.post("/v1/company-lookup-batches", status_code=202, dependencies=[Depends(authenticate)])
+    async def lookup_batch(request: CompanyLookupBatchRequest):
+        try:
+            return service.submit_lookup_batch(request)
+        except RequestConflict as error:
+            raise HTTPException(409, str(error)) from error
+        except ServiceUnavailable as error:
+            raise HTTPException(503, str(error)) from error
+        except LLMProfileError as error:
+            raise HTTPException(422, str(error)) from error
+
+    @app.get("/v1/crawl-batches/{batch_id}", dependencies=[Depends(authenticate)])
+    @app.get("/v1/company-lookup-batches/{batch_id}", dependencies=[Depends(authenticate)])
+    async def lookup_batch_status(batch_id: str):
+        assert service.lookup_store is not None
+        result = service.lookup_store.snapshot(batch_id)
+        if result is None:
+            raise HTTPException(404, "Unknown lookup batch")
+        return result
+
+    @app.delete("/v1/crawl-batches/{batch_id}", dependencies=[Depends(authenticate)])
+    @app.delete("/v1/company-lookup-batches/{batch_id}", dependencies=[Depends(authenticate)])
+    async def cancel_lookup_batch(batch_id: str):
+        assert service.lookup_store is not None
+        if service.lookup_store.snapshot(batch_id) is None:
+            raise HTTPException(404, "Unknown lookup batch")
+        for request_id in service.lookup_store.cancel(batch_id):
+            if request_id in service.jobs and service.jobs[request_id].state not in TERMINAL_STATES:
+                service.cancel(request_id)
+        return service.lookup_store.snapshot(batch_id)
+
+    def lookup_result_response(path: Path, request_id: str, attempt: int):
+        document = json.loads(path.read_text())
+        assert service.lookup_store is not None
+        receipt = service.lookup_store.receipt(request_id, attempt)
+        if not service.environment.get("CLICKHOUSE_RESULTS_URL") and receipt["state"] != "published":
+            receipt["error"] = "ClickHouse result writer is not configured; delivery remains queued"
+        document.update(publication=receipt, persisted_to_database=receipt["state"] == "published")
+        return JSONResponse(document, headers={"Cache-Control": "no-store"})
+
     @app.post("/v1/crawls/validate", dependencies=[Depends(authenticate)])
     async def validate(request: CrawlRequest) -> dict:
         """Normalize a publisher's payload without enqueueing or opening a browser."""
@@ -147,6 +215,7 @@ def create_app(
         ) | {
             "revision": service.history.revision(),
             "debug_available": True,
+            "company_lookup_available": bool(service.environment.get("CLICKHOUSE_URL")),
             "human_enabled": service.human_enabled,
             "challenge_agent_enabled": service.challenge_agent_enabled,
             "challenge_agent_max_runs": service.challenge_agent_max_runs,
@@ -199,6 +268,7 @@ def create_app(
         limit: Annotated[int, Query(ge=1, le=200)] = 100,
         download: bool = False,
         stream: bool = False,
+        result: bool = False,
     ):
         if request_id not in service.jobs:
             raise HTTPException(404, "Unknown crawl request")
@@ -213,6 +283,15 @@ def create_app(
             raise HTTPException(404, "Unknown crawl attempt")
         directory = service.root / "jobs" / request_id / "attempts" / f"{number:04}"
         headers = {"Cache-Control": "no-store"}
+        if result:
+            path = directory / "result.json"
+            if snapshot["state"] not in TERMINAL_STATES:
+                raise HTTPException(409, "Attempt is still running")
+            if not path.is_file():
+                raise HTTPException(404, "No result saved for this attempt; inspect its error trace")
+            if snapshot.get("purpose") == "company_lookup":
+                return lookup_result_response(path, request_id, number)
+            return FileResponse(path, media_type="application/json", headers=headers)
         if stream:
             supplied = http_request.headers.get("last-event-id", "")
             if supplied:
@@ -320,6 +399,8 @@ def create_app(
         dependencies=[Depends(authenticate)],
     )
     async def cancel(request_id: str) -> dict:
+        if service.lookup_store is not None and service.lookup_store.snapshot(request_id) is not None:
+            return await cancel_lookup_batch(request_id)
         if request_id not in service.jobs:
             raise HTTPException(404, "Unknown crawl request")
         try:
@@ -366,6 +447,14 @@ def create_app(
         dependencies=[Depends(authenticate)],
     )
     async def status(request_id: str) -> CrawlJob:
+        if service.lookup_store is not None:
+            batch = service.lookup_store.snapshot(request_id)
+            if batch is not None:
+                # Existing LLM task monitor can observe/cancel this entire batch.
+                return CrawlJob(request_id=request_id, purpose="company_lookup", source="rest",
+                    state="completed" if batch["state"] == "published" else "cancelled" if batch["state"] == "cancelled" else "running",
+                    submitted_at=batch["created_at"], finished_at=batch["published_at"],
+                    reason=f"{batch['processed']}/{batch['total']} processed", error=batch["publication_error"])
         if request_id not in service.jobs:
             raise HTTPException(404, "Unknown crawl request")
         return service.jobs[request_id].model_copy(deep=True)
@@ -382,6 +471,9 @@ def create_app(
         path = service.root / job.result_file
         if not path.is_file():
             raise HTTPException(503, "Stored crawl result is unavailable")
+        if job.purpose == "company_lookup":
+            saved = path.parent / "result.json"
+            return lookup_result_response(saved if saved.exists() else path, request_id, job.attempt)
         return FileResponse(path, media_type="application/json")
 
     return app

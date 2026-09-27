@@ -1,6 +1,6 @@
 # Domain list serving snapshot
 
-`corpscout.domains_search` (migration 443) is the sole source for the Workspace → Domains list. Its membership comes only from `corpscout.domains`. Other tables enrich existing roots and never add domains.
+`corpscout.domains_search` (migration 443) supplies membership for the Workspace → Domains list. Its membership comes only from `corpscout.domains`. Other tables enrich existing roots and never add domains.
 
 | Field | Source / meaning |
 | --- | --- |
@@ -16,7 +16,11 @@ Materialize `domains_search` with `domains_search_job` after publishing domains,
 
 The publisher freezes domain membership using CREATE TABLE CLONE AS (shared immutable parts, no full data copy), aggregates companies once, joins narrow DNS and website aggregates in bounded root ranges (default 500,000), verifies row count, then atomically exchanges the complete staging table. Empty inventory or a failed batch leaves the previous published snapshot in place. Temporary tables are cleaned on normal success/failure; process termination may require removal of abandoned UUID-suffixed domains_search_* staging tables after checking no corresponding run is active. Pool domains_search_publish uses the configured default concurrency limit of 1.
 
-MergeTree ORDER BY root_domain supports prefix/cursor reads. Full projections ordered by has_company, has_website and has_dns_records provide alternate sort orders for presence filters. They trade additional storage/write work for selective reads. Source arrays support any/all matching. Filters run before cursor pagination and have no request-time joins or FINAL. Global total comes from system.tables.total_rows; the page deliberately does not run exact filtered counts.
+MergeTree ORDER BY root_domain supports prefix/cursor reads. Source arrays support any/all matching. DNS and website presence use the snapshot fields. Company presence uses current active rows in `company_domains_resolved`, including reviewer decisions and country in company identity. Company matching presence uses any saved outcome in `website_company_lookup_results`; failed, cancelled and not-found attempts count as attempted. These two presence filters do not wait for an inventory refresh. Visible rows get current company counts and latest matching status from bounded queries for the page's domains.
+
+All filters apply before pagination. The global inventory total comes from `system.tables.total_rows`; an exact filtered count uses the same predicates without the cursor. For example, `suffix=se&companies=without&companyMatching=without` selects unassociated `.se` domains with no published matching attempt. Earlier local-only tests and requests still in progress have no published outcome and are not counted as attempted.
+
+Row selection and **Select all matching domains** retain explicit exclusions across pages. Changing applied filters clears an all-matching selection. The shared **Add to crawl queue** control sends either explicit IDs or the full filters/exclusions to `website_crawl_input_job`, using `workspace_domain_filters` against `corpscout.domains_search`. Dagster selects the full set in ClickHouse without a page limit and adds it to the ordinary crawl draft. Choose **Basic info**, then configure the processing model and enable **Company matching** from the queue. This does not automatically accept company-domain proposals. The existing one-million-domain draft limit applies.
 
 The expandable websites section reads `corpscout.websites` directly. An empty inventory has an explicit UI notice; absence of a website entry must not be interpreted as evidence that the domain has no website. After website inventory materialization, refresh domains_search to update its stored counts.
 

@@ -15,8 +15,8 @@ const latest = {...saved, kind: "latest", request_id: "latest", crawl_status: "n
 const failure = {crawl: {status: "needs_review", mode: "site_info", stop_reason: "model_unavailable", errors: [{error: "OpenRouter HTTP 404"}], usage: {by_call: [{error: "OpenRouter HTTP 404", provider_error: {message: "No allowed providers are available for the selected model."}}]}}};
 const success = {crawl: {status: "skip_crawling", site_info: {operator_name: "100%", site_description: "Swedish news website", business_activities: ["Publishing news"]}}, documents: []};
 function get(query = "") {return loader({params: {domain: "100.se"}, request: new Request(`http://backoffice/admin/se/companies/domains/100.se/crawl${query}`)} as never);}
-function render(data: Awaited<ReturnType<typeof loader>>) {
-  const router = createMemoryRouter([{path: "*", element: <DomainCrawl {...({loaderData: data} as Parameters<typeof DomainCrawl>[0])} />}], {initialEntries: ["/admin/se/companies/domains/100.se/crawl"]});
+function render(data: Awaited<ReturnType<typeof loader>>, path = "/admin/se/companies/domains/100.se/crawl") {
+  const router = createMemoryRouter([{path: "*", element: <DomainCrawl {...({loaderData: data} as Parameters<typeof DomainCrawl>[0])} />}], {initialEntries: [path]});
   return renderToStaticMarkup(<RouterProvider router={router} />);
 }
 function panels(data: Awaited<ReturnType<typeof loader>>) {
@@ -35,6 +35,16 @@ beforeEach(() => {
   vi.clearAllMocks();
   rows();
   archive.readCrawlArchive.mockImplementation(async path => ({domain: "100.se", result_json: JSON.stringify(path === saved.s3_path ? success : failure)}));
+});
+
+it("serves the same saved results and attempt links from the global domain crawl route", async () => {
+  const path = "/admin/domains/100.se/crawl";
+  const data = await loader({ params: { domain: "100.se" }, request: new Request(`http://backoffice${path}`) } as never);
+  const html = render(data, path);
+  expect(data.details?.result?.request_id).toBe("older");
+  expect(html).toContain("Swedish news website");
+  expect(html).toContain('?type=site_info&amp;request=latest&amp;attempt=1"');
+  expect(html).not.toContain("/admin/se/");
 });
 
 it("defaults to the last good parsed result while the latest failed attempt and reason stay in the sidebar", async () => {

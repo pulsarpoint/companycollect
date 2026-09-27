@@ -10,6 +10,7 @@
  * and in a test.
  */
 import type { GraphDirection } from "~/lib/domain-graph";
+import { normalizeDomainSuffix } from "~/lib/domain-suffix";
 import { DEFAULT_PAGE_SIZE } from "~/lib/paging";
 
 const MAX_FIELD_LENGTH = 253;
@@ -29,6 +30,8 @@ export const DOMAIN_SOURCE_VALUES = ["brave", "wikidata", "esef_filing", "common
 export interface SeDomainsFilters {
   /** A root-domain fragment, lower-cased (domains are stored lower-case). */
   domain: string;
+  /** DNS suffix without the leading dot, e.g. "se" or "co.uk". */
+  suffix: string;
   /** A company id (digits only). */
   company: string;
   source: string;
@@ -43,6 +46,7 @@ export interface SeDomainsFilters {
 
 export const EMPTY_SE_DOMAINS_FILTERS: SeDomainsFilters = {
   domain: "",
+  suffix: "",
   company: "",
   source: "",
   association: "",
@@ -79,6 +83,7 @@ export function parseSeDomainsFilters(params: URLSearchParams): SeDomainsFilters
   const source = (params.get("source") ?? "").trim();
   return {
     domain: (params.get("domain") ?? "").trim().toLowerCase().slice(0, MAX_FIELD_LENGTH),
+    suffix: normalizeDomainSuffix(params.get("suffix")),
     company: ALL_DIGITS.test(company) ? company : "",
     source: (DOMAIN_SOURCE_VALUES as readonly string[]).includes(source) ? source : "",
     association: isDomainAssociation(association) ? association : "",

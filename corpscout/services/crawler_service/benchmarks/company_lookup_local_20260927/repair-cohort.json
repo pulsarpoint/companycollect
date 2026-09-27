@@ -1,0 +1,29 @@
+{
+  "selection": "Targeted fresh local-model checks after fixes for the blank NCC explanation and Byggmax retail classification; include Avanza for sparse homepage review. Original 25-site outcomes are retained separately.",
+  "cases": [
+    {
+      "company_id": "5562748458",
+      "legal_name": "Avanza Bank Holding AB",
+      "root_domain": "avanza.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300MBWR5H8SIJLE03/2024-12-31/ESEF/SE/0/Avanza-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ]
+    },
+    {
+      "company_id": "5560345174",
+      "legal_name": "NCC AKTIEBOLAG",
+      "root_domain": "ncc.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/213800WRGLW3CY4MHW53/2024-12-31/ESEF/SE/0/ncc-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ]
+    },
+    {
+      "company_id": "5566563531",
+      "legal_name": "Byggmax Group AB",
+      "root_domain": "byggmax.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300MPJPYQB0KCNH03/2024-12-31/ESEF/SE/0/bmax-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ]
+    }
+  ]
+}

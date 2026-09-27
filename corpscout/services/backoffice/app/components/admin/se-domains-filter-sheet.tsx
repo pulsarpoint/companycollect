@@ -3,6 +3,7 @@ import { ListFilterSheet } from "~/components/admin/list-filter-sheet";
 import { Checkbox } from "~/components/ui/checkbox";
 import { Field, FieldGroup, FieldLabel } from "~/components/ui/field";
 import { Input } from "~/components/ui/input";
+import { DOMAIN_SUFFIX_PATTERN } from "~/lib/domain-suffix";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
 import {
   DOMAIN_ASSOCIATIONS, DOMAIN_SOURCE_VALUES, DOMAIN_STATUSES,
@@ -43,6 +44,12 @@ export function SeDomainsFilterFields({ filters, pageSize }: { filters: SeDomain
         <Input id="domains-domain" name="domain" defaultValue={filters.domain} placeholder="Contains…" />
       </Field>
       <Field className="gap-1">
+        <FieldLabel htmlFor="domains-suffix">Domain suffix</FieldLabel>
+        <Input id="domains-suffix" name="suffix" defaultValue={filters.suffix} placeholder=".se or .co.uk"
+          pattern={DOMAIN_SUFFIX_PATTERN} maxLength={253} autoCapitalize="none" spellCheck={false}
+          title="Enter a suffix such as .se or .co.uk" />
+      </Field>
+      <Field className="gap-1">
         <FieldLabel htmlFor="domains-company">Company id</FieldLabel>
         <Input id="domains-company" name="company" defaultValue={filters.company} placeholder="Exact id" inputMode="numeric" />
       </Field>
@@ -75,7 +82,7 @@ export function SeDomainsFilterFields({ filters, pageSize }: { filters: SeDomain
 }
 
 const FILTER_LABELS: Record<keyof SeDomainsFilters, string> = {
-  domain: "Domain", company: "Company", source: "Source", association: "Association",
+  domain: "Domain", suffix: "Suffix", company: "Company", source: "Source", association: "Association",
   status: "Status", minConfidence: "Min confidence", maxConfidence: "Max confidence", shared: "Shared only",
 };
 
@@ -84,7 +91,7 @@ export function SeDomainsFilterSheet({ filters, pageSize }: { filters: SeDomains
     .filter((param) => filters[param] !== "")
     .map((param) => ({
       param,
-      label: param === "shared" ? FILTER_LABELS[param] : `${FILTER_LABELS[param]} ${param === "source" ? companySourceLabel(filters[param]) : filters[param].replaceAll("_", " ")}`,
+      label: param === "shared" ? FILTER_LABELS[param] : `${FILTER_LABELS[param]} ${param === "source" ? companySourceLabel(filters[param]) : param === "suffix" ? `.${filters[param]}` : filters[param].replaceAll("_", " ")}`,
     }));
   return (
     <ListFilterSheet
@@ -92,7 +99,7 @@ export function SeDomainsFilterSheet({ filters, pageSize }: { filters: SeDomains
       clearHref={seDomainsHref(EMPTY_SE_DOMAINS_FILTERS, 1, pageSize)}
       hrefWithout={(param) => seDomainsHref({ ...filters, [param]: "" }, 1, pageSize)}
       title="Filter domains"
-      description="Filter by source, company, association, confidence or shared domains. Filters can be bookmarked or shared. Page size is kept."
+      description="Filter by domain suffix, source, company, association, confidence or shared domains. Filters can be bookmarked or shared. Page size is kept."
     >
       <SeDomainsFilterFields filters={filters} pageSize={pageSize} />
     </ListFilterSheet>

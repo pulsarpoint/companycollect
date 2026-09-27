@@ -1,0 +1,280 @@
+{
+  "manifest": {
+    "started_at": "2026-09-27T12:30:06.699089+00:00",
+    "selection": "Targeted end-to-end Jev ranking checks after the frozen local-model rerun; one exact-ID case and one previously ambiguous name case. Not part of the 25-site before/after comparison.",
+    "model": "nvidia/Qwen3.8-27B-NVFP4",
+    "profile_id": "657ff56f-2a12-4e84-8cdc-78fbbddb7093",
+    "revision": 5,
+    "reasoning_effort": null,
+    "decision_model": {
+      "model": "typesafe/jev-1.13",
+      "profile_id": "6c43edc8-ab24-49ac-8f8e-95d7e370d733",
+      "profile_revision": 1
+    },
+    "decision_tasks": [
+      "company_match"
+    ],
+    "config": {
+      "max_pages": 4,
+      "max_model_calls": 20
+    },
+    "concurrency": 2,
+    "source_sha256": {
+      "company_lookup.py": "231dc9f4df552e6cf4a5cf0e3d6e909afe3e199b85315b9ebcaaf9d010c50f5d",
+      "company_search.py": "f3e2b61873c0a88343c85245533ec64633d1463c05d248507af84e6ac21f3fae",
+      "company_evidence.py": "cb90feaeb754cf73e518b93f8277eac7383ca7f17a0769b333b15ccd2e5e2de3",
+      "jev.py": "670420ddaefbad73e7549c02091aad3d7f1e65fd583d59a514e90bb97d2a7f19"
+    },
+    "cases": [
+      {
+        "company_id": "5563029726",
+        "legal_name": "ADDTECH AB",
+        "root_domain": "addtech.se",
+        "reference_urls": [
+          "https://www.addtech.se/kontakt-oss",
+          "https://www.addtech.se/anvandarvillkor"
+        ],
+        "request_id": "lookup-local-9dc233093ca6-01"
+      },
+      {
+        "company_id": "5568403918",
+        "legal_name": "Brinova Fastigheter AB (publ)",
+        "root_domain": "brinova.se",
+        "reference_urls": [
+          "https://filings.xbrl.org/5493002JE0BBAIJ06O61/2024-12-31/ESEF/SE/0/Brinova-2024-12-31-0-sv/reports/ixbrlviewer.html"
+        ],
+        "request_id": "lookup-local-9dc233093ca6-02"
+      }
+    ]
+  },
+  "finished_at": "2026-09-27T12:32:24.107376+00:00",
+  "cases": [
+    {
+      "company_id": "5563029726",
+      "legal_name": "ADDTECH AB",
+      "root_domain": "addtech.se",
+      "reference_urls": [
+        "https://www.addtech.se/kontakt-oss",
+        "https://www.addtech.se/anvandarvillkor"
+      ],
+      "request_id": "lookup-local-9dc233093ca6-01",
+      "outcome": "exact_match",
+      "status": "completed",
+      "lookup_status": "matched",
+      "found_id": "5563029726",
+      "confidence": 0.95,
+      "site_type": "company",
+      "reasons": [
+        "Quoted website operator organisation/VAT number matches this company's ID.",
+        "Website organisation number matches the registry"
+      ],
+      "elapsed_seconds": 134.1,
+      "pages": 4,
+      "searches": 1,
+      "usage": {
+        "calls": 3,
+        "successful_responses": 3,
+        "known_cost_usd": 7.1652e-05,
+        "unknown_cost_calls": 2,
+        "prompt_tokens": 11873,
+        "completion_tokens": 1310,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_classification",
+            "attempt": 1,
+            "started_at": "2026-09-27T12:30:13+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 28.15,
+            "response_id": "chatcmpl-22d706e3-8fe1-47c8-a29f-680892d4fa2d",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 3669,
+              "completion_tokens": 158,
+              "total_tokens": 3827,
+              "prompt_tokens_details": {
+                "cached_tokens": 400,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 58,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 5204.965202,
+              "response_token/s": 7.088401362382543
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 2,
+            "task": "company_lookup_identity",
+            "attempt": 1,
+            "started_at": "2026-09-27T12:30:53+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 88.969,
+            "response_id": "chatcmpl-0eb94ffa-52a8-4991-bcdb-144b66f79ac8",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 6498,
+              "completion_tokens": 1040,
+              "total_tokens": 7538,
+              "prompt_tokens_details": {
+                "cached_tokens": 960,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 506,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 10422.610073,
+              "response_token/s": 14.81224163027685
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 3,
+            "task": "company_lookup_match_jev",
+            "attempt": 1,
+            "started_at": "2026-09-27T12:32:22+00:00",
+            "api": "openrouter_decisions",
+            "model": "typesafe/jev-1.13",
+            "http_status": 200,
+            "response_id": "gen-dec-1790512342-hIHxuyw0UivhsjX0NTip",
+            "response_model": "typesafe/jev-1.13-20260917",
+            "usage": {
+              "input_tokens": 1706,
+              "output_tokens": 112,
+              "cost": 7.1652e-05,
+              "prompt_tokens": 1706,
+              "completion_tokens": 112
+            },
+            "elapsed_seconds": 0.338
+          }
+        ]
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=addtech.se&source=rest&debug_request=lookup-local-9dc233093ca6-01&debug_attempt=1"
+    },
+    {
+      "company_id": "5568403918",
+      "legal_name": "Brinova Fastigheter AB (publ)",
+      "root_domain": "brinova.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/5493002JE0BBAIJ06O61/2024-12-31/ESEF/SE/0/Brinova-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-9dc233093ca6-02",
+      "outcome": "not_found",
+      "status": "completed",
+      "lookup_status": "not_found",
+      "found_id": null,
+      "confidence": null,
+      "site_type": "company",
+      "reasons": [
+        "An explicit operator legal name uniquely matches this company; no conflicting operator identity.",
+        "Multiple registry companies share the website's legal name: 5568403918, 5565949566; an organisation number or matching street address is required"
+      ],
+      "elapsed_seconds": 88.865,
+      "pages": 4,
+      "searches": 1,
+      "usage": {
+        "calls": 3,
+        "successful_responses": 3,
+        "known_cost_usd": 0.000170646,
+        "unknown_cost_calls": 2,
+        "prompt_tokens": 12386,
+        "completion_tokens": 1157,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_classification",
+            "attempt": 1,
+            "started_at": "2026-09-27T12:30:14+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 27.738,
+            "response_id": "chatcmpl-98595e3b-913e-4803-af1f-c78d25c9f12c",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 3256,
+              "completion_tokens": 160,
+              "total_tokens": 3416,
+              "prompt_tokens_details": {
+                "cached_tokens": 400,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 57,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 4618.677255,
+              "response_token/s": 8.93207497830352
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 2,
+            "task": "company_lookup_identity",
+            "attempt": 1,
+            "started_at": "2026-09-27T12:30:53+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 36.006,
+            "response_id": "chatcmpl-acc7347a-8016-4a8c-9150-7209cd5fc541",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 5067,
+              "completion_tokens": 154,
+              "total_tokens": 5221,
+              "prompt_tokens_details": {
+                "cached_tokens": 528,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 72,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 8138.074164000001,
+              "response_token/s": 5.512014976005484
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 3,
+            "task": "company_lookup_match_jev",
+            "attempt": 1,
+            "started_at": "2026-09-27T12:31:35+00:00",
+            "api": "openrouter_decisions",
+            "model": "typesafe/jev-1.13",
+            "http_status": 200,
+            "response_id": "gen-dec-1790512297-TWr4i2sWDr1SEoeTjqhz",
+            "response_model": "typesafe/jev-1.13-20260917",
+            "usage": {
+              "input_tokens": 4063,
+              "output_tokens": 843,
+              "cost": 0.000170646,
+              "prompt_tokens": 4063,
+              "completion_tokens": 843
+            },
+            "elapsed_seconds": 2.514
+          }
+        ]
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=brinova.se&source=rest&debug_request=lookup-local-9dc233093ca6-02&debug_attempt=1"
+    }
+  ]
+}

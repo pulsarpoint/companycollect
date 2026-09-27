@@ -9,6 +9,7 @@ import { Field, FieldGroup, FieldLabel } from "~/components/ui/field";
 import { Input } from "~/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "~/components/ui/native-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/ui/table";
+import { CompanyLookupResult } from "~/components/admin/company-lookup-result";
 
 export function CrawlDebugDetails({event, details}: {event: CrawlDebugEvent | undefined; details: unknown}) {
   return <div className="flex min-w-0 flex-col gap-2">
@@ -84,6 +85,7 @@ export function CrawlDebug({requestId, attempt}: {requestId: string; attempt: st
     </div>
     {error && <Alert variant="destructive"><AlertTitle>Debug trace unavailable</AlertTitle><AlertDescription>{error} Retrying automatically.</AlertDescription></Alert>}
     {snapshot && !snapshot.enabled && <Alert><AlertTitle>No debug trace recorded</AlertTitle><AlertDescription>This attempt predates debug recording or was submitted without it. New crawls from the Crawl tab record a trace automatically.</AlertDescription></Alert>}
+    {job?.purpose === "company_lookup" && !active && <CompanyLookupResult url={`${base}&result=1`} />}
     <FieldGroup className="flex-row flex-wrap items-end gap-3">
       <Field className="w-64"><FieldLabel htmlFor="trace-search">Search events</FieldLabel><Input id="trace-search" value={filter} onChange={event => setFilter(event.target.value)} placeholder="URL, model call, decision…" /></Field>
       <Field className="w-40"><FieldLabel htmlFor="trace-stage">Stage</FieldLabel><NativeSelect id="trace-stage" value={stage} onChange={event => setStage(event.target.value)}><NativeSelectOption value="">All stages</NativeSelectOption>{[...new Set(events.map(event => event.stage))].sort().map(value => <NativeSelectOption key={value} value={value}>{value.replaceAll("_", " ")}</NativeSelectOption>)}</NativeSelect></Field>

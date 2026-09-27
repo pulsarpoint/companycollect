@@ -1,0 +1,174 @@
+{
+  "selection": "First 20 distinct active Swedish registry companies with a suggested-primary .se domain explicitly identified as company_website in a 2024 ESEF filing, ordered by stable domain hash; Addtech added separately as the user-reported regression case, using its published organisation number. Expected IDs are reference associations and any different company requires operator-evidence review.",
+  "cases": [
+    {
+      "company_id": "5563029726",
+      "legal_name": "ADDTECH AB",
+      "root_domain": "addtech.se",
+      "reference_urls": [
+        "https://www.addtech.se/kontakt-oss",
+        "https://www.addtech.se/anvandarvillkor"
+      ]
+    },
+    {
+      "company_id": "5560452103",
+      "legal_name": "JM AB",
+      "root_domain": "jm.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/529900X0UEM9DOM6FK12/2024-12-31/ESEF/SE/0/JM-2024-12-31/reports/ixbrlviewer.html"
+      ]
+    },
+    {
+      "company_id": "5568254741",
+      "legal_name": "Stendörren Fastigheter AB",
+      "root_domain": "stendorren.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/5493003YS3NSPZJ5WU39/2024-12-31/ESEF/SE/0/sten-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ]
+    },
+    {
+      "company_id": "5565802526",
+      "legal_name": "Neobo Fastigheter AB (publ)",
+      "root_domain": "neobo.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/213800QBPS3L89U9TZ44/2024-12-31/ESEF/SE/0/neob-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ]
+    },
+    {
+      "company_id": "5565970513",
+      "legal_name": "Norion Bank AB",
+      "root_domain": "norion.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/529900AGWAKUTYNETM62/2024-12-31/ESEF/SE/0/529900AGWAKUTYNETM62-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ]
+    },
+    {
+      "company_id": "5590158944",
+      "legal_name": "Instalco AB",
+      "root_domain": "instalco.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300DZ9ONT2AXY4029/2024-12-31/ESEF/SE/0/549300DZ9ONT2AXY4029-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ]
+    },
+    {
+      "company_id": "5565010997",
+      "legal_name": "STUDSVIK AB",
+      "root_domain": "studsvik.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300MLJ046XFQNVH42/2024-12-31/ESEF/SE/0/549300MLJ046XFQNVH42-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ]
+    },
+    {
+      "company_id": "5564639440",
+      "legal_name": "Corem Property Group AB",
+      "root_domain": "corem.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/213800CHXQQD7TSS1T59/2024-12-31/ESEF/SE/0/core-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ]
+    },
+    {
+      "company_id": "5565420824",
+      "legal_name": "Axfood AB",
+      "root_domain": "axfood.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300QIXCZWZLHE8L05/2024-12-31/ESEF/SE/0/axfo-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ]
+    },
+    {
+      "company_id": "5562885417",
+      "legal_name": "Investment Aktiebolaget Spiltan",
+      "root_domain": "spiltan.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/5493001BIDO3E2AOA590/2024-12-31/ESEF/SE/0/investmentabspiltan-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ]
+    },
+    {
+      "company_id": "5566821202",
+      "legal_name": "Humlegården Fastigheter AB",
+      "root_domain": "humlegarden.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300HT0F6CFLJR3Y69/2024-12-31/ESEF/SE/0/huml-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ]
+    },
+    {
+      "company_id": "5560654054",
+      "legal_name": "Elon AB (publ)",
+      "root_domain": "elongroup.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300BD5VFRJS5HFW64/2024-12-31/ESEF/SE/0/elon-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ]
+    },
+    {
+      "company_id": "5562748458",
+      "legal_name": "Avanza Bank Holding AB",
+      "root_domain": "avanza.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300MBWR5H8SIJLE03/2024-12-31/ESEF/SE/0/Avanza-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ]
+    },
+    {
+      "company_id": "5560345174",
+      "legal_name": "NCC AKTIEBOLAG",
+      "root_domain": "ncc.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/213800WRGLW3CY4MHW53/2024-12-31/ESEF/SE/0/ncc-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ]
+    },
+    {
+      "company_id": "5560491523",
+      "legal_name": "Fabege AB",
+      "root_domain": "fabege.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300JNPI46XNH0PM97/2024-12-31/ESEF/SE/0/549300JNPI46XNH0PM97-2024-12-31-sv/reports/ixbrlviewer.html"
+      ]
+    },
+    {
+      "company_id": "5562746726",
+      "legal_name": "Arise AB",
+      "root_domain": "arise.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300FOT7EE85QYB655/2024-12-31/ESEF/SE/0/ariseab-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ]
+    },
+    {
+      "company_id": "5566285408",
+      "legal_name": "Mangold AB",
+      "root_domain": "mangold.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300F7ULEE3V59UW34/2024-12-31/ESEF/SE/0/mangold-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ]
+    },
+    {
+      "company_id": "5566563531",
+      "legal_name": "Byggmax Group AB",
+      "root_domain": "byggmax.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300MPJPYQB0KCNH03/2024-12-31/ESEF/SE/0/bmax-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ]
+    },
+    {
+      "company_id": "5564653185",
+      "legal_name": "Lifco AB (publ)",
+      "root_domain": "lifco.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300RTLL4VDQRCTW41/2024-12-31/ESEF/SE/0/549300RTLL4VDQRCTW41-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ]
+    },
+    {
+      "company_id": "5568403918",
+      "legal_name": "Brinova Fastigheter AB (publ)",
+      "root_domain": "brinova.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/5493002JE0BBAIJ06O61/2024-12-31/ESEF/SE/0/Brinova-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ]
+    },
+    {
+      "company_id": "5568648116",
+      "legal_name": "Genova Property Group AB",
+      "root_domain": "genova.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300EJ67GY3FS4IN91/2024-12-31/ESEF/SE/0/genovapropgroupab-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ]
+    }
+  ]
+}

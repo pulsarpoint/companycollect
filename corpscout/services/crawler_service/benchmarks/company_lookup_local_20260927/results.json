@@ -1,0 +1,2982 @@
+{
+  "stats": {
+    "attempted": 25,
+    "homepage_fetched": 22,
+    "classified_company": 21,
+    "reviewed_outcomes": {
+      "failed": 6,
+      "exact_match": 7,
+      "not_found": 10,
+      "supported_operator_match": 1,
+      "excluded_category": 1
+    },
+    "raw_outcomes": {
+      "failed": 6,
+      "exact_match": 7,
+      "not_found": 10,
+      "different_company": 1,
+      "excluded_category": 1
+    },
+    "model_calls": 58,
+    "calls_with_reported_model": 56,
+    "response_models": {
+      "nvidia/Qwen3.8-27B-NVFP4": 56
+    },
+    "prompt_tokens": 296502,
+    "completion_tokens": 15291,
+    "median_seconds_fetchable": 139.1,
+    "max_seconds": 241.353,
+    "query_counts": {
+      "registration_number": 10,
+      "name": 23
+    },
+    "query_statuses": {
+      "completed": 33
+    },
+    "median_query_ms": {
+      "name": 6646.4,
+      "registration_number": 622.1
+    },
+    "persisted_company_associations": false,
+    "wall_seconds": 1703.6
+  },
+  "manifests": [
+    {
+      "started_at": "2026-09-27T11:14:22.404413+00:00",
+      "selection": "First 20 distinct active Swedish registry companies with a suggested-primary .se domain explicitly identified as company_website in a 2024 ESEF filing, ordered by stable domain hash; Addtech added separately as the user-reported regression case, using its published organisation number. Expected IDs are reference associations and any different company requires operator-evidence review.",
+      "model": "RedHatAI/Qwen3.6-35B-A3B-NVFP4",
+      "profile_id": "657ff56f-2a12-4e84-8cdc-78fbbddb7093",
+      "revision": 4,
+      "reasoning_effort": null,
+      "config": {
+        "max_pages": 4,
+        "max_model_calls": 20
+      },
+      "concurrency": 2,
+      "source_sha256": {
+        "company_lookup.py": "8aad5fdc8b72c1bf4766ee5b8b36eb86bf33af8e645072a598bf5cf0aad366ec",
+        "company_search.py": "ae552f8dfd10f9b2fcdd22fe27b1ba39387346874e3a6197a2752493452348d6"
+      },
+      "cases": [
+        {
+          "company_id": "5563029726",
+          "legal_name": "ADDTECH AB",
+          "root_domain": "addtech.se",
+          "reference_urls": [
+            "https://www.addtech.se/kontakt-oss",
+            "https://www.addtech.se/anvandarvillkor"
+          ],
+          "request_id": "lookup-local-f6e553a27a52-01"
+        },
+        {
+          "company_id": "5560452103",
+          "legal_name": "JM AB",
+          "root_domain": "jm.se",
+          "reference_urls": [
+            "https://filings.xbrl.org/529900X0UEM9DOM6FK12/2024-12-31/ESEF/SE/0/JM-2024-12-31/reports/ixbrlviewer.html"
+          ],
+          "request_id": "lookup-local-f6e553a27a52-02"
+        },
+        {
+          "company_id": "5568254741",
+          "legal_name": "Stendörren Fastigheter AB",
+          "root_domain": "stendorren.se",
+          "reference_urls": [
+            "https://filings.xbrl.org/5493003YS3NSPZJ5WU39/2024-12-31/ESEF/SE/0/sten-2024-12-31-0-sv/reports/ixbrlviewer.html"
+          ],
+          "request_id": "lookup-local-f6e553a27a52-03"
+        },
+        {
+          "company_id": "5565802526",
+          "legal_name": "Neobo Fastigheter AB (publ)",
+          "root_domain": "neobo.se",
+          "reference_urls": [
+            "https://filings.xbrl.org/213800QBPS3L89U9TZ44/2024-12-31/ESEF/SE/0/neob-2024-12-31-0-sv/reports/ixbrlviewer.html"
+          ],
+          "request_id": "lookup-local-f6e553a27a52-04"
+        },
+        {
+          "company_id": "5565970513",
+          "legal_name": "Norion Bank AB",
+          "root_domain": "norion.se",
+          "reference_urls": [
+            "https://filings.xbrl.org/529900AGWAKUTYNETM62/2024-12-31/ESEF/SE/0/529900AGWAKUTYNETM62-2024-12-31-0-sv/reports/ixbrlviewer.html"
+          ],
+          "request_id": "lookup-local-f6e553a27a52-05"
+        },
+        {
+          "company_id": "5590158944",
+          "legal_name": "Instalco AB",
+          "root_domain": "instalco.se",
+          "reference_urls": [
+            "https://filings.xbrl.org/549300DZ9ONT2AXY4029/2024-12-31/ESEF/SE/0/549300DZ9ONT2AXY4029-2024-12-31-0-sv/reports/ixbrlviewer.html"
+          ],
+          "request_id": "lookup-local-f6e553a27a52-06"
+        },
+        {
+          "company_id": "5565010997",
+          "legal_name": "STUDSVIK AB",
+          "root_domain": "studsvik.se",
+          "reference_urls": [
+            "https://filings.xbrl.org/549300MLJ046XFQNVH42/2024-12-31/ESEF/SE/0/549300MLJ046XFQNVH42-2024-12-31-0-sv/reports/ixbrlviewer.html"
+          ],
+          "request_id": "lookup-local-f6e553a27a52-07"
+        },
+        {
+          "company_id": "5564639440",
+          "legal_name": "Corem Property Group AB",
+          "root_domain": "corem.se",
+          "reference_urls": [
+            "https://filings.xbrl.org/213800CHXQQD7TSS1T59/2024-12-31/ESEF/SE/0/core-2024-12-31-0-sv/reports/ixbrlviewer.html"
+          ],
+          "request_id": "lookup-local-f6e553a27a52-08"
+        },
+        {
+          "company_id": "5565420824",
+          "legal_name": "Axfood AB",
+          "root_domain": "axfood.se",
+          "reference_urls": [
+            "https://filings.xbrl.org/549300QIXCZWZLHE8L05/2024-12-31/ESEF/SE/0/axfo-2024-12-31-0-sv/reports/ixbrlviewer.html"
+          ],
+          "request_id": "lookup-local-f6e553a27a52-09"
+        },
+        {
+          "company_id": "5562885417",
+          "legal_name": "Investment Aktiebolaget Spiltan",
+          "root_domain": "spiltan.se",
+          "reference_urls": [
+            "https://filings.xbrl.org/5493001BIDO3E2AOA590/2024-12-31/ESEF/SE/0/investmentabspiltan-2024-12-31-0-sv/reports/ixbrlviewer.html"
+          ],
+          "request_id": "lookup-local-f6e553a27a52-10"
+        },
+        {
+          "company_id": "5566821202",
+          "legal_name": "Humlegården Fastigheter AB",
+          "root_domain": "humlegarden.se",
+          "reference_urls": [
+            "https://filings.xbrl.org/549300HT0F6CFLJR3Y69/2024-12-31/ESEF/SE/0/huml-2024-12-31-0-sv/reports/ixbrlviewer.html"
+          ],
+          "request_id": "lookup-local-f6e553a27a52-11"
+        },
+        {
+          "company_id": "5560654054",
+          "legal_name": "Elon AB (publ)",
+          "root_domain": "elongroup.se",
+          "reference_urls": [
+            "https://filings.xbrl.org/549300BD5VFRJS5HFW64/2024-12-31/ESEF/SE/0/elon-2024-12-31-0-sv/reports/ixbrlviewer.html"
+          ],
+          "request_id": "lookup-local-f6e553a27a52-12"
+        },
+        {
+          "company_id": "5562748458",
+          "legal_name": "Avanza Bank Holding AB",
+          "root_domain": "avanza.se",
+          "reference_urls": [
+            "https://filings.xbrl.org/549300MBWR5H8SIJLE03/2024-12-31/ESEF/SE/0/Avanza-2024-12-31-0-sv/reports/ixbrlviewer.html"
+          ],
+          "request_id": "lookup-local-f6e553a27a52-13"
+        },
+        {
+          "company_id": "5560345174",
+          "legal_name": "NCC AKTIEBOLAG",
+          "root_domain": "ncc.se",
+          "reference_urls": [
+            "https://filings.xbrl.org/213800WRGLW3CY4MHW53/2024-12-31/ESEF/SE/0/ncc-2024-12-31-0-sv/reports/ixbrlviewer.html"
+          ],
+          "request_id": "lookup-local-f6e553a27a52-14"
+        },
+        {
+          "company_id": "5560491523",
+          "legal_name": "Fabege AB",
+          "root_domain": "fabege.se",
+          "reference_urls": [
+            "https://filings.xbrl.org/549300JNPI46XNH0PM97/2024-12-31/ESEF/SE/0/549300JNPI46XNH0PM97-2024-12-31-sv/reports/ixbrlviewer.html"
+          ],
+          "request_id": "lookup-local-f6e553a27a52-15"
+        },
+        {
+          "company_id": "5562746726",
+          "legal_name": "Arise AB",
+          "root_domain": "arise.se",
+          "reference_urls": [
+            "https://filings.xbrl.org/549300FOT7EE85QYB655/2024-12-31/ESEF/SE/0/ariseab-2024-12-31-0-sv/reports/ixbrlviewer.html"
+          ],
+          "request_id": "lookup-local-f6e553a27a52-16"
+        },
+        {
+          "company_id": "5566285408",
+          "legal_name": "Mangold AB",
+          "root_domain": "mangold.se",
+          "reference_urls": [
+            "https://filings.xbrl.org/549300F7ULEE3V59UW34/2024-12-31/ESEF/SE/0/mangold-2024-12-31-0-sv/reports/ixbrlviewer.html"
+          ],
+          "request_id": "lookup-local-f6e553a27a52-17"
+        },
+        {
+          "company_id": "5566563531",
+          "legal_name": "Byggmax Group AB",
+          "root_domain": "byggmax.se",
+          "reference_urls": [
+            "https://filings.xbrl.org/549300MPJPYQB0KCNH03/2024-12-31/ESEF/SE/0/bmax-2024-12-31-0-sv/reports/ixbrlviewer.html"
+          ],
+          "request_id": "lookup-local-f6e553a27a52-18"
+        },
+        {
+          "company_id": "5564653185",
+          "legal_name": "Lifco AB (publ)",
+          "root_domain": "lifco.se",
+          "reference_urls": [
+            "https://filings.xbrl.org/549300RTLL4VDQRCTW41/2024-12-31/ESEF/SE/0/549300RTLL4VDQRCTW41-2024-12-31-0-sv/reports/ixbrlviewer.html"
+          ],
+          "request_id": "lookup-local-f6e553a27a52-19"
+        },
+        {
+          "company_id": "5568403918",
+          "legal_name": "Brinova Fastigheter AB (publ)",
+          "root_domain": "brinova.se",
+          "reference_urls": [
+            "https://filings.xbrl.org/5493002JE0BBAIJ06O61/2024-12-31/ESEF/SE/0/Brinova-2024-12-31-0-sv/reports/ixbrlviewer.html"
+          ],
+          "request_id": "lookup-local-f6e553a27a52-20"
+        },
+        {
+          "company_id": "5568648116",
+          "legal_name": "Genova Property Group AB",
+          "root_domain": "genova.se",
+          "reference_urls": [
+            "https://filings.xbrl.org/549300EJ67GY3FS4IN91/2024-12-31/ESEF/SE/0/genovapropgroupab-2024-12-31-0-sv/reports/ixbrlviewer.html"
+          ],
+          "request_id": "lookup-local-f6e553a27a52-21"
+        }
+      ]
+    },
+    {
+      "started_at": "2026-09-27T11:38:35.147894+00:00",
+      "selection": "Next four DNS-resolving distinct companies after the frozen initial cohort, using the same ESEF 2024 primary-domain selection. Added to obtain at least 20 fetchable websites; initial failures remain in the report.",
+      "model": "RedHatAI/Qwen3.6-35B-A3B-NVFP4",
+      "profile_id": "657ff56f-2a12-4e84-8cdc-78fbbddb7093",
+      "revision": 4,
+      "reasoning_effort": null,
+      "config": {
+        "max_pages": 4,
+        "max_model_calls": 20
+      },
+      "concurrency": 2,
+      "source_sha256": {
+        "company_lookup.py": "8aad5fdc8b72c1bf4766ee5b8b36eb86bf33af8e645072a598bf5cf0aad366ec",
+        "company_search.py": "ae552f8dfd10f9b2fcdd22fe27b1ba39387346874e3a6197a2752493452348d6"
+      },
+      "cases": [
+        {
+          "company_id": "5560263237",
+          "legal_name": "INVESTMENTAKTIEBOLAGET LATOUR",
+          "root_domain": "latour.se",
+          "reference_urls": [
+            "https://filings.xbrl.org/5493006GFBLNB3Y0Y789/2024-12-31/ESEF/SE/0/5493006GFBLNB3Y0Y789-2024-12-31-sv/reports/ixbrlviewer.html"
+          ],
+          "request_id": "lookup-local-c14d21833c4b-01"
+        },
+        {
+          "company_id": "5560128240",
+          "legal_name": "HUFVUDSTADEN AB",
+          "root_domain": "hufvudstaden.se",
+          "reference_urls": [
+            "https://filings.xbrl.org/213800UEV5ZAFFVQ4J85/2024-12-31/ESEF/SE/0/hufv-2024-12-31-0-sv/reports/ixbrlviewer.html"
+          ],
+          "request_id": "lookup-local-c14d21833c4b-02"
+        },
+        {
+          "company_id": "5560179367",
+          "legal_name": "INDUTRADE AKTIEBOLAG",
+          "root_domain": "indutrade.se",
+          "reference_urls": [
+            "https://filings.xbrl.org/549300FISLQ6CEFP1867/2024-12-31/ESEF/SE/0/indu-2024-12-31-0-sv/reports/ixbrlviewer.html"
+          ],
+          "request_id": "lookup-local-c14d21833c4b-03"
+        },
+        {
+          "company_id": "5562384361",
+          "legal_name": "Medivir Aktiebolag",
+          "root_domain": "medivir.se",
+          "reference_urls": [
+            "https://filings.xbrl.org/549300VWDGUX0WMJ1T79/2024-12-31/ESEF/SE/0/medivir-2024-12-31-0-sv/reports/ixbrlviewer.html"
+          ],
+          "request_id": "lookup-local-c14d21833c4b-04"
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "company_id": "5563029726",
+      "legal_name": "ADDTECH AB",
+      "root_domain": "addtech.se",
+      "reference_urls": [
+        "https://www.addtech.se/kontakt-oss",
+        "https://www.addtech.se/anvandarvillkor"
+      ],
+      "request_id": "lookup-local-f6e553a27a52-01",
+      "outcome": "failed",
+      "status": "failed",
+      "lookup_status": "failed",
+      "found_id": null,
+      "confidence": null,
+      "site_type": "company",
+      "reasons": [
+        "LLM exceeded 180s total deadline"
+      ],
+      "elapsed_seconds": 230.251,
+      "pages": 4,
+      "searches": 0,
+      "usage": {
+        "calls": 2,
+        "successful_responses": 1,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 2,
+        "prompt_tokens": 4649,
+        "completion_tokens": 246,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_classification",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:14:29+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 35.079,
+            "response_id": "chatcmpl-0680e2aa-846f-474d-8ac2-a61ca7d9b3d8",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 4649,
+              "completion_tokens": 246,
+              "total_tokens": 4895,
+              "prompt_tokens_details": {
+                "cached_tokens": 336,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 102,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 7395.860155,
+              "response_token/s": 10.19895837515262
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 2,
+            "task": "company_lookup_identity",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:15:14+00:00",
+            "api": "openai",
+            "error": "LLM exceeded 180s total deadline",
+            "elapsed_seconds": 180.002
+          }
+        ]
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=addtech.se&source=rest&debug_request=lookup-local-f6e553a27a52-01&debug_attempt=1",
+      "group": "initial",
+      "reviewed_outcome": "failed",
+      "result_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/addtech.se/result.json",
+      "trace_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/addtech.se/trace.jsonl"
+    },
+    {
+      "company_id": "5560452103",
+      "legal_name": "JM AB",
+      "root_domain": "jm.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/529900X0UEM9DOM6FK12/2024-12-31/ESEF/SE/0/JM-2024-12-31/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-f6e553a27a52-02",
+      "outcome": "exact_match",
+      "status": "completed",
+      "lookup_status": "matched",
+      "found_id": "5560452103",
+      "confidence": 1.0,
+      "site_type": "company",
+      "reasons": [
+        "Exact match on Organization Number (556045-2103) and Legal Name (JM AB) between website facts and registry candidate.",
+        "Website organisation number matches the registry"
+      ],
+      "elapsed_seconds": 143.599,
+      "pages": 4,
+      "searches": 1,
+      "usage": {
+        "calls": 3,
+        "successful_responses": 3,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 3,
+        "prompt_tokens": 6673,
+        "completion_tokens": 714,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_classification",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:14:28+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 34.564,
+            "response_id": "chatcmpl-0040d2be-3ec3-4abe-939d-8c5d09350563",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 1994,
+              "completion_tokens": 233,
+              "total_tokens": 2227,
+              "prompt_tokens_details": {
+                "cached_tokens": 48,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 103,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 3241.29324,
+              "response_token/s": 7.691149439373675
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 2,
+            "task": "company_lookup_identity",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:15:10+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 83.686,
+            "response_id": "chatcmpl-11c8acd4-0308-45f3-a336-0630352d51af",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 4162,
+              "completion_tokens": 397,
+              "total_tokens": 4559,
+              "prompt_tokens_details": {
+                "cached_tokens": 80,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 182,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 6652.337213,
+              "response_token/s": 5.147503595940332
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 3,
+            "task": "company_lookup_match",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:16:35+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 12.699,
+            "response_id": "chatcmpl-d14cd425-ba0f-4ddd-b30d-ad5213a4caeb",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 517,
+              "completion_tokens": 84,
+              "total_tokens": 601,
+              "prompt_tokens_details": {
+                "cached_tokens": 160,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 38,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 957.544963,
+              "response_token/s": 7.326903070060504
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=jm.se&source=rest&debug_request=lookup-local-f6e553a27a52-02&debug_attempt=1",
+      "group": "initial",
+      "reviewed_outcome": "exact_match",
+      "result_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/jm.se/result.json",
+      "trace_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/jm.se/trace.jsonl"
+    },
+    {
+      "company_id": "5568254741",
+      "legal_name": "Stendörren Fastigheter AB",
+      "root_domain": "stendorren.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/5493003YS3NSPZJ5WU39/2024-12-31/ESEF/SE/0/sten-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-f6e553a27a52-03",
+      "outcome": "not_found",
+      "status": "completed",
+      "lookup_status": "not_found",
+      "found_id": null,
+      "confidence": null,
+      "site_type": "company",
+      "reasons": [
+        "Name: Website displays 'Stendörren Fastigheter AB (publ)'; Candidate is 'Stendörren Fastigheter AB'. The '(publ)' indicates public limitation status, which is an attribute not always captured in the base legal name field.",
+        "Address: Website lists 'Linnégatan 87B, 115 23 Stockholm'; Candidate lists 'Linnégatan 87B 1tr, 11523 stockholm'. This is a match including the floor level.",
+        "The proposed match lacks a supported legal identity or corroborating address"
+      ],
+      "elapsed_seconds": 174.899,
+      "pages": 4,
+      "searches": 1,
+      "usage": {
+        "calls": 3,
+        "successful_responses": 3,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 3,
+        "prompt_tokens": 22170,
+        "completion_tokens": 599,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_classification",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:16:54+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 33.681,
+            "response_id": "chatcmpl-4924fac0-dd5c-4117-844f-160a57b7c7b1",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 4209,
+              "completion_tokens": 196,
+              "total_tokens": 4405,
+              "prompt_tokens_details": {
+                "cached_tokens": 336,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 81,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 6767.905954,
+              "response_token/s": 7.288016866984985
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 2,
+            "task": "company_lookup_identity",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:17:38+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 73.291,
+            "response_id": "chatcmpl-d47a24d8-6dbf-4135-84dd-8065927663f9",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 16361,
+              "completion_tokens": 255,
+              "total_tokens": 16616,
+              "prompt_tokens_details": {
+                "cached_tokens": 144,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 118,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 27120.014926,
+              "response_token/s": 5.521557546572764
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 3,
+            "task": "company_lookup_match",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:19:00+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 44.635,
+            "response_id": "chatcmpl-acb5fe3c-b02f-4205-9d53-7465551c6e71",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 1600,
+              "completion_tokens": 148,
+              "total_tokens": 1748,
+              "prompt_tokens_details": {
+                "cached_tokens": 160,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 64,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 2696.161958,
+              "response_token/s": 3.587712353695913
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=stendorren.se&source=rest&debug_request=lookup-local-f6e553a27a52-03&debug_attempt=1",
+      "group": "initial",
+      "reviewed_outcome": "not_found",
+      "result_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/stendorren.se/result.json",
+      "trace_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/stendorren.se/trace.jsonl"
+    },
+    {
+      "company_id": "5565802526",
+      "legal_name": "Neobo Fastigheter AB (publ)",
+      "root_domain": "neobo.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/213800QBPS3L89U9TZ44/2024-12-31/ESEF/SE/0/neob-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-f6e553a27a52-04",
+      "outcome": "exact_match",
+      "status": "completed",
+      "lookup_status": "matched",
+      "found_id": "5565802526",
+      "confidence": 1.0,
+      "site_type": "company",
+      "reasons": [
+        "Exact match on legal name 'Neobo Fastigheter AB' (ignoring '(publ)' suffix) and organization number '556580-2526'.",
+        "The website explicitly states 'Neobo Fastigheter AB (556580-2526)' in multiple contexts.",
+        "Address 'Mäster Samuelsgatan 42, 111 57 Stockholm' matches the candidate's registered address.",
+        "Activity description aligns with property management/holding activities implied by the website.",
+        "Website organisation number matches the registry"
+      ],
+      "elapsed_seconds": 193.213,
+      "pages": 4,
+      "searches": 3,
+      "usage": {
+        "calls": 3,
+        "successful_responses": 3,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 3,
+        "prompt_tokens": 17706,
+        "completion_tokens": 913,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_classification",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:18:20+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 44.987,
+            "response_id": "chatcmpl-73c2cf8d-2795-465c-843d-501bc17aed3b",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 3102,
+              "completion_tokens": 181,
+              "total_tokens": 3283,
+              "prompt_tokens_details": {
+                "cached_tokens": 336,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 68,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 4993.162873,
+              "response_token/s": 4.528270829234015
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 2,
+            "task": "company_lookup_identity",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:19:15+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 91.278,
+            "response_id": "chatcmpl-9f3522aa-f895-442c-85b7-d1eb5804eea0",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 11604,
+              "completion_tokens": 558,
+              "total_tokens": 12162,
+              "prompt_tokens_details": {
+                "cached_tokens": 144,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 258,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 18911.089749,
+              "response_token/s": 7.767365881331549
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 3,
+            "task": "company_lookup_match",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:21:03+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 27.339,
+            "response_id": "chatcmpl-80b6c0e7-3f63-4640-a1f0-7647010b582e",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 3000,
+              "completion_tokens": 174,
+              "total_tokens": 3174,
+              "prompt_tokens_details": {
+                "cached_tokens": 160,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 78,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 4909.8963810000005,
+              "response_token/s": 9.358782903361911
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=neobo.se&source=rest&debug_request=lookup-local-f6e553a27a52-04&debug_attempt=1",
+      "group": "initial",
+      "reviewed_outcome": "exact_match",
+      "result_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/neobo.se/result.json",
+      "trace_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/neobo.se/trace.jsonl"
+    },
+    {
+      "company_id": "5565970513",
+      "legal_name": "Norion Bank AB",
+      "root_domain": "norion.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/529900AGWAKUTYNETM62/2024-12-31/ESEF/SE/0/529900AGWAKUTYNETM62-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-f6e553a27a52-05",
+      "outcome": "failed",
+      "status": "failed",
+      "lookup_status": "failed",
+      "found_id": null,
+      "confidence": null,
+      "site_type": "unknown",
+      "reasons": [
+        "Could not fetch the homepage"
+      ],
+      "elapsed_seconds": 1.343,
+      "pages": 1,
+      "searches": 0,
+      "usage": {
+        "calls": 0,
+        "successful_responses": 0,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "by_call": []
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=norion.se&source=rest&debug_request=lookup-local-f6e553a27a52-05&debug_attempt=1",
+      "group": "initial",
+      "reviewed_outcome": "failed",
+      "result_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/norion.se/result.json",
+      "trace_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/norion.se/trace.jsonl"
+    },
+    {
+      "company_id": "5590158944",
+      "legal_name": "Instalco AB",
+      "root_domain": "instalco.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300DZ9ONT2AXY4029/2024-12-31/ESEF/SE/0/549300DZ9ONT2AXY4029-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-f6e553a27a52-06",
+      "outcome": "not_found",
+      "status": "completed",
+      "lookup_status": "not_found",
+      "found_id": null,
+      "confidence": null,
+      "site_type": "company",
+      "reasons": [
+        "Exact legal name match 'Instalco AB' between website and registry",
+        "Unique explicit street address 'Sveavägen 56C' matches",
+        "Postal code '11134' matches (website uses space, registry doesn't)",
+        "City 'Stockholm' matches",
+        "The proposed match lacks a supported legal identity or corroborating address"
+      ],
+      "elapsed_seconds": 134.353,
+      "pages": 4,
+      "searches": 1,
+      "usage": {
+        "calls": 3,
+        "successful_responses": 3,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 3,
+        "prompt_tokens": 17144,
+        "completion_tokens": 739,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_classification",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:19:56+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 40.286,
+            "response_id": "chatcmpl-141258d3-a9a2-4326-83d9-7dfbf709a007",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 3867,
+              "completion_tokens": 242,
+              "total_tokens": 4109,
+              "prompt_tokens_details": {
+                "cached_tokens": 336,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 103,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 6193.58679,
+              "response_token/s": 7.101168817046449
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 2,
+            "task": "company_lookup_identity",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:20:46+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 60.86,
+            "response_id": "chatcmpl-89f06853-2e52-4606-9801-2087da6c3424",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 11435,
+              "completion_tokens": 407,
+              "total_tokens": 11842,
+              "prompt_tokens_details": {
+                "cached_tokens": 144,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 180,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 18821.494619999998,
+              "response_token/s": 9.68314298656887
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 3,
+            "task": "company_lookup_match",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:21:55+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 10.265,
+            "response_id": "chatcmpl-17407126-609f-4a9d-8fbc-3bdea1ec3de5",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 1842,
+              "completion_tokens": 90,
+              "total_tokens": 1932,
+              "prompt_tokens_details": {
+                "cached_tokens": 160,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 34,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 3099.167407,
+              "response_token/s": 14.198963357903246
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=instalco.se&source=rest&debug_request=lookup-local-f6e553a27a52-06&debug_attempt=1",
+      "group": "initial",
+      "reviewed_outcome": "not_found",
+      "result_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/instalco.se/result.json",
+      "trace_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/instalco.se/trace.jsonl"
+    },
+    {
+      "company_id": "5565010997",
+      "legal_name": "STUDSVIK AB",
+      "root_domain": "studsvik.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300MLJ046XFQNVH42/2024-12-31/ESEF/SE/0/549300MLJ046XFQNVH42-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-f6e553a27a52-07",
+      "outcome": "failed",
+      "status": "failed",
+      "lookup_status": "failed",
+      "found_id": null,
+      "confidence": null,
+      "site_type": "unknown",
+      "reasons": [
+        "Could not fetch the homepage"
+      ],
+      "elapsed_seconds": 1.746,
+      "pages": 1,
+      "searches": 0,
+      "usage": {
+        "calls": 0,
+        "successful_responses": 0,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "by_call": []
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=studsvik.se&source=rest&debug_request=lookup-local-f6e553a27a52-07&debug_attempt=1",
+      "group": "initial",
+      "reviewed_outcome": "failed",
+      "result_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/studsvik.se/result.json",
+      "trace_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/studsvik.se/trace.jsonl"
+    },
+    {
+      "company_id": "5564639440",
+      "legal_name": "Corem Property Group AB",
+      "root_domain": "corem.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/213800CHXQQD7TSS1T59/2024-12-31/ESEF/SE/0/core-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-f6e553a27a52-08",
+      "outcome": "exact_match",
+      "status": "completed",
+      "lookup_status": "matched",
+      "found_id": "5564639440",
+      "confidence": 0.99,
+      "site_type": "company",
+      "reasons": [
+        "The organization number provided on the website (556463-9440) is an exact match to the registration number of Corem Property Group AB.",
+        "The legal name Corem Property Group AB listed in the candidate matches the trading name and legal context found on the website.",
+        "Website organisation number matches the registry"
+      ],
+      "elapsed_seconds": 195.096,
+      "pages": 4,
+      "searches": 3,
+      "usage": {
+        "calls": 3,
+        "successful_responses": 3,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 3,
+        "prompt_tokens": 13174,
+        "completion_tokens": 1136,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_classification",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:21:41+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 21.133,
+            "response_id": "chatcmpl-0c53d7ed-5213-4836-966a-221d34115cd8",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 1787,
+              "completion_tokens": 221,
+              "total_tokens": 2008,
+              "prompt_tokens_details": {
+                "cached_tokens": 336,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 93,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 2966.0578490000003,
+              "response_token/s": 12.136853478092418
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 2,
+            "task": "company_lookup_identity",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:22:12+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 125.567,
+            "response_id": "chatcmpl-31c544cf-fc8b-4eb4-a204-eca434e192fc",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 8029,
+              "completion_tokens": 807,
+              "total_tokens": 8836,
+              "prompt_tokens_details": {
+                "cached_tokens": 144,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 375,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 12849.474248,
+              "response_token/s": 7.157509370297105
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 3,
+            "task": "company_lookup_match",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:24:34+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 18.759,
+            "response_id": "chatcmpl-8453257a-b75d-4aa9-8a99-8de6ab3b2990",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 3358,
+              "completion_tokens": 108,
+              "total_tokens": 3466,
+              "prompt_tokens_details": {
+                "cached_tokens": 160,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 46,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 5395.793993,
+              "response_token/s": 8.960961806809765
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=corem.se&source=rest&debug_request=lookup-local-f6e553a27a52-08&debug_attempt=1",
+      "group": "initial",
+      "reviewed_outcome": "exact_match",
+      "result_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/corem.se/result.json",
+      "trace_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/corem.se/trace.jsonl"
+    },
+    {
+      "company_id": "5565420824",
+      "legal_name": "Axfood AB",
+      "root_domain": "axfood.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300QIXCZWZLHE8L05/2024-12-31/ESEF/SE/0/axfo-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-f6e553a27a52-09",
+      "outcome": "failed",
+      "status": "failed",
+      "lookup_status": "failed",
+      "found_id": null,
+      "confidence": null,
+      "site_type": "company",
+      "reasons": [
+        "LLM exceeded 180s total deadline"
+      ],
+      "elapsed_seconds": 241.353,
+      "pages": 4,
+      "searches": 0,
+      "usage": {
+        "calls": 2,
+        "successful_responses": 1,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 2,
+        "prompt_tokens": 4871,
+        "completion_tokens": 257,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_classification",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:22:15+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 45.667,
+            "response_id": "chatcmpl-a28b0744-c8a7-4212-ac19-7da154e329a0",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 4871,
+              "completion_tokens": 257,
+              "total_tokens": 5128,
+              "prompt_tokens_details": {
+                "cached_tokens": 336,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 106,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 7786.503797,
+              "response_token/s": 9.120594320334073
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 2,
+            "task": "company_lookup_identity",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:23:11+00:00",
+            "api": "openai",
+            "error": "LLM exceeded 180s total deadline",
+            "elapsed_seconds": 180.002
+          }
+        ]
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=axfood.se&source=rest&debug_request=lookup-local-f6e553a27a52-09&debug_attempt=1",
+      "group": "initial",
+      "reviewed_outcome": "failed",
+      "result_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/axfood.se/result.json",
+      "trace_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/axfood.se/trace.jsonl"
+    },
+    {
+      "company_id": "5562885417",
+      "legal_name": "Investment Aktiebolaget Spiltan",
+      "root_domain": "spiltan.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/5493001BIDO3E2AOA590/2024-12-31/ESEF/SE/0/investmentabspiltan-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-f6e553a27a52-10",
+      "outcome": "exact_match",
+      "status": "completed",
+      "lookup_status": "matched",
+      "found_id": "5562885417",
+      "confidence": 0.99,
+      "site_type": "company",
+      "reasons": [
+        "Exact legal name match 'Investment Aktiebolaget Spiltan' found in registry candidate and website facts.",
+        "Explicit legal name uniquely matches the returned registry candidates"
+      ],
+      "elapsed_seconds": 166.205,
+      "pages": 4,
+      "searches": 3,
+      "usage": {
+        "calls": 3,
+        "successful_responses": 3,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 3,
+        "prompt_tokens": 9219,
+        "completion_tokens": 733,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_classification",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:25:01+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 26.759,
+            "response_id": "chatcmpl-8fa11260-2968-40de-9a53-b97e2b18d6e3",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 1192,
+              "completion_tokens": 213,
+              "total_tokens": 1405,
+              "prompt_tokens_details": {
+                "cached_tokens": 336,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 90,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 2097.5887079999998,
+              "response_token/s": 8.610762127820912
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 2,
+            "task": "company_lookup_identity",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:25:39+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 56.461,
+            "response_id": "chatcmpl-df8da4da-3cdf-414f-8c25-bf0e94cce8e3",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 2950,
+              "completion_tokens": 463,
+              "total_tokens": 3413,
+              "prompt_tokens_details": {
+                "cached_tokens": 144,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 216,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 4791.033756,
+              "response_token/s": 8.971123997501332
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 3,
+            "task": "company_lookup_match",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:26:55+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 47.064,
+            "response_id": "chatcmpl-1e144c13-06fe-4ce3-b7fb-2db7422c0bd8",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 5077,
+              "completion_tokens": 57,
+              "total_tokens": 5134,
+              "prompt_tokens_details": {
+                "cached_tokens": 160,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 23,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 8144.108942999999,
+              "response_token/s": 1.4949984736364583
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=spiltan.se&source=rest&debug_request=lookup-local-f6e553a27a52-10&debug_attempt=1",
+      "group": "initial",
+      "reviewed_outcome": "exact_match",
+      "result_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/spiltan.se/result.json",
+      "trace_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/spiltan.se/trace.jsonl"
+    },
+    {
+      "company_id": "5566821202",
+      "legal_name": "Humlegården Fastigheter AB",
+      "root_domain": "humlegarden.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300HT0F6CFLJR3Y69/2024-12-31/ESEF/SE/0/huml-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-f6e553a27a52-11",
+      "outcome": "exact_match",
+      "status": "completed",
+      "lookup_status": "matched",
+      "found_id": "5566821202",
+      "confidence": 1.0,
+      "site_type": "company",
+      "reasons": [
+        "The website explicitly states the organization number '556682-1202' on the contact page.",
+        "This organization number exactly matches candidate '5566821202'.",
+        "Candidate '5566821202' is active and its legal name 'Humlegården Fastigheter AB' matches the trading name listed on the website.",
+        "While the postal code on the website (114 32) differs from the registry primary address (10244), the explicit registration number provides definitive identity.",
+        "Website organisation number matches the registry"
+      ],
+      "elapsed_seconds": 161.291,
+      "pages": 4,
+      "searches": 2,
+      "usage": {
+        "calls": 3,
+        "successful_responses": 3,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 3,
+        "prompt_tokens": 25694,
+        "completion_tokens": 991,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_classification",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:26:19+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 26.838,
+            "response_id": "chatcmpl-6b633917-c58b-4d0f-855b-7781df6f92bd",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 5373,
+              "completion_tokens": 275,
+              "total_tokens": 5648,
+              "prompt_tokens_details": {
+                "cached_tokens": 336,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 116,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 8607.525818999999,
+              "response_token/s": 15.066569692454106
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 2,
+            "task": "company_lookup_identity",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:26:55+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 89.677,
+            "response_id": "chatcmpl-7928c10e-ff03-4e89-b520-25a2e3646f69",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 18519,
+              "completion_tokens": 557,
+              "total_tokens": 19076,
+              "prompt_tokens_details": {
+                "cached_tokens": 144,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 256,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 31185.663074,
+              "response_token/s": 11.402783336528978
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 3,
+            "task": "company_lookup_match",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:28:32+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 23.954,
+            "response_id": "chatcmpl-abc24e70-387c-44b6-aaf5-4d75d38c5fbf",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 1802,
+              "completion_tokens": 159,
+              "total_tokens": 1961,
+              "prompt_tokens_details": {
+                "cached_tokens": 144,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 70,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 2975.2507870000004,
+              "response_token/s": 9.794634326261004
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=humlegarden.se&source=rest&debug_request=lookup-local-f6e553a27a52-11&debug_attempt=1",
+      "group": "initial",
+      "reviewed_outcome": "exact_match",
+      "result_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/humlegarden.se/result.json",
+      "trace_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/humlegarden.se/trace.jsonl"
+    },
+    {
+      "company_id": "5560654054",
+      "legal_name": "Elon AB (publ)",
+      "root_domain": "elongroup.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300BD5VFRJS5HFW64/2024-12-31/ESEF/SE/0/elon-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-f6e553a27a52-12",
+      "outcome": "failed",
+      "status": "failed",
+      "lookup_status": "failed",
+      "found_id": null,
+      "confidence": null,
+      "site_type": "unknown",
+      "reasons": [
+        "Could not fetch the homepage"
+      ],
+      "elapsed_seconds": 1.731,
+      "pages": 1,
+      "searches": 0,
+      "usage": {
+        "calls": 0,
+        "successful_responses": 0,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "by_call": []
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=elongroup.se&source=rest&debug_request=lookup-local-f6e553a27a52-12&debug_attempt=1",
+      "group": "initial",
+      "reviewed_outcome": "failed",
+      "result_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/elongroup.se/result.json",
+      "trace_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/elongroup.se/trace.jsonl"
+    },
+    {
+      "company_id": "5562748458",
+      "legal_name": "Avanza Bank Holding AB",
+      "root_domain": "avanza.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300MBWR5H8SIJLE03/2024-12-31/ESEF/SE/0/Avanza-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-f6e553a27a52-13",
+      "outcome": "not_found",
+      "status": "completed",
+      "lookup_status": "not_found",
+      "found_id": null,
+      "confidence": null,
+      "site_type": "company",
+      "reasons": [
+        "The provided facts list multiple legal entities (Avanza Bank AB, Avanza Fonder AB, Avanza Bank Holding AB) and registration numbers without explicitly identifying which single entity operates the website.",
+        "There is a conflict between candidate identities: Avanza Bank AB (5565735668) is the banking entity, while Avanza Bank Holding AB (5562748458) is the parent/holding company, and both are present in the facts with matching addresses.",
+        "Without an explicit statement designating the operator, it is ambiguous whether the website is operated by the operating bank or the holding company.",
+        "No sufficiently confident, supported registry match"
+      ],
+      "elapsed_seconds": 230.95,
+      "pages": 4,
+      "searches": 6,
+      "usage": {
+        "calls": 3,
+        "successful_responses": 3,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 3,
+        "prompt_tokens": 10573,
+        "completion_tokens": 1370,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_classification",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:27:55+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 26.333,
+            "response_id": "chatcmpl-9cc9f666-0b88-4b7e-b5e0-f283a88cb548",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 622,
+              "completion_tokens": 218,
+              "total_tokens": 840,
+              "prompt_tokens_details": {
+                "cached_tokens": 336,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 89,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 1149.458775,
+              "response_token/s": 8.636932368590642
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 2,
+            "task": "company_lookup_identity",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:28:30+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 138.71,
+            "response_id": "chatcmpl-742d8b4b-b050-4825-8d78-92ff9793bbaf",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 3790,
+              "completion_tokens": 967,
+              "total_tokens": 4757,
+              "prompt_tokens_details": {
+                "cached_tokens": 144,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 464,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 6135.696559,
+              "response_token/s": 7.292406991351039
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 3,
+            "task": "company_lookup_match",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:31:13+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 27.561,
+            "response_id": "chatcmpl-5a1a3f31-b378-4942-a7dc-50aa22848672",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 6161,
+              "completion_tokens": 185,
+              "total_tokens": 6346,
+              "prompt_tokens_details": {
+                "cached_tokens": 160,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 75,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 9851.519593,
+              "response_token/s": 11.405877791126077
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=avanza.se&source=rest&debug_request=lookup-local-f6e553a27a52-13&debug_attempt=1",
+      "group": "initial",
+      "reviewed_outcome": "not_found",
+      "result_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/avanza.se/result.json",
+      "trace_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/avanza.se/trace.jsonl"
+    },
+    {
+      "company_id": "5560345174",
+      "legal_name": "NCC AKTIEBOLAG",
+      "root_domain": "ncc.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/213800WRGLW3CY4MHW53/2024-12-31/ESEF/SE/0/ncc-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-f6e553a27a52-14",
+      "outcome": "not_found",
+      "status": "completed",
+      "lookup_status": "not_found",
+      "found_id": null,
+      "confidence": null,
+      "site_type": "company",
+      "reasons": [
+        "No explicit legal entity name (e.g., AB/ASA) was found in the provided text for any page.",
+        "The organisation number is present on the contact page but does not match the required Swedish format (SE + digits + 01).",
+        "No Swedish registry candidates found from supported website evidence"
+      ],
+      "elapsed_seconds": 112.249,
+      "pages": 4,
+      "searches": 0,
+      "usage": {
+        "calls": 2,
+        "successful_responses": 2,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 2,
+        "prompt_tokens": 35045,
+        "completion_tokens": 325,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_classification",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:29:09+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 39.555,
+            "response_id": "chatcmpl-7d611168-967c-48d9-acb7-b46a8ba15717",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 7559,
+              "completion_tokens": 257,
+              "total_tokens": 7816,
+              "prompt_tokens_details": {
+                "cached_tokens": 336,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 110,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 12143.282172,
+              "response_token/s": 9.381103522992905
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 2,
+            "task": "company_lookup_identity",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:29:59+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 53.618,
+            "response_id": "chatcmpl-4fb2c29b-bf4f-4c4d-b3b9-0cf810b599f1",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 27486,
+              "completion_tokens": 68,
+              "total_tokens": 27554,
+              "prompt_tokens_details": {
+                "cached_tokens": 144,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 25,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 47940.018877999995,
+              "response_token/s": 12.293479385691018
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=ncc.se&source=rest&debug_request=lookup-local-f6e553a27a52-14&debug_attempt=1",
+      "group": "initial",
+      "reviewed_outcome": "not_found",
+      "result_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/ncc.se/result.json",
+      "trace_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/ncc.se/trace.jsonl"
+    },
+    {
+      "company_id": "5560491523",
+      "legal_name": "Fabege AB",
+      "root_domain": "fabege.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300JNPI46XNH0PM97/2024-12-31/ESEF/SE/0/549300JNPI46XNH0PM97-2024-12-31-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-f6e553a27a52-15",
+      "outcome": "not_found",
+      "status": "completed",
+      "lookup_status": "not_found",
+      "found_id": null,
+      "confidence": null,
+      "site_type": "company",
+      "reasons": [
+        "No organisation number provided in source facts.",
+        "Legal name \"Fabege AB\" is not unique (multiple candidates exist).",
+        "Address match exists but no organization number to confirm identity.",
+        "No sufficiently confident, supported registry match"
+      ],
+      "elapsed_seconds": 107.513,
+      "pages": 4,
+      "searches": 1,
+      "usage": {
+        "calls": 3,
+        "successful_responses": 3,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 3,
+        "prompt_tokens": 11795,
+        "completion_tokens": 446,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_classification",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:31:05+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 31.505,
+            "response_id": "chatcmpl-fec24bdd-d8f5-45cd-849a-cf3363b96e38",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 2641,
+              "completion_tokens": 180,
+              "total_tokens": 2821,
+              "prompt_tokens_details": {
+                "cached_tokens": 336,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 72,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 4321.578358,
+              "response_token/s": 6.589910345985328
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 2,
+            "task": "company_lookup_identity",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:31:47+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 35.959,
+            "response_id": "chatcmpl-61e6b2a2-9e5b-4fa0-8802-d87f1c96e32b",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 7551,
+              "completion_tokens": 199,
+              "total_tokens": 7750,
+              "prompt_tokens_details": {
+                "cached_tokens": 144,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 85,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 12121.27529,
+              "response_token/s": 8.343864053569625
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 3,
+            "task": "company_lookup_match",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:32:29+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 14.063,
+            "response_id": "chatcmpl-46dba0a2-cf5a-4bf4-9458-cd80bfc88092",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 1603,
+              "completion_tokens": 67,
+              "total_tokens": 1670,
+              "prompt_tokens_details": {
+                "cached_tokens": 160,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 27,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 2698.3309379999996,
+              "response_token/s": 6.293286726121458
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=fabege.se&source=rest&debug_request=lookup-local-f6e553a27a52-15&debug_attempt=1",
+      "group": "initial",
+      "reviewed_outcome": "not_found",
+      "result_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/fabege.se/result.json",
+      "trace_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/fabege.se/trace.jsonl"
+    },
+    {
+      "company_id": "5562746726",
+      "legal_name": "Arise AB",
+      "root_domain": "arise.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300FOT7EE85QYB655/2024-12-31/ESEF/SE/0/ariseab-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-f6e553a27a52-16",
+      "outcome": "not_found",
+      "status": "completed",
+      "lookup_status": "not_found",
+      "found_id": null,
+      "confidence": null,
+      "site_type": "company",
+      "reasons": [
+        "No facts found.",
+        "No Swedish registry candidates found from supported website evidence"
+      ],
+      "elapsed_seconds": 56.616,
+      "pages": 4,
+      "searches": 0,
+      "usage": {
+        "calls": 2,
+        "successful_responses": 2,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 2,
+        "prompt_tokens": 5799,
+        "completion_tokens": 238,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_classification",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:31:50+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 35.043,
+            "response_id": "chatcmpl-28bb7959-78ec-4827-a8fe-25ef9b710d62",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 1898,
+              "completion_tokens": 225,
+              "total_tokens": 2123,
+              "prompt_tokens_details": {
+                "cached_tokens": 336,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 89,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 3161.441779,
+              "response_token/s": 9.958211482699703
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 2,
+            "task": "company_lookup_identity",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:32:33+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 7.853,
+            "response_id": "chatcmpl-9375b259-c847-45e5-be40-aa36d34031dc",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 3901,
+              "completion_tokens": 13,
+              "total_tokens": 3914,
+              "prompt_tokens_details": {
+                "cached_tokens": 144,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 4,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 6319.895055,
+              "response_token/s": 8.515937064905918
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=arise.se&source=rest&debug_request=lookup-local-f6e553a27a52-16&debug_attempt=1",
+      "group": "initial",
+      "reviewed_outcome": "not_found",
+      "result_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/arise.se/result.json",
+      "trace_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/arise.se/trace.jsonl"
+    },
+    {
+      "company_id": "5566285408",
+      "legal_name": "Mangold AB",
+      "root_domain": "mangold.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300F7ULEE3V59UW34/2024-12-31/ESEF/SE/0/mangold-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-f6e553a27a52-17",
+      "outcome": "different_company",
+      "status": "completed",
+      "lookup_status": "matched",
+      "found_id": "5565851267",
+      "confidence": 0.99,
+      "site_type": "company",
+      "reasons": [
+        "The legal name 'Mangold Fondkommission AB' is explicitly stated on the website's contact page and copyright footer.",
+        "The organisation number '556585-1267' (normalized to 5565851267) provided in the website facts exactly matches the company_id of the candidate 'Mangold Fondkommission AB'.",
+        "The street address 'Box 55691' and city 'Stockholm' listed on the website align with the primary address details of the matching registry entry.",
+        "Website organisation number matches the registry"
+      ],
+      "elapsed_seconds": 183.162,
+      "pages": 4,
+      "searches": 4,
+      "usage": {
+        "calls": 3,
+        "successful_responses": 3,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 3,
+        "prompt_tokens": 22678,
+        "completion_tokens": 1138,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_classification",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:32:49+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 17.544,
+            "response_id": "chatcmpl-c098a161-a135-4b9c-9894-ef197e4317ca",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 3842,
+              "completion_tokens": 187,
+              "total_tokens": 4029,
+              "prompt_tokens_details": {
+                "cached_tokens": 336,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 79,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 6184.399764,
+              "response_token/s": 19.431515597612226
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 2,
+            "task": "company_lookup_identity",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:33:17+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 100.532,
+            "response_id": "chatcmpl-e895ec14-78df-4488-9712-b7c8f8300982",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 12272,
+              "completion_tokens": 770,
+              "total_tokens": 13042,
+              "prompt_tokens_details": {
+                "cached_tokens": 144,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 360,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 20090.260812,
+              "response_token/s": 10.816459117330542
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 3,
+            "task": "company_lookup_match",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:35:18+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 30.309,
+            "response_id": "chatcmpl-c88910a4-afab-467a-990a-be24a7d13d31",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 6564,
+              "completion_tokens": 181,
+              "total_tokens": 6745,
+              "prompt_tokens_details": {
+                "cached_tokens": 160,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 82,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 10577.412547,
+              "response_token/s": 10.0167089211219
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=mangold.se&source=rest&debug_request=lookup-local-f6e553a27a52-17&debug_attempt=1",
+      "group": "initial",
+      "reviewed_outcome": "supported_operator_match",
+      "result_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/mangold.se/result.json",
+      "trace_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/mangold.se/trace.jsonl"
+    },
+    {
+      "company_id": "5566563531",
+      "legal_name": "Byggmax Group AB",
+      "root_domain": "byggmax.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300MPJPYQB0KCNH03/2024-12-31/ESEF/SE/0/bmax-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-f6e553a27a52-18",
+      "outcome": "excluded_category",
+      "status": "completed",
+      "lookup_status": "not_found",
+      "found_id": null,
+      "confidence": null,
+      "site_type": "online_store",
+      "reasons": [
+        "The header and footer prominently feature an e-commerce cart interface, including 'Din varukorg' (Your shopping cart) and prompts to continue shopping or remove items.",
+        "The site provides extensive product catalog navigation with categories such as 'Hus & bygg' (House & building), 'Verktyg & maskiner' (Tools & machinery), 'Fönster & dörrar' (Windows & doors), and 'Trädgårdsbyggnader' (Garden buildings), listing specific items with prices (e.g., '149 kr', '45 kr').",
+        "There are clear calls to action for purchasing and account management, including 'Logga in' (Log in), 'Bli medlem' (Become a member), 'Öppet köp' (Open purchase/returns policy), and 'Klicka & hämta' (Click & collect).",
+        "While the site includes corporate information ('Om Byggmax' / About Byggmax) and DIY guides, the primary function of the page is to facilitate the sale of construction materials and tools via an online retail platform."
+      ],
+      "elapsed_seconds": 92.267,
+      "pages": 1,
+      "searches": 0,
+      "usage": {
+        "calls": 1,
+        "successful_responses": 1,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 1,
+        "prompt_tokens": 11425,
+        "completion_tokens": 260,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_classification",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:33:07+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 70.839,
+            "response_id": "chatcmpl-6817b91c-4bec-42d8-9442-c3b6f429de54",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 11425,
+              "completion_tokens": 260,
+              "total_tokens": 11685,
+              "prompt_tokens_details": {
+                "cached_tokens": 336,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 109,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 18838.101061,
+              "response_token/s": 4.985568981266728
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=byggmax.se&source=rest&debug_request=lookup-local-f6e553a27a52-18&debug_attempt=1",
+      "group": "initial",
+      "reviewed_outcome": "excluded_category",
+      "result_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/byggmax.se/result.json",
+      "trace_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/byggmax.se/trace.jsonl"
+    },
+    {
+      "company_id": "5564653185",
+      "legal_name": "Lifco AB (publ)",
+      "root_domain": "lifco.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300RTLL4VDQRCTW41/2024-12-31/ESEF/SE/0/549300RTLL4VDQRCTW41-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-f6e553a27a52-19",
+      "outcome": "exact_match",
+      "status": "completed",
+      "lookup_status": "matched",
+      "found_id": "5564653185",
+      "confidence": 0.99,
+      "site_type": "company",
+      "reasons": [
+        "The website provides an explicit organization number '556465-3185'.",
+        "This ID exactly matches candidate 5564653185.",
+        "The name, address, and city match across all sources.",
+        "Website organisation number matches the registry"
+      ],
+      "elapsed_seconds": 121.948,
+      "pages": 4,
+      "searches": 2,
+      "usage": {
+        "calls": 3,
+        "successful_responses": 3,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 3,
+        "prompt_tokens": 4638,
+        "completion_tokens": 1061,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_classification",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:34:25+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 24.93,
+            "response_id": "chatcmpl-c50a9f6e-7c70-4a9b-95af-b674a6d6ccde",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 858,
+              "completion_tokens": 207,
+              "total_tokens": 1065,
+              "prompt_tokens_details": {
+                "cached_tokens": 336,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 86,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 1484.621091,
+              "response_token/s": 8.793137554720708
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 2,
+            "task": "company_lookup_identity",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:34:57+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 69.988,
+            "response_id": "chatcmpl-0bc7b9e1-8644-4116-afad-f1cc6aa74fc9",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 1879,
+              "completion_tokens": 772,
+              "total_tokens": 2651,
+              "prompt_tokens_details": {
+                "cached_tokens": 144,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 368,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 3128.856613,
+              "response_token/s": 11.550212994125118
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 3,
+            "task": "company_lookup_match",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:36:13+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 10.765,
+            "response_id": "chatcmpl-4fea1705-2e3e-4d15-9bef-2bff448f9a2d",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 1901,
+              "completion_tokens": 82,
+              "total_tokens": 1983,
+              "prompt_tokens_details": {
+                "cached_tokens": 160,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 35,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 3178.9947039999997,
+              "response_token/s": 12.21293673881692
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=lifco.se&source=rest&debug_request=lookup-local-f6e553a27a52-19&debug_attempt=1",
+      "group": "initial",
+      "reviewed_outcome": "exact_match",
+      "result_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/lifco.se/result.json",
+      "trace_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/lifco.se/trace.jsonl"
+    },
+    {
+      "company_id": "5568403918",
+      "legal_name": "Brinova Fastigheter AB (publ)",
+      "root_domain": "brinova.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/5493002JE0BBAIJ06O61/2024-12-31/ESEF/SE/0/Brinova-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-f6e553a27a52-20",
+      "outcome": "not_found",
+      "status": "completed",
+      "lookup_status": "not_found",
+      "found_id": null,
+      "confidence": null,
+      "site_type": "company",
+      "reasons": [
+        "Legal name 'Brinova Fastigheter AB (publ)' in candidate 5568403918 exactly matches the verified legal_name fact from the website.",
+        "Company 5568403918 is active, unlike similar-named inactive candidates.",
+        "Activity description aligns with the trading_name 'Brinova' described as a real estate company ('Fastighetsbolag').",
+        "No sufficiently confident, supported registry match"
+      ],
+      "elapsed_seconds": 134.644,
+      "pages": 4,
+      "searches": 2,
+      "usage": {
+        "calls": 3,
+        "successful_responses": 3,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 3,
+        "prompt_tokens": 26549,
+        "completion_tokens": 473,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_classification",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:35:57+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 25.975,
+            "response_id": "chatcmpl-a3089972-e2b9-46d9-a179-6cd12aa6b69a",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 5241,
+              "completion_tokens": 190,
+              "total_tokens": 5431,
+              "prompt_tokens_details": {
+                "cached_tokens": 336,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 80,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 8426.981822,
+              "response_token/s": 10.844036357006788
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 2,
+            "task": "company_lookup_identity",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:36:33+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 52.359,
+            "response_id": "chatcmpl-9210f25c-35a4-4a5a-a80e-a0c8639ecf20",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 18257,
+              "completion_tokens": 166,
+              "total_tokens": 18423,
+              "prompt_tokens_details": {
+                "cached_tokens": 144,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 73,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 30704.070315999998,
+              "response_token/s": 9.368605535476295
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 3,
+            "task": "company_lookup_match",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:37:47+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 20.129,
+            "response_id": "chatcmpl-cc4f92b7-3c76-4a40-b7bb-26b9d197aa78",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 3051,
+              "completion_tokens": 117,
+              "total_tokens": 3168,
+              "prompt_tokens_details": {
+                "cached_tokens": 160,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 49,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 4969.899933,
+              "response_token/s": 9.250194797121033
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=brinova.se&source=rest&debug_request=lookup-local-f6e553a27a52-20&debug_attempt=1",
+      "group": "initial",
+      "reviewed_outcome": "not_found",
+      "result_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/brinova.se/result.json",
+      "trace_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/brinova.se/trace.jsonl"
+    },
+    {
+      "company_id": "5568648116",
+      "legal_name": "Genova Property Group AB",
+      "root_domain": "genova.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300EJ67GY3FS4IN91/2024-12-31/ESEF/SE/0/genovapropgroupab-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-f6e553a27a52-21",
+      "outcome": "failed",
+      "status": "failed",
+      "lookup_status": "failed",
+      "found_id": null,
+      "confidence": null,
+      "site_type": "company",
+      "reasons": [
+        "1 validation error for WebsiteIdentity\nfacts.2.source_url\n  String should have at least 1 character [type=string_too_short, input_value='', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/string_too_short"
+      ],
+      "elapsed_seconds": 115.837,
+      "pages": 4,
+      "searches": 0,
+      "usage": {
+        "calls": 2,
+        "successful_responses": 2,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 2,
+        "prompt_tokens": 11864,
+        "completion_tokens": 588,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_classification",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:36:32+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 52.495,
+            "response_id": "chatcmpl-d2185ace-de12-48b6-a007-7c04f7a1b0bb",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 2900,
+              "completion_tokens": 149,
+              "total_tokens": 3049,
+              "prompt_tokens_details": {
+                "cached_tokens": 336,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 61,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 4735.0159810000005,
+              "response_token/s": 3.1003540088550983
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 2,
+            "task": "company_lookup_identity",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:37:33+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 50.226,
+            "response_id": "chatcmpl-e9bb7fd2-5936-4d93-8b10-58bc8504e385",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 8964,
+              "completion_tokens": 439,
+              "total_tokens": 9403,
+              "prompt_tokens_details": {
+                "cached_tokens": 144,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 202,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 14576.008001,
+              "response_token/s": 12.324763872421551
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=genova.se&source=rest&debug_request=lookup-local-f6e553a27a52-21&debug_attempt=1",
+      "group": "initial",
+      "reviewed_outcome": "failed",
+      "result_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/genova.se/result.json",
+      "trace_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-20260927/genova.se/trace.jsonl"
+    },
+    {
+      "company_id": "5560263237",
+      "legal_name": "INVESTMENTAKTIEBOLAGET LATOUR",
+      "root_domain": "latour.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/5493006GFBLNB3Y0Y789/2024-12-31/ESEF/SE/0/5493006GFBLNB3Y0Y789-2024-12-31-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-c14d21833c4b-01",
+      "outcome": "not_found",
+      "status": "completed",
+      "lookup_status": "not_found",
+      "found_id": null,
+      "confidence": null,
+      "site_type": "company",
+      "reasons": [
+        "Legal name 'Investment AB Latour (publ)' matches the website operator.",
+        "Street address 'J A Wettergrens gata 7' in candidate 5563372571 does not match, however the city/postal code '401 25 Göteborg' is a unique identifier for Investment AB Latour which is often associated with that specific address in registry data not fully reflected in the simplified candidate list or implies a different entity registration.",
+        "Wait, looking at the candidates provided: None of the candidates have the address J A Wettergrens gata 7. Candidate 5563372571 is Investment AB Urbanor. The name similarity for all is low/moderate. The legal name on the site is Investment AB Latour (publ). This company is a well-known Swedish listed company (stock market). None of the supplied candidates correspond to Investment AB Latour (Org number 556337-2571 belongs to Investment AB Urbanor, whereas Latour is typically 556337-257x? No, Latour's org nr is 556337-2571? Let me verify internal knowledge vs source. Source says Legal Name: Investment AB Latour (publ). Candidates list includes 'Investment AB Urbanor' with id 5563372571. The prompt asks to compare ONLY supplied facts and candidates. The fact is 'Investment AB Latour'. The candidate is 'Investment AB Urbanor'. These are different names. However, often these tasks contain traps or require strict matching. If I strictly follow 'Reject ambiguity', none of the candidates match the legal name 'Investment AB Latour'. Therefore, identity is NOT supported by the provided candidates.",
+        "Re-evaluating: The task is to propose the company that operates the website based on SUPPLIED registry candidates. The supplied facts say 'Investment AB Latour (publ)'. The candidates do NOT include 'Investment AB Latour'. They include 'Investment AB Fotsir', 'InvestmentLab AB', etc. None match the legal name exactly. Do any match the address? Address in fact: J A Wettergrens gata 7, Göteborg. Candidate addresses: Mölndal, Halmstad, Stockholm, Karlstad, Stockholm, Arvika, Stockholm, Åby, Sundsvall, Uppsala. No candidate matches the city/postal code of Göteborg/401 25 either (except maybe if one was in Gothenburg, but none are listed as such). Consequently, there is no unique explicit legal name OR name+address match in the candidate list. The instruction says 'Return null and basis insufficient unless identity is supported.'",
+        "Since 'Investment AB Latour' is not in the candidate list, I cannot select a candidate. I must return null.",
+        "The proposed match lacks a supported legal identity or corroborating address"
+      ],
+      "elapsed_seconds": 156.616,
+      "pages": 4,
+      "searches": 1,
+      "usage": {
+        "calls": 3,
+        "successful_responses": 3,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 3,
+        "prompt_tokens": 11401,
+        "completion_tokens": 1007,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_classification",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:38:42+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 24.444,
+            "response_id": "chatcmpl-21c47d29-8f9e-4bc7-b0b7-7b5d87571b25",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 2675,
+              "completion_tokens": 188,
+              "total_tokens": 2863,
+              "prompt_tokens_details": {
+                "cached_tokens": 336,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 78,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 4373.860317,
+              "response_token/s": 10.090264900903438
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 2,
+            "task": "company_lookup_identity",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:39:16+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 38.048,
+            "response_id": "chatcmpl-b284c53e-9442-451a-8f49-3a1e2643c845",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 7072,
+              "completion_tokens": 169,
+              "total_tokens": 7241,
+              "prompt_tokens_details": {
+                "cached_tokens": 144,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 76,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 11298.250453999999,
+              "response_token/s": 8.851000656240847
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 3,
+            "task": "company_lookup_match",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:40:00+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 73.081,
+            "response_id": "chatcmpl-5a828079-00fd-43af-9a9b-cc4a34f9dbad",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 1654,
+              "completion_tokens": 650,
+              "total_tokens": 2304,
+              "prompt_tokens_details": {
+                "cached_tokens": 160,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 265,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 2755.7365369999998,
+              "response_token/s": 9.330910112309853
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=latour.se&source=rest&debug_request=lookup-local-c14d21833c4b-01&debug_attempt=1",
+      "group": "additional",
+      "reviewed_outcome": "not_found",
+      "result_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-extra-20260927/latour.se/result.json",
+      "trace_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-extra-20260927/latour.se/trace.jsonl"
+    },
+    {
+      "company_id": "5560128240",
+      "legal_name": "HUFVUDSTADEN AB",
+      "root_domain": "hufvudstaden.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/213800UEV5ZAFFVQ4J85/2024-12-31/ESEF/SE/0/hufv-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-c14d21833c4b-02",
+      "outcome": "not_found",
+      "status": "completed",
+      "lookup_status": "not_found",
+      "found_id": null,
+      "confidence": null,
+      "site_type": "company",
+      "reasons": [
+        "The copyright and footer sections of the homepage (https://hufvudstaden.se/) explicitly identify the operating entity as 'Hufvudstaden AB'. The provided prompt context includes the extracted footer text which contains both the legal name and the organization number, confirming the operator's identity.",
+        "No Swedish registry candidates found from supported website evidence"
+      ],
+      "elapsed_seconds": 81.593,
+      "pages": 4,
+      "searches": 0,
+      "usage": {
+        "calls": 2,
+        "successful_responses": 2,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 2,
+        "prompt_tokens": 6433,
+        "completion_tokens": 410,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_classification",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:38:41+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 25.365,
+            "response_id": "chatcmpl-9f4fc7ef-9bac-4b18-91e7-23521877c632",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 1792,
+              "completion_tokens": 167,
+              "total_tokens": 1959,
+              "prompt_tokens_details": {
+                "cached_tokens": 336,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 63,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 2974.892023,
+              "response_token/s": 7.420446321647379
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 2,
+            "task": "company_lookup_identity",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:39:16+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 42.061,
+            "response_id": "chatcmpl-6a4a13b2-4d2e-449b-b46b-b559662d2575",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 4641,
+              "completion_tokens": 243,
+              "total_tokens": 4884,
+              "prompt_tokens_details": {
+                "cached_tokens": 144,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 105,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 7521.681661,
+              "response_token/s": 7.0272397018297355
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=hufvudstaden.se&source=rest&debug_request=lookup-local-c14d21833c4b-02&debug_attempt=1",
+      "group": "additional",
+      "reviewed_outcome": "not_found",
+      "result_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-extra-20260927/hufvudstaden.se/result.json",
+      "trace_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-extra-20260927/hufvudstaden.se/trace.jsonl"
+    },
+    {
+      "company_id": "5560179367",
+      "legal_name": "INDUTRADE AKTIEBOLAG",
+      "root_domain": "indutrade.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300FISLQ6CEFP1867/2024-12-31/ESEF/SE/0/indu-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-c14d21833c4b-03",
+      "outcome": "not_found",
+      "status": "completed",
+      "lookup_status": "not_found",
+      "found_id": null,
+      "confidence": null,
+      "site_type": "company",
+      "reasons": [
+        "Exact match between website's legal_name 'Indutrade AB' and registry's legal_name 'INDUTRADE AKTIEBOLAG' (case-insensitive match)",
+        "Exact match between website's registration_number '556017-9367' (normalized to 5560179367) and registry's company_id '5560179367'",
+        "Website's postal_code 'SE-164 06' matches registry's primary_postal_code '16406' after normalization",
+        "No sufficiently confident, supported registry match"
+      ],
+      "elapsed_seconds": 99.957,
+      "pages": 4,
+      "searches": 2,
+      "usage": {
+        "calls": 3,
+        "successful_responses": 3,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 3,
+        "prompt_tokens": 9673,
+        "completion_tokens": 627,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_classification",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:40:05+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 19.398,
+            "response_id": "chatcmpl-13513123-eaae-4369-96a6-acb59724c998",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 2717,
+              "completion_tokens": 142,
+              "total_tokens": 2859,
+              "prompt_tokens_details": {
+                "cached_tokens": 336,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 56,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 4398.6983820000005,
+              "response_token/s": 9.448408751537249
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 2,
+            "task": "company_lookup_identity",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:40:32+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 38.413,
+            "response_id": "chatcmpl-7e55d878-b5e2-400a-9332-bfb907041b05",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 4958,
+              "completion_tokens": 307,
+              "total_tokens": 5265,
+              "prompt_tokens_details": {
+                "cached_tokens": 144,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 143,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 7950.443764,
+              "response_token/s": 10.096537590487156
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 3,
+            "task": "company_lookup_match",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:41:17+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 23.139,
+            "response_id": "chatcmpl-fd1ffa0c-8fd2-464e-a512-7f28f5e37278",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 1998,
+              "completion_tokens": 178,
+              "total_tokens": 2176,
+              "prompt_tokens_details": {
+                "cached_tokens": 160,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 79,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 3319.769775,
+              "response_token/s": 9.363593664975957
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=indutrade.se&source=rest&debug_request=lookup-local-c14d21833c4b-03&debug_attempt=1",
+      "group": "additional",
+      "reviewed_outcome": "not_found",
+      "result_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-extra-20260927/indutrade.se/result.json",
+      "trace_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-extra-20260927/indutrade.se/trace.jsonl"
+    },
+    {
+      "company_id": "5562384361",
+      "legal_name": "Medivir Aktiebolag",
+      "root_domain": "medivir.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300VWDGUX0WMJ1T79/2024-12-31/ESEF/SE/0/medivir-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-c14d21833c4b-04",
+      "outcome": "exact_match",
+      "status": "completed",
+      "lookup_status": "matched",
+      "found_id": "5562384361",
+      "confidence": 0.99,
+      "site_type": "company",
+      "reasons": [
+        "Candidate 'Medivir Aktiebolag' matches the legal name 'Medivir AB' (AB is standard Swedish abbreviation for Aktiebolag).",
+        "The primary street address 'c/o A House Hagastaden, Solnavägen 3H', postal code '11363', and city 'stockholm' in the registry candidate exactly match the address provided on the website's 'om-oss' pages.",
+        "Explicit legal name uniquely matches the returned registry candidates"
+      ],
+      "elapsed_seconds": 88.884,
+      "pages": 4,
+      "searches": 1,
+      "usage": {
+        "calls": 3,
+        "successful_responses": 3,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 3,
+        "prompt_tokens": 7329,
+        "completion_tokens": 1020,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_classification",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:41:21+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 20.274,
+            "response_id": "chatcmpl-887f081e-3422-4627-9ed6-4439334ef5a4",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 1122,
+              "completion_tokens": 178,
+              "total_tokens": 1300,
+              "prompt_tokens_details": {
+                "cached_tokens": 336,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 72,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 1953.0979849999999,
+              "response_token/s": 10.079131111439766
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 2,
+            "task": "company_lookup_identity",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:41:48+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 41.527,
+            "response_id": "chatcmpl-7247c0e6-7afc-4273-afcc-517d6b377bd9",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 4454,
+              "completion_tokens": 692,
+              "total_tokens": 5146,
+              "prompt_tokens_details": {
+                "cached_tokens": 144,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 331,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 7185.13154,
+              "response_token/s": 20.183328455437614
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 3,
+            "task": "company_lookup_match",
+            "attempt": 1,
+            "started_at": "2026-09-27T11:42:35+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 10.948,
+            "response_id": "chatcmpl-a5354587-57cd-4c05-bdcb-fb10d63f7541",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 1753,
+              "completion_tokens": 150,
+              "total_tokens": 1903,
+              "prompt_tokens_details": {
+                "cached_tokens": 160,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 67,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 2917.7733639999997,
+              "response_token/s": 20.955815946148686
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=medivir.se&source=rest&debug_request=lookup-local-c14d21833c4b-04&debug_attempt=1",
+      "group": "additional",
+      "reviewed_outcome": "exact_match",
+      "result_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-extra-20260927/medivir.se/result.json",
+      "trace_file": "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/services/crawler_service/data/company-lookup-local-extra-20260927/medivir.se/trace.jsonl"
+    }
+  ]
+}

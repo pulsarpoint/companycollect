@@ -4,7 +4,8 @@ import { Link } from "react-router";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Checkbox } from "~/components/ui/checkbox";
-import { NO_DOMAINS_SELECTED, isSeDomainSelected, selectSeDomains, type SeDomainSelection } from "~/lib/se-domain-selection";
+import { NO_DOMAINS_SELECTED, isDomainSelected, selectDomains } from "~/lib/domain-selection";
+import { type SeDomainSelection } from "~/lib/se-domain-selection";
 import { SeDomainsFilterSheet } from "~/components/admin/se-domains-filter-sheet";
 import { DataTable } from "~/components/data-table/data-table";
 import { DataTablePagination } from "~/components/data-table/pagination";
@@ -208,7 +209,7 @@ export function SeDomainsTable({
   };
 }) {
   const pageDomains = [...new Set(rows.map((row) => row.root_domain))];
-  const selectedOnPage = selection ? pageDomains.filter((domain) => isSeDomainSelected(selection.value, domain)).length : 0;
+  const selectedOnPage = selection ? pageDomains.filter((domain) => isDomainSelected(selection.value, domain)).length : 0;
   const selectedCount = selection?.value.mode === "ids" ? selection.value.domains.length
     : selection ? Math.max(0, counts.domains - (selection.value.mode === "query" ? selection.value.excludedDomains.length : 0)) : 0;
   const domainColumns = columns();
@@ -218,11 +219,11 @@ export function SeDomainsTable({
       checked={pageDomains.length > 0 && selectedOnPage === pageDomains.length}
       indeterminate={selectedOnPage > 0 && selectedOnPage < pageDomains.length}
       disabled={pageDomains.length === 0}
-      onCheckedChange={(checked) => selection.onChange(selectSeDomains(selection.value, pageDomains, checked))} />,
+      onCheckedChange={(checked) => selection.onChange(selectDomains(selection.value, pageDomains, checked))} />,
     cell: ({ row }) => <span className="flex" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
       <Checkbox aria-label={`Select ${row.original.root_domain} (${row.original.company_id})`}
-        checked={isSeDomainSelected(selection.value, row.original.root_domain)}
-        onCheckedChange={(checked) => selection.onChange(selectSeDomains(selection.value, [row.original.root_domain], checked))} />
+        checked={isDomainSelected(selection.value, row.original.root_domain)}
+        onCheckedChange={(checked) => selection.onChange(selectDomains(selection.value, [row.original.root_domain], checked))} />
     </span>,
   });
   return (

@@ -323,6 +323,10 @@ def test_se_selection_filters_latest_rows_and_deduplicates_roots(
         [
             ("shared.se", "1", ["brave"], "connected", 1, 0.8, 1),
             ("shared.se", "2", ["brave"], "connected", 1, 0.8, 1),
+            ("shared.se.com", "1", ["brave"], "connected", 1, 0.8, 1),
+            ("shared.se.com", "2", ["brave"], "connected", 1, 0.8, 1),
+            ("shared.use", "1", ["brave"], "connected", 1, 0.8, 1),
+            ("shared.use", "2", ["brave"], "connected", 1, 0.8, 1),
             ("excluded.se", "1", ["brave"], "connected", 1, 0.8, 1),
             ("excluded.se", "2", ["brave"], "connected", 1, 0.8, 1),
             ("single.se", "1", ["brave"], "connected", 1, 0.8, 1),
@@ -337,7 +341,7 @@ def test_se_selection_filters_latest_rows_and_deduplicates_roots(
         select_all=True,
         excluded_targets=["excluded.se"],
         se_domain_filters={
-            "domain": ".se",
+            "suffix": "se",
             "source": "brave",
             "association": "connected",
             "status": "active",
@@ -362,6 +366,21 @@ def test_se_selection_filters_latest_rows_and_deduplicates_roots(
     assert client.execute(*source_query(WebtechInputConfig(**config))) == [
         ("shared.se", "shared.se")
     ]
+
+    # Empty suffix keeps the pre-extension receipt shape; a changed suffix is a new selection.
+    from dagster_v3.defs.common import draft_queue
+
+    config["se_domain_filters"].pop("suffix")
+    submission_id = str(uuid4())
+    original = add(resource, processing, objects, submission_id=submission_id, **config)
+    receipt = draft_queue.submission(processing, submission_id)
+    assert "suffix" not in receipt["selection_config"]["se_domain_filters"]
+    replay = add(resource, processing, objects, submission_id=submission_id, **config)
+    assert replay["task_id"] == original["task_id"]
+    assert replay["input_count"] == original["input_count"]
+    config["se_domain_filters"]["suffix"] = "se"
+    with pytest.raises(ValueError, match="different selection"):
+        add(resource, processing, objects, submission_id=submission_id, **config)
 
 
 @pytest.mark.parametrize(

@@ -2,10 +2,12 @@
 
 import asyncio
 import fcntl
+import hashlib
 import json
 import logging
 import traceback
 from contextlib import AsyncExitStack
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal, TextIO
 from urllib.parse import urlsplit
@@ -16,13 +18,30 @@ from pydantic import Field, field_serializer, field_validator, model_validator
 
 from crawler_service.brave_browser import BraveSearch
 from crawler_service.browser_client import BrowserLeaseClient
+from crawler_service.company_lookup import (
+    CompanyLookupBatchRequest,
+    CompanyLookupOptions,
+    basic_info_result,
+    find_company,
+)
+from crawler_service.company_lookup_results import publish as publish_lookup_results
+from crawler_service.company_lookup_store import LookupStore
 from crawler_service.crawl import crawl_company
 from crawler_service.crawl_history import CrawlHistory
-from crawler_service.debug_trace import CURRENT_TRACE, SECRET_FIELD, CrawlTrace, trace_event, trace_http_hooks
+from crawler_service.debug_trace import (
+    CURRENT_TRACE,
+    SECRET_FIELD,
+    CrawlTrace,
+    trace_event,
+    trace_http_hooks,
+)
 from crawler_service.discovery import crawlable_url, normalize_url
 from crawler_service.human_control import HumanSession
+from crawler_service.jev import JevClient
+from crawler_service.llm import ModelClient
 from crawler_service.llm_profile import EncryptedLLMProfile, LLMProfileError
 from crawler_service.models import ResearchConfig, StrictModel
+from crawler_service.profiles import site_information
 from crawler_service.storage import utc_now, write_json
 
 LOGGER = logging.getLogger(__name__)
@@ -54,7 +73,8 @@ class CrawlRequest(StrictModel):
         default=None, exclude_if=lambda value: value is None
     )
     decision_llm: EncryptedLLMProfile | None = Field(default=None, exclude_if=lambda value: value is None)
-    decision_tasks: list[Literal["site_eligibility", "link_selection"]] = Field(default_factory=list, exclude_if=lambda value: not value)
+    decision_tasks: list[Literal["site_eligibility", "link_selection", "company_match"]] = Field(default_factory=list, exclude_if=lambda value: not value)
+    company_lookup: CompanyLookupOptions | None = Field(default=None, exclude_if=lambda value: value is None)
     challenge_agent_max_runs: AgentRunBudget | None = None
     challenge_agent_model: AgentModel = "deepseek-flash"
     interactive: bool = False
@@ -81,6 +101,13 @@ class CrawlRequest(StrictModel):
 
     @model_validator(mode="after")
     def crawl_options(self):
+        if self.company_lookup is not None:
+            if self.llm is None:
+                raise ValueError("Company matching requires a processing model")
+            self.site_info = True
+            self.debug = True
+        elif "company_match" in self.decision_tasks:
+            raise ValueError("Company candidate ranking requires company lookup mode")
         if self.llm is not None and self.llm.is_decision_model:
             raise ValueError("Jev is a typed decision model; choose a text-generation model for this crawl")
         if bool(self.decision_tasks) != (self.decision_llm is not None):
@@ -132,9 +159,40 @@ class CrawlRequest(StrictModel):
         return self
 
 
+class CrawlBatchItem(StrictModel):
+    request: CrawlRequest
+    crawl_type: Literal["site_info", "full"]
+    input_revision: int = Field(ge=1)
+    work_key: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+    @model_validator(mode="after")
+    def matching_crawl(self):
+        if self.request.company_lookup is None or self.request.interactive:
+            raise ValueError("Durable batches require unattended company matching crawls")
+        if (self.crawl_type == "site_info") != (self.request.crawl is False):
+            raise ValueError("Crawl type must match the requested collection mode")
+        return self
+
+
+class CrawlBatchRequest(StrictModel):
+    batch_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+    input_id: str = Field(default="", max_length=128)
+    run_id: str = Field(default="", max_length=128)
+    entries: list[CrawlBatchItem] = Field(min_length=1, max_length=1000)
+
+    @model_validator(mode="after")
+    def unique_requests(self):
+        ids = [entry.request.request_id for entry in self.entries]
+        if len(set(ids)) != len(ids):
+            raise ValueError("Batch request IDs must be unique")
+        return self
+
+
 class CrawlJob(StrictModel):
     schema_version: Literal["company-crawl-job/1.0"] = "company-crawl-job/1.0"
     request_id: str
+    purpose: Literal["crawl", "company_lookup"] = "crawl"
+    lookup_result_version: int = 0
     state: Literal[
         "queued",
         "running",
@@ -216,6 +274,16 @@ class CrawlService:
         self.finished: dict[str, asyncio.Event] = {}
         self.queue: asyncio.Queue[str] = asyncio.Queue()
         self.manual_queue: asyncio.Queue[str] = asyncio.Queue()
+        self.lookup_queue: asyncio.Queue[str] = asyncio.Queue()
+        self.lookup_store: LookupStore | None = None
+        self.lookup_dispatch_task: asyncio.Task | None = None
+        self.lookup_delivery_task: asyncio.Task | None = None
+        self.lookup_concurrency = int(environment.get("CRAWL_LOOKUP_CONCURRENCY", "4"))
+        self.lookup_timeout = int(environment.get("CRAWL_LOOKUP_TIMEOUT_SECONDS", "900"))
+        if self.lookup_timeout < 1:
+            raise ValueError("CRAWL_LOOKUP_TIMEOUT_SECONDS must be positive")
+        if not 1 <= self.lookup_concurrency <= 20:
+            raise ValueError("CRAWL_LOOKUP_CONCURRENCY must be between 1 and 20")
         self.workers: list[asyncio.Task] = []
         self.executions: dict[str, asyncio.Task] = {}
         self.human_sessions: dict[str, HumanSession] = {}
@@ -267,6 +335,8 @@ class CrawlService:
             self.queue = asyncio.Queue()
             self.manual_queue = asyncio.Queue()
             self.history = CrawlHistory(self.root / "crawl-history.sqlite3")
+            self.lookup_queue = asyncio.Queue()
+            self.lookup_store = LookupStore(self.root / "company-lookups.sqlite3")
             for path in sorted((self.root / "jobs").glob("*/request.json")):
                 request = CrawlRequest.model_validate_json(
                     path.read_text(encoding="utf-8")
@@ -289,6 +359,9 @@ class CrawlService:
                 if job.request_id != request.request_id:
                     raise ValueError("Stored job and request IDs do not match")
                 result = path.parent / "attempts" / f"{job.attempt:04}" / "result.json"
+                job.purpose = "company_lookup" if request.company_lookup is not None else "crawl"
+                if not status_file.exists() and request.company_lookup is not None:
+                    job.lookup_result_version = 1
                 job.url = request.url
                 job.domain = (urlsplit(request.url).hostname or "").removeprefix("www.")
                 job.browser_available = False
@@ -297,14 +370,11 @@ class CrawlService:
                 job.assistance_deadline = None
                 if job.state not in TERMINAL_STATES | {"queued"} and result.exists():
                     document = json.loads(result.read_text(encoding="utf-8"))
-                    job.state = (
-                        "failed"
-                        if document["crawl"]["status"] == "failed"
-                        else "completed"
-                    )
-                    job.crawl_status = document["crawl"]["status"]
+                    outcome = document.get("crawl", document)
+                    job.state = "failed" if outcome["status"] in {"failed", "cancelled", "running"} else "completed"
+                    job.crawl_status = outcome["status"]
                     job.result_file = str(result.relative_to(self.root))
-                    job.finished_at = document["crawl"]["finished_at"]
+                    job.finished_at = outcome["finished_at"]
                 elif job.state not in TERMINAL_STATES | {"queued"}:
                     job.state = "failed"
                     job.error = (
@@ -325,11 +395,20 @@ class CrawlService:
                 self.jobs[job.request_id] = job
                 self.finished[job.request_id] = asyncio.Event()
                 self.persist(job)
+                if job.purpose == "company_lookup":
+                    # Recover the disk-write -> SQLite handoff gap without republishing old tests.
+                    for saved in path.parent.glob("attempts/*/result.json"):
+                        document = json.loads(saved.read_text())
+                        if document.get("schema_version") == "website-company-lookup/1.1":
+                            recovered = job.model_copy(update={"attempt": int(saved.parent.name)})
+                            self.queue_lookup_publication(request, recovered, saved.parent)
+                    if job.state in TERMINAL_STATES and job.attempt and job.lookup_result_version == 1:
+                        self.queue_lookup_publication(request, job, result.parent)
                 if job.state in TERMINAL_STATES:
                     self.finished[job.request_id].set()
                 else:
                     (
-                        self.manual_queue if job.source == "manual" else self.queue
+                        self.lookup_queue if job.purpose == "company_lookup" else self.manual_queue if job.source == "manual" else self.queue
                     ).put_nowait(job.request_id)
             self.workers = [
                 asyncio.create_task(self.work(self.queue))
@@ -338,6 +417,9 @@ class CrawlService:
                 asyncio.create_task(self.work(self.manual_queue))
                 for _ in range(self.manual_concurrency)
             ]
+            self.workers += [asyncio.create_task(self.work(self.lookup_queue)) for _ in range(self.lookup_concurrency)]
+            self.lookup_dispatch_task = asyncio.create_task(self.dispatch_lookup_batches())
+            self.lookup_delivery_task = asyncio.create_task(self.deliver_lookup_results())
             if self.results is not None:
                 self.delivery_task = asyncio.create_task(self.deliver_results())
             self.accepting = True
@@ -346,7 +428,7 @@ class CrawlService:
             raise
 
     def healthy(self) -> bool:
-        return self.accepting and all(not worker.done() for worker in self.workers)
+        return self.accepting and all(not worker.done() for worker in self.workers) and all(task is None or not task.done() for task in (self.lookup_dispatch_task, self.lookup_delivery_task))
 
     def persist(self, job: CrawlJob) -> None:
         job.updated_at = utc_now()
@@ -354,6 +436,7 @@ class CrawlService:
             job.state in TERMINAL_STATES
             and self.results is not None
             and job.s3_state == "not_configured"
+            and job.purpose == "crawl"
         ):
             job.s3_state = "pending"
         write_json(self.root / "jobs" / job.request_id / "job.json", job.model_dump())
@@ -402,8 +485,12 @@ class CrawlService:
                 raise ServiceUnavailable(f"Configure {key_name} on the service")
         if request.decision_llm is not None:
             request.decision_llm.decrypt_api_key(self.environment)
+        if request.company_lookup is not None and not self.environment.get("CLICKHOUSE_URL"):
+            raise ServiceUnavailable("Configure CLICKHOUSE_URL on the crawler for company lookup tests")
         job = CrawlJob(
             request_id=request.request_id,
+            purpose="company_lookup" if request.company_lookup is not None else "crawl",
+            lookup_result_version=1 if request.company_lookup is not None else 0,
             state="queued",
             source=source,
             submitted_at=utc_now(),
@@ -419,13 +506,13 @@ class CrawlService:
             if self.challenge_agent_enabled
             else 0,
             challenge_agent_model=request.challenge_agent_model,
-            s3_state="pending" if self.results is not None else "not_configured",
+            s3_state="pending" if self.results is not None and request.company_lookup is None else "not_configured",
         )
         write_json(folder / "request.json", request.model_dump())
         self.persist(job)
         self.jobs[request.request_id] = job
         self.finished[request.request_id] = asyncio.Event()
-        (self.manual_queue if source == "manual" else self.queue).put_nowait(
+        (self.lookup_queue if request.company_lookup is not None else self.manual_queue if source == "manual" else self.queue).put_nowait(
             request.request_id
         )
         return job.model_copy(deep=True)
@@ -565,6 +652,8 @@ class CrawlService:
             self.finished[request_id].set()
 
     def finish_cancelled(self, job: CrawlJob) -> None:
+        if job.purpose == "company_lookup":
+            job.attempt = max(1, job.attempt)
         job.state, job.error = "cancelled", "Cancelled by operator"
         job.challenge_agent_running = False
         job.finished_at = utc_now()
@@ -580,13 +669,144 @@ class CrawlService:
                 "finished_at": job.finished_at,
             },
         )
+        if job.purpose == "company_lookup":
+            request = CrawlRequest.model_validate_json((self.root / "jobs" / job.request_id / "request.json").read_text())
+            self.queue_lookup_publication(request, job, (self.root / job.result_file).parent)
         self.persist(job)
+
+    def submit_lookup_batch(self, request: CompanyLookupBatchRequest) -> dict:
+        if not self.accepting or self.lookup_store is None:
+            raise ServiceUnavailable("Crawler is not accepting batches")
+        if not self.environment.get("CLICKHOUSE_URL") or not self.environment.get("CLICKHOUSE_RESULTS_URL"):
+            raise ServiceUnavailable("Configure lookup registry and result ClickHouse connections first")
+        request.llm.decrypt_api_key(self.environment)
+        if request.decision_llm is not None:
+            request.decision_llm.decrypt_api_key(self.environment)
+        items = [{"domain": domain, "request_id": "lookup-" + hashlib.sha256(f"{request.batch_id}:{domain}".encode()).hexdigest()} for domain in request.domains]
+        try:
+            self.lookup_store.submit(request.batch_id, request.model_dump(), items)
+        except ValueError as error:
+            raise RequestConflict(str(error)) from error
+        return self.lookup_store.snapshot(request.batch_id)
+
+    def submit_crawl_batch(self, request: CrawlBatchRequest) -> dict:
+        if not self.accepting or self.lookup_store is None:
+            raise ServiceUnavailable("Crawler is not accepting batches")
+        if not self.environment.get("CLICKHOUSE_URL") or not self.environment.get("CLICKHOUSE_RESULTS_URL"):
+            raise ServiceUnavailable("Configure registry and result ClickHouse connections first")
+        items = []
+        for entry in request.entries:
+            assert entry.request.llm is not None
+            entry.request.llm.decrypt_api_key(self.environment)
+            if entry.request.decision_llm is not None:
+                entry.request.decision_llm.decrypt_api_key(self.environment)
+            items.append({"request_id": entry.request.request_id, "domain": urlsplit(entry.request.url).hostname})
+        try:
+            self.lookup_store.submit(request.batch_id, request.model_dump(), items)
+        except ValueError as error:
+            raise RequestConflict(str(error)) from error
+        return self.lookup_store.snapshot(request.batch_id)
+
+    async def dispatch_lookup_batches(self) -> None:
+        assert self.lookup_store is not None
+        while True:
+            active = sum(job.purpose == "company_lookup" and job.state not in TERMINAL_STATES for job in self.jobs.values())
+            for item in self.lookup_store.undispatched(max(0, self.lookup_concurrency - active)):
+                payload = json.loads(item["payload"])
+                if "entries" in payload:
+                    entry = next(entry for entry in payload["entries"] if entry["request"]["request_id"] == item["request_id"])
+                    request = CrawlRequest.model_validate(entry["request"])
+                else:
+                    options = CompanyLookupOptions(country=payload["country"], skip_if_mapped=payload.get("skip_if_mapped", False))
+                    payload = {key: value for key, value in payload.items() if key not in {"batch_id", "domains", "input_id", "run_id", "country", "skip_if_mapped", "max_pages"}}
+                    request = CrawlRequest(request_id=item["request_id"], url=f"https://{item['domain']}/",
+                        company_lookup=options, debug=True, site_info=True, **payload)
+                try:
+                    self.submit(request, source="rest")
+                except ServiceUnavailable:
+                    break
+                self.lookup_store.dispatched(item["request_id"])
+            await asyncio.sleep(0.25)
+
+    def queue_lookup_publication(self, request: CrawlRequest, job: CrawlJob, attempt: Path) -> None:
+        assert self.lookup_store is not None and request.company_lookup is not None
+        saved = attempt / "result.json"
+        now = datetime.now(UTC).isoformat(timespec="microseconds")
+        saved_result = json.loads(saved.read_text()) if saved.exists() else None
+        result = saved_result if saved_result and "crawl" not in saved_result else {
+            "schema_version": "website-company-lookup/1.1", "status": "cancelled" if job.state == "cancelled" else "failed", "found": False,
+            "started_at": job.started_at or now, "finished_at": now,
+            "stop_reason": "lookup_failed", "reasons": [job.error or "Lookup interrupted before completion"],
+            "company_id": None, "confidence": None, "company": None, "site_type": "unknown",
+            "candidates": [], "searches": [], "identity": [], "pages": [],
+        }
+        if saved_result and "crawl" in saved_result:
+            result["crawl_result"] = saved_result
+            result["site_info_result"] = basic_info_result(saved_result)
+        if "site_info_result" not in result:
+            basic_path = attempt / "matching" / "basic" / "result.json"
+            result["site_info_result"] = json.loads(basic_path.read_text()) if basic_path.exists() else {
+                "schema_version": "company-crawl-result/1.2", "documents": [], "crawl": {
+                    "status": "failed", "site_info": site_information(None, request.url),
+                    "started_at": job.started_at or now, "finished_at": now, "stop_reason": "initial_page_unavailable",
+                    "pages": [], "usage": {},
+                }}
+        settings = request.model_dump()
+        for key in ("llm", "decision_llm"):
+            if settings.get(key):
+                settings[key].pop("api_key_encrypted", None)
+        for key in ("request_id", "url", "session_id"):
+            settings.pop(key, None)
+        result.update(country=request.company_lookup.country, domain=job.domain, website_url=request.url,
+            request_id=job.request_id, attempt=job.attempt, result_path=str(saved.relative_to(self.root)),
+            work_key=hashlib.sha256(json.dumps(settings, sort_keys=True).encode()).hexdigest())
+        batch = self.lookup_store.db.execute("SELECT b.batch_id,b.payload FROM batches b JOIN items i USING(batch_id) WHERE i.request_id=?", (job.request_id,)).fetchone()
+        if batch:
+            metadata = json.loads(batch["payload"])
+            result.update(batch_id=batch["batch_id"], input_id=metadata["input_id"], run_id=metadata["run_id"])
+            if "entries" in metadata:
+                entry = next(entry for entry in metadata["entries"] if entry["request"]["request_id"] == job.request_id)
+                result.update({key: entry[key] for key in ("crawl_type", "input_revision", "work_key")})
+        result.setdefault("crawl_type", "site_info" if request.crawl is False or request.crawl is None and not request.pages and not request.instructions else "full")
+        result["site_info"] = result["site_info_result"]["crawl"]["site_info"]
+        result["persisted_to_database"] = False
+        # Keep the full portable basic capture locally, not duplicated in SQLite.
+        if not saved.exists() or saved_result and "crawl" in saved_result:
+            write_json(saved, result)
+        result = json.loads(json.dumps(result))
+        for capture in (result["site_info_result"], result.get("crawl_result", {})):
+            for document in capture.get("documents", []):
+                document.pop("html", None)
+                document.pop("rendered_html", None)
+        self.lookup_store.enqueue(job.request_id, job.attempt, result)
+        trace_event("company_publication", "Findings saved to SQLite for ClickHouse delivery", details={"request_id": job.request_id, "attempt": job.attempt, "batch_id": result.get("batch_id")})
+
+    async def deliver_lookup_results(self) -> None:
+        assert self.lookup_store is not None
+        while True:
+            if self.environment.get("CLICKHOUSE_RESULTS_URL"):
+                async with httpx.AsyncClient(base_url=self.environment["CLICKHOUSE_RESULTS_URL"].rstrip("/") + "/",
+                    auth=httpx.BasicAuth(self.environment.get("CLICKHOUSE_RESULTS_USER", "default"), self.environment.get("CLICKHOUSE_RESULTS_PASSWORD", "")), timeout=60) as http:
+                    for batch_id, rows in self.lookup_store.ready():
+                        error = None
+                        try:
+                            await publish_lookup_results(http, [json.loads(row["payload"]) for row in rows])
+                        except Exception as failure:
+                            # Provider URLs/credentials must never enter receipts or logs.
+                            error = type(failure).__name__ + (f" (HTTP {failure.response.status_code})" if isinstance(failure, httpx.HTTPStatusError) else "")
+                            LOGGER.warning("Lookup publication pending: batch=%s attempts=%s error=%s", batch_id, len(rows), error)
+                        self.lookup_store.delivered(batch_id, rows, error)
+                        if error is None:
+                            LOGGER.info("Lookup findings published: batch=%s attempts=%s", batch_id, len(rows))
+            await asyncio.sleep(5)
 
     async def deliver_results(self) -> None:
         assert self.history is not None and self.results is not None
         while True:
             for document in self.history.pending_uploads():
                 job = CrawlJob.model_validate(document)
+                if job.purpose == "company_lookup":
+                    continue
                 try:
                     job.s3_event = await asyncio.to_thread(
                         self.results.prepare_event, self.root, job
@@ -699,31 +919,63 @@ class CrawlService:
                     "browser_execution_id": browser_client.execution_id,
                 },
             )
-            return await crawl_company(
-                request.url,
-                search=search,
-                output_dir=attempt,
-                pages=request.pages,
-                instructions=request.instructions,
-                site_info=request.site_info,
-                full_crawl_all=request.full_crawl_all,
-                save_artifacts=request.save_artifacts or human is not None,
-                crawl=request.crawl,
-                api=request.llm.api if request.llm is not None else request.api,
-                config=request.llm.crawl_config(request.config)
-                if request.llm is not None
-                else request.config,
-                api_key=api_key,
-                base_url=request.llm.base_url if request.llm is not None else None,
-                **({"decision_model": request.decision_llm.model, "decision_api_key": decision_api_key,
-                    "decision_tasks": request.decision_tasks} if request.decision_llm is not None else {}),
-                **({"human": human} if human is not None else {}),
-                **(
-                    {"browser_client": browser_client}
-                    if browser_client is not None
-                    else {}
-                ),
-            )
+            crawl_result = None
+            if request.company_lookup is None or request.crawl is not None or request.pages is not None or request.instructions is not None:
+                manifest = await crawl_company(
+                    request.url,
+                    search=search,
+                    output_dir=attempt,
+                    pages=request.pages,
+                    instructions=request.instructions,
+                    site_info=request.site_info,
+                    full_crawl_all=request.full_crawl_all,
+                    save_artifacts=request.save_artifacts or human is not None,
+                    crawl=request.crawl,
+                    api=request.llm.api if request.llm is not None else request.api,
+                    config=request.llm.crawl_config(request.config)
+                    if request.llm is not None
+                    else request.config,
+                    api_key=api_key,
+                    base_url=request.llm.base_url if request.llm is not None else None,
+                    **({"decision_model": request.decision_llm.model, "decision_api_key": decision_api_key,
+                        "decision_tasks": request.decision_tasks} if request.decision_llm is not None else {}),
+                    **({"human": human} if human is not None else {}),
+                    **(
+                        {"browser_client": browser_client}
+                        if browser_client is not None
+                        else {}
+                    ),
+                )
+                if request.company_lookup is None:
+                    return manifest
+                crawl_result = json.loads((attempt / "result.json").read_text())
+            if request.company_lookup is not None:
+                assert request.llm is not None and api_key is not None
+                model_http = await stack.enter_async_context(httpx.AsyncClient(
+                    base_url=request.llm.base_url.rstrip("/") + "/",
+                    event_hooks=trace_http_hooks("model_http"), timeout=180))
+                matching_config = request.llm.crawl_config(request.config).model_copy(update={"max_pages": request.company_lookup.max_pages if crawl_result is not None else (request.config.max_pages if request.config is not None else 4)})
+                model = ModelClient(model_http, api_key, matching_config, attempt / "matching", api=request.llm.api)
+                if crawl_result is not None:
+                    model.calls.extend(crawl_result["crawl"].get("usage", {}).get("by_call", []))
+                decisions = None
+                if request.decision_llm is not None:
+                    assert decision_api_key is not None
+                    decision_http = await stack.enter_async_context(httpx.AsyncClient(event_hooks=trace_http_hooks("decision_http")))
+                    decisions = JevClient(decision_http, decision_api_key, request.decision_llm.model, request.decision_tasks, model)
+                database_http = await stack.enter_async_context(httpx.AsyncClient(
+                    base_url=self.environment["CLICKHOUSE_URL"].rstrip("/") + "/", timeout=20,
+                    auth=httpx.BasicAuth(self.environment.get("CLICKHOUSE_USER", "default"), self.environment.get("CLICKHOUSE_PASSWORD", ""))))
+                try:
+                    return await asyncio.wait_for(find_company(url=request.url, options=request.company_lookup, llm=model,
+                        decisions=decisions, browser_client=browser_client, human=human,
+                        output_dir=attempt / "matching", database_http=database_http, crawl_result=crawl_result), self.lookup_timeout)
+                finally:
+                    matching_path = attempt / "matching" / "result.json"
+                    if matching_path.exists():
+                        write_json(attempt / "result.json", json.loads(matching_path.read_text()))
+                    # Save before browser cleanup; it must not hold back durable results.
+                    self.queue_lookup_publication(request, job, attempt)
 
     async def execute(self, job: CrawlJob) -> None:
         folder = self.root / "jobs" / job.request_id
@@ -769,7 +1021,7 @@ class CrawlService:
         try:
             execution = asyncio.create_task(self.run_scan(request, job, attempt, human))
             self.executions[job.request_id] = execution
-            manifest = await execution
+            manifest = await asyncio.wait_for(execution, self.lookup_timeout) if job.purpose == "company_lookup" and request.crawl is None and request.pages is None and request.instructions is None else await execution
             job = self.jobs[job.request_id]
             job.crawl_status = manifest["status"]
             job.collected_pages = sum(
@@ -782,6 +1034,12 @@ class CrawlService:
                 or manifest["stop_reason"] == "human_assistance_timeout"
                 else "completed"
             )
+            if job.purpose == "company_lookup" and job.state == "completed":
+                job.reason = (
+                    f"Company match proposed: {manifest['company_id']}"
+                    if manifest["found"]
+                    else "Company matching skipped: domain already mapped" if manifest["status"] == "already_mapped" else f"No company match: {manifest['site_type']} ({manifest['stop_reason']})"
+                )
             if job.state == "failed":
                 job.error = manifest["stop_reason"]
                 job.reason = "Crawl failed; available for interactive retry"
@@ -811,7 +1069,7 @@ class CrawlService:
                 (attempt / "error.json").relative_to(self.root)
             )
             interrupted.s3_state = (
-                "pending" if self.results is not None else "not_configured"
+                "pending" if self.results is not None and job.purpose == "crawl" else "not_configured"
             )
             write_json(
                 self.root / interrupted.result_file,
@@ -823,7 +1081,7 @@ class CrawlService:
             )
             assert self.history is not None
             self.history.save(interrupted.model_dump())
-            if job.source == "manual":
+            if job.source == "manual" or job.purpose == "company_lookup":
                 self.jobs[job.request_id] = interrupted
                 self.persist(interrupted)
                 raise
@@ -855,7 +1113,11 @@ class CrawlService:
                 },
             )
             job.result_file = str(error_file.relative_to(self.root))
+            if job.purpose == "company_lookup" and (attempt / "result.json").is_file():
+                job.result_file = str((attempt / "result.json").relative_to(self.root))
         finally:
+            if job.purpose == "company_lookup":
+                self.queue_lookup_publication(request, job, attempt)
             self.jobs[job.request_id].challenge_agent_running = False
             self.executions.pop(job.request_id, None)
             self.human_sessions.pop(job.request_id, None)
@@ -881,6 +1143,13 @@ class CrawlService:
                 LOGGER.error("Crawl worker stopped (%s)", type(outcome).__name__)
         self.workers.clear()
         await self.search.close()
+        for task in (self.lookup_dispatch_task, self.lookup_delivery_task):
+            if task is not None:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+        if self.lookup_store is not None:
+            self.lookup_store.close()
+            self.lookup_store = None
         if self.delivery_task is not None:
             self.delivery_task.cancel()
             await asyncio.gather(self.delivery_task, return_exceptions=True)

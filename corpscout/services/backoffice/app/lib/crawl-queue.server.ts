@@ -1,5 +1,6 @@
 import {createHash} from "node:crypto";
 import {inputConfig, parseSeDomainSelection} from "~/lib/se-domain-crawl.server";
+import {parseWorkspaceDomainSelection, workspaceDomainInputConfig} from "~/lib/workspace-domain-crawl.server";
 import {dagsterRunUrl, launchRun, listRuns, runStatus} from "~/lib/dagster.server";
 import {QUEUE_UUID} from "~/lib/queues";
 
@@ -7,12 +8,20 @@ const JOB = "website_crawl_input_job";
 const ASSET = "website_crawl_input";
 const submissions = new Map<string, Promise<unknown>>();
 
-export async function addSeDomainsToCrawlQueue(value: unknown, crawlType: string, submissionId: string, requestedBy: string) {
+export async function addDomainsToCrawlQueue(source: "sweden" | "inventory", value: unknown, crawlType: string, submissionId: string, requestedBy: string) {
   if (!["full", "jobs", "site_info"].includes(crawlType)) throw new Error("Choose a crawl type.");
   if (!QUEUE_UUID.test(submissionId)) throw new Error("Invalid submission ID. Reload the page.");
-  const selection = parseSeDomainSelection(value);
+  let selection;
+  let sourceConfig: Record<string, unknown>;
+  if (source === "inventory") {
+    selection = parseWorkspaceDomainSelection(value);
+    sourceConfig = workspaceDomainInputConfig(selection);
+  } else {
+    selection = parseSeDomainSelection(value);
+    sourceConfig = inputConfig(selection);
+  }
   if ((selection.mode === "ids" ? selection.domains.length : selection.excludedDomains.length) > 10000) throw new Error("Use Select all matching for large selections; at most 10,000 explicit domains or exclusions.");
-  const config = {...inputConfig(selection), crawl_type: crawlType, queue_scope: "workspace", submission_id: submissionId};
+  const config = {...sourceConfig, crawl_type: crawlType, queue_scope: "workspace", submission_id: submissionId};
   const fingerprint = createHash("sha256").update(JSON.stringify(config)).digest("hex");
   const previous = submissions.get(submissionId);
   const pending = previous ? previous.then(submit, submit) : submit();

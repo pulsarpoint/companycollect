@@ -136,7 +136,7 @@ const EXTRA_FIELDS = {
   webtech: ["execution_id", "force_rescan", "recent_days"],
   brave: ["execution_id", "llm_profile_id", "brave_search_id", "brave_search_revision", "force_rescan", "recent_days", "requests_per_route", "input_batch_size", "answer_timeout_seconds", "progress_log_every", "progress_log_interval_seconds"],
   "ip-enrichment": ["execution_id", "batch_size", "max_requests", "request_delay_seconds", "registry_request_delays", "registry_daily_budgets", "rate_limit_pause_seconds", "use_proxies", "parent_depth", "rdap_cache_days", "force_rdap", "rate_limit_retry_seconds", "transient_retry_seconds"],
-  crawler: ["execution_id", "full_crawl_all", "max_in_flight", "refresh_interval_days", "force_refresh", "challenge_agent_model", "challenge_agent_max_runs", "llm_profile_id", "max_pages", "max_model_calls", "page_selection", "instructions", "wait_timeout_seconds", "poll_interval_seconds"],
+  crawler: ["match_company", "company_country", "skip_company_matching_if_mapped", "execution_id", "full_crawl_all", "max_in_flight", "refresh_interval_days", "force_refresh", "challenge_agent_model", "challenge_agent_max_runs", "llm_profile_id", "max_pages", "max_model_calls", "page_selection", "instructions", "wait_timeout_seconds", "poll_interval_seconds"],
 } as const;
 
 /**
@@ -188,7 +188,7 @@ export function parseQueueConfig(filters: QueueFilters, serialized: string): Rec
     challenge_agent_max_runs: [3, 1000], max_pages: [1, 500], max_model_calls: [1, 1000],
     wait_timeout_seconds: [Number.MIN_VALUE, 86400, true], poll_interval_seconds: [Number.MIN_VALUE, 30, true],
   } : QUEUE_NUMBER_LIMITS[filters.type];
-  const booleanFields = ["full_crawl_all", "force_rescan", "force_rdap", "force_refresh"];
+  const booleanFields = ["match_company", "skip_company_matching_if_mapped", "full_crawl_all", "force_rescan", "force_rdap", "force_refresh"];
   for (const [key, entry] of Object.entries(config)) {
     if (filters.type === "ip-enrichment" && Object.hasOwn(IP_ENRICHMENT_STRUCTURED, key)) continue;
     if (entry === null && ["execution_id", "instructions", "max_requests"].includes(key)) continue;

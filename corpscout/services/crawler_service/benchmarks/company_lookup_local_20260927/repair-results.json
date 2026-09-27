@@ -1,0 +1,311 @@
+{
+  "manifest": {
+    "started_at": "2026-09-27T12:28:22.953635+00:00",
+    "selection": "Targeted fresh local-model checks after fixes for the blank NCC explanation and Byggmax retail classification; include Avanza for sparse homepage review. Original 25-site outcomes are retained separately.",
+    "model": "nvidia/Qwen3.8-27B-NVFP4",
+    "profile_id": "657ff56f-2a12-4e84-8cdc-78fbbddb7093",
+    "revision": 5,
+    "reasoning_effort": null,
+    "decision_model": null,
+    "decision_tasks": [],
+    "config": {
+      "max_pages": 4,
+      "max_model_calls": 20
+    },
+    "concurrency": 2,
+    "source_sha256": {
+      "company_lookup.py": "231dc9f4df552e6cf4a5cf0e3d6e909afe3e199b85315b9ebcaaf9d010c50f5d",
+      "company_search.py": "f3e2b61873c0a88343c85245533ec64633d1463c05d248507af84e6ac21f3fae",
+      "company_evidence.py": "cb90feaeb754cf73e518b93f8277eac7383ca7f17a0769b333b15ccd2e5e2de3",
+      "jev.py": "670420ddaefbad73e7549c02091aad3d7f1e65fd583d59a514e90bb97d2a7f19"
+    },
+    "cases": [
+      {
+        "company_id": "5562748458",
+        "legal_name": "Avanza Bank Holding AB",
+        "root_domain": "avanza.se",
+        "reference_urls": [
+          "https://filings.xbrl.org/549300MBWR5H8SIJLE03/2024-12-31/ESEF/SE/0/Avanza-2024-12-31-0-sv/reports/ixbrlviewer.html"
+        ],
+        "request_id": "lookup-local-1ae830013ac2-01"
+      },
+      {
+        "company_id": "5560345174",
+        "legal_name": "NCC AKTIEBOLAG",
+        "root_domain": "ncc.se",
+        "reference_urls": [
+          "https://filings.xbrl.org/213800WRGLW3CY4MHW53/2024-12-31/ESEF/SE/0/ncc-2024-12-31-0-sv/reports/ixbrlviewer.html"
+        ],
+        "request_id": "lookup-local-1ae830013ac2-02"
+      },
+      {
+        "company_id": "5566563531",
+        "legal_name": "Byggmax Group AB",
+        "root_domain": "byggmax.se",
+        "reference_urls": [
+          "https://filings.xbrl.org/549300MPJPYQB0KCNH03/2024-12-31/ESEF/SE/0/bmax-2024-12-31-0-sv/reports/ixbrlviewer.html"
+        ],
+        "request_id": "lookup-local-1ae830013ac2-03"
+      }
+    ]
+  },
+  "finished_at": "2026-09-27T12:29:48.747684+00:00",
+  "cases": [
+    {
+      "company_id": "5562748458",
+      "legal_name": "Avanza Bank Holding AB",
+      "root_domain": "avanza.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300MBWR5H8SIJLE03/2024-12-31/ESEF/SE/0/Avanza-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-1ae830013ac2-01",
+      "outcome": "excluded_category",
+      "status": "completed",
+      "lookup_status": "not_found",
+      "found_id": null,
+      "confidence": null,
+      "site_type": "unknown",
+      "reasons": [
+        "The supplied page content consists only of the string 'Avanza', which is insufficient to determine the website's primary purpose.",
+        "There are no indicators of products, services, shopping carts, news, forums, or company information."
+      ],
+      "elapsed_seconds": 15.608,
+      "pages": 1,
+      "searches": 0,
+      "usage": {
+        "calls": 1,
+        "successful_responses": 1,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 1,
+        "prompt_tokens": 411,
+        "completion_tokens": 55,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_classification",
+            "attempt": 1,
+            "started_at": "2026-09-27T12:28:33+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 7.278,
+            "response_id": "chatcmpl-6eace2e7-b755-4900-8cd1-0c104605054a",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 411,
+              "completion_tokens": 55,
+              "total_tokens": 466,
+              "prompt_tokens_details": {
+                "cached_tokens": 400,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 22,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 762.461811,
+              "response_token/s": 9.726260810618438
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=avanza.se&source=rest&debug_request=lookup-local-1ae830013ac2-01&debug_attempt=1"
+    },
+    {
+      "company_id": "5560345174",
+      "legal_name": "NCC AKTIEBOLAG",
+      "root_domain": "ncc.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/213800WRGLW3CY4MHW53/2024-12-31/ESEF/SE/0/ncc-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-1ae830013ac2-02",
+      "outcome": "not_found",
+      "status": "completed",
+      "lookup_status": "not_found",
+      "found_id": null,
+      "confidence": null,
+      "site_type": "company",
+      "reasons": [
+        "No explicit legal name (e.g., 'Aktiebolaget NCC' or similar), organisation number, or VAT number is printed in the provided text.",
+        "The website footer contains '© NCC 2026', but 'NCC' is a brand/trading name; without an associated legal entity name or registration number, it cannot be verified as the specific legal operator required by the schema.",
+        "No Swedish registry candidates found from supported website evidence"
+      ],
+      "elapsed_seconds": 75.362,
+      "pages": 4,
+      "searches": 0,
+      "usage": {
+        "calls": 3,
+        "successful_responses": 3,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 3,
+        "prompt_tokens": 12745,
+        "completion_tokens": 310,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_classification",
+            "attempt": 1,
+            "started_at": "2026-09-27T12:28:29+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 15.577,
+            "response_id": "chatcmpl-3b536d0e-0d2a-4bca-9007-06107847c635",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 2818,
+              "completion_tokens": 144,
+              "total_tokens": 2962,
+              "prompt_tokens_details": {
+                "cached_tokens": 64,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 58,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 4547.270670999999,
+              "response_token/s": 12.991960096751782
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 2,
+            "task": "company_lookup_identity",
+            "attempt": 1,
+            "started_at": "2026-09-27T12:29:12+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 17.311,
+            "response_id": "chatcmpl-94f40c0c-1b35-4d7f-9fb7-c8a9b9976d18",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 4940,
+              "completion_tokens": 75,
+              "total_tokens": 5015,
+              "prompt_tokens_details": {
+                "cached_tokens": 4928,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 28,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 7877.1756909999995,
+              "response_token/s": 8.868361693151407
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 3,
+            "task": "company_lookup_identity_repair",
+            "attempt": 1,
+            "started_at": "2026-09-27T12:29:29+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 11.0,
+            "response_id": "chatcmpl-3e2d4231-1472-4b2e-8e8a-a7749682fa34",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 4987,
+              "completion_tokens": 91,
+              "total_tokens": 5078,
+              "prompt_tokens_details": {
+                "cached_tokens": 4976,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 32,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 308.445808,
+              "response_token/s": 8.56094966817849
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=ncc.se&source=rest&debug_request=lookup-local-1ae830013ac2-02&debug_attempt=1"
+    },
+    {
+      "company_id": "5566563531",
+      "legal_name": "Byggmax Group AB",
+      "root_domain": "byggmax.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300MPJPYQB0KCNH03/2024-12-31/ESEF/SE/0/bmax-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-1ae830013ac2-03",
+      "outcome": "excluded_category",
+      "status": "completed",
+      "lookup_status": "not_found",
+      "found_id": null,
+      "confidence": null,
+      "site_type": "online_store",
+      "reasons": [
+        "The page title explicitly mentions 'Byggvaruhus online & butik' (Online building supply house & store) and 'billiga byggvaror' (cheap building supplies), indicating a retail purpose.",
+        "The interface includes standard e-commerce features such as 'Logga in' (Login), 'Skapa ett nytt lösenord' (Create new password), 'Varukorg' (Shopping Cart), and 'Chat 'n' Shop'.",
+        "There is a prominent feature to select a physical store location ('Välj butik') by postal code or city from a long list of Swedish addresses, which is characteristic of an omnichannel retail operation with local inventory availability ('lagersaldo').",
+        "The navigation menu lists product categories for purchase, such as 'Produkter', 'Hus & bygg', 'Fönster & dörrar', 'Golv', 'Verktyg & maskiner' (Tools & machines), etc., functioning as a retail catalog.",
+        "Although the company may manufacture or source products, the primary purpose of this specific web interface is to facilitate product shopping and retail sales, fitting the definition of 'online_store' which excludes retail shops even if operated by a company."
+      ],
+      "elapsed_seconds": 63.9,
+      "pages": 1,
+      "searches": 0,
+      "usage": {
+        "calls": 1,
+        "successful_responses": 1,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 1,
+        "prompt_tokens": 5262,
+        "completion_tokens": 292,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_classification",
+            "attempt": 1,
+            "started_at": "2026-09-27T12:29:04+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 43.276,
+            "response_id": "chatcmpl-ad7a6790-6bfe-4f2d-8766-ddb2822a67e5",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 5262,
+              "completion_tokens": 292,
+              "total_tokens": 5554,
+              "prompt_tokens_details": {
+                "cached_tokens": 400,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 109,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 7618.361263,
+              "response_token/s": 8.470129716774593
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=byggmax.se&source=rest&debug_request=lookup-local-1ae830013ac2-03&debug_attempt=1"
+    }
+  ]
+}

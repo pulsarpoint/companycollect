@@ -20,6 +20,46 @@ describe("guided crawl submission", () => {
   });
   afterEach(() => {vi.unstubAllGlobals(); vi.unstubAllEnvs();});
 
+  it("keeps basic/full matching on the standard crawl endpoint", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (_url, options) => {
+      if (options?.method !== "POST") return Response.json({}, {status: 404});
+      const body = JSON.parse(options.body);
+      return Response.json({request_id: body.request_id, url: body.url, state: "queued"});
+    }));
+    for (const profile of ["site_info", "full"]) {
+      await publishTestCrawl(form({crawl_profile: profile, max_pages: profile === "site_info" ? "1" : "20", match_company: "true", country: "SE", skip_company_matching_if_mapped: "true"}));
+      const [url, options] = vi.mocked(fetch).mock.calls.at(-1)!;
+      expect(String(url)).toBe("http://crawler.test/v1/crawls");
+      expect(JSON.parse(options!.body as string)).toMatchObject({crawl: profile === "site_info" ? false : "full", company_lookup: {country: "SE", skip_if_mapped: true}});
+    }
+  });
+  it("submits company lookup to its separate read-only endpoint with verified models", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (_url, options) => {
+      if (options?.method !== "POST") return Response.json({}, {status: 404});
+      const body = JSON.parse(options.body);
+      return Response.json({request_id: body.request_id, url: `https://${body.domain}/`, state: "queued"});
+    }));
+    const receipt = await publishTestCrawl(form({crawl_profile: "company_lookup", country: "SE", url: "example.se", max_pages: "4"}));
+    const [url, options] = vi.mocked(fetch).mock.calls[1];
+    expect(String(url)).toBe("http://crawler.test/v1/company-lookups");
+    expect(JSON.parse(options!.body as string)).toEqual({request_id: receipt.request_id,
+      domain: "example.se", country: "SE", skip_if_mapped: false, llm: envelope, config: {max_pages: 4, max_model_calls: 20, provider: null},
+      interactive: false, challenge_agent_model: "deepseek-flash", challenge_agent_max_runs: 3});
+    expect(verifier.verifySelectedLlm).toHaveBeenCalledWith(envelope.profile_id, "crawler");
+    expect(receipt.url).toBe("https://example.se/");
+  });
+
+  it("passes candidate ranking independently of site classification to company lookup", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (_url, options) => {
+      if (options?.method !== "POST") return Response.json({}, {status: 404});
+      return Response.json({...JSON.parse(options.body), url: 'https://example.se/', state: "queued"});
+    }));
+    const jev = {...envelope, model: 'typesafe/jev-1.13'};
+    verifier.verifySelectedLlm.mockResolvedValueOnce(envelope).mockResolvedValueOnce(jev);
+    await publishTestCrawl(form({crawl_profile: 'company_lookup', country: 'SE', max_pages: '4', url: 'example.se', 'decision.company_match': 'jev', decision_llm_profile_id: '22222222-2222-4222-8222-222222222222'}));
+    expect(JSON.parse(vi.mocked(fetch).mock.calls[1][1]!.body as string)).toMatchObject({decision_llm: jev, decision_tasks: ['company_match']});
+  });
+
   it("verifies the saved LLM and sends its encrypted configuration with the guided parameters", async () => {
     const requests: {request_id: string; url: string}[] = [];
     vi.stubGlobal("fetch", vi.fn(async (_url, options) => {

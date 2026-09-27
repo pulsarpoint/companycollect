@@ -39,6 +39,62 @@ def decisions_payload(request, selected=None):
 
 
 class JevTests(unittest.IsolatedAsyncioTestCase):
+    async def test_company_ranking_uses_choice_probability_and_includes_no_match(self):
+        companies = [
+            {"company_id": "5560123456", "legal_name": "Example AB"},
+            {"company_id": "5560999999", "legal_name": "Unrelated AB"},
+        ]
+
+        def boundary(request):
+            payload = decisions_payload(
+                request,
+                {
+                    "operator": "5560123456",
+                    "basis_5560123456": "registration_number",
+                    "basis_5560999999": "insufficient",
+                },
+            )
+            payload["answers"]["operator"].update(
+                confidence=0.4,
+                probabilities={"none": 0.05, "5560123456": 0.9, "5560999999": 0.05},
+            )
+            return httpx.Response(200, json=payload)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(boundary)) as http:
+            budget = ModelClient(http, "processing-key", ResearchConfig(), None)
+            ranked = await JevClient(
+                http, API_KEY, "typesafe/jev-1.13", ["company_match"], budget
+            ).rank_companies([], companies)
+        self.assertEqual(ranked["assessment"]["confidence"], 0.9)
+        self.assertEqual(ranked["assessment"]["basis"], "registration_number")
+        self.assertEqual(ranked["no_match_probability"], 0.05)
+        self.assertEqual(len(ranked["candidates"]), 2)
+
+    async def test_company_ranking_rejects_missing_or_invalid_probabilities(self):
+        companies = [{"company_id": "5560123456", "legal_name": "Example AB"}]
+        for probabilities in [
+            None,
+            {"none": 0.1},
+            {"none": -0.1, "5560123456": 1.1},
+            {"none": 0.1, "5560123456": 0.2},
+        ]:
+
+            def boundary(request, distribution=probabilities):
+                payload = decisions_payload(request)
+                payload["answers"]["operator"]["probabilities"] = distribution
+                return httpx.Response(200, json=payload)
+
+            async with httpx.AsyncClient(
+                transport=httpx.MockTransport(boundary)
+            ) as http:
+                budget = ModelClient(http, "processing-key", ResearchConfig(), None)
+                with self.assertRaisesRegex(
+                    ModelUnavailable, "probability distribution"
+                ):
+                    await JevClient(
+                        http, API_KEY, "typesafe/jev-1.13", ["company_match"], budget
+                    ).rank_companies([], companies)
+
     async def test_typed_calls_share_budget_usage_and_redacted_artifacts(self):
         with TemporaryDirectory() as folder:
             root = Path(folder)

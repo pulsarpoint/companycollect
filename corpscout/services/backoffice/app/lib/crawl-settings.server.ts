@@ -44,10 +44,17 @@ export function parseCrawlSettings(read: SettingReader, type: DomainCrawlType) {
   if (!["true", "false"].includes(forceRefresh)) throw new Error("Invalid refresh option.");
   const fullCrawlAll = read("full_crawl_all") ?? "false";
   if (!["true", "false"].includes(fullCrawlAll) || (type !== "full" && fullCrawlAll === "true")) throw new Error("Full crawl all is a boolean option for full crawls only.");
+  const matchCompany = read("match_company") ?? "saved";
+  const skipMapped = read("skip_company_matching_if_mapped") ?? "true";
+  if (!["saved", "true", "false"].includes(matchCompany) || !["true", "false"].includes(skipMapped)) throw new Error("Invalid company matching option.");
+  if (type === "jobs" && matchCompany === "true") throw new Error("Company matching requires basic or full crawling.");
+  const country = read("company_country") ?? "SE";
+  if (matchCompany === "true" && country !== "SE") throw new Error("Company matching currently supports Sweden (SE).");
   const maxInFlight = read("max_in_flight") === null ? 3 : requiredInteger(read, "max_in_flight", 1, 20);
   const refreshDays = read("refresh_interval_days") === null ? 30 : requiredInteger(read, "refresh_interval_days", 1, 3650);
   return {
     force_refresh: forceRefresh === "true",
+    ...(matchCompany === "saved" ? {} : {match_company: matchCompany === "true", company_country: country, skip_company_matching_if_mapped: skipMapped === "true"}),
     ...(type === "full" ? {full_crawl_all: fullCrawlAll === "true"} : {}),
     challenge_agent_model: agentModel, challenge_agent_max_runs: agentRuns, llm_profile_id: profileId,
     max_pages: maxPages, max_model_calls: maxModelCalls, page_selection: pageSelection,

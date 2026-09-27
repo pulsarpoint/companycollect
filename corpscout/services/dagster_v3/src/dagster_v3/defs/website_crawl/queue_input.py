@@ -40,6 +40,12 @@ class CrawlQueueInputConfig(CrawlInputConfig):
 
 def load_crawl_draft(config, submission_id, store, clickhouse):
     selection = config.model_dump(exclude={"task_id", "submission_id", "queue_scope"})
+    if config.workspace_domain_filters is None:
+        # Keep existing SE/manual submission fingerprints stable.
+        selection.pop("workspace_domain_filters")
+    # Preserve receipts created before the suffix filter was available.
+    if config.se_domain_filters is not None and not config.se_domain_filters.suffix:
+        selection["se_domain_filters"].pop("suffix")
     for key in ("ids", "excluded_ids", "targets"):
         selection[key] = sorted(set(selection[key]))
     selection["filters"] = {

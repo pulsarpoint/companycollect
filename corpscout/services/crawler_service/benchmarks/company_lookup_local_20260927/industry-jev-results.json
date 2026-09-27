@@ -1,0 +1,1358 @@
+{
+  "cases": [
+    {
+      "domain": "addtech.se",
+      "source": "data/company-lookup-industry-20260927/addtech.se/result.json",
+      "model": "typesafe/jev-1.13",
+      "ranking": {
+        "candidates": [
+          {
+            "company_id": "5563029726",
+            "legal_name": "ADDTECH AB",
+            "confidence": 0.94,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          }
+        ],
+        "no_match_probability": 0.06,
+        "assessment": {
+          "company_id": "5563029726",
+          "confidence": 0.94,
+          "basis": "insufficient",
+          "reasons": [
+            "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+          ]
+        }
+      },
+      "industry_assessments": [
+        {
+          "company_id": "5563029726",
+          "legal_name": "ADDTECH AB",
+          "status": "consistent",
+          "reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "model_status": "consistent",
+          "model_reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "industries": [
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "7010",
+              "reported_label": "70.10 Activities of head offices",
+              "is_primary": 1,
+              "source": "sweden_scb",
+              "source_record_uid": "b69f70a9d623a1d33431712b7887d4c2c2398b3425e2a331ce14e306319fc5df",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "70.10 Activities of head offices",
+              "reference_status": "reference_consistent"
+            }
+          ]
+        }
+      ],
+      "accepted_company_id": "5563029726",
+      "validation": "Website organisation number matches the registry",
+      "usage": {
+        "calls": 2,
+        "successful_responses": 2,
+        "known_cost_usd": 0.00010483199999999999,
+        "unknown_cost_calls": 0,
+        "prompt_tokens": 2496,
+        "completion_tokens": 171,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_match_jev",
+            "attempt": 1,
+            "started_at": "2026-09-27T13:18:24+00:00",
+            "api": "openrouter_decisions",
+            "model": "typesafe/jev-1.13",
+            "http_status": 200,
+            "response_id": "gen-dec-1790515104-akt5RSBw7RcfHnkLCrir",
+            "response_model": "typesafe/jev-1.13-20260917",
+            "usage": {
+              "input_tokens": 1413,
+              "output_tokens": 114,
+              "cost": 5.9346e-05,
+              "prompt_tokens": 1413,
+              "completion_tokens": 114
+            },
+            "elapsed_seconds": 0.627
+          },
+          {
+            "call_id": 2,
+            "task": "company_lookup_industry_jev",
+            "attempt": 1,
+            "started_at": "2026-09-27T13:18:24+00:00",
+            "api": "openrouter_decisions",
+            "model": "typesafe/jev-1.13",
+            "http_status": 200,
+            "response_id": "gen-dec-1790515104-ND38LtNF35ePRdol5rIO",
+            "response_model": "typesafe/jev-1.13-20260917",
+            "usage": {
+              "input_tokens": 1083,
+              "output_tokens": 57,
+              "cost": 4.5486e-05,
+              "prompt_tokens": 1083,
+              "completion_tokens": 57
+            },
+            "elapsed_seconds": 0.251
+          }
+        ]
+      }
+    },
+    {
+      "domain": "jm.se",
+      "source": "data/company-lookup-industry-20260927/jm.se/result.json",
+      "model": "typesafe/jev-1.13",
+      "ranking": {
+        "candidates": [
+          {
+            "company_id": "5560452103",
+            "legal_name": "JM AB",
+            "confidence": 0.97,
+            "basis": "registration_number",
+            "reasons": [
+              "Quoted website operator organisation/VAT number matches this company's ID."
+            ]
+          }
+        ],
+        "no_match_probability": 0.03,
+        "assessment": {
+          "company_id": "5560452103",
+          "confidence": 0.97,
+          "basis": "registration_number",
+          "reasons": [
+            "Quoted website operator organisation/VAT number matches this company's ID."
+          ]
+        }
+      },
+      "industry_assessments": [
+        {
+          "company_id": "5560452103",
+          "legal_name": "JM AB",
+          "status": "insufficient_evidence",
+          "reasons": [
+            "No registry industry with a consistent classification version and label is available."
+          ],
+          "model_status": "insufficient_evidence",
+          "model_reasons": [
+            "No unambiguous model industry assessment was returned."
+          ],
+          "industries": [
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "4100",
+              "reported_label": "41.00 Construction of residential and non-residential buildings",
+              "is_primary": 1,
+              "source": "sweden_scb",
+              "source_record_uid": "fac68e3d976a609165bd33eb2ef92d63a48a590ade3e6e95bfdf038ac04ffe0d",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "",
+              "reference_status": "invalid_code_for_version"
+            }
+          ]
+        }
+      ],
+      "accepted_company_id": "5560452103",
+      "validation": "Website organisation number matches the registry",
+      "usage": {
+        "calls": 1,
+        "successful_responses": 1,
+        "known_cost_usd": 4.7334e-05,
+        "unknown_cost_calls": 0,
+        "prompt_tokens": 1127,
+        "completion_tokens": 112,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_match_jev",
+            "attempt": 1,
+            "started_at": "2026-09-27T13:18:25+00:00",
+            "api": "openrouter_decisions",
+            "model": "typesafe/jev-1.13",
+            "http_status": 200,
+            "response_id": "gen-dec-1790515105-PcSqKtf0IzfO4nuYz5wV",
+            "response_model": "typesafe/jev-1.13-20260917",
+            "usage": {
+              "input_tokens": 1127,
+              "output_tokens": 112,
+              "cost": 4.7334e-05,
+              "prompt_tokens": 1127,
+              "completion_tokens": 112
+            },
+            "elapsed_seconds": 0.293
+          }
+        ]
+      }
+    },
+    {
+      "domain": "neobo.se",
+      "source": "data/company-lookup-industry-20260927/neobo.se/result.json",
+      "model": "typesafe/jev-1.13",
+      "ranking": {
+        "candidates": [
+          {
+            "company_id": "5565802526",
+            "legal_name": "Neobo Fastigheter AB (publ)",
+            "confidence": 0.98,
+            "basis": "name_and_address",
+            "reasons": [
+              "Operator name, street and city/postal code agree with this company."
+            ]
+          },
+          {
+            "company_id": "5560661257",
+            "legal_name": "Aktiebolaget Ebo",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5562632587",
+            "legal_name": "Geo Bok Aktiebolag",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5563871085",
+            "legal_name": "BOBO Fastigheter AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5564352408",
+            "legal_name": "Nevo Fastigheter AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5567289342",
+            "legal_name": "Tembo Fastigheter AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5567295992",
+            "legal_name": "Nabo Fastigheter AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5568043904",
+            "legal_name": "Febo Fastigheter AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5568128614",
+            "legal_name": "Neob AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5569080780",
+            "legal_name": "Nero Fastigheter AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5569092801",
+            "legal_name": "N O B Fastigheter AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5569181174",
+            "legal_name": "Leo Bon AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5569418295",
+            "legal_name": "Debo fastigheter AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5569897225",
+            "legal_name": "LEJBO Fastigheter AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5591343859",
+            "legal_name": "Neobi AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5592218076",
+            "legal_name": "Neoboid AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5592721913",
+            "legal_name": "Neobit AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5592877681",
+            "legal_name": "Teobold AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5592903586",
+            "legal_name": "Neo AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5594386392",
+            "legal_name": "EBO AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          }
+        ],
+        "no_match_probability": 0.02,
+        "assessment": {
+          "company_id": "5565802526",
+          "confidence": 0.98,
+          "basis": "name_and_address",
+          "reasons": [
+            "Operator name, street and city/postal code agree with this company."
+          ]
+        }
+      },
+      "industry_assessments": [
+        {
+          "company_id": "5565802526",
+          "legal_name": "Neobo Fastigheter AB (publ)",
+          "status": "consistent",
+          "reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "model_status": "consistent",
+          "model_reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "industries": [
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "7010",
+              "reported_label": "70.10 Activities of head offices",
+              "is_primary": 1,
+              "source": "sweden_scb",
+              "source_record_uid": "6308862613bd77f0737a77f7b1c4cb84797a0fc6bba84994b192c137c9caf9f1",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "70.10 Activities of head offices",
+              "reference_status": "reference_consistent"
+            }
+          ]
+        },
+        {
+          "company_id": "5563871085",
+          "legal_name": "BOBO Fastigheter AB",
+          "status": "consistent",
+          "reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "model_status": "consistent",
+          "model_reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "industries": [
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "6820",
+              "reported_label": "68.20 Rental and operating of own or leased real estate",
+              "is_primary": 1,
+              "source": "sweden_scb",
+              "source_record_uid": "880838314bf46e501fa4dde3899e1ad27dafe21cad52fd9a810e15353d74bd91",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "68.20 Rental and operating of own or leased real estate",
+              "reference_status": "reference_consistent"
+            }
+          ]
+        },
+        {
+          "company_id": "5564352408",
+          "legal_name": "Nevo Fastigheter AB",
+          "status": "consistent",
+          "reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "model_status": "consistent",
+          "model_reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "industries": [
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "4941",
+              "reported_label": "49.41 Freight transport by road",
+              "is_primary": 1,
+              "source": "sweden_scb",
+              "source_record_uid": "414994c609ab3ce917d004099d6bfabf4e3c0babc4f9fece68290d8dbfeb20a8",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "49.41 Freight transport by road",
+              "reference_status": "reference_consistent"
+            }
+          ]
+        },
+        {
+          "company_id": "5567289342",
+          "legal_name": "Tembo Fastigheter AB",
+          "status": "insufficient_evidence",
+          "reasons": [
+            "No registry industry with a consistent classification version and label is available."
+          ],
+          "model_status": "insufficient_evidence",
+          "model_reasons": [
+            "No unambiguous model industry assessment was returned."
+          ],
+          "industries": [
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "6832",
+              "reported_label": "68.32 Other real estate activities on a fee or contract basis",
+              "is_primary": 1,
+              "source": "sweden_scb",
+              "source_record_uid": "a8e3878fe5127eaa8fd17f0bb43d8b15d2b647a84df4a7b3919ef6da3d7fb9bf",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "68.32 Management of real estate on a fee or contract basis",
+              "reference_status": "label_version_conflict"
+            }
+          ]
+        },
+        {
+          "company_id": "5567295992",
+          "legal_name": "Nabo Fastigheter AB",
+          "status": "consistent",
+          "reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "model_status": "consistent",
+          "model_reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "industries": [
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "6820",
+              "reported_label": "68.20 Rental and operating of own or leased real estate",
+              "is_primary": 1,
+              "source": "sweden_scb",
+              "source_record_uid": "3be0d40be5fde0dcbd9010810dd642fdd9cde9e58b13965c255aa8b3d9ff1571",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "68.20 Rental and operating of own or leased real estate",
+              "reference_status": "reference_consistent"
+            }
+          ]
+        },
+        {
+          "company_id": "5568043904",
+          "legal_name": "Febo Fastigheter AB",
+          "status": "consistent",
+          "reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "model_status": "consistent",
+          "model_reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "industries": [
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "6820",
+              "reported_label": "68.20 Rental and operating of own or leased real estate",
+              "is_primary": 1,
+              "source": "sweden_scb",
+              "source_record_uid": "5bf8a2bb881ea7282c97087394707b6dd9a390fb996423af7433893525b5a39d",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "68.20 Rental and operating of own or leased real estate",
+              "reference_status": "reference_consistent"
+            }
+          ]
+        },
+        {
+          "company_id": "5569080780",
+          "legal_name": "Nero Fastigheter AB",
+          "status": "consistent",
+          "reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "model_status": "consistent",
+          "model_reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "industries": [
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "6820",
+              "reported_label": "68.20 Rental and operating of own or leased real estate",
+              "is_primary": 1,
+              "source": "sweden_scb",
+              "source_record_uid": "c50cd8c8df3f0dddc2ca7c213877e3503564f4546ce142c2393947eae707b105",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "68.20 Rental and operating of own or leased real estate",
+              "reference_status": "reference_consistent"
+            }
+          ]
+        },
+        {
+          "company_id": "5569092801",
+          "legal_name": "N O B Fastigheter AB",
+          "status": "consistent",
+          "reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "model_status": "consistent",
+          "model_reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "industries": [
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "6820",
+              "reported_label": "68.20 Rental and operating of own or leased real estate",
+              "is_primary": 1,
+              "source": "sweden_scb",
+              "source_record_uid": "28e3e641a0345cc535cb75368af73e484cfb668b9efd7ec59371267a1502517d",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "68.20 Rental and operating of own or leased real estate",
+              "reference_status": "reference_consistent"
+            }
+          ]
+        },
+        {
+          "company_id": "5569418295",
+          "legal_name": "Debo fastigheter AB",
+          "status": "consistent",
+          "reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "model_status": "consistent",
+          "model_reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "industries": [
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "6820",
+              "reported_label": "68.20 Rental and operating of own or leased real estate",
+              "is_primary": 1,
+              "source": "sweden_scb",
+              "source_record_uid": "e515d13003fc42c2b18440c3fa640c552611f559860579e74b3b75c27656db2c",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "68.20 Rental and operating of own or leased real estate",
+              "reference_status": "reference_consistent"
+            }
+          ]
+        },
+        {
+          "company_id": "5569897225",
+          "legal_name": "LEJBO Fastigheter AB",
+          "status": "consistent",
+          "reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "model_status": "consistent",
+          "model_reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "industries": [
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "6820",
+              "reported_label": "68.20 Rental and operating of own or leased real estate",
+              "is_primary": 1,
+              "source": "sweden_scb",
+              "source_record_uid": "420c75913deb264075d6298dd3a72b174cd886606f960fd2e001b638b9f15249",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "68.20 Rental and operating of own or leased real estate",
+              "reference_status": "reference_consistent"
+            }
+          ]
+        },
+        {
+          "company_id": "5568128614",
+          "legal_name": "Neob AB",
+          "status": "consistent",
+          "reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "model_status": "consistent",
+          "model_reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "industries": [
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "7112",
+              "reported_label": "71.12 Engineering activities and related technical consultancy",
+              "is_primary": 1,
+              "source": "sweden_scb",
+              "source_record_uid": "49fc49a9c5242369fb249deeb69132ac058704e649baa529cf7044fd60bf34fa",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "71.12 Engineering activities and related technical consultancy",
+              "reference_status": "reference_consistent"
+            }
+          ]
+        },
+        {
+          "company_id": "5591343859",
+          "legal_name": "Neobi AB",
+          "status": "insufficient_evidence",
+          "reasons": [
+            "No registry industry with a consistent classification version and label is available."
+          ],
+          "model_status": "insufficient_evidence",
+          "model_reasons": [
+            "No unambiguous model industry assessment was returned."
+          ],
+          "industries": [
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "6210",
+              "reported_label": "62.10 Computer programming activities",
+              "is_primary": 1,
+              "source": "sweden_scb",
+              "source_record_uid": "4319cddf66168a47b1b62f496406372403c45b7a18fe016019c7d723927e7677",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "",
+              "reference_status": "invalid_code_for_version"
+            }
+          ]
+        },
+        {
+          "company_id": "5592218076",
+          "legal_name": "Neoboid AB",
+          "status": "insufficient_evidence",
+          "reasons": [
+            "No registry industry with a consistent classification version and label is available."
+          ],
+          "model_status": "insufficient_evidence",
+          "model_reasons": [
+            "No unambiguous model industry assessment was returned."
+          ],
+          "industries": [
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "6210",
+              "reported_label": "62.10 Computer programming activities",
+              "is_primary": 1,
+              "source": "sweden_scb",
+              "source_record_uid": "2e576866f3b5c173796e381af64f437525f300be17c02daf1af848b9261ad618",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "",
+              "reference_status": "invalid_code_for_version"
+            }
+          ]
+        },
+        {
+          "company_id": "5569181174",
+          "legal_name": "Leo Bon AB",
+          "status": "insufficient_evidence",
+          "reasons": [
+            "No registry industry with a consistent classification version and label is available."
+          ],
+          "model_status": "insufficient_evidence",
+          "model_reasons": [
+            "No unambiguous model industry assessment was returned."
+          ],
+          "industries": [
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "5611",
+              "reported_label": "56.11 Restaurant activities",
+              "is_primary": 1,
+              "source": "sweden_scb",
+              "source_record_uid": "c8d73f3d9d785a8766808c7a6b2029bf6e2a9bae9c20e1b533a17eab2829285b",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "",
+              "reference_status": "invalid_code_for_version"
+            }
+          ]
+        },
+        {
+          "company_id": "5592721913",
+          "legal_name": "Neobit AB",
+          "status": "insufficient_evidence",
+          "reasons": [
+            "No registry industry with a consistent classification version and label is available."
+          ],
+          "model_status": "insufficient_evidence",
+          "model_reasons": [
+            "No unambiguous model industry assessment was returned."
+          ],
+          "industries": [
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "6210",
+              "reported_label": "62.10 Computer programming activities",
+              "is_primary": 1,
+              "source": "sweden_scb",
+              "source_record_uid": "aafa1dc18a3bee977512aa5140583cd559645703ad7b088a4a052d90b781197e",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "",
+              "reference_status": "invalid_code_for_version"
+            }
+          ]
+        },
+        {
+          "company_id": "5562632587",
+          "legal_name": "Geo Bok Aktiebolag",
+          "status": "insufficient_evidence",
+          "reasons": [
+            "No registry industry with a consistent classification version and label is available."
+          ],
+          "model_status": "insufficient_evidence",
+          "model_reasons": [
+            "No unambiguous model industry assessment was returned."
+          ],
+          "industries": []
+        },
+        {
+          "company_id": "5592903586",
+          "legal_name": "Neo AB",
+          "status": "consistent",
+          "reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "model_status": "consistent",
+          "model_reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "industries": [
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "7112",
+              "reported_label": "71.12 Engineering activities and related technical consultancy",
+              "is_primary": 1,
+              "source": "sweden_scb",
+              "source_record_uid": "e49684cf745994836042cd5ec0e917e898d82330f13faa936bc7cf99c110aa15",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "71.12 Engineering activities and related technical consultancy",
+              "reference_status": "reference_consistent"
+            }
+          ]
+        },
+        {
+          "company_id": "5594386392",
+          "legal_name": "EBO AB",
+          "status": "consistent",
+          "reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "model_status": "consistent",
+          "model_reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "industries": [
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "6820",
+              "reported_label": "68.20 Rental and operating of own or leased real estate",
+              "is_primary": 1,
+              "source": "sweden_scb",
+              "source_record_uid": "b24006e0ca1a1a5f0b7c443502edd3a9df216aa7babfa6c32d86c3be5b119e88",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "68.20 Rental and operating of own or leased real estate",
+              "reference_status": "reference_consistent"
+            },
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "4100",
+              "reported_label": "41.00 Construction of residential and non-residential buildings",
+              "is_primary": 0,
+              "source": "sweden_scb",
+              "source_record_uid": "b24006e0ca1a1a5f0b7c443502edd3a9df216aa7babfa6c32d86c3be5b119e88",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "",
+              "reference_status": "invalid_code_for_version"
+            }
+          ]
+        },
+        {
+          "company_id": "5560661257",
+          "legal_name": "Aktiebolaget Ebo",
+          "status": "insufficient_evidence",
+          "reasons": [
+            "No registry industry with a consistent classification version and label is available."
+          ],
+          "model_status": "insufficient_evidence",
+          "model_reasons": [
+            "No unambiguous model industry assessment was returned."
+          ],
+          "industries": []
+        },
+        {
+          "company_id": "5592877681",
+          "legal_name": "Teobold AB",
+          "status": "consistent",
+          "reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "model_status": "consistent",
+          "model_reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "industries": [
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "7721",
+              "reported_label": "77.21 Rental and leasing of recreational and sports goods",
+              "is_primary": 1,
+              "source": "sweden_scb",
+              "source_record_uid": "0d0e2269314ccefa41b5815198d5a6ad74e52f93f91681f06430819bfea04cad",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "77.21 Rental and leasing of recreational and sports goods",
+              "reference_status": "reference_consistent"
+            }
+          ]
+        }
+      ],
+      "accepted_company_id": "5565802526",
+      "validation": "Website organisation number matches the registry",
+      "usage": {
+        "calls": 2,
+        "successful_responses": 2,
+        "known_cost_usd": 0.000602364,
+        "unknown_cost_calls": 0,
+        "prompt_tokens": 14342,
+        "completion_tokens": 2357,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_match_jev",
+            "attempt": 1,
+            "started_at": "2026-09-27T13:18:25+00:00",
+            "api": "openrouter_decisions",
+            "model": "typesafe/jev-1.13",
+            "http_status": 200,
+            "response_id": "gen-dec-1790515105-T6aVnDNqO6rvoEcqbzJg",
+            "response_model": "typesafe/jev-1.13-20260917",
+            "usage": {
+              "input_tokens": 7775,
+              "output_tokens": 1652,
+              "cost": 0.00032655,
+              "prompt_tokens": 7775,
+              "completion_tokens": 1652
+            },
+            "elapsed_seconds": 0.304
+          },
+          {
+            "call_id": 2,
+            "task": "company_lookup_industry_jev",
+            "attempt": 1,
+            "started_at": "2026-09-27T13:18:25+00:00",
+            "api": "openrouter_decisions",
+            "model": "typesafe/jev-1.13",
+            "http_status": 200,
+            "response_id": "gen-dec-1790515105-v6lPYKRDxOLQfPF0F0Pe",
+            "response_model": "typesafe/jev-1.13-20260917",
+            "usage": {
+              "input_tokens": 6567,
+              "output_tokens": 705,
+              "cost": 0.000275814,
+              "prompt_tokens": 6567,
+              "completion_tokens": 705
+            },
+            "elapsed_seconds": 0.315
+          }
+        ]
+      }
+    },
+    {
+      "domain": "instalco.se",
+      "source": "data/company-lookup-industry-20260927/instalco.se/result.json",
+      "model": "typesafe/jev-1.13",
+      "ranking": {
+        "candidates": [
+          {
+            "company_id": "5590158944",
+            "legal_name": "Instalco AB",
+            "confidence": 0.96,
+            "basis": "name_and_address",
+            "reasons": [
+              "Operator name, street and city/postal code agree with this company."
+            ]
+          },
+          {
+            "company_id": "195303157936",
+            "legal_name": "INSTAL",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "196904106256",
+            "legal_name": "Installo",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5563468528",
+            "legal_name": "Instapro AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5564583556",
+            "legal_name": "Finstad & Co Aktiebolag",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5567238315",
+            "legal_name": "Instacon AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5568336712",
+            "legal_name": "Installo AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5568937832",
+            "legal_name": "Installcon AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5591938369",
+            "legal_name": "InsTalk AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5594569013",
+            "legal_name": "Instaly AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          }
+        ],
+        "no_match_probability": 0.04,
+        "assessment": {
+          "company_id": "5590158944",
+          "confidence": 0.96,
+          "basis": "name_and_address",
+          "reasons": [
+            "Operator name, street and city/postal code agree with this company."
+          ]
+        }
+      },
+      "industry_assessments": [
+        {
+          "company_id": "5590158944",
+          "legal_name": "Instalco AB",
+          "status": "insufficient_evidence",
+          "reasons": [
+            "No registry industry with a consistent classification version and label is available."
+          ],
+          "model_status": "insufficient_evidence",
+          "model_reasons": [
+            "No unambiguous model industry assessment was returned."
+          ],
+          "industries": [
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "6421",
+              "reported_label": "64.21 Activities of holding companies",
+              "is_primary": 1,
+              "source": "sweden_scb",
+              "source_record_uid": "abf006dedcba48ffdb109c04f0e0d5c0b84f426c8c8168f65ae41711ace53516",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "",
+              "reference_status": "invalid_code_for_version"
+            }
+          ]
+        },
+        {
+          "company_id": "5568336712",
+          "legal_name": "Installo AB",
+          "status": "consistent",
+          "reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "model_status": "consistent",
+          "model_reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "industries": [
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "4321",
+              "reported_label": "43.21 Electrical installation",
+              "is_primary": 1,
+              "source": "sweden_scb",
+              "source_record_uid": "283c49512d17986f8e5cdcf08d3cc8c7352f20500cbde224d75ce61e21cd161b",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "43.21 Electrical installation",
+              "reference_status": "reference_consistent"
+            },
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "4324",
+              "reported_label": "43.24 Other construction installation",
+              "is_primary": 0,
+              "source": "sweden_scb",
+              "source_record_uid": "283c49512d17986f8e5cdcf08d3cc8c7352f20500cbde224d75ce61e21cd161b",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "",
+              "reference_status": "invalid_code_for_version"
+            },
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "4332",
+              "reported_label": "43.32 Joinery installation",
+              "is_primary": 0,
+              "source": "sweden_scb",
+              "source_record_uid": "283c49512d17986f8e5cdcf08d3cc8c7352f20500cbde224d75ce61e21cd161b",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "43.32 Joinery installation",
+              "reference_status": "reference_consistent"
+            },
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "9521",
+              "reported_label": "95.21 Repair and maintenance of consumer electronics",
+              "is_primary": 0,
+              "source": "sweden_scb",
+              "source_record_uid": "283c49512d17986f8e5cdcf08d3cc8c7352f20500cbde224d75ce61e21cd161b",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "95.21 Repair of consumer electronics",
+              "reference_status": "label_version_conflict"
+            }
+          ]
+        },
+        {
+          "company_id": "196904106256",
+          "legal_name": "Installo",
+          "status": "insufficient_evidence",
+          "reasons": [
+            "No registry industry with a consistent classification version and label is available."
+          ],
+          "model_status": "insufficient_evidence",
+          "model_reasons": [
+            "No unambiguous model industry assessment was returned."
+          ],
+          "industries": []
+        },
+        {
+          "company_id": "5568937832",
+          "legal_name": "Installcon AB",
+          "status": "consistent",
+          "reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "model_status": "consistent",
+          "model_reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "industries": [
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "7112",
+              "reported_label": "71.12 Engineering activities and related technical consultancy",
+              "is_primary": 1,
+              "source": "sweden_scb",
+              "source_record_uid": "41165266e9d274a44d8d47759e63b30c3332b9c97c921733345867babaf17b93",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "71.12 Engineering activities and related technical consultancy",
+              "reference_status": "reference_consistent"
+            }
+          ]
+        },
+        {
+          "company_id": "5564583556",
+          "legal_name": "Finstad & Co Aktiebolag",
+          "status": "insufficient_evidence",
+          "reasons": [
+            "No registry industry with a consistent classification version and label is available."
+          ],
+          "model_status": "insufficient_evidence",
+          "model_reasons": [
+            "No unambiguous model industry assessment was returned."
+          ],
+          "industries": []
+        },
+        {
+          "company_id": "5567238315",
+          "legal_name": "Instacon AB",
+          "status": "consistent",
+          "reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "model_status": "consistent",
+          "model_reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "industries": [
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "7112",
+              "reported_label": "71.12 Engineering activities and related technical consultancy",
+              "is_primary": 1,
+              "source": "sweden_scb",
+              "source_record_uid": "2554f1ac448a7dddf6f1415f7a3bb88171fc0b25824f6a37779ce4269fccd405",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "71.12 Engineering activities and related technical consultancy",
+              "reference_status": "reference_consistent"
+            }
+          ]
+        },
+        {
+          "company_id": "5591938369",
+          "legal_name": "InsTalk AB",
+          "status": "consistent",
+          "reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "model_status": "consistent",
+          "model_reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "industries": [
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "8559",
+              "reported_label": "85.59 Other education n.e.c.",
+              "is_primary": 1,
+              "source": "sweden_scb",
+              "source_record_uid": "a463cfded8161fc8ad4164e50c2eac652a61c814df62fa13e27050b3764d860f",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "85.59 Other education n.e.c.",
+              "reference_status": "reference_consistent"
+            }
+          ]
+        },
+        {
+          "company_id": "5594569013",
+          "legal_name": "Instaly AB",
+          "status": "consistent",
+          "reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "model_status": "consistent",
+          "model_reasons": [
+            "At least one reliable registered industry is compatible with the quoted website activities. This supports identity but never proves it."
+          ],
+          "industries": [
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "4321",
+              "reported_label": "43.21 Electrical installation",
+              "is_primary": 1,
+              "source": "sweden_scb",
+              "source_record_uid": "3db6d1cba336bcadbf35e15bef74d69e578cd3c21f398d68baf7838599864bc6",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "43.21 Electrical installation",
+              "reference_status": "reference_consistent"
+            },
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "6391",
+              "reported_label": "63.91 Web search portal activities",
+              "is_primary": 0,
+              "source": "sweden_scb",
+              "source_record_uid": "3db6d1cba336bcadbf35e15bef74d69e578cd3c21f398d68baf7838599864bc6",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "63.91 News agency activities",
+              "reference_status": "label_version_conflict"
+            },
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "8009",
+              "reported_label": "80.09 Security activities n.e.c.",
+              "is_primary": 0,
+              "source": "sweden_scb",
+              "source_record_uid": "3db6d1cba336bcadbf35e15bef74d69e578cd3c21f398d68baf7838599864bc6",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "",
+              "reference_status": "invalid_code_for_version"
+            },
+            {
+              "classification_system": "NACE_REV2",
+              "classification_code": "8559",
+              "reported_label": "85.59 Other education n.e.c.",
+              "is_primary": 0,
+              "source": "sweden_scb",
+              "source_record_uid": "3db6d1cba336bcadbf35e15bef74d69e578cd3c21f398d68baf7838599864bc6",
+              "classification_version": "NACE_REV_2",
+              "reference_label": "85.59 Other education n.e.c.",
+              "reference_status": "reference_consistent"
+            }
+          ]
+        },
+        {
+          "company_id": "195303157936",
+          "legal_name": "INSTAL",
+          "status": "insufficient_evidence",
+          "reasons": [
+            "No registry industry with a consistent classification version and label is available."
+          ],
+          "model_status": "insufficient_evidence",
+          "model_reasons": [
+            "No unambiguous model industry assessment was returned."
+          ],
+          "industries": []
+        },
+        {
+          "company_id": "5563468528",
+          "legal_name": "Instapro AB",
+          "status": "insufficient_evidence",
+          "reasons": [
+            "No registry industry with a consistent classification version and label is available."
+          ],
+          "model_status": "insufficient_evidence",
+          "model_reasons": [
+            "No unambiguous model industry assessment was returned."
+          ],
+          "industries": []
+        }
+      ],
+      "accepted_company_id": "5590158944",
+      "validation": "Explicit legal name uniquely matches the returned registry candidates",
+      "usage": {
+        "calls": 2,
+        "successful_responses": 2,
+        "known_cost_usd": 0.00030513000000000003,
+        "unknown_cost_calls": 0,
+        "prompt_tokens": 7265,
+        "completion_tokens": 1123,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_match_jev",
+            "attempt": 1,
+            "started_at": "2026-09-27T13:18:25+00:00",
+            "api": "openrouter_decisions",
+            "model": "typesafe/jev-1.13",
+            "http_status": 200,
+            "response_id": "gen-dec-1790515106-p6B5uREpIDAKWbcdp92g",
+            "response_model": "typesafe/jev-1.13-20260917",
+            "usage": {
+              "input_tokens": 4264,
+              "output_tokens": 850,
+              "cost": 0.000179088,
+              "prompt_tokens": 4264,
+              "completion_tokens": 850
+            },
+            "elapsed_seconds": 0.272
+          },
+          {
+            "call_id": 2,
+            "task": "company_lookup_industry_jev",
+            "attempt": 1,
+            "started_at": "2026-09-27T13:18:26+00:00",
+            "api": "openrouter_decisions",
+            "model": "typesafe/jev-1.13",
+            "http_status": 200,
+            "response_id": "gen-dec-1790515106-R8mqgyNEadMMKw3Stdhu",
+            "response_model": "typesafe/jev-1.13-20260917",
+            "usage": {
+              "input_tokens": 3001,
+              "output_tokens": 273,
+              "cost": 0.000126042,
+              "prompt_tokens": 3001,
+              "completion_tokens": 273
+            },
+            "elapsed_seconds": 0.319
+          }
+        ]
+      }
+    }
+  ]
+}

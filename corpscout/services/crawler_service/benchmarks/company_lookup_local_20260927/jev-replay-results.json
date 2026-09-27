@@ -1,0 +1,610 @@
+{
+  "cases": [
+    {
+      "domain": "jm.se",
+      "source": "data/company-lookup-local-20260927/jm.se/result.json",
+      "model": "typesafe/jev-1.13",
+      "ranking": {
+        "candidates": [
+          {
+            "company_id": "5560452103",
+            "legal_name": "JM AB",
+            "confidence": 0.97,
+            "basis": "registration_number",
+            "reasons": [
+              "Quoted website operator organisation/VAT number matches this company's ID."
+            ]
+          }
+        ],
+        "no_match_probability": 0.03,
+        "assessment": {
+          "company_id": "5560452103",
+          "confidence": 0.97,
+          "basis": "registration_number",
+          "reasons": [
+            "Quoted website operator organisation/VAT number matches this company's ID."
+          ]
+        }
+      },
+      "accepted_company_id": "5560452103",
+      "validation": "Website organisation number matches the registry",
+      "usage": {
+        "calls": 1,
+        "successful_responses": 1,
+        "known_cost_usd": 4.0488e-05,
+        "unknown_cost_calls": 0,
+        "prompt_tokens": 964,
+        "completion_tokens": 112,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_match_jev",
+            "attempt": 1,
+            "started_at": "2026-09-27T12:07:43+00:00",
+            "api": "openrouter_decisions",
+            "model": "typesafe/jev-1.13",
+            "http_status": 200,
+            "response_id": "gen-dec-1790510863-rGs1lLu6wuyosDJEjhWB",
+            "response_model": "typesafe/jev-1.13-20260917",
+            "usage": {
+              "input_tokens": 964,
+              "output_tokens": 112,
+              "cost": 4.0488e-05,
+              "prompt_tokens": 964,
+              "completion_tokens": 112
+            },
+            "elapsed_seconds": 0.564
+          }
+        ]
+      }
+    },
+    {
+      "domain": "avanza.se",
+      "source": "data/company-lookup-local-20260927/avanza.se/result.json",
+      "model": "typesafe/jev-1.13",
+      "ranking": {
+        "candidates": [
+          {
+            "company_id": "5565735668",
+            "legal_name": "Avanza Bank AB",
+            "confidence": 0.5,
+            "basis": "registration_number",
+            "reasons": [
+              "Quoted website operator organisation/VAT number matches this company's ID."
+            ]
+          },
+          {
+            "company_id": "5562748458",
+            "legal_name": "Avanza Bank Holding AB",
+            "confidence": 0.02,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5156025859",
+            "legal_name": "AVANZA 50",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5156025867",
+            "legal_name": "AVANZA 75",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5156025875",
+            "legal_name": "AVANZA 100",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5156030362",
+            "legal_name": "AVANZA USA",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5164016775",
+            "legal_name": "Försäkringsaktiebolaget Avanza Pension",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5561581041",
+            "legal_name": "Avarda Bank AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5561587634",
+            "legal_name": "Svea Bank AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5562382167",
+            "legal_name": "Banco Fonder AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5562666064",
+            "legal_name": "Första Fonder Aktiebolag",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5563172310",
+            "legal_name": "SKANDIA FONDER AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5564917861",
+            "legal_name": "Evli Fonder Aktiebolag",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5565201182",
+            "legal_name": "Avanzera AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5565451696",
+            "legal_name": "Avanza Holding AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5565492922",
+            "legal_name": "AMF Fonder AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5565504726",
+            "legal_name": "KPA Fonder Aktiebolag",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5566331707",
+            "legal_name": "Bangatan Holding AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5566643531",
+            "legal_name": "Avanza Fonder AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5567643001",
+            "legal_name": "Avantrade Holding AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5567741748",
+            "legal_name": "Minafonder AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5568353717",
+            "legal_name": "Volga Fonder AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5568490873",
+            "legal_name": "Valla Park Holding AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5591102677",
+            "legal_name": "Valfrank Holding AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5591498588",
+            "legal_name": "Vontab MRK Holding AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5592751142",
+            "legal_name": "Sanatak Holding AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5592955412",
+            "legal_name": "Azaban AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5593632143",
+            "legal_name": "Chaaban Holding AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5594139007",
+            "legal_name": "A Vanbrabant AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5595397281",
+            "legal_name": "Bang Bang Holding AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          }
+        ],
+        "no_match_probability": 0.48,
+        "assessment": {
+          "company_id": "5565735668",
+          "confidence": 0.5,
+          "basis": "registration_number",
+          "reasons": [
+            "Quoted website operator organisation/VAT number matches this company's ID."
+          ]
+        }
+      },
+      "accepted_company_id": null,
+      "validation": "No sufficiently confident, supported registry match",
+      "usage": {
+        "calls": 1,
+        "successful_responses": 1,
+        "known_cost_usd": 0.000543732,
+        "unknown_cost_calls": 0,
+        "prompt_tokens": 12946,
+        "completion_tokens": 2461,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_match_jev",
+            "attempt": 1,
+            "started_at": "2026-09-27T12:07:44+00:00",
+            "api": "openrouter_decisions",
+            "model": "typesafe/jev-1.13",
+            "http_status": 200,
+            "response_id": "gen-dec-1790510864-XOrWzivlFgKxxJtlFRDC",
+            "response_model": "typesafe/jev-1.13-20260917",
+            "usage": {
+              "input_tokens": 12946,
+              "output_tokens": 2461,
+              "cost": 0.000543732,
+              "prompt_tokens": 12946,
+              "completion_tokens": 2461
+            },
+            "elapsed_seconds": 0.332
+          }
+        ]
+      }
+    },
+    {
+      "domain": "brinova.se",
+      "source": "data/company-lookup-local-20260927/brinova.se/result.json",
+      "model": "typesafe/jev-1.13",
+      "ranking": {
+        "candidates": [
+          {
+            "company_id": "5568403918",
+            "legal_name": "Brinova Fastigheter AB (publ)",
+            "confidence": 0.98,
+            "basis": "unique_legal_name",
+            "reasons": [
+              "An explicit operator legal name uniquely matches this company; no conflicting operator identity."
+            ]
+          },
+          {
+            "company_id": "193112275015",
+            "legal_name": "Bosinova",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "194311219317",
+            "legal_name": "Rinova",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "195903154606",
+            "legal_name": "Bliva Fastigheter",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "197206224151",
+            "legal_name": "Rinova",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "197501254077",
+            "legal_name": "Frinova",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5560403957",
+            "legal_name": "Brinova T4 AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5561105379",
+            "legal_name": "Bränna Fastigheter Aktiebolag",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5565332482",
+            "legal_name": "Lubrinova Aktiebolag",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5565728812",
+            "legal_name": "KRINOVA AKTIEBOLAG",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5565886404",
+            "legal_name": "TRENOVA FASTIGHETER AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5565949566",
+            "legal_name": "Brinova Fastigheter AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5566465091",
+            "legal_name": "Parinova Fastigheter AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5566903935",
+            "legal_name": "Betonova Fastigheter AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5568266943",
+            "legal_name": "Fortinova Fastigheter AB (publ)",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5568385966",
+            "legal_name": "Brinova HK AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5569961948",
+            "legal_name": "Arbonova Fastigheter AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5590456686",
+            "legal_name": "Prinova AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5591731111",
+            "legal_name": "Aeronova Fastigheter AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          },
+          {
+            "company_id": "5592321607",
+            "legal_name": "ORINOVA AB",
+            "confidence": 0,
+            "basis": "insufficient",
+            "reasons": [
+              "Insufficient, conflicting or unrelated operator evidence; similarity alone does not prove ownership."
+            ]
+          }
+        ],
+        "no_match_probability": 0.02,
+        "assessment": {
+          "company_id": "5568403918",
+          "confidence": 0.98,
+          "basis": "unique_legal_name",
+          "reasons": [
+            "An explicit operator legal name uniquely matches this company; no conflicting operator identity."
+          ]
+        }
+      },
+      "accepted_company_id": null,
+      "validation": "The proposed match lacks a supported legal identity or corroborating address",
+      "usage": {
+        "calls": 1,
+        "successful_responses": 1,
+        "known_cost_usd": 0.000318108,
+        "unknown_cost_calls": 0,
+        "prompt_tokens": 7574,
+        "completion_tokens": 1673,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_match_jev",
+            "attempt": 1,
+            "started_at": "2026-09-27T12:07:44+00:00",
+            "api": "openrouter_decisions",
+            "model": "typesafe/jev-1.13",
+            "http_status": 200,
+            "response_id": "gen-dec-1790510864-1eegB3OxfTulcvgfiTlr",
+            "response_model": "typesafe/jev-1.13-20260917",
+            "usage": {
+              "input_tokens": 7574,
+              "output_tokens": 1673,
+              "cost": 0.000318108,
+              "prompt_tokens": 7574,
+              "completion_tokens": 1673
+            },
+            "elapsed_seconds": 0.343
+          }
+        ]
+      }
+    }
+  ]
+}

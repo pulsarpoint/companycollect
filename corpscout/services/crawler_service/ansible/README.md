@@ -45,6 +45,43 @@ locale, prefix the command with `LC_ALL=en_US.UTF-8`.
 
 All non-secret deployment settings are in [vars.yml](vars.yml).
 
+### Company matching result publication
+
+Apply ClickHouse migration 459 before deploying company matching. Configure
+`crawler_service_clickhouse_results_url`, `crawler_service_clickhouse_results_user`
+and `crawler_service_clickhouse_results_password` in the ignored `secrets.yml`.
+These are separate from the existing registry reader credentials. The writer
+needs `INSERT` on exactly these tables in the `corpscout` database:
+
+- `website_site_info_results`
+- `website_full_crawl_results`
+- `website_company_lookup_results`
+- `website_company_lookup_candidates`
+- `website_company_lookup_evidence`
+- `website_company_lookup_searches`
+
+The reader also needs access to `company_domains_resolved` for the optional
+existing-association check. Deploy through this playbook once the crawler is idle.
+After a matching test finishes, its result API must report
+`publication.state = "published"` and `persisted_to_database = true`. Verify the
+same request ID and attempt in both the basic and matching result tables:
+
+```sql
+SELECT domain, request_id, attempt, status, company_id, confidence
+FROM corpscout.website_company_lookup_results FINAL
+ORDER BY finished_at DESC LIMIT 10;
+
+SELECT domain, request_id, attempt, successful, company_matching_status
+FROM corpscout.website_site_info_results FINAL
+WHERE company_matching_status != ''
+ORDER BY finished_at DESC LIMIT 10;
+```
+
+Local files remain available for debugging, and SQLite retains delivery receipts
+and pending writes across restarts. A failed insert retries publication without
+repeating the crawl. Earlier version-1.0 lookup tests are not automatically
+backfilled because they did not produce the canonical basic crawl result.
+
 To store failed attempts and results in S3, add these
 settings to the ignored `secrets.yml` (the bucket must already exist):
 

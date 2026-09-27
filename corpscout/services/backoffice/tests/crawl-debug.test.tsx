@@ -6,6 +6,12 @@ import { loader } from "~/routes/admin-crawls-debug";
 import { CrawlDebugDetails } from "~/components/admin/crawl-debug";
 
 describe("crawl debug API", () => {
+  it("loads the lookup output for the selected attempt", async () => {
+    server.crawlerFetch.mockResolvedValue(Response.json({status: "not_found", site_type: "online_store"}));
+    const response = await loader({request: new Request("http://backoffice/admin/crawls/debug?request=test&attempt=2&result=1")} as Parameters<typeof loader>[0]);
+    expect(server.crawlerFetch).toHaveBeenLastCalledWith("/v1/crawls/test/debug?attempt=2&result=true", expect.anything());
+    expect(await response.json()).toEqual({status: "not_found", site_type: "online_store"});
+  });
   it("relays saved-file events without buffering and forwards reconnect cursors", async () => {
     let output!: ReadableStreamDefaultController<Uint8Array>;
     server.crawlerFetch.mockResolvedValue(new Response(new ReadableStream({start(controller) {output = controller;}}), {headers: {"Content-Type": "text/event-stream"}}));

@@ -18,12 +18,12 @@ describe("SE domain selection parsing", () => {
 
   it("passes all applied filters and exclusions without expanding the selection", () => {
     const selection = parseSeDomainSelection({ mode: "query", query: {
-      domain: "exa%' or 1=1 --", company: "5560049529", source: "brave", association: "connected",
+      domain: "exa%' or 1=1 --", suffix: "se", company: "5560049529", source: "brave", association: "connected",
       status: "inactive", minConfidence: "0.4", maxConfidence: "0.9", shared: "1",
     }, excludedDomains: ["skip.se", "skip.se"] });
     const config = inputConfig(selection);
     expect(config).toMatchObject({select_all: true, excluded_ids: ["skip.se"], se_domain_filters: {
-      domain: "exa%' or 1=1 --", company: "5560049529", source: "brave", association: "connected",
+      domain: "exa%' or 1=1 --", suffix: "se", company: "5560049529", source: "brave", association: "connected",
       status: "inactive", min_confidence: .4, max_confidence: .9, shared: true,
     }});
     expect(config).not.toHaveProperty("ids");
@@ -41,6 +41,8 @@ describe("SE domain selection parsing", () => {
     { mode: "query", query: {}, excludedDomains: [] },
     { mode: "query", query: { ...EMPTY_SE_DOMAINS_FILTERS, source: "unknown" }, excludedDomains: [] },
     { mode: "query", query: { ...EMPTY_SE_DOMAINS_FILTERS, status: "typo" }, excludedDomains: [] },
+    { mode: "query", query: { ...EMPTY_SE_DOMAINS_FILTERS, suffix: "se%" }, excludedDomains: [] },
+    { mode: "query", query: { ...EMPTY_SE_DOMAINS_FILTERS, suffix: ".se" }, excludedDomains: [] },
     { mode: "query", query: { ...EMPTY_SE_DOMAINS_FILTERS, page: "2" }, excludedDomains: [] },
     { mode: "query", query: { ...EMPTY_SE_DOMAINS_FILTERS, minConfidence: "0.9", maxConfidence: "0.5" }, excludedDomains: [] },
     { mode: "query", query: EMPTY_SE_DOMAINS_FILTERS, excludedDomains: ["x'); DROP TABLE x"] },

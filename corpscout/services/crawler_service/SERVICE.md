@@ -52,6 +52,10 @@ environment; request bodies cannot supply credentials or output paths.
 
 ## REST
 
+For website-to-company proposals, basic results and durable batches, see
+[company lookup tests](COMPANY_LOOKUP.md). These use a separate submission endpoint
+and the existing crawler status, result and debug APIs.
+
 ```bash
 uv run --extra service crawler-service \
   --transport rest --output-dir ./data/crawl-service --env-file .env

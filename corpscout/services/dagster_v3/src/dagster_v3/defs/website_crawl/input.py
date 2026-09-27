@@ -13,6 +13,7 @@ from pydantic import Field, field_validator, model_validator
 
 from dagster_v3.defs.common.clickhouse_queue import validate_relation
 from dagster_v3.defs.website_crawl.se_domains import SE_DOMAIN_TABLE, SeDomainFilters
+from dagster_v3.defs.website_crawl.workspace_domains import DOMAIN_INVENTORY, WorkspaceDomainFilters
 
 INPUT_TABLES = (
     "corpscout.website_full_crawl_requests",
@@ -46,6 +47,7 @@ class CrawlInputConfig(dg.Config):
     ids: list[str] = Field(default_factory=list)
     excluded_ids: list[str] = Field(default_factory=list)
     se_domain_filters: SeDomainFilters | None = None
+    workspace_domain_filters: WorkspaceDomainFilters | None = None
     filters: dict[str, list[str]] = Field(
         default_factory=dict,
         description="Column-to-values filters: OR within each list, AND between columns and ids.",
@@ -92,6 +94,7 @@ class CrawlInputConfig(dg.Config):
             or self.excluded_ids
             or self.filters
             or self.se_domain_filters is not None
+            or self.workspace_domain_filters is not None
             or self.source_final
             or self.select_all
         ):
@@ -115,11 +118,22 @@ class CrawlInputConfig(dg.Config):
             raise ValueError(
                 "SE domain filters require the current se_company_domain table with root_domain identity and website columns"
             )
+        if self.workspace_domain_filters is not None and (
+            self.source_relation != DOMAIN_INVENTORY
+            or self.source_final
+            or self.id_column != "root_domain"
+            or self.website_column != "root_domain"
+        ):
+            raise ValueError("Inventory filters require domains_search with root_domain identity and website columns, without FINAL")
         if not (
             self.targets
             or self.ids
             or self.filters
             or self.select_all
+            or (
+                self.workspace_domain_filters is not None
+                and self.workspace_domain_filters.model_dump(exclude_defaults=True)
+            )
             or (
                 self.se_domain_filters is not None
                 and self.se_domain_filters.model_dump(exclude_defaults=True)
@@ -142,6 +156,10 @@ def selected_domains_sql(config: CrawlInputConfig) -> tuple[str, dict]:
         se_predicates, se_parameters = config.se_domain_filters.predicates()
         predicates.extend(se_predicates)
         parameters.update(se_parameters)
+    if config.workspace_domain_filters is not None:
+        inventory_predicates, inventory_parameters = config.workspace_domain_filters.predicates()
+        predicates.extend(inventory_predicates)
+        parameters.update(inventory_parameters)
     for index, (column, values) in enumerate(sorted(config.filters.items())):
         predicates.append(f"toString(`{column}`) IN %(filter_{index})s")
         parameters[f"filter_{index}"] = tuple(sorted(set(values)))
@@ -150,6 +168,21 @@ def selected_domains_sql(config: CrawlInputConfig) -> tuple[str, dict]:
     limit = " LIMIT %(limit)s" if config.max_domains is not None else ""
     if config.max_domains is not None:
         parameters["limit"] = config.max_domains
+    if (
+        config.source_relation == DOMAIN_INVENTORY
+        and config.id_column == "root_domain"
+        and config.website_column == "root_domain"
+        and not config.source_final
+    ):
+        # The inventory publisher already validates lowercase ASCII/IDNA hostnames.
+        # Re-parsing them as arbitrary URLs makes country-wide imports needlessly slow.
+        return (
+            f"""SELECT replaceRegexpOne(root_domain, '^www[.]', '') AS domain,
+                argMin(concat('https://', root_domain), tuple(length(root_domain), root_domain)) AS website_url
+            FROM {DOMAIN_INVENTORY}{where}
+            GROUP BY domain ORDER BY domain{limit}""",
+            parameters,
+        )
     source_rows = f"SELECT trimBoth(ifNull(toString(`{config.website_column}`), '')) AS raw_website FROM {config.source_relation}{final}{where}"
     if config.targets:
         parameters["targets"] = sorted(set(config.targets))

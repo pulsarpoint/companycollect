@@ -13,10 +13,9 @@ from urllib.parse import quote, urlsplit
 
 import psycopg2
 from clickhouse_driver import Client
+from dagster_v3.defs.common.resources import ObjectStoreResource
 from dotenv import dotenv_values, load_dotenv
 from psycopg2 import sql
-
-from dagster_v3.defs.common.resources import ObjectStoreResource
 
 
 def main():
@@ -53,9 +52,10 @@ def main():
     with closing(psycopg2.connect(admin_url, connect_timeout=10)) as connection:
         with connection, connection.cursor() as cursor:
             cursor.execute("SELECT 'processing.tasks'::regclass")
-            for role, password in [
-                ("processing_worker", credentials["PROCESSING_PG_PASSWORD"]),
-                ("processing_reader", credentials["PROCESSING_PG_READER_PASSWORD"]),
+            # Backoffice pools, Dagster and browser admission share the worker role.
+            for role, password, connection_limit in [
+                ("processing_worker", credentials["PROCESSING_PG_PASSWORD"], 32),
+                ("processing_reader", credentials["PROCESSING_PG_READER_PASSWORD"], 8),
             ]:
                 cursor.execute("SELECT 1 FROM pg_roles WHERE rolname=%s", (role,))
                 if cursor.fetchone() is None:
@@ -64,9 +64,9 @@ def main():
                     )
                 cursor.execute(
                     sql.SQL(
-                        "ALTER ROLE {} WITH LOGIN PASSWORD %s NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION CONNECTION LIMIT 8"
+                        "ALTER ROLE {} WITH LOGIN PASSWORD %s NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION CONNECTION LIMIT %s"
                     ).format(sql.Identifier(role)),
-                    (password,),
+                    (password, connection_limit),
                 )
                 cursor.execute(
                     sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(

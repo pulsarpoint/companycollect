@@ -20,9 +20,8 @@ from dagster_clickhouse import ClickhouseResource
 from dlt.sources.helpers.requests import Session
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
-from dagster_v3.defs.common.llm_control import finish_external_request
-
 from dagster_v3.defs.common.encrypted_llm import EncryptedLLMConfig
+from dagster_v3.defs.common.llm_control import finish_external_request
 from dagster_v3.defs.common.processing import ProcessingResource
 from dagster_v3.defs.website_crawl.dispatch import (
     INPUTS_BY_TYPE,
@@ -31,6 +30,7 @@ from dagster_v3.defs.website_crawl.dispatch import (
     send_crawl,
     verify_crawl_llm,
 )
+from dagster_v3.defs.website_crawl.matching_batches import process_matching_batch
 
 RESULTS_BY_TYPE = {
     "full": "corpscout.website_full_crawl_results",
@@ -52,6 +52,9 @@ FIXED_ON_RESUME = (
     "crawler_config",
     "force_refresh",
     "full_crawl_all",
+    "match_company",
+    "company_country",
+    "skip_company_matching_if_mapped",
     "refresh_interval_days",
 )
 
@@ -77,7 +80,18 @@ class CrawlResultsConfig(dg.Config):
     bucket: int | None = Field(default=None, ge=0, le=255)
     refresh_interval_days: int = Field(default=30, ge=1, le=3650)
     force_refresh: bool = False
-    full_crawl_all: bool = Field(default=False, strict=True, description="Override the company-only gate for full crawls, including shops and content sites.")
+    full_crawl_all: bool = Field(
+        default=False,
+        strict=True,
+        description="Override the company-only gate for full crawls, including shops and content sites.",
+    )
+    match_company: bool | None = Field(
+        default=None,
+        description="Override the saved request's matching flag. None uses the request table.",
+    )
+    company_country: Literal["SE"] = "SE"
+    skip_company_matching_if_mapped: bool = True
+    matching_batch_size: int = Field(default=200, ge=1, le=1000)
     challenge_agent_model: str = Field(
         pattern=r"^(deepseek-flash|z-ai/glm-5[.]3-flash)$"
     )
@@ -186,6 +200,32 @@ def effective_payload(
     if config.page_selection == "instructions":
         payload.pop("crawl", None)
         payload["instructions"] = config.instructions
+    matching = (
+        bool(row.get("match_company", False))
+        if config.match_company is None
+        else config.match_company
+    )
+    if matching:
+        if crawl_type not in {"full", "site_info"} or config.llm is None:
+            raise ValueError(
+                "Company matching requires a basic/full crawl with a selected LLM"
+            )
+        country = (
+            row.get("company_country", "")
+            if config.match_company is None
+            else config.company_country
+        )
+        if country != "SE":
+            raise ValueError("Company matching currently supports SE only")
+        payload.update(
+            site_info=True,
+            company_lookup={
+                "country": country,
+                "skip_if_mapped": bool(row.get("skip_company_matching_if_mapped", True))
+                if config.match_company is None
+                else config.skip_company_matching_if_mapped,
+            },
+        )
     # Operational settings do not invalidate content. Every content/model setting does.
     semantic = {
         key: value
@@ -200,7 +240,9 @@ def effective_payload(
     }
     if config.llm is not None:
         # Credential rotation/re-encryption does not alter requested content.
-        semantic["llm"] = config.llm.model_dump(exclude={"api_key_encrypted"}, exclude_none=True)
+        semantic["llm"] = config.llm.model_dump(
+            exclude={"api_key_encrypted"}, exclude_none=True
+        )
     work_key = hashlib.sha256(
         json.dumps([crawl_type, semantic], sort_keys=True).encode()
     ).hexdigest()
@@ -227,14 +269,15 @@ def fresh_crawl_results(
     return set(
         client.execute(
             f"""SELECT domain, work_key FROM (
-                SELECT domain, work_key, successful
+                SELECT domain, work_key, successful{", company_matching_status, request_id, attempt" if crawl_type != "jobs" else ""}
                 FROM {RESULTS_BY_TYPE[crawl_type]} FINAL
                 WHERE domain IN %(domains)s
                   AND finished_at >= toDateTime64(%(cutoff)s, 6, 'UTC')
                   AND finished_at <= toDateTime64(%(started)s, 6, 'UTC')
                 ORDER BY finished_at DESC, request_id DESC, attempt DESC
                 LIMIT 1 BY domain
-            ) WHERE successful""",
+            ) WHERE successful
+                {"AND (company_matching_status = '' OR (company_matching_status IN ('matched', 'not_found', 'already_mapped') AND (request_id, attempt) IN (SELECT request_id, attempt FROM corpscout.website_company_lookup_results)))" if crawl_type != "jobs" else ""}""",
             {
                 "domains": domains,
                 "cutoff": cutoff.strftime("%Y-%m-%d %H:%M:%S.%f"),
@@ -317,7 +360,15 @@ def resolve_execution(
         changed = [
             name
             for name in FIXED_ON_RESUME
-            if settings[name] != execution["settings"].get(name, False if name == "full_crawl_all" else None)
+            if settings[name]
+            != execution["settings"].get(
+                name,
+                {
+                    "full_crawl_all": False,
+                    "company_country": "SE",
+                    "skip_company_matching_if_mapped": True,
+                }.get(name),
+            )
         ]
         if changed:
             raise ValueError(
@@ -420,7 +471,9 @@ def process_crawls(
             verified_llms: set[str] = set()
             if config.llm is not None:
                 verify_crawl_llm(http, url, config.llm.model_dump(exclude_none=True))
-                verified_llms.add(json.dumps(config.llm.model_dump(exclude_none=True), sort_keys=True))
+                verified_llms.add(
+                    json.dumps(config.llm.model_dump(exclude_none=True), sort_keys=True)
+                )
             params = {
                 "type": crawl_type,
                 "limit": config.batch_size * config.max_batches,
@@ -441,7 +494,8 @@ def process_crawls(
                 params["bucket"] = config.bucket
                 selected += " AND toUInt16(cityHash64(domain) % 256) = %(bucket)s"
             pending_sql = f"""SELECT * FROM {SUBMISSIONS} FINAL
-                WHERE crawl_type=%(type)s AND request_id NOT IN (SELECT request_id FROM {table} FINAL)"""
+                WHERE crawl_type=%(type)s AND request_id NOT IN (SELECT request_id FROM {table} FINAL
+                {"WHERE company_matching_status = '' OR (request_id, attempt) IN (SELECT request_id, attempt FROM corpscout.website_company_lookup_results)" if crawl_type != "jobs" else ""})"""
             pending = read_rows(
                 client,
                 pending_sql
@@ -466,6 +520,23 @@ def process_crawls(
 
             def collect(submissions: list[dict]) -> None:
                 nonlocal processed
+                matching = [
+                    item
+                    for item in submissions
+                    if json.loads(item["request_json"]).get("company_lookup")
+                ]
+                submissions = [item for item in submissions if item not in matching]
+                for start in range(0, len(matching), config.matching_batch_size):
+                    group = matching[start : start + config.matching_batch_size]
+                    processed += process_matching_batch(
+                        context, client, http, url, group
+                    )
+                    [(ok, failed)] = client.execute(
+                        f"SELECT countIf(successful AND company_matching_status NOT IN ('failed', 'cancelled')), countIf(NOT successful OR company_matching_status IN ('failed', 'cancelled')) FROM {table} FINAL WHERE request_id IN %(ids)s",
+                        {"ids": tuple(item["request_id"] for item in group)},
+                    )
+                    metadata["completed"] += ok
+                    metadata["unsuccessful"] += failed
                 for start in range(0, len(submissions), config.max_in_flight):
                     group = submissions[start : start + config.max_in_flight]
                     for item in group:
@@ -487,8 +558,16 @@ def process_crawls(
                                 raise ValueError(
                                     "Crawler returned a different request identity"
                                 )
-                            if job["state"] in {"completed", "failed", "cancelled"} and json.loads(item["request_json"]).get("llm", {}).get("profile_id"):
-                                finish_external_request("crawler", request_id, job["state"])
+                            if job["state"] in {
+                                "completed",
+                                "failed",
+                                "cancelled",
+                            } and json.loads(item["request_json"]).get("llm", {}).get(
+                                "profile_id"
+                            ):
+                                finish_external_request(
+                                    "crawler", request_id, job["state"]
+                                )
                             if (
                                 job["state"] not in {"completed", "failed", "cancelled"}
                                 or job["s3_state"] == "pending"

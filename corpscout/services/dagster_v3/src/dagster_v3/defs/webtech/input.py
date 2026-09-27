@@ -237,6 +237,8 @@ def load_draft(
     # Omit new empty options so receipts created before these fields keep their fingerprint.
     if config.se_domain_filters is not None:
         selection["se_domain_filters"] = config.se_domain_filters.model_dump()
+        if not config.se_domain_filters.suffix:
+            selection["se_domain_filters"].pop("suffix")
     if config.excluded_targets:
         selection["excluded_targets"] = sorted(set(config.excluded_targets))
     selection["filters"] = {

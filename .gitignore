@@ -62,3 +62,7 @@ corpscout/services/cc-processor/tools/**/uv.lock
 corpscout/dagster_v3/storage/
 companies/analysis/sweden/data_model/
 corpscout/services/searcher/profile*/
+
+# Local browser sessions contain cookies, credentials, and cache files.
+corpscout/searcher/.local/
+corpscout/searcher/.testd/

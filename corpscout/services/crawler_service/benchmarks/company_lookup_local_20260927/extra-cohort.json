@@ -1,0 +1,37 @@
+{
+  "selection": "Next four DNS-resolving distinct companies after the frozen initial cohort, using the same ESEF 2024 primary-domain selection. Added to obtain at least 20 fetchable websites; initial failures remain in the report.",
+  "cases": [
+    {
+      "company_id": "5560263237",
+      "legal_name": "INVESTMENTAKTIEBOLAGET LATOUR",
+      "root_domain": "latour.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/5493006GFBLNB3Y0Y789/2024-12-31/ESEF/SE/0/5493006GFBLNB3Y0Y789-2024-12-31-sv/reports/ixbrlviewer.html"
+      ]
+    },
+    {
+      "company_id": "5560128240",
+      "legal_name": "HUFVUDSTADEN AB",
+      "root_domain": "hufvudstaden.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/213800UEV5ZAFFVQ4J85/2024-12-31/ESEF/SE/0/hufv-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ]
+    },
+    {
+      "company_id": "5560179367",
+      "legal_name": "INDUTRADE AKTIEBOLAG",
+      "root_domain": "indutrade.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300FISLQ6CEFP1867/2024-12-31/ESEF/SE/0/indu-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ]
+    },
+    {
+      "company_id": "5562384361",
+      "legal_name": "Medivir Aktiebolag",
+      "root_domain": "medivir.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300VWDGUX0WMJ1T79/2024-12-31/ESEF/SE/0/medivir-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ]
+    }
+  ]
+}

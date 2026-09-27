@@ -15,9 +15,8 @@ from time import monotonic, sleep
 import dagster as dg
 from dlt.sources.helpers.requests import Session
 
-from dagster_v3.defs.common.llm_control import finish_external_request
-
 from dagster_v3.defs.common import queue_execution
+from dagster_v3.defs.common.llm_control import finish_external_request
 from dagster_v3.defs.common.result_buffer import ResultBuffer
 from dagster_v3.defs.website_crawl.dispatch import (
     CrawlRequestConflict,
@@ -27,6 +26,7 @@ from dagster_v3.defs.website_crawl.dispatch import (
     verify_crawl_llm,
 )
 from dagster_v3.defs.website_crawl.input import TASK_DOMAINS, task_processor
+from dagster_v3.defs.website_crawl.matching_batches import process_matching_batch
 from dagster_v3.defs.website_crawl.results import (
     DEFAULT_CRAWLER_API_URL,
     INPUTS_BY_TYPE,
@@ -94,7 +94,7 @@ def start_crawl_execution(
             "total": total,
         }, total
 
-    profile = config.model_dump(exclude=NOT_FROZEN)
+    profile = config.model_dump(exclude=NOT_FROZEN | {"matching_batch_size"})
     if profile["llm"] is None:
         # Existing executions without an LLM envelope stay resumable.
         profile.pop("llm")
@@ -103,6 +103,13 @@ def start_crawl_execution(
     if saved is not None and config.execution_id in (None, saved["execution_id"]):
         if "full_crawl_all" not in saved["profile"] and not profile["full_crawl_all"]:
             profile.pop("full_crawl_all")
+        for name, default in (
+            ("match_company", None),
+            ("company_country", "SE"),
+            ("skip_company_matching_if_mapped", True),
+        ):
+            if name not in saved["profile"] and profile.get(name) == default:
+                profile.pop(name, None)
         saved_llm = saved["profile"].get("llm")
         if profile.get("llm") is not None and saved_llm is not None:
             # Fresh encryption changes the nonce, not the content profile. Compare
@@ -161,6 +168,7 @@ def remaining_crawl_entries(
             p.headless AS headless, p.proxy_route AS proxy_route,
             p.save_artifacts AS save_artifacts, p.preset_version AS preset_version,
             p.config_json AS config_json
+            {", p.match_company AS match_company, p.company_country AS company_country, p.skip_company_matching_if_mapped AS skip_company_matching_if_mapped" if crawl_type != "jobs" else ""}
         FROM (
             SELECT domain, website_url, {REQUEST_ID_SQL} AS request_id
             FROM {TASK_DOMAINS}
@@ -168,7 +176,8 @@ def remaining_crawl_entries(
         ) AS q
         LEFT JOIN {INPUTS_BY_TYPE[crawl_type]}_current AS p ON q.domain = p.domain
         WHERE q.request_id NOT IN (
-            SELECT request_id FROM {RESULTS_BY_TYPE[crawl_type]} WHERE run_id = %(exec)s)
+            SELECT request_id FROM {RESULTS_BY_TYPE[crawl_type]} WHERE run_id = %(exec)s
+            {"AND (company_matching_status = '' OR (request_id, attempt) IN (SELECT request_id, attempt FROM corpscout.website_company_lookup_results))" if crawl_type != "jobs" else ""})
         ORDER BY q.domain LIMIT %(limit)s""",
         {**crawl_parameters(task, crawl_type), "after": after, "limit": limit},
     )
@@ -349,6 +358,22 @@ def run_crawl_window(context, client, http, url, task, crawl_type, config) -> in
                         )
                     )
                     continue
+                if json.loads(ready[0]["request_json"]).get("company_lookup"):
+                    # Finish ordinary in-flight work before waiting on a durable batch.
+                    if window:
+                        break
+                    batch = []
+                    while (
+                        ready
+                        and len(batch) < config.matching_batch_size
+                        and json.loads(ready[0]["request_json"]).get("company_lookup")
+                    ):
+                        batch.append(ready.popleft())
+                    stored += process_matching_batch(
+                        context, client, http, url, batch, input_id=str(task["task_id"])
+                    )
+                    last_progress = monotonic()
+                    continue
                 item = ready.popleft()
                 if item["request_id"] in window or item["request_id"] in buffered:
                     continue
@@ -391,7 +416,7 @@ def finish_crawl_execution(store, client, task, crawl_type, config) -> dict:
     unresolved = count_unresolved(client, task, crawl_type, config)
     [(succeeded, failed)] = client.execute(
         f"""SELECT countIf(ok), countIf(NOT ok) FROM (
-            SELECT request_id, argMax(successful, tuple(finished_at, attempt)) AS ok
+            SELECT request_id, argMax(successful{" AND company_matching_status NOT IN ('failed', 'cancelled')" if crawl_type != "jobs" else ""}, tuple(finished_at, attempt)) AS ok
             FROM {RESULTS_BY_TYPE[crawl_type]} FINAL
             WHERE run_id = %(exec)s AND request_id IN (
                 SELECT {REQUEST_ID_SQL} FROM {TASK_DOMAINS}

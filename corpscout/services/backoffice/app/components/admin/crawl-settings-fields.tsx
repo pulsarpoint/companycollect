@@ -12,6 +12,7 @@ import { NativeSelect, NativeSelectOption } from "~/components/ui/native-select"
  * the server validates them with parseCrawlSettings.
  */
 export function CrawlSettingsFields({type, idPrefix, initialProfileId = ""}: {type: DomainCrawlType; idPrefix: string; initialProfileId?: string}) {
+  const [matchCompany, setMatchCompany] = useState("saved");
   const [pageSelection, setPageSelection] = useState("saved");
   const id = (name: string) => `${idPrefix}-${name}`;
   return <FieldGroup className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -23,6 +24,13 @@ export function CrawlSettingsFields({type, idPrefix, initialProfileId = ""}: {ty
     <Field><FieldLabel htmlFor={id("max-calls")}>Model call limit</FieldLabel><Input id={id("max-calls")} name="max_model_calls" type="number" min={1} max={1000} defaultValue={20} required /></Field>
     <Field><FieldLabel htmlFor={id("page-selection")}>Page selection</FieldLabel><NativeSelect id={id("page-selection")} name="page_selection" value={type === "site_info" ? "basic_info" : pageSelection} onChange={(event) => setPageSelection(event.target.value)} required>{type === "site_info" ? <NativeSelectOption value="basic_info">Basic info · single page</NativeSelectOption> : <><NativeSelectOption value="saved">Saved pages / discovery preset</NativeSelectOption><NativeSelectOption value="instructions">Custom discovery instructions</NativeSelectOption></>}</NativeSelect></Field>
     {type === "full" && <Field><FieldLabel htmlFor={id("full-crawl-all")}>Full crawl all</FieldLabel><NativeSelect id={id("full-crawl-all")} name="full_crawl_all" defaultValue="false"><NativeSelectOption value="false">No · company websites only</NativeSelectOption><NativeSelectOption value="true">Yes · include shops and content sites</NativeSelectOption></NativeSelect><FieldDescription>By default, online shops, news, forums and other content sites stop after first-page classification. Enable to crawl these sites too.</FieldDescription></Field>}
+    {type !== "jobs" && <>
+      <Field><FieldLabel htmlFor={id("match-company")}>Company matching</FieldLabel><NativeSelect id={id("match-company")} name="match_company" value={matchCompany} onChange={event => setMatchCompany(event.target.value)}><NativeSelectOption value="saved">Use saved request settings</NativeSelectOption><NativeSelectOption value="true">On · find the website operator</NativeSelectOption><NativeSelectOption value="false">Off</NativeSelectOption></NativeSelect><FieldDescription>Matching uses the crawl LLM and the captured pages. Matching batches contain 200 domains and use four crawler sessions.</FieldDescription></Field>
+      {matchCompany === "true" && <>
+        <Field><FieldLabel htmlFor={id("company-country")}>Company registry</FieldLabel><NativeSelect id={id("company-country")} name="company_country" defaultValue="SE"><NativeSelectOption value="SE">Sweden (SE)</NativeSelectOption></NativeSelect></Field>
+        <Field><FieldLabel htmlFor={id("skip-mapped")}>Already mapped domains</FieldLabel><NativeSelect id={id("skip-mapped")} name="skip_company_matching_if_mapped" defaultValue="true"><NativeSelectOption value="true">Skip matching when already connected</NativeSelectOption><NativeSelectOption value="false">Always run matching</NativeSelectOption></NativeSelect><FieldDescription>The crawl still runs. Proposals do not count as active connections.</FieldDescription></Field>
+      </>}
+    </>}
     <Field><FieldLabel htmlFor={id("refresh")}>Fresh results</FieldLabel><NativeSelect id={id("refresh")} name="force_refresh" defaultValue="false"><NativeSelectOption value="false">Skip valid recent results</NativeSelectOption><NativeSelectOption value="true">Force a new crawl</NativeSelectOption></NativeSelect></Field>
     {type !== "site_info" && pageSelection === "instructions" && <Field className="sm:col-span-2"><FieldLabel htmlFor={id("instructions")}>Page-selection instructions</FieldLabel><Textarea id={id("instructions")} name="instructions" placeholder="Find current vacancies and collect the full job descriptions" maxLength={20000} required /></Field>}
     <Field><FieldLabel htmlFor={id("parallel")}>Concurrent crawls</FieldLabel><Input id={id("parallel")} name="max_in_flight" type="number" min={1} max={20} defaultValue={3} required /></Field>

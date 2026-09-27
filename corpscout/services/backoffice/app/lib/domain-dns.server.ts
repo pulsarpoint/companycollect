@@ -1,3 +1,4 @@
+import { TupleParam } from "@clickhouse/client";
 import { chQuery } from "~/lib/clickhouse.server";
 import { graphDomainError } from "~/lib/domain-graph";
 import { dnsGroupKey, dnsObservationHistory, type DnsFilters, type DnsRecordValue, type DnsObservationPeriod } from "~/lib/domain-dns";
@@ -70,7 +71,7 @@ export async function getDomainDns(domain: string, filters: DnsFilters): Promise
     FROM ${TABLE} WHERE root_domain = {domain:String}
       AND (name,record_type_code,record_class_code) IN {keys:Array(Tuple(String,UInt16,UInt16))}
     ORDER BY name,record_type_code,record_class_code,priority,value,id ${SETTINGS}`,
-    { domain, keys: groups.map((group) => [group.name, group.type_code, group.class_code]) },
+    { domain, keys: groups.map((group) => new TupleParam([group.name, group.type_code, group.class_code])) },
   ) : [];
   const byKey = new Map<string, DnsRecordValue[]>();
   for (const row of rows) {

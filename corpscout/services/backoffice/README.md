@@ -11,6 +11,16 @@ and exclusions are passed to the input asset. That asset selects from
 including disabled rows and operator settings, are preserved. The UI returns the
 input run link. It does not write these tables directly or start crawling.
 
+**Workspace → Domains** (`/admin/domains`) uses the same crawl queue control.
+Combine **Domain suffix = .se**, **Companies = Without companies**, and
+**Company matching = Not attempted**, then select individual rows or all matching
+domains across pages. Explicit exclusions survive pagination. Dagster evaluates
+the applied inventory filters server-side; no list of hundreds of thousands of
+domains is sent through the browser. Company presence reflects current active
+associations, and any published matching outcome counts as an attempt, including
+failures. In the crawl queue, select the model and enable company matching before
+starting processing. See the [domain list contract](../dagster_v3/docs/operations/domains-search.md).
+
 The **Crawler** page at `/admin/crawls` separates saved inputs into **Jobs**,
 **Basic info**, and **Full crawl** tabs with inventory counts. Select individual
 domains or activate the enabled inputs on the current page. **Activate** opens a

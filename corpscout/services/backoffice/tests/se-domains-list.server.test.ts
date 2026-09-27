@@ -117,6 +117,16 @@ describe("se-domains-list.server", () => {
     expect(clickhouse.query).toHaveBeenCalledTimes(1);
   });
 
+  it("uses the same suffix boundary for counts and paginated rows", async () => {
+    await listSeDomainsPage({ ...EMPTY, suffix: "se", page: 2, pageSize: 50 });
+    await loadSeDomainsCounts({ ...EMPTY, suffix: "se" });
+    expect(clickhouse.query).toHaveBeenCalledTimes(2);
+    for (const [sql, params] of clickhouse.query.mock.calls) {
+      expect(sql).toContain("endsWith(d.root_domain, {suffix:String})");
+      expect(params).toMatchObject({ suffix: ".se" });
+    }
+  });
+
   it("counts under the same filter as the page", async () => {
     clickhouse.query.mockResolvedValueOnce([
       { rows: "11370", domains: "9355", companies: "8735", shared: "718" },

@@ -471,6 +471,7 @@ EXPECTED_MIGRATIONS = (
     "000456_corpscout_brave_captcha_health",
     "000457_remove_brave_captcha_health",
     "000458_corpscout_ip_enrichment_queue_contract",
+    "000459_corpscout_website_company_lookup_results",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}

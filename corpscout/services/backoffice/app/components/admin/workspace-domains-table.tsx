@@ -3,12 +3,17 @@ import { Link, useFetcher } from "react-router";
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { Badge } from "~/components/ui/badge";
+import { Checkbox } from "~/components/ui/checkbox";
+import { isDomainSelected, selectDomains } from "~/lib/domain-selection";
+import type { WorkspaceDomainSelection } from "~/lib/workspace-domains";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/ui/table";
 import type { DomainEvidence, DomainSite } from "~/lib/workspace-domains.server";
 import type { loader as sitesLoader } from "~/routes/admin-domain-sites";
 import { DOMAIN_SOURCE_LABELS, workspaceDomainHref } from "~/lib/workspace-domains";
 
-function DomainRow({ row }: { row: DomainEvidence }) {
+type Selection = { value: WorkspaceDomainSelection; onChange: (selection: WorkspaceDomainSelection) => void };
+
+function DomainRow({ row, selection }: { row: DomainEvidence; selection?: Selection }) {
   const [expanded, setExpanded] = useState(false);
   const [sites, setSites] = useState<DomainSite[]>([]);
   const fetcher = useFetcher<typeof sitesLoader>();
@@ -26,6 +31,8 @@ function DomainRow({ row }: { row: DomainEvidence }) {
   }
   return <Fragment>
     <TableRow>
+      {selection && <TableCell><Checkbox aria-label={`Select ${row.root_domain}`} checked={isDomainSelected(selection.value, row.root_domain)}
+        onCheckedChange={checked => selection.onChange(selectDomains(selection.value, [row.root_domain], checked))} /></TableCell>}
       <TableCell><div className="flex items-center gap-2">
         <Button variant="ghost" size="icon-sm" aria-label={`${expanded ? "Collapse" : "Expand"} websites for ${row.root_domain}`}
           aria-expanded={expanded} aria-controls={id} onClick={() => { setExpanded(!expanded); if (!expanded && !fetcher.data) load(); }}>
@@ -40,8 +47,10 @@ function DomainRow({ row }: { row: DomainEvidence }) {
         {row.website_count > 0 ? <p className="text-muted-foreground text-xs">{row.observed_website_count} observed · {row.website_count - row.observed_website_count} assumed</p> : null}
       </TableCell>
       <TableCell className="tabular-nums">{row.company_count}</TableCell>
+      <TableCell>{row.company_matching_status ? <Badge variant="outline">{{ matched: "Matched", not_found: "Not found", already_mapped: "Already associated", failed: "Failed", cancelled: "Cancelled" }[row.company_matching_status] ?? row.company_matching_status}</Badge> : <span className="text-muted-foreground">Not attempted</span>}</TableCell>
+      <TableCell><Link className="underline underline-offset-2" aria-label={`View crawls for ${row.root_domain}`} to={`${workspaceDomainHref(row.root_domain)}/crawl`}>Crawl</Link></TableCell>
     </TableRow>
-    {expanded ? <TableRow><TableCell colSpan={6} className="whitespace-normal">
+    {expanded ? <TableRow><TableCell colSpan={selection ? 9 : 8} className="whitespace-normal">
       <div id={id} className="flex flex-col gap-3 p-3" aria-busy={busy}>
         <h3 className="font-medium">Websites for {row.root_domain}</h3>
         <p className="text-muted-foreground text-xs">Website inventory entries. Observed means evidence exists; it does not confirm current reachability.</p>
@@ -62,9 +71,13 @@ function DomainRow({ row }: { row: DomainEvidence }) {
   </Fragment>;
 }
 
-export function WorkspaceDomainsTable({ rows }: { rows: DomainEvidence[] }) {
+export function WorkspaceDomainsTable({ rows, selection }: { rows: DomainEvidence[]; selection?: Selection }) {
+  const domains = rows.map(row => row.root_domain);
+  const selected = selection ? domains.filter(domain => isDomainSelected(selection.value, domain)).length : 0;
   return <div className="overflow-x-auto rounded-lg border"><Table>
-    <TableHeader><TableRow><TableHead>Domain</TableHead><TableHead>Sources</TableHead><TableHead>DNS records</TableHead><TableHead>DNS last observed</TableHead><TableHead>Websites</TableHead><TableHead>Companies</TableHead></TableRow></TableHeader>
-    <TableBody>{rows.length ? rows.map((row) => <DomainRow key={row.root_domain} row={row} />) : <TableRow><TableCell colSpan={6}>No domains match these filters.</TableCell></TableRow>}</TableBody>
+    <TableHeader><TableRow>{selection && <TableHead><Checkbox aria-label="Select every domain on this page" checked={domains.length > 0 && selected === domains.length}
+      indeterminate={selected > 0 && selected < domains.length} disabled={!domains.length}
+      onCheckedChange={checked => selection.onChange(selectDomains(selection.value, domains, checked))} /></TableHead>}<TableHead>Domain</TableHead><TableHead>Sources</TableHead><TableHead>DNS records</TableHead><TableHead>DNS last observed</TableHead><TableHead>Websites</TableHead><TableHead>Companies</TableHead><TableHead>Company matching</TableHead><TableHead>Crawl</TableHead></TableRow></TableHeader>
+    <TableBody>{rows.length ? rows.map((row) => <DomainRow key={row.root_domain} row={row} selection={selection} />) : <TableRow><TableCell colSpan={selection ? 9 : 8}>No domains match these filters.</TableCell></TableRow>}</TableBody>
   </Table></div>;
 }

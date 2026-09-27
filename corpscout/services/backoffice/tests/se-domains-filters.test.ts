@@ -9,10 +9,11 @@ import {
 describe("se domains filters", () => {
   it("reads the filters off the URL, trimmed and capped", () => {
     const params = new URLSearchParams(
-      "domain= Example.SE &company=5560125220&source= brave &association=connected&status=active&minConfidence=0.7&maxConfidence=0.9&shared=1",
+      "domain= Example.SE &suffix= .SE &company=5560125220&source= brave &association=connected&status=active&minConfidence=0.7&maxConfidence=0.9&shared=1",
     );
     expect(parseSeDomainsFilters(params)).toEqual({
       domain: "example.se",
+      suffix: "se",
       company: "5560125220",
       source: "brave",
       association: "connected",
@@ -42,11 +43,11 @@ describe("se domains filters", () => {
     expect(seDomainsHref(EMPTY_SE_DOMAINS_FILTERS, 1, 50)).toBe("/admin/se/companies/domains");
     expect(
       seDomainsHref(
-        { ...EMPTY_SE_DOMAINS_FILTERS, minConfidence: "0.9", shared: "1" },
+        { ...EMPTY_SE_DOMAINS_FILTERS, suffix: "co.uk", minConfidence: "0.9", shared: "1" },
         3,
         100,
       ),
-    ).toBe("/admin/se/companies/domains?minConfidence=0.9&shared=1&page=3&pageSize=100");
+    ).toBe("/admin/se/companies/domains?suffix=co.uk&minConfidence=0.9&shared=1&page=3&pageSize=100");
   });
 
   it("links a domain to its detail page, encoded", () => {

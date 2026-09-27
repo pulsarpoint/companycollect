@@ -64,7 +64,7 @@ it("fails closed when import history is unavailable", async () => {
   expect(launchRun).not.toHaveBeenCalled();
 });
 
-const filters = {domain: "", company: "", source: "", association: "", status: "", shared: "", minConfidence: "", maxConfidence: ""};
+const filters = {domain: "", suffix: "", company: "", source: "", association: "", status: "", shared: "", minConfidence: "", maxConfidence: ""};
 it("loads distinct selected roots from the current Swedish domain entity", async () => {
   await addSeDomainsToWebtechQueue({mode: "ids", domains: ["b.se", "a.se", "a.se"]}, submission, "operator");
   expect(launchRun).toHaveBeenCalledWith(expect.objectContaining({
@@ -77,14 +77,14 @@ it("loads distinct selected roots from the current Swedish domain entity", async
   }));
 });
 it("passes all matching filters and exclusions without a page limit or results processing", async () => {
-  const query = {...filters, domain: "example", company: "1234567890", source: "brave", association: "connected", status: "active", shared: "1", minConfidence: "0.7", maxConfidence: "0.9"};
+  const query = {...filters, domain: "example", suffix: "se", company: "1234567890", source: "brave", association: "connected", status: "active", shared: "1", minConfidence: "0.7", maxConfidence: "0.9"};
   await addSeDomainsToWebtechQueue({mode: "query", query, excludedDomains: ["example.se"]}, submission, "operator");
   const run = vi.mocked(launchRun).mock.calls[0][0];
   expect(run.runConfig).toEqual({ops: {webtech_scan_input: {config: {
     submission_id: submission, queue_scope: "workspace", source_relation: "corpscout.se_company_domain",
     source_final: true, target_column: "root_domain", source_name: "backoffice:se-company-domains",
     select_all: true, excluded_targets: ["example.se"], se_domain_filters: {
-      domain: "example", company: "1234567890", source: "brave", association: "connected", status: "active", shared: true,
+      domain: "example", suffix: "se", company: "1234567890", source: "brave", association: "connected", status: "active", shared: true,
       min_confidence: 0.7, max_confidence: 0.9,
     },
   }}}});

@@ -22,13 +22,20 @@ export async function publishTestCrawl(form: FormData): Promise<CrawlPublishRece
   catch (error) { if (!(error instanceof CrawlerApiError) || error.status !== 404) throw error; }
   const llm = await verifySelectedLlm(profileId, "crawler");
   const decisionLlm = decisionProfileId ? await verifySelectedLlm(decisionProfileId, "crawler", false, "decision") : null;
+  const body = {...payload, request_id: requestId, llm,
+    ...(decisionLlm ? {decision_llm: decisionLlm} : {}),
+    api: llm.provider === "deepseek" || new URL(llm.base_url).hostname === "api.deepseek.com" ? "deepseek" : "openrouter",
+    config: {...payload.config, provider: null}};
+  const lookup = payload.crawl === undefined ? payload.company_lookup : undefined;
   try {
-    const response = await crawlerFetch("/v1/crawls", {
+    const response = await crawlerFetch(lookup ? "/v1/company-lookups" : "/v1/crawls", {
       method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({...payload, request_id: requestId, llm,
-        ...(decisionLlm ? {decision_llm: decisionLlm} : {}),
-        api: llm.provider === "deepseek" || new URL(llm.base_url).hostname === "api.deepseek.com" ? "deepseek" : "openrouter",
-        config: {...payload.config, provider: null}}),
+      body: JSON.stringify(lookup ? {request_id: requestId, domain: new URL(payload.url).hostname,
+        country: lookup.country, skip_if_mapped: lookup.skip_if_mapped, llm, ...(decisionLlm ? {decision_llm: decisionLlm} : {}),
+        ...(payload.decision_tasks ? {decision_tasks: payload.decision_tasks} : {}),
+        config: body.config, interactive: payload.interactive,
+        challenge_agent_model: payload.challenge_agent_model,
+        challenge_agent_max_runs: payload.challenge_agent_max_runs} : body),
     });
     return receipt(await response.json());
   } catch (error) {

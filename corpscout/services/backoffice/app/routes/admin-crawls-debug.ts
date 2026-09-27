@@ -14,6 +14,7 @@ export async function loader({request}: Route.LoaderArgs) {
     query.set(key, value);
   }
   if (search.get("download") === "1") query.set("download", "true");
+  if (search.get("result") === "1") query.set("result", "true");
   const streaming = search.get("stream") === "1";
   if (streaming) query.set("stream", "true");
   const lastEvent = request.headers.get("Last-Event-ID");

@@ -35,7 +35,7 @@ export const CRAWL_SETTINGS: CrawlSetting[] = [
 ];
 
 export function crawlSettingsFor(profile: CrawlTestProfile, restrictedPages = false) {
-  return CRAWL_SETTINGS.filter(setting => setting.group === "fetch"
+  return CRAWL_SETTINGS.filter(setting => !(profile === "company_lookup" && setting.name === "max_browser_restarts")).filter(setting => setting.group === "fetch"
     || setting.group === "model" && profile !== "pages"
     || ["full", "jobs", "custom"].includes(profile) && (setting.group !== "search" || !restrictedPages)
       && (!restrictedPages || !["max_sitemap_urls", "max_sitemap_files"].includes(setting.name)));

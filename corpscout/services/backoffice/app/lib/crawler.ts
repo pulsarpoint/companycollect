@@ -19,6 +19,7 @@ export interface CrawlPublishReceipt {
   state: string;
 }
 export interface CrawlAttempt {
+  purpose?: "crawl" | "company_lookup";
   request_id: string;
   attempt: number;
   url: string;
@@ -56,6 +57,7 @@ export interface CrawlAttempt {
 }
 export interface CrawlSnapshot {
   debug_available?: boolean;
+  company_lookup_available?: boolean;
   attempts: CrawlAttempt[];
   total: number;
   limit: number;

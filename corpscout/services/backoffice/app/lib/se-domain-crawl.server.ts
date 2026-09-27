@@ -1,7 +1,7 @@
 import { EMPTY_SE_DOMAINS_FILTERS, parseSeDomainsFilters, type SeDomainsFilters } from "~/lib/se-domains-filters";
 import type { SeDomainSelection } from "~/lib/se-domain-selection";
 
-function domains(value: unknown): string[] {
+export function parseDomainNames(value: unknown): string[] {
   if (!Array.isArray(value) || value.some((domain) => typeof domain !== "string" || domain.length > 253 || !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(domain))) {
     throw new Error("Selection must contain valid domain names.");
   }
@@ -12,7 +12,7 @@ export function parseSeDomainSelection(value: unknown): SeDomainSelection {
   if (typeof value !== "object" || value === null || !("mode" in value)) throw new Error("Select domains to submit.");
   if (value.mode === "ids" && "domains" in value) {
     if (Object.keys(value).some((key) => !["mode", "domains"].includes(key))) throw new Error("Invalid domain selection fields.");
-    const selected = domains(value.domains);
+    const selected = parseDomainNames(value.domains);
     if (selected.length === 0) throw new Error("Select at least one domain.");
     return { mode: "ids", domains: selected };
   }
@@ -30,7 +30,7 @@ export function parseSeDomainSelection(value: unknown): SeDomainSelection {
   // Browsing can drop an invalid parameter. A bulk action must never broaden it.
   if (fields.some((key) => parsed[key] !== params.get(key))) throw new Error("Invalid domain filter value.");
   if (parsed.minConfidence !== "" && parsed.maxConfidence !== "" && Number(parsed.minConfidence) > Number(parsed.maxConfidence)) throw new Error("Minimum confidence cannot exceed maximum confidence.");
-  return { mode: "query", query: parsed, excludedDomains: domains(value.excludedDomains) };
+  return { mode: "query", query: parsed, excludedDomains: parseDomainNames(value.excludedDomains) };
 }
 
 /** Input asset config: Dagster evaluates the selection inside ClickHouse. */
@@ -47,6 +47,7 @@ export function inputConfig(selection: SeDomainSelection): Record<string, unknow
     config.excluded_ids = selection.excludedDomains;
     config.se_domain_filters = {
       domain: q.domain, company: q.company, source: q.source, association: q.association,
+      ...(q.suffix === "" ? {} : {suffix: q.suffix}),
       status: q.status, shared: q.shared === "1",
       ...(q.minConfidence === "" ? {} : {min_confidence: Number(q.minConfidence)}),
       ...(q.maxConfidence === "" ? {} : {max_confidence: Number(q.maxConfidence)}),

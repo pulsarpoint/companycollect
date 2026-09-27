@@ -2,6 +2,7 @@ import { crawlSettingsFor } from "~/lib/crawl-settings";
 
 export const CRAWL_TEST_PROFILES = [
   {value: "site_info", label: "Basic info", description: "Classify the website and collect basic information from one page, including shops and content sites."},
+  {value: "company_lookup", label: "Find company", description: "Identify the operator of any website, including shops, news and streaming sites, through its footer, About, contact and legal pages. Propose a Swedish registry match without saving company associations."},
   {value: "full", label: "Full crawl", description: "Research a company website: company details, contacts, products, people, jobs and financial sources."},
   {value: "jobs", label: "Jobs", description: "Discover vacancies and collect full job descriptions, including the company’s recruiting platform."},
   {value: "pages", label: "Specific pages", description: "Collect the pages you provide without discovering additional pages."},
@@ -52,6 +53,13 @@ export function parseTestCrawl(form: FormData) {
   const agentModel = read("challenge_agent_model");
   if (!["deepseek-flash", "z-ai/glm-5.3-flash"].includes(agentModel)) throw new Error("Choose a CAPTCHA model.");
   const allSites = boolean("full_crawl_all");
+  const matching = profile === "company_lookup" || (form.has("match_company") && boolean("match_company"));
+  if (matching && !["site_info", "full", "company_lookup"].includes(profile)) throw new Error("Company matching is available for basic and full crawls.");
+  const country = (read("country") || (profile !== "company_lookup" ? "SE" : "")).toUpperCase();
+  if (matching && country !== "SE") throw new Error("Company matching currently supports Sweden (SE).");
+  const skipIfMapped = form.has("skip_company_matching_if_mapped") ? boolean("skip_company_matching_if_mapped") : false;
+  if (profile === "company_lookup" && (country !== "SE" || maxPages > 10 || allSites)) throw new Error("Find company supports Sweden (SE) and at most 10 identity pages for any website category; full content crawling is not used.");
+  if (profile === "company_lookup" && (new URL(url).pathname !== "/" || new URL(url).search || new URL(url).port)) throw new Error("Find company starts from a domain's homepage; remove the path, query and port.");
   const instructions = read("instructions");
   const pages = [...new Set(read("pages").split(/\r?\n/).map(page => page.trim()).filter(Boolean).map(page => websiteUrl(page, url)))];
   if (pages.length > 1000) throw new Error("Enter at most 1000 pages.");
@@ -70,10 +78,11 @@ export function parseTestCrawl(form: FormData) {
     overrides[setting.name] = typeof setting.defaultValue === "boolean" ? boolean(key) : integer(key, setting.min!, setting.max!);
   }
   if (settings.some(setting => setting.name === "max_sitemap_urls") && Number(overrides.max_sitemap_urls ?? 500) >= Number(overrides.max_candidates ?? 1000)) throw new Error("Candidate URL limit must be greater than the sitemap URL limit.");
-  const decisionTasks = (["site_eligibility", "link_selection"] as const).filter(task => {
+  const decisionTasks = (["site_eligibility", "link_selection", "company_match"] as const).filter(task => {
     const selected = read(`decision.${task}`) || "processing";
     if (!["processing", "jev"].includes(selected)) throw new Error("Choose Processing LLM or Jev for each decision step.");
-    if (selected === "jev" && (profile === "pages" || task === "link_selection" && profile === "site_info")) throw new Error("This decision step is not used by the selected crawl profile.");
+    if (selected === "jev" && (profile === "pages" || task === "link_selection" && ["site_info", "company_lookup"].includes(profile))) throw new Error("This decision step is not used by the selected crawl profile.");
+    if (selected === "jev" && task === "company_match" && !matching) throw new Error("Enable company matching to rank company candidates.");
     return selected === "jev";
   });
   const decisionProfileId = read("decision_llm_profile_id");
@@ -83,6 +92,7 @@ export function parseTestCrawl(form: FormData) {
   const payload = {
     url,
     debug: true,
+    ...(matching ? {company_lookup: {country, skip_if_mapped: skipIfMapped}} : {}),
     ...(decisionTasks.length ? {decision_tasks: decisionTasks} : {}),
     ...(profile !== "pages" ? {site_info: true} : {}),
     ...(profile === "site_info" ? {crawl: false} : {}),

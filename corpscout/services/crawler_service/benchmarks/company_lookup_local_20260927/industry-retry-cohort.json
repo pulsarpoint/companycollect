@@ -1,0 +1,13 @@
+{
+  "selection": "Separate retry of Lifco after a truncated local-model response in the frozen industry run; do not replace the original outcome.",
+  "cases": [
+    {
+      "company_id": "5564653185",
+      "legal_name": "Lifco AB (publ)",
+      "root_domain": "lifco.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300RTLL4VDQRCTW41/2024-12-31/ESEF/SE/0/549300RTLL4VDQRCTW41-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ]
+    }
+  ]
+}

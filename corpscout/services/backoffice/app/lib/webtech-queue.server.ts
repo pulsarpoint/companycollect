@@ -35,6 +35,7 @@ export async function addSeDomainsToWebtechQueue(value: unknown, submissionId: s
     config.excluded_targets = [...selection.excludedDomains].sort();
     config.se_domain_filters = {
       domain: q.domain, company: q.company, source: q.source, association: q.association,
+      ...(q.suffix === "" ? {} : {suffix: q.suffix}),
       status: q.status, shared: q.shared === "1",
       ...(q.minConfidence === "" ? {} : {min_confidence: Number(q.minConfidence)}),
       ...(q.maxConfidence === "" ? {} : {max_confidence: Number(q.maxConfidence)}),

@@ -409,6 +409,47 @@ def test_se_domain_query_exclusions_apply_to_whole_domain(se_domains):
 
 
 @pytest.mark.parametrize(
+    ("suffix", "expected"),
+    [("se", ["example.se"]), ("co.uk", ["example.co.uk"])],
+)
+def test_suffix_selection_matches_complete_labels(se_domains, suffix, expected):
+    client, *_ = se_domains
+    domains = [
+        "example.se", "example.se.com", "example.use", "example.co.uk", "example.co.uk.com"
+    ]
+    client.execute(
+        "INSERT INTO corpscout.se_company_domain VALUES",
+        [("500", domain, ["brave"], "connected", 1, 0.8, 1) for domain in domains],
+    )
+    add(se_domains, "full", **SE_SOURCE, se_domain_filters={"suffix": suffix})
+    assert client.execute(
+        "SELECT domain FROM corpscout.website_full_crawl_requests_current ORDER BY domain"
+    ) == [(domain,) for domain in expected]
+
+
+def test_suffix_preserves_old_crawl_receipts_and_detects_changed_selection(se_domains):
+    from dagster_v3.defs.common import draft_queue
+
+    _, resource, processing = se_domains
+    submission_id = str(uuid4())
+    selection = {**SE_SOURCE, "se_domain_filters": {"source": "brave"}}
+    config = CrawlQueueInputConfig(crawl_type="full", **selection)
+    original = load_crawl_draft(config, submission_id, processing, resource)
+    receipt = draft_queue.submission(processing, submission_id)
+    assert "suffix" not in receipt["selection_config"]["se_domain_filters"]
+    assert "workspace_domain_filters" not in receipt["selection_config"]
+    replay = load_crawl_draft(config, submission_id, processing, resource)
+    assert replay["task_id"] == original["task_id"]
+    assert replay["input_count"] == original["input_count"]
+    selection["se_domain_filters"]["suffix"] = "se"
+    with pytest.raises(ValueError, match="different selection"):
+        load_crawl_draft(
+            CrawlQueueInputConfig(crawl_type="full", **selection),
+            submission_id, processing, resource,
+        )
+
+
+@pytest.mark.parametrize(
     "filters",
     [
         {"source": "unknown"},
@@ -418,6 +459,10 @@ def test_se_domain_query_exclusions_apply_to_whole_domain(se_domains):
         {"max_confidence": 2},
         {"min_confidence": 0.9, "max_confidence": 0.5},
         {"company": "1 OR 1=1"},
+        {"suffix": "se%"},
+        {"suffix": ".se"},
+        {"suffix": "se.com' OR 1=1"},
+        {"suffix": "a" * 64},
     ],
 )
 def test_invalid_se_domain_criteria_are_rejected(filters):

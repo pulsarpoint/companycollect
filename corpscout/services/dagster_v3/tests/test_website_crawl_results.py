@@ -46,6 +46,9 @@ def database(server, processing_postgres_url):  # noqa: F811
     for statement in migration.read_text().split(";"):
         if statement.strip():
             client.execute(statement)
+    for statement in (migration.parent / "000459_corpscout_website_company_lookup_results.up.sql").read_text().split(";"):
+        if statement.strip():
+            client.execute(statement)
     for table in (*INPUT_TABLES, *RESULTS_BY_TYPE.values(), SUBMISSIONS):
         client.execute(f"TRUNCATE TABLE {table}")
     return client, resource, ProcessingResource(postgres_url=processing_postgres_url)
@@ -539,3 +542,20 @@ def test_resume_of_retired_task_execution_is_rejected(database, crawler):
         assert "execution_id belongs to a retired crawl task" in str(
             resumed.get_step_failure_events()[0].event_specific_data.error
         )
+
+
+def test_matching_failure_and_unpublished_result_do_not_satisfy_freshness(database):
+    from datetime import timedelta
+    from dagster_v3.defs.website_crawl.results import fresh_crawl_results
+    client, _, _ = database
+    client.execute("""INSERT INTO corpscout.website_site_info_results
+        (domain, request_id, attempt, work_key, successful, finished_at, company_matching_status)
+        VALUES ('failed-match.se','failed-match',1,'failed',true,now64(6),'failed'),
+               ('incomplete.se','not-published',1,'pending',true,now64(6),'matched'),
+               ('mapped.se','mapped',1,'mapped',true,now64(6),'already_mapped')""")
+    client.execute("""INSERT INTO corpscout.website_company_lookup_results
+        (country, domain, request_id, attempt, status, found)
+        VALUES ('SE','mapped.se','mapped',1,'already_mapped',false)""")
+    now = datetime.now(UTC)
+    fresh = fresh_crawl_results(client, 'site_info', ('failed-match.se', 'incomplete.se', 'mapped.se'), cutoff=now-timedelta(days=1), started=now+timedelta(seconds=1))
+    assert fresh == {('mapped.se', 'mapped')}

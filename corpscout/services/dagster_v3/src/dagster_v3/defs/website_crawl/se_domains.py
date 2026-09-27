@@ -10,6 +10,12 @@ SE_DOMAIN_TABLE = "corpscout.se_company_domain"
 
 class SeDomainFilters(dg.Config):
     domain: str = Field(default="", max_length=253)
+    suffix: str = Field(
+        default="",
+        max_length=253,
+        pattern=r"^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*)?$",
+        description="Domain suffix without a leading dot, e.g. se or co.uk",
+    )
     company: str = Field(default="", pattern=r"^[0-9]*$")
     source: Literal["", "brave", "wikidata", "esef_filing", "common_crawl_identity"] = (
         ""
@@ -36,6 +42,9 @@ class SeDomainFilters(dg.Config):
         if self.domain:
             where.append("root_domain LIKE %(se_domain)s")
             params["se_domain"] = f"%{self.domain}%"
+        if self.suffix:
+            where.append("endsWith(root_domain, %(se_suffix)s)")
+            params["se_suffix"] = f".{self.suffix}"
         if self.company:
             where.append("company_id = %(se_company)s")
             params["se_company"] = self.company

@@ -6,6 +6,27 @@ function form(overrides: Record<string, string> = {}) {
   return result;
 }
 describe("crawl test profiles", () => {
+  it("restricts company lookup to Swedish homepage tests and supported decisions", () => {
+    const valid = {crawl_profile: "company_lookup", country: "se", max_pages: "4"};
+    expect(parseTestCrawl(form(valid)).payload).toMatchObject({company_lookup: {country: "SE"}, debug: true, config: {max_pages: 4}});
+    const invalidInputs: Record<string, string>[] = [{country: "NO"}, {max_pages: "11"}, {url: "example.com/about"}, {url: "example.com/?q=1"}, {full_crawl_all: "true"}, {"decision.link_selection": "jev"}, {"config.web_search": "true"}];
+    for (const invalid of invalidInputs) {
+      expect(() => parseTestCrawl(form({...valid, ...invalid}))).toThrow();
+    }
+    expect(parseTestCrawl(form({...valid, "decision.site_eligibility": "jev", decision_llm_profile_id: "22222222-2222-4222-8222-222222222222"})).payload.decision_tasks).toEqual(["site_eligibility"]);
+    expect(parseTestCrawl(form({...valid, "decision.company_match": "jev", decision_llm_profile_id: "22222222-2222-4222-8222-222222222222"})).payload.decision_tasks).toEqual(["company_match"]);
+    expect(() => parseTestCrawl(form({"decision.company_match": "jev"}))).toThrow("Enable company matching");
+  });
+  it("adds matching to basic and full without changing the crawl mode", () => {
+    for (const profile of ["site_info", "full"]) {
+      const result = parseTestCrawl(form({crawl_profile: profile, max_pages: profile === "site_info" ? "1" : "20", match_company: "true", country: "SE", skip_company_matching_if_mapped: "true", "decision.company_match": "jev", decision_llm_profile_id: "22222222-2222-4222-8222-222222222222"}));
+      expect(result.payload.crawl).toBe(profile === "site_info" ? false : "full");
+      expect(result.payload.company_lookup).toEqual({country: "SE", skip_if_mapped: true});
+      expect(result.payload.decision_tasks).toEqual(["company_match"]);
+    }
+    expect(() => parseTestCrawl(form({crawl_profile: "jobs", match_company: "true"}))).toThrow("basic and full");
+    expect(() => parseTestCrawl(form({match_company: "true", country: "NO"}))).toThrow("Sweden");
+  });
   it("maps basic, full and jobs to the real crawler modes", () => {
     expect(parseTestCrawl(form({crawl_profile: "site_info", max_pages: "1"})).payload).toMatchObject({site_info: true, crawl: false, config: {max_pages: 1}, full_crawl_all: false});
     expect(parseTestCrawl(form()).payload).toMatchObject({url: "https://example.com/", crawl: "full", full_crawl_all: false});

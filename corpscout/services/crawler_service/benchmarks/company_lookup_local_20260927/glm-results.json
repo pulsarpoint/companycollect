@@ -1,0 +1,2105 @@
+{
+  "manifest": {
+    "started_at": "2026-09-27T14:36:32.334980+00:00",
+    "selection": "Same 25 cases as the completed initial and supplementary 2026-09-27 local-model benchmark; no cases replaced or omitted.",
+    "model": "z-ai/glm-5.3-flash",
+    "profile_id": "9299f05a-103d-410f-a445-1e712a21108a",
+    "revision": 1,
+    "reasoning_effort": null,
+    "decision_model": null,
+    "decision_tasks": [],
+    "config": {
+      "max_pages": 4,
+      "max_model_calls": 20
+    },
+    "concurrency": 2,
+    "source_sha256": {
+      "company_lookup.py": "516c45c722e558007de893afa3a3f4ecde5ad50dae5bbc59aed7227ed57d9389",
+      "company_search.py": "f3e2b61873c0a88343c85245533ec64633d1463c05d248507af84e6ac21f3fae",
+      "company_evidence.py": "ca4563a4105104bd4cfdfdb2f54b9c030429f1edf5e8bf2e83b595343c82524e",
+      "company_industry.py": "f65095e76b6c021933a2b8752c92d715ec9234dc57d8167916386ab2dd4e4d95",
+      "jev.py": "ff15fd2307dc61934d731492daad449139e530620516fab09d40c5d9961a4d0c"
+    },
+    "cases": [
+      {
+        "company_id": "5563029726",
+        "legal_name": "ADDTECH AB",
+        "root_domain": "addtech.se",
+        "reference_urls": [
+          "https://www.addtech.se/kontakt-oss",
+          "https://www.addtech.se/anvandarvillkor"
+        ],
+        "request_id": "lookup-local-563edc45cd60-01"
+      },
+      {
+        "company_id": "5560452103",
+        "legal_name": "JM AB",
+        "root_domain": "jm.se",
+        "reference_urls": [
+          "https://filings.xbrl.org/529900X0UEM9DOM6FK12/2024-12-31/ESEF/SE/0/JM-2024-12-31/reports/ixbrlviewer.html"
+        ],
+        "request_id": "lookup-local-563edc45cd60-02"
+      },
+      {
+        "company_id": "5568254741",
+        "legal_name": "Stendörren Fastigheter AB",
+        "root_domain": "stendorren.se",
+        "reference_urls": [
+          "https://filings.xbrl.org/5493003YS3NSPZJ5WU39/2024-12-31/ESEF/SE/0/sten-2024-12-31-0-sv/reports/ixbrlviewer.html"
+        ],
+        "request_id": "lookup-local-563edc45cd60-03"
+      },
+      {
+        "company_id": "5565802526",
+        "legal_name": "Neobo Fastigheter AB (publ)",
+        "root_domain": "neobo.se",
+        "reference_urls": [
+          "https://filings.xbrl.org/213800QBPS3L89U9TZ44/2024-12-31/ESEF/SE/0/neob-2024-12-31-0-sv/reports/ixbrlviewer.html"
+        ],
+        "request_id": "lookup-local-563edc45cd60-04"
+      },
+      {
+        "company_id": "5565970513",
+        "legal_name": "Norion Bank AB",
+        "root_domain": "norion.se",
+        "reference_urls": [
+          "https://filings.xbrl.org/529900AGWAKUTYNETM62/2024-12-31/ESEF/SE/0/529900AGWAKUTYNETM62-2024-12-31-0-sv/reports/ixbrlviewer.html"
+        ],
+        "request_id": "lookup-local-563edc45cd60-05"
+      },
+      {
+        "company_id": "5590158944",
+        "legal_name": "Instalco AB",
+        "root_domain": "instalco.se",
+        "reference_urls": [
+          "https://filings.xbrl.org/549300DZ9ONT2AXY4029/2024-12-31/ESEF/SE/0/549300DZ9ONT2AXY4029-2024-12-31-0-sv/reports/ixbrlviewer.html"
+        ],
+        "request_id": "lookup-local-563edc45cd60-06"
+      },
+      {
+        "company_id": "5565010997",
+        "legal_name": "STUDSVIK AB",
+        "root_domain": "studsvik.se",
+        "reference_urls": [
+          "https://filings.xbrl.org/549300MLJ046XFQNVH42/2024-12-31/ESEF/SE/0/549300MLJ046XFQNVH42-2024-12-31-0-sv/reports/ixbrlviewer.html"
+        ],
+        "request_id": "lookup-local-563edc45cd60-07"
+      },
+      {
+        "company_id": "5564639440",
+        "legal_name": "Corem Property Group AB",
+        "root_domain": "corem.se",
+        "reference_urls": [
+          "https://filings.xbrl.org/213800CHXQQD7TSS1T59/2024-12-31/ESEF/SE/0/core-2024-12-31-0-sv/reports/ixbrlviewer.html"
+        ],
+        "request_id": "lookup-local-563edc45cd60-08"
+      },
+      {
+        "company_id": "5565420824",
+        "legal_name": "Axfood AB",
+        "root_domain": "axfood.se",
+        "reference_urls": [
+          "https://filings.xbrl.org/549300QIXCZWZLHE8L05/2024-12-31/ESEF/SE/0/axfo-2024-12-31-0-sv/reports/ixbrlviewer.html"
+        ],
+        "request_id": "lookup-local-563edc45cd60-09"
+      },
+      {
+        "company_id": "5562885417",
+        "legal_name": "Investment Aktiebolaget Spiltan",
+        "root_domain": "spiltan.se",
+        "reference_urls": [
+          "https://filings.xbrl.org/5493001BIDO3E2AOA590/2024-12-31/ESEF/SE/0/investmentabspiltan-2024-12-31-0-sv/reports/ixbrlviewer.html"
+        ],
+        "request_id": "lookup-local-563edc45cd60-10"
+      },
+      {
+        "company_id": "5566821202",
+        "legal_name": "Humlegården Fastigheter AB",
+        "root_domain": "humlegarden.se",
+        "reference_urls": [
+          "https://filings.xbrl.org/549300HT0F6CFLJR3Y69/2024-12-31/ESEF/SE/0/huml-2024-12-31-0-sv/reports/ixbrlviewer.html"
+        ],
+        "request_id": "lookup-local-563edc45cd60-11"
+      },
+      {
+        "company_id": "5560654054",
+        "legal_name": "Elon AB (publ)",
+        "root_domain": "elongroup.se",
+        "reference_urls": [
+          "https://filings.xbrl.org/549300BD5VFRJS5HFW64/2024-12-31/ESEF/SE/0/elon-2024-12-31-0-sv/reports/ixbrlviewer.html"
+        ],
+        "request_id": "lookup-local-563edc45cd60-12"
+      },
+      {
+        "company_id": "5562748458",
+        "legal_name": "Avanza Bank Holding AB",
+        "root_domain": "avanza.se",
+        "reference_urls": [
+          "https://filings.xbrl.org/549300MBWR5H8SIJLE03/2024-12-31/ESEF/SE/0/Avanza-2024-12-31-0-sv/reports/ixbrlviewer.html"
+        ],
+        "request_id": "lookup-local-563edc45cd60-13"
+      },
+      {
+        "company_id": "5560345174",
+        "legal_name": "NCC AKTIEBOLAG",
+        "root_domain": "ncc.se",
+        "reference_urls": [
+          "https://filings.xbrl.org/213800WRGLW3CY4MHW53/2024-12-31/ESEF/SE/0/ncc-2024-12-31-0-sv/reports/ixbrlviewer.html"
+        ],
+        "request_id": "lookup-local-563edc45cd60-14"
+      },
+      {
+        "company_id": "5560491523",
+        "legal_name": "Fabege AB",
+        "root_domain": "fabege.se",
+        "reference_urls": [
+          "https://filings.xbrl.org/549300JNPI46XNH0PM97/2024-12-31/ESEF/SE/0/549300JNPI46XNH0PM97-2024-12-31-sv/reports/ixbrlviewer.html"
+        ],
+        "request_id": "lookup-local-563edc45cd60-15"
+      },
+      {
+        "company_id": "5562746726",
+        "legal_name": "Arise AB",
+        "root_domain": "arise.se",
+        "reference_urls": [
+          "https://filings.xbrl.org/549300FOT7EE85QYB655/2024-12-31/ESEF/SE/0/ariseab-2024-12-31-0-sv/reports/ixbrlviewer.html"
+        ],
+        "request_id": "lookup-local-563edc45cd60-16"
+      },
+      {
+        "company_id": "5566285408",
+        "legal_name": "Mangold AB",
+        "root_domain": "mangold.se",
+        "reference_urls": [
+          "https://filings.xbrl.org/549300F7ULEE3V59UW34/2024-12-31/ESEF/SE/0/mangold-2024-12-31-0-sv/reports/ixbrlviewer.html"
+        ],
+        "request_id": "lookup-local-563edc45cd60-17"
+      },
+      {
+        "company_id": "5566563531",
+        "legal_name": "Byggmax Group AB",
+        "root_domain": "byggmax.se",
+        "reference_urls": [
+          "https://filings.xbrl.org/549300MPJPYQB0KCNH03/2024-12-31/ESEF/SE/0/bmax-2024-12-31-0-sv/reports/ixbrlviewer.html"
+        ],
+        "request_id": "lookup-local-563edc45cd60-18"
+      },
+      {
+        "company_id": "5564653185",
+        "legal_name": "Lifco AB (publ)",
+        "root_domain": "lifco.se",
+        "reference_urls": [
+          "https://filings.xbrl.org/549300RTLL4VDQRCTW41/2024-12-31/ESEF/SE/0/549300RTLL4VDQRCTW41-2024-12-31-0-sv/reports/ixbrlviewer.html"
+        ],
+        "request_id": "lookup-local-563edc45cd60-19"
+      },
+      {
+        "company_id": "5568403918",
+        "legal_name": "Brinova Fastigheter AB (publ)",
+        "root_domain": "brinova.se",
+        "reference_urls": [
+          "https://filings.xbrl.org/5493002JE0BBAIJ06O61/2024-12-31/ESEF/SE/0/Brinova-2024-12-31-0-sv/reports/ixbrlviewer.html"
+        ],
+        "request_id": "lookup-local-563edc45cd60-20"
+      },
+      {
+        "company_id": "5568648116",
+        "legal_name": "Genova Property Group AB",
+        "root_domain": "genova.se",
+        "reference_urls": [
+          "https://filings.xbrl.org/549300EJ67GY3FS4IN91/2024-12-31/ESEF/SE/0/genovapropgroupab-2024-12-31-0-sv/reports/ixbrlviewer.html"
+        ],
+        "request_id": "lookup-local-563edc45cd60-21"
+      },
+      {
+        "company_id": "5560263237",
+        "legal_name": "INVESTMENTAKTIEBOLAGET LATOUR",
+        "root_domain": "latour.se",
+        "reference_urls": [
+          "https://filings.xbrl.org/5493006GFBLNB3Y0Y789/2024-12-31/ESEF/SE/0/5493006GFBLNB3Y0Y789-2024-12-31-sv/reports/ixbrlviewer.html"
+        ],
+        "request_id": "lookup-local-563edc45cd60-22"
+      },
+      {
+        "company_id": "5560128240",
+        "legal_name": "HUFVUDSTADEN AB",
+        "root_domain": "hufvudstaden.se",
+        "reference_urls": [
+          "https://filings.xbrl.org/213800UEV5ZAFFVQ4J85/2024-12-31/ESEF/SE/0/hufv-2024-12-31-0-sv/reports/ixbrlviewer.html"
+        ],
+        "request_id": "lookup-local-563edc45cd60-23"
+      },
+      {
+        "company_id": "5560179367",
+        "legal_name": "INDUTRADE AKTIEBOLAG",
+        "root_domain": "indutrade.se",
+        "reference_urls": [
+          "https://filings.xbrl.org/549300FISLQ6CEFP1867/2024-12-31/ESEF/SE/0/indu-2024-12-31-0-sv/reports/ixbrlviewer.html"
+        ],
+        "request_id": "lookup-local-563edc45cd60-24"
+      },
+      {
+        "company_id": "5562384361",
+        "legal_name": "Medivir Aktiebolag",
+        "root_domain": "medivir.se",
+        "reference_urls": [
+          "https://filings.xbrl.org/549300VWDGUX0WMJ1T79/2024-12-31/ESEF/SE/0/medivir-2024-12-31-0-sv/reports/ixbrlviewer.html"
+        ],
+        "request_id": "lookup-local-563edc45cd60-25"
+      }
+    ]
+  },
+  "stats": {
+    "finished_at": "2026-09-27T14:57:50.690423+00:00",
+    "completed_sites": 25,
+    "requested_sites": 25,
+    "outcomes": {
+      "exact_match": 14,
+      "not_found": 4,
+      "failed": 5,
+      "different_company": 1,
+      "timeout": 1
+    },
+    "found": 15,
+    "computed_matches": 16,
+    "usage": {
+      "calls": 80,
+      "input_tokens": 255730,
+      "output_tokens": 74451,
+      "reasoning_tokens": 35392,
+      "cached_input_tokens": 640,
+      "known_cost_usd": 0.0697447675,
+      "unknown_cost_calls": 0,
+      "sum_request_seconds": 1166.258,
+      "median_request_seconds": 7.2780000000000005,
+      "model_errors": 1
+    },
+    "by_task": {
+      "company_lookup_classification": {
+        "calls": 22,
+        "input_tokens": 60808,
+        "output_tokens": 13374,
+        "reasoning_tokens": 5678,
+        "cached_input_tokens": 0,
+        "known_cost_usd": 0.0146495025,
+        "unknown_cost_calls": 0,
+        "sum_request_seconds": 172.387,
+        "median_request_seconds": 5.564,
+        "model_errors": 0
+      },
+      "company_lookup_identity": {
+        "calls": 22,
+        "input_tokens": 134111,
+        "output_tokens": 32237,
+        "reasoning_tokens": 10578,
+        "cached_input_tokens": 640,
+        "known_cost_usd": 0.0329124725,
+        "unknown_cost_calls": 0,
+        "sum_request_seconds": 430.388,
+        "median_request_seconds": 10.459,
+        "model_errors": 1
+      },
+      "company_lookup_match": {
+        "calls": 20,
+        "input_tokens": 40496,
+        "output_tokens": 6977,
+        "reasoning_tokens": 3869,
+        "cached_input_tokens": 0,
+        "known_cost_usd": 0.0088445575,
+        "unknown_cost_calls": 0,
+        "sum_request_seconds": 112.277,
+        "median_request_seconds": 3.0325,
+        "model_errors": 0
+      },
+      "company_lookup_industry": {
+        "calls": 16,
+        "input_tokens": 20315,
+        "output_tokens": 21863,
+        "reasoning_tokens": 15267,
+        "cached_input_tokens": 0,
+        "known_cost_usd": 0.013338235,
+        "unknown_cost_calls": 0,
+        "sum_request_seconds": 451.206,
+        "median_request_seconds": 6.023,
+        "model_errors": 0
+      }
+    },
+    "by_provider": {
+      "Modal": {
+        "calls": 28,
+        "input_tokens": 106621,
+        "output_tokens": 50517,
+        "reasoning_tokens": 35392,
+        "cached_input_tokens": 0,
+        "known_cost_usd": 0.0406267,
+        "unknown_cost_calls": 0,
+        "sum_request_seconds": 861.0,
+        "median_request_seconds": 16.5175,
+        "model_errors": 1
+      },
+      "Decart": {
+        "calls": 52,
+        "input_tokens": 149109,
+        "output_tokens": 23934,
+        "reasoning_tokens": 0,
+        "cached_input_tokens": 640,
+        "known_cost_usd": 0.0291180675,
+        "unknown_cost_calls": 0,
+        "sum_request_seconds": 305.258,
+        "median_request_seconds": 4.2565,
+        "model_errors": 0
+      }
+    },
+    "wall_seconds": 1278.355443,
+    "sites_per_minute": 1.1733825738480468,
+    "median_site_seconds": 45.054,
+    "median_computed_site_seconds": 45.216,
+    "query_kinds": {
+      "registration_number": 17,
+      "industry": 20,
+      "name": 15
+    },
+    "query_statuses": {
+      "completed": 51,
+      "failed": 1
+    },
+    "all_results_read_only": true,
+    "archive_states": {
+      "not_configured": 25
+    },
+    "model_errors": [
+      {
+        "task": "company_lookup_identity",
+        "error": "Incomplete model response (error)",
+        "http_status": 200,
+        "finish_reason": "error",
+        "response_id": "gen-1790520026-R6hAxyqcWxMHzZeQfGBB"
+      }
+    ],
+    "known_cost_per_attempted_site_usd": 0.0027897907,
+    "known_cost_per_found_match_usd": 0.004649651166666667
+  },
+  "cases": [
+    {
+      "company_id": "5563029726",
+      "legal_name": "ADDTECH AB",
+      "root_domain": "addtech.se",
+      "reference_urls": [
+        "https://www.addtech.se/kontakt-oss",
+        "https://www.addtech.se/anvandarvillkor"
+      ],
+      "request_id": "lookup-local-563edc45cd60-01",
+      "outcome": "exact_match",
+      "status": "completed",
+      "lookup_status": "matched",
+      "found_id": "5563029726",
+      "confidence": 0.98,
+      "site_type": "company",
+      "reasons": [
+        "Exact organisation number match: website addtech.se states Org.nr 556302-9726 (normalized 5563029726), identical to candidate company_id 5563029726",
+        "Legal name matches: website legal name 'Addtech AB' equals candidate 'ADDTECH AB' (case-insensitive)",
+        "Address corroborates: registry Box 5112, postal code 10243, city stockholm match website facts Box 5112, 102 43 Stockholm",
+        "No conflicting candidate present; candidate status active and consistent with operating website",
+        "Website organisation number matches the registry"
+      ],
+      "elapsed_seconds": 44.892,
+      "pages": 4,
+      "searches": 2,
+      "usage": {
+        "calls": 3,
+        "input_tokens": 12291,
+        "output_tokens": 3876,
+        "reasoning_tokens": 2589,
+        "cached_input_tokens": 0,
+        "known_cost_usd": 0.00378165,
+        "unknown_cost_calls": 0,
+        "sum_request_seconds": 23.182000000000002,
+        "median_request_seconds": 8.637,
+        "model_errors": 0
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=addtech.se&source=rest&debug_request=lookup-local-563edc45cd60-01&debug_attempt=1",
+      "stop_reason": "matched",
+      "computed_status": "matched",
+      "computed_company_id": "5563029726",
+      "computed_elapsed_seconds": 44.892,
+      "job_elapsed_seconds": 47.0,
+      "persisted_to_database": false,
+      "business_activity_facts": 0,
+      "industry_assessments": 1,
+      "review": null
+    },
+    {
+      "company_id": "5560452103",
+      "legal_name": "JM AB",
+      "root_domain": "jm.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/529900X0UEM9DOM6FK12/2024-12-31/ESEF/SE/0/JM-2024-12-31/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-563edc45cd60-02",
+      "outcome": "exact_match",
+      "status": "completed",
+      "lookup_status": "matched",
+      "found_id": "5560452103",
+      "confidence": 0.98,
+      "site_type": "company",
+      "reasons": [
+        "Organisationsnummer 556045-2103 is stated verbatim in the footer of multiple jm.se pages (start page, contact pages) and matches the registry candidate's company_id 5560452103 exactly when normalized",
+        "Website legal name 'JM AB' matches the registry candidate's legal_name 'JM AB' with name_similarity 1",
+        "Candidate is active, consistent with a live corporate website presenting current contact details",
+        "Website business activity (residential property development) is consistent with the registry activity description covering construction and property management",
+        "No competing candidates were supplied and no conflicting identifiers or names appear in the verified facts",
+        "Website organisation number matches the registry"
+      ],
+      "elapsed_seconds": 32.655,
+      "pages": 4,
+      "searches": 2,
+      "usage": {
+        "calls": 3,
+        "input_tokens": 7422,
+        "output_tokens": 3529,
+        "reasoning_tokens": 1821,
+        "cached_input_tokens": 0,
+        "known_cost_usd": 0.0028778,
+        "unknown_cost_calls": 0,
+        "sum_request_seconds": 19.235,
+        "median_request_seconds": 6.044,
+        "model_errors": 0
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=jm.se&source=rest&debug_request=lookup-local-563edc45cd60-02&debug_attempt=1",
+      "stop_reason": "matched",
+      "computed_status": "matched",
+      "computed_company_id": "5560452103",
+      "computed_elapsed_seconds": 32.655,
+      "job_elapsed_seconds": 35.0,
+      "persisted_to_database": false,
+      "business_activity_facts": 4,
+      "industry_assessments": 1,
+      "review": null
+    },
+    {
+      "company_id": "5568254741",
+      "legal_name": "Stendörren Fastigheter AB",
+      "root_domain": "stendorren.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/5493003YS3NSPZJ5WU39/2024-12-31/ESEF/SE/0/sten-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-563edc45cd60-03",
+      "outcome": "not_found",
+      "status": "completed",
+      "lookup_status": "not_found",
+      "found_id": null,
+      "confidence": null,
+      "site_type": "company",
+      "reasons": [
+        "No registered company data was supplied or found matching the website's stated identity",
+        "No sufficiently confident, supported registry match"
+      ],
+      "elapsed_seconds": 98.135,
+      "pages": 4,
+      "searches": 2,
+      "usage": {
+        "calls": 4,
+        "input_tokens": 14044,
+        "output_tokens": 8246,
+        "reasoning_tokens": 5800,
+        "cached_input_tokens": 0,
+        "known_cost_usd": 0.0062296,
+        "unknown_cost_calls": 0,
+        "sum_request_seconds": 82.453,
+        "median_request_seconds": 19.4285,
+        "model_errors": 0
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=stendorren.se&source=rest&debug_request=lookup-local-563edc45cd60-03&debug_attempt=1",
+      "stop_reason": "ambiguous_or_unconfirmed",
+      "computed_status": "not_found",
+      "computed_company_id": null,
+      "computed_elapsed_seconds": 98.135,
+      "job_elapsed_seconds": 100.0,
+      "persisted_to_database": false,
+      "business_activity_facts": 5,
+      "industry_assessments": 1,
+      "review": {
+        "classification": "false_negative_final_model_answer",
+        "expected_company_id": "5568254741",
+        "finding": "The actual match request supplied candidate 5568254741, the exact website organisation number, and a matching Stockholm address. The final GLM response nevertheless returned null and claimed no matching registry data was supplied. This contradicts the saved request. The crawler preserved the rejection rather than promoting model reasoning into an accepted answer."
+      }
+    },
+    {
+      "company_id": "5565802526",
+      "legal_name": "Neobo Fastigheter AB (publ)",
+      "root_domain": "neobo.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/213800QBPS3L89U9TZ44/2024-12-31/ESEF/SE/0/neob-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-563edc45cd60-04",
+      "outcome": "exact_match",
+      "status": "completed",
+      "lookup_status": "matched",
+      "found_id": "5565802526",
+      "confidence": 0.99,
+      "site_type": "company",
+      "reasons": [
+        "Website cookie notice explicitly states legal name and organisation number: 'Neobo Fastigheter AB (556580-2526)', which exactly matches registry candidate 5565802526 ('Neobo Fastigheter AB (publ)'; the '(publ)' suffix is a company form designation, not a conflict).",
+        "Website contact address 'Mäster Samuelsgatan 42, 111 57 Stockholm' matches the candidate's registered primary address (Mäster Samuelsgatan 42, 11157, Stockholm).",
+        "Website business activity (residential property management across Sweden) matches the candidate's registry activity description (owning, managing and developing real estate).",
+        "No conflicting candidate: all other candidates have different organisation numbers, names, and addresses in other locations; name similarity for the matched candidate is 1.0.",
+        "Identity supported by exact organisation number plus matching legal name, street address, and postal code/city, exceeding the required evidence threshold.",
+        "Explicit legal name uniquely matches the returned registry candidates"
+      ],
+      "elapsed_seconds": 146.262,
+      "pages": 4,
+      "searches": 3,
+      "usage": {
+        "calls": 4,
+        "input_tokens": 21332,
+        "output_tokens": 9187,
+        "reasoning_tokens": 6279,
+        "cached_input_tokens": 0,
+        "known_cost_usd": 0.0077933,
+        "unknown_cost_calls": 0,
+        "sum_request_seconds": 110.307,
+        "median_request_seconds": 19.789,
+        "model_errors": 0
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=neobo.se&source=rest&debug_request=lookup-local-563edc45cd60-04&debug_attempt=1",
+      "stop_reason": "matched",
+      "computed_status": "matched",
+      "computed_company_id": "5565802526",
+      "computed_elapsed_seconds": 146.262,
+      "job_elapsed_seconds": 148.0,
+      "persisted_to_database": false,
+      "business_activity_facts": 6,
+      "industry_assessments": 20,
+      "review": null
+    },
+    {
+      "company_id": "5565970513",
+      "legal_name": "Norion Bank AB",
+      "root_domain": "norion.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/529900AGWAKUTYNETM62/2024-12-31/ESEF/SE/0/529900AGWAKUTYNETM62-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-563edc45cd60-05",
+      "outcome": "failed",
+      "status": "failed",
+      "lookup_status": "failed",
+      "found_id": null,
+      "confidence": null,
+      "site_type": "unknown",
+      "reasons": [
+        "Could not fetch the homepage"
+      ],
+      "elapsed_seconds": 1.359,
+      "pages": 1,
+      "searches": 0,
+      "usage": {
+        "calls": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0,
+        "cached_input_tokens": 0,
+        "known_cost_usd": 0.0,
+        "unknown_cost_calls": 0,
+        "sum_request_seconds": 0,
+        "median_request_seconds": null,
+        "model_errors": 0
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=norion.se&source=rest&debug_request=lookup-local-563edc45cd60-05&debug_attempt=1",
+      "stop_reason": "lookup_failed",
+      "computed_status": "failed",
+      "computed_company_id": null,
+      "computed_elapsed_seconds": 1.359,
+      "job_elapsed_seconds": 3.0,
+      "persisted_to_database": false,
+      "business_activity_facts": 0,
+      "industry_assessments": 0,
+      "review": {
+        "classification": "homepage_fetch_failure",
+        "finding": "Homepage failed with ERR_NAME_NOT_RESOLVED before any model request; retained in the original cohort."
+      }
+    },
+    {
+      "company_id": "5590158944",
+      "legal_name": "Instalco AB",
+      "root_domain": "instalco.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300DZ9ONT2AXY4029/2024-12-31/ESEF/SE/0/549300DZ9ONT2AXY4029-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-563edc45cd60-06",
+      "outcome": "exact_match",
+      "status": "completed",
+      "lookup_status": "matched",
+      "found_id": "5590158944",
+      "confidence": 0.97,
+      "site_type": "company",
+      "reasons": [
+        "Website legal name 'Instalco AB (publ)' matches candidate legal name 'Instalco AB' exactly, with '(publ)' being only the public-company designation suffix; name_similarity 1.0.",
+        "Website street address 'Sveavägen 56 C', postal code '111 34' and city 'Stockholm' match the candidate's registered address 'Sveavägen 56C, 11134, Stockholm' exactly.",
+        "Website business activity (installation work within el, vvs, ventilation, industry and technical consulting) is consistent with the candidate's registered activity description covering entreprenad-, konsult- och serviceverksamhet inom installationsbranschen.",
+        "Website footer identifies Instalco AB (publ) as the head office (huvudkontor) at the matching address, indicating the site operator, and no other candidate resembles the name or shares the address.",
+        "All other candidates differ substantially in name (similarity ≤ 0.875), address and/or activity and are rejected.",
+        "Explicit legal name uniquely matches the returned registry candidates"
+      ],
+      "elapsed_seconds": 181.594,
+      "pages": 4,
+      "searches": 2,
+      "usage": {
+        "calls": 4,
+        "input_tokens": 19184,
+        "output_tokens": 9266,
+        "reasoning_tokens": 7258,
+        "cached_input_tokens": 0,
+        "known_cost_usd": 0.0075106,
+        "unknown_cost_calls": 0,
+        "sum_request_seconds": 158.452,
+        "median_request_seconds": 30.7365,
+        "model_errors": 0
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=instalco.se&source=rest&debug_request=lookup-local-563edc45cd60-06&debug_attempt=1",
+      "stop_reason": "matched",
+      "computed_status": "matched",
+      "computed_company_id": "5590158944",
+      "computed_elapsed_seconds": 181.594,
+      "job_elapsed_seconds": 183.0,
+      "persisted_to_database": false,
+      "business_activity_facts": 4,
+      "industry_assessments": 10,
+      "review": null
+    },
+    {
+      "company_id": "5565010997",
+      "legal_name": "STUDSVIK AB",
+      "root_domain": "studsvik.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300MLJ046XFQNVH42/2024-12-31/ESEF/SE/0/549300MLJ046XFQNVH42-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-563edc45cd60-07",
+      "outcome": "failed",
+      "status": "failed",
+      "lookup_status": "failed",
+      "found_id": null,
+      "confidence": null,
+      "site_type": "unknown",
+      "reasons": [
+        "Could not fetch the homepage"
+      ],
+      "elapsed_seconds": 1.767,
+      "pages": 1,
+      "searches": 0,
+      "usage": {
+        "calls": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0,
+        "cached_input_tokens": 0,
+        "known_cost_usd": 0.0,
+        "unknown_cost_calls": 0,
+        "sum_request_seconds": 0,
+        "median_request_seconds": null,
+        "model_errors": 0
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=studsvik.se&source=rest&debug_request=lookup-local-563edc45cd60-07&debug_attempt=1",
+      "stop_reason": "lookup_failed",
+      "computed_status": "failed",
+      "computed_company_id": null,
+      "computed_elapsed_seconds": 1.767,
+      "job_elapsed_seconds": 4.0,
+      "persisted_to_database": false,
+      "business_activity_facts": 0,
+      "industry_assessments": 0,
+      "review": {
+        "classification": "homepage_fetch_failure",
+        "finding": "Homepage failed with ERR_CERT_COMMON_NAME_INVALID before any model request; retained in the original cohort."
+      }
+    },
+    {
+      "company_id": "5564639440",
+      "legal_name": "Corem Property Group AB",
+      "root_domain": "corem.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/213800CHXQQD7TSS1T59/2024-12-31/ESEF/SE/0/core-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-563edc45cd60-08",
+      "outcome": "failed",
+      "status": "failed",
+      "lookup_status": "failed",
+      "found_id": null,
+      "confidence": null,
+      "site_type": "company",
+      "reasons": [
+        "Incomplete model response (error)"
+      ],
+      "elapsed_seconds": 57.162,
+      "pages": 4,
+      "searches": 0,
+      "usage": {
+        "calls": 2,
+        "input_tokens": 5102,
+        "output_tokens": 954,
+        "reasoning_tokens": 600,
+        "cached_input_tokens": 0,
+        "known_cost_usd": 0.00061735,
+        "unknown_cost_calls": 0,
+        "sum_request_seconds": 44.408,
+        "median_request_seconds": 22.204,
+        "model_errors": 1
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=corem.se&source=rest&debug_request=lookup-local-563edc45cd60-08&debug_attempt=1",
+      "stop_reason": "lookup_failed",
+      "computed_status": "failed",
+      "computed_company_id": null,
+      "computed_elapsed_seconds": 57.162,
+      "job_elapsed_seconds": 59.0,
+      "persisted_to_database": false,
+      "business_activity_facts": 0,
+      "industry_assessments": 0,
+      "review": {
+        "classification": "provider_response_failure",
+        "finding": "Modal/OpenRouter returned HTTP 200 but finish_reason=error during identity extraction. The crawler rejected the incomplete response. That call reported cost=0, despite upstream_inference_cost=0.00062495; the benchmark uses the reported charged cost, not upstream cost."
+      }
+    },
+    {
+      "company_id": "5565420824",
+      "legal_name": "Axfood AB",
+      "root_domain": "axfood.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300QIXCZWZLHE8L05/2024-12-31/ESEF/SE/0/axfo-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-563edc45cd60-09",
+      "outcome": "exact_match",
+      "status": "completed",
+      "lookup_status": "matched",
+      "found_id": "5565420824",
+      "confidence": 0.99,
+      "site_type": "company",
+      "reasons": [
+        "Website publishes organisation number 556542-0824 which exactly matches registry candidate company_id 5565420824 (Axfood AB).",
+        "Website legal name 'Axfood AB' matches the candidate's registered legal name exactly.",
+        "Website street address Solnavägen 4 matches the candidate's primary street address; Stockholm matches the candidate city.",
+        "Other candidates (WiLLY:S AB, HEMKÖPSKEDJAN AB, DAGAB AB, AXFOOD SNABBGROSS AB, City Gross Sverige AB) have different organisation numbers and are group-related/subsidiary names, not the operator of the corporate website.",
+        "Website organisation number matches the registry"
+      ],
+      "elapsed_seconds": 222.0,
+      "pages": 4,
+      "searches": 7,
+      "usage": {
+        "calls": 4,
+        "input_tokens": 18270,
+        "output_tokens": 5946,
+        "reasoning_tokens": 3802,
+        "cached_input_tokens": 0,
+        "known_cost_usd": 0.0057135,
+        "unknown_cost_calls": 0,
+        "sum_request_seconds": 202.089,
+        "median_request_seconds": 48.547000000000004,
+        "model_errors": 0
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=axfood.se&source=rest&debug_request=lookup-local-563edc45cd60-09&debug_attempt=1",
+      "stop_reason": "matched",
+      "computed_status": "matched",
+      "computed_company_id": "5565420824",
+      "computed_elapsed_seconds": 222.0,
+      "job_elapsed_seconds": 224.0,
+      "persisted_to_database": false,
+      "business_activity_facts": 6,
+      "industry_assessments": 6,
+      "review": null
+    },
+    {
+      "company_id": "5562885417",
+      "legal_name": "Investment Aktiebolaget Spiltan",
+      "root_domain": "spiltan.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/5493001BIDO3E2AOA590/2024-12-31/ESEF/SE/0/investmentabspiltan-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-563edc45cd60-10",
+      "outcome": "exact_match",
+      "status": "completed",
+      "lookup_status": "matched",
+      "found_id": "5562885417",
+      "confidence": 0.99,
+      "site_type": "company",
+      "reasons": [
+        "Exact legal name match: website privacy policy states 'Investment Aktiebolaget Spiltan', identical to registry legal name for org 5562885417",
+        "Exact address match: website shows Erik Dahlbergsallén 15, 115 20 Stockholm; registry shows Erik Dahlbergsallén 15, 11520, stockholm",
+        "Status active in registry; activity (investering, kapitalförvaltning) consistent with website's stated investment activity",
+        "All other candidates differ in legal name, status, and address; name similarity alone does not support them",
+        "Explicit legal name uniquely matches the returned registry candidates"
+      ],
+      "elapsed_seconds": 254.292,
+      "pages": 4,
+      "searches": 3,
+      "usage": {
+        "calls": 4,
+        "input_tokens": 8976,
+        "output_tokens": 9513,
+        "reasoning_tokens": 7243,
+        "cached_input_tokens": 0,
+        "known_cost_usd": 0.0061029,
+        "unknown_cost_calls": 0,
+        "sum_request_seconds": 220.87400000000002,
+        "median_request_seconds": 31.007,
+        "model_errors": 0
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=spiltan.se&source=rest&debug_request=lookup-local-563edc45cd60-10&debug_attempt=1",
+      "stop_reason": "matched",
+      "computed_status": "matched",
+      "computed_company_id": "5562885417",
+      "computed_elapsed_seconds": 254.292,
+      "job_elapsed_seconds": 256.0,
+      "persisted_to_database": false,
+      "business_activity_facts": 3,
+      "industry_assessments": 20,
+      "review": null
+    },
+    {
+      "company_id": "5566821202",
+      "legal_name": "Humlegården Fastigheter AB",
+      "root_domain": "humlegarden.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300HT0F6CFLJR3Y69/2024-12-31/ESEF/SE/0/huml-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-563edc45cd60-11",
+      "outcome": "exact_match",
+      "status": "completed",
+      "lookup_status": "matched",
+      "found_id": "5566821202",
+      "confidence": 0.99,
+      "site_type": "company",
+      "reasons": [
+        "Website contact page states Organisationsnummer 556682-1202, exactly matching registry candidate company_id 5566821202",
+        "Legal name on website 'Humlegården Fastigheter AB (publ)' matches registry legal_name 'Humlegården Fastigheter AB' (the '(publ)' suffix is a public company designation)",
+        "Both website and registry list Stockholm as city; website postal code 114 32 corresponds to visiting/address context while registry primary postal code 10244 matches Box 5182 post address",
+        "No conflicting candidates; single unique match on organisation number and name",
+        "Website organisation number matches the registry"
+      ],
+      "elapsed_seconds": 30.865,
+      "pages": 4,
+      "searches": 2,
+      "usage": {
+        "calls": 4,
+        "input_tokens": 10308,
+        "output_tokens": 1352,
+        "reasoning_tokens": 0,
+        "cached_input_tokens": 0,
+        "known_cost_usd": 0.00188887,
+        "unknown_cost_calls": 0,
+        "sum_request_seconds": 15.613,
+        "median_request_seconds": 2.851,
+        "model_errors": 0
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=humlegarden.se&source=rest&debug_request=lookup-local-563edc45cd60-11&debug_attempt=1",
+      "stop_reason": "matched",
+      "computed_status": "matched",
+      "computed_company_id": "5566821202",
+      "computed_elapsed_seconds": 30.865,
+      "job_elapsed_seconds": 33.0,
+      "persisted_to_database": false,
+      "business_activity_facts": 4,
+      "industry_assessments": 1,
+      "review": null
+    },
+    {
+      "company_id": "5560654054",
+      "legal_name": "Elon AB (publ)",
+      "root_domain": "elongroup.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300BD5VFRJS5HFW64/2024-12-31/ESEF/SE/0/elon-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-563edc45cd60-12",
+      "outcome": "failed",
+      "status": "failed",
+      "lookup_status": "failed",
+      "found_id": null,
+      "confidence": null,
+      "site_type": "unknown",
+      "reasons": [
+        "Could not fetch the homepage"
+      ],
+      "elapsed_seconds": 1.549,
+      "pages": 1,
+      "searches": 0,
+      "usage": {
+        "calls": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0,
+        "cached_input_tokens": 0,
+        "known_cost_usd": 0.0,
+        "unknown_cost_calls": 0,
+        "sum_request_seconds": 0,
+        "median_request_seconds": null,
+        "model_errors": 0
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=elongroup.se&source=rest&debug_request=lookup-local-563edc45cd60-12&debug_attempt=1",
+      "stop_reason": "lookup_failed",
+      "computed_status": "failed",
+      "computed_company_id": null,
+      "computed_elapsed_seconds": 1.549,
+      "job_elapsed_seconds": 4.0,
+      "persisted_to_database": false,
+      "business_activity_facts": 0,
+      "industry_assessments": 0,
+      "review": {
+        "classification": "homepage_fetch_failure",
+        "finding": "Homepage fetch failed before any model request; retained in the original cohort.",
+        "page_errors": [
+          [
+            "Fetch returned HTTP None; Browser fetch failed (ERR_HTTP_RESPONSE_CODE_FAILURE)",
+            "Fetch returned HTTP None; Browser fetch failed (ERR_HTTP_RESPONSE_CODE_FAILURE)"
+          ]
+        ]
+      }
+    },
+    {
+      "company_id": "5562748458",
+      "legal_name": "Avanza Bank Holding AB",
+      "root_domain": "avanza.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300MBWR5H8SIJLE03/2024-12-31/ESEF/SE/0/Avanza-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-563edc45cd60-13",
+      "outcome": "not_found",
+      "status": "completed",
+      "lookup_status": "not_found",
+      "found_id": null,
+      "confidence": null,
+      "site_type": "company",
+      "reasons": [
+        "Legal name on website states Avanza Bank AB",
+        "Organization number matches candidate company_id 5565735668",
+        "Registry address Box 1399 11193 Stockholm matches website postal address",
+        "Candidate activity description aligns with website business activities",
+        "Avanza Bank Holding AB (5562748458) is the parent company of Avanza Bank AB per public info, consistent with holding entity description",
+        "Website organisation numbers require review: 5562748458, 5565735668; proposed company: 5565735668"
+      ],
+      "elapsed_seconds": 48.091,
+      "pages": 4,
+      "searches": 5,
+      "usage": {
+        "calls": 4,
+        "input_tokens": 10579,
+        "output_tokens": 1855,
+        "reasoning_tokens": 0,
+        "cached_input_tokens": 0,
+        "known_cost_usd": 0.0021371975,
+        "unknown_cost_calls": 0,
+        "sum_request_seconds": 17.863,
+        "median_request_seconds": 4.203,
+        "model_errors": 0
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=avanza.se&source=rest&debug_request=lookup-local-563edc45cd60-13&debug_attempt=1",
+      "stop_reason": "ambiguous_or_unconfirmed",
+      "computed_status": "not_found",
+      "computed_company_id": null,
+      "computed_elapsed_seconds": 48.091,
+      "job_elapsed_seconds": 50.0,
+      "persisted_to_database": false,
+      "business_activity_facts": 2,
+      "industry_assessments": 20,
+      "review": {
+        "classification": "multiple_company_ids_require_review",
+        "finding": "GLM proposed Avanza Bank AB (5565735668), but extracted both the bank and holding-company registration numbers. The production conflict guard rejected automatic acceptance. This is distinct from the Stendorren final-model contradiction; the previous local run accepted the bank operator."
+      }
+    },
+    {
+      "company_id": "5560345174",
+      "legal_name": "NCC AKTIEBOLAG",
+      "root_domain": "ncc.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/213800WRGLW3CY4MHW53/2024-12-31/ESEF/SE/0/ncc-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-563edc45cd60-14",
+      "outcome": "not_found",
+      "status": "completed",
+      "lookup_status": "not_found",
+      "found_id": null,
+      "confidence": null,
+      "site_type": "company",
+      "reasons": [
+        "Trading name NCC matches candidate legal name NCC AKTIEBOLAG uniquely among candidates",
+        "Headquarters street address Herrjärva torg 4 in website matches candidate primary address with Solna; postal code 17067 matches candidate 17080? Postal code differs slightly (17080 vs 17067) but both Solna; note website shows 170 67 Solna, candidate 17080 — this is a minor discrepancy. Hmm. Also website lists many branch addresses consistent with a large construction company; candidate activity description matches construction. No other candidate matches. Name exact match plus city Solna match. Confidence high but postal code mismatch slightly reduces. Maybe basis unique explicit legal name.",
+        "The proposed match lacks a supported legal identity or corroborating address"
+      ],
+      "elapsed_seconds": 45.216,
+      "pages": 4,
+      "searches": 2,
+      "usage": {
+        "calls": 3,
+        "input_tokens": 10395,
+        "output_tokens": 1981,
+        "reasoning_tokens": 0,
+        "cached_input_tokens": 0,
+        "known_cost_usd": 0.0021672875,
+        "unknown_cost_calls": 0,
+        "sum_request_seconds": 18.679,
+        "median_request_seconds": 2.458,
+        "model_errors": 0
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=ncc.se&source=rest&debug_request=lookup-local-563edc45cd60-14&debug_attempt=1",
+      "stop_reason": "ambiguous_or_unconfirmed",
+      "computed_status": "not_found",
+      "computed_company_id": null,
+      "computed_elapsed_seconds": 45.216,
+      "job_elapsed_seconds": 47.0,
+      "persisted_to_database": false,
+      "business_activity_facts": 0,
+      "industry_assessments": 10,
+      "review": {
+        "classification": "insufficient_supported_identity",
+        "finding": "GLM proposed NCC from a trading name and an address containing inconsistent postal details. The production identity guard rejected it because the accepted facts did not establish a supported legal name or corroborating address. NCC was also unresolved in the local baseline."
+      }
+    },
+    {
+      "company_id": "5560491523",
+      "legal_name": "Fabege AB",
+      "root_domain": "fabege.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300JNPI46XNH0PM97/2024-12-31/ESEF/SE/0/549300JNPI46XNH0PM97-2024-12-31-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-563edc45cd60-15",
+      "outcome": "exact_match",
+      "status": "completed",
+      "lookup_status": "matched",
+      "found_id": "5560491523",
+      "confidence": 0.98,
+      "site_type": "company",
+      "reasons": [
+        "legal_name Fabege AB on site matches candidate Fabege AB",
+        "postal address Box 730, 169 27 Solna on site matches candidate Box 730, 16927 solna",
+        "candidate active",
+        "website activity (property/stadsutveckling) matches candidate activity description",
+        "Explicit legal name uniquely matches the returned registry candidates"
+      ],
+      "elapsed_seconds": 45.921,
+      "pages": 4,
+      "searches": 2,
+      "usage": {
+        "calls": 4,
+        "input_tokens": 13524,
+        "output_tokens": 1999,
+        "reasoning_tokens": 0,
+        "cached_input_tokens": 320,
+        "known_cost_usd": 0.002541245,
+        "unknown_cost_calls": 0,
+        "sum_request_seconds": 20.679000000000002,
+        "median_request_seconds": 5.841,
+        "model_errors": 0
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=fabege.se&source=rest&debug_request=lookup-local-563edc45cd60-15&debug_attempt=1",
+      "stop_reason": "matched",
+      "computed_status": "matched",
+      "computed_company_id": "5560491523",
+      "computed_elapsed_seconds": 45.921,
+      "job_elapsed_seconds": 48.0,
+      "persisted_to_database": false,
+      "business_activity_facts": 5,
+      "industry_assessments": 10,
+      "review": null
+    },
+    {
+      "company_id": "5562746726",
+      "legal_name": "Arise AB",
+      "root_domain": "arise.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300FOT7EE85QYB655/2024-12-31/ESEF/SE/0/ariseab-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-563edc45cd60-16",
+      "outcome": "exact_match",
+      "status": "completed",
+      "lookup_status": "matched",
+      "found_id": "5562746726",
+      "confidence": 0.98,
+      "site_type": "company",
+      "reasons": [
+        "Website legal name 'Arise AB (publ)' / 'Arise AB' exactly matches candidate legal_name 'Arise AB' (org 5562746726)",
+        "Website head office address Linjegatan 7, 302 50, Halmstad exactly matches candidate primary_street_address Linjegatan 7, primary_postal_code 30250, primary_city halmstad",
+        "Candidate activity description (develop, own and operate energy facilities, electricity trading, energy development) matches website business activity in renewable energy",
+        "Other candidates are dissimilar or inactive with different addresses and activities; no conflicting match exists",
+        "Name and street address agree with the registry"
+      ],
+      "elapsed_seconds": 42.468,
+      "pages": 4,
+      "searches": 2,
+      "usage": {
+        "calls": 4,
+        "input_tokens": 9146,
+        "output_tokens": 1537,
+        "reasoning_tokens": 0,
+        "cached_input_tokens": 320,
+        "known_cost_usd": 0.0017867,
+        "unknown_cost_calls": 0,
+        "sum_request_seconds": 19.387,
+        "median_request_seconds": 4.6045,
+        "model_errors": 0
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=arise.se&source=rest&debug_request=lookup-local-563edc45cd60-16&debug_attempt=1",
+      "stop_reason": "matched",
+      "computed_status": "matched",
+      "computed_company_id": "5562746726",
+      "computed_elapsed_seconds": 42.468,
+      "job_elapsed_seconds": 45.0,
+      "persisted_to_database": false,
+      "business_activity_facts": 5,
+      "industry_assessments": 10,
+      "review": null
+    },
+    {
+      "company_id": "5566285408",
+      "legal_name": "Mangold AB",
+      "root_domain": "mangold.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300F7ULEE3V59UW34/2024-12-31/ESEF/SE/0/mangold-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-563edc45cd60-17",
+      "outcome": "different_company",
+      "status": "completed",
+      "lookup_status": "matched",
+      "found_id": "5565851267",
+      "confidence": 0.98,
+      "site_type": "company",
+      "reasons": [
+        "Website's legal name 'Mangold Fondkommission AB' matches the registry candidate's legal_name exactly.",
+        "Website states org. nr 556585-1267, which matches the candidate's company_id 5565851267 exactly (prefer exact organisation number).",
+        "Website postal address 'Box 55691, 102 15 Stockholm' matches candidate's primary_street_address 'Box 55691', primary_postal_code '10215' and primary_city 'stockholm'.",
+        "Candidate status is 'active' and its registered activity description (securities business under lagen om värdepappersmarknaden: order execution, portfolio management, investment advice, analysis/Certified Adviser, etc.) is consistent with the website's described business (Investment Banking, Private Banking, advisory, analyst service Mangold Insight).",
+        "No conflicting candidates or ambiguous alternatives were provided; identity is fully supported.",
+        "Website organisation number matches the registry"
+      ],
+      "elapsed_seconds": 38.034,
+      "pages": 4,
+      "searches": 2,
+      "usage": {
+        "calls": 4,
+        "input_tokens": 15944,
+        "output_tokens": 2021,
+        "reasoning_tokens": 0,
+        "cached_input_tokens": 0,
+        "known_cost_usd": 0.002891785,
+        "unknown_cost_calls": 0,
+        "sum_request_seconds": 23.44,
+        "median_request_seconds": 5.1434999999999995,
+        "model_errors": 0
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=mangold.se&source=rest&debug_request=lookup-local-563edc45cd60-17&debug_attempt=1",
+      "stop_reason": "matched",
+      "computed_status": "matched",
+      "computed_company_id": "5565851267",
+      "computed_elapsed_seconds": 38.034,
+      "job_elapsed_seconds": 40.0,
+      "persisted_to_database": false,
+      "business_activity_facts": 5,
+      "industry_assessments": 1,
+      "review": {
+        "classification": "supported_operator_different_reference_company",
+        "finding": "The contact page explicitly identifies Mangold Fondkommission AB and organisation number 556585-1267. Returned 5565851267 is supported by that quote and matching postal address; the cohort reference 5566285408 is the reporting parent Mangold AB. The local baseline also accepted this operating company."
+      }
+    },
+    {
+      "company_id": "5566563531",
+      "legal_name": "Byggmax Group AB",
+      "root_domain": "byggmax.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300MPJPYQB0KCNH03/2024-12-31/ESEF/SE/0/bmax-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-563edc45cd60-18",
+      "outcome": "exact_match",
+      "status": "completed",
+      "lookup_status": "matched",
+      "found_id": "5566563531",
+      "confidence": 0.99,
+      "site_type": "online_store",
+      "reasons": [
+        "Organisation number 556656-3531 on the website matches the registry candidate exactly.",
+        "Legal name Byggmax Group AB matches the registry candidate.",
+        "Address Box 30006, 104 25 Stockholm matches the registry candidate.",
+        "No conflicting or ambiguous evidence.",
+        "Website organisation number matches the registry"
+      ],
+      "elapsed_seconds": 102.645,
+      "pages": 4,
+      "searches": 2,
+      "usage": {
+        "calls": 3,
+        "input_tokens": 14532,
+        "output_tokens": 2363,
+        "reasoning_tokens": 0,
+        "cached_input_tokens": 0,
+        "known_cost_usd": 0.002857105,
+        "unknown_cost_calls": 0,
+        "sum_request_seconds": 22.441,
+        "median_request_seconds": 7.193,
+        "model_errors": 0
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=byggmax.se&source=rest&debug_request=lookup-local-563edc45cd60-18&debug_attempt=1",
+      "stop_reason": "matched",
+      "computed_status": "matched",
+      "computed_company_id": "5566563531",
+      "computed_elapsed_seconds": 102.645,
+      "job_elapsed_seconds": 104.0,
+      "persisted_to_database": false,
+      "business_activity_facts": 6,
+      "industry_assessments": 1,
+      "review": null
+    },
+    {
+      "company_id": "5564653185",
+      "legal_name": "Lifco AB (publ)",
+      "root_domain": "lifco.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300RTLL4VDQRCTW41/2024-12-31/ESEF/SE/0/549300RTLL4VDQRCTW41-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-563edc45cd60-19",
+      "outcome": "timeout",
+      "status": "cancelled",
+      "lookup_status": null,
+      "found_id": null,
+      "confidence": null,
+      "site_type": null,
+      "reasons": [],
+      "elapsed_seconds": null,
+      "pages": 0,
+      "searches": 0,
+      "usage": {
+        "calls": 4,
+        "input_tokens": 4663,
+        "output_tokens": 1148,
+        "reasoning_tokens": 0,
+        "cached_input_tokens": 0,
+        "known_cost_usd": 0.0010824325,
+        "unknown_cost_calls": 0,
+        "sum_request_seconds": 42.181,
+        "median_request_seconds": 10.5635,
+        "model_errors": 0
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=lifco.se&source=rest&debug_request=lookup-local-563edc45cd60-19&debug_attempt=1",
+      "stop_reason": "matched",
+      "computed_status": "matched",
+      "computed_company_id": "5564653185",
+      "computed_elapsed_seconds": 86.115,
+      "job_elapsed_seconds": 601.0,
+      "persisted_to_database": false,
+      "business_activity_facts": 2,
+      "industry_assessments": 1,
+      "review": {
+        "classification": "matched_result_cleanup_stalled",
+        "finding": "The lookup computed the expected ID 5564653185 at 14:49:15 UTC after 86.115 seconds and four model calls. The outer request remained running with browser heartbeats continuing after the saved final lookup result. The benchmark retains that computed result and billed usage separately from terminal request status. The original 600-second test deadline cancelled this request at 14:57:48 UTC; the browser DELETE returned HTTP 200 and the crawl ended. Computed result, pre-cancellation trace, terminal result and status are all retained."
+      }
+    },
+    {
+      "company_id": "5568403918",
+      "legal_name": "Brinova Fastigheter AB (publ)",
+      "root_domain": "brinova.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/5493002JE0BBAIJ06O61/2024-12-31/ESEF/SE/0/Brinova-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-563edc45cd60-20",
+      "outcome": "not_found",
+      "status": "completed",
+      "lookup_status": "not_found",
+      "found_id": null,
+      "confidence": null,
+      "site_type": "company",
+      "reasons": [
+        "Website legal name 'Brinova Fastigheter AB (publ)' exactly matches candidate legal name",
+        "Business activity (residential and community property real estate) matches registry activity description",
+        "No conflicting candidate; other Brinova-named entity (5565949566) is inactive and lacks the (publ) designation",
+        "Multiple registry companies share the website's legal name: 5568403918, 5565949566; an organisation number or matching street address is required"
+      ],
+      "elapsed_seconds": 64.528,
+      "pages": 4,
+      "searches": 3,
+      "usage": {
+        "calls": 4,
+        "input_tokens": 14118,
+        "output_tokens": 2700,
+        "reasoning_tokens": 0,
+        "cached_input_tokens": 0,
+        "known_cost_usd": 0.002947545,
+        "unknown_cost_calls": 0,
+        "sum_request_seconds": 29.151,
+        "median_request_seconds": 6.1005,
+        "model_errors": 0
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=brinova.se&source=rest&debug_request=lookup-local-563edc45cd60-20&debug_attempt=1",
+      "stop_reason": "ambiguous_or_unconfirmed",
+      "computed_status": "not_found",
+      "computed_company_id": null,
+      "computed_elapsed_seconds": 64.528,
+      "job_elapsed_seconds": 66.0,
+      "persisted_to_database": false,
+      "business_activity_facts": 4,
+      "industry_assessments": 20,
+      "review": {
+        "classification": "same_name_ambiguity",
+        "finding": "The candidates include two registry entities whose normalized legal name matches Brinova Fastigheter AB. GLM proposed 5568403918 with basis registration_number despite no supported number settling the match. The production guard required an organisation number or corroborating address and kept the case unresolved, as in the local baseline."
+      }
+    },
+    {
+      "company_id": "5568648116",
+      "legal_name": "Genova Property Group AB",
+      "root_domain": "genova.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300EJ67GY3FS4IN91/2024-12-31/ESEF/SE/0/genovapropgroupab-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-563edc45cd60-21",
+      "outcome": "exact_match",
+      "status": "completed",
+      "lookup_status": "matched",
+      "found_id": "5568648116",
+      "confidence": 0.93,
+      "site_type": "company",
+      "reasons": [
+        "Website footer states '© Genova Property Group AB (publ)', matching registry legal name 'Genova Property Group AB' uniquely (name_similarity 1.0, only candidate with this name).",
+        "Website contact page lists street address 'Smålandsgatan 12' and city 'Stockholm', matching registry address Smålandsgatan 12, 11146, Stockholm for company 5568648116.",
+        "Website activity 'äger, förvaltar och utvecklar fastigheter' aligns with registry activity description 'fastighetsinvesteringar och fastighetsförvaltning'.",
+        "No other candidate matches the name or address; no conflicting evidence present.",
+        "Explicit legal name uniquely matches the returned registry candidates"
+      ],
+      "elapsed_seconds": 59.368,
+      "pages": 4,
+      "searches": 2,
+      "usage": {
+        "calls": 4,
+        "input_tokens": 14057,
+        "output_tokens": 1687,
+        "reasoning_tokens": 0,
+        "cached_input_tokens": 0,
+        "known_cost_usd": 0.0025092425,
+        "unknown_cost_calls": 0,
+        "sum_request_seconds": 30.992,
+        "median_request_seconds": 5.5205,
+        "model_errors": 0
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=genova.se&source=rest&debug_request=lookup-local-563edc45cd60-21&debug_attempt=1",
+      "stop_reason": "matched",
+      "computed_status": "matched",
+      "computed_company_id": "5568648116",
+      "computed_elapsed_seconds": 59.368,
+      "job_elapsed_seconds": 62.0,
+      "persisted_to_database": false,
+      "business_activity_facts": 4,
+      "industry_assessments": 10,
+      "review": null
+    },
+    {
+      "company_id": "5560263237",
+      "legal_name": "INVESTMENTAKTIEBOLAGET LATOUR",
+      "root_domain": "latour.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/5493006GFBLNB3Y0Y789/2024-12-31/ESEF/SE/0/5493006GFBLNB3Y0Y789-2024-12-31-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-563edc45cd60-22",
+      "outcome": "failed",
+      "status": "failed",
+      "lookup_status": "failed",
+      "found_id": null,
+      "confidence": null,
+      "site_type": "company",
+      "reasons": [
+        "Company database search failed (HTTPStatusError)"
+      ],
+      "elapsed_seconds": 40.751,
+      "pages": 4,
+      "searches": 1,
+      "usage": {
+        "calls": 2,
+        "input_tokens": 7825,
+        "output_tokens": 688,
+        "reasoning_tokens": 0,
+        "cached_input_tokens": 0,
+        "known_cost_usd": 0.0012900875,
+        "unknown_cost_calls": 0,
+        "sum_request_seconds": 11.488000000000001,
+        "median_request_seconds": 5.744000000000001,
+        "model_errors": 0
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=latour.se&source=rest&debug_request=lookup-local-563edc45cd60-22&debug_attempt=1",
+      "stop_reason": "lookup_failed",
+      "computed_status": "failed",
+      "computed_company_id": null,
+      "computed_elapsed_seconds": 40.751,
+      "job_elapsed_seconds": 43.0,
+      "persisted_to_database": false,
+      "business_activity_facts": 5,
+      "industry_assessments": 0,
+      "review": {
+        "classification": "database_search_timeout",
+        "finding": "The name search for Investment AB Latour (publ), normalized as investmentlatour, returned HTTP 408 after 15,148.4 ms. GLM classification and identity calls both completed. This is a database-search failure, not an LLM response failure."
+      }
+    },
+    {
+      "company_id": "5560128240",
+      "legal_name": "HUFVUDSTADEN AB",
+      "root_domain": "hufvudstaden.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/213800UEV5ZAFFVQ4J85/2024-12-31/ESEF/SE/0/hufv-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-563edc45cd60-23",
+      "outcome": "exact_match",
+      "status": "completed",
+      "lookup_status": "matched",
+      "found_id": "5560128240",
+      "confidence": 0.97,
+      "site_type": "company",
+      "reasons": [
+        "Org.nr 556012-8240 on website matches candidate 5560128240 exactly",
+        "Legal name Hufvudstaden AB matches candidate HUFVUDSTADEN AB",
+        "Postal address NK 100, 111 77 Stockholm on website matches candidate address Nk 100, 11177 stockholm",
+        "Business activity (property company leasing offices) consistent with candidate activity description of owning and managing real estate",
+        "No conflicting candidate present",
+        "Website organisation number matches the registry"
+      ],
+      "elapsed_seconds": 31.919,
+      "pages": 4,
+      "searches": 2,
+      "usage": {
+        "calls": 4,
+        "input_tokens": 6939,
+        "output_tokens": 1305,
+        "reasoning_tokens": 0,
+        "cached_input_tokens": 0,
+        "known_cost_usd": 0.0014393475,
+        "unknown_cost_calls": 0,
+        "sum_request_seconds": 15.644,
+        "median_request_seconds": 3.533,
+        "model_errors": 0
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=hufvudstaden.se&source=rest&debug_request=lookup-local-563edc45cd60-23&debug_attempt=1",
+      "stop_reason": "matched",
+      "computed_status": "matched",
+      "computed_company_id": "5560128240",
+      "computed_elapsed_seconds": 31.919,
+      "job_elapsed_seconds": 34.0,
+      "persisted_to_database": false,
+      "business_activity_facts": 5,
+      "industry_assessments": 1,
+      "review": null
+    },
+    {
+      "company_id": "5560179367",
+      "legal_name": "INDUTRADE AKTIEBOLAG",
+      "root_domain": "indutrade.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300FISLQ6CEFP1867/2024-12-31/ESEF/SE/0/indu-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-563edc45cd60-24",
+      "outcome": "exact_match",
+      "status": "completed",
+      "lookup_status": "matched",
+      "found_id": "5560179367",
+      "confidence": 0.99,
+      "site_type": "company",
+      "reasons": [
+        "Legal name on website states 'Indutrade AB' with corporate identity number 556017-9367",
+        "Candidate INDUTRADE AKTIEBOLAG has matching company_id 5560179367 and status active",
+        "Candidate address (Box 6044, 16406 Kista) matches website postal address (Box 6044, SE-164 06 Kista)",
+        "Website organisation number matches the registry"
+      ],
+      "elapsed_seconds": 30.632,
+      "pages": 4,
+      "searches": 2,
+      "usage": {
+        "calls": 4,
+        "input_tokens": 9533,
+        "output_tokens": 1679,
+        "reasoning_tokens": 0,
+        "cached_input_tokens": 0,
+        "known_cost_usd": 0.0019290325,
+        "unknown_cost_calls": 0,
+        "sum_request_seconds": 18.544,
+        "median_request_seconds": 3.4805,
+        "model_errors": 0
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=indutrade.se&source=rest&debug_request=lookup-local-563edc45cd60-24&debug_attempt=1",
+      "stop_reason": "matched",
+      "computed_status": "matched",
+      "computed_company_id": "5560179367",
+      "computed_elapsed_seconds": 30.632,
+      "job_elapsed_seconds": 32.0,
+      "persisted_to_database": false,
+      "business_activity_facts": 2,
+      "industry_assessments": 1,
+      "review": null
+    },
+    {
+      "company_id": "5562384361",
+      "legal_name": "Medivir Aktiebolag",
+      "root_domain": "medivir.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300VWDGUX0WMJ1T79/2024-12-31/ESEF/SE/0/medivir-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-563edc45cd60-25",
+      "outcome": "exact_match",
+      "status": "completed",
+      "lookup_status": "matched",
+      "found_id": "5562384361",
+      "confidence": 0.97,
+      "site_type": "company",
+      "reasons": [
+        "Website legal name 'Medivir AB (publ)' matches registry candidate legal name 'Medivir Aktiebolag' uniquely; no other candidate matches",
+        "Website postal code 11363 matches candidate postal code 11363",
+        "Website city Stockholm matches candidate city stockholm",
+        "Website pharmaceutical business activity matches candidate activity description (research, development, manufacture and sale of pharmaceuticals)",
+        "No other candidate shares similar name or address; ambiguous candidates are clearly different companies",
+        "Explicit legal name uniquely matches the returned registry candidates"
+      ],
+      "elapsed_seconds": 38.832,
+      "pages": 4,
+      "searches": 2,
+      "usage": {
+        "calls": 4,
+        "input_tokens": 7546,
+        "output_tokens": 1619,
+        "reasoning_tokens": 0,
+        "cached_input_tokens": 0,
+        "known_cost_usd": 0.00165019,
+        "unknown_cost_calls": 0,
+        "sum_request_seconds": 19.156,
+        "median_request_seconds": 4.555,
+        "model_errors": 0
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=medivir.se&source=rest&debug_request=lookup-local-563edc45cd60-25&debug_attempt=1",
+      "stop_reason": "matched",
+      "computed_status": "matched",
+      "computed_company_id": "5562384361",
+      "computed_elapsed_seconds": 38.832,
+      "job_elapsed_seconds": 41.0,
+      "persisted_to_database": false,
+      "business_activity_facts": 5,
+      "industry_assessments": 10,
+      "review": null
+    }
+  ],
+  "concurrency": [
+    {
+      "concurrency": 1,
+      "elapsed_seconds": 36.044483500067145,
+      "requests": 4,
+      "requests_per_minute": 6.658439147825573,
+      "supported_identities_per_minute": 6.658439147825573,
+      "median_request_seconds": 6.9680583332665265,
+      "max_request_seconds": 15.99186629243195,
+      "output_tokens_per_second": 103.2890372806442,
+      "valid_json": 4,
+      "supported_identity": 4,
+      "prompt_tokens": 26496,
+      "completion_tokens": 3723,
+      "known_cost_usd": 0.004953987,
+      "unknown_cost_calls": 0,
+      "metrics_before": {},
+      "metrics_after": {},
+      "rows": [
+        {
+          "domain": "addtech.se",
+          "sent_after_seconds": 5.7999975979328156e-05,
+          "valid_json": true,
+          "supported_identity": true,
+          "http_status": 200,
+          "usage": {
+            "prompt_tokens": 6788,
+            "completion_tokens": 1693,
+            "total_tokens": 8481,
+            "cost": 0.001584995,
+            "is_byok": false,
+            "prompt_tokens_details": {
+              "cached_tokens": 0,
+              "cache_write_tokens": 0,
+              "audio_tokens": 0,
+              "video_tokens": 0
+            },
+            "cost_details": {
+              "upstream_inference_cost": 0.001584995,
+              "upstream_inference_prompt_cost": 0.00086547,
+              "upstream_inference_completions_cost": 0.000719525
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 0,
+              "image_tokens": 0,
+              "audio_tokens": 0
+            }
+          },
+          "served_model": "z-ai/glm-5.3-flash",
+          "provider": "Decart",
+          "response_id": "gen-1790520935-UGWTWxtZV6zy7oiiD8By",
+          "finish_reason": "stop",
+          "verified_facts": 20,
+          "elapsed_seconds": 15.99186629243195
+        },
+        {
+          "domain": "jm.se",
+          "sent_after_seconds": 15.992886792402714,
+          "valid_json": true,
+          "supported_identity": true,
+          "http_status": 200,
+          "usage": {
+            "prompt_tokens": 4440,
+            "completion_tokens": 689,
+            "total_tokens": 5129,
+            "cost": 0.000858925,
+            "is_byok": false,
+            "prompt_tokens_details": {
+              "cached_tokens": 0,
+              "cache_write_tokens": 0,
+              "audio_tokens": 0,
+              "video_tokens": 0
+            },
+            "cost_details": {
+              "upstream_inference_cost": 0.000858925,
+              "upstream_inference_prompt_cost": 0.0005661,
+              "upstream_inference_completions_cost": 0.000292825
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 0,
+              "image_tokens": 0,
+              "audio_tokens": 0
+            }
+          },
+          "served_model": "z-ai/glm-5.3-flash",
+          "provider": "Decart",
+          "response_id": "gen-1790520951-NuvHVo4ZeG9pzVDLaFrc",
+          "finish_reason": "stop",
+          "verified_facts": 7,
+          "elapsed_seconds": 6.748953957576305
+        },
+        {
+          "domain": "neobo.se",
+          "sent_after_seconds": 22.74286250025034,
+          "valid_json": true,
+          "supported_identity": true,
+          "http_status": 200,
+          "usage": {
+            "prompt_tokens": 11365,
+            "completion_tokens": 665,
+            "total_tokens": 12030,
+            "cost": 0.0017251345,
+            "is_byok": false,
+            "prompt_tokens_details": {
+              "cached_tokens": 64,
+              "cache_write_tokens": 0,
+              "audio_tokens": 0,
+              "video_tokens": 0
+            },
+            "cost_details": {
+              "upstream_inference_cost": 0.0017251345,
+              "upstream_inference_prompt_cost": 0.0014425095,
+              "upstream_inference_completions_cost": 0.000282625
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 0,
+              "image_tokens": 0,
+              "audio_tokens": 0
+            }
+          },
+          "served_model": "z-ai/glm-5.3-flash",
+          "provider": "Decart",
+          "response_id": "gen-1790520958-fJKTXrx4KRBp4ArUx9c1",
+          "finish_reason": "stop",
+          "verified_facts": 8,
+          "elapsed_seconds": 7.187162708956748
+        },
+        {
+          "domain": "arise.se",
+          "sent_after_seconds": 29.930956500116736,
+          "valid_json": true,
+          "supported_identity": true,
+          "http_status": 200,
+          "usage": {
+            "prompt_tokens": 3903,
+            "completion_tokens": 676,
+            "total_tokens": 4579,
+            "cost": 0.0007849325,
+            "is_byok": false,
+            "prompt_tokens_details": {
+              "cached_tokens": 0,
+              "cache_write_tokens": 0,
+              "audio_tokens": 0,
+              "video_tokens": 0
+            },
+            "cost_details": {
+              "upstream_inference_cost": 0.0007849325,
+              "upstream_inference_prompt_cost": 0.0004976325,
+              "upstream_inference_completions_cost": 0.0002873
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 0,
+              "image_tokens": 0,
+              "audio_tokens": 0
+            }
+          },
+          "served_model": "z-ai/glm-5.3-flash",
+          "provider": "Decart",
+          "response_id": "gen-1790520965-jyZsQK054SzUiEavoVLI",
+          "finish_reason": "stop",
+          "verified_facts": 9,
+          "elapsed_seconds": 6.112753834109753
+        }
+      ]
+    },
+    {
+      "concurrency": 2,
+      "elapsed_seconds": 30.00595933292061,
+      "requests": 4,
+      "requests_per_minute": 7.998411160168687,
+      "supported_identities_per_minute": 7.998411160168687,
+      "median_request_seconds": 8.237610354553908,
+      "max_request_seconds": 23.017335625365376,
+      "output_tokens_per_second": 142.57167893000687,
+      "valid_json": 4,
+      "supported_identity": 4,
+      "prompt_tokens": 26496,
+      "completion_tokens": 4278,
+      "known_cost_usd": 0.004040934,
+      "unknown_cost_calls": 0,
+      "metrics_before": {},
+      "metrics_after": {},
+      "rows": [
+        {
+          "domain": "addtech.se",
+          "sent_after_seconds": 0.00015166588127613068,
+          "valid_json": true,
+          "supported_identity": true,
+          "http_status": 200,
+          "usage": {
+            "prompt_tokens": 6788,
+            "completion_tokens": 723,
+            "total_tokens": 7511,
+            "cost": 0.001172745,
+            "is_byok": false,
+            "prompt_tokens_details": {
+              "cached_tokens": 0,
+              "cache_write_tokens": 0,
+              "audio_tokens": 0,
+              "video_tokens": 0
+            },
+            "cost_details": {
+              "upstream_inference_cost": 0.001172745,
+              "upstream_inference_prompt_cost": 0.00086547,
+              "upstream_inference_completions_cost": 0.000307275
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 0,
+              "image_tokens": 0,
+              "audio_tokens": 0
+            }
+          },
+          "served_model": "z-ai/glm-5.3-flash",
+          "provider": "Decart",
+          "response_id": "gen-1790520971-gf8ld4YK8GRpd9poilpc",
+          "finish_reason": "stop",
+          "verified_facts": 10,
+          "elapsed_seconds": 7.828443834092468
+        },
+        {
+          "domain": "jm.se",
+          "sent_after_seconds": 0.0032480410300195217,
+          "valid_json": true,
+          "supported_identity": true,
+          "http_status": 200,
+          "usage": {
+            "prompt_tokens": 4440,
+            "completion_tokens": 545,
+            "total_tokens": 4985,
+            "cost": 0.000797725,
+            "is_byok": false,
+            "prompt_tokens_details": {
+              "cached_tokens": 0,
+              "cache_write_tokens": 0,
+              "audio_tokens": 0,
+              "video_tokens": 0
+            },
+            "cost_details": {
+              "upstream_inference_cost": 0.000797725,
+              "upstream_inference_prompt_cost": 0.0005661,
+              "upstream_inference_completions_cost": 0.000231625
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 0,
+              "image_tokens": 0,
+              "audio_tokens": 0
+            }
+          },
+          "served_model": "z-ai/glm-5.3-flash",
+          "provider": "Decart",
+          "response_id": "gen-1790520971-bnsMZtfEI9OPGIoWVb9K",
+          "finish_reason": "stop",
+          "verified_facts": 7,
+          "elapsed_seconds": 6.98413374973461
+        },
+        {
+          "domain": "neobo.se",
+          "sent_after_seconds": 6.98776620766148,
+          "valid_json": true,
+          "supported_identity": true,
+          "http_status": 200,
+          "usage": {
+            "prompt_tokens": 11365,
+            "completion_tokens": 2383,
+            "total_tokens": 13748,
+            "cost": 0.0013063565,
+            "is_byok": false,
+            "prompt_tokens_details": {
+              "cached_tokens": 11328,
+              "cache_write_tokens": 0,
+              "audio_tokens": 0,
+              "video_tokens": 0
+            },
+            "cost_details": {
+              "upstream_inference_cost": 0.0013063565,
+              "upstream_inference_prompt_cost": 0.0002935815,
+              "upstream_inference_completions_cost": 0.001012775
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 0,
+              "image_tokens": 0,
+              "audio_tokens": 0
+            }
+          },
+          "served_model": "z-ai/glm-5.3-flash",
+          "provider": "Decart",
+          "response_id": "gen-1790520978-Emy4gjJwHw0sFlWRhfL9",
+          "finish_reason": "stop",
+          "verified_facts": 20,
+          "elapsed_seconds": 23.017335625365376
+        },
+        {
+          "domain": "arise.se",
+          "sent_after_seconds": 7.829164708033204,
+          "valid_json": true,
+          "supported_identity": true,
+          "http_status": 200,
+          "usage": {
+            "prompt_tokens": 3903,
+            "completion_tokens": 627,
+            "total_tokens": 4530,
+            "cost": 0.0007641075,
+            "is_byok": false,
+            "prompt_tokens_details": {
+              "cached_tokens": 0,
+              "cache_write_tokens": 0,
+              "audio_tokens": 0,
+              "video_tokens": 0
+            },
+            "cost_details": {
+              "upstream_inference_cost": 0.0007641075,
+              "upstream_inference_prompt_cost": 0.0004976325,
+              "upstream_inference_completions_cost": 0.000266475
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 0,
+              "image_tokens": 0,
+              "audio_tokens": 0
+            }
+          },
+          "served_model": "z-ai/glm-5.3-flash",
+          "provider": "Decart",
+          "response_id": "gen-1790520979-n1WVd7MqHG3nmYiumly0",
+          "finish_reason": "stop",
+          "verified_facts": 9,
+          "elapsed_seconds": 8.646776875015348
+        }
+      ]
+    },
+    {
+      "concurrency": 4,
+      "elapsed_seconds": 10.502673749811947,
+      "requests": 4,
+      "requests_per_minute": 22.851323931136797,
+      "supported_identities_per_minute": 22.851323931136797,
+      "median_request_seconds": 9.961689812596887,
+      "max_request_seconds": 10.502277290914208,
+      "output_tokens_per_second": 268.1222007920051,
+      "valid_json": 4,
+      "supported_identity": 4,
+      "prompt_tokens": 26496,
+      "completion_tokens": 2816,
+      "known_cost_usd": 0.004124608,
+      "unknown_cost_calls": 0,
+      "metrics_before": {},
+      "metrics_after": {},
+      "rows": [
+        {
+          "domain": "addtech.se",
+          "sent_after_seconds": 0.00015737488865852356,
+          "valid_json": true,
+          "supported_identity": true,
+          "http_status": 200,
+          "usage": {
+            "prompt_tokens": 6788,
+            "completion_tokens": 782,
+            "total_tokens": 7570,
+            "cost": 0.00119782,
+            "is_byok": false,
+            "prompt_tokens_details": {
+              "cached_tokens": 0,
+              "cache_write_tokens": 0,
+              "audio_tokens": 0,
+              "video_tokens": 0
+            },
+            "cost_details": {
+              "upstream_inference_cost": 0.00119782,
+              "upstream_inference_prompt_cost": 0.00086547,
+              "upstream_inference_completions_cost": 0.00033235
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 0,
+              "image_tokens": 0,
+              "audio_tokens": 0
+            }
+          },
+          "served_model": "z-ai/glm-5.3-flash",
+          "provider": "Decart",
+          "response_id": "gen-1790521001-PT5dDFHp5EnDZpbdOxUL",
+          "finish_reason": "stop",
+          "verified_facts": 9,
+          "elapsed_seconds": 10.502277290914208
+        },
+        {
+          "domain": "jm.se",
+          "sent_after_seconds": 0.0030637909658253193,
+          "valid_json": true,
+          "supported_identity": true,
+          "http_status": 200,
+          "usage": {
+            "prompt_tokens": 4440,
+            "completion_tokens": 609,
+            "total_tokens": 5049,
+            "cost": 0.000374493,
+            "is_byok": false,
+            "prompt_tokens_details": {
+              "cached_tokens": 4416,
+              "cache_write_tokens": 0,
+              "audio_tokens": 0,
+              "video_tokens": 0
+            },
+            "cost_details": {
+              "upstream_inference_cost": 0.000374493,
+              "upstream_inference_prompt_cost": 0.000115668,
+              "upstream_inference_completions_cost": 0.000258825
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 0,
+              "image_tokens": 0,
+              "audio_tokens": 0
+            }
+          },
+          "served_model": "z-ai/glm-5.3-flash",
+          "provider": "Decart",
+          "response_id": "gen-1790521001-166Jd8BuCTpoaLoRgsaa",
+          "finish_reason": "stop",
+          "verified_facts": 6,
+          "elapsed_seconds": 8.618042083922774
+        },
+        {
+          "domain": "neobo.se",
+          "sent_after_seconds": 0.0051334998570382595,
+          "valid_json": true,
+          "supported_identity": true,
+          "http_status": 200,
+          "usage": {
+            "prompt_tokens": 11365,
+            "completion_tokens": 711,
+            "total_tokens": 12076,
+            "cost": 0.0017512125,
+            "is_byok": false,
+            "prompt_tokens_details": {
+              "cached_tokens": 0,
+              "cache_write_tokens": 0,
+              "audio_tokens": 0,
+              "video_tokens": 0
+            },
+            "cost_details": {
+              "upstream_inference_cost": 0.0017512125,
+              "upstream_inference_prompt_cost": 0.0014490375,
+              "upstream_inference_completions_cost": 0.000302175
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 0,
+              "image_tokens": 0,
+              "audio_tokens": 0
+            }
+          },
+          "served_model": "z-ai/glm-5.3-flash",
+          "provider": "Decart",
+          "response_id": "gen-1790521001-GbeGtfAx5auofRVDvsVR",
+          "finish_reason": "stop",
+          "verified_facts": 9,
+          "elapsed_seconds": 10.137060541193932
+        },
+        {
+          "domain": "arise.se",
+          "sent_after_seconds": 0.0073591661639511585,
+          "valid_json": true,
+          "supported_identity": true,
+          "http_status": 200,
+          "usage": {
+            "prompt_tokens": 3903,
+            "completion_tokens": 714,
+            "total_tokens": 4617,
+            "cost": 0.0008010825,
+            "is_byok": false,
+            "prompt_tokens_details": {
+              "cached_tokens": 0,
+              "cache_write_tokens": 0,
+              "audio_tokens": 0,
+              "video_tokens": 0
+            },
+            "cost_details": {
+              "upstream_inference_cost": 0.0008010825,
+              "upstream_inference_prompt_cost": 0.0004976325,
+              "upstream_inference_completions_cost": 0.00030345
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 0,
+              "image_tokens": 0,
+              "audio_tokens": 0
+            }
+          },
+          "served_model": "z-ai/glm-5.3-flash",
+          "provider": "Decart",
+          "response_id": "gen-1790521001-4V4MUF1ETZHnjbGBzdNn",
+          "finish_reason": "stop",
+          "verified_facts": 9,
+          "elapsed_seconds": 9.786319083999842
+        }
+      ]
+    }
+  ],
+  "concurrency_usage": {
+    "calls": 12,
+    "input_tokens": 79488,
+    "output_tokens": 10817,
+    "reasoning_tokens": 0,
+    "cached_input_tokens": 15808,
+    "known_cost_usd": 0.013119529,
+    "unknown_cost_calls": 0,
+    "sum_request_seconds": 121.56112587731332,
+    "median_request_seconds": 8.632409479469061,
+    "model_errors": 0
+  }
+}

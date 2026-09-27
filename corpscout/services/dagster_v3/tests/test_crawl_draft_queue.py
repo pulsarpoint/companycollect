@@ -60,6 +60,9 @@ def db(server, store):  # noqa: F811
     for statement in (migrations / "000449_corpscout_queue_task_sources.up.sql").read_text().split(";"):
         if statement.strip():
             client.execute(statement)
+    for statement in (migrations / "000459_corpscout_website_company_lookup_results.up.sql").read_text().split(";"):
+        if statement.strip():
+            client.execute(statement)
     for table in (
         *INPUT_TABLES,
         TASK_DOMAINS,

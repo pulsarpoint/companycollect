@@ -10,6 +10,7 @@ export interface DomainEvidence {
   website_count: number;
   observed_website_count: number;
   company_count: number;
+  company_matching_status?: string;
   first_seen_at: string;
   last_seen_at: string;
   refreshed_at: string;
@@ -22,30 +23,61 @@ export interface DomainSite {
 }
 
 export async function listWorkspaceDomains(filters: WorkspaceDomainFilters, after: string) {
-  const conditions = ["root_domain > {after:String}"];
+  const conditions: string[] = [];
   if (filters.prefix) conditions.push("startsWith(root_domain, {prefix:String})");
+  if (filters.suffix) conditions.push("endsWith(root_domain, {suffix:String})");
   if (filters.sources.length) conditions.push(`${filters.sourceMatch === "all" ? "hasAll" : "hasAny"}(sources, {sources:Array(String)})`);
   if (filters.dns !== "any") conditions.push(`has_dns_records = ${filters.dns === "with" ? 1 : 0}`);
   if (filters.websites === "observed") conditions.push("has_website = 1 AND observed_website_count > 0");
   else if (filters.websites !== "any") conditions.push(`has_website = ${filters.websites === "with" ? 1 : 0}`);
-  if (filters.companies !== "any") conditions.push(`has_company = ${filters.companies === "with" ? 1 : 0}`);
-  const [rows, totals, publication] = await Promise.all([
+  // Associations and matching outcomes change between inventory refreshes.
+  // Read their current sources so a finished attempt disappears immediately.
+  if (filters.companies !== "any") conditions.push(`root_domain ${filters.companies === "without" ? "NOT " : ""}IN
+    (SELECT root_domain FROM corpscout.company_domains_resolved WHERE is_active = 1)`);
+  if (filters.companyMatching !== "any") conditions.push(`root_domain ${filters.companyMatching === "without" ? "NOT " : ""}IN
+    (SELECT domain FROM corpscout.website_company_lookup_results)`);
+  const filterParams = { prefix: filters.prefix, suffix: `.${filters.suffix}`, sources: filters.sources };
+  const [rows, totals, publication, matching] = await Promise.all([
     chQuery<DomainEvidence>(`SELECT root_domain,sources,has_dns_records,dns_last_observed_at,
       toUInt32(website_count) AS website_count,toUInt32(observed_website_count) AS observed_website_count,
       toUInt32(company_count) AS company_count,first_seen_at,last_seen_at,refreshed_at
       FROM corpscout.domains_search
-      WHERE ${conditions.join(" AND ")}
+      WHERE ${["root_domain > {after:String}", ...conditions].join(" AND ")}
       ORDER BY root_domain LIMIT {limit:UInt32}
       SETTINGS optimize_read_in_order=1, max_threads=4, max_execution_time=20`,
-      { prefix: filters.prefix, sources: filters.sources, after, limit: PAGE_SIZE + 1 }),
-    // MergeTree row-count metadata: no request-time full-table count or filter joins.
+      { ...filterParams, after, limit: PAGE_SIZE + 1 }),
+    // The unfiltered inventory uses metadata; filtered totals cover every page.
     chQuery<{ name: string; total: string }>(`SELECT name,toString(total_rows) AS total FROM system.tables
       WHERE database='corpscout' AND name IN ('domains_search','websites')`),
     chQuery<{ refreshed_at: string }>("SELECT refreshed_at FROM corpscout.domains_search LIMIT 1"),
+    conditions.length ? chQuery<{ total: string }>(`SELECT toString(count()) AS total
+      FROM corpscout.domains_search WHERE ${conditions.join(" AND ")}
+      SETTINGS max_threads=4, max_execution_time=20`, filterParams) : null,
   ]);
   const visible = rows.slice(0, PAGE_SIZE);
+  if (visible.length) {
+    const domains = visible.map(row => row.root_domain);
+    const [companies, attempts] = await Promise.all([
+      chQuery<{ root_domain: string; company_count: number }>(`SELECT root_domain,
+        toUInt32(uniqExact((country_code, company_id))) AS company_count
+        FROM corpscout.company_domains_resolved WHERE is_active = 1 AND root_domain IN {domains:Array(String)}
+        GROUP BY root_domain SETTINGS max_threads=4, max_execution_time=20`, { domains }),
+      chQuery<{ domain: string; status: string }>(`SELECT domain,
+        argMax(status, (finished_at, request_id, attempt)) AS status
+        FROM corpscout.website_company_lookup_results WHERE domain IN {domains:Array(String)}
+        GROUP BY domain SETTINGS max_threads=4, max_execution_time=20`, { domains }),
+    ]);
+    const counts = new Map(companies.map(row => [row.root_domain, row.company_count]));
+    const statuses = new Map(attempts.map(row => [row.domain, row.status]));
+    for (const row of visible) {
+      row.company_count = counts.get(row.root_domain) ?? 0;
+      row.company_matching_status = statuses.get(row.root_domain) ?? "";
+    }
+  }
+  const total = totals.find((row) => row.name === "domains_search")?.total ?? "0";
   return { rows: visible, hasMore: rows.length > PAGE_SIZE,
-    next: visible.at(-1)?.root_domain ?? "", total: totals.find((row) => row.name === "domains_search")?.total ?? "0",
+    next: visible.at(-1)?.root_domain ?? "", total,
+    matchingTotal: matching === null ? total : matching[0]?.total ?? "0",
     websiteInventoryTotal: totals.find((row) => row.name === "websites")?.total ?? "0",
     refreshedAt: publication[0]?.refreshed_at ?? null };
 }

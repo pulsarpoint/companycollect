@@ -163,7 +163,7 @@ export default function AdminCrawls({loaderData}: Route.ComponentProps) {
         <TabsTrigger value="attempts">Attempts</TabsTrigger>
       </TabsList>
       <TabsContent value="crawl" keepMounted className="pt-4">
-        <CrawlSubmit enabled={submissionEnabled && snapshot?.debug_available === true} unavailableReason={submissionEnabled ? "The crawler service needs the debug-trace update before starting new test crawls. Existing crawls continue running." : undefined} initialProfile={CRAWL_TEST_PROFILES.find(item => item.value === search.get("input_type"))?.value} onPublished={receipt => {
+        <CrawlSubmit lookupEnabled={snapshot?.company_lookup_available === true} enabled={submissionEnabled && snapshot?.debug_available === true} unavailableReason={submissionEnabled ? "The crawler service needs the debug-trace update before starting new test crawls. Existing crawls continue running." : undefined} initialProfile={CRAWL_TEST_PROFILES.find(item => item.value === search.get("input_type"))?.value} onPublished={receipt => {
           setSubmission(receipt);
           const next = new URLSearchParams(search);
           next.set("tab", "attempts");

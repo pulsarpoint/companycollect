@@ -179,6 +179,15 @@ and `se_company_brave_search_results_latest_success`; PostgreSQL uses the existi
 Deploy/configure the browser service before launching the updated Dagster definition.
 An existing per-request run must be stopped and resumed to switch it to batches.
 
+The shared `processing_worker` role needs a connection limit of **32**, as configured
+by `scripts/provision-processing-storage.py`. The original pilot limit of eight
+was exhausted by Backoffice pools plus Dagster/browser admission checks on
+2026-09-26, causing a Brave worker to fail with `OperationalError`. For an existing
+installation, apply `ALTER ROLE processing_worker CONNECTION LIMIT 32` as a
+PostgreSQL administrator; no service restart or credential rotation is needed.
+Keep `processing_reader` at eight. This allowance covers database concurrency and
+does not increase the four Brave browser workers or their request rate.
+
 
 Apply ClickHouse migration **453** before deploying these definitions and Backoffice.
 It adds the partitioned input and company-membership tables.

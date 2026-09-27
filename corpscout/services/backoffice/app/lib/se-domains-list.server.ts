@@ -124,6 +124,10 @@ export function buildSeDomainsFilter(filters: SeDomainsFilters): SeDomainsFilter
     where.push("d.root_domain LIKE {domain:String}");
     params.domain = `%${filters.domain}%`;
   }
+  if (filters.suffix !== "") {
+    where.push("endsWith(d.root_domain, {suffix:String})");
+    params.suffix = `.${filters.suffix}`;
+  }
   if (filters.company !== "") {
     where.push("d.company_id = {company:String}");
     params.company = filters.company;

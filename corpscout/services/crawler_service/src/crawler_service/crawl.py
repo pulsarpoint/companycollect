@@ -282,6 +282,7 @@ async def collect_pages(
                     manifest["site_info"] = site_information(profile, page.source_url)
                     if decisions is not None and "site_eligibility" in decisions.tasks:
                         manifest["site_info"].update(crawl_decision=decision, site_types=[eligibility["site_type"]], decision_model=eligibility)
+                manifest["site_info_usage"] = json.loads(json.dumps(llm.usage()))
                 # A one-page description is complete for any identified site type.
                 # The classification decision only gates deeper collection.
                 if (

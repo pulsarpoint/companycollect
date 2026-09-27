@@ -1,0 +1,196 @@
+{
+  "manifest": {
+    "started_at": "2026-09-27T13:52:29.974312+00:00",
+    "selection": "Separate retry of Lifco after a truncated local-model response in the frozen industry run; do not replace the original outcome.",
+    "model": "nvidia/Qwen3.8-27B-NVFP4",
+    "profile_id": "657ff56f-2a12-4e84-8cdc-78fbbddb7093",
+    "revision": 5,
+    "reasoning_effort": null,
+    "decision_model": null,
+    "decision_tasks": [],
+    "config": {
+      "max_pages": 4,
+      "max_model_calls": 20
+    },
+    "concurrency": 2,
+    "source_sha256": {
+      "company_lookup.py": "e8f50fc0ea116735b57b30dd23b5b42d4440be0d1fb59d9b4a19a5c9f36eeb4c",
+      "company_search.py": "f3e2b61873c0a88343c85245533ec64633d1463c05d248507af84e6ac21f3fae",
+      "company_evidence.py": "cb90feaeb754cf73e518b93f8277eac7383ca7f17a0769b333b15ccd2e5e2de3",
+      "company_industry.py": "f65095e76b6c021933a2b8752c92d715ec9234dc57d8167916386ab2dd4e4d95",
+      "jev.py": "b386dd129b739d9fe8367b13f2ef9056705dc60d78798bed07e21fd70efa62c1"
+    },
+    "cases": [
+      {
+        "company_id": "5564653185",
+        "legal_name": "Lifco AB (publ)",
+        "root_domain": "lifco.se",
+        "reference_urls": [
+          "https://filings.xbrl.org/549300RTLL4VDQRCTW41/2024-12-31/ESEF/SE/0/549300RTLL4VDQRCTW41-2024-12-31-0-sv/reports/ixbrlviewer.html"
+        ],
+        "request_id": "lookup-local-2bd7cb1fe7b3-01"
+      }
+    ]
+  },
+  "finished_at": "2026-09-27T13:53:56.672706+00:00",
+  "cases": [
+    {
+      "company_id": "5564653185",
+      "legal_name": "Lifco AB (publ)",
+      "root_domain": "lifco.se",
+      "reference_urls": [
+        "https://filings.xbrl.org/549300RTLL4VDQRCTW41/2024-12-31/ESEF/SE/0/549300RTLL4VDQRCTW41-2024-12-31-0-sv/reports/ixbrlviewer.html"
+      ],
+      "request_id": "lookup-local-2bd7cb1fe7b3-01",
+      "outcome": "exact_match",
+      "status": "completed",
+      "lookup_status": "matched",
+      "found_id": "5564653185",
+      "confidence": 0.95,
+      "site_type": "company",
+      "reasons": [
+        "Exact match on organization number 556465-3185",
+        "Legal name 'LIFCO AB' aligns with registry candidate 'Lifco AB (publ)'",
+        "Exact match on street address Verkmästaregatan 1",
+        "Exact match on postal code 74585/745 85",
+        "Exact match on city Enköping/enköping",
+        "Website organisation number matches the registry"
+      ],
+      "elapsed_seconds": 83.578,
+      "pages": 4,
+      "searches": 2,
+      "usage": {
+        "calls": 4,
+        "successful_responses": 4,
+        "known_cost_usd": 0,
+        "unknown_cost_calls": 4,
+        "prompt_tokens": 5200,
+        "completion_tokens": 1305,
+        "by_call": [
+          {
+            "call_id": 1,
+            "task": "company_lookup_classification",
+            "attempt": 1,
+            "started_at": "2026-09-27T13:52:34+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 8.016,
+            "response_id": "chatcmpl-2a6ac2ce-2e5c-4efb-a516-ef8ded29b6ec",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 915,
+              "completion_tokens": 137,
+              "total_tokens": 1052,
+              "prompt_tokens_details": {
+                "cached_tokens": 912,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 54,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 927.933541,
+              "response_token/s": 19.23613429252901
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 2,
+            "task": "company_lookup_identity",
+            "attempt": 1,
+            "started_at": "2026-09-27T13:52:50+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 48.551,
+            "response_id": "chatcmpl-150db3c9-86b6-415d-9e59-c979cb51e352",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 2636,
+              "completion_tokens": 893,
+              "total_tokens": 3529,
+              "prompt_tokens_details": {
+                "cached_tokens": 2624,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 435,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 4290.210381,
+              "response_token/s": 20.22907684106962
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 3,
+            "task": "company_lookup_match",
+            "attempt": 1,
+            "started_at": "2026-09-27T13:53:38+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 7.1,
+            "response_id": "chatcmpl-72644508-680f-49f5-a644-dc44baeca664",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 914,
+              "completion_tokens": 115,
+              "total_tokens": 1029,
+              "prompt_tokens_details": {
+                "cached_tokens": 192,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 50,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 1552.7985939999999,
+              "response_token/s": 20.740554756048915
+            },
+            "finish_reason": "stop"
+          },
+          {
+            "call_id": 4,
+            "task": "company_lookup_industry",
+            "attempt": 1,
+            "started_at": "2026-09-27T13:53:46+00:00",
+            "api": "openai",
+            "http_status": 200,
+            "elapsed_seconds": 9.202,
+            "response_id": "chatcmpl-63fb701e-3cbf-489f-a8ca-c7d9730c5a98",
+            "provider": null,
+            "response_model": "nvidia/Qwen3.8-27B-NVFP4",
+            "usage": {
+              "prompt_tokens": 735,
+              "completion_tokens": 160,
+              "total_tokens": 895,
+              "prompt_tokens_details": {
+                "cached_tokens": 224,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "audio_tokens": 0,
+                "accepted_prediction_tokens": 72,
+                "rejected_prediction_tokens": 0
+              },
+              "time_to_first_token_ms": 1299.172712,
+              "response_token/s": 21.34945752357067
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "s3_state": "not_configured",
+      "trace_url": "http://localhost:5183/admin/crawls?tab=attempts&domain=lifco.se&source=rest&debug_request=lookup-local-2bd7cb1fe7b3-01&debug_attempt=1"
+    }
+  ]
+}
