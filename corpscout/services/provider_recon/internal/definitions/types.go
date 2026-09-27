@@ -112,6 +112,20 @@ type FeedRef struct {
 	// GenericTags (exact or glob) name umbrella tags whose ranges are dropped
 	// when the same CIDR also appears under a specific tag (AWS AMAZON).
 	GenericTags []string `yaml:"generic_tags,omitempty"`
+	// RemovalGraceDays is how long a range may be missing from successful
+	// fetches before it is marked removed. 0 means DefaultRemovalGraceDays.
+	RemovalGraceDays int `yaml:"removal_grace_days,omitempty"`
+}
+
+// DefaultRemovalGraceDays applies when a feed sets no removal_grace_days.
+const DefaultRemovalGraceDays = 7
+
+// Grace returns the feed's removal grace period in days.
+func (f FeedRef) Grace() int {
+	if f.RemovalGraceDays > 0 {
+		return f.RemovalGraceDays
+	}
+	return DefaultRemovalGraceDays
 }
 
 // ID is the collector name plus sorted params: the key under which the

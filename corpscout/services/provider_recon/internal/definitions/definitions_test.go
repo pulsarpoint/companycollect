@@ -204,3 +204,48 @@ func TestSchemaIsCurrent(t *testing.T) {
 		t.Fatal("definitions/schema.json is stale; run: go test ./internal/definitions -run TestSchemaIsCurrent -update")
 	}
 }
+
+func TestFeedGraceDefault(t *testing.T) {
+	if g := (FeedRef{}).Grace(); g != 7 {
+		t.Fatalf("default grace = %d", g)
+	}
+	if g := (FeedRef{RemovalGraceDays: 14}).Grace(); g != 14 {
+		t.Fatalf("explicit grace = %d", g)
+	}
+}
+
+func TestValidateFeedLifecycleSettings(t *testing.T) {
+	feed := func(mut func(*FeedRef)) Definition {
+		d := base()
+		f := FeedRef{Collector: "fake_feed", TagMap: map[string]string{"X": "acme.web"}}
+		mut(&f)
+		d.Feeds = []FeedRef{f}
+		return d
+	}
+	cases := []struct {
+		name string
+		def  Definition
+		want string
+	}{
+		{"negative grace", feed(func(f *FeedRef) { f.RemovalGraceDays = -1 }), "removal_grace_days: must be between 1 and 365"},
+		{"huge grace", feed(func(f *FeedRef) { f.RemovalGraceDays = 400 }), "removal_grace_days: must be between 1 and 365"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := Validate([]Definition{c.def}, collectors())
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("err = %v, want %q", err, c.want)
+			}
+		})
+	}
+
+	d := base()
+	d.Feeds = []FeedRef{
+		{Collector: "fake_feed", TagMap: map[string]string{"X": "acme.web"}},
+		{Collector: "fake_feed", TagMap: map[string]string{"Y": "acme.web"}},
+	}
+	err := Validate([]Definition{d}, collectors())
+	if err == nil || !strings.Contains(err.Error(), `duplicate feed "fake_feed"`) {
+		t.Fatalf("duplicate feed: err = %v", err)
+	}
+}

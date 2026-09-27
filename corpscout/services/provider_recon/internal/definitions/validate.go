@@ -117,8 +117,15 @@ func validateProvider(d *Definition, p *problems, collectors map[string]ParamVal
 		validateService(d, s, path, p)
 	}
 
+	feedIDs := map[string]bool{}
 	for i := range d.Feeds {
-		validateFeed(d, &d.Feeds[i], fmt.Sprintf("feeds[%d]", i), serviceKeys, collectors, p)
+		path := fmt.Sprintf("feeds[%d]", i)
+		validateFeed(d, &d.Feeds[i], path, serviceKeys, collectors, p)
+		id := d.Feeds[i].ID()
+		if feedIDs[id] {
+			p.add(d, path, "duplicate feed %q; merge the tag_maps into one entry", id)
+		}
+		feedIDs[id] = true
 	}
 }
 
@@ -268,6 +275,9 @@ func validateFeed(d *Definition, f *FeedRef, path string, services map[string]bo
 		if svc != "" && !services[svc] {
 			p.add(d, path, "tag_map[%q] points to unknown service %q", tag, svc)
 		}
+	}
+	if f.RemovalGraceDays < 0 || f.RemovalGraceDays > 365 {
+		p.add(d, path+".removal_grace_days", "must be between 1 and 365 (omit for the default %d)", DefaultRemovalGraceDays)
 	}
 	for _, g := range f.GenericTags {
 		if strings.Contains(g, "*") {

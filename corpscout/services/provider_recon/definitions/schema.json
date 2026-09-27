@@ -107,6 +107,9 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "removal_grace_days": {
+          "type": "integer"
         }
       },
       "additionalProperties": false,
