@@ -472,6 +472,7 @@ EXPECTED_MIGRATIONS = (
     "000457_remove_brave_captcha_health",
     "000458_corpscout_ip_enrichment_queue_contract",
     "000459_corpscout_website_company_lookup_results",
+    "000460_corpscout_provider_recon",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -4591,3 +4592,14 @@ def test_retired_person_llm_tables_have_no_schema_or_runtime_definitions() -> No
         text = path.read_text(encoding="utf-8")
         for table in retired:
             assert table not in text, f"{path} still references {table}"
+
+
+def test_provider_recon_migration_maps_s3_without_credentials() -> None:
+    up = (MIGRATIONS_DIR / "000460_corpscout_provider_recon.up.sql").read_text()
+    assert "ENGINE = S3(provider_recon, filename = 'providers/*/latest.json', format = 'JSONAsString')" in up
+    for secret_marker in ("access_key", "secret", "aws_", "http://", "https://"):
+        assert secret_marker not in up.lower(), secret_marker
+    for table in ("provider_services", "provider_ip_ranges", "provider_rules"):
+        assert f"CREATE TABLE IF NOT EXISTS corpscout.{table}" in up
+        assert "ENGINE = ReplacingMergeTree(loaded_at)" in up
+    assert "CREATE VIEW IF NOT EXISTS corpscout.provider_ip_ranges_current" in up
