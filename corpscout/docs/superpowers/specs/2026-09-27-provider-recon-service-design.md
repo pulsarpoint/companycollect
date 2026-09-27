@@ -255,8 +255,8 @@ shrinking. Checks:
 
 - `scope`: the command (`collect` or `restore`) and the selected providers.
 - `feeds`: every feed's status, item count, per-run churn (added / missing /
-  reappeared / removed / purged) and unmapped tags. The churn is what the
-  hold thresholds get calibrated from.
+  reappeared / removed / purged, and restored on restore runs) and unmapped
+  tags. The churn is what the backoffice warning rules are evaluated against.
 - Evidence diffs list lifecycle transitions: `added`, `missing`,
   `reappeared`, `removed` (with action), `purged`, `updated`.
 - Evidence diffs also list `restored` items.
