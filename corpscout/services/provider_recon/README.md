@@ -17,6 +17,7 @@ bin/provider-recon collect -out /tmp/recon       # dry run to a local directory
 bin/provider-recon collect                       # publish to S3
 bin/provider-recon collect -provider aws         # one provider
 bin/provider-recon schema                        # regenerate definitions/schema.json
+bin/provider-recon restore -provider aws -collector aws_ip_ranges -removed-since 2026-10-03   # undo wrong removals
 make live                                        # hit every real feed (format-drift check)
 ```
 
@@ -34,6 +35,32 @@ make live                                        # hit every real feed (format-d
 The content hash covers identity + evidence and ignores sync tokens. A feed
 that republishes identical ranges therefore creates no history. A failing
 feed keeps the previous ranges (`stale`); the provider is never emptied.
+
+## Removal lifecycle
+
+Nothing disappears the moment a feed stops listing it. Every item has a
+`status`:
+- `active`
+- `missing`: absent from a successful fetch since `missing_since`
+- `removed`: with `removed_at` and a `removal_action` of `grace_expired` or
+  `definition_removed`
+
+Items also carry `first_seen` and `last_seen`.
+
+- A missing range is removed after the feed's `removal_grace_days`
+  (default 7; Azure 14). While a feed fails, nothing moves.
+- No threshold blocks a large drop. Every run's per-feed churn is in the
+  change manifest, and the backoffice highlights unusual updates.
+- A wrong removal is undone with:
+
+  ```bash
+  bin/provider-recon restore -provider <slug> -collector <id> -removed-since <YYYY-MM-DD>
+  ```
+
+  It sets `restored_at`, and restores only grace-expired removals. Fix the
+  collector first, then restore, then collect.
+- Removed items stay in `latest.json` for 90 days. History objects keep them
+  forever.
 
 ## Environment
 

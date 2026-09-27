@@ -71,3 +71,5 @@ feeds:
       # customer-facing hosting; ignored rather than reported as unmapped.
       "*": ""
     generic_tags: ["AzureCloud*"]
+    # Azure republishes weekly: two publications before a range is removed.
+    removal_grace_days: 14
