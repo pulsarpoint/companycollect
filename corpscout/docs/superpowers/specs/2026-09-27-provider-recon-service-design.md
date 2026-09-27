@@ -262,3 +262,58 @@ shrinking. Checks:
 - Evidence diffs also list `restored` items.
 - Run ids carry the command (`<YYYYMMDDTHHMMSSZ>-collect`), so a `restore`
   right after a run can't overwrite that run's manifest.
+
+## Stage 3: service, ClickHouse mapping and Dagster (owner, 2026-09-28)
+
+### provider-recon as a service on companycollect
+
+The CLI stays for manual use. The same binary gains `provider-recon serve`, an
+HTTP API run as the systemd unit `provider-recon.service` on **companycollect**
+(deployed with Ansible like the translator):
+
+| Method + path | Behaviour |
+|---|---|
+| `GET /healthz` | 200, no auth |
+| `POST /v1/collect` `{"providers": [...]}` (optional) | Starts a collect in the background and returns 202 `{run_id, status}`. One run at a time: 409 while a collect or restore runs. 400 for an unknown provider. |
+| `GET /v1/runs/{run_id}` | `running` / `succeeded` / `failed`, with changed providers, unchanged count and collector issues. The last 50 runs are kept in memory. |
+| `POST /v1/restore` `{provider, collector, removed_since}` | Synchronous. 200 `{run_id, restored}`. 404 when there is no document, 422 when there is nothing to restore, 409 while a collect runs. |
+
+- **Auth:** bearer token (`PROVIDER_RECON_API_TOKEN`) on `/v1/*`.
+- **Address:** listens on `:8095`. Dagster reaches it at
+  `http://companycollect.taileb086.ts.net:8095` (FQDN, per the host-name rule).
+- **Run ids:** the service run id is the manifest run id, so a Dagster run, the
+  S3 change file and the backoffice all name the same run.
+- **No scheduler inside the service:** Dagster decides when it runs.
+
+### ClickHouse reads the bucket directly
+
+- **Named collection.** `provider_recon` points at
+  `http://rustfs:9000/provider-recon/`. It is created by the deploy playbook
+  from stdin with query logging off; the credentials never appear in a
+  migration.
+- **S3 table.** `provider_recon_documents_s3` (engine S3, `JSONAsString`) maps
+  `providers/*/latest.json`, one row per provider. It is live as soon as the
+  service writes.
+- **Normalised tables**, which are the permanent timeline:
+  - `provider_services`
+  - `provider_ip_ranges`: one row per range instance, keyed
+    (provider, service, CIDR, collector, first_seen), with pre-computed
+    `range_start` / `range_end` as IPv6 (IPv4 mapped)
+  - `provider_rules`: DNS / HTTP / PTR / certificate / ASN evidence
+  - `provider_ip_ranges_current`: a view of the non-removed rows
+- **Loading is an upsert, never a replace.** Each load inserts every
+  instance from the S3 table into ReplacingMergeTree tables versioned by load
+  time. Instances that later drop out of `latest.json` (90-day retention) keep
+  their last state, so ClickHouse holds the full history.
+
+### Dagster
+
+- **`provider_recon_documents`.** Materialising it calls `POST /v1/collect`
+  and polls the run. Metadata: run id, changed providers, issues, and the
+  S3-table document count. An asset check WARNs when any feed is not `ok`. A
+  failed run fails the asset.
+- **`provider_recon_clickhouse`** (downstream). SQL `INSERT … SELECT` from
+  `provider_recon_documents_s3` into the normalised tables, with row-count
+  metadata. It refuses to load when the S3 table has no documents.
+- **Scheduling.** `provider_recon_job`, run daily by a schedule that is
+  created stopped and started after the first verified run.
