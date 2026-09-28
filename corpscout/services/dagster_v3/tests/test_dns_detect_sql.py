@@ -29,6 +29,7 @@ RECORDS = [
     (9, "s1._domainkey.example.se", "CNAME", "dkim.x.net."),          # DKIM
     (10, "example.se", "CAA", '0 issue "letsencrypt.org"'),           # type the resolver ignores
     (11, "example.se", "TXT", ""),                                    # blank value: would wedge the bucket
+    (12, "example.se", "TXT", "  "),                                  # whitespace only: the resolver trims, so also blank
 ]
 
 

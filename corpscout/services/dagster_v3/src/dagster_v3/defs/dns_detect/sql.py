@@ -45,7 +45,8 @@ def candidates_sql(database: str, bucket: int) -> str:
     resolver's input fields. Parameters: %(rules_version)s, %(ip_version)s.
 
     The query goes through clickhouse-driver's %-substitution, so a literal
-    modulo is written %%. Records with a blank root_domain, name or value are
+    modulo is written %%. Records with a blank (or whitespace-only: the resolver
+    trims) root_domain, name or value are
     left out: the service would refuse the whole batch for one of them."""
     types = ", ".join(f"'{t}'" for t in ROUTABLE_TYPES)
     ip_analyzers = ", ".join(f"'{a}'" for a in IP_ANALYZERS)
@@ -64,7 +65,7 @@ FROM
     WHERE cityHash64(root_domain) %% {STORE_BUCKETS} = {int(bucket) % STORE_BUCKETS}
       AND cityHash64(root_domain) %% {PARTITION_COUNT} = {int(bucket)}
       AND record_type IN ({types})
-      AND root_domain != '' AND name != '' AND value != ''
+      AND trimBoth(root_domain) != '' AND trimBoth(name) != '' AND trimBoth(value) != ''
       AND (
         name = root_domain
         OR name = concat('www.', root_domain)
