@@ -53,9 +53,9 @@ services:
     display_name: Amazon SES
     service_types: [email_sending]
     dns_rules:
-      - {record_type: TXT, match_field: value, matcher_type: contains, pattern: "include:amazonses.com"}
-      - {record_type: CNAME, match_field: target, matcher_type: suffix, pattern: "dkim.amazonses.com"}
-      - {record_type: TXT, match_field: name, matcher_type: prefix, pattern: "_amazonses.", confidence: 0.9}
+      - {record_type: SPF, match_field: include, matcher_type: suffix, pattern: "amazonses.com"}
+      - {record_type: DKIM, match_field: target, matcher_type: suffix, pattern: "dkim.amazonses.com"}
+      - {record_type: TXT, match_field: name, matcher_type: exact, pattern: "_amazonses", confidence: 0.9}
   - key: aws.other
     display_name: Other AWS address space
     service_types: [iaas]

@@ -16,9 +16,12 @@ services:
     display_name: Microsoft 365 outbound mail
     service_types: [email_sending]
     dns_rules:
-      - {record_type: TXT, match_field: value, matcher_type: contains, pattern: "include:spf.protection.outlook.com"}
+      - {record_type: SPF, match_field: include, matcher_type: suffix, pattern: "spf.protection.outlook.com"}
       # DKIM: selector1._domainkey CNAME selector1-<domain>._domainkey.<tenant>.onmicrosoft.com
-      - {record_type: CNAME, match_field: target, matcher_type: suffix, pattern: "onmicrosoft.com"}
+      - {record_type: DKIM, match_field: target, matcher_type: suffix, pattern: "onmicrosoft.com"}
+      # Microsoft 365's default selectors; other senders reuse the names, hence the lower confidence
+      - {record_type: DKIM, match_field: selector, matcher_type: exact, pattern: "selector1", confidence: 0.6}
+      - {record_type: DKIM, match_field: selector, matcher_type: exact, pattern: "selector2", confidence: 0.6}
   - key: microsoft.365-verification
     display_name: Microsoft 365 domain verification
     service_types: [saas_verification]

@@ -105,7 +105,7 @@ order:
 {"knowledge_version":"sha256:…","record_id":"a","results":[{"record_id":"a","root_domain":"a.se","record_name":"a.se","record_type":"NS","analyzer":"ns","subject":"ns1.loopia.se","service_type":"dns","provider_key":"loopia","provider_slug":"loopia","service_key":"loopia.dns","rule_id":"loopia/loopia.dns/NS/target suffix loopia.se","confidence":1,"fallback":false,"valid_from":"2026-09-01","valid_to":"2026-09-23"}],"findings":[]}
 ```
 
-Routing (slice 1):
+Routing (slices 1–2):
 - **apex NS**: `ns`, gives `dns`.
 - **apex SOA**: `soa`, the MNAME host, gives `dns` with `fallback: true`.
 - **apex MX**: `mx`, gives `email`. `0 .` is the finding `null_mx`.
@@ -113,7 +113,26 @@ Routing (slice 1):
   target inside the domain itself (www → apex) is only the finding
   `cname_within_domain`: where that name is served from is the A/AAAA
   evidence's job (slice 3).
-- **Everything else** gives no result yet.
+- **apex TXT `v=spf1…`**: `spf`, gives `email_sending`.
+  - `include:`/`redirect=` hosts are labelled by SPF/include rules, then by
+    their provider key.
+  - Bare `a`/`mx` mean self-hosted.
+  - Macros (`spf_macro`) and more than ten lookups
+    (`spf_lookup_budget_exceeded`) are findings.
+  - `ip4`/`ip6` wait for slice 3. No DNS lookups are made.
+- **other apex TXT**: `txt`, TXT/value rules only (verification tokens).
+- **`_name` TXT**: `txt`, TXT/name rules only (e.g. `_amazonses`).
+- **`<selector>._domainkey` CNAME/TXT**: `dkim`, gives `email_sending`.
+  - DKIM/selector rules apply to both.
+  - A CNAME target is also labelled by DKIM/target rules, then its provider
+    key.
+- **`_dmarc` TXT**: `dmarc`, gives `dmarc_reporting` for each `rua`/`ruf`
+  mailbox host outside the domain. A non-DMARC value is the finding
+  `dmarc_invalid`.
+- **Everything else** (A/AAAA until slice 3, CAA, SRV…) gives no result yet.
+
+DNS rule kinds are one list, `model.DNSRuleKinds`, shared by `validate` and
+the resolver. `exists` is refused for DNS rules.
 
 Fallback rows count only where no non-fallback row of the same service type
 covers the same time. The history view applies that (slice 4).

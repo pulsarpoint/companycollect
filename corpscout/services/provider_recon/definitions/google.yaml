@@ -18,7 +18,9 @@ services:
     display_name: Google Workspace outbound mail
     service_types: [email_sending]
     dns_rules:
-      - {record_type: TXT, match_field: value, matcher_type: contains, pattern: "include:_spf.google.com"}
+      - {record_type: SPF, match_field: include, matcher_type: suffix, pattern: "_spf.google.com"}
+      # Google Workspace's default DKIM selector
+      - {record_type: DKIM, match_field: selector, matcher_type: exact, pattern: "google", confidence: 0.7}
   - key: google.site-verification
     display_name: Google site verification
     service_types: [saas_verification]
