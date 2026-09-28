@@ -47,7 +47,7 @@ dns_detect/
   internal/hosts       host normalisation, registrable domain (public suffix list)
   internal/analyze     one analyzer per record type / protocol
   internal/engine      routing, fallback labelling, aggregation
-  cmd/dns-detect       CLI: records JSON in → services JSON out (later: serve)
+  cmd/dns-detect       CLI: input objects on stdin → one result per line (later: serve)
 ```
 
 - **No shared code with provider-recon.** `dns_detect` doesn't import
@@ -82,9 +82,21 @@ dns_detect/
 
 ## Time
 
-- **What `asOf` selects.** It keeps the records whose window contains it, and
-  the IP ranges valid at it.
-- **When a range is valid.** From `first_seen` until `removed_at` (open while
+- **Observations are point scans.** The DNS store stamps each record instance
+  with the scans that saw it (volvo.com was scanned on 08-10, 09-06, 09-19 and
+  09-26). A date between two scans lies inside no record's window, so "records
+  whose window contains `asOf`" would wrongly give nothing on 09-25.
+- **What `asOf` selects: the latest observation at or before it.**
+  - The observation date is `observed = max(min(last_seen, asOf))` over the
+    dated records with `first_seen ≤ asOf`.
+  - The records kept are those with `first_seen ≤ asOf` and
+    `last_seen ≥ observed`.
+  - After the last scan this carries the last known state forward. Before the
+    first scan there is nothing.
+  - Undated records always count, and never move `observed`.
+  - The result reports `observed_at`, so a caller can see how old the evidence
+    is.
+- **IP ranges** are valid from `first_seen` until `removed_at` (open while
   active). Ranges from the first provider-recon run count as valid since the
   beginning of time, because nothing earlier is known.
 - **Rules.** The current rules apply at every `asOf`, so improving a
@@ -195,9 +207,10 @@ type Analyzer interface {
 **Service types.** They are the spec's closed list plus `dmarc_reporting`
 (new), because the `rua` domain is a reporting service, not a mail host.
 
-## Fallback labelling (the engine)
+## Fallback labelling
 
-For a host no rule matched, the engine uses the registrable domain from Go's
+A shared helper every host-based analyzer calls (`analyze.LabelHost`). For a
+host no rule matched, it uses the registrable domain from Go's
 public suffix list (`golang.org/x/net/publicsuffix`: `ns1.binero.se` →
 `binero.se`, `x.github.io` → `x.github.io`). Then:
 1. **Self-hosted** when the key is the domain itself, or the host is under it.
@@ -211,13 +224,14 @@ public suffix list (`golang.org/x/net/publicsuffix`: `ns1.binero.se` →
 {
   "domain": "spotify.com",
   "as_of": "2026-09-25",
+  "observed_at": "2026-09-25",
   "knowledge_version": "sha256:…",
   "services": [
     {"service_type": "email_sending", "provider_key": "google", "provider_slug": "google",
      "service_keys": ["google.workspace-sending"], "confidence": 1.0,
      "evidence": [
        {"analyzer": "spf", "record_name": "spotify.com", "record_type": "TXT",
-        "value": "include:_spf.google.com", "rule_id": "google/google.workspace-sending/spf-include-1",
+        "value": "_spf.google.com", "rule_id": "google/google.workspace-sending/SPF/include suffix _spf.google.com",
         "confidence": 1.0}
      ]},
     {"service_type": "email_sending", "provider_key": "sendgrid.net", "provider_slug": "",
@@ -230,8 +244,10 @@ public suffix list (`golang.org/x/net/publicsuffix`: `ns1.binero.se` →
 - **Aggregation.** `services` has one entry per `(service_type, provider_key)`,
   sorted by service type and then provider key. Its confidence is the maximum
   over its evidence.
-- **Rule ids** are stable: `<provider>/<service_key>/<kind>-<n>`, so evidence
-  can be traced to a definition.
+- **Rule ids** describe the rule itself:
+  `<provider>/<service_key>/<RECORD_TYPE>/<field> <matcher> <pattern>`, e.g.
+  `cloudflare/cloudflare.dns/NS/target suffix ns.cloudflare.com`. They stay
+  stable when other rules are added or reordered.
 - **Knowledge version.** `knowledge_version` hashes the loaded documents, so a
   stored result names what produced it.
 - **Findings** are observations that aren't services, e.g. two SPF records or an
