@@ -1,0 +1,90 @@
+"""SQL for the dns-detect asset: candidate selection and result inserts.
+
+Candidates are one hash bucket's DNS records that the resolver routes and that
+have no current resolution: never resolved, resolved under older rules, (for
+the ip and spf analyzers) under an older IP-range version, or with a window
+that has grown since (a later scan extends a record's last_seen).
+"""
+
+DNS_RECORDS_TABLE = "commoncrawl_domain_dns_records"
+RESOLUTIONS_TABLE = "dns_record_resolutions"
+SERVICES_TABLE = "dns_record_services"
+
+# The DNS store is PARTITION BY cityHash64(root_domain) % 16; bucket N of 128
+# lives in store partition N % 16, so repeating that expression prunes.
+STORE_BUCKETS = 16
+PARTITION_COUNT = 128
+
+# Analyzers whose answers depend on the IP ranges (A/AAAA, SPF ip4/ip6).
+IP_ANALYZERS = ("ip", "spf")
+ROUTABLE_TYPES = ("NS", "SOA", "MX", "CNAME", "TXT", "A", "AAAA")
+
+RESOLUTION_COLUMNS = (
+    "record_id", "root_domain", "record_name", "record_type", "analyzer", "rules_version", "ip_version",
+    "result_count", "findings", "record_from", "record_to", "resolved_at",
+)
+SERVICE_COLUMNS = (
+    "record_id", "root_domain", "record_name", "record_type", "analyzer", "subject", "service_type", "provider_key",
+    "provider_slug", "service_key", "rule_id", "confidence", "fallback", "valid_from", "valid_to", "resolved_at",
+)
+
+
+def partition_keys() -> list[str]:
+    return [f"hash_{bucket:03d}" for bucket in range(PARTITION_COUNT)]
+
+
+def partition_bucket(partition_key: str) -> int:
+    bucket = int(partition_key.removeprefix("hash_"))
+    if not 0 <= bucket < PARTITION_COUNT:
+        raise ValueError(f"partition key {partition_key!r} is out of range")
+    return bucket
+
+
+def candidates_sql(database: str, bucket: int) -> str:
+    """The bucket's routable records without a current resolution, as the
+    resolver's input fields. Parameters: %(rules_version)s, %(ip_version)s."""
+    types = ", ".join(f"'{t}'" for t in ROUTABLE_TYPES)
+    ip_analyzers = ", ".join(f"'{a}'" for a in IP_ANALYZERS)
+    return f"""SELECT
+    lower(hex(r.record_id)) AS record_id,
+    r.root_domain AS root_domain,
+    r.name AS name,
+    toString(r.record_type) AS type,
+    r.value AS value,
+    toString(toDate(r.first_seen)) AS first_seen,
+    toString(toDate(r.last_seen)) AS last_seen
+FROM
+(
+    SELECT record_id, root_domain, name, record_type, value, first_seen, last_seen
+    FROM `{database}`.`{DNS_RECORDS_TABLE}` FINAL
+    WHERE cityHash64(root_domain) % {STORE_BUCKETS} = {int(bucket) % STORE_BUCKETS}
+      AND cityHash64(root_domain) % {PARTITION_COUNT} = {int(bucket)}
+      AND record_type IN ({types})
+      AND (
+        name = root_domain
+        OR name = concat('www.', root_domain)
+        OR startsWith(name, '_')
+        OR position(name, '._domainkey.') > 0
+        OR (record_type = 'TXT' AND positionCaseInsensitive(value, 'v=spf1') > 0)
+      )
+) AS r
+LEFT ANTI JOIN
+(
+    SELECT root_domain, record_id, tupleElement(last, 1) AS record_from, tupleElement(last, 2) AS record_to
+    FROM
+    (
+        SELECT root_domain, record_id,
+               argMax(tuple(record_from, record_to, rules_version, ip_version, analyzer), resolved_at) AS last
+        FROM `{database}`.`{RESOLUTIONS_TABLE}`
+        WHERE cityHash64(root_domain) % {PARTITION_COUNT} = {int(bucket)}
+        GROUP BY root_domain, record_id
+    )
+    WHERE tupleElement(last, 3) = %(rules_version)s
+      AND (tupleElement(last, 4) = %(ip_version)s OR tupleElement(last, 5) NOT IN ({ip_analyzers}))
+) AS done
+ON done.root_domain = r.root_domain AND done.record_id = r.record_id
+   AND done.record_from = toDate(r.first_seen) AND done.record_to = toDate(r.last_seen)"""
+
+
+def insert_sql(database: str, table: str, columns: tuple[str, ...]) -> str:
+    return f"INSERT INTO `{database}`.`{table}` ({', '.join(columns)}) VALUES"
