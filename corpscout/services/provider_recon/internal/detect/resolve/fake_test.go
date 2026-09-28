@@ -39,6 +39,13 @@ var kb = fakeKB{
 		knowledge.SPFInclude: {
 			"_spf.google.com": {ProviderSlug: "google", ServiceKey: "google.workspace-sending", ServiceTypes: []string{"email_sending"}, RuleID: "google/spf", Confidence: 1},
 		},
+		knowledge.DKIMSelector: {
+			"selector1": {ProviderSlug: "microsoft", ServiceKey: "microsoft.365-sending", ServiceTypes: []string{"email_sending"}, RuleID: "microsoft/dkim-selector", Confidence: 0.6},
+			"google":    {ProviderSlug: "google", ServiceKey: "google.workspace-sending", ServiceTypes: []string{"email_sending"}, RuleID: "google/dkim-selector", Confidence: 0.7},
+		},
+		knowledge.DKIMTarget: {
+			"selector1-example-se._domainkey.contoso.onmicrosoft.com": {ProviderSlug: "microsoft", ServiceKey: "microsoft.365-sending", ServiceTypes: []string{"email_sending"}, RuleID: "microsoft/dkim-target", Confidence: 1},
+		},
 		knowledge.TXTName: {
 			"_amazonses": {ProviderSlug: "aws", ServiceKey: "aws.ses", ServiceTypes: []string{"email_sending"}, RuleID: "aws/txt-name", Confidence: 0.9},
 		},

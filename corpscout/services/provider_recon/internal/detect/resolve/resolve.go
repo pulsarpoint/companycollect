@@ -26,6 +26,8 @@ func Route(rec Record) Analyzer {
 		return SOA{}
 	case rec.Type == "MX" && apex:
 		return MX{}
+	case (rec.Type == "CNAME" || rec.Type == "TXT") && dkim && below != "._domainkey":
+		return DKIM{}
 	case rec.Type == "CNAME" && (apex || www):
 		return CNAME{}
 	case rec.Type == "TXT" && apex && isSPF(rec.Value):
