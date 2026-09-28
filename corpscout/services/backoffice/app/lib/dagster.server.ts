@@ -36,6 +36,12 @@ import type {
   EvaluationErrorReason,
   RunStatus,
   StaleStatus,
+  BackofficeScheduleQuery,
+  BackofficeScheduleQueryVariables,
+  BackofficeStartScheduleMutation,
+  BackofficeStartScheduleMutationVariables,
+  BackofficeStopScheduleMutation,
+  BackofficeStopScheduleMutationVariables,
 } from "~/lib/dagster.generated";
 import {
   BACKOFFICE_ASSET_GROUP_QUERY,
@@ -46,6 +52,9 @@ import {
   BACKOFFICE_RUN_QUERY,
   BACKOFFICE_RUNS_QUERY,
   BACKOFFICE_PROCESSING_RUNS_QUERY,
+  BACKOFFICE_SCHEDULE_QUERY,
+  BACKOFFICE_START_SCHEDULE_MUTATION,
+  BACKOFFICE_STOP_SCHEDULE_MUTATION,
 } from "~/lib/dagster.operations";
 
 /** The deployed code location and repository these jobs live in. */
@@ -594,4 +603,87 @@ export async function instigatorStates(
         status: sensor.sensorState.status,
       })),
   };
+}
+
+export interface ScheduleDetails {
+  name: string;
+  status: string;
+  stateId: string | null;
+  cronSchedule: string;
+  timezone: string | null;
+  /** Seconds since the epoch of the next tick; null when none is scheduled. */
+  nextTick: number | null;
+}
+
+function scheduleSelector(name: string) {
+  return {
+    repositoryLocationName: REPOSITORY_LOCATION_NAME,
+    repositoryName: REPOSITORY_NAME,
+    scheduleName: name,
+  };
+}
+
+export async function scheduleDetails(
+  name: string,
+  options: DagsterOptions = {},
+): Promise<ScheduleDetails> {
+  const data = await graphql<
+    BackofficeScheduleQuery,
+    BackofficeScheduleQueryVariables
+  >(BACKOFFICE_SCHEDULE_QUERY, { scheduleSelector: scheduleSelector(name) }, options);
+  const node = data.scheduleOrError;
+  if (node.__typename !== "Schedule") {
+    throw unionError(node, `Reading schedule ${name}`);
+  }
+  return {
+    name: node.name,
+    status: node.scheduleState.status,
+    stateId: node.scheduleState.id ?? null,
+    cronSchedule: node.cronSchedule,
+    timezone: node.executionTimezone ?? null,
+    nextTick: node.futureTicks.results[0]?.timestamp ?? null,
+  };
+}
+
+/** Start a schedule; a schedule already running is left alone. Returns the resulting status. */
+export async function startSchedule(
+  name: string,
+  options: DagsterOptions = {},
+): Promise<string> {
+  const current = await scheduleDetails(name, options);
+  if (current.status === "RUNNING") return current.status;
+  const data = await graphql<
+    BackofficeStartScheduleMutation,
+    BackofficeStartScheduleMutationVariables
+  >(BACKOFFICE_START_SCHEDULE_MUTATION, { scheduleSelector: scheduleSelector(name) }, options);
+  const result = data.startSchedule;
+  if (result.__typename !== "ScheduleStateResult") {
+    throw unionError(result, `Starting ${name}`);
+  }
+  return result.scheduleState.status;
+}
+
+/** Stop a schedule; a schedule already stopped is left alone. Returns the resulting status. */
+export async function stopSchedule(
+  name: string,
+  options: DagsterOptions = {},
+): Promise<string> {
+  const current = await scheduleDetails(name, options);
+  if (current.status !== "RUNNING" || !current.stateId) return current.status;
+  const data = await graphql<
+    BackofficeStopScheduleMutation,
+    BackofficeStopScheduleMutationVariables
+  >(BACKOFFICE_STOP_SCHEDULE_MUTATION, { id: current.stateId }, options);
+  const result = data.stopRunningSchedule;
+  if (result.__typename !== "ScheduleStateResult") {
+    throw unionError(result, `Stopping ${name}`);
+  }
+  return result.scheduleState.status;
+}
+
+/** Browser link to an asset page, resolved like dagsterRunUrl. */
+export function dagsterAssetUrl(asset: string, url?: string): string | null {
+  const run = dagsterRunUrl("x", url);
+  if (run === null) return null;
+  return `${run.replace(/\/runs\/x$/, "")}/assets/${encodeURIComponent(asset)}`;
 }

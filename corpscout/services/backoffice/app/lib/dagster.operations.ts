@@ -244,3 +244,69 @@ export const BACKOFFICE_INSTIGATORS_QUERY = /* GraphQL */ `
     }
   }
 `;
+
+export const BACKOFFICE_SCHEDULE_QUERY = /* GraphQL */ `
+  query BackofficeSchedule($scheduleSelector: ScheduleSelector!) {
+    scheduleOrError(scheduleSelector: $scheduleSelector) {
+      __typename
+      ... on Schedule {
+        name
+        cronSchedule
+        executionTimezone
+        scheduleState {
+          id
+          status
+        }
+        futureTicks(limit: 1) {
+          results {
+            timestamp
+          }
+        }
+      }
+      ... on PythonError {
+        message
+      }
+      ... on ScheduleNotFoundError {
+        message
+      }
+    }
+  }
+`;
+
+export const BACKOFFICE_START_SCHEDULE_MUTATION = /* GraphQL */ `
+  mutation BackofficeStartSchedule($scheduleSelector: ScheduleSelector!) {
+    startSchedule(scheduleSelector: $scheduleSelector) {
+      __typename
+      ... on ScheduleStateResult {
+        scheduleState {
+          status
+        }
+      }
+      ... on PythonError {
+        message
+      }
+      ... on UnauthorizedError {
+        message
+      }
+    }
+  }
+`;
+
+export const BACKOFFICE_STOP_SCHEDULE_MUTATION = /* GraphQL */ `
+  mutation BackofficeStopSchedule($id: String!) {
+    stopRunningSchedule(id: $id) {
+      __typename
+      ... on ScheduleStateResult {
+        scheduleState {
+          status
+        }
+      }
+      ... on PythonError {
+        message
+      }
+      ... on UnauthorizedError {
+        message
+      }
+    }
+  }
+`;

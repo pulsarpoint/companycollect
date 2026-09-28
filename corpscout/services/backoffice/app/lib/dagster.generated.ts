@@ -139,6 +139,13 @@ export type RunsFilter = {
   updatedBefore?: number | null | undefined;
 };
 
+/** This type represents the fields necessary to identify a schedule. */
+export type ScheduleSelector = {
+  repositoryLocationName: string;
+  repositoryName: string;
+  scheduleName: string;
+};
+
 /** An enumeration. */
 export type StaleStatus = "FRESH" | "MISSING" | "STALE";
 
@@ -511,4 +518,71 @@ export type BackofficeInstigatorsQuery = {
           };
         }>;
       };
+};
+
+export type BackofficeScheduleQueryVariables = Exact<{
+  scheduleSelector: ScheduleSelector;
+}>;
+
+export type BackofficeScheduleQuery = {
+  __typename: "Query";
+  scheduleOrError:
+    | { __typename: "PythonError"; message: string }
+    | {
+        __typename: "Schedule";
+        name: string;
+        cronSchedule: string;
+        executionTimezone: string | null;
+        scheduleState: {
+          __typename: "InstigationState";
+          id: string;
+          status: InstigationStatus;
+        };
+        futureTicks: {
+          __typename: "DryRunInstigationTicks";
+          results: Array<{
+            __typename: "DryRunInstigationTick";
+            timestamp: number | null;
+          }>;
+        };
+      }
+    | { __typename: "ScheduleNotFoundError"; message: string };
+};
+
+export type BackofficeStartScheduleMutationVariables = Exact<{
+  scheduleSelector: ScheduleSelector;
+}>;
+
+export type BackofficeStartScheduleMutation = {
+  __typename: "Mutation";
+  startSchedule:
+    | { __typename: "PythonError"; message: string }
+    | { __typename: "ScheduleNotFoundError" }
+    | {
+        __typename: "ScheduleStateResult";
+        scheduleState: {
+          __typename: "InstigationState";
+          status: InstigationStatus;
+        };
+      }
+    | { __typename: "UnauthorizedError"; message: string };
+};
+
+export type BackofficeStopScheduleMutationVariables = Exact<{
+  id: string;
+}>;
+
+export type BackofficeStopScheduleMutation = {
+  __typename: "Mutation";
+  stopRunningSchedule:
+    | { __typename: "PythonError"; message: string }
+    | { __typename: "ScheduleNotFoundError" }
+    | {
+        __typename: "ScheduleStateResult";
+        scheduleState: {
+          __typename: "InstigationState";
+          status: InstigationStatus;
+        };
+      }
+    | { __typename: "UnauthorizedError"; message: string };
 };
