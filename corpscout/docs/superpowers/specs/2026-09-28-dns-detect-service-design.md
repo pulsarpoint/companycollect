@@ -110,6 +110,7 @@ immutable, and is injected as an interface. Analyzers never load anything:
 type Knowledge interface {
     Match(kind Kind, subject string) (Match, bool)   // best rule: priority, confidence, rule id
     ProviderForKey(key string) (Provider, bool)      // exact provider key or glob key
+    LookupIP(p netip.Prefix) []IPRange               // ranges containing p, longest prefix first
     Version() string                                 // hash of the documents
 }
 ```
@@ -152,11 +153,11 @@ The resolver routes a record by type and by name relative to `root_domain`:
 | apex SOA | `soa`, MNAME host, `fallback: true` | `dns` | 1 |
 | apex MX | `mx`, exchange host; `0 .` gives the finding `null_mx` | `email` | 1 |
 | apex / `www` CNAME | `cname` | `hosting` | 1 |
-| apex TXT `v=spf1…` | `spf`: include/redirect hosts; `a`/`mx` give self-hosted; `ip4`/`ip6` go to the IP index (slice 3); macros are findings, and a macro host's literal tail after its last macro is labelled (owner ruling 2026-09-28) | `email_sending` | 2 |
+| TXT `v=spf1…` at the apex or any name under it (e.g. `_spf`) | `spf`: include/redirect hosts (inside the domain: finding `spf_include_within_domain`); `a`/`mx` give self-hosted; `ip4`/`ip6` go to the IP index, windowed like A/AAAA; macros are findings, and a macro host's literal tail after its last macro is labelled (owner ruling 2026-09-28) | `email_sending` | 2 |
 | apex / `_name` TXT (other) | `txt`, rules only | from the rule | 2 |
 | `<selector>._domainkey` CNAME/TXT | `dkim` | `email_sending` | 2 |
 | `_dmarc` TXT | `dmarc`, rua/ruf mailbox domains | `dmarc_reporting` | 2 |
-| apex / `www` A, AAAA | `ip`, the range index with windows | from the range's service | 3 |
+| apex / `www` A, AAAA | `ip`: the record's window is split at every range change, the longest prefix wins each piece. A range is valid from `first_seen` (open when first seen on its own feed's first run: its provider and collector) until `last_seen` once no longer active | from the range's service | 3 |
 | anything else | none | | |
 
 **Host labelling** is shared by every host-based analyzer

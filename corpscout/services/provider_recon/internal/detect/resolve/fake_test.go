@@ -76,6 +76,8 @@ var kb = fakeKB{
 		{Prefix: netip.MustParsePrefix("52.84.0.0/15"), ProviderSlug: "aws", ServiceKey: "aws.cloudfront", ServiceTypes: []string{"cdn"}, Confidence: 1, From: "2026-03-01", RuleID: "aws/aws.cloudfront/IP 52.84.0.0/15"},
 		{Prefix: netip.MustParsePrefix("2600:9000::/28"), ProviderSlug: "aws", ServiceKey: "aws.cloudfront", ServiceTypes: []string{"cdn"}, Confidence: 1, RuleID: "aws/aws.cloudfront/IP 2600:9000::/28"},
 		{Prefix: netip.MustParsePrefix("198.51.100.0/24"), ProviderSlug: "mailchimp", ServiceKey: "mailchimp.sending", ServiceTypes: []string{"email_sending"}, Confidence: 1, RuleID: "mailchimp/mailchimp.sending/IP 198.51.100.0/24"},
+		{Prefix: netip.MustParsePrefix("198.18.0.0/24"), ProviderSlug: "sendy", ServiceKey: "sendy.mail", ServiceTypes: []string{"email_sending"}, Confidence: 1, To: "2026-08-20", RuleID: "sendy/sendy.mail/IP 198.18.0.0/24"},
+		{Prefix: netip.MustParsePrefix("198.18.0.0/24"), ProviderSlug: "sendy", ServiceKey: "sendy.mail", ServiceTypes: []string{"email_sending"}, Confidence: 1, From: "2026-09-01", RuleID: "sendy/sendy.mail/IP 198.18.0.0/24"},
 		{Prefix: netip.MustParsePrefix("203.0.113.0/24"), ProviderSlug: "hosty", ServiceKey: "hosty.web", ServiceTypes: []string{"hosting"}, Confidence: 1, RuleID: "hosty/hosty.web/IP 203.0.113.0/24"},
 	},
 	keys: map[string]knowledge.Provider{

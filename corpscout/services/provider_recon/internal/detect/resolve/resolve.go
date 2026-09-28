@@ -79,7 +79,10 @@ func Resolve(rec Record, kb knowledge.Knowledge) Output {
 	out.Findings = append(out.Findings, got.Findings...)
 	slices.SortFunc(out.Results, func(a, b Result) int {
 		return cmp.Or(cmp.Compare(a.ServiceType, b.ServiceType), cmp.Compare(a.ProviderKey, b.ProviderKey),
-			cmp.Compare(a.Subject, b.Subject), cmp.Compare(a.RuleID, b.RuleID))
+			cmp.Compare(a.Subject, b.Subject), cmp.Compare(a.RuleID, b.RuleID),
+			cmp.Compare(a.ValidFrom, b.ValidFrom), cmp.Compare(a.ValidTo, b.ValidTo),
+			cmp.Compare(a.ServiceKey, b.ServiceKey), cmp.Compare(a.ProviderSlug, b.ProviderSlug),
+			cmp.Compare(a.Confidence, b.Confidence))
 	})
 	// One record can prove the same thing twice (SPF "a" and "mx"): keep one.
 	out.Results = slices.Compact(out.Results)

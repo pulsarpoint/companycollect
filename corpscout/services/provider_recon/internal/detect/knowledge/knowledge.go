@@ -132,9 +132,9 @@ var _ Knowledge = (*Index)(nil)
 // claimed by two providers. Removed rules and services are skipped.
 //
 // The version hashes exactly what the index uses: live services with their
-// types, provider keys, and active rules with priority and confidence. IP
-// ranges and seen dates don't move it, so results are only re-resolved when
-// they could change.
+// types, provider keys, active rules with priority and confidence, and IP
+// range instances with their windows. Daily last_seen ticks of active ranges
+// don't move it, so results are only re-resolved when they could change.
 func Compile(docs []model.Document) (*Index, error) {
 	idx := &Index{rules: map[Kind][]compiledRule{}, exactKeys: map[string]*Provider{}, ipRanges: map[netip.Prefix][]IPRange{}}
 	var used []string
@@ -266,13 +266,19 @@ func (idx *Index) Version() string { return idx.version }
 
 // addRanges indexes every range instance of every service, removed ones too:
 // they are the history that older records are matched against.
+//
+// A range's validity opens at the beginning of time when it was first seen on
+// its own feed's first run (the earliest first_seen of that provider and
+// collector): nothing earlier is known about that feed, whenever it was added.
 func (idx *Index) addRanges(docs []model.Document) error {
-	start := ""
+	feed := func(slug string, r model.IPRange) string { return slug + "|" + r.Collector }
+	firstRun := map[string]string{}
 	for _, d := range docs {
 		for _, s := range d.Services {
 			for _, r := range s.Evidence.IPRanges {
-				if r.FirstSeen != "" && (start == "" || r.FirstSeen < start) {
-					start = r.FirstSeen
+				k := feed(d.Slug, r)
+				if r.FirstSeen != "" && (firstRun[k] == "" || r.FirstSeen < firstRun[k]) {
+					firstRun[k] = r.FirstSeen
 				}
 			}
 		}
@@ -287,7 +293,7 @@ func (idx *Index) addRanges(docs []model.Document) error {
 				p = p.Masked()
 				e := IPRange{Prefix: p, ProviderSlug: d.Slug, ServiceKey: s.Key, ServiceTypes: s.ServiceTypes, FeedTag: r.FeedTag,
 					Confidence: r.Confidence, From: r.FirstSeen, RuleID: fmt.Sprintf("%s/%s/IP %s", d.Slug, s.Key, p)}
-				if e.From == start {
+				if e.From == firstRun[feed(d.Slug, r)] {
 					e.From = ""
 				}
 				if r.Status != model.StatusActive {

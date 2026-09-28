@@ -243,7 +243,8 @@ func TestLookupIPReturnsContainingRangesWithWindows(t *testing.T) {
 		t.Fatalf("ranges = %+v", got)
 	}
 	// Longest prefix first.
-	if got[0].Prefix.String() != "52.84.0.0/15" || got[0].ServiceKey != "aws2.cloudfront" || got[0].From != "2026-10-01" || got[0].To != "2026-11-15" ||
+	// aws2's feed first ran on 2026-10-01: its first-run ranges open at the beginning.
+	if got[0].Prefix.String() != "52.84.0.0/15" || got[0].ServiceKey != "aws2.cloudfront" || got[0].From != "" || got[0].To != "2026-11-15" ||
 		got[0].RuleID != "aws2/aws2.cloudfront/IP 52.84.0.0/15" || got[0].ServiceTypes[0] != "cdn" {
 		t.Fatalf("nested range = %+v", got[0])
 	}
@@ -251,7 +252,7 @@ func TestLookupIPReturnsContainingRangesWithWindows(t *testing.T) {
 	if got[1].Prefix.String() != "52.84.0.0/14" || got[1].From != "" || got[1].To != "" {
 		t.Fatalf("outer range = %+v", got[1])
 	}
-	if v6 := idx.LookupIP(mustPrefix(t, "2600:9000:1::1/128")); len(v6) != 1 || v6[0].From != "2026-10-01" || v6[0].To != "" {
+	if v6 := idx.LookupIP(mustPrefix(t, "2600:9000:1::1/128")); len(v6) != 1 || v6[0].From != "" || v6[0].To != "" {
 		t.Fatalf("v6 = %+v", v6)
 	}
 	if none := idx.LookupIP(mustPrefix(t, "192.0.2.1/32")); len(none) != 0 {
@@ -298,5 +299,37 @@ func TestVersionTracksRanges(t *testing.T) {
 	}
 	if v(ipRange("198.51.100.0/24", model.StatusActive, "2026-09-27", "2026-09-28"), ipRange("203.0.113.0/24", model.StatusActive, "2026-09-27", "2026-09-28")) == base {
 		t.Error("an added range did not move the version")
+	}
+}
+
+func TestRangesOpenAtTheirOwnFeedsFirstRun(t *testing.T) {
+	collected := func(cidr, collector, first string) model.IPRange {
+		r := ipRange(cidr, model.StatusActive, first, "2026-12-01")
+		r.Collector = collector
+		return r
+	}
+	old := withRanges("aws", "aws.cloudfront", []string{"cdn"}, collected("52.84.0.0/15", "aws_ip_ranges", "2026-09-27"))
+	// A provider whose feed first ran two months later: its first-run ranges
+	// are just as old as anything else, so they open at the beginning too.
+	late := withRanges("vercel", "vercel.edge", []string{"cdn"},
+		collected("76.76.21.0/24", "vercel_ranges", "2026-11-01"),
+		collected("76.76.22.0/24", "vercel_ranges", "2026-11-20"))
+	idx, err := Compile([]model.Document{old, late})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := idx.LookupIP(mustPrefix(t, "76.76.21.9/32")); len(got) != 1 || got[0].From != "" {
+		t.Fatalf("first-run range of a later feed = %+v", got)
+	}
+	if got := idx.LookupIP(mustPrefix(t, "76.76.22.9/32")); len(got) != 1 || got[0].From != "2026-11-20" {
+		t.Fatalf("range added after that feed's first run = %+v", got)
+	}
+	// Loading another provider's document must not change these windows.
+	alone, err := Compile([]model.Document{late})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := alone.LookupIP(mustPrefix(t, "76.76.21.9/32")); got[0].From != "" {
+		t.Fatalf("window depends on which documents are loaded: %+v", got)
 	}
 }

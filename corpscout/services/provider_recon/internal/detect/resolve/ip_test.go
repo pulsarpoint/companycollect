@@ -111,3 +111,14 @@ func TestSPFIPMechanismsUseTheRangeIndex(t *testing.T) {
 		t.Fatalf("got %+v\nwant %+v", got, want)
 	}
 }
+
+func TestResultsAreChronologicalAndRepeatedTermsDeduplicated(t *testing.T) {
+	got := windows(spf(`"v=spf1 ip4:198.18.0.0/24 ip4:198.18.0.0/24 -all"`).Results)
+	want := []windowed{
+		{"email_sending", "sendy", "sendy.mail", "198.18.0.0/24", "2026-08-10", "2026-08-20"},
+		{"email_sending", "sendy", "sendy.mail", "198.18.0.0/24", "2026-09-01", "2026-09-19"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v\nwant %+v", got, want)
+	}
+}
