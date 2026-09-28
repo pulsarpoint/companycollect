@@ -70,6 +70,7 @@ func Resolve(rec Record, kb knowledge.Knowledge) Output {
 	if a == nil {
 		return out
 	}
+	out.Analyzer = a.Name()
 	base := Result{
 		RecordID: rec.RecordID, RootDomain: rec.RootDomain, RecordName: rec.Name, RecordType: rec.Type,
 		Analyzer: a.Name(), ValidFrom: day(rec.FirstSeen), ValidTo: day(rec.LastSeen),

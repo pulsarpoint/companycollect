@@ -47,9 +47,12 @@ type Finding struct {
 	Detail   string `json:"detail,omitempty"`
 }
 
-// Output is everything one record resolves to.
+// Output is everything one record resolves to. Analyzer names the analyzer
+// the record was routed to ("" when none handles it), even when it proved
+// nothing: callers use it to know which knowledge the answer depends on.
 type Output struct {
 	RecordID string    `json:"record_id"`
+	Analyzer string    `json:"analyzer"`
 	Results  []Result  `json:"results"`
 	Findings []Finding `json:"findings"`
 }

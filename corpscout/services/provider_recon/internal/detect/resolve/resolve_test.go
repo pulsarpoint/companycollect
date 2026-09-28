@@ -96,7 +96,7 @@ func TestResolveIsDeterministicAndSerialisesEmptyLists(t *testing.T) {
 		}
 	}
 	empty, _ := json.Marshal(Resolve(rec("example.se", "A", "192.0.2.1"), kb))
-	if string(empty) != `{"record_id":"r1","results":[],"findings":[]}` {
+	if string(empty) != `{"record_id":"r1","analyzer":"ip","results":[],"findings":[]}` {
 		t.Fatalf("empty output = %s", empty)
 	}
 }
@@ -138,5 +138,14 @@ func TestValidateRecord(t *testing.T) {
 		if err := r.Validate(); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+func TestOutputNamesTheAnalyzerEvenWithoutResults(t *testing.T) {
+	if got := Resolve(rec("example.se", "A", "192.0.2.1"), kb).Analyzer; got != "ip" {
+		t.Fatalf("routed record analyzer = %q", got)
+	}
+	if got := Resolve(rec("example.se", "CAA", `0 issue "letsencrypt.org"`), kb).Analyzer; got != "" {
+		t.Fatalf("unrouted record analyzer = %q", got)
 	}
 }
