@@ -158,3 +158,32 @@ Without a rule, a host's registrable domain decides:
 
 Test fixtures in `internal/detect/knowledge/testdata/providers` are real
 documents. Refresh them with the loop in the slices 0–1 plan (Task 2, Step 1).
+
+### dns-detect serve
+
+`dns-detect serve` is the resolver as a stateless HTTP service. It never
+reads ClickHouse: Dagster sends batches of records and gets the results back
+in the same response. Design:
+`docs/superpowers/specs/2026-09-28-dns-detect-slice-4-storage-design.md`.
+
+- `GET /healthz`: `ok`, both versions, and the last reload error, if any.
+- `GET /v1/knowledge`: `rules_version`, `ip_version`, `documents`,
+  `loaded_at`.
+- `POST /v1/resolve`: NDJSON records (the CLI's input), at most 50,000.
+  - The response is one NDJSON line per record, in order, with
+    `X-Rules-Version` and `X-IP-Version` headers.
+  - A bad record gives 400 naming its position, with no partial output.
+  - More than 50,000 records give 413.
+
+Knowledge is loaded from the provider-recon bucket at start (the service
+refuses to start without it). It is reloaded when `changes/index.json`
+changes, polled every `DNS_DETECT_RELOAD_INTERVAL` (default 10m). A failed
+reload keeps the loaded knowledge.
+
+Environment:
+- `DNS_DETECT_LISTEN` (default `127.0.0.1:8096`);
+- `DNS_DETECT_RELOAD_INTERVAL`;
+- `CORPSCOUT_S3_ENDPOINT`, `CORPSCOUT_S3_ACCESS_KEY`, `CORPSCOUT_S3_SECRET_KEY`;
+- `PROVIDER_RECON_BUCKET`.
+
+`-store DIR` reads a local copy instead of S3.

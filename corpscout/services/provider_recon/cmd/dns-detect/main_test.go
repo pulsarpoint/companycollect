@@ -2,7 +2,12 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"os"
+	"time"
+
 	"encoding/json"
+	"provider_recon/internal/publish"
 	"strings"
 	"testing"
 )
@@ -93,5 +98,54 @@ func TestResolveStopsAtAnIncompleteRecordAfterWritingEarlierLines(t *testing.T) 
 	}
 	if !strings.Contains(stderr.String(), "record 2") {
 		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestServeNeedsAStore(t *testing.T) {
+	for _, k := range []string{"CORPSCOUT_S3_ENDPOINT", "CORPSCOUT_S3_ACCESS_KEY", "CORPSCOUT_S3_SECRET_KEY"} {
+		t.Setenv(k, "")
+	}
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"serve"}, strings.NewReader(""), &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "CORPSCOUT_S3") {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+}
+
+func TestServeRefusesToStartWithoutKnowledge(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := serve(context.Background(), []string{"-store", t.TempDir(), "-listen", "127.0.0.1:0"}, &stderr)
+	if code != 1 || !strings.Contains(stderr.String(), "load knowledge") {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+	_ = stdout
+}
+
+func TestServeStartsAndStopsCleanly(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	store := publish.FSStore{Root: dir}
+	doc, err := os.ReadFile(knowledgeDir + "/loopia.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put(ctx, publish.LatestKey("loopia"), doc, "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put(ctx, publish.IndexKey, []byte(`{"runs":[],"providers":["loopia"]}`), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan int, 1)
+	var stderr bytes.Buffer
+	go func() { done <- serve(ctx, []string{"-store", dir, "-listen", "127.0.0.1:0"}, &stderr) }()
+	time.Sleep(300 * time.Millisecond)
+	cancel()
+	select {
+	case code := <-done:
+		if code != 0 {
+			t.Fatalf("exit %d: %s", code, stderr.String())
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("serve did not stop")
 	}
 }

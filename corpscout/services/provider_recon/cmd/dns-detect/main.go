@@ -1,6 +1,7 @@
 // Command dns-detect resolves DNS records into the services they prove.
 //
 //	dns-detect resolve -knowledge DIR < records.ndjson > results.ndjson
+//	dns-detect serve [-listen 127.0.0.1:8096] [-reload 10m]
 //
 // stdin holds record objects ({"record_id", "root_domain", "name", "type",
 // "value", "first_seen", "last_seen"}), concatenated or one per line. stdout
@@ -31,8 +32,11 @@ type line struct {
 }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "serve" {
+		return serveMain(args[1:], stderr)
+	}
 	if len(args) == 0 || args[0] != "resolve" {
-		fmt.Fprintln(stderr, "usage: dns-detect resolve -knowledge DIR < records.ndjson")
+		fmt.Fprintln(stderr, "usage: dns-detect resolve -knowledge DIR < records.ndjson | dns-detect serve [-listen ADDR]")
 		return 2
 	}
 	fs := flag.NewFlagSet("resolve", flag.ContinueOnError)
