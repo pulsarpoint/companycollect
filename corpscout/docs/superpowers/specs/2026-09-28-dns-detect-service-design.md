@@ -89,10 +89,18 @@ dns_detect/
   beginning of time, because nothing earlier is known.
 - **Rules.** The current rules apply at every `asOf`, so improving a
   definition relabels history.
-- **History beyond 90 days.** `latest.json` keeps removed ranges for 90 days.
-  Evaluating older dates needs the full range timeline, from ClickHouse
-  `provider_ip_ranges` or the S3 history files. The knowledge loader is an
-  interface so that source can be added. The first slice loads `latest.json`.
+- **Full history in `latest.json` (owner ruling 2026-09-28).** Provider-recon
+  stops purging removed items. It used to drop them 90 days after `removed_at`
+  (`RemovedRetentionDays` in `internal/assemble`); now they stay indefinitely
+  with their windows.
+  - `latest.json` is therefore the complete timeline, and one document answers
+    "which provider owned this IP on date X" for any date since the timeline
+    started (2026-09-27).
+  - Size: 37 documents total 25 MB today, and a removed range adds a few
+    hundred bytes, so growth is a few MB a year. Snapshots were rejected: they
+    lose ranges that appear and disappear between two snapshots, and every
+    re-analysis would need the right snapshot.
+  - The loader stays an interface, used for tests and the directory loader.
 - **Sliding.** The caller slides through time. A helper, `ChangePoints(records)
   []date`, lists the dates where the record set changes, so evaluating only at
   those dates gives the full timeline.
@@ -257,7 +265,6 @@ public suffix list (`golang.org/x/net/publicsuffix`: `ns1.binero.se` →
 - **Pipeline wiring:** exporting each bucket's records, streaming them through
   the service, and loading `domain_services` with the parked plan's tables,
   schedule and sensor.
-- **The full range timeline** from ClickHouse.
 - **More analyzers:** CAA, SRV, HTTPS and MTA-STS.
 
 ## Slices
@@ -265,6 +272,9 @@ public suffix list (`golang.org/x/net/publicsuffix`: `ns1.binero.se` →
 1. **Engine skeleton and host-based analyzers:** the model, knowledge
    (directory loader, host and key indexes), `hosts`, the `ns`/`soa`/`mx`/`cname`
    analyzers, the engine with fallback and aggregation, and the CLI.
+0. **Provider-recon keeps history:** remove the purge of removed items,
+   with a test that a 400-day-old removed range is still in the document;
+   redeploy.
 2. **Parsed analyzers:** `spf`, `dkim`, `dmarc` and `txt`, plus the new rule
    kinds in provider-recon (validator, definitions rewritten, redeploy).
 3. **IP analyzer and time:** the IP index with windows, `ip`, SPF `ip4`/`ip6`,
