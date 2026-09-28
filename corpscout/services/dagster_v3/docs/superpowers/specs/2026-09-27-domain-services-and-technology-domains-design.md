@@ -233,14 +233,16 @@ single scan of the DNS store's partition:
 
 It refuses to swap an empty stage when the bucket has DNS records.
 
-`provider_ip_range_keys` is a small helper table, rebuilt by
-`provider_recon_clickhouse` after each load (stage + EXCHANGE), so the 128
-buckets don't expand the ranges 128 times.
+The range keys are rebuilt inside each bucket run as a temp table from
+`provider_ip_ranges FINAL` (48k ranges, well under a second), so the asset
+doesn't depend on another module's helper table.
 
 **Scheduling** is server-side only:
-- A sensor on `provider_recon_clickhouse` launches a full 128-bucket backfill
-  when the provider content changed. The change is detected from the set of
-  `provider_services.content_hash` values.
+- A sensor launches a full 128-bucket refresh when the provider
+  **definitions** change: services, their keys and types, and the active DNS
+  rules, hashed into one digest. It deliberately ignores `content_hash`, which
+  changes whenever a feed's IP ranges churn (almost daily); range churn is
+  picked up by the weekly refresh.
 - A weekly schedule does the same for new DNS records.
 - A full backfill never starts while one is in flight, and never alongside
   other heavy materializations (pool limit 1).
