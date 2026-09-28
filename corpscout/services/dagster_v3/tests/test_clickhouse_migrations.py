@@ -473,6 +473,7 @@ EXPECTED_MIGRATIONS = (
     "000458_corpscout_ip_enrichment_queue_contract",
     "000459_corpscout_website_company_lookup_results",
     "000460_corpscout_provider_recon",
+    "000467_corpscout_dns_detect",
 )
 
 NOOP_MIGRATIONS = {"000276_noop"}
@@ -4603,3 +4604,16 @@ def test_provider_recon_migration_maps_s3_without_credentials() -> None:
         assert f"CREATE TABLE IF NOT EXISTS corpscout.{table}" in up
         assert "ENGINE = ReplacingMergeTree(loaded_at)" in up
     assert "CREATE VIEW IF NOT EXISTS corpscout.provider_ip_ranges_current" in up
+
+
+def test_dns_detect_migration_defines_tables_and_history_views() -> None:
+    up = (MIGRATIONS_DIR / "000467_corpscout_dns_detect.up.sql").read_text()
+    for table in ("dns_record_resolutions", "dns_record_services"):
+        assert f"CREATE TABLE IF NOT EXISTS corpscout.{table}" in up
+    # Both are filled per dns-detect hash partition.
+    assert up.count("PARTITION BY cityHash64(root_domain) % 128") == 2
+    for view in ("dns_record_services_current", "domain_services_history", "domain_services_now"):
+        assert f"CREATE VIEW IF NOT EXISTS corpscout.{view}" in up
+    # No deletes anywhere: results are versioned, never mutated.
+    assert "DELETE" not in up.upper().replace("DELETED", "")
+
