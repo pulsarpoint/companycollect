@@ -124,6 +124,7 @@ type Index struct {
 	ipRanges  map[netip.Prefix][]IPRange
 
 	rulesVersion, ipVersion, version string
+	documents                        int
 }
 
 var _ Knowledge = (*Index)(nil)
@@ -175,6 +176,7 @@ func Compile(docs []model.Document) (*Index, error) {
 		slices.SortFunc(idx.rules[kind], func(a, b compiledRule) int { return strings.Compare(a.RuleID, b.RuleID) })
 	}
 	slices.SortFunc(idx.globKeys, func(a, b globKey) int { return strings.Compare(a.raw, b.raw) })
+	idx.documents = len(docs)
 	idx.rulesVersion = digest(used)
 	idx.ipVersion = digest(ipUsed)
 	idx.version = digest([]string{idx.rulesVersion, idx.ipVersion})
@@ -264,6 +266,9 @@ func (idx *Index) ProviderForKey(key string) (Provider, bool) {
 
 // Version implements Knowledge: RulesVersion and IPVersion combined.
 func (idx *Index) Version() string { return idx.version }
+
+// Documents is how many provider documents the index was compiled from.
+func (idx *Index) Documents() int { return idx.documents }
 
 // RulesVersion hashes services, provider keys and active DNS rules. A change
 // can alter any record's results.
