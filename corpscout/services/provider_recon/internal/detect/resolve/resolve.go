@@ -14,6 +14,11 @@ import (
 func Route(rec Record) Analyzer {
 	apex := rec.Name == rec.RootDomain
 	www := rec.Name == "www."+rec.RootDomain
+	below := ""
+	if !apex && strings.HasSuffix(rec.Name, "."+rec.RootDomain) {
+		below = strings.TrimSuffix(rec.Name, "."+rec.RootDomain)
+	}
+	dkim := strings.HasSuffix(below, "._domainkey")
 	switch {
 	case rec.Type == "NS" && apex:
 		return NS{}
@@ -23,17 +28,36 @@ func Route(rec Record) Analyzer {
 		return MX{}
 	case rec.Type == "CNAME" && (apex || www):
 		return CNAME{}
+	case rec.Type == "TXT" && apex && isSPF(rec.Value):
+		return nil
+	case rec.Type == "TXT" && apex:
+		return TXT{}
+	case rec.Type == "TXT" && strings.HasPrefix(below, "_") && below != "_dmarc" && !dkim:
+		return TXT{}
 	}
 	return nil
+}
+
+// isSPF reports whether a TXT value is an SPF record (RFC 7208 §4.5: the
+// version term, case-insensitive, alone or followed by a space).
+func isSPF(value string) bool {
+	v := strings.ToLower(txtValue(value))
+	return v == "v=spf1" || strings.HasPrefix(v, "v=spf1 ")
+}
+
+// normalise lower-cases names, drops trailing dots and upper-cases the type.
+func normalise(rec Record) Record {
+	rec.RootDomain = hosts.Normalize(rec.RootDomain)
+	rec.Name = hosts.Normalize(rec.Name)
+	rec.Type = strings.ToUpper(strings.TrimSpace(rec.Type))
+	return rec
 }
 
 // Resolve turns one record into the services it proves. It normalises names
 // and type, routes the record, copies its window onto every result, and sorts
 // the output so the same record always gives identical output.
 func Resolve(rec Record, kb knowledge.Knowledge) Output {
-	rec.RootDomain = hosts.Normalize(rec.RootDomain)
-	rec.Name = hosts.Normalize(rec.Name)
-	rec.Type = strings.ToUpper(strings.TrimSpace(rec.Type))
+	rec = normalise(rec)
 	out := Output{RecordID: rec.RecordID, Results: []Result{}, Findings: []Finding{}}
 	a := Route(rec)
 	if a == nil {

@@ -46,3 +46,24 @@ func LabelHost(kb knowledge.Knowledge, base Result, kind knowledge.Kind, fallbac
 	}
 	return []Result{r}
 }
+
+// LabelRule labels a subject by rules alone: the best rule of kind gives one
+// result per service type of its service; no rule gives nothing.
+func LabelRule(kb knowledge.Knowledge, base Result, kind knowledge.Kind, subject string) []Result {
+	if subject == "" {
+		return nil
+	}
+	m, ok := kb.Match(kind, subject)
+	if !ok {
+		return nil
+	}
+	base.Subject = subject
+	out := make([]Result, 0, len(m.ServiceTypes))
+	for _, t := range m.ServiceTypes {
+		r := base
+		r.ServiceType, r.ProviderKey, r.ProviderSlug, r.ServiceKey = t, m.ProviderSlug, m.ProviderSlug, m.ServiceKey
+		r.RuleID, r.Confidence = m.RuleID, m.Confidence
+		out = append(out, r)
+	}
+	return out
+}

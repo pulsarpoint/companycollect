@@ -33,6 +33,12 @@ var kb = fakeKB{
 		knowledge.MXTarget: {
 			"aspmx.l.google.com": {ProviderSlug: "google", ServiceKey: "google.workspace-mail", ServiceTypes: []string{"email"}, RuleID: "google/mx", Confidence: 1},
 		},
+		knowledge.TXTValue: {
+			"apple-domain-verification=xyz": {ProviderSlug: "apple", ServiceKey: "apple.domain-verification", ServiceTypes: []string{"saas_verification"}, RuleID: "apple/txt", Confidence: 0.9},
+		},
+		knowledge.TXTName: {
+			"_amazonses": {ProviderSlug: "aws", ServiceKey: "aws.ses", ServiceTypes: []string{"email_sending"}, RuleID: "aws/txt-name", Confidence: 0.9},
+		},
 		knowledge.CNAMETarget: {
 			"example.se.cdn.cloudflare.net": {ProviderSlug: "cloudflare", ServiceKey: "cloudflare.edge", ServiceTypes: []string{"cdn", "ddos_protection", "waf"}, RuleID: "cloudflare/cname", Confidence: 1},
 		},
