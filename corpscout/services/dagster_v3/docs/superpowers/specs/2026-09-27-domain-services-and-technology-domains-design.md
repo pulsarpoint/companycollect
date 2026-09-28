@@ -1,13 +1,26 @@
 # Domain services (service type + provider) and technology_domains — design
 
-Status: DRAFT for owner review (2026-09-27)
-Module: `dagster_v3/defs/technology_catalog` (+ a new `domain_services` module)
+Status: APPROVED by owner (2026-09-28), revision 2
+Module: `dagster_v3/defs/domain_services` (new); `technology_domains` later in
+`dagster_v3/defs/technology_catalog`
+
+Revision 2 (2026-09-28) records the owner's rulings:
+- Everything here is **domain data**. How a company relates to a domain is a
+  separate concern, and `company_domains` is to be removed. There are no
+  company views, company tabs or company counts in this work.
+- Provider evidence comes from `provider_recon` (the `provider_services`,
+  `provider_rules` and `provider_ip_ranges` tables in ClickHouse). The
+  `custom/service_providers.json` mapping file from revision 1 is dropped.
+- IP matching against provider ranges is in the first cut.
+- A new named provider is added by editing provider-recon's YAML definitions.
+  The next daily provider-recon run publishes it.
+- The old `webtech_domain_technologies` (v1) is left to the webtech track.
 
 ## Why
 
-The technology pipeline flattens infrastructure into Wappalyzer technology names,
-and the service is taken from the technology's catalog category instead of from
-the evidence. Live examples (2026-09-27):
+The technology pipeline flattens infrastructure into Wappalyzer technology
+names, and takes the service from the technology's catalog category instead
+of from the evidence. Live examples (2026-09-27):
 
 | Evidence | Labelled today | Actually means |
 |---|---|---|
@@ -18,249 +31,277 @@ the evidence. Live examples (2026-09-27):
 
 The surrounding tables have their own problems:
 
-- `technology_companies`, `technology_top_domains` and `technology_adoption` are
-  weekly copies that should be views or live reads. `technology_top_domains`
-  pauses the `se_companies_serving` refresh (`SYSTEM STOP VIEW`) and needs a
-  20 GiB cap to build.
-- `domain_signal_technologies` was last built 2026-09-06. Nothing schedules it.
-- `webtech_domain_technologies_v2` (700k domains) feeds none of the rollups.
-- The backoffice domain page never shows DNS evidence.
+- **Copies that should be reads.** `technology_companies`, `technology_top_domains`
+  and `technology_adoption` are weekly copies that should be views or live
+  reads.
+- **`technology_top_domains` is costly to build.** It pauses the
+  `se_companies_serving` refresh and needs a 20 GiB cap.
+- **Detection is stale.** `domain_signal_technologies` was last built
+  2026-09-06, and nothing schedules it.
+- **Webtech is ignored.** `webtech_domain_technologies_v2` (700k domains) feeds
+  none of the rollups.
+- **No DNS evidence in the UI.** The backoffice domain page never shows it.
 
 ## Model
 
-Two separate concepts:
+Two separate concepts, both keyed by `root_domain`:
 
-1. **Domain services**: infrastructure a domain uses. It is a pair
-   `(service_type, provider)`, and the **evidence decides the service type**.
-   Cloudflare as a nameserver gives `(dns, Cloudflare)`. A Cloudflare IP or a
-   `cf-ray` header gives `(cdn, Cloudflare)` + `(ddos_protection, Cloudflare)`.
-2. **Technologies**: software seen on pages (WordPress, React, HubSpot…), keyed
-   by the Wappalyzer catalog name as today.
+1. **Domain services** are the infrastructure a domain uses, stored as a pair
+   `(service_type, provider)`. **The evidence decides the service type.**
+   - Cloudflare nameservers give `(dns, Cloudflare)`.
+   - A Cloudflare IP gives `(cdn, Cloudflare)`.
+2. **Technologies** are the software seen on pages (WordPress, React,
+   HubSpot…), keyed by the Wappalyzer catalog name as today.
 
-### Service types (owned by us, closed list)
+### Service types (closed list)
 
-| service_type | Evidence | Phase |
-|---|---|---|
-| `dns` | apex NS (SOA only as fallback when NS is absent) | 1 |
-| `email` | apex MX | 1 |
-| `email_security` | apex MX to a gateway (Proofpoint, Mimecast…) | 1 |
-| `email_sending` | SPF `include:` hosts, DKIM selector CNAME targets | 1 |
-| `saas_verification` | TXT verification tokens. Weak signal, never counted as infrastructure | 1 |
-| `cdn`, `ddos_protection`, `waf` | page/header detections of proxy providers (phase 1); A/AAAA in provider IP ranges, CNAME to edge hosts (phase 2) | 1 + 2 |
-| `hosting`, `paas`, `iaas` | CNAME to platform hosts (`*.vercel.app`, `*.azurewebsites.net`…) (phase 1); A/AAAA via RDAP owner / provider IP ranges (phase 2) | 1 + 2 |
+| service_type | Evidence |
+|---|---|
+| `dns` | Apex NS. SOA MNAME is used only when a domain has no NS record. |
+| `email` | Apex MX. |
+| `email_security` | Apex MX to a gateway, when the provider's service declares it (Proofpoint, Mimecast…). |
+| `email_sending` | SPF `include:`/`redirect=` hosts, and DKIM selector CNAME targets. |
+| `saas_verification` | TXT verification tokens. A weak signal, never counted as infrastructure. |
+| `cdn`, `ddos_protection`, `waf` | Apex/www A/AAAA inside a provider range, or apex/www CNAME to an edge host. |
+| `hosting`, `paas`, `iaas` | Apex/www CNAME to a platform host, or A/AAAA inside a cloud provider range. |
 
-The DNS record store already holds everything phase 1 and 2 need: A, AAAA,
-CNAME, NS, MX, TXT, SOA, HTTPS, SRV, CAA, plus `*._domainkey.*` and `_dmarc.*`
-names (sampled bucket 3/128, 2026-09-27).
+The service type of a **named** provider comes from its matched provider-recon
+service (`provider_services.service_types`). The service type of an
+**unmapped** key comes from the signal, as in the table above; CNAME targets
+give `hosting`.
 
 ### Provider key: every detection is labelled
 
-Every detection gets a **provider key** derived mechanically from the evidence
-host: its registrable domain (`cutToFirstSignificantSubdomain`). So
-`ns1.binero.se` → `binero.se`.
+Every host-based detection gets a **provider key**: the registrable domain of
+the evidence host, `cutToFirstSignificantSubdomain` (verified on the server:
+`ns1.binero.se` → `binero.se`, `mx1.example.co.uk` → `example.co.uk`,
+`aspmx.l.google.com` → `google.com`). Then:
 
-- A key equal to the domain itself → provider `self-hosted`. This generalises
-  today's self-hosted-email rule to every service type.
-- A key present in the provider mapping → that named provider.
-- Otherwise the key is stored as-is and marked **unmapped**. Counts, company
-  views and provider lists are complete from the first run. Nothing is dropped
-  into "other".
+1. **A provider-recon rule matches the candidate.** The rule gives the
+   provider and the service. See Rule evaluation below.
+2. **No rule matches, but the key is one of a provider's `provider_keys`.**
+   Matching is exact, or by a `*` pattern such as `awsdns-*`. That provider is
+   used, with its first service whose `service_types` contains the signal's
+   service type. If it has no such service, the provider is still named but
+   the service is empty.
+3. **The key equals the domain itself.** The provider is `self-hosted`.
+4. **Otherwise** the key is stored as-is, with an empty `provider_slug`, and
+   the row is **unmapped**. Counts and lists are complete from the first run,
+   and nothing is dropped into "other".
 
-IP-based evidence (phase 2) gets its key from the matched range's provider, or
-from the RDAP owner handle when no provider range matches.
+IP evidence has no host. It is labelled only by the matched range's provider
+and service (see IP matching below). An IP that no range contains gives no
+row. Labelling it by its RDAP owner belongs to the IP-enrichment track: the
+`rdap_network_trie` covers only 162k looked-up networks.
 
-### Provider mapping (repo-owned)
+### Rule evaluation
 
-`custom/service_providers.json`, versioned like `technologies.json`:
+`provider_rules` of `kind = 'dns'` (94 rules on 2026-09-28) are evaluated in
+SQL against the candidates of the same `record_type`:
 
-```json
-{
-  "cloudflare": {
-    "name": "Cloudflare",
-    "website": "https://www.cloudflare.com",
-    "catalog_technology": "Cloudflare",
-    "country": "US",
-    "keys": ["cloudflare.com", "cloudflare.net"],
-    "key_patterns": [],
-    "services": ["dns", "cdn", "ddos_protection", "waf"]
-  },
-  "aws": {
-    "name": "Amazon Web Services",
-    "keys": ["amazonaws.com", "cloudfront.net"],
-    "key_patterns": ["^awsdns-\\d+\\.(com|net|org|co\\.uk)$"]
-  }
-}
-```
+- **What is matched.** `match_field = 'target'` matches the normalised host;
+  `value` matches the TXT value with quotes stripped; `name` matches the
+  record name.
+- **Matcher types.**
+  - `suffix`: the candidate equals the pattern or ends with `.pattern`.
+  - `prefix`, `contains`: string matching.
+  - `regex`: `match()` (re2).
+  - `exists`: the candidate is non-empty.
+  - `case_sensitive = 0` lower-cases both sides.
+- **Which rules are used.** Only non-removed rules: `status != 'removed'` in
+  the `FINAL` read.
+- **Several rules match one candidate.** The highest `priority` wins, then the
+  highest `confidence`, then `rule_key` as a tie-break. The result is
+  deterministic.
 
-- `catalog_technology` reuses the catalog icon and description.
-- `key_patterns` exist only for providers that spread across many registrable
-  domains (AWS `awsdns-NN.*`, Azure `azure-dns.*`). The long tail needs no
-  patterns.
-- `services`, when present, restricts which service types the provider can
-  carry. It guards against, for example, Cloudflare `saas_verification` TXT
-  tokens being read as CDN.
-- Signal-specific classification that the key alone can't express (MX gateway
-  → `email_security` vs mailbox → `email`) lives in a small per-signal override
-  list in the same file.
-- The Wappalyzer `dns` fingerprints and `fingerprints.json` are superseded by
-  this file.
+The rule set is tiny, so it is cross-joined with each record type's
+candidates. Rules of `kind` `asn`, `ptr` and `http` need data the DNS store
+doesn't hold (ASN, reverse DNS, page headers), so they aren't used here.
 
-**Promotion flow:** the backoffice lists unmapped keys ranked by domain count,
-with a per-country breakdown (so Swedish providers surface first). Promoting a
-key means adding it to the JSON. The next detection run relabels the old rows,
-because detection is recomputed from scratch each run. There is no proposals
-state machine: the key is deterministic, so there is nothing to approve.
-White-label nameservers show the reseller, which is accurate for the `dns`
-service. An optional `parent` link can be added later if it matters.
+### History
 
-### Page detections of infrastructure
+Every candidate carries its DNS record's seen window (`first_seen`,
+`last_seen` from `commoncrawl_domain_dns_records`). The record store keeps
+records that have disappeared, so the pipeline computes history, not a
+snapshot:
 
-Wappalyzer page/header detections of infrastructure names ("Cloudflare",
-"Amazon CloudFront", "Akamai", "Fastly"…) are translated through the mapping
-(`catalog_technology` → provider + its proxy service types). They land in
-`domain_services`, not `technology_domains`, so they aren't double-counted.
-Phase 1 therefore already gives `cdn`/`ddos_protection` for crawled domains.
-Phase 2 extends it to every DNS-scanned domain.
+- **Host evidence** keeps the record's window. The current rules classify all
+  of history, so improving the definitions relabels the past.
+- **IP evidence** is accepted only when the record's window overlaps the
+  range's validity window, `[first_seen, coalesce(removed_at, today)]`. Ranges
+  collected on the first provider-recon run (2026-09-27, the start of the
+  range timeline) count as valid from the beginning of time, because earlier
+  ranges are unknown. The accepted window is the overlap.
+- **Current state.** `domain_services` stores `domain_last_seen`, the newest
+  `last_seen` of any of the domain's records in the pass. A service is
+  **current** when its `last_seen >= domain_last_seen - 7 days`. The view
+  `domain_services_current` applies that rule.
+
+No per-company or per-day snapshots are kept. "Domain X used Azure for three
+months last year" is a read of `domain_services`.
+
+## IP matching
+
+**Candidates.** Apex and www A/AAAA values are parsed with `toIPv6OrNull`, with
+IPv4 mapped. Unparsable values are dropped. There are about 4M such records per
+bucket: bucket 3 on 2026-09-28 held 2.1M apex A, 1.0M www A and 1.2M AAAA.
+
+**Range keys.** `provider_ip_ranges` (194k rows including history) are
+expanded into join keys:
+- IPv4 ranges get one key per `/16` they cover.
+- IPv6 ranges get one key per `/32` they cover.
+- A range wider than `/8` (IPv4) or `/20` (IPv6) is refused with a logged
+  count, so one bad feed can't explode the join.
+
+**Join.** Candidates are equi-joined to the keys on `(ip_family, key)`, then
+filtered with `range_start <= ip AND ip <= range_end` and the window rule.
+When ranges overlap (AWS `AMAZON` and `CLOUDFRONT`, for example), the longest
+prefix wins, so the most specific service labels the IP.
+
+**Result.** The matched service gives the provider and its `service_types`,
+e.g. `aws.cloudfront` gives `cdn`. The evidence row stores the IP, the CIDR
+and the feed tag.
 
 ## Tables
 
-All three data tables are partitioned by `cityHash64(root_domain) % 128`, so
-each is refreshed one bucket at a time with `REPLACE PARTITION` (the existing
-detection asset's pattern).
+The data tables are partitioned by `cityHash64(root_domain) % 128`. That
+refines the DNS store's `% 16` key, so detection bucket N reads only
+record-store partition N % 16, as today's detection asset does. Each bucket is
+rebuilt with a stage table and `REPLACE PARTITION`.
 
-**`domain_service_evidence`**: one row per supporting record, for explaining
-detections. Read by the domain page.
+**`domain_service_evidence`** has one row per supporting record, and explains
+every detection. The domain page reads it.
 
 ```
-root_domain, service_type, provider_key, provider_id ('' when unmapped),
-signal_type, record_name, evidence, first_seen, last_seen, confidence,
-source ('dns'|'page'|'webtech'|'ip_range'|'rdap'), source_run_id, detected_at
+root_domain, service_type, provider_slug ('' when unmapped),
+service_key ('' when unmapped or the provider has no matching service),
+provider_key, signal_type, record_name, evidence, rule_key ('' for key fallback),
+ip_cidr ('' unless IP evidence), feed_tag, first_seen, last_seen, confidence,
+source ('dns'|'ip_range'), source_run_id, detected_at
 ORDER BY (root_domain, service_type, provider_key, signal_type, evidence)
 ```
 
-**`domain_services`**: one row per `(service_type, provider_key, root_domain)`.
-Read by provider pages.
+**`domain_services`** has one row per `(service_type, provider_key,
+root_domain)`. Provider pages read it.
 
 ```
-service_type, provider_key, provider_id, root_domain, sources Array,
-first_seen, last_seen, confidence, harmonic_rank, detected_at
+service_type, provider_key, provider_slug, service_keys Array, root_domain,
+signal_types Array, first_seen, last_seen, domain_last_seen, confidence (max),
+harmonic_rank, source_run_id, detected_at
 ORDER BY (service_type, provider_key, harmonic_rank, root_domain)
 ```
 
-**`technology_domains`**: one row per `(technology, root_domain)` for page
-software, combining CommonCrawl page detections and
-`webtech_domain_technologies_current_v2`.
-
-```
-technology, root_domain, sources Array, first_seen, last_seen,
-harmonic_rank, detected_at
-ORDER BY (technology, harmonic_rank, root_domain)
-```
-
-`harmonic_rank` is copied in from `commoncrawl_domain_graph_ranks` (latest
-complete release) at build time, with UInt64 max when unranked. Because the
-sort key has it right after the group key:
-
-- **"Top domains for X"** = `WHERE technology = X ORDER BY harmonic_rank LIMIT 500`,
-  a sorted read.
-- **Adoption count** = `count()` over the key prefix, cheap because the prefix
-  is contiguous per partition.
-
-This replaces `technology_top_domains` and `technology_adoption`.
+- **Provider key.** For a named provider the key is the `provider_slug`
+  (`cloudflare`), so every Cloudflare host collapses into one provider. For an
+  unmapped provider it is the registrable domain (`binero.se`); for
+  self-hosted it is `self-hosted`.
+- **Rank.** `harmonic_rank` is copied from `commoncrawl_domain_graph_ranks`
+  (the latest complete release) at build time, and is UInt64 max when a
+  domain is unranked.
+- **Top domains** for a provider is a sorted read: `WHERE service_type = X AND
+  provider_key = Y ORDER BY harmonic_rank LIMIT 500`.
+- **Adoption** is a `count()` over the key prefix.
 
 **Views:**
-
-- `company_services`: `company_domains` joined to `domain_services`
-- `company_technologies`: `company_domains` joined to `technology_domains`
-- `unmapped_provider_keys`: key, service_type, domain count, per-country counts
-
-`company_domains` is ~11k rows, so both company views are cheap and every
-country appears automatically.
+- `domain_services_current`: the rows that are current (see History).
+- `unmapped_provider_keys`: key, service_type, domain count, current domain
+  count, and the top domains by rank. The review list of providers worth
+  adding to provider-recon.
 
 ## Assets and orchestration
 
-- `service_providers_clickhouse` (new, unpartitioned): validates and publishes
-  the mapping JSON to a small `service_providers` table (stage + EXCHANGE).
-  Runs in the weekly `technology_catalog_job`.
-- `domain_services_clickhouse` (replaces `domain_signal_technologies_clickhouse`,
-  128 partitions, pool `domain_signal_detection`): one candidate pass per bucket
-  over `commoncrawl_domain_dns_records`, which extends today's apex MX/TXT/NS/SOA
-  and apex+www CNAME candidates with:
-  - SPF includes
-  - DKIM selector CNAMEs
-  - phase 2: A/AAAA
+`domain_services_clickhouse` is a new asset with 128 static partitions
+(`hash_000`…`hash_127`) in pool `domain_signal_detection`. Per bucket, in a
+single scan of the DNS store's partition:
 
-  Also reads the bucket's page and webtech infrastructure detections. Writes
-  both `domain_service_evidence` and `domain_services`.
-- `technology_domains_clickhouse` (new, 128 partitions, same pool): per bucket,
-  combines page + webtech detections for non-infrastructure technologies and
-  joins the ranks. The first full build is the one unavoidable pass over the
-  12.9B page rows, but split into 128 separately retryable units instead of one
-  job. The page table is not partitioned by the same hash, so each unit still
-  filters by hash; measure one bucket before the full backfill.
-- **Scheduling:** a server-side sensor launches a full 128-bucket backfill after
-  a publish whose provider-mapping or catalog hash changed, or when the DNS
-  scan cycle completes. Never a local loop, and never alongside other heavy
-  materializations. This fixes today's "nothing ever refreshes detection".
+1. **Candidates** go into a temp table, one row per distinct `(root_domain,
+   record_name, signal_type, candidate)` with the window:
+   - apex NS, MX and TXT;
+   - apex SOA, only when the domain has no NS;
+   - apex and www CNAME;
+   - `*._domainkey.<root>` CNAME;
+   - apex and www A/AAAA.
 
-## Phase 2: IP evidence
+   SPF includes are split from `v=spf1` TXT values. `domain_last_seen` is
+   computed alongside.
+2. **Host signals:** rule evaluation, then key fallback, into the evidence
+   stage.
+3. **IP signals:** the range-key join into the evidence stage.
+4. **Aggregate** the evidence stage into the `domain_services` stage, joining
+   ranks.
+5. **Swap** both tables' partition N with `REPLACE PARTITION`.
 
-- Weekly assets for official provider ranges (Cloudflare, AWS
-  `ip-ranges.json` with service tag, Azure Service Tags, Google `cloud.json`,
-  Fastly, Akamai, Bunny, GitHub `meta`, DigitalOcean/Oracle/Linode) →
-  `provider_ip_ranges` + an `ip_trie` dictionary.
-- Apex/www A/AAAA matching:
-  - A match on a proxy provider → `cdn` / `ddos_protection`.
-  - A match on a cloud provider → `iaas`/`paas` with the service tag.
-  - No match → `hosting` keyed by the RDAP owner from the existing trie.
+It refuses to swap an empty stage when the bucket has DNS records.
 
-## Historical attribution (owner, 2026-09-27)
+`provider_ip_range_keys` is a small helper table, rebuilt by
+`provider_recon_clickhouse` after each load (stage + EXCHANGE), so the 128
+buckets don't expand the ranges 128 times.
 
-Provider evidence comes from `provider_recon`
-(`docs/superpowers/specs/2026-09-27-provider-recon-service-design.md`). That
-service replaces the `custom/service_providers.json` idea above.
+**Scheduling** is server-side only:
+- A sensor on `provider_recon_clickhouse` launches a full 128-bucket backfill
+  when the provider content changed. The change is detected from the set of
+  `provider_services.content_hash` values.
+- A weekly schedule does the same for new DNS records.
+- A full backfill never starts while one is in flight, and never alongside
+  other heavy materializations (pool limit 1).
 
-Every range has a validity window. `domain_services` is computed by joining
-each DNS record's seen window (A/AAAA/CNAME/NS/MX) with the evidence valid in
-that window, so the result carries its own `first_seen`/`last_seen`. That
-answers questions like "company X used Azure a year ago for three months".
+The old `domain_signal_technologies_clickhouse` stops being scheduled once the
+new asset is live, and is removed after cut-over.
 
-- **IP lookup.** The current-state `ip_trie` dictionary only answers "now".
-  The historical pass uses an interval join per hash bucket instead: IPv4 as
-  UInt32 start/end, IPv6 as UInt128.
-- **No snapshots.** Company history is a view, and re-running detection with
-  better definitions reclassifies all of history.
-- **Before the range timeline starts** (2026-09-27), the earliest known ranges
-  are used.
+## technology_domains (second plan)
+
+`technology_domains` has one row per `(technology, root_domain)` of page
+software. It combines CommonCrawl page detections with
+`webtech_domain_technologies_v2`, and carries `harmonic_rank`:
+
+```
+technology, harmonic_rank, root_domain, sources, first_seen, last_seen
+ORDER BY (technology, harmonic_rank, root_domain)
+```
+
+`commoncrawl_page_technologies` (12.9B rows) is partitioned by `crawl_id` and
+sorted by `root_domain`, so a hash-bucket filter can't prune it, and 128
+per-bucket passes would each read the whole table. The build therefore goes
+**per crawl**, which is the page table's own partition:
+
+- Each crawl's pass aggregates `(technology, root_domain, min/max resolved_at)`
+  into an AggregatingMergeTree target.
+- A new crawl adds one pass.
+- A new graph release, which changes ranks, triggers a rebuild.
+- Webtech v2 is merged in by a small full-refresh pass.
+
+Page detections of infrastructure names (Cloudflare, CloudFront…) stay
+technologies here. Mapping them into `domain_services` would need a
+`catalog_technologies` field on provider-recon services. That is a later
+addition, unnecessary now that IP matching covers CDN detection for every
+DNS-scanned domain.
+
+The first step of that plan is to measure one crawl's pass.
 
 ## Removals (after cut-over is verified)
 
-- Tables: `technology_adoption`, `technology_companies`,
-  `technology_top_domains`, `domain_signal_technologies`,
+- **Tables:** `technology_adoption`, `technology_companies`,
+  `technology_top_domains`, `domain_signal_technologies` and
   `technology_fingerprints`.
-- Assets `technology_adoption_clickhouse`, `technology_companies_clickhouse`,
-  `technology_top_domains_clickhouse` and `domain_signal_technologies_clickhouse`,
-  plus the fingerprint extraction in `technology_catalog_clickhouse` and its
-  asset check.
-- Drops follow the ledger policy (remove the objects from the migration files +
-  a DROP script), and happen only after the backoffice reads the new tables.
+- **Assets:**
+  - the builders of those tables;
+  - `domain_signal_technologies_clickhouse`;
+  - the fingerprint extraction in `technology_catalog_clickhouse`, with its
+    asset check.
+- **Process:** drops follow the ledger policy (remove the objects from the
+  migration files + a DROP script), and happen only after nothing reads the
+  old tables.
 
 ## Backoffice
 
-- `technologies.server.ts`: adoption, Domains tab and Companies tab read
-  `technology_domains` / `company_technologies`.
-- New provider pages per `(service_type, provider)`: top domains + companies
-  (e.g. `/admin/services/dns/binero.se`).
-- Domain page: a "Services" section from `domain_service_evidence` showing the
-  evidence, and technologies from `technology_domains` (adds webtech).
-- Unmapped-provider review list (read-only; promotion = edit the JSON).
-
-## Open points for the owner
-
-1. First-cut scope as written: phase 1 = DNS/email/sending/verification plus
-   CDN/DDoS from page headers; phase 2 = IP ranges. Or pull IP matching into
-   phase 1?
-2. Promotion via JSON in the repo (reviewed by commit, as proposed), or an
-   admin-editable ClickHouse table so promotion happens in the backoffice?
-3. Retire the old `webtech_domain_technologies` (v1, 8.9M rows) as part of this
-   work, or leave it to the webtech track?
+- **Domain page:** a Services section from `domain_service_evidence` (service
+  type, provider, the record that proves it, seen window). Technologies come
+  from `technology_domains` once it exists.
+- **Service provider pages** for each `(service_type, provider_key)` (e.g.
+  `/admin/services/dns/cloudflare`, `/admin/services/dns/binero.se`): top
+  domains by rank, current and historical counts, and links to evidence.
+- **Services overview:** per service type, providers ranked by current domain
+  count, with unmapped keys marked. Adding a provider means editing
+  provider-recon's YAML.
+- **Technology pages:** adoption and the Domains tab read `technology_domains`.
+  The Companies tab goes.
