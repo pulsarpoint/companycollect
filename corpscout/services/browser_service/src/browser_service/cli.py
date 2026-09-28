@@ -58,7 +58,7 @@ def main() -> None:
         settings = BrowserRuntimeSettings(
             max_browsers=args.max_browsers
             if args.max_browsers is not None
-            else int(os.environ.get("BROWSER_MAX_BROWSERS", "6")),
+            else int(os.environ.get("BROWSER_MAX_BROWSERS", "8")),
             idle_timeout_seconds=args.idle_timeout_seconds
             if args.idle_timeout_seconds is not None
             else float(os.environ.get("BROWSER_IDLE_TIMEOUT_SECONDS", "120")),

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from time import monotonic, time
 from uuid import UUID, uuid4
@@ -23,6 +24,27 @@ LOGGER = logging.getLogger(__name__)
 ROUTES = ("direct", "crawl_proxy1", "crawl_proxy2", "crawl_proxy3")
 
 
+class BraveRequestError(RuntimeError):
+    """A safe, contextual failure from the internal Brave request endpoint."""
+
+
+def http_error_detail(error: HTTPException) -> str:
+    detail = error.detail
+    if isinstance(detail, dict):
+        detail = detail.get("message", "Request rejected")
+    if not isinstance(detail, str):
+        detail = "Request rejected"
+    detail = re.sub(r"(?i)\bBearer\s+\S+|\bsk-[A-Za-z0-9_-]+", "[redacted]", detail)
+    detail = re.sub(r"(https?://)[^/\s@]+@", r"\1[redacted]@", detail)
+    detail = re.sub(r"(https?://[^\s?#]+)[?#][^\s]*", r"\1?[redacted]", detail)
+    detail = re.sub(
+        r"""(?i)((?:api[_-]?key|password|token|secret)["']?\s*[=:]\s*["']?)[^"'\s,;}]+""",
+        r"\1[redacted]",
+        detail,
+    )
+    return " ".join(detail.split())[:500]
+
+
 class BraveBatchQueue:
     def __init__(
         self,
@@ -40,6 +62,8 @@ class BraveBatchQueue:
         self.batch_id: str | None = None
         self.lock = asyncio.Lock()
         self.pause_reason = ""
+        self.draining = False
+        self.capacity_waiters: dict[str, dict] = {}
 
     def start(self) -> None:
         self.store = BraveBatchStore(self.service.root / "brave-queue.sqlite3")
@@ -57,6 +81,16 @@ class BraveBatchQueue:
 
     def snapshot(self, batch_id: str) -> dict:
         result = self.require_store().snapshot(batch_id)
+        waiters = (
+            list(self.capacity_waiters.values()) if self.batch_id == batch_id else []
+        )
+        result["waiting_for_capacity"] = len(waiters)
+        if result["state"] == "running" and waiters:
+            result["reason"] = "Waiting for browser capacity: " + "; ".join(
+                f"{item['route']} input={item['input_id']} request={item['request_id']} "
+                f"waited={int(monotonic() - item['started'])}s HTTP 503: {item['detail']}"
+                for item in waiters
+            )
         if (
             self.batch_id == batch_id
             and self.task is not None
@@ -124,21 +158,25 @@ class BraveBatchQueue:
             )
             payload.source_run_id = controller.controller_id
             self.batch_id, self.pause_reason = batch_id, ""
+            self.draining = False
             self.task = asyncio.create_task(
                 self.run(payload), name=f"brave-batch-{batch_id}"
             )
             return store.snapshot(batch_id)
 
     async def stop(self, reason: str) -> None:
-        self.pause_reason = reason
         if self.task is not None and not self.task.done():
-            if not self.task.cancelling():
+            # A failure already starts cleanup. Dagster's final /cancel must not
+            # cancel that cleanup a second time or erase the original cause.
+            if not self.draining and not self.task.cancelling():
+                self.pause_reason = reason
                 self.task.cancel()
-            await asyncio.gather(self.task, return_exceptions=True)
+            await asyncio.shield(asyncio.gather(self.task, return_exceptions=True))
             if (
                 self.store is not None
                 and self.batch_id is not None
-                and self.store.get(self.batch_id)["state"] != "completed"
+                and self.store.get(self.batch_id)["state"]
+                not in {"completed", "paused"}
             ):
                 self.store.state(self.batch_id, "paused", reason)
 
@@ -211,12 +249,13 @@ class BraveBatchQueue:
         except Exception as error:
             reason = (
                 str(error)
-                if isinstance(error, BraveAdmissionError)
+                if isinstance(error, (BraveAdmissionError, BraveRequestError))
                 else f"Batch processing failed ({type(error).__name__}); resume the batch"
             )
             store.state(batch_id, "paused", reason)
             LOGGER.error("Brave batch %s: %s", batch_id, reason)
         finally:
+            self.draining = True
             watch.cancel()
             for worker in workers:
                 if not worker.cancelling():
@@ -231,6 +270,8 @@ class BraveBatchQueue:
     async def worker(self, batch: BraveBatchRequest, route: str) -> None:
         store = self.require_store()
         batch_id, session_id = str(batch.batch_id), uuid4().hex
+        item = None
+        stage = "claim"
         try:
             while (item := store.claim(batch_id)) is not None:
                 company = batch.items[item["position"]]
@@ -238,6 +279,7 @@ class BraveBatchQueue:
                 while True:
                     await self.control.admit(batch, item["request_id"])
                     try:
+                        stage = "status"
                         result = await self.status(item["request_id"])
                     except HTTPException as error:
                         if error.status_code != 404:
@@ -269,6 +311,7 @@ class BraveBatchQueue:
                             route=route,
                         )
                         try:
+                            stage = "submit"
                             # Individual cancellation addresses this child task, not the queue's worker.
                             result = await asyncio.create_task(self.ask(request))
                         except asyncio.CancelledError:
@@ -277,7 +320,45 @@ class BraveBatchQueue:
                             )
                             raise
                         except HTTPException as error:
-                            if error.status_code == 503 or (
+                            if error.status_code == 503:
+                                # Shared browser capacity is backpressure, not a
+                                # failed company search. The heartbeat/admission
+                                # watcher still fences this wait and cancellation.
+                                now = monotonic()
+                                if session_id not in self.capacity_waiters:
+                                    self.capacity_waiters[session_id] = {
+                                        "route": route,
+                                        "input_id": company.input_id,
+                                        "request_id": item["request_id"],
+                                        "started": now,
+                                        "logged": now,
+                                        "detail": http_error_detail(error),
+                                    }
+                                    LOGGER.warning(
+                                        "Brave batch %s waiting for browser capacity: input=%s route=%s request=%s HTTP 503: %s",
+                                        batch_id,
+                                        company.input_id,
+                                        route,
+                                        item["request_id"],
+                                        http_error_detail(error),
+                                    )
+                                elif (
+                                    now - self.capacity_waiters[session_id]["logged"]
+                                    >= 30
+                                ):
+                                    LOGGER.info(
+                                        "Brave batch %s still waiting for browser capacity: input=%s route=%s waited=%.0fs",
+                                        batch_id,
+                                        company.input_id,
+                                        route,
+                                        now
+                                        - self.capacity_waiters[session_id]["started"],
+                                    )
+                                    self.capacity_waiters[session_id]["logged"] = now
+                                deadline = now + 120
+                                await asyncio.sleep(2)
+                                continue
+                            if (
                                 error.status_code == 409
                                 and error.headers
                                 and error.headers.get("Retry-After")
@@ -286,6 +367,15 @@ class BraveBatchQueue:
                                     await asyncio.sleep(2)
                                     continue
                             raise
+                    waiting = self.capacity_waiters.pop(session_id, None)
+                    if waiting is not None:
+                        LOGGER.info(
+                            "Brave batch %s capacity wait resolved: input=%s route=%s waited=%.0fs",
+                            batch_id,
+                            company.input_id,
+                            route,
+                            monotonic() - waiting["started"],
+                        )
                     if result["request_id"] != item["request_id"]:
                         raise ValueError("Browser result belongs to another request")
                     store.save(
@@ -302,7 +392,14 @@ class BraveBatchQueue:
                         result["status"],
                     )
                     break
+        except HTTPException as error:
+            raise BraveRequestError(
+                f"HTTP {error.status_code} during {stage}: {http_error_detail(error)}; "
+                f"input={item['input_id'] if item else 'unknown'} route={route} "
+                f"request={item['request_id'] if item else 'unknown'}; saved results retained for resume"
+            ) from error
         finally:
+            self.capacity_waiters.pop(session_id, None)
             session = self.service.active.get(session_id)
             if session is not None:
                 await self.service.release(

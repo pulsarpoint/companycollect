@@ -44,7 +44,7 @@ class BraveBatchStore:
             )
             self.connection.execute("""UPDATE batches SET state='paused',lease_until=0,
                 reason='Browser service restarted; resume the batch'
-                WHERE state != 'completed'""")
+                WHERE state IN ('running', 'publishing')""")
 
     def get(self, batch_id: str) -> dict:
         row = self.connection.execute(

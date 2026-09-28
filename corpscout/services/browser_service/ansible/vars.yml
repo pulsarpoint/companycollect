@@ -24,7 +24,7 @@ browser_service_runtime_environment:
 browser_service_activate: true
 browser_service_listen_host: "0.0.0.0"
 browser_service_port: 8081
-browser_service_max_browsers: 6
+browser_service_max_browsers: 8
 browser_service_session_retention_days: 7
 # Empty creates an empty template under the state directory.
 browser_service_base_profile: ""

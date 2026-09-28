@@ -60,6 +60,99 @@ def payload(count=8):
 
 
 class BatchTests(unittest.IsolatedAsyncioTestCase):
+    async def test_capacity_wait_survives_two_minutes_then_publishes_same_request(self):
+        batch = payload(1)
+        ask = self.queue.ask
+        attempts = []
+        clock = 0
+        available = asyncio.Event()
+
+        async def wait_for_slot(request):
+            nonlocal clock
+            clock += 150  # Capacity can stay full longer than the old deadline.
+            attempts.append(request.request_id)
+            if not available.is_set():
+                raise HTTPException(503, {"message": "Browser capacity exhausted"})
+            return await ask(request)
+
+        self.queue.ask = wait_for_slot
+        with patch(
+            "browser_service.brave_batches.monotonic", side_effect=lambda: clock
+        ):
+            await self.submit(batch)
+            await self.until(lambda: bool(self.queue.capacity_waiters))
+            state = (await self.http.get(f"/batches/{batch.batch_id}")).json()
+            self.assertEqual(state["state"], "running")
+            self.assertEqual(state["waiting_for_capacity"], 1)
+            self.assertIn("HTTP 503: Browser capacity exhausted", state["reason"])
+            self.assertIn("input=SE:0", state["reason"])
+            available.set()
+            await asyncio.wait_for(self.queue.task, 5)
+        self.assertEqual(len(set(attempts)), 1)
+        state = self.queue.snapshot(str(batch.batch_id))
+        self.assertEqual(
+            (state["state"], state["published"], state["waiting_for_capacity"]),
+            ("completed", 1, 0),
+        )
+
+    async def test_capacity_wait_stops_when_model_is_disabled(self):
+        batch = payload(1)
+        self.queue.ask = AsyncMock(
+            side_effect=HTTPException(503, "Browser capacity exhausted")
+        )
+        await self.submit(batch)
+        await self.until(lambda: bool(self.queue.capacity_waiters))
+        self.control.admit.side_effect = BraveAdmissionError("LLM disabled")
+        await asyncio.wait_for(self.queue.task, 5)
+        state = self.queue.snapshot(str(batch.batch_id))
+        self.assertEqual(
+            (
+                state["state"],
+                state["reason"],
+                state["running"],
+                state["waiting_for_capacity"],
+            ),
+            ("paused", "LLM disabled", 0, 0),
+        )
+
+    async def test_http_failure_keeps_context_and_cleanup_cancel_preserves_cause(self):
+        batch = payload(2)
+        cleaning, finish_cleanup = asyncio.Event(), asyncio.Event()
+
+        async def ask(request):
+            if request.query == "Find Company 0":
+                await asyncio.sleep(0.01)
+                raise HTTPException(
+                    422, {"message": "Invalid profile api_key=private-value"}
+                )
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleaning.set()
+                await finish_cleanup.wait()
+
+        self.queue.ask = ask
+        await self.submit(batch)
+        await asyncio.wait_for(cleaning.wait(), 5)
+        self.assertTrue(self.queue.draining)
+        reason = self.queue.snapshot(str(batch.batch_id))["reason"]
+        self.assertIn("HTTP 422 during submit: Invalid profile", reason)
+        self.assertIn("input=SE:0 route=direct request=dagster-", reason)
+        self.assertNotIn("private-value", reason)
+        cancel = asyncio.create_task(self.queue.stop("Stopped by Dagster"))
+        await asyncio.sleep(0)
+        self.assertFalse(cancel.done())
+        finish_cleanup.set()
+        await asyncio.wait_for(cancel, 5)
+        state = self.queue.snapshot(str(batch.batch_id))
+        self.assertEqual(
+            (state["state"], state["running"], state["pending"]), ("paused", 0, 2)
+        )
+        self.assertEqual(state["reason"], reason)
+        self.queue.store.close()
+        self.queue.start()
+        self.assertEqual(self.queue.snapshot(str(batch.batch_id))["reason"], reason)
+
     async def test_storage_failure_cannot_leave_an_exited_worker_looking_running(self):
         batch = payload(4)
         await self.submit(batch)

@@ -13,7 +13,7 @@ uv sync
 uv run browser-service --env-file .env --max-browsers 6 --session-retention-days 7
 ```
 
-Defaults: six concurrent browsers, 120 seconds idle timeout, seven days profile
+Defaults: eight concurrent browsers, 120 seconds idle timeout, seven days profile
 retention. Startup opens **zero browsers**. `--max-browsers` overrides
 `BROWSER_MAX_BROWSERS`; `--idle-timeout-seconds` overrides
 `BROWSER_IDLE_TIMEOUT_SECONDS`; `--session-retention-days` overrides
@@ -334,6 +334,18 @@ is published. A 60-second expired lease pauses work. Service restart also pauses
 unfinished batches until explicit resume. Completed SQLite batches are pruned after
 seven days on new submissions; unpublished data is retained. ClickHouse and
 PostgreSQL history are unaffected by local cache pruning.
+
+Browser capacity is shared with crawler sessions. A worker receiving HTTP 503
+waits for a slot with the same request/session IDs instead of failing the batch
+after two minutes. Heartbeat expiry, model disablement, and explicit cancellation
+still stop the wait. Status responses include `waiting_for_capacity` and a reason
+with the waiting company, route, request ID, and elapsed time; Dagster includes
+that reason in its regular progress logs.
+
+Other HTTP failures pause the batch with their status, sanitized detail, company,
+route, request ID, and failed operation. Cleanup and subsequent service restarts
+preserve that cause and completed results; cleanup returns unfinished items to
+pending before another controller resumes them.
 
 Configure `BRAVE_CLICKHOUSE_URL` (HTTP endpoint), `BRAVE_CLICKHOUSE_USER`,
 `BRAVE_CLICKHOUSE_PASSWORD`, and `LLM_CONTROL_PG_URL` in the service environment.
