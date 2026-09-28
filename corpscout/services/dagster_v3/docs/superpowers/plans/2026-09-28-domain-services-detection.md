@@ -1,5 +1,7 @@
 # Domain services detection Implementation Plan
 
+> **SUPERSEDED (2026-09-28), not executed.** Detection moved to the Go resolver (`docs/superpowers/specs/2026-09-28-dns-detect-service-design.md`), and storage/orchestration to `docs/superpowers/specs/2026-09-28-dns-detect-slice-4-storage-design.md`. Migration number 000465 was never used.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build `corpscout.domain_service_evidence` and `corpscout.domain_services`: for every domain in the DNS record store, which **(service type, provider)** it uses. Examples: `(dns, cloudflare)`, `(email, google)`, `(cdn, fastly)`, `(email_sending, sendgrid.net)`. Each row keeps the record that proves it and the window it was seen in. A Dagster asset refreshes the tables per hash bucket, driven by a weekly schedule and a provider-definitions sensor.
