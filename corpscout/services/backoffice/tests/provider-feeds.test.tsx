@@ -97,6 +97,18 @@ describe("DagsterPanel", () => {
     expect(html).toContain("documents: 37");
   });
 
+  it("disables the controls while a submission is in flight and Run now while a run is active", () => {
+    const base = {
+      assets: [], schedule: { name: "provider_recon_daily", status: "RUNNING", stateId: "s", cronSchedule: "12 3 * * *", timezone: "UTC", nextTick: null },
+      error: null,
+    };
+    const busy = inDataRouter(<DagsterPanel busy dagster={{ ...base, runs: [] }} />);
+    expect(busy.match(/<button[^>]*disabled=""[^>]*>/g)?.length).toBe(2);
+    const active = inDataRouter(<DagsterPanel dagster={{ ...base, runs: [{ runId: "r2", status: "STARTED", startTime: 1, endTime: null, url: null }] }} />);
+    expect(active).toMatch(/<button[^>]*disabled=""[^>]*value="run-now"|<button[^>]*value="run-now"[^>]*disabled=""/);
+    expect(active).not.toMatch(/<button[^>]*disabled=""[^>]*value="schedule-stop"|<button[^>]*value="schedule-stop"[^>]*disabled=""/);
+  });
+
   it("shows the Dagster error instead of the panel content", () => {
     const html = inDataRouter(<DagsterPanel dagster={{ assets: [], schedule: null, runs: [], error: "Dagster at x did not answer" }} />);
     expect(html).toContain("Dagster at x did not answer");

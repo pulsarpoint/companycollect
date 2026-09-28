@@ -57,6 +57,27 @@ describe("loadProviderReconDagster panel data", () => {
   });
 });
 
+describe("loadProviderReconDagster timeouts", () => {
+  it("bounds every Dagster request so a hung Dagster cannot stall the page", async () => {
+    const signals: (AbortSignal | undefined)[] = [];
+    const fetchImpl = vi.fn(async (_u: string | URL | Request, init?: RequestInit) => {
+      signals.push(init?.signal ?? undefined);
+      throw new TypeError("fetch failed");
+    }) as unknown as typeof fetch;
+    await loadProviderReconDagster({ fetchImpl });
+    expect(signals.length).toBeGreaterThan(0);
+    expect(signals.every((sig) => sig instanceof AbortSignal)).toBe(true);
+  });
+
+  it("gives up on a Dagster that never answers", async () => {
+    const hang = vi.fn((_u: string | URL | Request, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+    })) as unknown as typeof fetch;
+    const panel = await loadProviderReconDagster({ fetchImpl: hang, timeoutMs: 50 });
+    expect(panel.error).toContain("did not answer");
+  });
+});
+
 describe("runProviderReconNow", () => {
   it("launches the whole provider_recon_job with an empty run config", async () => {
     const { fetchImpl, seen } = dagster({
@@ -85,6 +106,14 @@ describe("restoreProviderRanges", () => {
     const error = await call(status, body).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ProviderReconServiceError);
     expect((error as Error).message).toContain(text);
+  });
+
+  it("says a timed-out restore may still complete instead of calling the service unreachable", async () => {
+    const slow = vi.fn(async () => { throw new DOMException("The operation was aborted due to timeout", "TimeoutError"); }) as unknown as typeof fetch;
+    const error = await restoreProviderRanges({ provider: "aws", collector: "aws_ip_ranges", removedSince: "2026-09-28" }, slow).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ProviderReconServiceError);
+    expect((error as Error).message).toContain("may still complete");
+    expect((error as Error).message).not.toContain("unreachable");
   });
 
   it("reports an unreachable service", async () => {

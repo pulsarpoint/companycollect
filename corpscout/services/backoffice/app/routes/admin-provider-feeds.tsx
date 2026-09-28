@@ -118,7 +118,7 @@ export default function AdminProviderFeeds({ loaderData, actionData }: Route.Com
               <CardDescription>The provider_recon assets, their daily schedule and recent runs.</CardDescription>
             </CardHeader>
             <CardContent>
-              <DagsterPanel dagster={dagster} />
+              <DagsterPanel dagster={dagster} busy={busy} />
             </CardContent>
           </Card>
           <Card>

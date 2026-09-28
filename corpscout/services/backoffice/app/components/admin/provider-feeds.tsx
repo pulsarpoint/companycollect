@@ -105,19 +105,25 @@ function when(seconds: number | null): string {
 const LINK = "underline-offset-4 hover:underline";
 
 /** provider-recon in Dagster: assets, schedule, recent runs, and the Run now / schedule controls. */
-export function DagsterPanel({ dagster }: { dagster: ProviderReconDagster }) {
+const ACTIVE_RUN = new Set(["QUEUED", "NOT_STARTED", "MANAGED", "STARTING", "STARTED"]);
+
+export function DagsterPanel({ dagster, busy = false }: { dagster: ProviderReconDagster; busy?: boolean }) {
   if (dagster.error) {
     return <p className="text-sm text-destructive">Dagster unavailable: {dagster.error}</p>;
   }
   const running = dagster.schedule?.status === "RUNNING";
+  // A second launch would only collide with the first one's collect (409) in the service.
+  const active = dagster.runs.some((r) => ACTIVE_RUN.has(r.status));
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
         <Form method="post">
-          <Button type="submit" name="intent" value="run-now">Run now</Button>
+          <Button type="submit" name="intent" value="run-now" disabled={busy || active}>
+            {active ? "Run in progress" : "Run now"}
+          </Button>
         </Form>
         <Form method="post">
-          <Button type="submit" variant="outline" name="intent" value={running ? "schedule-stop" : "schedule-start"}>
+          <Button type="submit" variant="outline" name="intent" value={running ? "schedule-stop" : "schedule-start"} disabled={busy}>
             {running ? "Stop schedule" : "Start schedule"}
           </Button>
         </Form>

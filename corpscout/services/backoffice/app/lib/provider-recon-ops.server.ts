@@ -38,10 +38,14 @@ export interface ProviderReconDagster {
   error: string | null;
 }
 
+/** Per-request bound for the panel, so a hung Dagster cannot stall the page. */
+const PANEL_TIMEOUT_MS = 8_000;
+
 /** Everything the panel shows; a Dagster failure becomes `error`, never a throw. */
 export async function loadProviderReconDagster(
-  options: DagsterOptions = {},
+  panelOptions: DagsterOptions = {},
 ): Promise<ProviderReconDagster> {
+  const options = { ...panelOptions, timeoutMs: panelOptions.timeoutMs ?? PANEL_TIMEOUT_MS };
   try {
     const [assets, schedule, runs] = await Promise.all([
       assetGroup(PROVIDER_RECON_GROUP, options),
@@ -144,6 +148,12 @@ export async function restoreProviderRanges(
       signal: AbortSignal.timeout(120_000),
     });
   } catch (error) {
+    // The service keeps restoring after the client gives up (it ignores cancellation).
+    if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
+      throw new ProviderReconServiceError(
+        "provider-recon did not answer within 120 s; the restore may still complete. Check this page or the recent runs before retrying.",
+      );
+    }
     throw new ProviderReconServiceError(
       `provider-recon service unreachable: ${error instanceof Error ? error.message : String(error)}`,
     );
