@@ -109,7 +109,10 @@ Routing (slice 1):
 - **apex NS**: `ns`, gives `dns`.
 - **apex SOA**: `soa`, the MNAME host, gives `dns` with `fallback: true`.
 - **apex MX**: `mx`, gives `email`. `0 .` is the finding `null_mx`.
-- **apex/www CNAME**: `cname`, gives `hosting` unless a rule says otherwise.
+- **apex/www CNAME**: `cname`, gives `hosting` unless a rule says otherwise. A
+  target inside the domain itself (www → apex) is only the finding
+  `cname_within_domain`: where that name is served from is the A/AAAA
+  evidence's job (slice 3).
 - **Everything else** gives no result yet.
 
 Fallback rows count only where no non-fallback row of the same service type

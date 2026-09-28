@@ -3,6 +3,7 @@ package resolve
 import (
 	"strings"
 
+	"provider_recon/internal/detect/hosts"
 	"provider_recon/internal/detect/knowledge"
 )
 
@@ -59,11 +60,17 @@ func (a MX) Analyze(rec Record, base Result, kb knowledge.Knowledge) Output {
 }
 
 // CNAME labels an apex or www CNAME target: service type hosting unless a
-// rule says otherwise (a CDN edge, a PaaS).
+// rule says otherwise (a CDN edge, a PaaS). A target inside the domain itself
+// (www → apex, the usual alias) proves nothing about hosting: where that name
+// is served from is the A/AAAA evidence's job, so it is only a finding.
 type CNAME struct{}
 
 func (CNAME) Name() string { return "cname" }
 
-func (CNAME) Analyze(rec Record, base Result, kb knowledge.Knowledge) Output {
+func (a CNAME) Analyze(rec Record, base Result, kb knowledge.Knowledge) Output {
+	target := hosts.Normalize(rec.Value)
+	if target != "" && hosts.Under(target, rec.RootDomain) {
+		return Output{Findings: []Finding{{RecordID: rec.RecordID, Analyzer: a.Name(), Code: "cname_within_domain", Detail: target}}}
+	}
 	return Output{Results: LabelHost(kb, base, knowledge.CNAMETarget, "hosting", rec.Value)}
 }

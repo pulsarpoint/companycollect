@@ -102,6 +102,7 @@ type Index struct {
 	rules     map[Kind][]compiledRule
 	exactKeys map[string]*Provider
 	globKeys  []globKey
+	providers []*Provider
 	version   string
 }
 
@@ -111,36 +112,50 @@ var _ Knowledge = (*Index)(nil)
 // version, a rule of an unknown kind, an invalid pattern, or a provider key
 // claimed by two providers. Removed rules and services are skipped.
 //
-// The version hashes each document's content hash (which excludes collection
-// timestamps), so it changes only when provider content changes.
+// The version hashes exactly what the index uses: live services with their
+// types, provider keys, and active rules with priority and confidence. IP
+// ranges and seen dates don't move it, so results are only re-resolved when
+// they could change.
 func Compile(docs []model.Document) (*Index, error) {
 	idx := &Index{rules: map[Kind][]compiledRule{}, exactKeys: map[string]*Provider{}}
-	hashes := make([]string, 0, len(docs))
+	var used []string
 	for _, d := range docs {
 		if d.Version != model.ContractVersion {
 			return nil, fmt.Errorf("provider %q: contract %q, want %q", d.Slug, d.Version, model.ContractVersion)
 		}
-		h, err := model.ContentHash(d)
-		if err != nil {
-			return nil, fmt.Errorf("provider %q: %w", d.Slug, err)
-		}
-		hashes = append(hashes, d.Slug+"="+h)
 		if err := idx.add(d); err != nil {
 			return nil, err
+		}
+	}
+	for kind, rules := range idx.rules {
+		for _, r := range rules {
+			used = append(used, fmt.Sprintf("rule %s|%s|%d|%g|%s", kind, r.RuleID, r.priority, r.Confidence, strings.Join(r.ServiceTypes, ",")))
+		}
+	}
+	for key, p := range idx.exactKeys {
+		used = append(used, "key "+key+"|"+p.Slug)
+	}
+	for _, g := range idx.globKeys {
+		used = append(used, "glob "+g.raw+"|"+g.provider.Slug)
+	}
+	for _, p := range idx.providers {
+		for _, s := range p.Services {
+			used = append(used, fmt.Sprintf("service %s|%s|%s", p.Slug, s.Key, strings.Join(s.Types, ",")))
 		}
 	}
 	for kind := range idx.rules {
 		slices.SortFunc(idx.rules[kind], func(a, b compiledRule) int { return strings.Compare(a.RuleID, b.RuleID) })
 	}
 	slices.SortFunc(idx.globKeys, func(a, b globKey) int { return strings.Compare(a.raw, b.raw) })
-	slices.Sort(hashes)
-	sum := sha256.Sum256([]byte(strings.Join(hashes, "\n")))
+	slices.Sort(used)
+	sum := sha256.Sum256([]byte(strings.Join(used, "\n")))
 	idx.version = "sha256:" + hex.EncodeToString(sum[:])
 	return idx, nil
 }
 
 func (idx *Index) add(d model.Document) error {
 	p := &Provider{Slug: d.Slug, Name: d.DisplayName, Country: d.Country}
+	idx.providers = append(idx.providers, p)
 	for _, s := range d.Services {
 		if s.RemovedAt != "" {
 			continue

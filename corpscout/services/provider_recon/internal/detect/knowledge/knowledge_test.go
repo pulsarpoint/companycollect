@@ -173,3 +173,41 @@ func TestCompileRefusesBadKnowledge(t *testing.T) {
 		t.Error("a provider key claimed by two providers compiled")
 	}
 }
+
+func TestVersionTracksOnlyWhatTheIndexUses(t *testing.T) {
+	base := func() model.Document {
+		return doc("p", []string{"p.com"}, svc("p.dns", []string{"dns"}, rule("NS", "target", "suffix", "ns.p.com", 0, 1)))
+	}
+	version := func(d model.Document) string {
+		idx, err := Compile([]model.Document{d})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return idx.Version()
+	}
+	v0 := version(base())
+
+	ranges := base()
+	ranges.Services[0].Evidence.IPRanges = []model.IPRange{{CIDR: "192.0.2.0/24", Lifecycle: model.Lifecycle{Status: model.StatusActive}}}
+	if version(ranges) != v0 {
+		t.Error("an IP range change moved the version, but the index does not use ranges")
+	}
+	seen := base()
+	seen.Services[0].Evidence.DNSRules[0].LastSeen = "2026-12-31"
+	if version(seen) != v0 {
+		t.Error("a last_seen bump moved the version")
+	}
+	for name, mutate := range map[string]func(*model.Document){
+		"rule pattern":  func(d *model.Document) { d.Services[0].Evidence.DNSRules[0].Pattern = "ns2.p.com" },
+		"rule priority": func(d *model.Document) { d.Services[0].Evidence.DNSRules[0].Priority = 5 },
+		"service types": func(d *model.Document) { d.Services[0].ServiceTypes = []string{"dns", "hosting"} },
+		"provider key":  func(d *model.Document) { d.ProviderKeys = []string{"p.net"} },
+		"rule removed":  func(d *model.Document) { d.Services[0].Evidence.DNSRules[0].Status = model.StatusRemoved },
+	} {
+		d := base()
+		mutate(&d)
+		if version(d) == v0 {
+			t.Errorf("%s: version unchanged", name)
+		}
+	}
+}

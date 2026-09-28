@@ -62,8 +62,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "resolve: record %d: %v\n", n, err)
 			return 1
 		}
-		if rec.RootDomain == "" || rec.Name == "" || rec.Type == "" {
-			fmt.Fprintf(stderr, "resolve: record %d: root_domain, name and type are required\n", n)
+		if err := rec.Validate(); err != nil {
+			fmt.Fprintf(stderr, "resolve: record %d: %v\n", n, err)
 			return 1
 		}
 		if err := enc.Encode(line{KnowledgeVersion: kb.Version(), Output: resolve.Resolve(rec, kb)}); err != nil {

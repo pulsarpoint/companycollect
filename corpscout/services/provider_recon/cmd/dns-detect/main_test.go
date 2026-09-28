@@ -80,3 +80,18 @@ func TestResolveRejectsBadRecords(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveStopsAtAnIncompleteRecordAfterWritingEarlierLines(t *testing.T) {
+	stdin := strings.NewReader(`{"record_id":"a","root_domain":"a.se","name":"a.se.","type":"NS","value":"ns1.loopia.se."}
+{"record_id":"","root_domain":"b.se","name":"b.se.","type":"NS","value":"ns1.loopia.se."}`)
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"resolve", "-knowledge", knowledgeDir}, stdin, &stdout, &stderr); code != 1 {
+		t.Fatalf("exit %d, want 1", code)
+	}
+	if lines := strings.Split(strings.TrimSpace(stdout.String()), "\n"); len(lines) != 1 || !strings.Contains(lines[0], `"record_id":"a"`) {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "record 2") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}

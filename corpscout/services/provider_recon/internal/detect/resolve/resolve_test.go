@@ -100,3 +100,43 @@ func TestResolveIsDeterministicAndSerialisesEmptyLists(t *testing.T) {
 		t.Fatalf("empty output = %s", empty)
 	}
 }
+
+func TestCNAMEToTheDomainItselfIsNotHostingEvidence(t *testing.T) {
+	for _, target := range []string{"example.se.", "cdn.example.se."} {
+		out := Resolve(rec("www.example.se", "CNAME", target), kb)
+		if len(out.Results) != 0 {
+			t.Fatalf("CNAME to %s gave results %v", target, short(out.Results))
+		}
+		if len(out.Findings) != 1 || out.Findings[0].Code != "cname_within_domain" {
+			t.Fatalf("CNAME to %s findings = %+v", target, out.Findings)
+		}
+	}
+}
+
+func TestValidateRecord(t *testing.T) {
+	good := rec("example.se", "NS", "ns1.binero.se.")
+	if err := good.Validate(); err != nil {
+		t.Fatalf("valid record refused: %v", err)
+	}
+	open := good
+	open.FirstSeen, open.LastSeen = "", "2026-09-19 00:00:00.000"
+	if err := open.Validate(); err != nil {
+		t.Fatalf("open window / timestamp refused: %v", err)
+	}
+	for name, mutate := range map[string]func(*Record){
+		"no record_id":   func(r *Record) { r.RecordID = "" },
+		"no root_domain": func(r *Record) { r.RootDomain = "" },
+		"no name":        func(r *Record) { r.Name = " " },
+		"no type":        func(r *Record) { r.Type = "" },
+		"no value":       func(r *Record) { r.Value = "" },
+		"bad first_seen": func(r *Record) { r.FirstSeen = "garbage" },
+		"bad last_seen":  func(r *Record) { r.LastSeen = "2026-13-40" },
+		"reversed":       func(r *Record) { r.FirstSeen, r.LastSeen = "2026-09-20", "2026-09-19" },
+	} {
+		r := good
+		mutate(&r)
+		if err := r.Validate(); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
