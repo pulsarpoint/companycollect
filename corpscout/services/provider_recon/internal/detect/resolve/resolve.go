@@ -29,7 +29,7 @@ func Route(rec Record) Analyzer {
 	case rec.Type == "CNAME" && (apex || www):
 		return CNAME{}
 	case rec.Type == "TXT" && apex && isSPF(rec.Value):
-		return nil
+		return SPF{}
 	case rec.Type == "TXT" && apex:
 		return TXT{}
 	case rec.Type == "TXT" && strings.HasPrefix(below, "_") && below != "_dmarc" && !dkim:
@@ -74,6 +74,8 @@ func Resolve(rec Record, kb knowledge.Knowledge) Output {
 		return cmp.Or(cmp.Compare(a.ServiceType, b.ServiceType), cmp.Compare(a.ProviderKey, b.ProviderKey),
 			cmp.Compare(a.Subject, b.Subject), cmp.Compare(a.RuleID, b.RuleID))
 	})
+	// One record can prove the same thing twice (SPF "a" and "mx"): keep one.
+	out.Results = slices.Compact(out.Results)
 	return out
 }
 

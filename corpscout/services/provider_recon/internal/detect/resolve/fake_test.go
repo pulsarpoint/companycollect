@@ -36,6 +36,9 @@ var kb = fakeKB{
 		knowledge.TXTValue: {
 			"apple-domain-verification=xyz": {ProviderSlug: "apple", ServiceKey: "apple.domain-verification", ServiceTypes: []string{"saas_verification"}, RuleID: "apple/txt", Confidence: 0.9},
 		},
+		knowledge.SPFInclude: {
+			"_spf.google.com": {ProviderSlug: "google", ServiceKey: "google.workspace-sending", ServiceTypes: []string{"email_sending"}, RuleID: "google/spf", Confidence: 1},
+		},
 		knowledge.TXTName: {
 			"_amazonses": {ProviderSlug: "aws", ServiceKey: "aws.ses", ServiceTypes: []string{"email_sending"}, RuleID: "aws/txt-name", Confidence: 0.9},
 		},

@@ -63,7 +63,7 @@ func TestRoutingIgnoresRecordsNoAnalyzerHandles(t *testing.T) {
 		rec("sub.example.se", "NS", "ns.elsewhere.net."),
 		rec("shop.example.se", "CNAME", "shops.myshopify.com."),
 		rec("www.example.se", "MX", "10 mx.elsewhere.net."),
-		rec("example.se", "TXT", `"v=spf1 include:_spf.google.com ~all"`),
+		rec("example.se", "CAA", `0 issue "letsencrypt.org"`),
 		rec("example.se", "A", "192.0.2.1"),
 	} {
 		if out := Resolve(r, kb); len(out.Results)+len(out.Findings) != 0 {
