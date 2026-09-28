@@ -333,3 +333,32 @@ func TestRangesOpenAtTheirOwnFeedsFirstRun(t *testing.T) {
 		t.Fatalf("window depends on which documents are loaded: %+v", got)
 	}
 }
+
+func TestRulesAndIPVersionsMoveIndependently(t *testing.T) {
+	build := func(pattern, status string) *Index {
+		d := doc("p", []string{"p.com"}, svc("p.a", []string{"cdn"}, rule("NS", "target", "suffix", pattern, 0, 1)))
+		d.Services[0].Evidence.IPRanges = []model.IPRange{ipRange("198.51.100.0/24", status, "2026-09-27", "2026-09-28")}
+		idx, err := Compile([]model.Document{d})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return idx
+	}
+	base := build("ns.p.com", model.StatusActive)
+	rules := build("ns2.p.com", model.StatusActive)
+	ips := build("ns.p.com", model.StatusRemoved)
+	if rules.RulesVersion() == base.RulesVersion() || rules.IPVersion() != base.IPVersion() {
+		t.Error("a rule change must move only the rules version")
+	}
+	if ips.IPVersion() == base.IPVersion() || ips.RulesVersion() != base.RulesVersion() {
+		t.Error("a range change must move only the IP version")
+	}
+	if base.Version() == rules.Version() || base.Version() == ips.Version() {
+		t.Error("the combined version must move with either")
+	}
+	for _, v := range []string{base.RulesVersion(), base.IPVersion(), base.Version()} {
+		if !strings.HasPrefix(v, "sha256:") {
+			t.Fatalf("version %q", v)
+		}
+	}
+}

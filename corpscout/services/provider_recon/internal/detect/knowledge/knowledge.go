@@ -122,7 +122,8 @@ type Index struct {
 	providers []*Provider
 	ipTrie    bart.Table[netip.Prefix]
 	ipRanges  map[netip.Prefix][]IPRange
-	version   string
+
+	rulesVersion, ipVersion, version string
 }
 
 var _ Knowledge = (*Index)(nil)
@@ -137,7 +138,7 @@ var _ Knowledge = (*Index)(nil)
 // don't move it, so results are only re-resolved when they could change.
 func Compile(docs []model.Document) (*Index, error) {
 	idx := &Index{rules: map[Kind][]compiledRule{}, exactKeys: map[string]*Provider{}, ipRanges: map[netip.Prefix][]IPRange{}}
-	var used []string
+	var used, ipUsed []string
 	for _, d := range docs {
 		if d.Version != model.ContractVersion {
 			return nil, fmt.Errorf("provider %q: contract %q, want %q", d.Slug, d.Version, model.ContractVersion)
@@ -151,7 +152,7 @@ func Compile(docs []model.Document) (*Index, error) {
 	}
 	for _, rs := range idx.ipRanges {
 		for _, r := range rs {
-			used = append(used, fmt.Sprintf("ip %s|%s|%s|%g|%s", r.RuleID, r.From, r.To, r.Confidence, strings.Join(r.ServiceTypes, ",")))
+			ipUsed = append(ipUsed, fmt.Sprintf("ip %s|%s|%s|%g|%s", r.RuleID, r.From, r.To, r.Confidence, strings.Join(r.ServiceTypes, ",")))
 		}
 	}
 	for kind, rules := range idx.rules {
@@ -174,9 +175,9 @@ func Compile(docs []model.Document) (*Index, error) {
 		slices.SortFunc(idx.rules[kind], func(a, b compiledRule) int { return strings.Compare(a.RuleID, b.RuleID) })
 	}
 	slices.SortFunc(idx.globKeys, func(a, b globKey) int { return strings.Compare(a.raw, b.raw) })
-	slices.Sort(used)
-	sum := sha256.Sum256([]byte(strings.Join(used, "\n")))
-	idx.version = "sha256:" + hex.EncodeToString(sum[:])
+	idx.rulesVersion = digest(used)
+	idx.ipVersion = digest(ipUsed)
+	idx.version = digest([]string{idx.rulesVersion, idx.ipVersion})
 	return idx, nil
 }
 
@@ -261,8 +262,25 @@ func (idx *Index) ProviderForKey(key string) (Provider, bool) {
 	return Provider{}, false
 }
 
-// Version implements Knowledge.
+// Version implements Knowledge: RulesVersion and IPVersion combined.
 func (idx *Index) Version() string { return idx.version }
+
+// RulesVersion hashes services, provider keys and active DNS rules. A change
+// can alter any record's results.
+func (idx *Index) RulesVersion() string { return idx.rulesVersion }
+
+// IPVersion hashes the IP range instances with their windows. A change can
+// only alter results of records resolved against the range index (A, AAAA,
+// SPF ip4/ip6).
+func (idx *Index) IPVersion() string { return idx.ipVersion }
+
+// digest is the sha256 of the sorted lines.
+func digest(lines []string) string {
+	lines = slices.Clone(lines)
+	slices.Sort(lines)
+	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
 
 // addRanges indexes every range instance of every service, removed ones too:
 // they are the history that older records are matched against.
