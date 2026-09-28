@@ -143,7 +143,7 @@ export default function AdminProviderFeedsProvider({ loaderData, actionData }: R
       <Card>
         <CardHeader>
           <CardTitle>Missing and removed ranges</CardTitle>
-          <CardDescription>Removed ranges stay here for 90 days; history keeps them forever.</CardDescription>
+          <CardDescription>Removed ranges stay here with their removal date; restore undoes a wrong removal.</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           {restores.length > 0 && (

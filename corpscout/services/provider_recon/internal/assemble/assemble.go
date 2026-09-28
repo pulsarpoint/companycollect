@@ -28,9 +28,6 @@ const (
 	curatedConfidence  = 1.0
 	officialConfidence = 1.0
 	bgpConfidence      = 0.8
-	// RemovedRetentionDays is how long a removed item stays in latest.json.
-	// History objects and the ClickHouse timeline keep it forever.
-	RemovedRetentionDays = 90
 )
 
 // bgpCollectors publish announcements, not operator-published ranges.
@@ -128,7 +125,6 @@ func Build(def definitions.Definition, outcomes map[string]FeedOutcome, prev *mo
 		appendRange(&doc, index, p)
 	}
 
-	purge(&doc, today)
 	model.Normalize(&doc)
 	hash, err := model.ContentHash(doc)
 	if err != nil {
@@ -549,46 +545,6 @@ func better(a, b model.IPRange) bool {
 		return a.FeedTag < b.FeedTag
 	}
 	return a.Region < b.Region
-}
-
-// purge drops removed items older than the retention period, and services
-// dropped from the definition once they hold no items.
-func purge(doc *model.Document, today string) {
-	out := doc.Services[:0:0]
-	for _, s := range doc.Services {
-		e := &s.Evidence
-		e.IPRanges = keepFresh(e.IPRanges, func(x *model.IPRange) *model.Lifecycle { return &x.Lifecycle }, today, func(x model.IPRange) {
-			if st, ok := doc.Collection.Collectors[x.Collector]; ok {
-				st.Churn.Purged++
-				doc.Collection.Collectors[x.Collector] = st
-			}
-		})
-		e.ASNs = keepFresh(e.ASNs, func(x *model.ASN) *model.Lifecycle { return &x.Lifecycle }, today, nil)
-		e.DNSRules = keepFresh(e.DNSRules, func(x *model.DNSRule) *model.Lifecycle { return &x.Lifecycle }, today, nil)
-		e.HTTPRules = keepFresh(e.HTTPRules, func(x *model.HTTPRule) *model.Lifecycle { return &x.Lifecycle }, today, nil)
-		e.PTRRules = keepFresh(e.PTRRules, func(x *model.PTRRule) *model.Lifecycle { return &x.Lifecycle }, today, nil)
-		e.CertificateIdentities = keepFresh(e.CertificateIdentities, func(x *model.CertificateIdentity) *model.Lifecycle { return &x.Lifecycle }, today, nil)
-		if s.RemovedAt != "" && len(e.IPRanges)+len(e.ASNs)+len(e.DNSRules)+len(e.HTTPRules)+len(e.PTRRules)+len(e.CertificateIdentities) == 0 {
-			continue
-		}
-		out = append(out, s)
-	}
-	doc.Services = out
-}
-
-func keepFresh[T any](items []T, life func(*T) *model.Lifecycle, today string, onPurge func(T)) []T {
-	out := items[:0:0]
-	for _, it := range items {
-		l := life(&it)
-		if l.Status == model.StatusRemoved && daysBetween(l.RemovedAt, today) > RemovedRetentionDays {
-			if onPurge != nil {
-				onPurge(it)
-			}
-			continue
-		}
-		out = append(out, it)
-	}
-	return out
 }
 
 // upgrade gives items published before lifecycle tracking an active lifecycle

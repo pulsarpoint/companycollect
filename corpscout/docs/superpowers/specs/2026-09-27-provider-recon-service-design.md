@@ -217,8 +217,10 @@ Rules:
   the source of truth. The usual order is fix the collector → `restore` →
   `collect`: restored ranges that the feed lists again continue their
   original timeline, and ones it still lacks go missing again.
-- **Retention.** Removed items stay in `latest.json` for 90 days, then drop
-  out. History objects and the ClickHouse timeline keep them forever.
+- **Retention.** Removed items stay in `latest.json` indefinitely, with
+  `removed_at` and `removal_action`, so the document is the complete timeline
+  (owner ruling 2026-09-28; was 90 days until 2026-09-28). History objects and
+  the ClickHouse timeline keep them too.
 - **Content hash.** Status transitions change the hash, and so history and
   change entries are written. The daily `last_seen` update does not.
 - **Upgrade from slice 1.** Items published before lifecycle tracking are

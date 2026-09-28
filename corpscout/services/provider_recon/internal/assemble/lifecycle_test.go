@@ -292,7 +292,7 @@ func TestCuratedRuleRemovedFromDefinition(t *testing.T) {
 	}
 }
 
-func TestServiceRemovedFromDefinitionThenPurged(t *testing.T) {
+func TestServiceRemovedFromDefinitionIsKept(t *testing.T) {
 	two := lcDef()
 	two.Services = append(two.Services, definitions.ServiceDef{Key: "aws.ec2", DisplayName: "EC2", ServiceTypes: []string{"iaas"}})
 	two.Feeds[0].TagMap["EC2"] = "aws.ec2"
@@ -317,31 +317,34 @@ func TestServiceRemovedFromDefinitionThenPurged(t *testing.T) {
 	if tags := d1.Collection.Collectors["aws_ip_ranges"].UnmappedTags; len(tags) != 1 || tags[0] != "EC2" {
 		t.Fatalf("unmapped = %v", tags)
 	}
-	d93 := run(t, lcDef(), out, &d1, 93)
-	for _, s := range d93.Services {
+	// Removed items are kept indefinitely (owner ruling 2026-09-28): the
+	// service and its removed range survive well past the old 90-day purge.
+	d500 := run(t, lcDef(), out, &d1, 500)
+	kept := false
+	for _, s := range d500.Services {
 		if s.Key == "aws.ec2" {
-			t.Fatal("service with only purged items should disappear")
+			kept = true
 		}
 	}
-	if len(ranges(d93, "3.5.140.0/22")) != 0 {
-		t.Fatal("removed range not purged after 90 days")
+	if !kept {
+		t.Fatal("service removed from the definition disappeared")
+	}
+	if got := ranges(d500, "3.5.140.0/22"); len(got) != 1 || got[0].RemovedAt != dstr(1) {
+		t.Fatalf("removed range after 500 days = %+v", got)
 	}
 }
 
-func TestRetentionPurgesRemovedAfter90Days(t *testing.T) {
+func TestRemovedItemsAreKeptIndefinitely(t *testing.T) {
 	d0 := run(t, lcDef(), cidrs(10), nil, 0)
 	d1 := run(t, lcDef(), cidrs(10, 3), &d0, 1)
 	d8 := run(t, lcDef(), cidrs(10, 3), &d1, 8)
-	d98 := run(t, lcDef(), cidrs(10, 3), &d8, 98)
-	if len(ranges(d98, "10.0.3.0/24")) != 1 {
-		t.Fatal("purged before the 90-day retention ended")
+	d400 := run(t, lcDef(), cidrs(10, 3), &d8, 400)
+	got := ranges(d400, "10.0.3.0/24")
+	if len(got) != 1 || got[0].Status != model.StatusRemoved || got[0].RemovedAt == "" || got[0].FirstSeen != dstr(0) {
+		t.Fatalf("removed range after 400 days = %+v", got)
 	}
-	d99 := run(t, lcDef(), cidrs(10, 3), &d98, 99)
-	if len(ranges(d99, "10.0.3.0/24")) != 0 {
-		t.Fatal("not purged after 90 days")
-	}
-	if c := d99.Collection.Collectors["aws_ip_ranges"].Churn; c.Purged != 1 {
-		t.Fatalf("churn = %+v", c)
+	if c := d400.Collection.Collectors["aws_ip_ranges"].Churn; c.Purged != 0 {
+		t.Fatalf("churn = %+v, want nothing purged", c)
 	}
 }
 

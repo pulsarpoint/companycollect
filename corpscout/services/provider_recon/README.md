@@ -59,8 +59,9 @@ Items also carry `first_seen` and `last_seen`.
 
   It sets `restored_at`, and restores only grace-expired removals. Fix the
   collector first, then restore, then collect.
-- Removed items stay in `latest.json` for 90 days. History objects keep them
-  forever.
+- Removed items stay in `latest.json` indefinitely, with `removed_at` and
+  `removal_action`, so the document is the complete timeline (owner ruling
+  2026-09-28). History objects and the ClickHouse timeline keep them too.
 
 ## Environment
 
