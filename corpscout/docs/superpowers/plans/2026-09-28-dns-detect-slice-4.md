@@ -11,7 +11,7 @@
   - a new `internal/detect/server` holds the knowledge in an atomic holder, with a reload loop and three handlers;
   - `dns-detect serve` runs it.
 - **Ansible:** a new `dns_detect` role and a `dns-detect.yml` playbook in the same Ansible directory, targeting the `dagster` host.
-- **ClickHouse:** migration 000467 with two tables and three views.
+- **ClickHouse:** migration 000468 with two tables and three views.
 - **Dagster** (`defs/dns_detect`):
   - a resource client;
   - the SQL builders;
@@ -28,7 +28,7 @@
 - **Request size:** `POST /v1/resolve` takes at most 50,000 records. The response is in input order, and any invalid line gives 400 with no partial output.
 - **Staleness:** a resolution is stale when its `rules_version` differs from the current one, or when its `ip_version` differs and the record is A, AAAA or SPF TXT.
 - **No deletes.** Views keep only each record's latest resolution. Inserts go in acknowledged batches, never one row per insert.
-- **Migration number 000467.** Before applying it, the prod ledger must be checked. If 000466 (another session's) is still unapplied, STOP and ask the owner, because applying 467 first would make golang-migrate skip 466.
+- **Migration number 000468.** Before applying it, the prod ledger must be checked. If 000466 (another session's) is still unapplied, STOP and ask the owner, because applying 467 first would make golang-migrate skip 466.
 - **Git:** commit by explicit path from the `corpscout` root, in a worktree under `companycollect/.worktrees/`. Each commit ends with `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>`.
 - **Checks:**
   - Go: `go vet`, gofmt and `go test -race ./...`.
@@ -86,7 +86,7 @@
 - [ ] **Deploy** with the keys exported as for provider-recon. Expected: the playbook finishes with `failed=0`; on the Dagster host `curl 127.0.0.1:8096/healthz` returns `ok` with versions; and the service is not reachable from outside the host.
 - [ ] **Commit:** `feat(provider_recon): ansible role for dns-detect on the Dagster host`.
 
-### Task 6: Migration 000467 and view tests
+### Task 6: Migration 000468 and view tests
 
 - [ ] **Failing tests** (`services/dagster_v3/tests/test_dns_detect_views.py`, clickhouse-local):
   - latest-resolution filtering hides the rows of an older resolution;
@@ -95,8 +95,8 @@
   - `domain_services_now` keeps only intervals reaching the domain's latest scan of that record type.
 
   Migration tests: `EXPECTED_MIGRATIONS` plus a contract test.
-- [ ] **Implement:** the `000467_corpscout_dns_detect.up/down.sql` migration with both tables and the three views, as in the spec.
-- [ ] **Checks, commit:** `feat(clickhouse): 000467 dns-detect resolutions, results and history views`.
+- [ ] **Implement:** the `000468_corpscout_dns_detect.up/down.sql` migration with both tables and the three views, as in the spec.
+- [ ] **Checks, commit:** `feat(clickhouse): 000468 dns-detect resolutions, results and history views`.
 
 ### Task 7: Dagster module `defs/dns_detect`
 
@@ -112,7 +112,7 @@
 ### Task 8: Rollout
 
 - [ ] **Precondition:** the prod ledger. If 000466 is unapplied, STOP and ask.
-- [ ] **Apply** 000467 and verify the 5 objects exist.
+- [ ] **Apply** 000468 and verify the 5 objects exist.
 - [ ] **Deploy dagster_v3** with the pristine-worktree recipe (refresh the dbt state; wait for the deploy lock, never delete it).
 - [ ] **One partition:** launch `hash_003`, then record the duration, throughput, and the counts of resolutions and results.
 - [ ] **Spot-check** `domain_services_history` for spotify.com, volvo.com and loopia.se against the CLI results from slices 1–3.

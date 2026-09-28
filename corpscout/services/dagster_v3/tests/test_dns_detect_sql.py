@@ -9,7 +9,7 @@ from clickhouse_driver import Client
 from dagster_v3.defs.dns_detect import sql
 from tests.clickhouse_local import clickhouse_local_command
 
-MIGRATION = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations" / "000467_corpscout_dns_detect.up.sql"
+MIGRATION = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations" / "000468_corpscout_dns_detect.up.sql"
 DNS_STORE = """
 CREATE TABLE corpscout.commoncrawl_domain_dns_records (`record_id` FixedString(16), `root_domain` String, `name` String, `record_type` SimpleAggregateFunction(any, LowCardinality(String)), `record_type_code` UInt16, `record_class_code` UInt16, `value` SimpleAggregateFunction(any, String), `rdata_wire` SimpleAggregateFunction(any, String), `priority` SimpleAggregateFunction(any, UInt16), `sources` SimpleAggregateFunction(groupUniqArrayArray, Array(String)), `discoveries` SimpleAggregateFunction(groupUniqArrayArray, Array(String)), `seen_dates` SimpleAggregateFunction(groupUniqArrayArray, Array(Date)), `first_seen` SimpleAggregateFunction(min, DateTime64(3, 'UTC')), `last_seen` SimpleAggregateFunction(max, DateTime64(3, 'UTC')), `last_loaded_at` SimpleAggregateFunction(max, DateTime64(3, 'UTC'))) ENGINE = AggregatingMergeTree PARTITION BY cityHash64(root_domain) % 16 ORDER BY (root_domain, name, record_type_code, record_class_code, record_id);
 """

@@ -69,10 +69,10 @@ Routine range churn (AWS, Google and Microsoft several times a week) therefore
 re-resolves only A/AAAA and SPF records. A definition change re-resolves
 everything, which is intended.
 
-## Storage (migration 000467)
+## Storage (migration 000468)
 
 The number is re-checked against main and the prod ledger before merge:
-000461–000464 and 000466 belong to another session.
+000461–000467 belong to another session (their 000467 `compact_domain_sources` took the number this migration first had, so it moved to 000468 on 2026-09-28).
 
 **`dns_record_resolutions`** has one row per resolution of a record, including
 records that give nothing, so they are never re-sent. It also stores the

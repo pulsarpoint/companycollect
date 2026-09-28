@@ -1,4 +1,4 @@
-"""dns-detect tables and history views (migration 000467), run in clickhouse-local."""
+"""dns-detect tables and history views (migration 000468), run in clickhouse-local."""
 
 import json
 import subprocess
@@ -6,7 +6,7 @@ from pathlib import Path
 
 from tests.clickhouse_local import clickhouse_local_command
 
-MIGRATION = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations" / "000467_corpscout_dns_detect.up.sql"
+MIGRATION = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations" / "000468_corpscout_dns_detect.up.sql"
 
 
 def run(sql: str) -> list[list]:

@@ -130,7 +130,7 @@ def resolve_partition(reader, writer, service, bucket: int, log, *, chunk_size: 
     pool="dns_detect",
     description=(
         "DNS records resolved by the dns-detect service into services and evidence: "
-        "corpscout.dns_record_resolutions and corpscout.dns_record_services (migration 000467), "
+        "corpscout.dns_record_resolutions and corpscout.dns_record_services (migration 000468), "
         "read through domain_services_history / domain_services_now. 128 hash partitions; each run "
         "resolves only records without a current resolution (new, older rules, older IP ranges for "
         "A/AAAA/SPF, or a grown window)."
