@@ -105,7 +105,7 @@ order:
 {"knowledge_version":"sha256:…","record_id":"a","results":[{"record_id":"a","root_domain":"a.se","record_name":"a.se","record_type":"NS","analyzer":"ns","subject":"ns1.loopia.se","service_type":"dns","provider_key":"loopia","provider_slug":"loopia","service_key":"loopia.dns","rule_id":"loopia/loopia.dns/NS/target suffix loopia.se","confidence":1,"fallback":false,"valid_from":"2026-09-01","valid_to":"2026-09-23"}],"findings":[]}
 ```
 
-Routing (slices 1–2):
+Routing (slices 1–3):
 - **apex NS**: `ns`, gives `dns`.
 - **apex SOA**: `soa`, the MNAME host, gives `dns` with `fallback: true`.
 - **apex MX**: `mx`, gives `email`. `0 .` is the finding `null_mx`.
@@ -113,7 +113,8 @@ Routing (slices 1–2):
   target inside the domain itself (www → apex) is only the finding
   `cname_within_domain`: where that name is served from is the A/AAAA
   evidence's job (slice 3).
-- **apex TXT `v=spf1…`**: `spf`, gives `email_sending`.
+- **TXT `v=spf1…` at the apex or any name under it** (e.g. `_spf.<domain>`):
+  `spf`, gives `email_sending`.
   - `include:`/`redirect=` hosts are labelled by SPF/include rules, then by
     their provider key. A host inside the domain is delegation, so only the
     finding `spf_include_within_domain`.
@@ -122,7 +123,8 @@ Routing (slices 1–2):
     (`spf_lookup_budget_exceeded`) are findings. A macro host's literal tail
     after its last macro is still labelled (`%{d}._spf.vali.email` →
     `_spf.vali.email`).
-  - `ip4`/`ip6` wait for slice 3. No DNS lookups are made.
+  - `ip4`/`ip6` are looked up in the provider ranges valid during the
+    record's window. No DNS lookups are made.
 - **other apex TXT**: `txt`, TXT/value rules only (verification tokens).
 - **`_name` TXT**: `txt`, TXT/name rules on the first label only (e.g.
   `_amazonses` of `_amazonses.mail.<domain>`).
@@ -135,7 +137,13 @@ Routing (slices 1–2):
   mailbox host outside the domain. `?…` and `!size` suffixes are dropped,
   and address literals are ignored. A non-DMARC value is the finding
   `dmarc_invalid`.
-- **Everything else** (A/AAAA until slice 3, CAA, SRV…) gives no result yet.
+- **apex/www A, AAAA**: `ip`, gives the service types of the provider range
+  containing the address.
+  - The record's window is cut at every range change. Where ranges nest, the
+    longest prefix wins.
+  - A range is valid from `first_seen` (open for ranges from the first
+    provider-recon run) until `last_seen` once it is no longer active.
+- **Everything else** (CAA, SRV…) gives no result yet.
 
 DNS rule kinds are one list, `model.DNSRuleKinds`, shared by `validate` and
 the resolver. `exists` is refused for DNS rules.

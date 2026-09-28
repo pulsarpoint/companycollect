@@ -2,6 +2,7 @@ package resolve
 
 import (
 	"fmt"
+	"net/netip"
 	"strings"
 
 	"provider_recon/internal/detect/hosts"
@@ -21,7 +22,8 @@ const spfLookupBudget = 10
 //   - a host with a macro (%{…}) is a finding; the labels after its last
 //     macro are literal text in the record, so that tail is labelled
 //     (…%{d}._spf.vali.email → _spf.vali.email); a macro is never expanded;
-//   - ip4/ip6 (slice 3), ptr, exists and all give nothing;
+//   - ip4/ip6 are looked up in the provider ranges valid during the record's
+//     window (email_sending); ptr, exists and all give nothing;
 //   - more than ten DNS-querying terms is a finding.
 type SPF struct{}
 
@@ -36,6 +38,12 @@ func (a SPF) Analyze(rec Record, base Result, kb knowledge.Knowledge) Output {
 		name, arg := term, ""
 		if i := strings.IndexAny(term, ":="); i >= 0 {
 			name, arg = term[:i], term[i+1:]
+		}
+		if name == "ip4" || name == "ip6" {
+			if p, ok := spfPrefix(arg); ok {
+				out.Results = append(out.Results, ipResults(kb, base, p, p.String(), "email_sending")...)
+			}
+			continue
 		}
 		switch name {
 		case "include", "redirect", "a", "mx", "ptr", "exists":
@@ -85,4 +93,22 @@ func macroTail(host string) string {
 		}
 	}
 	return strings.Join(labels[last+1:], ".")
+}
+
+// spfPrefix parses an ip4/ip6 argument: a prefix, or an address meaning its
+// single-address prefix.
+func spfPrefix(arg string) (netip.Prefix, bool) {
+	if strings.Contains(arg, "/") {
+		p, err := netip.ParsePrefix(arg)
+		if err != nil {
+			return netip.Prefix{}, false
+		}
+		return p.Masked(), true
+	}
+	a, err := netip.ParseAddr(arg)
+	if err != nil {
+		return netip.Prefix{}, false
+	}
+	a = a.Unmap()
+	return netip.PrefixFrom(a, a.BitLen()), true
 }

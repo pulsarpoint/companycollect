@@ -2,7 +2,9 @@ package resolve
 
 import (
 	"cmp"
+	"net/netip"
 	"slices"
+	"strings"
 	"time"
 
 	"provider_recon/internal/detect/knowledge"
@@ -93,4 +95,46 @@ func shift(date string, days int) string {
 		return date
 	}
 	return d.AddDate(0, 0, days).Format(time.DateOnly)
+}
+
+// IP resolves an apex or www A/AAAA record against the provider ranges valid
+// during the record's window: one result per piece and per service type of
+// the piece's range. A value that is not an IP address gives nothing.
+type IP struct{}
+
+func (IP) Name() string { return "ip" }
+
+func (IP) Analyze(rec Record, base Result, kb knowledge.Knowledge) Output {
+	addr, err := netip.ParseAddr(strings.TrimSpace(rec.Value))
+	if err != nil {
+		return Output{}
+	}
+	addr = addr.Unmap()
+	return Output{Results: ipResults(kb, base, netip.PrefixFrom(addr, addr.BitLen()), addr.String(), "")}
+}
+
+// ipResults labels a prefix with the ranges containing it. serviceType ""
+// takes each range's own service types; otherwise every piece is that
+// service type (SPF ip4/ip6 → email_sending) and the range's service key is
+// kept only when that service has the type.
+func ipResults(kb knowledge.Knowledge, base Result, p netip.Prefix, subject, serviceType string) []Result {
+	var out []Result
+	for _, piece := range ipPieces(base.ValidFrom, base.ValidTo, kb.LookupIP(p)) {
+		rg := piece.Range
+		types := rg.ServiceTypes
+		if serviceType != "" {
+			types = []string{serviceType}
+		}
+		for _, t := range types {
+			r := base
+			r.Subject, r.ServiceType, r.ProviderKey, r.ProviderSlug = subject, t, rg.ProviderSlug, rg.ProviderSlug
+			r.ServiceKey = rg.ServiceKey
+			if serviceType != "" && !slices.Contains(rg.ServiceTypes, serviceType) {
+				r.ServiceKey = ""
+			}
+			r.RuleID, r.Confidence, r.ValidFrom, r.ValidTo = rg.RuleID, rg.Confidence, piece.From, piece.To
+			out = append(out, r)
+		}
+	}
+	return out
 }

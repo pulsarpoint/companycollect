@@ -56,3 +56,58 @@ func TestIPPieces(t *testing.T) {
 		})
 	}
 }
+
+type windowed struct {
+	ServiceType, ProviderKey, ServiceKey, Subject, From, To string
+}
+
+func windows(rs []Result) []windowed {
+	out := []windowed{}
+	for _, r := range rs {
+		out = append(out, windowed{r.ServiceType, r.ProviderKey, r.ServiceKey, r.Subject, r.ValidFrom, r.ValidTo})
+	}
+	return out
+}
+
+func TestIPAnalyzerCutsTheRecordWindowAtRangeChanges(t *testing.T) {
+	r := Record{RecordID: "a1", RootDomain: "example.se", Name: "example.se", Type: "A", Value: "52.84.1.1", FirstSeen: "2026-01-01", LastSeen: "2026-09-19"}
+	out := Resolve(r, kb)
+	want := []windowed{
+		{"cdn", "aws", "aws.cloudfront", "52.84.1.1", "2026-03-01", "2026-09-19"},
+		{"iaas", "aws", "aws.other", "52.84.1.1", "2026-01-01", "2026-02-28"},
+	}
+	if got := windows(out.Results); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v\nwant %+v", got, want)
+	}
+	if out.Results[0].Analyzer != "ip" || out.Results[0].RuleID != "aws/aws.cloudfront/IP 52.84.0.0/15" {
+		t.Fatalf("result = %+v", out.Results[0])
+	}
+}
+
+func TestIPAnalyzerRoutingAndValues(t *testing.T) {
+	if got := windows(Resolve(rec("www.example.se", "AAAA", "2600:9000:1::1"), kb).Results); !reflect.DeepEqual(got, []windowed{
+		{"cdn", "aws", "aws.cloudfront", "2600:9000:1::1", "2026-08-10", "2026-09-19"},
+	}) {
+		t.Fatalf("www AAAA = %+v", got)
+	}
+	if got := windows(Resolve(rec("example.se", "A", "::ffff:52.84.1.1"), kb).Results); len(got) != 1 || got[0].Subject != "52.84.1.1" {
+		t.Fatalf("mapped address = %+v", got)
+	}
+	for _, r := range []Record{rec("shop.example.se", "A", "52.84.1.1"), rec("example.se", "A", "not-an-ip"), rec("example.se", "A", "192.0.2.1")} {
+		if out := Resolve(r, kb); len(out.Results) != 0 {
+			t.Errorf("%s %s gave %+v", r.Name, r.Value, windows(out.Results))
+		}
+	}
+}
+
+func TestSPFIPMechanismsUseTheRangeIndex(t *testing.T) {
+	got := windows(spf(`"v=spf1 ip4:198.51.100.0/24 ip4:203.0.113.5 ip4:192.0.2.0/24 ip6:2600:9000::1 -all"`).Results)
+	want := []windowed{
+		{"email_sending", "aws", "", "2600:9000::1/128", "2026-08-10", "2026-09-19"},
+		{"email_sending", "hosty", "", "203.0.113.5/32", "2026-08-10", "2026-09-19"},
+		{"email_sending", "mailchimp", "mailchimp.sending", "198.51.100.0/24", "2026-08-10", "2026-09-19"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v\nwant %+v", got, want)
+	}
+}

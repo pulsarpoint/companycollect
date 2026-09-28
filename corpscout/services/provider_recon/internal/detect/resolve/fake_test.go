@@ -71,6 +71,13 @@ var kb = fakeKB{
 			"example.se.cdn.cloudflare.net": {ProviderSlug: "cloudflare", ServiceKey: "cloudflare.edge", ServiceTypes: []string{"cdn", "ddos_protection", "waf"}, RuleID: "cloudflare/cname", Confidence: 1},
 		},
 	},
+	ips: []knowledge.IPRange{
+		{Prefix: netip.MustParsePrefix("52.84.0.0/14"), ProviderSlug: "aws", ServiceKey: "aws.other", ServiceTypes: []string{"iaas"}, Confidence: 0.9, RuleID: "aws/aws.other/IP 52.84.0.0/14"},
+		{Prefix: netip.MustParsePrefix("52.84.0.0/15"), ProviderSlug: "aws", ServiceKey: "aws.cloudfront", ServiceTypes: []string{"cdn"}, Confidence: 1, From: "2026-03-01", RuleID: "aws/aws.cloudfront/IP 52.84.0.0/15"},
+		{Prefix: netip.MustParsePrefix("2600:9000::/28"), ProviderSlug: "aws", ServiceKey: "aws.cloudfront", ServiceTypes: []string{"cdn"}, Confidence: 1, RuleID: "aws/aws.cloudfront/IP 2600:9000::/28"},
+		{Prefix: netip.MustParsePrefix("198.51.100.0/24"), ProviderSlug: "mailchimp", ServiceKey: "mailchimp.sending", ServiceTypes: []string{"email_sending"}, Confidence: 1, RuleID: "mailchimp/mailchimp.sending/IP 198.51.100.0/24"},
+		{Prefix: netip.MustParsePrefix("203.0.113.0/24"), ProviderSlug: "hosty", ServiceKey: "hosty.web", ServiceTypes: []string{"hosting"}, Confidence: 1, RuleID: "hosty/hosty.web/IP 203.0.113.0/24"},
+	},
 	keys: map[string]knowledge.Provider{
 		"binero.se": {Slug: "binero", Services: []knowledge.ProviderService{{Key: "binero.web", Types: []string{"hosting"}}, {Key: "binero.dns", Types: []string{"dns"}}}},
 	},
