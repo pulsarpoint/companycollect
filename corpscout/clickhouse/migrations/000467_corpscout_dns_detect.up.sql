@@ -3,7 +3,7 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 -- One row per resolution of a DNS record by the dns-detect service, including
 -- records that resolved to nothing, so they are not sent again. A record is
 -- re-resolved when its rules_version, or for A/AAAA/SPF its ip_version, is no
--- longer current; the newest resolved_at wins. record_from/record_to are the
+-- longer current, and the newest resolved_at wins. record_from/record_to are the
 -- record's own seen window.
 CREATE TABLE IF NOT EXISTS corpscout.dns_record_resolutions
 (
@@ -25,7 +25,7 @@ PARTITION BY cityHash64(root_domain) % 128
 ORDER BY (root_domain, record_id);
 
 -- One row per service a record proves (dns-detect's Result). Rows are never
--- deleted: a re-resolved record gets new rows, and the views below keep only
+-- deleted. A re-resolved record gets new rows, and the views below keep only
 -- the rows of each record's latest resolution.
 CREATE TABLE IF NOT EXISTS corpscout.dns_record_services
 (
@@ -109,7 +109,7 @@ GROUP BY root_domain, service_type, provider_key, island;
 
 -- The history intervals still in use: those reaching the domain's latest scan
 -- of one of their record types (scans of different record types run on
--- different schedules; a latest scan that resolved to nothing still counts).
+-- different schedules, and a latest scan that resolved to nothing still counts).
 CREATE VIEW IF NOT EXISTS corpscout.domain_services_now AS
 SELECT h.*
 FROM corpscout.domain_services_history AS h
