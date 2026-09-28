@@ -159,7 +159,7 @@ func (idx *Index) add(d model.Document) error {
 			if r.Status == model.StatusRemoved {
 				continue
 			}
-			kind := Kind{strings.ToUpper(r.RecordType), strings.ToLower(r.MatchField)}
+			kind := Kind{RecordType: strings.ToUpper(r.RecordType), MatchField: strings.ToLower(r.MatchField)}
 			if !model.IsDNSRuleKind(kind.RecordType, kind.MatchField) {
 				return fmt.Errorf("provider %q service %q: unsupported rule kind %s", d.Slug, s.Key, kind)
 			}
