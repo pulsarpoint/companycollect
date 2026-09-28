@@ -1,0 +1,50 @@
+{
+  "aliases": [
+    "GoDaddy"
+  ],
+  "candidates": [],
+  "category": "dns",
+  "collection": {
+    "collected_at": "2026-09-28T15:40:13Z",
+    "collectors": {},
+    "content_hash": "sha256:7108d3c5b508dec0f225c2ce749a638578e7dfa6a9fd67163c6de01f4205451a"
+  },
+  "country": "US",
+  "display_name": "GoDaddy",
+  "provider_keys": [
+    "domaincontrol.com"
+  ],
+  "services": [
+    {
+      "display_name": "GoDaddy DNS",
+      "evidence": {
+        "asns": [],
+        "certificate_identities": [],
+        "dns_rules": [
+          {
+            "confidence": 1,
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "match_field": "target",
+            "matcher_type": "suffix",
+            "pattern": "domaincontrol.com",
+            "priority": 100,
+            "record_type": "NS",
+            "source": "curated",
+            "status": "active"
+          }
+        ],
+        "http_rules": [],
+        "ip_ranges": [],
+        "ptr_rules": []
+      },
+      "service_key": "godaddy.dns",
+      "service_types": [
+        "dns"
+      ],
+      "traits": []
+    }
+  ],
+  "slug": "godaddy",
+  "version": "provider-recon/v1"
+}

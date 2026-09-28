@@ -1,0 +1,80 @@
+{
+  "aliases": [
+    "Beebyte"
+  ],
+  "candidates": [],
+  "category": "hosting",
+  "collection": {
+    "collected_at": "2026-09-28T15:40:13Z",
+    "collectors": {},
+    "content_hash": "sha256:607425793f4417f219d2f16f4bf1cb5c7b35c6146a53e71fd50621690ca95285"
+  },
+  "country": "SE",
+  "display_name": "Beebyte",
+  "provider_keys": [
+    "beebyte.net",
+    "beebyte.se"
+  ],
+  "services": [
+    {
+      "display_name": "Beebyte DNS",
+      "evidence": {
+        "asns": [],
+        "certificate_identities": [],
+        "dns_rules": [
+          {
+            "confidence": 1,
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "match_field": "target",
+            "matcher_type": "suffix",
+            "pattern": "beebyte.net",
+            "priority": 100,
+            "record_type": "NS",
+            "source": "curated",
+            "status": "active"
+          }
+        ],
+        "http_rules": [],
+        "ip_ranges": [],
+        "ptr_rules": []
+      },
+      "service_key": "beebyte.dns",
+      "service_types": [
+        "dns"
+      ],
+      "traits": []
+    },
+    {
+      "display_name": "Beebyte email",
+      "evidence": {
+        "asns": [],
+        "certificate_identities": [],
+        "dns_rules": [
+          {
+            "confidence": 1,
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "match_field": "target",
+            "matcher_type": "suffix",
+            "pattern": "beebyte.se",
+            "priority": 100,
+            "record_type": "MX",
+            "source": "curated",
+            "status": "active"
+          }
+        ],
+        "http_rules": [],
+        "ip_ranges": [],
+        "ptr_rules": []
+      },
+      "service_key": "beebyte.email",
+      "service_types": [
+        "email"
+      ],
+      "traits": []
+    }
+  ],
+  "slug": "beebyte",
+  "version": "provider-recon/v1"
+}

@@ -1,0 +1,50 @@
+{
+  "aliases": [
+    "GleSYS"
+  ],
+  "candidates": [],
+  "category": "hosting",
+  "collection": {
+    "collected_at": "2026-09-28T15:40:13Z",
+    "collectors": {},
+    "content_hash": "sha256:2b42868ca54f1aded887f4071a78f75a1a70a5d529b324d865cd417f4a50c69b"
+  },
+  "country": "SE",
+  "display_name": "GleSYS",
+  "provider_keys": [
+    "glesys.se"
+  ],
+  "services": [
+    {
+      "display_name": "GleSYS email",
+      "evidence": {
+        "asns": [],
+        "certificate_identities": [],
+        "dns_rules": [
+          {
+            "confidence": 1,
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "match_field": "target",
+            "matcher_type": "suffix",
+            "pattern": "glesys.se",
+            "priority": 100,
+            "record_type": "MX",
+            "source": "curated",
+            "status": "active"
+          }
+        ],
+        "http_rules": [],
+        "ip_ranges": [],
+        "ptr_rules": []
+      },
+      "service_key": "glesys.email",
+      "service_types": [
+        "email"
+      ],
+      "traits": []
+    }
+  ],
+  "slug": "glesys",
+  "version": "provider-recon/v1"
+}

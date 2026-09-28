@@ -1,0 +1,92 @@
+{
+  "aliases": [
+    "Loopia"
+  ],
+  "candidates": [],
+  "category": "hosting",
+  "collection": {
+    "collected_at": "2026-09-28T15:40:13Z",
+    "collectors": {},
+    "content_hash": "sha256:9a95dc0df4e4082fc277fe92e43897d2f3f8d0d7f27583c8c7e6ed4551de6d59"
+  },
+  "country": "SE",
+  "display_name": "Loopia",
+  "provider_keys": [
+    "loopia.se",
+    "loopiagroup.com"
+  ],
+  "services": [
+    {
+      "display_name": "Loopia DNS",
+      "evidence": {
+        "asns": [],
+        "certificate_identities": [],
+        "dns_rules": [
+          {
+            "confidence": 1,
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "match_field": "target",
+            "matcher_type": "suffix",
+            "pattern": "loopia.se",
+            "priority": 100,
+            "record_type": "NS",
+            "source": "curated",
+            "status": "active"
+          },
+          {
+            "confidence": 1,
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "match_field": "target",
+            "matcher_type": "suffix",
+            "pattern": "loopiagroup.com",
+            "priority": 100,
+            "record_type": "NS",
+            "source": "curated",
+            "status": "active"
+          }
+        ],
+        "http_rules": [],
+        "ip_ranges": [],
+        "ptr_rules": []
+      },
+      "service_key": "loopia.dns",
+      "service_types": [
+        "dns"
+      ],
+      "traits": []
+    },
+    {
+      "display_name": "Loopia email",
+      "evidence": {
+        "asns": [],
+        "certificate_identities": [],
+        "dns_rules": [
+          {
+            "confidence": 1,
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "match_field": "target",
+            "matcher_type": "suffix",
+            "pattern": "loopia.se",
+            "priority": 100,
+            "record_type": "MX",
+            "source": "curated",
+            "status": "active"
+          }
+        ],
+        "http_rules": [],
+        "ip_ranges": [],
+        "ptr_rules": []
+      },
+      "service_key": "loopia.email",
+      "service_types": [
+        "email"
+      ],
+      "traits": []
+    }
+  ],
+  "slug": "loopia",
+  "version": "provider-recon/v1"
+}

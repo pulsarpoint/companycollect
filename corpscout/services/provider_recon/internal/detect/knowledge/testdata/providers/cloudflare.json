@@ -1,0 +1,420 @@
+{
+  "aliases": [
+    "Cloudflare",
+    "Cloudflare, Inc."
+  ],
+  "candidates": [],
+  "category": "cdn",
+  "collection": {
+    "collected_at": "2026-09-28T15:40:13Z",
+    "collectors": {
+      "cloudflare_ips": {
+        "churn": {
+          "added": 0,
+          "missing": 0,
+          "purged": 0,
+          "reappeared": 0,
+          "removed": 0
+        },
+        "fetched_at": "2026-09-28T15:40:13Z",
+        "format": "JSON API",
+        "items": 22,
+        "last_success_at": "2026-09-28T15:40:13Z",
+        "source_url": "https://api.cloudflare.com/client/v4/ips",
+        "source_version": "etag=38f79d050aa027e3be3865e495dcc9bc",
+        "status": "ok"
+      }
+    },
+    "content_hash": "sha256:22e0d05b78a9f76997fce564a2e3636cb7bac7c0155dbc1ff5fdb8f555abccf7"
+  },
+  "country": "US",
+  "display_name": "Cloudflare",
+  "provider_keys": [
+    "cloudflare.com",
+    "cloudflare.net"
+  ],
+  "services": [
+    {
+      "display_name": "Cloudflare DNS",
+      "evidence": {
+        "asns": [],
+        "certificate_identities": [],
+        "dns_rules": [
+          {
+            "confidence": 1,
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "match_field": "target",
+            "matcher_type": "suffix",
+            "pattern": "ns.cloudflare.com",
+            "priority": 100,
+            "record_type": "NS",
+            "source": "curated",
+            "status": "active"
+          }
+        ],
+        "http_rules": [],
+        "ip_ranges": [],
+        "ptr_rules": []
+      },
+      "service_key": "cloudflare.dns",
+      "service_types": [
+        "dns"
+      ],
+      "traits": []
+    },
+    {
+      "display_name": "Cloudflare proxy network",
+      "evidence": {
+        "asns": [
+          {
+            "asn": 13335,
+            "confidence": 1,
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "source": "curated",
+            "status": "active"
+          }
+        ],
+        "certificate_identities": [],
+        "dns_rules": [
+          {
+            "confidence": 1,
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "match_field": "target",
+            "matcher_type": "suffix",
+            "pattern": "cdn.cloudflare.net",
+            "priority": 100,
+            "record_type": "CNAME",
+            "source": "curated",
+            "status": "active"
+          }
+        ],
+        "http_rules": [
+          {
+            "confidence": 1,
+            "first_seen": "2026-09-27",
+            "header_name": "cf-ray",
+            "http_part": "header",
+            "last_seen": "2026-09-28",
+            "matcher_type": "exists",
+            "pattern": "",
+            "priority": 100,
+            "source": "curated",
+            "status": "active"
+          }
+        ],
+        "ip_ranges": [
+          {
+            "cidr": "103.21.244.0/22",
+            "collector": "cloudflare_ips",
+            "confidence": 1,
+            "feed_tag": "CLOUDFLARE",
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "source": "official_feed",
+            "source_url": "https://api.cloudflare.com/client/v4/ips",
+            "source_version": "etag=38f79d050aa027e3be3865e495dcc9bc",
+            "status": "active"
+          },
+          {
+            "cidr": "103.22.200.0/22",
+            "collector": "cloudflare_ips",
+            "confidence": 1,
+            "feed_tag": "CLOUDFLARE",
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "source": "official_feed",
+            "source_url": "https://api.cloudflare.com/client/v4/ips",
+            "source_version": "etag=38f79d050aa027e3be3865e495dcc9bc",
+            "status": "active"
+          },
+          {
+            "cidr": "103.31.4.0/22",
+            "collector": "cloudflare_ips",
+            "confidence": 1,
+            "feed_tag": "CLOUDFLARE",
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "source": "official_feed",
+            "source_url": "https://api.cloudflare.com/client/v4/ips",
+            "source_version": "etag=38f79d050aa027e3be3865e495dcc9bc",
+            "status": "active"
+          },
+          {
+            "cidr": "104.16.0.0/13",
+            "collector": "cloudflare_ips",
+            "confidence": 1,
+            "feed_tag": "CLOUDFLARE",
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "source": "official_feed",
+            "source_url": "https://api.cloudflare.com/client/v4/ips",
+            "source_version": "etag=38f79d050aa027e3be3865e495dcc9bc",
+            "status": "active"
+          },
+          {
+            "cidr": "104.24.0.0/14",
+            "collector": "cloudflare_ips",
+            "confidence": 1,
+            "feed_tag": "CLOUDFLARE",
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "source": "official_feed",
+            "source_url": "https://api.cloudflare.com/client/v4/ips",
+            "source_version": "etag=38f79d050aa027e3be3865e495dcc9bc",
+            "status": "active"
+          },
+          {
+            "cidr": "108.162.192.0/18",
+            "collector": "cloudflare_ips",
+            "confidence": 1,
+            "feed_tag": "CLOUDFLARE",
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "source": "official_feed",
+            "source_url": "https://api.cloudflare.com/client/v4/ips",
+            "source_version": "etag=38f79d050aa027e3be3865e495dcc9bc",
+            "status": "active"
+          },
+          {
+            "cidr": "131.0.72.0/22",
+            "collector": "cloudflare_ips",
+            "confidence": 1,
+            "feed_tag": "CLOUDFLARE",
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "source": "official_feed",
+            "source_url": "https://api.cloudflare.com/client/v4/ips",
+            "source_version": "etag=38f79d050aa027e3be3865e495dcc9bc",
+            "status": "active"
+          },
+          {
+            "cidr": "141.101.64.0/18",
+            "collector": "cloudflare_ips",
+            "confidence": 1,
+            "feed_tag": "CLOUDFLARE",
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "source": "official_feed",
+            "source_url": "https://api.cloudflare.com/client/v4/ips",
+            "source_version": "etag=38f79d050aa027e3be3865e495dcc9bc",
+            "status": "active"
+          },
+          {
+            "cidr": "162.158.0.0/15",
+            "collector": "cloudflare_ips",
+            "confidence": 1,
+            "feed_tag": "CLOUDFLARE",
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "source": "official_feed",
+            "source_url": "https://api.cloudflare.com/client/v4/ips",
+            "source_version": "etag=38f79d050aa027e3be3865e495dcc9bc",
+            "status": "active"
+          },
+          {
+            "cidr": "172.64.0.0/13",
+            "collector": "cloudflare_ips",
+            "confidence": 1,
+            "feed_tag": "CLOUDFLARE",
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "source": "official_feed",
+            "source_url": "https://api.cloudflare.com/client/v4/ips",
+            "source_version": "etag=38f79d050aa027e3be3865e495dcc9bc",
+            "status": "active"
+          },
+          {
+            "cidr": "173.245.48.0/20",
+            "collector": "cloudflare_ips",
+            "confidence": 1,
+            "feed_tag": "CLOUDFLARE",
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "source": "official_feed",
+            "source_url": "https://api.cloudflare.com/client/v4/ips",
+            "source_version": "etag=38f79d050aa027e3be3865e495dcc9bc",
+            "status": "active"
+          },
+          {
+            "cidr": "188.114.96.0/20",
+            "collector": "cloudflare_ips",
+            "confidence": 1,
+            "feed_tag": "CLOUDFLARE",
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "source": "official_feed",
+            "source_url": "https://api.cloudflare.com/client/v4/ips",
+            "source_version": "etag=38f79d050aa027e3be3865e495dcc9bc",
+            "status": "active"
+          },
+          {
+            "cidr": "190.93.240.0/20",
+            "collector": "cloudflare_ips",
+            "confidence": 1,
+            "feed_tag": "CLOUDFLARE",
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "source": "official_feed",
+            "source_url": "https://api.cloudflare.com/client/v4/ips",
+            "source_version": "etag=38f79d050aa027e3be3865e495dcc9bc",
+            "status": "active"
+          },
+          {
+            "cidr": "197.234.240.0/22",
+            "collector": "cloudflare_ips",
+            "confidence": 1,
+            "feed_tag": "CLOUDFLARE",
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "source": "official_feed",
+            "source_url": "https://api.cloudflare.com/client/v4/ips",
+            "source_version": "etag=38f79d050aa027e3be3865e495dcc9bc",
+            "status": "active"
+          },
+          {
+            "cidr": "198.41.128.0/17",
+            "collector": "cloudflare_ips",
+            "confidence": 1,
+            "feed_tag": "CLOUDFLARE",
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "source": "official_feed",
+            "source_url": "https://api.cloudflare.com/client/v4/ips",
+            "source_version": "etag=38f79d050aa027e3be3865e495dcc9bc",
+            "status": "active"
+          },
+          {
+            "cidr": "2400:cb00::/32",
+            "collector": "cloudflare_ips",
+            "confidence": 1,
+            "feed_tag": "CLOUDFLARE",
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "source": "official_feed",
+            "source_url": "https://api.cloudflare.com/client/v4/ips",
+            "source_version": "etag=38f79d050aa027e3be3865e495dcc9bc",
+            "status": "active"
+          },
+          {
+            "cidr": "2405:8100::/32",
+            "collector": "cloudflare_ips",
+            "confidence": 1,
+            "feed_tag": "CLOUDFLARE",
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "source": "official_feed",
+            "source_url": "https://api.cloudflare.com/client/v4/ips",
+            "source_version": "etag=38f79d050aa027e3be3865e495dcc9bc",
+            "status": "active"
+          },
+          {
+            "cidr": "2405:b500::/32",
+            "collector": "cloudflare_ips",
+            "confidence": 1,
+            "feed_tag": "CLOUDFLARE",
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "source": "official_feed",
+            "source_url": "https://api.cloudflare.com/client/v4/ips",
+            "source_version": "etag=38f79d050aa027e3be3865e495dcc9bc",
+            "status": "active"
+          },
+          {
+            "cidr": "2606:4700::/32",
+            "collector": "cloudflare_ips",
+            "confidence": 1,
+            "feed_tag": "CLOUDFLARE",
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "source": "official_feed",
+            "source_url": "https://api.cloudflare.com/client/v4/ips",
+            "source_version": "etag=38f79d050aa027e3be3865e495dcc9bc",
+            "status": "active"
+          },
+          {
+            "cidr": "2803:f800::/32",
+            "collector": "cloudflare_ips",
+            "confidence": 1,
+            "feed_tag": "CLOUDFLARE",
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "source": "official_feed",
+            "source_url": "https://api.cloudflare.com/client/v4/ips",
+            "source_version": "etag=38f79d050aa027e3be3865e495dcc9bc",
+            "status": "active"
+          },
+          {
+            "cidr": "2a06:98c0::/29",
+            "collector": "cloudflare_ips",
+            "confidence": 1,
+            "feed_tag": "CLOUDFLARE",
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "source": "official_feed",
+            "source_url": "https://api.cloudflare.com/client/v4/ips",
+            "source_version": "etag=38f79d050aa027e3be3865e495dcc9bc",
+            "status": "active"
+          },
+          {
+            "cidr": "2c0f:f248::/32",
+            "collector": "cloudflare_ips",
+            "confidence": 1,
+            "feed_tag": "CLOUDFLARE",
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "source": "official_feed",
+            "source_url": "https://api.cloudflare.com/client/v4/ips",
+            "source_version": "etag=38f79d050aa027e3be3865e495dcc9bc",
+            "status": "active"
+          }
+        ],
+        "ptr_rules": []
+      },
+      "service_key": "cloudflare.edge",
+      "service_types": [
+        "cdn",
+        "ddos_protection",
+        "waf"
+      ],
+      "traits": [
+        "origin_obscured",
+        "shared_infrastructure"
+      ]
+    },
+    {
+      "display_name": "Cloudflare Email Routing",
+      "evidence": {
+        "asns": [],
+        "certificate_identities": [],
+        "dns_rules": [
+          {
+            "confidence": 1,
+            "first_seen": "2026-09-27",
+            "last_seen": "2026-09-28",
+            "match_field": "target",
+            "matcher_type": "suffix",
+            "pattern": "mx.cloudflare.net",
+            "priority": 100,
+            "record_type": "MX",
+            "source": "curated",
+            "status": "active"
+          }
+        ],
+        "http_rules": [],
+        "ip_ranges": [],
+        "ptr_rules": []
+      },
+      "service_key": "cloudflare.email-routing",
+      "service_types": [
+        "email"
+      ],
+      "traits": []
+    }
+  ],
+  "slug": "cloudflare",
+  "version": "provider-recon/v1",
+  "website": "https://www.cloudflare.com"
+}
