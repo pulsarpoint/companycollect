@@ -42,10 +42,20 @@ func TestSPFIgnoresIPsPTRExistsAndAll(t *testing.T) {
 	}
 }
 
-func TestSPFMacroIsAFindingNotAProvider(t *testing.T) {
-	out := spf(`"v=spf1 include:%{i}._spf.mta.salesforce.com -all"`)
+func TestSPFMacroLabelsItsLiteralTailAndIsAFinding(t *testing.T) {
+	// Owner ruling 2026-09-28: the labels after the last macro are written in
+	// the record, so they are labelled; the macro itself is still a finding.
+	out := spf(`"v=spf1 include:%{i}._ip.%{h}._ehlo.%{d}._spf.vali.email ~all"`)
+	assertResults(t, out.Results, [][]any{
+		{"email_sending", "vali.email", "", "", "_spf.vali.email", UnmappedConfidence, false},
+	})
+	if len(out.Findings) != 1 || out.Findings[0].Code != "spf_macro" {
+		t.Fatalf("findings = %+v", out.Findings)
+	}
+	// A macro with no literal tail names nothing.
+	out = spf(`"v=spf1 include:%{d} -all"`)
 	if len(out.Results) != 0 || len(out.Findings) != 1 || out.Findings[0].Code != "spf_macro" {
-		t.Fatalf("out = %+v", out)
+		t.Fatalf("tail-less macro = %+v", out)
 	}
 }
 

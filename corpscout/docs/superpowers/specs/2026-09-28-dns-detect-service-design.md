@@ -152,7 +152,7 @@ The resolver routes a record by type and by name relative to `root_domain`:
 | apex SOA | `soa`, MNAME host, `fallback: true` | `dns` | 1 |
 | apex MX | `mx`, exchange host; `0 .` gives the finding `null_mx` | `email` | 1 |
 | apex / `www` CNAME | `cname` | `hosting` | 1 |
-| apex TXT `v=spf1…` | `spf`: include/redirect hosts; `a`/`mx` give self-hosted; `ip4`/`ip6` go to the IP index (slice 3); macros are findings | `email_sending` | 2 |
+| apex TXT `v=spf1…` | `spf`: include/redirect hosts; `a`/`mx` give self-hosted; `ip4`/`ip6` go to the IP index (slice 3); macros are findings, and a macro host's literal tail after its last macro is labelled (owner ruling 2026-09-28) | `email_sending` | 2 |
 | apex / `_name` TXT (other) | `txt`, rules only | from the rule | 2 |
 | `<selector>._domainkey` CNAME/TXT | `dkim` | `email_sending` | 2 |
 | `_dmarc` TXT | `dmarc`, rua/ruf mailbox domains | `dmarc_reporting` | 2 |

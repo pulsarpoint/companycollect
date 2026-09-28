@@ -118,7 +118,9 @@ Routing (slices 1–2):
     their provider key.
   - Bare `a`/`mx` mean self-hosted.
   - Macros (`spf_macro`) and more than ten lookups
-    (`spf_lookup_budget_exceeded`) are findings.
+    (`spf_lookup_budget_exceeded`) are findings. A macro host's literal tail
+    after its last macro is still labelled (`%{d}._spf.vali.email` →
+    `_spf.vali.email`).
   - `ip4`/`ip6` wait for slice 3. No DNS lookups are made.
 - **other apex TXT**: `txt`, TXT/value rules only (verification tokens).
 - **`_name` TXT**: `txt`, TXT/name rules only (e.g. `_amazonses`).

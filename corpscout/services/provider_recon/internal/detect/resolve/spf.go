@@ -16,7 +16,9 @@ const spfLookupBudget = 10
 //     the provider-key fallback (email_sending);
 //   - a and mx without a host mean the domain sends itself (self-hosted);
 //     a:host and mx:host label that host;
-//   - a host with a macro (%{…}) is a finding, never guessed at;
+//   - a host with a macro (%{…}) is a finding; the labels after its last
+//     macro are literal text in the record, so that tail is labelled
+//     (…%{d}._spf.vali.email → _spf.vali.email); a macro is never expanded;
 //   - ip4/ip6 (slice 3), ptr, exists and all give nothing;
 //   - more than ten DNS-querying terms is a finding.
 type SPF struct{}
@@ -51,6 +53,9 @@ func (a SPF) Analyze(rec Record, base Result, kb knowledge.Knowledge) Output {
 			continue
 		case strings.Contains(host, "%{"):
 			out.Findings = append(out.Findings, Finding{RecordID: rec.RecordID, Analyzer: a.Name(), Code: "spf_macro", Detail: term})
+			if tail := macroTail(host); tail != "" {
+				out.Results = append(out.Results, LabelHost(kb, base, knowledge.SPFInclude, "email_sending", tail)...)
+			}
 		case host == "" && (name == "a" || name == "mx"):
 			self := base
 			self.Subject, self.ServiceType, self.ProviderKey, self.Confidence = rec.RootDomain, "email_sending", SelfHosted, SelfHostedConfidence
@@ -63,4 +68,17 @@ func (a SPF) Analyze(rec Record, base Result, kb knowledge.Knowledge) Output {
 		out.Findings = append(out.Findings, Finding{RecordID: rec.RecordID, Analyzer: a.Name(), Code: "spf_lookup_budget_exceeded", Detail: fmt.Sprintf("%d lookups", lookups)})
 	}
 	return out
+}
+
+// macroTail is the part of a macro host after its last label that contains a
+// macro: "%{i}._ip.%{d}._spf.vali.email" → "_spf.vali.email", "%{d}" → "".
+func macroTail(host string) string {
+	labels := strings.Split(host, ".")
+	last := -1
+	for i, l := range labels {
+		if strings.Contains(l, "%") {
+			last = i
+		}
+	}
+	return strings.Join(labels[last+1:], ".")
 }
