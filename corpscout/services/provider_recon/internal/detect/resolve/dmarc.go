@@ -1,6 +1,7 @@
 package resolve
 
 import (
+	"regexp"
 	"strings"
 
 	"provider_recon/internal/detect/hosts"
@@ -35,12 +36,13 @@ func (a DMARC) Analyze(rec Record, base Result, kb knowledge.Knowledge) Output {
 				continue
 			}
 			addr, _, _ := strings.Cut(uri[7:], "!")
+			addr, _, _ = strings.Cut(addr, "?")
 			at := strings.LastIndex(addr, "@")
 			if at < 0 {
 				continue
 			}
 			host := hosts.Normalize(addr[at+1:])
-			if host == "" || hosts.Under(host, rec.RootDomain) {
+			if !hostnameRE.MatchString(host) || hosts.Under(host, rec.RootDomain) {
 				continue
 			}
 			out.Results = append(out.Results, LabelHost(kb, base, knowledge.DMARCReport, "dmarc_reporting", host)...)
@@ -48,3 +50,7 @@ func (a DMARC) Analyze(rec Record, base Result, kb knowledge.Knowledge) Output {
 	}
 	return out
 }
+
+// hostnameRE accepts dotted DNS host names; address literals ([192.0.2.1])
+// and other junk in a mailbox are dropped rather than turned into keys.
+var hostnameRE = regexp.MustCompile(`^[a-z0-9_]([a-z0-9_-]*[a-z0-9])?(\.[a-z0-9_]([a-z0-9_-]*[a-z0-9])?)+$`)

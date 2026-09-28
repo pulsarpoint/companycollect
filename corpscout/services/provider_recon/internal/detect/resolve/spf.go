@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"provider_recon/internal/detect/hosts"
 	"provider_recon/internal/detect/knowledge"
 )
 
@@ -13,7 +14,8 @@ const spfLookupBudget = 10
 // SPF reads an apex "v=spf1" record without any DNS lookups: only what the
 // record itself names.
 //   - include:host and redirect=host are labelled with SPF/include rules, then
-//     the provider-key fallback (email_sending);
+//     the provider-key fallback (email_sending); a host inside the domain is
+//     delegation to another of its own records, so only a finding;
 //   - a and mx without a host mean the domain sends itself (self-hosted);
 //     a:host and mx:host label that host;
 //   - a host with a macro (%{…}) is a finding; the labels after its last
@@ -56,6 +58,8 @@ func (a SPF) Analyze(rec Record, base Result, kb knowledge.Knowledge) Output {
 			if tail := macroTail(host); tail != "" {
 				out.Results = append(out.Results, LabelHost(kb, base, knowledge.SPFInclude, "email_sending", tail)...)
 			}
+		case (name == "include" || name == "redirect") && hosts.Under(host, rec.RootDomain):
+			out.Findings = append(out.Findings, Finding{RecordID: rec.RecordID, Analyzer: a.Name(), Code: "spf_include_within_domain", Detail: host})
 		case host == "" && (name == "a" || name == "mx"):
 			self := base
 			self.Subject, self.ServiceType, self.ProviderKey, self.Confidence = rec.RootDomain, "email_sending", SelfHosted, SelfHostedConfidence

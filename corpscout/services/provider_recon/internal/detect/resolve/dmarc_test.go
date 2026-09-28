@@ -38,3 +38,12 @@ func TestDMARCOnlyAtTheDomainsOwnDmarcName(t *testing.T) {
 		t.Fatal("_dmarc of a subdomain routed to dmarc")
 	}
 }
+
+func TestDMARCMailtoQueriesAndAddressLiterals(t *testing.T) {
+	assertResults(t, dmarc(`"v=DMARC1; rua=mailto:a@rua.dmarcian.com?subject=x"`).Results, [][]any{
+		{"dmarc_reporting", "dmarcian", "dmarcian", "dmarcian.reporting", "rua.dmarcian.com", 1.0, false},
+	})
+	if out := dmarc(`"v=DMARC1; rua=mailto:dmarc@[192.0.2.1],mailto:x@bad_host!name.se"`); len(out.Results) != 0 {
+		t.Fatalf("address literal / invalid host gave %v", short(out.Results))
+	}
+}

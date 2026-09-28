@@ -34,3 +34,10 @@ func TestDKIMNamesOutsideTheDomainAreNotRouted(t *testing.T) {
 		t.Fatalf("routed to %s", a.Name())
 	}
 }
+
+func TestDKIMTargetWithinTheDomainIsAFinding(t *testing.T) {
+	out := Resolve(rec("s1._domainkey.example.se", "CNAME", "s1.dkim.example.se."), kb)
+	if len(out.Results) != 0 || len(out.Findings) != 1 || out.Findings[0].Code != "dkim_target_within_domain" {
+		t.Fatalf("out = %+v", out)
+	}
+}

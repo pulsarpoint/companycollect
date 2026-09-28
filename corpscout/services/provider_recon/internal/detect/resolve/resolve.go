@@ -19,6 +19,7 @@ func Route(rec Record) Analyzer {
 		below = strings.TrimSuffix(rec.Name, "."+rec.RootDomain)
 	}
 	dkim := strings.HasSuffix(below, "._domainkey")
+	label, _, _ := strings.Cut(below, ".")
 	switch {
 	case rec.Type == "NS" && apex:
 		return NS{}
@@ -26,7 +27,7 @@ func Route(rec Record) Analyzer {
 		return SOA{}
 	case rec.Type == "MX" && apex:
 		return MX{}
-	case (rec.Type == "CNAME" || rec.Type == "TXT") && dkim && below != "._domainkey":
+	case (rec.Type == "CNAME" || rec.Type == "TXT") && dkim:
 		return DKIM{}
 	case rec.Type == "CNAME" && (apex || www):
 		return CNAME{}
@@ -36,7 +37,7 @@ func Route(rec Record) Analyzer {
 		return SPF{}
 	case rec.Type == "TXT" && apex:
 		return TXT{}
-	case rec.Type == "TXT" && strings.HasPrefix(below, "_") && below != "_dmarc" && !dkim:
+	case rec.Type == "TXT" && strings.HasPrefix(label, "_") && label != "_dmarc" && !dkim:
 		return TXT{}
 	}
 	return nil

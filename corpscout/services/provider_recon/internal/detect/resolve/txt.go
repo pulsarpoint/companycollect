@@ -33,8 +33,8 @@ func txtValue(v string) string {
 }
 
 // TXT matches TXT rules only: an apex value against TXT/value rules (e.g.
-// verification tokens), an underscore name against TXT/name rules (e.g.
-// "_amazonses"). There is no provider-key fallback: a TXT value names no host.
+// verification tokens), the first label of an underscore name against
+// TXT/name rules (e.g. "_amazonses" of _amazonses.mail.<domain>). There is no provider-key fallback: a TXT value names no host.
 type TXT struct{}
 
 func (TXT) Name() string { return "txt" }
@@ -43,5 +43,6 @@ func (TXT) Analyze(rec Record, base Result, kb knowledge.Knowledge) Output {
 	if rec.Name == rec.RootDomain {
 		return Output{Results: LabelRule(kb, base, knowledge.TXTValue, txtValue(rec.Value))}
 	}
-	return Output{Results: LabelRule(kb, base, knowledge.TXTName, strings.TrimSuffix(rec.Name, "."+rec.RootDomain))}
+	label, _, _ := strings.Cut(strings.TrimSuffix(rec.Name, "."+rec.RootDomain), ".")
+	return Output{Results: LabelRule(kb, base, knowledge.TXTName, label)}
 }

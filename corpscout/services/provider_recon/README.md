@@ -115,7 +115,8 @@ Routing (slices 1–2):
   evidence's job (slice 3).
 - **apex TXT `v=spf1…`**: `spf`, gives `email_sending`.
   - `include:`/`redirect=` hosts are labelled by SPF/include rules, then by
-    their provider key.
+    their provider key. A host inside the domain is delegation, so only the
+    finding `spf_include_within_domain`.
   - Bare `a`/`mx` mean self-hosted.
   - Macros (`spf_macro`) and more than ten lookups
     (`spf_lookup_budget_exceeded`) are findings. A macro host's literal tail
@@ -123,13 +124,16 @@ Routing (slices 1–2):
     `_spf.vali.email`).
   - `ip4`/`ip6` wait for slice 3. No DNS lookups are made.
 - **other apex TXT**: `txt`, TXT/value rules only (verification tokens).
-- **`_name` TXT**: `txt`, TXT/name rules only (e.g. `_amazonses`).
+- **`_name` TXT**: `txt`, TXT/name rules on the first label only (e.g.
+  `_amazonses` of `_amazonses.mail.<domain>`).
 - **`<selector>._domainkey` CNAME/TXT**: `dkim`, gives `email_sending`.
   - DKIM/selector rules apply to both.
   - A CNAME target is also labelled by DKIM/target rules, then its provider
-    key.
+    key. A target inside the domain is only the finding
+    `dkim_target_within_domain`.
 - **`_dmarc` TXT**: `dmarc`, gives `dmarc_reporting` for each `rua`/`ruf`
-  mailbox host outside the domain. A non-DMARC value is the finding
+  mailbox host outside the domain. `?…` and `!size` suffixes are dropped,
+  and address literals are ignored. A non-DMARC value is the finding
   `dmarc_invalid`.
 - **Everything else** (A/AAAA until slice 3, CAA, SRV…) gives no result yet.
 

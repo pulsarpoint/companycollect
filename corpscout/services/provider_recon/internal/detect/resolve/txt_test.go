@@ -54,3 +54,11 @@ func TestTXTRoutingLeavesSPFDMARCDKIMAndPlainSubdomainsAlone(t *testing.T) {
 		t.Error("SPF record routed to txt")
 	}
 }
+
+func TestTXTNameMatchesTheFirstLabel(t *testing.T) {
+	assertResults(t, Resolve(rec("_amazonses.mail.example.se", "TXT", `"abc"`), kb).Results,
+		[][]any{{"email_sending", "aws", "aws", "aws.ses", "_amazonses", 0.9, false}})
+	if a := Route(normalise(rec("_dmarc.sub.example.se", "TXT", `"v=DMARC1"`))); a != nil {
+		t.Fatalf("_dmarc of a subdomain routed to %s", a.Name())
+	}
+}

@@ -3,6 +3,7 @@ package resolve
 import (
 	"strings"
 
+	"provider_recon/internal/detect/hosts"
 	"provider_recon/internal/detect/knowledge"
 )
 
@@ -10,14 +11,19 @@ import (
 // provider (DKIM/selector rules, e.g. Microsoft 365's "selector1"); a CNAME
 // target is labelled with DKIM/target rules, then the provider-key fallback
 // (email_sending). A TXT record publishes the key itself, so only the
-// selector can speak for it.
+// selector can speak for it. A CNAME target inside the domain delegates to
+// another of its own names, so it is only a finding.
 type DKIM struct{}
 
 func (DKIM) Name() string { return "dkim" }
 
-func (DKIM) Analyze(rec Record, base Result, kb knowledge.Knowledge) Output {
+func (a DKIM) Analyze(rec Record, base Result, kb knowledge.Knowledge) Output {
 	selector := strings.TrimSuffix(rec.Name, "._domainkey."+rec.RootDomain)
 	out := Output{Results: LabelRule(kb, base, knowledge.DKIMSelector, selector)}
+	if target := hosts.Normalize(rec.Value); rec.Type == "CNAME" && target != "" && hosts.Under(target, rec.RootDomain) {
+		out.Findings = append(out.Findings, Finding{RecordID: rec.RecordID, Analyzer: a.Name(), Code: "dkim_target_within_domain", Detail: target})
+		return out
+	}
 	if rec.Type == "CNAME" {
 		out.Results = append(out.Results, LabelHost(kb, base, knowledge.DKIMTarget, "email_sending", rec.Value)...)
 	}

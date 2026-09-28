@@ -79,3 +79,16 @@ func TestSPFIsCaseInsensitive(t *testing.T) {
 		{"email_sending", "google", "google", "google.workspace-sending", "_spf.google.com", 1.0, false},
 	})
 }
+
+func TestSPFIncludeWithinTheDomainIsDelegationNotSelfHosting(t *testing.T) {
+	for _, v := range []string{`"v=spf1 include:_spf.example.se -all"`, `"v=spf1 redirect=spf.example.se"`} {
+		out := spf(v)
+		if len(out.Results) != 0 || len(out.Findings) != 1 || out.Findings[0].Code != "spf_include_within_domain" {
+			t.Fatalf("%s = %+v", v, out)
+		}
+	}
+	// a/mx naming the domain's own hosts still mean it sends itself.
+	assertResults(t, spf(`"v=spf1 mx:mx.example.se -all"`).Results, [][]any{
+		{"email_sending", SelfHosted, "", "", "mx.example.se", SelfHostedConfidence, false},
+	})
+}
