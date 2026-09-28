@@ -36,6 +36,27 @@ describe("loadProviderReconDagster", () => {
   });
 });
 
+describe("loadProviderReconDagster panel data", () => {
+  it("shows materialisation times in seconds and the counts from the latest materialisation", async () => {
+    const asset = (name: string) => ({
+      assetKey: { path: [name] }, description: "", groupName: "provider_recon", kinds: [], dependencyKeys: [], jobNames: ["provider_recon_job"],
+      staleStatus: "FRESH", partitionDefinition: null, assetMaterializations: [{ runId: "r1", timestamp: "1790565200123" }],
+    });
+    const { fetchImpl } = dagster({
+      BackofficeAssetGroup: { assetNodes: [asset("provider_recon_documents")] },
+      BackofficeAssetMaterializations: { assetNodes: [{ assetMaterializations: [{ runId: "r1", timestamp: "1790565200123",
+        metadataEntries: [{ __typename: "IntMetadataEntry", label: "documents", intValue: 37 }] }] }] },
+      BackofficeSchedule: { scheduleOrError: { __typename: "Schedule", name: "provider_recon_daily", cronSchedule: "12 3 * * *", executionTimezone: "UTC",
+        scheduleState: { id: "s", status: "RUNNING" }, futureTicks: { results: [] } } },
+      BackofficeRuns: { runsOrError: { __typename: "Runs", results: [] } },
+    });
+    const panel = await loadProviderReconDagster({ fetchImpl });
+    expect(panel.error).toBeNull();
+    expect(panel.assets[0].materializedAt).toBe(1790565200.123);
+    expect(panel.assets[0].numbers).toEqual({ documents: 37 });
+  });
+});
+
 describe("runProviderReconNow", () => {
   it("launches the whole provider_recon_job with an empty run config", async () => {
     const { fetchImpl, seen } = dagster({

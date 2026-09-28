@@ -1,5 +1,6 @@
 import {
   assetGroup,
+  assetMaterializations,
   dagsterAssetUrl,
   dagsterRunUrl,
   launchRun,
@@ -20,6 +21,7 @@ export interface ProviderReconDagster {
   assets: {
     asset: string;
     url: string | null;
+    /** Seconds since the epoch. */
     materializedAt: number | null;
     runId: string | null;
     runUrl: string | null;
@@ -46,17 +48,25 @@ export async function loadProviderReconDagster(
       scheduleDetails(PROVIDER_RECON_SCHEDULE, options),
       listRuns({ job: PROVIDER_RECON_JOB, limit: 5 }, options),
     ]);
+    // assetGroup carries no metadata; the counts come from the latest materialization.
+    const latest = await Promise.all(
+      assets.map((a) =>
+        assetMaterializations({ asset: a.asset, limit: 1 }, options).then((m) => m[0] ?? null),
+      ),
+    );
     return {
-      assets: assets.map((a) => ({
-        asset: a.asset,
-        url: dagsterAssetUrl(a.asset, options.url),
-        materializedAt: a.materialization?.timestamp ?? null,
-        runId: a.materialization?.runId ?? null,
-        runUrl: a.materialization?.runId
-          ? dagsterRunUrl(a.materialization.runId, options.url)
-          : null,
-        numbers: a.materialization?.numbers ?? {},
-      })),
+      assets: assets.map((a, i) => {
+        const m = latest[i] ?? a.materialization;
+        return {
+          asset: a.asset,
+          url: dagsterAssetUrl(a.asset, options.url),
+          // Dagster reports materialization timestamps in milliseconds.
+          materializedAt: m?.timestamp ? m.timestamp / 1000 : null,
+          runId: m?.runId ?? null,
+          runUrl: m?.runId ? dagsterRunUrl(m.runId, options.url) : null,
+          numbers: m?.numbers ?? {},
+        };
+      }),
       schedule,
       runs: runs.map((r) => ({
         runId: r.runId,
