@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_INDICATOR_RULES,
+  feedProtocol,
+  safeHttpUrl,
   attentionRanges,
   flagFeed,
   normalizeFeedRun,
@@ -145,5 +147,24 @@ describe("restoreOptions", () => {
       { collector: "aws_ip_ranges", since: "2026-09-01", count: 3 },
       { collector: "google_goog", since: "2026-09-20", count: 1 },
     ]);
+  });
+});
+
+describe("feedProtocol", () => {
+  it.each([
+    ["https://ip-ranges.amazonaws.com/ip-ranges.json", "JSON", "HTTPS · JSON"],
+    ["http://example.test/feed.csv", "CSV (RFC 8805 geofeed)", "HTTP · CSV (RFC 8805 geofeed)"],
+    ["not a url", "JSON", "JSON"],
+    [undefined, undefined, "—"],
+    ["ftp://x/y", "", "FTP"],
+  ])("%s + %s → %s", (url, format, expected) => {
+    expect(feedProtocol(url, format)).toBe(expected);
+  });
+
+  it("only links http(s) URLs", () => {
+    expect(safeHttpUrl("https://a.test/x")).toBe("https://a.test/x");
+    expect(safeHttpUrl("javascript:alert(1)")).toBeNull();
+    expect(safeHttpUrl("ftp://x/y")).toBeNull();
+    expect(safeHttpUrl(undefined)).toBeNull();
   });
 });

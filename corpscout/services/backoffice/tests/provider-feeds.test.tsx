@@ -1,7 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { MemoryRouter } from "react-router";
+import { createMemoryRouter, MemoryRouter, RouterProvider } from "react-router";
+import type { ReactElement } from "react";
 import { describe, expect, it } from "vitest";
-import { FeedTable, RangeTable } from "~/components/admin/provider-feeds";
+import { DagsterPanel, FeedTable, RangeTable } from "~/components/admin/provider-feeds";
 import { DEFAULT_INDICATOR_RULES, normalizeFeedRun } from "~/lib/provider-recon";
 
 describe("FeedTable", () => {
@@ -43,5 +44,62 @@ describe("RangeTable", () => {
     expect(html).toContain("grace_expired");
     expect(html).toContain("2026-09-28");
     expect(html).toContain(">active<");
+  });
+});
+
+describe("FeedTable source column", () => {
+  it("shows protocol, full URL link and version", () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <FeedTable rules={DEFAULT_INDICATOR_RULES} feeds={[normalizeFeedRun({
+          slug: "aws", collector: "aws_ip_ranges", status: "ok", items: 10,
+          source_url: "https://ip-ranges.amazonaws.com/ip-ranges.json", source_version: "syncToken=1", format: "JSON",
+        })]} />
+      </MemoryRouter>,
+    );
+    expect(html).toContain("HTTPS · JSON");
+    expect(html).toContain('href="https://ip-ranges.amazonaws.com/ip-ranges.json"');
+    expect(html).toContain("syncToken=1");
+  });
+
+  it("falls back to a dash for manifests without source details", () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <FeedTable rules={DEFAULT_INDICATOR_RULES} feeds={[normalizeFeedRun({ slug: "aws", collector: "aws_ip_ranges", status: "ok", items: 10 })]} />
+      </MemoryRouter>,
+    );
+    expect(html).toContain("—");
+    expect(html).not.toContain("href=\"http");
+  });
+});
+
+/** Forms need a data router; MemoryRouter is not one. */
+function inDataRouter(element: ReactElement) {
+  const router = createMemoryRouter([{ path: "/admin/provider-feeds", element }], { initialEntries: ["/admin/provider-feeds"] });
+  return renderToStaticMarkup(<RouterProvider router={router} />);
+}
+
+describe("DagsterPanel", () => {
+  it("renders assets with links, the schedule and runs, and controls", () => {
+    const html = inDataRouter(
+        <DagsterPanel dagster={{
+          assets: [{ asset: "provider_recon_documents", url: "http://d/assets/provider_recon_documents", materializedAt: 1790565200, runId: "r1", runUrl: "http://d/runs/r1", numbers: { documents: 37 } }],
+          schedule: { name: "provider_recon_daily", status: "RUNNING", stateId: "s", cronSchedule: "12 3 * * *", timezone: "UTC", nextTick: 1790565120 },
+          runs: [{ runId: "r1", status: "SUCCESS", startTime: 1790565100, endTime: 1790565160, url: "http://d/runs/r1" }],
+          error: null,
+        }} />,
+    );
+    expect(html).toContain('href="http://d/assets/provider_recon_documents"');
+    expect(html).toContain("12 3 * * *");
+    expect(html).toContain("RUNNING");
+    expect(html).toMatch(/<button[^>]*value="run-now"[^>]*name="intent"|<button[^>]*name="intent"[^>]*value="run-now"/);
+    expect(html).toContain('value="schedule-stop"');
+    expect(html).toContain("documents: 37");
+  });
+
+  it("shows the Dagster error instead of the panel content", () => {
+    const html = inDataRouter(<DagsterPanel dagster={{ assets: [], schedule: null, runs: [], error: "Dagster at x did not answer" }} />);
+    expect(html).toContain("Dagster at x did not answer");
+    expect(html).not.toContain("run-now");
   });
 });

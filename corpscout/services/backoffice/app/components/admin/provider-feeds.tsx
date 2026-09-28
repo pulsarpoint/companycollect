@@ -1,8 +1,10 @@
-import { isRouteErrorResponse, Link } from "react-router";
+import { Form, isRouteErrorResponse, Link } from "react-router";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
+import { Button } from "~/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/ui/table";
-import { flagFeed, rangeStatus, type FeedRun, type IndicatorRules, type IPRange } from "~/lib/provider-recon";
+import { feedProtocol, flagFeed, rangeStatus, safeHttpUrl, type FeedRun, type IndicatorRules, type IPRange } from "~/lib/provider-recon";
+import type { ProviderReconDagster } from "~/lib/provider-recon-ops.server";
 
 const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
   ok: "secondary",
@@ -26,6 +28,7 @@ export function FeedTable({ feeds, rules }: { feeds: FeedRun[]; rules: Indicator
         <TableRow>
           <TableHead>Provider</TableHead>
           <TableHead>Feed</TableHead>
+          <TableHead>Source</TableHead>
           <TableHead>Status</TableHead>
           <TableHead className="text-right">Ranges</TableHead>
           <TableHead className="text-right">Added</TableHead>
@@ -48,6 +51,9 @@ export function FeedTable({ feeds, rules }: { feeds: FeedRun[]; rules: Indicator
                 </Link>
               </TableCell>
               <TableCell className="font-mono text-xs">{feed.collector}</TableCell>
+              <TableCell className="max-w-72">
+                <FeedSource url={feed.source_url} format={feed.format} version={feed.source_version} />
+              </TableCell>
               <TableCell><StatusBadge status={feed.status} /></TableCell>
               <TableCell className="text-right tabular-nums">{feed.items}</TableCell>
               <TableCell className="text-right tabular-nums">{feed.churn.added}</TableCell>
@@ -69,6 +75,116 @@ export function FeedTable({ feeds, rules }: { feeds: FeedRun[]; rules: Indicator
         })}
       </TableBody>
     </Table>
+  );
+}
+
+/** Protocol (scheme · format), the full URL as a link when it is http(s), and the source version. */
+export function FeedSource({ url, format, version }: { url?: string; format?: string; version?: string }) {
+  const href = safeHttpUrl(url);
+  return (
+    <>
+      <div className="text-xs font-medium">{feedProtocol(url, format)}</div>
+      {href ? (
+        <a className="block truncate font-mono text-xs underline-offset-4 hover:underline" href={href} target="_blank" rel="noreferrer" title={url}>
+          {url}
+        </a>
+      ) : null}
+      {version ? (
+        <div className="truncate font-mono text-xs text-muted-foreground" title={version}>
+          {version}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function when(seconds: number | null): string {
+  return seconds === null ? "—" : `${new Date(seconds * 1000).toISOString().replace("T", " ").slice(0, 16)} UTC`;
+}
+
+const LINK = "underline-offset-4 hover:underline";
+
+/** provider-recon in Dagster: assets, schedule, recent runs, and the Run now / schedule controls. */
+export function DagsterPanel({ dagster }: { dagster: ProviderReconDagster }) {
+  if (dagster.error) {
+    return <p className="text-sm text-destructive">Dagster unavailable: {dagster.error}</p>;
+  }
+  const running = dagster.schedule?.status === "RUNNING";
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Form method="post">
+          <Button type="submit" name="intent" value="run-now">Run now</Button>
+        </Form>
+        <Form method="post">
+          <Button type="submit" variant="outline" name="intent" value={running ? "schedule-stop" : "schedule-start"}>
+            {running ? "Stop schedule" : "Start schedule"}
+          </Button>
+        </Form>
+      </div>
+      {dagster.schedule && (
+        <p className="text-sm">
+          Schedule <span className="font-mono">{dagster.schedule.name}</span> <StatusBadge status={dagster.schedule.status} />{" "}
+          <span className="font-mono">{dagster.schedule.cronSchedule}</span> {dagster.schedule.timezone ?? ""} · next {when(dagster.schedule.nextTick)}
+        </p>
+      )}
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Asset</TableHead>
+            <TableHead>Last materialised</TableHead>
+            <TableHead>Numbers</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {dagster.assets.map((a) => (
+            <TableRow key={a.asset}>
+              <TableCell>
+                {a.url ? (
+                  <a className={`font-mono text-xs ${LINK}`} href={a.url} target="_blank" rel="noreferrer">{a.asset}</a>
+                ) : (
+                  <span className="font-mono text-xs">{a.asset}</span>
+                )}
+              </TableCell>
+              <TableCell className="text-sm">
+                {a.runUrl ? <a className={LINK} href={a.runUrl} target="_blank" rel="noreferrer">{when(a.materializedAt)}</a> : when(a.materializedAt)}
+              </TableCell>
+              <TableCell className="text-xs">{Object.entries(a.numbers).map(([k, v]) => `${k}: ${v}`).join(", ") || "—"}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+      {dagster.runs.length > 0 && (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Run</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Started</TableHead>
+              <TableHead className="text-right">Took</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {dagster.runs.map((r) => (
+              <TableRow key={r.runId}>
+                <TableCell>
+                  {r.url ? (
+                    <a className={`font-mono text-xs ${LINK}`} href={r.url} target="_blank" rel="noreferrer">{r.runId.slice(0, 8)}</a>
+                  ) : (
+                    <span className="font-mono text-xs">{r.runId.slice(0, 8)}</span>
+                  )}
+                </TableCell>
+                <TableCell><StatusBadge status={r.status === "SUCCESS" ? "ok" : r.status.toLowerCase()} /></TableCell>
+                <TableCell className="text-sm">{when(r.startTime)}</TableCell>
+                <TableCell className="text-right text-sm tabular-nums">
+                  {r.startTime && r.endTime ? `${Math.round(r.endTime - r.startTime)} s` : "—"}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+    </div>
   );
 }
 

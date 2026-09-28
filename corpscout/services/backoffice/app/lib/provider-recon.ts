@@ -20,6 +20,13 @@ export interface FeedRun {
   churn: Churn;
   unmapped_tags: string[];
   error?: string;
+  /** Source details; absent in manifests published before 2026-09-28. */
+  source_url?: string;
+  source_version?: string;
+  format?: string;
+  fetched_at?: string;
+  last_success_at?: string;
+  skipped_lines?: number;
 }
 
 export interface RunScope {
@@ -113,6 +120,7 @@ export interface CollectorStatus {
   status: string;
   source_url?: string;
   source_version?: string;
+  format?: string;
   items: number;
   fetched_at: string;
   last_success_at?: string;
@@ -169,7 +177,35 @@ export function normalizeFeedRun(raw: Omit<Partial<FeedRun>, "churn"> & { churn?
     churn: { ...EMPTY_CHURN, ...(raw.churn ?? {}) },
     unmapped_tags: raw.unmapped_tags ?? [],
     ...(raw.error ? { error: raw.error } : {}),
+    ...(raw.source_url ? { source_url: raw.source_url } : {}),
+    ...(raw.source_version ? { source_version: raw.source_version } : {}),
+    ...(raw.format ? { format: raw.format } : {}),
+    ...(raw.fetched_at ? { fetched_at: raw.fetched_at } : {}),
+    ...(raw.last_success_at ? { last_success_at: raw.last_success_at } : {}),
+    ...(raw.skipped_lines ? { skipped_lines: raw.skipped_lines } : {}),
   };
+}
+
+/** "HTTPS · JSON": upper-cased URL scheme, then the collector's format; "—" when neither is known. */
+export function feedProtocol(sourceUrl?: string, format?: string): string {
+  let scheme = "";
+  try {
+    if (sourceUrl) scheme = new URL(sourceUrl).protocol.replace(/:$/, "").toUpperCase();
+  } catch {
+    scheme = "";
+  }
+  const parts = [scheme, format ?? ""].filter((p) => p !== "");
+  return parts.length ? parts.join(" · ") : "—";
+}
+
+/** The URL when it is http(s), else null; only such URLs are rendered as links. */
+export function safeHttpUrl(sourceUrl?: string): string | null {
+  try {
+    const u = new URL(sourceUrl ?? "");
+    return u.protocol === "https:" || u.protocol === "http:" ? u.toString() : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

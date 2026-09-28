@@ -1,6 +1,6 @@
 import { data, Form, Link, redirect, useNavigation } from "react-router";
 import type { Route } from "./+types/admin-provider-feeds";
-import { FeedTable, ProviderFeedsError } from "~/components/admin/provider-feeds";
+import { DagsterPanel, FeedTable, ProviderFeedsError } from "~/components/admin/provider-feeds";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
@@ -8,21 +8,25 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/com
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "~/components/ui/field";
 import { Input } from "~/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/ui/table";
+import { dagsterRunUrl } from "~/lib/dagster.server";
 import { ObjectStoreError } from "~/lib/object-store.server";
 import { DEFAULT_INDICATOR_RULES, flagFeed, parseIndicatorRules } from "~/lib/provider-recon";
+import { loadProviderReconDagster, runProviderReconNow, setProviderReconSchedule } from "~/lib/provider-recon-ops.server";
 import { loadIndicatorRules, loadRunIndex, saveIndicatorRules } from "~/lib/provider-recon.server";
 
 const RECENT_RUNS = 60;
 
 export async function loader() {
+  // Never throws: a Dagster failure is shown inside the panel.
+  const dagster = loadProviderReconDagster();
   try {
     const [index, rules] = await Promise.all([loadRunIndex(), loadIndicatorRules()]);
     const latestFull = index.runs.find((r) => r.scope.command === "collect" && !(r.scope.providers?.length)) ?? null;
-    return { runs: index.runs.slice(0, RECENT_RUNS), providers: index.providers, rules, latestFull, error: null as string | null };
+    return { runs: index.runs.slice(0, RECENT_RUNS), providers: index.providers, rules, latestFull, error: null as string | null, dagster: await dagster };
   } catch (error) {
     // The object store is down or misconfigured: show it, keep the rules form usable.
     const message = error instanceof Error ? error.message : String(error);
-    return { runs: [], providers: [] as string[], rules: DEFAULT_INDICATOR_RULES, latestFull: null, error: message };
+    return { runs: [], providers: [] as string[], rules: DEFAULT_INDICATOR_RULES, latestFull: null, error: message, dagster: await dagster };
   }
 }
 
@@ -33,7 +37,21 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
 export async function action({ request }: Route.ActionArgs) {
   const origin = request.headers.get("origin");
   if (origin && origin !== new URL(request.url).origin) return data({ error: "Invalid request origin." }, { status: 403 });
-  const parsed = parseIndicatorRules(await request.formData());
+  const form = await request.formData();
+  const intent = form.get("intent");
+  if (intent === "run-now" || intent === "schedule-start" || intent === "schedule-stop") {
+    try {
+      if (intent === "run-now") {
+        const runId = await runProviderReconNow();
+        return data({ launched: { runId, url: dagsterRunUrl(runId) } });
+      }
+      const status = await setProviderReconSchedule(intent === "schedule-start");
+      return data({ message: `Schedule provider_recon_daily is ${status}.` });
+    } catch (error) {
+      return data({ error: error instanceof Error ? error.message : String(error) }, { status: 502 });
+    }
+  }
+  const parsed = parseIndicatorRules(form);
   if ("error" in parsed) return data({ error: parsed.error }, { status: 400 });
   try {
     await saveIndicatorRules(parsed.rules);
@@ -50,7 +68,8 @@ export function meta() {
 }
 
 export default function AdminProviderFeeds({ loaderData, actionData }: Route.ComponentProps) {
-  const { runs, providers, rules, latestFull, error } = loaderData;
+  const { runs, providers, rules, latestFull, error, dagster } = loaderData;
+  const result = actionData as { error?: string; message?: string; launched?: { runId: string; url: string | null } } | undefined;
   const busy = useNavigation().state === "submitting";
   return (
     <div className="flex flex-col gap-6 p-4 md:p-6">
@@ -58,7 +77,7 @@ export default function AdminProviderFeeds({ loaderData, actionData }: Route.Com
         <h1 className="text-2xl font-semibold">Provider feeds</h1>
         <p className="text-sm text-muted-foreground">
           Every provider-recon run and what each feed changed. Warnings are display only; nothing is blocked. A wrong removal is undone
-          with <code className="font-mono">provider-recon restore</code> (see a provider's page).
+          with Restore on a provider's page.
         </p>
       </header>
       {error && (
@@ -67,14 +86,41 @@ export default function AdminProviderFeeds({ loaderData, actionData }: Route.Com
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
-      {actionData?.error && (
+      {result?.error && (
         <Alert variant="destructive">
-          <AlertTitle>Rules not saved</AlertTitle>
-          <AlertDescription>{actionData.error}</AlertDescription>
+          <AlertTitle>Action failed</AlertTitle>
+          <AlertDescription>{result.error}</AlertDescription>
+        </Alert>
+      )}
+      {result?.launched && (
+        <Alert>
+          <AlertTitle>Run launched</AlertTitle>
+          <AlertDescription>
+            {result.launched.url ? (
+              <a className="font-mono underline-offset-4 hover:underline" href={result.launched.url} target="_blank" rel="noreferrer">{result.launched.runId}</a>
+            ) : (
+              <span className="font-mono">{result.launched.runId}</span>
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
+      {result?.message && (
+        <Alert>
+          <AlertTitle>Schedule updated</AlertTitle>
+          <AlertDescription>{result.message}</AlertDescription>
         </Alert>
       )}
       <div className="grid min-w-0 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,26rem)]">
         <section className="flex min-w-0 flex-col gap-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Dagster</CardTitle>
+              <CardDescription>The provider_recon assets, their daily schedule and recent runs.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <DagsterPanel dagster={dagster} />
+            </CardContent>
+          </Card>
           <Card>
             <CardHeader>
               <CardTitle>Latest full collect</CardTitle>
