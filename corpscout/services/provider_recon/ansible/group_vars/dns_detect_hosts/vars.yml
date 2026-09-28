@@ -20,6 +20,7 @@ dns_detect_reload_interval: 10m
 dns_detect_memory_max: 4G
 dns_detect_cpu_quota: 400%
 dns_detect_gomaxprocs: 4
+dns_detect_gomemlimit: 3500MiB
 
 # The provider-recon bucket, addressed by its full tailnet name (short names
 # break Go resolvers on the Dagster host).

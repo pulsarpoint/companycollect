@@ -25,8 +25,10 @@ PARTITION BY cityHash64(root_domain) % 128
 ORDER BY (root_domain, record_id);
 
 -- One row per service a record proves (dns-detect's Result). Rows are never
--- deleted. A re-resolved record gets new rows, and the views below keep only
--- the rows of each record's latest resolution.
+-- deleted. A re-resolution replaces the rows of the same result (same record,
+-- service, provider, subject, rule and start) by the newer resolved_at, and
+-- the views keep only rows of each record's latest resolution, which hides
+-- results that disappeared.
 CREATE TABLE IF NOT EXISTS corpscout.dns_record_services
 (
     record_id FixedString(16),
@@ -46,9 +48,9 @@ CREATE TABLE IF NOT EXISTS corpscout.dns_record_services
     valid_to Date,
     resolved_at DateTime64(3, 'UTC')
 )
-ENGINE = MergeTree
+ENGINE = ReplacingMergeTree(resolved_at)
 PARTITION BY cityHash64(root_domain) % 128
-ORDER BY (root_domain, service_type, provider_key, record_id, valid_from);
+ORDER BY (root_domain, record_id, service_type, provider_key, subject, rule_id, valid_from);
 
 -- Results of each record's latest resolution.
 CREATE VIEW IF NOT EXISTS corpscout.dns_record_services_current AS
@@ -61,12 +63,27 @@ INNER JOIN
     GROUP BY root_domain, record_id
 ) AS latest USING (root_domain, record_id, resolved_at);
 
--- Per domain, service type and provider: the periods it was in use.
+-- Per domain, service type and provider: the periods it was in use. A
+-- parameterized view (domain_services_history(domain = 'x.se')) so the domain
+-- filter reaches the tables before the joins and window functions.
 -- Fallback rows (SOA MNAME) are dropped wherever a non-fallback row of the
--- same domain and service type overlaps them. Windows of one service that
--- overlap or are less than 45 days apart merge (scans run every 2-4 weeks),
--- so first_seen/last_seen are as precise as the scans.
+-- same service type overlaps them. Windows of one service less than 45 days
+-- apart merge (scans run every 2-4 weeks), so first_seen/last_seen are as
+-- precise as the scans.
 CREATE VIEW IF NOT EXISTS corpscout.domain_services_history AS
+WITH cur AS
+(
+    SELECT s.*
+    FROM corpscout.dns_record_services AS s
+    INNER JOIN
+    (
+        SELECT root_domain, record_id, max(resolved_at) AS resolved_at
+        FROM corpscout.dns_record_resolutions
+        WHERE root_domain = {domain:String}
+        GROUP BY root_domain, record_id
+    ) AS latest USING (root_domain, record_id, resolved_at)
+    WHERE s.root_domain = {domain:String}
+)
 SELECT
     root_domain,
     service_type,
@@ -88,15 +105,15 @@ FROM
     (
         SELECT
             *,
-            valid_from > addDays(max(valid_to) OVER (PARTITION BY root_domain, service_type, provider_key ORDER BY valid_from, valid_to ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 45) AS new_island
+            valid_from >= addDays(max(valid_to) OVER (PARTITION BY root_domain, service_type, provider_key ORDER BY valid_from, valid_to ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 45) AS new_island
         FROM
         (
             SELECT c.*
-            FROM corpscout.dns_record_services_current AS c
+            FROM cur AS c
             LEFT JOIN
             (
                 SELECT root_domain, service_type, groupArray((valid_from, valid_to)) AS covered
-                FROM corpscout.dns_record_services_current
+                FROM cur
                 WHERE fallback = 0
                 GROUP BY root_domain, service_type
             ) AS primary USING (root_domain, service_type)
@@ -107,12 +124,13 @@ FROM
 )
 GROUP BY root_domain, service_type, provider_key, island;
 
--- The history intervals still in use: those reaching the domain's latest scan
--- of one of their record types (scans of different record types run on
--- different schedules, and a latest scan that resolved to nothing still counts).
+-- The history intervals still in use (domain_services_now(domain = 'x.se')):
+-- those reaching the domain's latest scan of one of their record types
+-- (scans of different record types run on different schedules, and a latest
+-- scan that resolved to nothing still counts).
 CREATE VIEW IF NOT EXISTS corpscout.domain_services_now AS
 SELECT h.*
-FROM corpscout.domain_services_history AS h
+FROM corpscout.domain_services_history(domain = {domain:String}) AS h
 INNER JOIN
 (
     SELECT root_domain, CAST((groupArray(record_type), groupArray(last_scan)), 'Map(String, Date)') AS latest_scan
@@ -120,6 +138,7 @@ INNER JOIN
     (
         SELECT root_domain, record_type, max(record_to) AS last_scan
         FROM corpscout.dns_record_resolutions
+        WHERE root_domain = {domain:String}
         GROUP BY root_domain, record_type
     )
     GROUP BY root_domain

@@ -53,15 +53,20 @@ def rows_for(records: list[dict], lines: list[dict], rules_version: str, ip_vers
     for record, out in zip(records, lines, strict=True):
         if out["record_id"] != record["record_id"]:
             raise ValueError(f"dns-detect answered out of order: {out['record_id']} for {record['record_id']}")
+        if "analyzer" not in out:
+            raise ValueError("dns-detect answered without an analyzer field: the service predates this asset, redeploy it")
         rid = bytes.fromhex(record["record_id"])
+        # Both tables are keyed on the input record's own fields, so results
+        # always join their resolution (the service normalises its copies).
+        root, name, rtype = record["root_domain"], record["name"], record["type"]
         resolutions.append((
-            rid, record["root_domain"], record["name"], record["type"], out.get("analyzer", ""), rules_version, ip_version,
+            rid, root, name, rtype, out["analyzer"], rules_version, ip_version,
             len(out["results"]), [(f["code"], f.get("detail", "")) for f in out["findings"]],
             _date(record["first_seen"]), _date(record["last_seen"]), resolved_at,
         ))
         for r in out["results"]:
             results.append((
-                rid, r["root_domain"], r["record_name"], r["record_type"], r["analyzer"], r["subject"], r["service_type"],
+                rid, root, name, rtype, r["analyzer"], r["subject"], r["service_type"],
                 r["provider_key"], r["provider_slug"], r["service_key"], r["rule_id"], float(r["confidence"]),
                 int(bool(r["fallback"])), _date(r["valid_from"]), _date(r["valid_to"]), resolved_at,
             ))

@@ -42,7 +42,11 @@ def partition_bucket(partition_key: str) -> int:
 
 def candidates_sql(database: str, bucket: int) -> str:
     """The bucket's routable records without a current resolution, as the
-    resolver's input fields. Parameters: %(rules_version)s, %(ip_version)s."""
+    resolver's input fields. Parameters: %(rules_version)s, %(ip_version)s.
+
+    The query goes through clickhouse-driver's %-substitution, so a literal
+    modulo is written %%. Records with a blank root_domain, name or value are
+    left out: the service would refuse the whole batch for one of them."""
     types = ", ".join(f"'{t}'" for t in ROUTABLE_TYPES)
     ip_analyzers = ", ".join(f"'{a}'" for a in IP_ANALYZERS)
     return f"""SELECT
@@ -57,9 +61,10 @@ FROM
 (
     SELECT record_id, root_domain, name, record_type, value, first_seen, last_seen
     FROM `{database}`.`{DNS_RECORDS_TABLE}` FINAL
-    WHERE cityHash64(root_domain) % {STORE_BUCKETS} = {int(bucket) % STORE_BUCKETS}
-      AND cityHash64(root_domain) % {PARTITION_COUNT} = {int(bucket)}
+    WHERE cityHash64(root_domain) %% {STORE_BUCKETS} = {int(bucket) % STORE_BUCKETS}
+      AND cityHash64(root_domain) %% {PARTITION_COUNT} = {int(bucket)}
       AND record_type IN ({types})
+      AND root_domain != '' AND name != '' AND value != ''
       AND (
         name = root_domain
         OR name = concat('www.', root_domain)
@@ -76,7 +81,7 @@ LEFT ANTI JOIN
         SELECT root_domain, record_id,
                argMax(tuple(record_from, record_to, rules_version, ip_version, analyzer), resolved_at) AS last
         FROM `{database}`.`{RESOLUTIONS_TABLE}`
-        WHERE cityHash64(root_domain) % {PARTITION_COUNT} = {int(bucket)}
+        WHERE cityHash64(root_domain) %% {PARTITION_COUNT} = {int(bucket)}
         GROUP BY root_domain, record_id
     )
     WHERE tupleElement(last, 3) = %(rules_version)s

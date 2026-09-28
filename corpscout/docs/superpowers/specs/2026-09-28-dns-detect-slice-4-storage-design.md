@@ -29,8 +29,8 @@ It is the same binary as the CLI (`cmd/dns-detect`), started with `serve`.
 **Knowledge:**
 - Loaded from the provider-recon bucket (`providers/*/latest.json`) at
   startup.
-- Reloaded when the bucket's `changes/index.json` changes, polled every 10
-  minutes.
+- Reloaded every 10 minutes. The knowledge is swapped in when its compiled
+  version differs; a reload that races a publish is replaced by the next one.
 - A failed reload keeps the loaded knowledge and is reported in `/healthz`.
 
 **Endpoints:**
@@ -46,8 +46,9 @@ It is the same binary as the CLI (`cmd/dns-detect`), started with `serve`.
   `127.0.0.1:8096` only, and is deployed by provider-recon's Ansible
   (inventory group `dns_detect_hosts`, host `dagster` by its full tailnet
   name).
-- **Limits:** `MemoryMax=4G`, `CPUQuota=400%` and `GOMAXPROCS=4`, so the scan
-  can never starve Dagster (the host has wedged under memory pressure before).
+- **Limits:** `MemoryMax=4G`, `CPUQuota=400%`, `GOMAXPROCS=4` and
+  `GOMEMLIMIT=3500MiB`, so the scan can never starve Dagster (the host has
+  wedged under memory pressure before).
 - **Credentials:** the same S3 credentials as provider-recon, from an env file
   owned by root.
 - **Moving later:** change the inventory host and the Dagster setting
@@ -74,7 +75,8 @@ The number is re-checked against main and the prod ledger before merge:
 000461–000464 and 000466 belong to another session.
 
 **`dns_record_resolutions`** has one row per resolution of a record, including
-records that give nothing, so they are never re-sent:
+records that give nothing, so they are never re-sent. It also stores the
+record's own window (`record_from`/`record_to`):
 
 ```
 record_id FixedString(16), root_domain String, record_name String,
@@ -95,15 +97,16 @@ record_type LowCardinality(String), analyzer LowCardinality(String), subject Str
 service_type LowCardinality(String), provider_key String, provider_slug LowCardinality(String),
 service_key LowCardinality(String), rule_id String, confidence Float32, fallback UInt8,
 valid_from Date, valid_to Date, resolved_at DateTime64(3, 'UTC')
-ENGINE = MergeTree
+ENGINE = ReplacingMergeTree(resolved_at)
 PARTITION BY cityHash64(root_domain) % 128
-ORDER BY (root_domain, service_type, provider_key, record_id, valid_from)
+ORDER BY (root_domain, record_id, service_type, provider_key, subject, rule_id, valid_from)
 ```
 
 - **Windows are always dated.** Every stored record has dates, and IP pieces
   are cut inside the record's window.
-- **No deletes.** A re-resolved record gets a new resolution and new result
-  rows. Its older rows stay physically but are hidden: the views keep only
+- **No deletes.** A re-resolved record gets a new resolution, and its result
+  rows replace the previous copies of the same result (review fix
+  2026-09-28), so routine re-resolution doesn't grow the table. Its older rows stay physically but are hidden: the views keep only
   result rows whose `resolved_at` equals the record's latest resolution. This
   is the "versions, not deletes" rule of the queue contract.
 - **Compaction.** A partition can be compacted later by rewriting it through
@@ -112,15 +115,18 @@ ORDER BY (root_domain, service_type, provider_key, record_id, valid_from)
 **Views:**
 - **`dns_record_services_current`:** result rows of each record's latest
   resolution.
-- **`domain_services_history`:** per `(root_domain, service_type,
-  provider_key)`, intervals `first_seen → last_seen`, built from `_current`:
+- **`domain_services_history(domain = '…')`:** a parameterized view, so the
+  domain filter reaches the tables before the joins and window functions
+  (review fix: a plain view computed the whole dataset). Per `(root_domain,
+  service_type, provider_key)` it gives intervals `first_seen → last_seen`:
   - `fallback` rows are dropped wherever a non-fallback row of the same domain
     and service type overlaps their window (SOA versus NS);
   - windows of the same service that overlap or are less than 45 days apart
     are merged (scans run every 2–4 weeks);
   - each interval carries its evidence count, the analyzers involved and the
     maximum confidence.
-- **`domain_services_now`:** the history intervals whose `last_seen` is the
+- **`domain_services_now(domain = '…')`,** also parameterized: the history
+  intervals whose `last_seen` is the
   domain's latest scan date for that record type.
 
 ## The Dagster asset: `dns_record_services_clickhouse`

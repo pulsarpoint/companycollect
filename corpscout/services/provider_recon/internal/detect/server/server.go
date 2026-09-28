@@ -56,9 +56,12 @@ func New(store publish.Store, log *slog.Logger) *Server {
 
 func (s *Server) current() *state { return s.loaded.Load() }
 
-// Reload loads the published documents and swaps the knowledge in when the
-// run index changed since the last load. A failure keeps the current
-// knowledge and is reported by /healthz.
+// Reload loads the published documents and swaps the knowledge in when what
+// it compiles to changed. The compiled version, not the run index, decides:
+// publish writes the index before the documents, so a reload racing a publish
+// can compile a mix, and only a version comparison lets the next reload
+// replace it. A failure keeps the current knowledge and is reported by
+// /healthz.
 func (s *Server) Reload(ctx context.Context) error {
 	s.reloadMu.Lock()
 	defer s.reloadMu.Unlock()
@@ -70,7 +73,7 @@ func (s *Server) Reload(ctx context.Context) error {
 		return err
 	}
 	s.reloadErr, s.errAt = "", time.Time{}
-	if cur := s.current(); cur != nil && cur.digest == digest {
+	if cur := s.current(); cur != nil && cur.kb.Version() == kb.Version() {
 		return nil
 	}
 	s.loaded.Store(&state{kb: kb, digest: digest, loadedAt: s.now().UTC()})

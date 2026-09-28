@@ -38,6 +38,20 @@ def test_rows_for_builds_resolutions_and_results() -> None:
                     "loopia.dns", "rule", 1.0, 0, date(2026, 8, 1), date(2026, 9, 20), at)]
 
 
+def test_rows_for_keys_both_tables_on_the_input_record() -> None:
+    records = [assets.record_dict(RECORD)]
+    odd = result(records[0]["record_id"]) | {"root_domain": "EXAMPLE.se", "record_name": "Example.SE", "record_type": "ns"}
+    _, svc = assets.rows_for(records, [line(records[0]["record_id"], "ns", [odd])], "R", "I", datetime(2026, 9, 28))
+    assert svc[0][1:4] == ("example.se", "example.se", "NS")
+
+
+def test_rows_for_refuses_an_answer_without_its_analyzer() -> None:
+    records = [assets.record_dict(RECORD)]
+    old_service = {"record_id": records[0]["record_id"], "results": [], "findings": []}
+    with pytest.raises(ValueError, match="analyzer"):
+        assets.rows_for(records, [old_service], "R", "I", datetime(2026, 9, 28))
+
+
 def test_rows_for_refuses_a_response_out_of_order() -> None:
     records = [assets.record_dict(RECORD)]
     with pytest.raises(ValueError, match="out of order"):

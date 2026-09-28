@@ -4,8 +4,10 @@ import json
 import subprocess
 from pathlib import Path
 
+from clickhouse_driver import Client
+
 from dagster_v3.defs.dns_detect import sql
-from tests.clickhouse_local import clickhouse_local_command, render
+from tests.clickhouse_local import clickhouse_local_command
 
 MIGRATION = Path(__file__).resolve().parents[3] / "clickhouse" / "migrations" / "000467_corpscout_dns_detect.up.sql"
 DNS_STORE = """
@@ -26,7 +28,15 @@ RECORDS = [
     (8, "shop.example.se", "A", "192.0.2.2"),                         # not routable
     (9, "s1._domainkey.example.se", "CNAME", "dkim.x.net."),          # DKIM
     (10, "example.se", "CAA", '0 issue "letsencrypt.org"'),           # type the resolver ignores
+    (11, "example.se", "TXT", ""),                                    # blank value: would wedge the bucket
 ]
+
+
+def driver_render(query: str, params: dict) -> str:
+    """Substitute parameters exactly as production does (clickhouse-driver's
+    %-formatting), so a stray % in the SQL fails here too. No connection is made."""
+    client = Client("localhost")
+    return client.substitute_params(query, params, client.connection.context)
 
 
 def hexid(n: int) -> str:
@@ -68,7 +78,7 @@ def bucket() -> int:
 
 
 def test_candidates_are_routable_unresolved_or_stale_records() -> None:
-    query = render(sql.candidates_sql("corpscout", bucket()), {"rules_version": "R", "ip_version": "I"})
+    query = driver_render(sql.candidates_sql("corpscout", bucket()), {"rules_version": "R", "ip_version": "I"})
     rows = run(setup() + query + " ORDER BY record_id FORMAT JSONCompactEachRow;")
     got = {int(r[0], 16): r for r in rows}
     assert sorted(got) == [1, 3, 4, 6, 7, 9]
@@ -78,5 +88,5 @@ def test_candidates_are_routable_unresolved_or_stale_records() -> None:
 
 def test_other_buckets_select_nothing() -> None:
     other = (bucket() + 1) % sql.PARTITION_COUNT
-    query = render(sql.candidates_sql("corpscout", other), {"rules_version": "R", "ip_version": "I"})
+    query = driver_render(sql.candidates_sql("corpscout", other), {"rules_version": "R", "ip_version": "I"})
     assert run(setup() + query + " FORMAT JSONCompactEachRow;") == []

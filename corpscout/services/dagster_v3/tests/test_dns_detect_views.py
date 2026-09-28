@@ -79,7 +79,7 @@ def test_history_drops_fallback_where_ns_covers_and_keeps_it_elsewhere() -> None
          # SOA before NS was ever seen: nothing covers it, so it stays.
          result(rid(2), "a.se", "SOA", "soa", "dns", "binero", "2026-01-01", "2026-02-01", T1, fallback=1)],
     )
-    rows = run(sql + "SELECT provider_key, toString(first_seen), toString(last_seen) FROM corpscout.domain_services_history WHERE root_domain = 'a.se' ORDER BY ALL FORMAT JSONCompactEachRow;")
+    rows = run(sql + "SELECT provider_key, toString(first_seen), toString(last_seen) FROM corpscout.domain_services_history(domain = 'a.se') ORDER BY ALL FORMAT JSONCompactEachRow;")
     assert rows == [["binero", "2026-01-01", "2026-02-01"], ["loopia", "2026-03-01", "2026-09-01"]]
 
 
@@ -92,7 +92,7 @@ def test_history_merges_gaps_under_45_days_and_keeps_real_gaps() -> None:
         svc.append(result(rid(n), "a.se", "NS", "ns", "dns", "loopia", f, t, T1))
     rows = run(insert(res, svc) + (
         "SELECT provider_key, toString(first_seen), toString(last_seen), evidence, analyzers "
-        "FROM corpscout.domain_services_history ORDER BY first_seen FORMAT JSONCompactEachRow;"))
+        "FROM corpscout.domain_services_history(domain = 'a.se') ORDER BY first_seen FORMAT JSONCompactEachRow;"))
     assert rows == [
         ["loopia", "2026-01-01", "2026-02-10", 2, ["ns"]],
         ["loopia", "2026-05-01", "2026-05-10", 1, ["ns"]],
@@ -110,6 +110,27 @@ def test_now_keeps_intervals_reaching_the_latest_scan_of_their_record_type() -> 
          result(rid(2), "a.se", "NS", "ns", "dns", "loopia", "2026-06-01", "2026-09-20", T1),
          result(rid(3), "a.se", "MX", "mx", "email", "google", "2026-01-01", "2026-09-20", T1)],
     )
-    rows = run(sql + "SELECT service_type, provider_key FROM corpscout.domain_services_now ORDER BY ALL FORMAT JSONCompactEachRow;")
+    rows = run(sql + "SELECT service_type, provider_key FROM corpscout.domain_services_now(domain = 'a.se') ORDER BY ALL FORMAT JSONCompactEachRow;")
     # Binero ended before the latest NS scan; Google's MX was absent from the latest MX scan.
     assert rows == [["dns", "loopia"]]
+
+
+def test_a_re_resolution_replaces_its_results_instead_of_copying_them() -> None:
+    sql = insert(
+        [resolution(rid(1), "a.se", "NS", "ns", T1, "2026-01-01", "2026-09-01"),
+         resolution(rid(1), "a.se", "NS", "ns", T2, "2026-01-01", "2026-09-20")],
+        [result(rid(1), "a.se", "NS", "ns", "dns", "loopia", "2026-01-01", "2026-09-01", T1),
+         result(rid(1), "a.se", "NS", "ns", "dns", "loopia", "2026-01-01", "2026-09-20", T2)],
+    )
+    rows = run(sql + "OPTIMIZE TABLE corpscout.dns_record_services FINAL;\n"
+               "SELECT count(), toString(max(valid_to)) FROM corpscout.dns_record_services FORMAT JSONCompactEachRow;")
+    assert rows == [[1, "2026-09-20"]]
+
+
+def test_exactly_45_days_apart_is_a_new_interval() -> None:
+    res, svc = [], []
+    for n, (f, t) in enumerate([("2026-01-01", "2026-01-10"), ("2026-02-24", "2026-03-01")], start=1):
+        res.append(resolution(rid(n), "a.se", "NS", "ns", T1, f, t))
+        svc.append(result(rid(n), "a.se", "NS", "ns", "dns", "loopia", f, t, T1))
+    rows = run(insert(res, svc) + "SELECT count() FROM corpscout.domain_services_history(domain = 'a.se') FORMAT JSONCompactEachRow;")
+    assert rows == [[2]]

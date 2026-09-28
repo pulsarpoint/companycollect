@@ -186,3 +186,25 @@ func TestReloadSwapsOnlyOnChangeAndKeepsKnowledgeOnFailure(t *testing.T) {
 		t.Fatalf("health after failed reload = %+v", h)
 	}
 }
+
+func TestReloadRecoversFromAPublishItRaced(t *testing.T) {
+	s, store, _ := started(t)
+	// Publish writes the run index before the documents: a reload in between
+	// sees the new index with the old document.
+	publishDocs(t, store, 2, document("loopia", "loopia.se"))
+	if err := s.Reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	raced := s.current()
+	// The documents land; the index does not change again.
+	b, _ := json.Marshal(document("loopia", "loopia.net"))
+	if err := store.Put(context.Background(), publish.LatestKey("loopia"), b, "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if s.current() == raced || s.current().kb.RulesVersion() == raced.kb.RulesVersion() {
+		t.Fatal("the knowledge compiled during the race stayed pinned")
+	}
+}
