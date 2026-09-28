@@ -46,6 +46,9 @@ var kb = fakeKB{
 		knowledge.DKIMTarget: {
 			"selector1-example-se._domainkey.contoso.onmicrosoft.com": {ProviderSlug: "microsoft", ServiceKey: "microsoft.365-sending", ServiceTypes: []string{"email_sending"}, RuleID: "microsoft/dkim-target", Confidence: 1},
 		},
+		knowledge.DMARCReport: {
+			"rua.dmarcian.com": {ProviderSlug: "dmarcian", ServiceKey: "dmarcian.reporting", ServiceTypes: []string{"dmarc_reporting"}, RuleID: "dmarcian/rua", Confidence: 1},
+		},
 		knowledge.TXTName: {
 			"_amazonses": {ProviderSlug: "aws", ServiceKey: "aws.ses", ServiceTypes: []string{"email_sending"}, RuleID: "aws/txt-name", Confidence: 0.9},
 		},

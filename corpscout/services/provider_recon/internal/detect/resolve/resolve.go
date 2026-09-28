@@ -30,6 +30,8 @@ func Route(rec Record) Analyzer {
 		return DKIM{}
 	case rec.Type == "CNAME" && (apex || www):
 		return CNAME{}
+	case rec.Type == "TXT" && below == "_dmarc":
+		return DMARC{}
 	case rec.Type == "TXT" && apex && isSPF(rec.Value):
 		return SPF{}
 	case rec.Type == "TXT" && apex:
