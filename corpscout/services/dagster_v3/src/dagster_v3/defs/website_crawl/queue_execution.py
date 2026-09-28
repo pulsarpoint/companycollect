@@ -13,6 +13,7 @@ from datetime import datetime
 from time import monotonic, sleep
 
 import dagster as dg
+from corpscout_identity.observations import register_crawl_results
 from dlt.sources.helpers.requests import Session
 
 from dagster_v3.defs.common import queue_execution
@@ -27,6 +28,7 @@ from dagster_v3.defs.website_crawl.dispatch import (
 )
 from dagster_v3.defs.website_crawl.input import TASK_DOMAINS, task_processor
 from dagster_v3.defs.website_crawl.matching_batches import process_matching_batch
+from dagster_v3.defs.website_crawl.outcome_logging import log_crawl_outcomes
 from dagster_v3.defs.website_crawl.results import (
     DEFAULT_CRAWLER_API_URL,
     INPUTS_BY_TYPE,
@@ -133,7 +135,7 @@ def start_crawl_execution(
 
 # The request identity, computed where the entries live. The Python twin is
 # dispatch.crawl_payload(row, crawl_type, execution_id)["request_id"].
-REQUEST_ID_SQL = "concat('dagster-crawl-', lower(hex(SHA256(concat(%(exec)s, ':', %(type)s, ':', domain)))))"
+REQUEST_ID_SQL = "concat('dagster-crawl-', lower(hex(SHA256(concat(%(exec)s, ':', %(type)s, ':', if(request_identity_version=2,website_id,domain))))))"
 
 
 def _clickhouse_time(value: str) -> str:
@@ -154,7 +156,7 @@ def crawl_parameters(task: dict, crawl_type: str) -> dict:
 def remaining_crawl_entries(
     client, task: dict, crawl_type: str, *, after: str = "", limit: int = PAGE_SIZE
 ) -> list[dict]:
-    """Frozen entries after ``after`` (by domain) without a result of this execution.
+    """Frozen entries after ``after`` (by website ID) without a result of this execution.
 
     Each row carries the current preset so the caller can build the payload and
     decide skips; the preset columns are named explicitly to avoid clashing with
@@ -163,6 +165,7 @@ def remaining_crawl_entries(
     return read_rows(
         client,
         f"""SELECT q.domain AS domain, q.website_url AS selected_url, q.request_id AS request_id,
+            q.website_id AS website_id, q.request_identity_version AS request_identity_version,
             p.website_url AS preset_url, p.enabled AS enabled, p.revision AS revision,
             p.page_mode AS page_mode, p.pages AS pages, p.instructions AS instructions,
             p.headless AS headless, p.proxy_route AS proxy_route,
@@ -170,15 +173,15 @@ def remaining_crawl_entries(
             p.config_json AS config_json
             {", p.match_company AS match_company, p.company_country AS company_country, p.skip_company_matching_if_mapped AS skip_company_matching_if_mapped" if crawl_type != "jobs" else ""}
         FROM (
-            SELECT domain, website_url, {REQUEST_ID_SQL} AS request_id
+            SELECT domain, website_url, website_id, request_identity_version, {REQUEST_ID_SQL} AS request_id
             FROM {TASK_DOMAINS}
-            WHERE task_id=%(task)s AND crawl_type=%(type)s AND domain > %(after)s
+            WHERE task_id=%(task)s AND crawl_type=%(type)s AND website_id > %(after)s
         ) AS q
-        LEFT JOIN {INPUTS_BY_TYPE[crawl_type]}_current AS p ON q.domain = p.domain
+        LEFT JOIN {INPUTS_BY_TYPE[crawl_type]}_current AS p ON q.website_id = p.website_id
         WHERE q.request_id NOT IN (
             SELECT request_id FROM {RESULTS_BY_TYPE[crawl_type]} WHERE run_id = %(exec)s
-            {"AND (company_matching_status = '' OR (request_id, attempt) IN (SELECT request_id, attempt FROM corpscout.website_company_lookup_results))" if crawl_type != "jobs" else ""})
-        ORDER BY q.domain LIMIT %(limit)s""",
+            {"AND (company_matching_status = '' OR (request_id, attempt, website_id) IN (SELECT request_id, attempt, website_id FROM corpscout.website_company_lookup_results))" if crawl_type != "jobs" else ""})
+        ORDER BY q.website_id LIMIT %(limit)s""",
         {**crawl_parameters(task, crawl_type), "after": after, "limit": limit},
     )
 
@@ -222,6 +225,7 @@ def dispatchable_entries(
             {
                 "crawl_type": crawl_type,
                 "domain": row["domain"],
+                "website_id": row["website_id"],
                 "request_id": row["request_id"],
                 "input_revision": row["revision"],
                 "work_key": work_key,
@@ -236,10 +240,10 @@ def dispatchable_entries(
             client,
             task,
             crawl_type,
-            [(item["domain"], item["work_key"]) for item in items],
+            [(item["website_id"], item["work_key"]) for item in items],
         )
     )
-    return [item for item in items if (item["domain"], item["work_key"]) not in fresh]
+    return [item for item in items if (item["website_id"], item["work_key"]) not in fresh]
 
 
 def count_unresolved(client, task: dict, crawl_type: str, config) -> int:
@@ -250,7 +254,7 @@ def count_unresolved(client, task: dict, crawl_type: str, config) -> int:
         rows = remaining_crawl_entries(client, task, crawl_type, after=after)
         if not rows:
             return unresolved
-        after = rows[-1]["domain"]
+        after = rows[-1]["website_id"]
         unresolved += len(
             dispatchable_entries(
                 client, rows, task=task, crawl_type=crawl_type, config=config
@@ -261,7 +265,7 @@ def count_unresolved(client, task: dict, crawl_type: str, config) -> int:
 def run_crawl_window(context, client, http, url, task, crawl_type, config) -> int:
     """Keep up to ``max_in_flight`` crawler requests outstanding until nothing remains.
 
-    Entries are walked in domain order with a cursor; disabled and fresh entries are
+    Entries are walked in website ID order with a cursor; disabled and fresh entries are
     skipped in memory. A pass over every remaining entry that dispatches nothing,
     with nothing outstanding, means only skips remain and the loop ends. Outcomes go
     through a ResultBuffer and leave the window only once ClickHouse acknowledged
@@ -275,6 +279,7 @@ def run_crawl_window(context, client, http, url, task, crawl_type, config) -> in
 
     def store(records: list[dict]) -> None:
         nonlocal stored
+        register_crawl_results(client, records, source=table.split(".")[-1], run_id=task["config"]["execution"]["execution_id"])
         client.execute(
             f"INSERT INTO {table} ({','.join(records[0])}) VALUES",
             records,
@@ -284,6 +289,7 @@ def run_crawl_window(context, client, http, url, task, crawl_type, config) -> in
         for record in records:
             window.pop(record["request_id"], None)
             buffered.discard(record["request_id"])
+        log_crawl_outcomes(context, records, crawl_type)
         context.log.info(
             "Stored %s crawl outcomes; %s requests still in flight",
             len(records),
@@ -347,7 +353,7 @@ def run_crawl_window(context, client, http, url, task, crawl_type, config) -> in
                     if not rows:
                         scanning = False
                         break
-                    after = rows[-1]["domain"]
+                    after = rows[-1]["website_id"]
                     ready.extend(
                         dispatchable_entries(
                             client,

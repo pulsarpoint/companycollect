@@ -6,7 +6,11 @@ from pathlib import Path
 import pytest
 from clickhouse_driver import Client
 
-from dagster_v3.defs.domains_search.assets import DomainsSearchConfig, publish_domains_search
+from dagster_v3.defs.domains_search.assets import (
+    DomainsSearchConfig,
+    publish_domains_search,
+)
+from tests.domain_sources_schema import central_schema_sql, execute_sql
 from tests.test_ip_enrichment_input import server as server
 
 
@@ -18,9 +22,11 @@ def database(server):
         for statement in (migrations / f'{name}.up.sql').read_text(encoding='utf-8').split(';'):
             if statement.strip():
                 client.execute(statement)
-    client.execute('CREATE TABLE IF NOT EXISTS corpscout.se_company_domain (company_id String,root_domain String,active UInt8,association String,version UInt64) ENGINE=ReplacingMergeTree(version) ORDER BY (company_id,root_domain)')
+    execute_sql(client, central_schema_sql())
+    client.execute("CREATE TABLE IF NOT EXISTS corpscout.se_company_domain (company_id String,root_domain String,active UInt8,association String,version UInt64,country_code String DEFAULT 'SE') ENGINE=ReplacingMergeTree(version) ORDER BY (country_code,company_id,root_domain)")
+    client.execute("CREATE OR REPLACE VIEW corpscout.se_company_domain_resolved AS SELECT lower(hex(SHA256(root_domain))) AS domain_id,country_code,company_id,toUInt8(active AND association='connected') AS is_active FROM corpscout.se_company_domain FINAL")
     client.execute('CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domain_dns_records (root_domain String,last_seen DateTime64(3)) ENGINE=MergeTree ORDER BY root_domain')
-    for table in ('domains','websites','domains_search','se_company_domain','commoncrawl_domain_dns_records'):
+    for table in ('domains','websites','domains_search','se_company_domain','domains_sources','commoncrawl_domain_dns_records'):
         client.execute(f'TRUNCATE TABLE corpscout.{table}')
     client.execute("""INSERT INTO corpscout.domains (root_domain,sources,first_seen_at,last_seen_at) VALUES
         ('a.se',['se_company_domain'],'2026-01-01','2026-09-01'),
@@ -35,7 +41,7 @@ def build(resource):
 
 def test_enriches_only_canonical_members_and_refresh_removes_stale_flags(database):
     client, resource = database
-    client.execute("""INSERT INTO corpscout.se_company_domain VALUES
+    client.execute("""INSERT INTO corpscout.se_company_domain (company_id,root_domain,active,association,version) VALUES
         ('1','a.se',1,'connected',1),('1','a.se',1,'connected',1),
         ('2','a.se',0,'connected',1),('3','a.se',1,'uncertain',1),
         ('4','a.se',1,'not_connected',1),('5','outside.net',1,'connected',1)""")
@@ -46,12 +52,16 @@ def test_enriches_only_canonical_members_and_refresh_removes_stale_flags(databas
         ('a.se','https://a.se',['se_company_domain'],'2026-01-01','2026-09-01',NULL),
         ('a.se','https://www.a.se',['webtech'],'2026-01-01','2026-09-01','2026-09-01'),
         ('outside.net','https://outside.net',['webtech'],'2026-01-01','2026-09-01','2026-09-01')""")
+    # Mock a registered second country summary with the same company identifier.
+    client.execute("INSERT INTO corpscout.se_company_domain VALUES ('1','a.se',1,'connected',1,'NO')")
     assert build(resource)['dagster/row_count'] == 3
     assert client.execute('SELECT root_domain,has_dns_records,website_count,observed_website_count,has_website,company_count,has_company FROM corpscout.domains_search ORDER BY root_domain') == [
-        ('a.se',0,2,1,1,1,1),('b.com',1,0,0,0,0,0),('c.org',0,0,0,0,0,0)]
+        ('a.se',0,2,1,1,2,1),('b.com',1,0,0,0,0,0),('c.org',0,0,0,0,0,0)]
     assert client.execute('SELECT root_domain,sources,first_seen_at FROM corpscout.domains_search ORDER BY root_domain') == client.execute('SELECT root_domain,sources,first_seen_at FROM corpscout.domains ORDER BY root_domain')
     client.execute('TRUNCATE TABLE corpscout.websites')
-    client.execute("INSERT INTO corpscout.se_company_domain VALUES ('1','a.se',0,'connected',2)")
+    client.execute("""INSERT INTO corpscout.se_company_domain
+        SELECT * REPLACE (toUInt8(0) AS active,toUInt64(2) AS version)
+        FROM corpscout.se_company_domain FINAL WHERE company_id='1'""")
     build(resource)
     assert client.execute("SELECT has_website,has_company FROM corpscout.domains_search WHERE root_domain='a.se'") == [(0,0)]
 

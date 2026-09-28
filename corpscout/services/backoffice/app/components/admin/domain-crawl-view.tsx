@@ -1,9 +1,11 @@
-import { isRouteErrorResponse, Link, useRevalidator, useRouteError } from "react-router";
+import { isRouteErrorResponse, Link, useNavigate, useRevalidator, useRouteError } from "react-router";
 import { CrawlTime, DomainCrawls } from "~/components/admin/domain-crawls";
 import { CrawlResultDetails } from "~/components/admin/crawl-result-details";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
+import { Field, FieldLabel } from "~/components/ui/field";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "~/components/ui/tabs";
 import type { DomainCrawlResult, loadDomainCrawlPage } from "~/lib/domain-crawls.server";
 import { domainCrawlStatus } from "~/lib/domain-crawl-status";
@@ -12,6 +14,10 @@ export function DomainCrawlView({domain, details, error, search = ""}: Awaited<R
   function crawlHref(type: string, attempt?: DomainCrawlResult) {
     const next = new URLSearchParams(search);
     next.set("type", type);
+    next.delete("request");
+    next.delete("attempt");
+    next.delete("result");
+    if (details?.websiteId) next.set("website", details.websiteId);
     if (attempt) {
       next.set("request", attempt.request_id);
       next.set("attempt", String(attempt.attempt));
@@ -19,6 +25,8 @@ export function DomainCrawlView({domain, details, error, search = ""}: Awaited<R
     return `?${next}`;
   }
   const revalidator = useRevalidator();
+  const navigate = useNavigate();
+  const websiteItems = details?.websites.map(site => ({value: site.website_id, label: site.website_url})) ?? [];
   const selected = details?.crawls.find(crawl => crawl.type === details.selectedType);
   const result = details?.result;
   const newest = result && result.request_id === details?.latest?.request_id && result.attempt === details.latest.attempt;
@@ -29,6 +37,18 @@ export function DomainCrawlView({domain, details, error, search = ""}: Awaited<R
     </header>
     {error && <Alert variant="destructive"><AlertTitle>Crawl status unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
     {details && selected && <>
+      {websiteItems.length > 0 && <Field className="max-w-xl">
+        <FieldLabel htmlFor="crawl-website">Website</FieldLabel>
+        <Select value={details.websiteId} items={websiteItems} onValueChange={value => {
+          if (!value) return;
+          const next = new URLSearchParams(crawlHref(details.selectedType).slice(1));
+          next.set("website", value);
+          navigate(`?${next}`);
+        }}>
+          <SelectTrigger id="crawl-website" className="w-full"><SelectValue /></SelectTrigger>
+          <SelectContent><SelectGroup>{websiteItems.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
+        </Select>
+      </Field>}
       <Tabs value={details.selectedType}><TabsList aria-label="Crawl types">{details.crawls.map(crawl => <TabsTrigger key={crawl.type} value={crawl.type} nativeButton={false} render={<Link to={crawlHref(crawl.type)} />}>{crawl.label}</TabsTrigger>)}</TabsList></Tabs>
       <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
         <section className="flex min-w-0 flex-col gap-4" aria-label="Crawl result details">

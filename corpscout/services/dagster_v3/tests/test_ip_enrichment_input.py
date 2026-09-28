@@ -27,7 +27,7 @@ from tests.test_processing_store import (
 @pytest.fixture(scope="module")
 def server():
     clickhouse_local_command()
-    name = "ip-input-test-" + uuid4().hex
+    container_name = "ip-input-test-" + uuid4().hex
     subprocess.run(
         [
             "docker",
@@ -35,7 +35,7 @@ def server():
             "-d",
             "--rm",
             "--name",
-            name,
+            container_name,
             "-p",
             "127.0.0.1::9000",
             "-p",
@@ -50,21 +50,24 @@ def server():
         check=True,
     )
     try:
-        port = int(
-            subprocess.check_output(
-                ["docker", "port", name, "9000"],
+        deadline = time.monotonic() + 30
+        while True:
+            published_port = subprocess.check_output(
+                ["docker", "port", container_name, "9000"],
                 text=True,
-            )
-            .strip()
-            .rsplit(":", 1)[1]
-        )
+            ).strip()
+            if published_port:
+                port = int(published_port.rsplit(":", 1)[1])
+                break
+            assert time.monotonic() < deadline, "Docker did not publish the test ClickHouse port"
+            time.sleep(0.2)
         deadline = time.monotonic() + 30
         while True:
             probe = subprocess.run(
                 [
                     "docker",
                     "exec",
-                    name,
+                    container_name,
                     "clickhouse-client",
                     "--user",
                     "test",
@@ -100,7 +103,7 @@ def server():
                         client.execute(statement)
             yield client, resource
     finally:
-        subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False)
+        subprocess.run(["docker", "rm", "-f", container_name], capture_output=True, check=False)
 
 
 @pytest.fixture

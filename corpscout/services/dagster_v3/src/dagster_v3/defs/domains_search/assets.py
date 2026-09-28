@@ -29,7 +29,7 @@ def publish_domains_search(
     log: logging.Logger,
 ) -> dict:
     assert_clickhouse_tables_exist(clickhouse, database="corpscout", tables=(
-        "domains", "domains_search", "websites", "se_company_domain",
+        "domains", "domains_search", "websites", "se_company_domain_resolved",
         "commoncrawl_domain_dns_records",
     ))
     suffix = uuid4().hex
@@ -61,9 +61,14 @@ def publish_domains_search(
             # it once, not once per domain range. Country remains part of identity.
             client.execute(f"""INSERT INTO {companies}
                 (root_domain,company_count,has_dns_records)
-                SELECT root_domain,uniqExact(('SE',company_id)),0
-                FROM corpscout.se_company_domain FINAL
-                WHERE active=1 AND association='connected' GROUP BY root_domain
+                SELECT d.root_domain,uniqExact((s.country_code,s.company_id)),0
+                FROM (SELECT domain_id,country_code,company_id FROM corpscout.se_company_domain_resolved
+                    WHERE is_active=1) AS s
+                INNER JOIN (SELECT domain_id,root_domain FROM corpscout.domains
+                    WHERE domain_id IN (SELECT domain_id FROM corpscout.se_company_domain_resolved
+                        WHERE is_active=1)) AS d
+                    ON d.domain_id=s.domain_id
+                GROUP BY d.root_domain
             """, settings={**settings, "optimize_aggregation_in_order": 0}, query_id=f"{prefix}companies")
             [(expected,)] = client.execute(f"SELECT count() FROM {frozen}")
             if not expected:
@@ -130,7 +135,7 @@ def publish_domains_search(
     deps=["domains", "websites", "se_company_domain_publish",
           dg.AssetKey(["corpscout", "commoncrawl_domain_dns_records"])],
     metadata={"dagster/table_name": TABLE},
-    description="Precomputed domain filters. Membership comes only from domains; DNS, websites and active connected Swedish companies enrich existing roots.",
+    description="Precomputed domain filters. Membership comes from domains; DNS, websites and country summaries with live review decisions enrich existing roots.",
 )
 def domains_search(
     context: dg.AssetExecutionContext, config: DomainsSearchConfig,

@@ -11,6 +11,8 @@ from uuid import uuid4
 import dagster as dg
 import psycopg2
 import pytest
+from corpscout_identity.urls import website_reference
+from tests.crawl_reference_schema import upgrade_references
 
 from dagster_v3.defs.common.processing import ProcessingResource
 from dagster_v3.defs.website_crawl.input import INPUT_TABLES
@@ -37,8 +39,9 @@ ASSETS = (
 
 
 @pytest.fixture
-def database(server, processing_postgres_url):  # noqa: F811
+def database(server, processing_postgres_url, monkeypatch):  # noqa: F811
     client, resource = server
+    monkeypatch.setenv("PROCESSING_PG_URL", processing_postgres_url)
     migration = (
         Path(__file__).parents[3]
         / "clickhouse/migrations/000430_corpscout_website_crawl_type_results.up.sql"
@@ -49,6 +52,7 @@ def database(server, processing_postgres_url):  # noqa: F811
     for statement in (migration.parent / "000459_corpscout_website_company_lookup_results.up.sql").read_text().split(";"):
         if statement.strip():
             client.execute(statement)
+    upgrade_references(client)
     for table in (*INPUT_TABLES, *RESULTS_BY_TYPE.values(), SUBMISSIONS):
         client.execute(f"TRUNCATE TABLE {table}")
     return client, resource, ProcessingResource(postgres_url=processing_postgres_url)
@@ -227,10 +231,9 @@ def run(database, asset=website_site_info_results, *, instance=None, **config):
 
 
 def seed(client, table=INPUT_TABLES[2]):
-    client.execute(f"""INSERT INTO {table} (domain, website_url, priority, enabled, revision)
-        VALUES ('a.example', 'https://a.example/', 20, true, 1),
-               ('z.example', 'https://z.example/', 90, true, 1),
-               ('off.example', 'https://off.example/', 100, false, 1)""")
+    rows = [(domain, f"https://{domain}/", website_reference(f"https://{domain}/"), priority, enabled, 1)
+        for domain, priority, enabled in (("alpha.se",20,True),("zulu.se",90,True),("off.se",100,False))]
+    client.execute(f"INSERT INTO {table} (domain,website_url,website_id,priority,enabled,revision) VALUES", rows)
 
 
 @pytest.mark.parametrize(
@@ -253,8 +256,8 @@ def test_results_wait_for_crawls_and_store_sections(
         max_pages=1 if kind == "site_info" else 7,
     ).success
     assert [body["url"] for path, body in calls if path == "/v1/crawls"] == [
-        "https://z.example/",
-        "https://a.example/",
+        "https://zulu.se/",
+        "https://alpha.se/",
     ]
     assert len(saved) == 2
     for payload in saved.values():
@@ -267,7 +270,7 @@ def test_results_wait_for_crawls_and_store_sections(
         f"SELECT domain, successful, site_info, page_observations, s3_path FROM {RESULTS_BY_TYPE[kind]} FINAL ORDER BY domain"
     )
     assert len(rows) == 2
-    assert rows[0][0:2] == ("a.example", True)
+    assert rows[0][0:2] == ("alpha.se", True)
     assert json.loads(rows[0][2])["description"] == "Makes sensors"
     assert "hi@example.org" in rows[0][3]
     assert rows[0][4].endswith("/attempts/0001/result.json.gz")
@@ -280,11 +283,11 @@ def test_trailing_fresh_inputs_are_counted_once(database, crawler, batch_size):
     client, _, _ = database
     saved, _, _ = crawler
     seed(client)
-    assert run(database, domains=["a.example"]).success
+    assert run(database, domains=["alpha.se"]).success
     # z is admitted first; a is a fresh input after the last admission.
     result = run(
         database,
-        domains=["z.example", "a.example"],
+        domains=["zulu.se", "alpha.se"],
         batch_size=batch_size,
         max_batches=2,
     )
@@ -303,16 +306,16 @@ def test_new_failure_invalidates_freshness_but_preserves_earlier_saved_data(
     saved, _, behavior = crawler
     seed(client)
     behavior["partial"] = True
-    assert run(database, domains=["a.example"]).success
+    assert run(database, domains=["alpha.se"]).success
     assert client.execute(
         "SELECT successful FROM corpscout.website_site_info_results FINAL"
     ) == [(False,)]
     behavior["partial"] = False
-    assert run(database, domains=["a.example"]).success
+    assert run(database, domains=["alpha.se"]).success
     behavior["partial"] = True
-    assert run(database, domains=["a.example"], force_refresh=True).success
+    assert run(database, domains=["alpha.se"], force_refresh=True).success
     assert len(saved) == 3
-    assert run(database, domains=["a.example"]).success
+    assert run(database, domains=["alpha.se"]).success
     assert len(saved) == 4
     assert client.execute(
         "SELECT count() FROM corpscout.website_site_info_results_latest_success"
@@ -328,7 +331,7 @@ def test_timeout_recovers_original_request_and_payload(database, crawler, waitin
     with pytest.raises(TimeoutError):
         run(
             database,
-            domains=["a.example"],
+            domains=["alpha.se"],
             wait_timeout_seconds=0.01,
             challenge_agent_max_runs=6,
         )
@@ -339,7 +342,7 @@ def test_timeout_recovers_original_request_and_payload(database, crawler, waitin
     behavior[waiting] = False
     # Even a different run/batch and model override resumes the saved request first.
     assert run(
-        database, domains=["a.example"], challenge_agent_max_runs=12, force_refresh=True
+        database, domains=["alpha.se"], challenge_agent_max_runs=12, force_refresh=True
     ).success
     assert len(saved) == 1
     assert next(iter(saved.values()))["challenge_agent_max_runs"] == 6
@@ -365,13 +368,13 @@ def test_sweep_recovery_verifies_the_pending_receipts_actual_llm(database, crawl
     seed(client)
     behavior["pending"] = True
     with pytest.raises(TimeoutError):
-        run(database, domains=["a.example"], llm=LLM, wait_timeout_seconds=0.01)
+        run(database, domains=["alpha.se"], llm=LLM, wait_timeout_seconds=0.01)
     original = dict(saved)
     behavior["pending"] = False
     calls.clear()
     # A fresh manual sweep still recovers the durable receipt's encrypted profile,
     # including when this run does not itself supply an LLM override.
-    assert run(database, domains=["a.example"]).success
+    assert run(database, domains=["alpha.se"]).success
     assert calls[0] == ("/v1/llm/verify", {"llm": LLM})
     assert saved == original
 
@@ -382,13 +385,13 @@ def test_same_batch_replay_is_idempotent_and_semantic_change_is_due(database, cr
     seed(client)
     batch = str(uuid4())
     assert run(
-        database, batch_id=batch, domains=["a.example"], force_refresh=True
+        database, batch_id=batch, domains=["alpha.se"], force_refresh=True
     ).success
     assert run(
-        database, batch_id=batch, domains=["a.example"], force_refresh=True
+        database, batch_id=batch, domains=["alpha.se"], force_refresh=True
     ).success
     assert len(saved) == 1
-    assert run(database, domains=["a.example"], model="new-model").success
+    assert run(database, domains=["alpha.se"], model="new-model").success
     assert len(saved) == 2
 
 
@@ -443,17 +446,17 @@ def test_refresh_policy_and_disabled_revisions(database, crawler):
     client, _, _ = database
     saved, _, _ = crawler
     seed(client)
-    assert run(database, domains=["a.example"]).success
+    assert run(database, domains=["alpha.se"]).success
     client.execute("""INSERT INTO corpscout.website_site_info_results
         SELECT * REPLACE (now64(6) - INTERVAL 10 DAY AS finished_at, now64(6) AS ingested_at)
         FROM corpscout.website_site_info_results FINAL""")
-    assert run(database, domains=["a.example"], refresh_interval_days=30).success
+    assert run(database, domains=["alpha.se"], refresh_interval_days=30).success
     assert len(saved) == 1
-    assert run(database, domains=["a.example"], refresh_interval_days=7).success
+    assert run(database, domains=["alpha.se"], refresh_interval_days=7).success
     assert len(saved) == 2
     client.execute("""INSERT INTO corpscout.website_site_info_requests
         SELECT * EXCEPT bucket REPLACE (false AS enabled, 2 AS revision)
-        FROM corpscout.website_site_info_requests_current WHERE domain='z.example'""")
+        FROM corpscout.website_site_info_requests_current WHERE domain='zulu.se'""")
     assert run(database).success
     assert len(saved) == 2
 
@@ -465,7 +468,7 @@ def test_custom_page_instructions_reach_crawler(database, crawler):
     assert run(
         database,
         website_full_crawl_results,
-        domains=["a.example"],
+        domains=["alpha.se"],
         page_selection="instructions",
         instructions="Find all financial documents",
     ).success
@@ -518,7 +521,7 @@ def test_sweep_llm_preflight_and_resume_reuse_frozen_envelope(database, crawler)
             database,
             instance=instance,
             execution_id=first.run_id,
-            llm={**LLM, "base_url": "https://other.example/v1"},
+            llm={**LLM, "base_url": "https://other.se/v1"},
         )
         assert not changed.success
         assert "resume must keep llm unchanged" in str(
@@ -549,13 +552,13 @@ def test_matching_failure_and_unpublished_result_do_not_satisfy_freshness(databa
     from dagster_v3.defs.website_crawl.results import fresh_crawl_results
     client, _, _ = database
     client.execute("""INSERT INTO corpscout.website_site_info_results
-        (domain, request_id, attempt, work_key, successful, finished_at, company_matching_status)
-        VALUES ('failed-match.se','failed-match',1,'failed',true,now64(6),'failed'),
-               ('incomplete.se','not-published',1,'pending',true,now64(6),'matched'),
-               ('mapped.se','mapped',1,'mapped',true,now64(6),'already_mapped')""")
+        (domain, website_id, request_id, attempt, work_key, successful, finished_at, company_matching_status)
+        VALUES ('failed-match.se',lower(hex(SHA256('https://failed-match.se'))),'failed-match',1,'failed',true,now64(6),'failed'),
+               ('incomplete.se',lower(hex(SHA256('https://incomplete.se'))),'not-published',1,'pending',true,now64(6),'matched'),
+               ('mapped.se',lower(hex(SHA256('https://mapped.se'))),'mapped',1,'mapped',true,now64(6),'already_mapped')""")
     client.execute("""INSERT INTO corpscout.website_company_lookup_results
-        (country, domain, request_id, attempt, status, found)
-        VALUES ('SE','mapped.se','mapped',1,'already_mapped',false)""")
+        (country, domain, website_id, request_id, attempt, status, found)
+        VALUES ('SE','mapped.se',lower(hex(SHA256('https://mapped.se'))),'mapped',1,'already_mapped',false)""")
     now = datetime.now(UTC)
-    fresh = fresh_crawl_results(client, 'site_info', ('failed-match.se', 'incomplete.se', 'mapped.se'), cutoff=now-timedelta(days=1), started=now+timedelta(seconds=1))
-    assert fresh == {('mapped.se', 'mapped')}
+    fresh = fresh_crawl_results(client, 'site_info', tuple(website_reference(f'https://{domain}') for domain in ('failed-match.se', 'incomplete.se', 'mapped.se')), cutoff=now-timedelta(days=1), started=now+timedelta(seconds=1))
+    assert fresh == {(website_reference('https://mapped.se'), 'mapped')}

@@ -37,7 +37,7 @@ UNION ALL
 -- A failed document extraction is not a source withdrawal. Retain that document's
 -- last good observations until it has a successful replacement, including an empty one.
 SELECT {', '.join('stored.' + column for column in SELECT_COLUMNS)}
-FROM corpscout.se_company_domain_suggestion AS stored FINAL
+FROM corpscout.se_company_domain_sources_resolved AS stored FINAL
 INNER JOIN (
     SELECT DISTINCT company_id, source_document_id FROM corpscout.se_esef_domains
     WHERE extraction_status != 'ok'

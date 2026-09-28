@@ -5,6 +5,9 @@ import json
 from datetime import datetime
 
 import httpx
+from corpscout_identity.observations import crawl_observations
+from corpscout_identity.observations import timestamp as observation_time
+from corpscout_identity.urls import website_reference
 
 
 def timestamp(value: str) -> str:
@@ -14,8 +17,10 @@ def timestamp(value: str) -> str:
 
 
 def result_rows(result: dict) -> dict[str, list[dict]]:
+    website_reference(result["website_url"], result["website_id"])
     common = {
-        key: result[key] for key in ("country", "domain", "request_id", "attempt")
+        key: result[key]
+        for key in ("country", "domain", "website_id", "request_id", "attempt")
     }
     finished = timestamp(result["finished_at"])
     common["finished_at"] = finished
@@ -40,6 +45,7 @@ def result_rows(result: dict) -> dict[str, list[dict]]:
         {
             "domain": result["domain"],
             "website_url": result["website_url"],
+            "website_id": result["website_id"],
             "request_id": result["request_id"],
             "attempt": result["attempt"],
             "input_revision": result.get("input_revision", 1),
@@ -235,6 +241,52 @@ async def publish(http: httpx.AsyncClient, results: list[dict]) -> None:
     for result in results:
         for table, rows in result_rows(result).items():
             grouped.setdefault(table, []).extend(rows)
+    # Verify against the actual publication target as well as the native registry.
+    # Misconfigured connections must never publish child rows in another database.
+    expected = {}
+    for result in results:
+        for observation in crawl_observations(
+            result,
+            requested_url=result["website_url"],
+            website_id=result["website_id"],
+            discovered_at=observation_time(result["finished_at"]),
+        ):
+            identity = observation.identity
+            expected[identity.page_id] = (
+                identity.website_id,
+                identity.domain_id,
+                identity.page_url,
+            )
+    ids = list(expected)
+    for start in range(0, len(ids), 10000):
+        group = ids[start : start + 10000]
+        response = await http.post(
+            "",
+            params={
+                "query": """SELECT p.page_id AS page_id, w.website_id AS website_id, d.domain_id AS domain_id, p.page_url AS page_url
+                FROM corpscout.pages AS p
+                INNER JOIN (SELECT website_id,domain_id FROM corpscout.websites
+                    WHERE website_id IN {websites:Array(String)}) AS w ON p.website_id=w.website_id
+                INNER JOIN (SELECT domain_id FROM corpscout.domains
+                    WHERE domain_id IN {domains:Array(String)}) AS d ON w.domain_id=d.domain_id
+                WHERE p.page_id IN {ids:Array(String)} FORMAT JSONEachRow""",
+                "param_ids": repr(
+                    group
+                ),  # ClickHouse Array(String) query-parameter syntax; IDs are hex.
+                "param_websites": repr(sorted({expected[key][0] for key in group})),
+                "param_domains": repr(sorted({expected[key][1] for key in group})),
+            },
+        )
+        response.raise_for_status()
+        rows = [json.loads(line) for line in response.text.splitlines() if line.strip()]
+        found = {
+            row["page_id"]: (row["website_id"], row["domain_id"], row["page_url"])
+            for row in rows
+        }
+        if len(rows) != len(group) or found != {key: expected[key] for key in group}:
+            raise ValueError(
+                "Result destination is missing registered website/page parents"
+            )
     # Summary is the completion marker: basic data and child findings arrive first.
     for table, rows in grouped.items():
         if not rows:

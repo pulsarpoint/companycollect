@@ -99,6 +99,34 @@
   changed_when: false
   check_mode: false
 
+- name: Preview the shared identity package synchronization
+  ansible.builtin.command:
+    argv:
+      - rsync
+      - --archive
+      - --no-owner
+      - --no-group
+      - --delete-after
+      - --delay-updates
+      - --omit-dir-times
+      - --itemize-changes
+      - --dry-run
+      - --exclude=__pycache__/
+      - --exclude=*.pyc
+      - --rsync-path=sudo -n rsync
+      - "{{ dagster_source_dir }}/../../python/corpscout_identity/"
+      - "{{ ansible_user }}@{{ ansible_host }}:{{ dagster_deploy_dir }}/../../python/corpscout_identity/"
+  register: dagster_identity_preview
+  delegate_to: localhost
+  become: false
+  check_mode: false
+  changed_when: dagster_identity_preview.stdout_lines | length > 0
+
+- name: Require a full deployment for shared identity changes
+  ansible.builtin.assert:
+    that: dagster_identity_preview.stdout_lines | length == 0
+    fail_msg: Shared identity code changed. Use the full stopped deployment to rebuild the installed package before resuming work.
+
 - name: Capture the Dagster supervisor before hot-sync
   ansible.builtin.command:
     argv:

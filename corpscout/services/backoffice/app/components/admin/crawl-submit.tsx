@@ -6,6 +6,7 @@ import type { CrawlPublishReceipt } from "~/lib/crawler";
 import { crawlSettingsFor } from "~/lib/crawl-settings";
 import { CRAWL_TEST_PROFILES, type CrawlTestProfile } from "~/lib/crawl-test";
 import { LlmProfileField } from "~/components/admin/llm-profile-field";
+import { CompanyAssociationFields } from "~/components/admin/company-association-fields";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Button } from "~/components/ui/button";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "~/components/ui/field";
@@ -64,8 +65,8 @@ export function CrawlSubmit({enabled, lookupEnabled = false, unavailableReason, 
               {CRAWL_TEST_PROFILES.map(item => <NativeSelectOption key={item.value} value={item.value} disabled={item.value === "company_lookup" && !lookupEnabled}>{item.label}</NativeSelectOption>)}
             </NativeSelect><FieldDescription>{selected.description}</FieldDescription>
           </Field>
-          {(basic || profile === "full") && <Field className="sm:col-span-2"><FieldLabel htmlFor="test-match-company">Company matching</FieldLabel><NativeSelect id="test-match-company" name="match_company" value={String(matchCompany)} onChange={event => {setMatchCompany(event.target.value === "true"); setDecisionSteps({...decisionSteps, company_match: "processing"});}}><NativeSelectOption value="false">Off</NativeSelectOption><NativeSelectOption value="true" disabled={!lookupEnabled}>Find the company operating this website</NativeSelectOption></NativeSelect><FieldDescription>Add a Swedish company match to the crawl. Reuses captured pages and may follow up to four About, contact or legal pages, including on shops and news sites.</FieldDescription></Field>}
-          {matching && <Field><FieldLabel htmlFor="test-skip-mapped">Already mapped domains</FieldLabel><NativeSelect id="test-skip-mapped" name="skip_company_matching_if_mapped" defaultValue="true"><NativeSelectOption value="true">Skip matching when already connected</NativeSelectOption><NativeSelectOption value="false">Always run company matching</NativeSelectOption></NativeSelect><FieldDescription>The selected crawl still runs. Only an active company association skips matching.</FieldDescription></Field>}
+          {(basic || profile === "full" || lookup) && <CompanyAssociationFields key={profile} idPrefix="test" enabled={matching}
+            disabled={!lookupEnabled || lookup} onEnabledChange={value => {setMatchCompany(value); setDecisionSteps({...decisionSteps, company_match: "processing"});}} />}
           {matching && <Field className="sm:col-span-2"><FieldLabel htmlFor="test-company-country">Company registry country</FieldLabel><NativeSelect id="test-company-country" name="country" defaultValue="SE"><NativeSelectOption value="SE">Sweden (SE)</NativeSelectOption></NativeSelect><FieldDescription>Company matching examines homepage, About, contact and legal information for any site category. The selected crawl keeps its own scope. Crawl results and matching findings are saved to ClickHouse; company–domain links await acceptance.</FieldDescription></Field>}
           <LlmProfileField idPrefix="test-crawl" label="Processing LLM" description="We verify the selected configuration before starting. Model and reasoning settings come from the saved LLM." />
           {profile !== "pages" && <>

@@ -65,9 +65,9 @@ export const COMPANY_DOMAINS_SQL = `SELECT
   entity.verification_reason AS verification_reason,
   entity.inactive_reason AS inactive_reason,
   multiIf(d.is_active = 1, 'connected', d.review_status = 'rejected', 'not_connected', entity.association) AS association
-FROM corpscout.company_domains_resolved AS d
+FROM corpscout.se_company_domain_resolved AS d
 LEFT JOIN corpscout.se_company_domain AS entity FINAL
-  ON entity.company_id = d.company_id AND entity.root_domain = d.root_domain
+  ON entity.company_id = d.company_id AND entity.domain_id = d.domain_id
 WHERE d.country_code = 'SE' AND d.company_id = {companyId:String}
 ORDER BY d.is_active DESC, d.suggested_primary DESC, length(d.supporting_sources) DESC, d.suggested_confidence DESC, d.root_domain
 LIMIT 100`;

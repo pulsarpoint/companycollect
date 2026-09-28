@@ -2,9 +2,25 @@ import json
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import pytest
+from corpscout_identity.urls import website_reference
+
+from dagster_v3.defs.website_crawl.matching_batches import process_matching_batch
 from dagster_v3.defs.website_crawl.queue_execution import run_crawl_window
 from dagster_v3.defs.website_crawl.results import CrawlResultsConfig, effective_payload
 from tests.test_website_crawl_llm import LLM, ROW, SETTINGS
+
+
+def test_failed_admission_keeps_original_error_when_cleanup_cannot_find_batch():
+    context = SimpleNamespace(log=Mock())
+    http = Mock()
+    http.request.side_effect = [SimpleNamespace(status_code=500), SimpleNamespace(status_code=404)]
+    item = {"request_json": json.dumps({"request_id": "request", "url": "https://example.se"}),
+            "request_id": "request", "crawl_type": "site_info", "input_revision": 1,
+            "work_key": "key", "run_id": "execution"}
+    with pytest.raises(RuntimeError, match="POST with HTTP 500"):
+        process_matching_batch(context, Mock(), http, "http://crawler", [item])
+    context.log.warning.assert_called_once()
 
 
 def test_saved_request_matching_flags_change_work_identity_and_can_be_overridden():
@@ -40,6 +56,7 @@ def test_existing_queue_waits_for_200_published_and_confirmed_before_next_batch(
         {
             "crawl_type": "site_info",
             "domain": f"example-{i:04d}.se",
+            "website_id": website_reference(f"https://example-{i:04d}.se/"),
             "request_id": f"crawl-{i}",
             "input_revision": 1,
             "work_key": "a" * 64,
@@ -57,7 +74,10 @@ def test_existing_queue_waits_for_200_published_and_confirmed_before_next_batch(
     ]
 
     class Client:
-        def execute(self, sql, params):
+        def execute(self, sql, params, **kwargs):
+            if kwargs.get("with_column_types"):
+                events.append("diagnostics")
+                return [], []
             events.append("confirmed")
             return [(len(params["ids"]),)]
 
@@ -104,8 +124,10 @@ def test_existing_queue_waits_for_200_published_and_confirmed_before_next_batch(
         "published",
         "confirmed",
         "confirmed",
+        "diagnostics",
         ("submitted", 5),
         "published",
         "confirmed",
         "confirmed",
+        "diagnostics",
     ]

@@ -5,9 +5,11 @@ import json
 import os
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from uuid import uuid4
 
 from clickhouse_driver.errors import ServerException
+from corpscout_identity.observations import crawl_observations
 
 from crawler_service.clickhouse_results import connect, result_row
 
@@ -41,6 +43,76 @@ def analysis_result():
 
 
 class ResultMappingTests(unittest.TestCase):
+    def test_native_registration_supports_existing_query_credentials(self):
+        with patch("crawler_service.identity_registration.Client") as client:
+            connect(
+                {
+                    "CLICKHOUSE_NATIVE_URL": "clickhouses://db:9441/?username=writer&password=fake%3Akey"
+                }
+            )
+        self.assertEqual(
+            client.call_args.kwargs,
+            {
+                "host": "db",
+                "port": 9441,
+                "user": "writer",
+                "password": "fake:key",
+                "database": "corpscout",
+                "secure": True,
+                "connect_timeout": 10,
+                "send_receive_timeout": 120,
+            },
+        )
+
+    def test_registration_reads_legacy_json_columns(self):
+        payload = {
+            "schema_version": "company-crawl-result/1.2",
+            "crawl": {
+                "input_url": "https://example.com/",
+                "finished_at": "2026-09-17T10:00:00Z",
+                "pages": [
+                    {
+                        "page_id": "p0001",
+                        "fetch_status": "fetched",
+                        "fetched_at": "2026-09-17T10:00:00Z",
+                    }
+                ],
+            },
+            "documents": [
+                {
+                    "input": {
+                        "observations": {
+                            "page_id": "p0001",
+                            "source_url": "https://www.example.com/about",
+                        }
+                    }
+                }
+            ],
+        }
+        row = result_row(payload, source_path="saved.json")
+        observations = crawl_observations(
+            row,
+            requested_url=row["website_url"],
+            website_id=row["website_id"],
+            discovered_at=row["finished_at"],
+        )
+        self.assertEqual(len(observations), 2)
+        self.assertEqual(
+            observations[1].identity.page_url, "https://www.example.com/about"
+        )
+        analysis = result_row(analysis_result(), source_path="analysis.json")
+        self.assertEqual(
+            len(
+                crawl_observations(
+                    analysis,
+                    requested_url=analysis["website_url"],
+                    website_id=analysis["website_id"],
+                    discovered_at=analysis["finished_at"],
+                )
+            ),
+            1,
+        )
+
     def test_records_are_lossless_and_input_unchanged(self):
         payload = analysis_result()
         before = copy.deepcopy(payload)
@@ -176,8 +248,18 @@ class ClickHouseResultTests(unittest.TestCase):
         )
         for path, explicit_id, request_id, attempt in [
             ("crawls/company-crawls/legacy/result.json.gz", None, "legacy", None),
-            ("crawls/company-crawls/new-scan/attempts/0002/result.json.gz", None, "new-scan", 2),
-            ("crawls/company-crawls/new-scan/attempts/0002/result.json.gz", "explicit", "explicit", 2),
+            (
+                "crawls/company-crawls/new-scan/attempts/0002/result.json.gz",
+                None,
+                "new-scan",
+                2,
+            ),
+            (
+                "crawls/company-crawls/new-scan/attempts/0002/result.json.gz",
+                "explicit",
+                "explicit",
+                2,
+            ),
         ]:
             with self.subTest(path=path, explicit_id=explicit_id):
                 payload = analysis_result()

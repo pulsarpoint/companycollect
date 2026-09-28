@@ -7,6 +7,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from tests.crawl_reference_schema import upgrade_references
 from clickhouse_driver import Client
 from clickhouse_driver.errors import ServerException
 from dagster_clickhouse import ClickhouseResource
@@ -117,9 +118,16 @@ def server() -> Iterator[tuple[Client, ClickhouseResource]]:
 
 
 @pytest.fixture
-def database(server, store):  # noqa: F811
+def database(server, store, monkeypatch):  # noqa: F811
     client, resource = server
-    processing, _ = store
+    processing, dsn = store
+    monkeypatch.setenv("PROCESSING_PG_URL", dsn)
+    migrations = Path(__file__).resolve().parents[3] / "clickhouse/migrations"
+    for name in ("000430_corpscout_website_crawl_type_results", "000459_corpscout_website_company_lookup_results"):
+        for statement in (migrations / f"{name}.up.sql").read_text().split(";"):
+            if statement.strip():
+                client.execute(statement)
+    upgrade_references(client)
     for table in (*INPUT_TABLES, TASK_DOMAINS):
         client.execute(f"TRUNCATE TABLE {table}")
     client.execute("DROP TABLE IF EXISTS corpscout.crawl_test_source")
@@ -165,9 +173,9 @@ def test_ids_and_filters_seed_each_destination_and_preserve_edits(database, craw
         filters={"country": ["SE"], "active": ["1"]},
         priority=80,
     )
-    assert result["total"] == 1
+    assert result["total"] == 2
     assert client.execute(
-        f"SELECT domain, website_url, priority, enabled, source, revision, bucket < 256 FROM {target}_current"
+        f"SELECT domain, website_url, priority, enabled, source, revision, bucket < 256 FROM {target}_current ORDER BY website_url"
     ) == [
         (
             "novelic.com",
@@ -177,29 +185,31 @@ def test_ids_and_filters_seed_each_destination_and_preserve_edits(database, craw
             "corpscout.crawl_test_source",
             1,
             1,
-        )
+        ),
+        ("novelic.com", "https://www.novelic.com/careers", 80, True, "corpscout.crawl_test_source", 1, 1),
     ]
     assert client.execute(
         f"SELECT countIf(created_at = updated_at AND created_at > toDateTime64('2026-01-01', 6)) FROM {target}"
-    ) == [(1,)]
+    ) == [(2,)]
     assert client.execute(
-        f"SELECT crawl_type, domain, website_url FROM {TASK_DOMAINS}"
-    ) == [(crawl_type, "novelic.com", "https://novelic.com/")]
+        f"SELECT crawl_type, domain, website_url FROM {TASK_DOMAINS} ORDER BY website_url"
+    ) == [(crawl_type, "novelic.com", "https://novelic.com/"), (crawl_type, "novelic.com", "https://www.novelic.com/careers")]
     client.execute(f"""INSERT INTO {target}
         SELECT * EXCEPT bucket REPLACE (false AS enabled, 2 AS revision, 10 AS priority, 'operator' AS instructions)
         FROM {target}_current""")
     repeated = add(database, crawl_type, ids=["1", "2", "3"], priority=99)
-    assert repeated["total"] == 2
+    assert repeated["total"] == 3
     # The existing operator row keeps its settings; membership does not re-enable it.
     assert client.execute(
         f"SELECT domain, priority, enabled, instructions, revision FROM {target}_current ORDER BY domain"
     ) == [
         ("melexis.com", 99, True, "", 1),
         ("novelic.com", 10, False, "operator", 2),
+        ("novelic.com", 10, False, "operator", 2),
     ]
     assert client.execute(
         f"SELECT count() FROM {target} WHERE domain='novelic.com' AND revision=1"
-    ) == [(1,)]
+    ) == [(2,)]
     for other in set(INPUT_TABLES) - {target}:
         assert client.execute(f"SELECT count() FROM {other}") == [(0,)]
 
@@ -250,8 +260,8 @@ def test_url_normalization_invalid_inputs_and_stable_limit(database):
                     "https://user:password@example.com",
                     "ftp://bad.example/x",
                     "https://bad.example:99999",
-                    "https://bad..example",
-                    "https://-bad.example",
+                    "https://bad..se",
+                    "https://-bad.se",
                     "https://bad.example:word",
                 ]
             )
@@ -259,9 +269,10 @@ def test_url_normalization_invalid_inputs_and_stable_limit(database):
     )
     add(database, "full", select_all=True)
     assert client.execute(
-        "SELECT domain, website_url FROM corpscout.website_full_crawl_requests_current ORDER BY domain"
+        "SELECT domain, website_url FROM corpscout.website_full_crawl_requests_current ORDER BY domain, website_url"
     ) == [
         ("careers.example.com", "https://careers.example.com/jobs"),
+        ("example.com", "http://example.com/path"),
         ("example.com", "https://example.com"),
         ("xn--bcher-kva.de", "https://www.xn--bcher-kva.de:8080/jobs?x=1"),
     ]
@@ -322,14 +333,14 @@ def se_domains(database):
     client.execute(
         "INSERT INTO corpscout.se_company_domain VALUES",
         [
-            ("100", "shared.example", ["brave"], "connected", 1, 0.8, 1),
-            ("100", "shared.example", ["brave"], "connected", 0, 0.5, 2),
-            ("200", "shared.example", ["wikidata"], "connected", 1, 0.9, 1),
-            ("100", "solo.example", ["brave", "brave"], "uncertain", 1, 0.7, 1),
-            ("300", "rejected.example", ["esef_filing"], "not_connected", 0, 0.2, 1),
+            ("100", "shared.com", ["brave"], "connected", 1, 0.8, 1),
+            ("100", "shared.com", ["brave"], "connected", 0, 0.5, 2),
+            ("200", "shared.com", ["wikidata"], "connected", 1, 0.9, 1),
+            ("100", "solo.com", ["brave", "brave"], "uncertain", 1, 0.7, 1),
+            ("300", "rejected.com", ["esef_filing"], "not_connected", 0, 0.2, 1),
             (
                 "400",
-                "second.example",
+                "second.com",
                 ["common_crawl_identity"],
                 "connected",
                 1,
@@ -352,19 +363,19 @@ SE_SOURCE = {
 @pytest.mark.parametrize(
     ("filters", "expected"),
     [
-        ({"domain": "solo"}, ["solo.example"]),
-        ({"company": "100"}, ["shared.example", "solo.example"]),
-        ({"source": "brave"}, ["shared.example", "solo.example"]),
-        ({"association": "not_connected"}, ["rejected.example"]),
-        ({"status": "inactive"}, ["rejected.example", "shared.example"]),
-        ({"min_confidence": 0.75}, ["shared.example"]),
-        ({"max_confidence": 0.3}, ["rejected.example"]),
+        ({"domain": "solo"}, ["solo.com"]),
+        ({"company": "100"}, ["shared.com", "solo.com"]),
+        ({"source": "brave"}, ["shared.com", "solo.com"]),
+        ({"association": "not_connected"}, ["rejected.com"]),
+        ({"status": "inactive"}, ["rejected.com", "shared.com"]),
+        ({"min_confidence": 0.75}, ["shared.com"]),
+        ({"max_confidence": 0.3}, ["rejected.com"]),
         (
             {"min_confidence": 0.6, "max_confidence": 0.8},
-            ["second.example", "solo.example"],
+            ["second.com", "solo.com"],
         ),
-        ({"shared": True}, ["shared.example"]),
-        ({"source": "brave", "status": "active"}, ["solo.example"]),
+        ({"shared": True}, ["shared.com"]),
+        ({"source": "brave", "status": "active"}, ["solo.com"]),
         ({"domain": "' OR 1=1 --"}, []),
         (
             {
@@ -377,7 +388,7 @@ SE_SOURCE = {
                 "max_confidence": 0.95,
                 "shared": True,
             },
-            ["shared.example"],
+            ["shared.com"],
         ),
     ],
 )
@@ -397,15 +408,15 @@ def test_se_domain_query_exclusions_apply_to_whole_domain(se_domains):
         **SE_SOURCE,
         select_all=True,
         se_domain_filters={"status": "active"},
-        excluded_ids=["shared.example"],
+        excluded_ids=["shared.com"],
     )
     assert client.execute(
         "SELECT domain FROM corpscout.website_jobs_crawl_requests_current ORDER BY domain"
-    ) == [("second.example",), ("solo.example",)]
-    add(se_domains, "site_info", **SE_SOURCE, ids=["shared.example", "shared.example"])
+    ) == [("second.com",), ("solo.com",)]
+    add(se_domains, "site_info", **SE_SOURCE, ids=["shared.com", "shared.com"])
     assert client.execute(
         "SELECT domain FROM corpscout.website_site_info_requests_current"
-    ) == [("shared.example",)]
+    ) == [("shared.com",)]
 
 
 @pytest.mark.parametrize(

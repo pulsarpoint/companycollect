@@ -7,10 +7,14 @@ sources; neither operation crawls or downloads websites.
 
 ## Storage
 
-Migrations 000408 and 000417 own the tables:
+Migrations 000408, 000417 and the locally prepared 000466 own the tables. The
+source-reference change is not deployed; activate only after the bounded legacy copy
+and coordinated writer switch described below.
 
-- `se_company_domain_suggestion`: current source observation by company/source/slot;
-  typed claims plus source record, evidence, stable slot and removal tombstones.
+- `se_company_domain_sources`: current source evidence by company/source/slot, with
+  required `domain_id`, optional `website_id`, original URL/evidence, confidence and
+  withdrawal records. Canonical root labels are resolved through `domains` by
+  `se_company_domain_sources_resolved`; they are not stored again in the evidence table.
 - `se_company_domain`: current folded company/domain association, primary choice,
   provenance, verification and reviewer status, activity and fold metadata.
 - `se_company_domain_history`: changed output images, changed fields, change kind and
@@ -22,9 +26,13 @@ Migrations 000408 and 000417 own the tables:
   including exact input JSON and prompt, evidence/prompt/model hashes, verdict, reason,
   usage, errors and run ID. The latest attempt for the current input is the cache entry.
 
-The existing `company_domains` and `company_domain_current` become serving projections
-updated by the existing serving refresh. Backoffice readers use `company_domains_resolved`,
-a live view of the entity with the newest canonical review rules applied.
+Central `domains` owns domain identity. `se_company_domain.domain_id` references
+that identity, and `domains_sources` indexes each contributing country table once per domain. Company
+identity, confidence and review status remain in the country summary/evidence tables.
+Publication registers the parent and source before writing the country association.
+Backoffice readers use `se_company_domain_resolved`, a live view of the entity with
+the newest canonical review rules applied. Migration 000464 removes the former
+`company_domains` and `company_domain_current` serving copies after reader cutover.
 Existing domain reviews and published rows are imported before cutover. Reviews continue
 through their current backoffice route and are recorded in the entity rule table.
 
@@ -40,13 +48,14 @@ acknowledges the storage flush, not just acceptance into an in-memory buffer.
 ## Sources and precedence
 
 Contributors are Brave official-website answers, Wikidata official websites linked through Swedish identifiers or
-verified company LEIs, ESEF filing domain evidence, and Common Crawl identity matches.
+verified company LEIs, ESEF filing domain evidence, Common Crawl identity matches,
+and saved Swedish crawler company matches.
 Each extractor owns its source rows. A source withdrawal writes a tombstone; it cannot
 remove another source's evidence. Source sync compares stable content, excluding routine
 run IDs and extraction timestamps, so rebuilding unchanged source tables is a no-op.
 
 Precedence is per field (`website`, `association`, `primary`): reviewer 20000,
-Brave 1000, ESEF 900, Wikidata 800, Common Crawl 600. A high rank does not turn a weak mention into
+Brave 1000, ESEF 900, Wikidata 800, crawler matching 700, Common Crawl 600. A high rank does not turn a weak mention into
 proof. Company/domain overrides take precedence over company-wide and global ranks.
 A company can have many connected domains; primary selection is deterministic and picks
 at most one active domain. Reviewer primary decisions lead, followed by the number of
@@ -97,6 +106,44 @@ candidate as verification evidence. Answers can mention unrelated alternatives, 
 is not a connected-domain verdict: candidates begin uncertain at confidence 0.5. The first
 mention is only a primary preference. Existing verification and human review decide whether
 the domain is connected before it can become the published primary.
+
+## Saved crawler matching
+
+`se_company_domain_suggestions_crawler_lookup` reads saved ClickHouse attempts only.
+The newest attempt is selected per country/website before inspecting its outcome; a
+company filter must not resurrect a superseded owner. A matched result owns one slot
+per requested website, retaining request ID, attempt, reasons, model and archive path.
+Repeated basic/full attempts update that slot. Multiple origins still count as one
+independent `crawler_lookup` supporting source.
+
+`not_found` withdraws the previous source claim. A failed/cancelled request or
+`already_mapped` skip preserves existing evidence but cannot create or strengthen a
+claim. A changed owner withdraws the former company's slot. Other countries are excluded.
+Confidence uses the existing fold threshold/policy; human decisions remain authoritative.
+
+## Reference publication and legacy copy
+
+Every source writer validates a page, registers missing central domains and any actual
+known websites in batches, then synchronously writes claims. Domain-only sources retain
+their original display/evidence URL without inventing a website identity. Wikidata's
+actual website URLs and crawler website references are registered. Withdrawals retain
+the original reference and evidence. A failed parent or claim insert prevents the Brave
+checkpoint. Replaying saved source data makes no browser/model request.
+
+`se_company_domain_sources_backfill` is an explicit cutover asset, excluded from normal
+sync/refresh jobs. It reads the current legacy claims including removed rows, preserves
+source slots, IDs, original timestamps, versions and reviewer evidence, and registers
+parents before copying. Default `execute=false` previews. With writers paused, run with
+`execute=true`, a bounded `max_companies`, and resume using the last logged/returned
+`after_company_id`. Progress advances only after acknowledged inserts. Replay is safe
+under current-row reads; a later source version is not replaced by the older backfill.
+Preserve existing Brave extraction checkpoints and paid verification records.
+
+Do not deploy this reader/writer switch before the copy, parity checks and identity
+backfill are complete. Keep the old suggestion table as the cutover source until then;
+there are no normal writers to it in the new code. Retire it with a later forward
+migration after checking all consumers. Summary/history/review physical-key conversion
+and the compact global contribution index remain separate coordinated cutover work.
 
 ## Verification
 

@@ -56,20 +56,6 @@ models:
           key_columns: [country_code, company_id, contact_type, contact_id]
       - company_serving_sweden_anchor
 
-  - name: company_domains_build
-    data_tests:
-      - company_serving_unique_key:
-          key_columns: [country_code, company_id, root_domain]
-      - company_serving_sweden_anchor
-    columns:
-      - name: company_id
-        data_tests: [not_null]
-      - name: root_domain
-        data_tests: [not_null]
-
-  - name: company_domain_current_build
-    description: Compatibility projection of non-rejected unified company domains.
-
   - name: company_contract_current_build
     data_tests:
       - company_serving_unique_key:

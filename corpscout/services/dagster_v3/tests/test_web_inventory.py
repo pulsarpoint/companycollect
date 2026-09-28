@@ -1,11 +1,17 @@
 """Real ClickHouse source imports, repeatability and publication failure safety."""
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Event
 
 import dagster as dg
 import pytest
+from tests.test_processing_store import processing_postgres_url as processing_postgres_url
+from tests.identity_registration_support import identity_postgres as identity_postgres
+
+
 from clickhouse_driver import Client
 
 from dagster_v3.defs.web_inventory.assets import (
@@ -16,6 +22,10 @@ from dagster_v3.defs.web_inventory.assets import (
     web_inventory,
 )
 from tests.test_ip_enrichment_input import server as server
+from tests.domain_sources_schema import central_schema_sql, execute_sql
+from corpscout_identity.registration import WebsiteObservation, identify_website, register_websites
+
+pytestmark = pytest.mark.usefixtures("identity_postgres")
 
 
 @pytest.fixture
@@ -32,6 +42,7 @@ def database(server):
             if statement.strip():
                 client.execute(statement)
     client.execute("CREATE TABLE IF NOT EXISTS corpscout.webtech_domain_scan_results AS corpscout.webtech_domain_scan_results_v2")
+    execute_sql(client, central_schema_sql())
     for table in ("domains", "pages", "websites", "webtech_domain_scan_results",
                   *(name for name, _ in COMMONCRAWL_URLS)):
         client.execute(f"TRUNCATE TABLE corpscout.{table}")
@@ -165,3 +176,33 @@ def test_idna_and_query_identity_match_webtech():
     )
     with pytest.raises(ValueError):
         normalize_target("example.com", "https://notexample.com/")
+
+
+def test_registration_during_web_build_preserves_new_website_and_page(database, monkeypatch):
+    client, resource = database
+    client.execute("INSERT INTO corpscout.commoncrawl_domains (root_domain,url,resolved_at) VALUES ('example.com','https://example.com/','2026-08-01')")
+    prepared, registered = Event(), Event()
+    execute = Client.execute
+
+    def pause_after_validation(self, query, *args, **kwargs):
+        result = execute(self, query, *args, **kwargs)
+        if kwargs.get("query_id", "").endswith(":validate-domains"):
+            prepared.set()
+            assert registered.wait(20), "registration did not complete while staging was unlocked"
+        return result
+
+    monkeypatch.setattr(Client, "execute", pause_after_validation)
+    identity = identify_website("https://late.example.com/contact")
+    stamp = datetime(2026, 9, 28, tzinfo=UTC)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(build, resource, ["commoncrawl"])
+        try:
+            assert prepared.wait(20)
+            register_websites(client, [WebsiteObservation(identity, stamp, stamp, stamp)], source="crawler", run_id="late")
+        finally:
+            registered.set()
+        result = future.result(timeout=30)
+    assert result["websites"] == 2
+    assert result["pages"] == 2
+    assert client.execute("SELECT page_url,last_successful_fetch_at FROM corpscout.pages WHERE page_id=%(id)s", {"id": identity.page_id}) == [(identity.page_url, stamp)]
+    assert client.execute("SELECT count() FROM corpscout.pages p INNER JOIN corpscout.websites w ON p.website_id=w.website_id") == [(2,)]

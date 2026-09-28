@@ -28,6 +28,7 @@ from crawler_service.company_lookup import (
     CompanyLookupRequest,
 )
 from crawler_service.debug_trace import read_trace
+from crawler_service.identity_registration import register_requests
 from crawler_service.llm_profile import LLMProfileError, VerifyLLMRequest, verify_llm
 from crawler_service.service import (
     TERMINAL_STATES,
@@ -97,6 +98,15 @@ def create_app(
             raise HTTPException(503, "Crawl service is not ready")
         return {"status": "ok"}
 
+    async def register_admission(requests: list[CrawlRequest], run_id: str) -> None:
+        try:
+            await asyncio.to_thread(register_requests, service.environment,
+                [request.model_dump() for request in requests], run_id=run_id)
+        except Exception as error:
+            # Keep database URLs, credentials and SQL out of REST errors.
+            raise HTTPException(503, "Central website registration failed; no new crawl was admitted",
+                headers={"Retry-After": "5"}) from error
+
     @app.post(
         "/v1/crawls",
         response_model=CrawlJob,
@@ -105,6 +115,8 @@ def create_app(
     )
     async def submit(request: CrawlRequest, response: Response) -> CrawlJob:
         try:
+            if request.request_id not in service.jobs:
+                await register_admission([request], request.request_id)
             job = service.submit(request, source="rest")
         except RequestConflict as error:
             raise HTTPException(409, str(error)) from error
@@ -130,6 +142,7 @@ def create_app(
     @app.post("/v1/crawl-batches", status_code=202, dependencies=[Depends(authenticate)])
     async def crawl_batch(request: CrawlBatchRequest):
         try:
+            await register_admission([entry.request for entry in request.entries], request.batch_id)
             return service.submit_crawl_batch(request)
         except RequestConflict as error:
             raise HTTPException(409, str(error)) from error
@@ -141,6 +154,8 @@ def create_app(
     @app.post("/v1/company-lookup-batches", status_code=202, dependencies=[Depends(authenticate)])
     async def lookup_batch(request: CompanyLookupBatchRequest):
         try:
+            await register_admission([CrawlRequest(url=f"https://{domain}/", site_info=True)
+                for domain in request.domains], request.batch_id)
             return service.submit_lookup_batch(request)
         except RequestConflict as error:
             raise HTTPException(409, str(error)) from error
@@ -357,6 +372,9 @@ def create_app(
     )
     async def retry(request_id: str, payload: RetryRequest) -> CrawlJob:
         try:
+            saved = service.root / "jobs" / request_id / "request.json"
+            if request_id in service.jobs and saved.is_file():
+                await register_admission([CrawlRequest.model_validate_json(saved.read_text(encoding="utf-8"))], payload.request_id or request_id)
             return service.retry(
                 request_id,
                 **payload.model_dump(exclude={"request_id"}),

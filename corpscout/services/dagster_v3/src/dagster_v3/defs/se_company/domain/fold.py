@@ -9,7 +9,7 @@ from dagster_v3.defs.se_company.domain import tables
 from dagster_v3.defs.se_company.domain.evidence import digest, domain_evidence, json_text, requires_verification
 from dagster_v3.defs.se_company.domain.precedence import DOMAIN_PRECEDENCE
 
-FOLD_VERSION = "domain-fold-v2-source-support"
+FOLD_VERSION = "domain-fold-v3-source-references"
 LLM_THRESHOLD = 0.9
 COMPARE_COLUMNS = tuple(c for c in tables.MAIN_COLUMNS if c not in (
     "folded_at", "fold_version", "source_run_id", "last_seen_at", "fold_input_hash",

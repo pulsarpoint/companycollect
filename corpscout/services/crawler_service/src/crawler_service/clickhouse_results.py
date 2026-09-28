@@ -7,14 +7,17 @@ import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import urlsplit
 
 from clickhouse_driver import Client
 from clickhouse_driver.errors import Error as ClickHouseError
+from corpscout_identity.observations import register_crawl_results
+from corpscout_identity.urls import website_reference
 from dotenv import dotenv_values
 
 from crawler_service.discovery import normalize_url
 from crawler_service.domain_evidence import external_domain_evidence
+from crawler_service.identity_registration import connect as connect
 from crawler_service.models import OBJECTIVES
 from crawler_service.service_results import S3Settings
 
@@ -43,31 +46,6 @@ ARRAY_SECTIONS = (
     "external_links",
     "errors",
 )
-
-
-def connect(environment: dict[str, str]) -> Client:
-    value = environment.get("CLICKHOUSE_NATIVE_URL") or environment.get(
-        "CLICKHOUSE_MIGRATE_URL"
-    )
-    if not value:
-        raise ValueError("Set CLICKHOUSE_NATIVE_URL or CLICKHOUSE_MIGRATE_URL")
-    parsed = urlsplit(value)
-    if parsed.scheme not in {"clickhouse", "clickhouses"} or parsed.hostname is None:
-        raise ValueError("Expected a native ClickHouse connection URL")
-    options = parse_qs(parsed.query)
-    secure = parsed.scheme == "clickhouses" or options.get("secure", ["false"])[
-        0
-    ].lower() in {"true", "1"}
-    return Client(
-        host=parsed.hostname,
-        port=parsed.port or (9440 if secure else 9000),
-        user=options.get("username", [unquote(parsed.username or "default")])[0],
-        password=options.get("password", [unquote(parsed.password or "")])[0],
-        database="corpscout",
-        secure=secure,
-        connect_timeout=10,
-        send_receive_timeout=120,
-    )
 
 
 def result_row(payload: dict, *, source_path: str, request_id: str = "") -> dict:
@@ -127,6 +105,7 @@ def result_row(payload: dict, *, source_path: str, request_id: str = "") -> dict
     row = {
         "domain": domain,
         "website_url": website_url,
+        "website_id": website_reference(website_url, payload.get("website_id")),
         "result_id": hashlib.sha256(canonical.encode()).hexdigest(),
         "result_kind": kind,
         "schema_version": schema,
@@ -215,7 +194,16 @@ def result_row(payload: dict, *, source_path: str, request_id: str = "") -> dict
     return row
 
 
-def insert_result(client: Client, row: dict) -> None:
+def insert_result(
+    client: Client, row: dict, *, processing_url: str | None = None
+) -> None:
+    register_crawl_results(
+        client,
+        [row],
+        source="website_crawl_results",
+        run_id=row["request_id"] or row["result_id"],
+        processing_url=processing_url,
+    )
     # Columns come only from result_row, never from caller-supplied JSON keys.
     columns = ", ".join(row)
     client.execute(
@@ -323,7 +311,9 @@ def main() -> None:
                     else path.read_bytes()
                 )
                 row = result_row(json.loads(content), source_path=str(path.resolve()))
-                insert_result(client, row)
+                insert_result(
+                    client, row, processing_url=environment.get("PROCESSING_PG_URL")
+                )
                 print(
                     json.dumps(
                         {
@@ -347,7 +337,9 @@ def main() -> None:
                 row = result_row(
                     json.loads(content), source_path=source_path, request_id=request_id
                 )
-                insert_result(client, row)
+                insert_result(
+                    client, row, processing_url=environment.get("PROCESSING_PG_URL")
+                )
                 print(
                     json.dumps(
                         {

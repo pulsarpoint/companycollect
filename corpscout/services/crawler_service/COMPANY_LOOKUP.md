@@ -248,6 +248,13 @@ payload to SQLite and uses the four-worker pool described above. Its
 `GET /v1/crawl-batches/{batch_id}` endpoint is polled **every two seconds**; DELETE
 cancels the batch. Legacy company-lookup batch endpoints remain compatible.
 
+A resumed execution can regroup unfinished requests into a new transport batch.
+SQLite retains membership in each batch while sharing the immutable result by
+request ID and attempt. Identical requests dispatch only once; reusing a request
+ID with different inputs or settings returns 409. Cancelling one batch leaves a
+request running when another active batch still needs it. Startup migrates older
+single-batch membership keys transactionally, preserving saved results and history.
+
 The next batch waits for `published` and confirmation of both ordinary and matching
 rows in ClickHouse. Matching assets belong to the `website_crawl` group and receive
 materialization events after publication. The full variant also reports a basic

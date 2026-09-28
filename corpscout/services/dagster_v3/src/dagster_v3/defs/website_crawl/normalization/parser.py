@@ -6,6 +6,9 @@ from decimal import Decimal
 from urllib.parse import urlsplit
 from uuid import UUID
 
+from corpscout_identity.registration import identify_website
+from corpscout_identity.urls import website_reference
+
 from dagster_v3.defs.website_crawl.normalization.structured import (
     array_value,
     job_row,
@@ -180,6 +183,9 @@ def page_rows(
             "pages",
             **origin,
             requested_url=page.get("requested_url") or "",
+            resource_page_id=identify_website(origin["source_url"]).page_id
+            if origin["source_url"]
+            else None,
             final_url=text(page.get("source_url")),
             canonical_url=text(metadata.get("canonical_url")),
             http_status=page.get("status_code"),
@@ -280,8 +286,10 @@ def parse_attempt(
     run_id: str,
 ) -> dict[str, list[dict]]:
     common = {
-        key: source[key] for key in ("domain", "crawl_type", "request_id", "attempt")
+        key: source[key]
+        for key in ("domain", "website_id", "crawl_type", "request_id", "attempt")
     }
+    website_reference(source["website_url"], source["website_id"])
     common["normalization_id"] = normalization_id
     rows = {table: [] for table in COLUMNS}
     if host(source["website_url"]) != source["domain"]:
@@ -312,7 +320,9 @@ def parse_attempt(
             if key in payload and payload[key] != source[key]:
                 raise ValueError("Archive request/attempt mismatch")
         input_url = crawl.get("input_url") or payload.get("target_url")
-        if input_url and host(input_url) != host(source["website_url"]):
+        if payload.get("website_id") is not None:
+            website_reference(source["website_url"], payload["website_id"])
+        if input_url and website_reference(input_url) != source["website_id"]:
             raise ValueError("Archive website identity mismatch")
         documents = array_value(payload.get("documents"), "documents")
     pages = [

@@ -25,7 +25,7 @@ export type DomainAssociation = (typeof DOMAIN_ASSOCIATIONS)[number];
 export const DOMAIN_STATUSES = ["active", "inactive"] as const;
 export type DomainStatus = (typeof DOMAIN_STATUSES)[number];
 
-export const DOMAIN_SOURCE_VALUES = ["brave", "wikidata", "esef_filing", "common_crawl_identity"] as const;
+export const DOMAIN_SOURCE_VALUES = ["brave", "wikidata", "esef_filing", "common_crawl_identity", "crawler_lookup"] as const;
 
 export interface SeDomainsFilters {
   /** A root-domain fragment, lower-cased (domains are stored lower-case). */

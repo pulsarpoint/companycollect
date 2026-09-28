@@ -5,6 +5,7 @@ from dagster_v3.defs.common.llm_control import check_admission, current_request_
 
 import hashlib
 import json
+from corpscout_identity.urls import website_reference
 from time import monotonic, sleep
 
 from dlt.sources.helpers.requests import Session
@@ -61,6 +62,8 @@ def crawl_payload(row: dict, crawl_type: str, batch_id: str) -> dict:
         "headless",
         "proxy_route",
         "request_id",
+        "website_id",
+        "request_identity_version",
         "url",
         "crawl",
         "pages",
@@ -75,14 +78,17 @@ def crawl_payload(row: dict, crawl_type: str, batch_id: str) -> dict:
         raise ValueError(
             "config_json cannot override input identity, routing or refresh policy"
         )
-    # One identity per domain/type/batch. Changed payloads conflict at the service,
+    # One identity per website/type/batch (legacy requests retain their domain key). Changed payloads conflict at the service,
     # rather than silently creating a second execution while recovering a batch.
+    website_id = website_reference(row["website_url"], row.get("website_id"))
+    request_key = website_id if row.get("request_identity_version", 1) == 2 else row["domain"]
     identity = hashlib.sha256(
-        f"{batch_id}:{crawl_type}:{row['domain']}".encode()
+        f"{batch_id}:{crawl_type}:{request_key}".encode()
     ).hexdigest()
     payload = {
         "request_id": f"dagster-crawl-{identity}",
         "url": row["website_url"],
+        "website_id": website_id,
         "save_artifacts": bool(row["save_artifacts"]),
         "interactive": not bool(row["headless"]),
     }

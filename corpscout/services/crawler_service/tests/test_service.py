@@ -5,6 +5,7 @@ import io
 import json
 import unittest
 from contextlib import asynccontextmanager, redirect_stderr, redirect_stdout
+from hashlib import sha256
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -28,6 +29,7 @@ URL = "https://example.test/jobs"
 
 class CrawlServiceTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        self.enterContext(patch("crawler_service.service_api.register_requests"))
         install_browser_api(self)
         self.temporary = TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
@@ -68,7 +70,7 @@ class CrawlServiceTests(unittest.IsolatedAsyncioTestCase):
                 response = await client.post("/v1/crawls/validate", json=payload)
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(
-                    response.json(), payload | {"url": "https://example.test/"}
+                    response.json(), payload | {"url": "https://example.test/", "website_id": sha256(b"https://example.test").hexdigest()}
                 )
                 for invalid in (
                     payload | {"pages": [URL]},
@@ -363,6 +365,7 @@ class CrawlServiceTests(unittest.IsolatedAsyncioTestCase):
 
 class CrawlCliResultTests(unittest.TestCase):
     def setUp(self):
+        self.enterContext(patch("crawler_service.service_api.register_requests"))
         install_browser_api(self)
 
     def test_existing_cli_preserves_stdout_and_writes_portable_json(self):

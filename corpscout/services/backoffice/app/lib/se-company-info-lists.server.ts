@@ -142,7 +142,7 @@ export interface SeCompanyInfoListRow {
   /** 0 | 1 -- has an active row in the person entity's main table (migration
    * 000396); empty until slice 2's first fold. */
   has_people: number;
-  /** 0 | 1 -- has a Swedish row in the unified corpscout.company_domains. */
+  /** 0 | 1 -- has a Swedish row in the canonical corpscout.se_company_domain. */
   has_domains: number;
   /** 0 | 1 -- an ESEF filing exists for the company's LEI (listed on an EU
    * regulated market). */
@@ -249,7 +249,7 @@ export const DATATYPE_PRESENCE_EXPR: Record<ProfileDatatypeKey, string> = {
  * Each is the serving view's stored flag; WHICH tables earn a register its
  * flag (addresses/accounts/people for Bolagsverket; description/LEI/filing/
  * people for ESEF; wikidata_id/description for Wikidata; NOT
- * company_domains.source_names, NOT the filed-reports arm) is settled in the
+ * se_company_domain.sources, NOT the filed-reports arm) is settled in the
  * Dagster builder now -- see SE_COMPANIES_SERVING_TABLE's doc comment.
  *
  * - scb: the tautology, on the owner's ruling that SCB is the register base.

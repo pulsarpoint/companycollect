@@ -149,14 +149,14 @@ export const COMPANY_FLAG_SOURCES: Record<
     contacts: { idQuery: swedenSectionCompanyIds("domains") },
     domain: {
       idQuery: `SELECT company_id
-        FROM company_domains FINAL
+        FROM se_company_domain_resolved
         WHERE country_code = 'SE'
           AND is_active = 1
           AND review_status != 'rejected'`,
     },
     domain_suggestion: {
       idQuery: `SELECT company_id
-        FROM company_domains FINAL
+        FROM se_company_domain_resolved
         WHERE country_code = 'SE'
           AND is_active = 1
           AND review_status = 'unreviewed'`,

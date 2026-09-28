@@ -1,11 +1,15 @@
+import ast
 import asyncio
 import json
+import sqlite3
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 import httpx
+from corpscout_identity.registration import identify_website
+from corpscout_identity.urls import website_reference
 from test_llm_profile import KEY, profile_payload
 
 from crawler_service.company_lookup import CompanyLookupBatchRequest
@@ -29,6 +33,7 @@ def result(domain="example.se", *, failed=False):
         country="SE",
         domain=domain,
         website_url=f"https://{domain}/",
+        website_id=website_reference(f"https://{domain}/"),
         request_id="lookup-test",
         attempt=1,
         work_key="settings",
@@ -57,6 +62,78 @@ def result(domain="example.se", *, failed=False):
 
 
 class LookupStoreTests(unittest.TestCase):
+    def test_legacy_queue_migration_preserves_request_and_batch_state(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "queue.sqlite3"
+            old = sqlite3.connect(path)
+            old.executescript("""CREATE TABLE items (
+                request_id TEXT PRIMARY KEY, batch_id TEXT NOT NULL, domain TEXT NOT NULL,
+                dispatched INTEGER NOT NULL DEFAULT 0, cancelled INTEGER NOT NULL DEFAULT 0);
+                INSERT INTO items VALUES ('a','old','a.se',1,0),('b','old','b.se',0,1);""")
+            old.close()
+            for _ in range(2):
+                store = LookupStore(path)
+                self.assertEqual([tuple(row) for row in store.db.execute("SELECT * FROM items ORDER BY request_id")],
+                                 [("a", "old", "a.se", 1, 0), ("b", "old", "b.se", 0, 1)])
+                store.db.execute("INSERT OR IGNORE INTO items VALUES ('b','new','b.se',0,0)")
+                self.assertEqual(store.db.execute("SELECT count(*) FROM items").fetchone()[0], 3)
+                store.db.rollback()
+                store.close()
+
+    def test_partial_cancelled_batch_can_resume_with_new_membership_after_restart(self):
+        def payload(batch, domains):
+            return {"batch_id": batch, "input_id": "task", "run_id": "execution", "entries": [
+                {"request": {"request_id": domain, "url": f"https://{domain}/",
+                             "llm": {"profile_id": "model", "profile_revision": 1,
+                                     "api_key_encrypted": batch}}, "work_key": domain}
+                for domain in domains]}
+
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "queue.sqlite3"
+            store = LookupStore(path)
+            store.submit("old", payload("old", ["a.se", "b.se"]), [
+                {"request_id": domain, "domain": domain} for domain in ["a.se", "b.se"]])
+            store.dispatched("a.se")
+            store.enqueue("a.se", 1, result("a.se"))
+            store.cancel("old")
+            batch, rows = store.ready()[0]
+            store.delivered(batch, rows, None)
+            store.close()
+            store = LookupStore(path)
+            store.submit("new", payload("new", ["b.se", "c.se"]), [
+                {"request_id": domain, "domain": domain} for domain in ["b.se", "c.se"]])
+            self.assertEqual(store.snapshot("old")["total"], 2)
+            self.assertEqual([r["domain"] for r in store.undispatched(4)], ["b.se", "c.se"])
+            for domain in ["b.se", "c.se"]:
+                store.dispatched(domain)
+                store.enqueue(domain, 1, result(domain))
+            self.assertEqual(store.undispatched(4), [])
+            batch, rows = store.ready()[0]
+            self.assertEqual(batch, "new")
+            self.assertEqual(len(rows), 2)
+            store.delivered(batch, rows, None)
+            self.assertEqual(store.snapshot("old")["state"], "cancelled")
+            self.assertEqual(store.snapshot("new")["state"], "published")
+            self.assertEqual(store.snapshot("new")["processed"], 2)
+            self.assertEqual(store.ready(), [])
+            with self.assertRaisesRegex(ValueError, "Request ID already exists"):
+                store.submit("conflict", payload("conflict", ["b.se"]) | {"run_id": "different-execution"},
+                             [{"request_id": "b.se", "domain": "b.se"}])
+            self.assertIsNone(store.snapshot("conflict"))
+            store.close()
+
+    def test_overlapping_active_batches_dispatch_once_and_cancel_only_exclusive_work(self):
+        with TemporaryDirectory() as directory:
+            store = LookupStore(Path(directory) / "queue.sqlite3")
+            for batch in ["one", "two"]:
+                store.submit(batch, {"domains": ["a.se"]}, [{"request_id": "a", "domain": "a.se"}])
+            self.assertEqual(len(store.undispatched(4)), 1)
+            store.dispatched("a")
+            self.assertEqual(store.undispatched(4), [])
+            self.assertEqual(store.cancel("one"), [])
+            self.assertEqual(store.cancel("two"), ["a"])
+            store.close()
+
     def test_restart_holds_partial_batch_and_replays_only_unacknowledged_rows(self):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "queue.sqlite3"
@@ -117,7 +194,25 @@ class LookupStoreTests(unittest.TestCase):
         self.assertEqual(rows["website_company_lookup_results"][0]["status"], "failed")
 
 
+def parent_response(request):
+    if not request.url.params.get("query", "").startswith("SELECT p.page_id"):
+        return None
+    ids = ast.literal_eval(request.url.params["param_ids"])
+    domains = ["alpha.se", "beta.se", "gamma.se", "delta.se", "epsilon.se", "example.se"] + [f"site-{i}.se" for i in range(6)]
+    identities = [identify_website(f"https://{domain}/") for domain in domains]
+    return httpx.Response(200, text="\n".join(json.dumps({
+        "page_id": item.page_id, "website_id": item.website_id, "domain_id": item.domain_id, "page_url": item.page_url
+    }) for item in identities if item.page_id in ids))
+
+
 class LookupBatchApiTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        # These tests exercise the HTTP/SQLite scheduling boundary. The real parent
+        # registration + publication boundary is covered by identity integration tests.
+        for target in ("crawler_service.service_api.register_requests", "crawler_service.service.register_results"):
+            mocked = self.enterContext(patch(target))
+            if target.endswith("register_results"):
+                self.registration = mocked
     async def test_four_workers_and_no_publication_before_whole_batch_finishes(self):
         await self.exercise_batch()
 
@@ -125,7 +220,11 @@ class LookupBatchApiTests(unittest.IsolatedAsyncioTestCase):
         for crawl_type in ("site_info", "full"):
             await self.exercise_batch(crawl_type)
 
-    async def exercise_batch(self, crawl_type=None):
+    async def test_registration_outage_keeps_completed_payloads_without_recrawling(self):
+        self.registration.side_effect = ValueError("identity database unavailable")
+        await self.exercise_batch(registration_outage=True)
+
+    async def exercise_batch(self, crawl_type=None, registration_outage=False):
         with TemporaryDirectory() as directory:
             service = CrawlService(
                 Path(directory),
@@ -148,13 +247,16 @@ class LookupBatchApiTests(unittest.IsolatedAsyncioTestCase):
                 peak = max(peak, active)
                 started.append(job.domain)
                 await (release if len(started) <= 4 else last_release).wait()
-                output = result(job.domain, failed=job.domain == "a.se")
+                output = result(job.domain, failed=job.domain == "alpha.se")
                 write_json(attempt / "result.json", output)
                 active -= 1
                 return output
 
             async def transport(_transport, request):
                 self.assertEqual(request.url.host, "results")
+                parents = parent_response(request)
+                if parents is not None:
+                    return parents
                 inserts.append(
                     (
                         request.url.params["query"],
@@ -187,7 +289,7 @@ class LookupBatchApiTests(unittest.IsolatedAsyncioTestCase):
                 ):
                     payload = dict(
                         batch_id="batch",
-                        domains=["a.se", "b.se", "c.se", "d.se", "e.se"],
+                        domains=["alpha.se", "beta.se", "gamma.se", "delta.se", "epsilon.se"],
                         country="SE",
                         llm=profile_payload(),
                     )
@@ -216,6 +318,13 @@ class LookupBatchApiTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(service.lookup_store.ready(), [])
                     self.assertEqual(inserts, [])
                     last_release.set()
+                    if registration_outage:
+                        await until(lambda: service.lookup_store.snapshot("batch")["publication_error"])
+                        self.assertEqual(len(started), 5)
+                        self.assertEqual(inserts, [])
+                        self.assertEqual(service.lookup_store.snapshot("batch")["processed"], 5)
+                        self.assertEqual(len(service.lookup_store.ready()[0][1]), 5)
+                        self.registration.side_effect = None
                     await until(
                         lambda: (
                             service.lookup_store.snapshot("batch")["state"]
@@ -273,7 +382,7 @@ class LookupBatchApiTests(unittest.IsolatedAsyncioTestCase):
             service.run_scan = blocked
 
             async def transport(_transport, request):
-                return httpx.Response(200)
+                return parent_response(request) or httpx.Response(200)
 
             with patch.object(
                 httpx.AsyncHTTPTransport, "handle_async_request", transport
@@ -374,6 +483,9 @@ class LookupBatchApiTests(unittest.IsolatedAsyncioTestCase):
         fail = True
 
         def respond(request):
+            parents = parent_response(request)
+            if parents is not None:
+                return parents
             query = request.url.params["query"]
             attempts.append(query)
             return httpx.Response(503 if fail else 200)
@@ -485,11 +597,22 @@ class ClickHousePublicationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.status_code, 200, response.text)
             self.assertEqual(json.loads(response.text), dict(request_id="full-crawl", input_revision=9, successful=True, company_matching_status="failed"))
             # Match prechecks read active, country-scoped associations, including review overrides in the production view.
-            await http.post("", content=b"CREATE TABLE corpscout.company_domains_resolved (country_code String, root_domain String, company_id String, is_active Bool) ENGINE=Memory")
-            response = await http.post("", content=b"INSERT INTO corpscout.company_domains_resolved VALUES ('SE', 'mapped.se', '5560123456', true), ('SE', 'mapped.se', '5560999999', false), ('NO', 'mapped.se', '5560888888', true)")
+            await http.post("", content=b"CREATE TABLE corpscout.se_company_domain_resolved (country_code String, root_domain String, company_id String, is_active Bool) ENGINE=Memory")
+            response = await http.post("", content=b"INSERT INTO corpscout.se_company_domain_resolved VALUES ('SE', 'mapped.se', '5560123456', true), ('SE', 'mapped.se', '5560999999', false), ('NO', 'mapped.se', '5560888888', true)")
             self.assertEqual(response.status_code, 200, response.text)
             from crawler_service.company_search import search_companies
             searches = []
             mapped = await search_companies(http, kind="existing_mapping", value="www.mapped.se", searches=searches)
             self.assertEqual(mapped, [{"company_id": "5560123456"}])
             self.assertEqual(searches[0]["row_count"], 1)
+
+
+def test_legacy_batch_identity_enrichment_does_not_change_frozen_settings(tmp_path):
+    store = LookupStore(tmp_path / "queue.sqlite3")
+    old = {"batch_id": "old", "entries": [{"request": {"request_id": "a", "url": "https://a.se/"}}]}
+    store.submit("old", old, [{"request_id": "a", "domain": "a.se"}])
+    enriched = json.loads(json.dumps(old))
+    enriched["entries"][0]["request"]["website_id"] = website_reference("https://a.se/")
+    store.submit("old", enriched, [{"request_id": "a", "domain": "a.se"}])
+    assert store.snapshot("old")["total"] == 1
+    store.close()

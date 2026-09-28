@@ -106,6 +106,15 @@ HTML and full original JSON remain in S3 and are readable through the existing
 interpretation remain offline work. One stored unsuccessful response does not fail
 an otherwise completed batch; asset metadata reports successful/unsuccessful counts.
 
+After ClickHouse acknowledges results, Dagster logs a warning for each unsuccessful
+domain/stage, with its saved reason, page navigation errors, request ID, attempt,
+and Backoffice debug-trace path. Company-association batches also emit an asset
+observation with a `failure_details` table and separate crawl/matching totals.
+`not_found` is a completed company search, not a crawler failure. Inputs can be
+purged after publication without removing these result rows or their diagnostics.
+Historical runs retain their original logs; inspect their saved results and debug
+traces for failures that predate this logging.
+
 Before submission, the asset validates the selected batch with the crawler API and
 persists immutable request snapshots in `website_crawl_submissions`. This is an audit
 and recovery ledger, not an atomic claim queue. The Dagster pool and a direct PostgreSQL

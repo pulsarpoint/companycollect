@@ -17,6 +17,7 @@ from dagster_v3.defs.esef_filings.website_candidates import registrable_domain_f
 from dagster_v3.defs.se_company.basic_info.extract import ExtractConfig, scope_pages
 from dagster_v3.defs.se_company.domain import tables
 from dagster_v3.defs.se_company.domain.batch import read_rows
+from dagster_v3.defs.se_company.domain.claims import insert_claims
 from dagster_v3.defs.se_company.domain.evidence import digest, json_text
 
 EXTRACTOR_VERSION = "brave-domains-v1"
@@ -231,7 +232,7 @@ def process_brave_answers(
             ]
             previous = defaultdict(list)
             for row in read_rows(
-                client, tables.SUGGESTION_TABLE, tables.SUGGESTION_COLUMNS, ids
+                client, tables.SOURCE_VIEW, tables.SUGGESTION_COLUMNS, ids
             ):
                 if row["source"] == "brave":
                     previous[row["company_id"]].append(row)
@@ -281,27 +282,16 @@ def process_brave_answers(
             if config.execute:
                 # Acknowledged suggestions first, checkpoint second. A failure between
                 # them is replayable, including a response that withdraws every domain.
-                for table, columns, rows, counter in (
-                    (
-                        tables.SUGGESTION_TABLE,
-                        tables.SUGGESTION_COLUMNS,
-                        suggestions,
-                        "suggestions_written",
-                    ),
-                    (
-                        CHECKPOINT_TABLE,
-                        CHECKPOINT_COLUMNS,
-                        checkpoints,
-                        "checkpoints_written",
-                    ),
-                ):
-                    if rows:
-                        client.execute(
-                            f"INSERT INTO corpscout.{table} ({','.join(columns)}) VALUES",
-                            [tuple(row[column] for column in columns) for row in rows],
-                            settings={"async_insert": 0},
-                        )
-                        counts[counter] += len(rows)
+                if suggestions:
+                    insert_claims(client, suggestions)
+                    counts["suggestions_written"] += len(suggestions)
+                if checkpoints:
+                    client.execute(
+                        f"INSERT INTO corpscout.{CHECKPOINT_TABLE} ({','.join(CHECKPOINT_COLUMNS)}) VALUES",
+                        [tuple(row[column] for column in CHECKPOINT_COLUMNS) for row in checkpoints],
+                        settings={"async_insert": 0},
+                    )
+                    counts["checkpoints_written"] += len(checkpoints)
             log(
                 "Brave domain extraction: companies=%d domains=%d empty=%d execute=%s",
                 counts["companies"],
@@ -319,7 +309,7 @@ def process_brave_answers(
     kinds={"clickhouse", "python"},
     pool="se_company_domain_brave",
     deps=["company_brave_search_results"],
-    metadata={"table": "corpscout.se_company_domain_suggestion", "source": "brave"},
+    metadata={"table": "corpscout.se_company_domain_sources", "source": "brave"},
     description="Extract and save domain suggestions from each new official-website Brave response. Save response-ID/hash checkpoints with JSON domain lists after source suggestions, including empty lists. Candidates retain the original answer for domain verification. Writes are enabled by default; execute=false previews without saving.",
 )
 def se_company_domain_suggestions_brave(
@@ -330,7 +320,7 @@ def se_company_domain_suggestions_brave(
     assert_clickhouse_tables_exist(
         clickhouse,
         database=tables.DATABASE,
-        tables=("se_company_brave_search_results_latest_success", CHECKPOINT_TABLE, tables.SUGGESTION_TABLE),
+        tables=("se_company_brave_search_results_latest_success", CHECKPOINT_TABLE, tables.SOURCE_TABLE, tables.SOURCE_VIEW),
     )
     with clickhouse.get_connection() as client:
         counts = process_brave_answers(

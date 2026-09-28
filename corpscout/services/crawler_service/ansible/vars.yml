@@ -60,3 +60,7 @@ crawler_service_clickhouse_results_url: "{{ lookup('ansible.builtin.env', 'CLICK
 crawler_service_clickhouse_results_user: "{{ lookup('ansible.builtin.env', 'CLICKHOUSE_RESULTS_USER') }}"
 crawler_service_clickhouse_results_password: "{{ lookup('ansible.builtin.env', 'CLICKHOUSE_RESULTS_PASSWORD') }}"
 crawler_service_lookup_timeout_seconds: 900
+
+# Central identities use the same PostgreSQL database as Dagster publication guards.
+crawler_service_clickhouse_native_url: "{{ lookup('ansible.builtin.env', 'CLICKHOUSE_NATIVE_URL') }}"
+crawler_service_processing_pg_url: "{{ lookup('ansible.builtin.env', 'PROCESSING_PG_URL') }}"

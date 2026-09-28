@@ -520,6 +520,37 @@
   check_mode: false
   when: dagster_venv.stat.exists
 
+- name: Prepare the shared identity package directory
+  ansible.builtin.file:
+    path: "{{ dagster_deploy_dir }}/../../python/corpscout_identity"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Preview the shared identity package synchronization
+  ansible.builtin.command:
+    argv:
+      - rsync
+      - --archive
+      - --no-owner
+      - --no-group
+      - --delete-after
+      - --delay-updates
+      - --omit-dir-times
+      - --itemize-changes
+      - --dry-run
+      - --exclude=__pycache__/
+      - --exclude=*.pyc
+      - --rsync-path=sudo -n rsync
+      - "{{ dagster_source_dir }}/../../python/corpscout_identity/"
+      - "{{ ansible_user }}@{{ ansible_host }}:{{ dagster_deploy_dir }}/../../python/corpscout_identity/"
+  register: dagster_identity_preview
+  delegate_to: localhost
+  become: false
+  check_mode: false
+  changed_when: dagster_identity_preview.stdout_lines | length > 0
+
 - name: Preview the local-to-host Dagster synchronization
   ansible.builtin.command:
     argv:
@@ -556,21 +587,24 @@
   ansible.builtin.set_fact:
     dagster_source_changed: >-
       {{
+        (dagster_identity_preview.stdout_lines | length > 0) or (
         dagster_rsync_preview.stdout_lines
         | reject('match', '^cannot delete non-empty directory:')
         | reject('match', '^[*]deleting .+/$')
         | reject('equalto', '')
         | list
-        | length > 0
+        | length > 0)
       }}
     dagster_environment_changed: >-
       {{
-        not dagster_venv.stat.exists
+        (dagster_identity_preview.stdout_lines | length > 0)
+        or not dagster_venv.stat.exists
         or (dagster_uv_check.rc | default(1)) != 0
       }}
     dagster_deployment_required: >-
       {{
         dagster_force_restart
+        or (dagster_identity_preview.stdout_lines | length > 0)
         or (
           dagster_rsync_preview.stdout_lines
           | reject('match', '^cannot delete non-empty directory:')
@@ -818,6 +852,30 @@
       parser model at {{ dagster_libpostal_parser_model }} and the development
       header at {{ dagster_libpostal_header }}.
   when: not ansible_check_mode
+
+- name: Synchronize shared identities while Dagster is stopped
+  ansible.builtin.command:
+    argv:
+      - rsync
+      - --archive
+      - --no-owner
+      - --no-group
+      - --delete-after
+      - --delay-updates
+      - --omit-dir-times
+      - --itemize-changes
+      - --exclude=__pycache__/
+      - --exclude=*.pyc
+      - --rsync-path=sudo -n rsync
+      - "{{ dagster_source_dir }}/../../python/corpscout_identity/"
+      - "{{ ansible_user }}@{{ ansible_host }}:{{ dagster_deploy_dir }}/../../python/corpscout_identity/"
+  register: dagster_identity_sync
+  delegate_to: localhost
+  become: false
+  changed_when: dagster_identity_sync.stdout_lines | length > 0
+  when:
+    - not ansible_check_mode
+    - dagster_identity_preview.stdout_lines | length > 0
 
 - name: Synchronize changed Dagster source files
   ansible.builtin.command:

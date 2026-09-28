@@ -42,24 +42,17 @@ def publish_company_serving_country(
             stage = stages[contract.name]
             client.execute(f"CREATE TABLE {stage} AS {contract.qualified_name}")
             columns = ", ".join(contract.columns)
-            if contract is tables.DOMAINS:
-                _insert_company_domain_stage(
-                    client,
-                    stage=stage,
-                    country_code=country_code,
-                )
-            else:
-                country_filter = (
-                    " WHERE country_code = %(country_code)s"
-                    if contract.partitioned
-                    else ""
-                )
-                client.execute(
-                    f"INSERT INTO {stage} ({columns}) "
-                    f"SELECT {columns} FROM {contract.qualified_build_model}"
-                    f"{country_filter}",
-                    {"country_code": country_code},
-                )
+            country_filter = (
+                " WHERE country_code = %(country_code)s"
+                if contract.partitioned
+                else ""
+            )
+            client.execute(
+                f"INSERT INTO {stage} ({columns}) "
+                f"SELECT {columns} FROM {contract.qualified_build_model}"
+                f"{country_filter}",
+                {"country_code": country_code},
+            )
             row_count = _scalar(client, f"SELECT count() FROM {stage}")
             counts[f"{contract.name}_rows"] = row_count
             _validate_stage(
@@ -95,12 +88,7 @@ def publish_company_serving_country(
         for contract in tables.CURRENT_TABLES:
             target = contract.qualified_name
             stage = stages[contract.name]
-            if contract is tables.DOMAINS:
-                columns = ", ".join(contract.columns)
-                client.execute(
-                    f"INSERT INTO {target} ({columns}) SELECT {columns} FROM {stage}"
-                )
-            elif contract.partitioned:
+            if contract.partitioned:
                 backup = backups[contract.name]
                 client.execute(f"CREATE TABLE {backup} AS {target}")
                 client.execute(
@@ -154,62 +142,6 @@ def publish_company_serving_country(
         counts,
     )
     return counts
-
-
-def _insert_company_domain_stage(
-    client: Any,
-    *,
-    stage: str,
-    country_code: str,
-) -> None:
-    """Stage fresh source evidence with the latest human review state.
-
-    dbt can finish before the serving publisher starts. Reading review fields
-    again here prevents a decision made in that interval from being replaced
-    by the older dbt snapshot. The published rows retain the build's source
-    evidence and become newer ReplacingMergeTree versions.
-    """
-    client.execute(
-        f"""INSERT INTO {stage} ({", ".join(tables.DOMAINS.columns)})
-SELECT
-    staged.country_code,
-    staged.company_id,
-    staged.root_domain,
-    staged.website_url,
-    staged.website_host,
-    staged.source_names,
-    staged.source_confidences,
-    staged.source_record_ids,
-    staged.source_urls,
-    staged.confidence_bases,
-    staged.suggested_confidence,
-    staged.suggested_primary,
-    staged.evidence_fingerprint,
-    if(current.root_domain != '', current.review_status, staged.review_status),
-    if(current.root_domain != '', current.review_note, staged.review_note),
-    if(current.root_domain != '', current.reviewed_by, staged.reviewed_by),
-    if(current.root_domain != '', current.reviewed_at, staged.reviewed_at),
-    if(
-        current.root_domain != '',
-        current.reviewed_evidence_fingerprint,
-        staged.reviewed_evidence_fingerprint
-    ),
-    toUInt8(multiIf(
-        current.review_status IN ('confirmed_primary', 'confirmed_related'), 1,
-        current.review_status = 'rejected', 0,
-        staged.is_active
-    )),
-    staged.first_seen_at,
-    staged.last_seen_at,
-    now64(3, 'UTC')
-FROM {tables.DOMAINS.qualified_build_model} AS staged
-LEFT JOIN {tables.DOMAINS.qualified_name} AS current FINAL
-    ON current.country_code = staged.country_code
-   AND current.company_id = staged.company_id
-   AND current.root_domain = staged.root_domain
-WHERE staged.country_code = %(country_code)s""",
-        {"country_code": country_code},
-    )
 
 
 def _validate_stage(
@@ -282,20 +214,15 @@ def _validate_source_links(client: Any, link_stage: str) -> None:
         raise ValueError(f"Section evidence stage has {missing} missing source records")
 
 
-# The rows of the domains stage that the presence model counts: company_domain_current_build
-# keeps exactly these rows of company_domains_build, and the presence model's domains and
-# technology legs read it, while the publish stages the unfiltered build (with the live
-# review state overlaid). Without the filter the first inactive or rejected domain row fails
-# the reconciliation by one (2026-09-13).
-PUBLISHED_DOMAIN_FILTER = "is_active = 1 AND review_status != 'rejected'"
-
-
 def _validate_presence_counts(
     client: Any,
     *,
     stages: dict[str, str],
     country_code: str,
 ) -> None:
+    # Domain associations publish independently of this serving snapshot. Their
+    # live count can advance after dbt builds presence, so do not reconcile it
+    # against this snapshot. Anchor and section validation still apply.
     expected_queries = {
         "gleif": (
             "SELECT countDistinct(tuple(company_id, item_key)) FROM ("
@@ -311,14 +238,6 @@ def _validate_presence_counts(
         "descriptions": (
             "SELECT countDistinct(tuple(company_id, description_id)) "
             f"FROM {stages[tables.DESCRIPTIONS.name]}"
-        ),
-        "domains": (
-            "SELECT countDistinct(tuple(company_id, item_key)) FROM ("
-            f"SELECT company_id, concat('domain:', root_domain) AS item_key FROM {stages[tables.DOMAINS.name]} "
-            f"WHERE {PUBLISHED_DOMAIN_FILTER} "
-            "UNION ALL "
-            f"SELECT company_id, concat('contact:', contact_id) AS item_key FROM {stages[tables.CONTACTS.name]}"
-            ")"
         ),
         "contracts": (
             "SELECT countDistinct(tuple(company_id, contract_ref)) "
@@ -355,10 +274,6 @@ def _validate_presence_counts(
             "SELECT countDistinct(tuple(company_id, source_record_uid)) "
             f"FROM {stages[tables.SOURCE_LINKS.name]} "
             f"WHERE country_code = '{country_code}'"
-        ),
-        "technology": (
-            "SELECT countDistinct(tuple(company_id, root_domain)) "
-            f"FROM {stages[tables.DOMAINS.name]} WHERE {PUBLISHED_DOMAIN_FILTER}"
         ),
     }
     presence_stage = stages[tables.PRESENCE.name]

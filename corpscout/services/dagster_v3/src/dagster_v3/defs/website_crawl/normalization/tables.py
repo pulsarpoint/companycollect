@@ -1,6 +1,6 @@
 """Migration 452 export contracts. ClickHouse DDL remains migration-owned."""
 
-PARSER_VERSION = "1"
+PARSER_VERSION = "2"
 
 SCHEMAS = {
     "scans": """domain String
@@ -172,6 +172,10 @@ expires_at_original Nullable(String)
 extraction_source Enum8('jsonld' = 1, 'legacy_record' = 2)
 evidence Array(String)""",
 }
+
+# Migration 466 adds these ordinary references after the existing export columns.
+SCHEMAS = {name: schema + "\nwebsite_id String" for name, schema in SCHEMAS.items()}
+SCHEMAS["pages"] += "\nresource_page_id Nullable(String)"
 
 COLUMNS = {
     table: tuple(line.split(" ", 1)[0] for line in schema.splitlines())

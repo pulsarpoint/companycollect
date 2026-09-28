@@ -7,6 +7,7 @@ from dagster_clickhouse import ClickhouseResource
 from pydantic import Field
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
+from dagster_v3.defs.domains.registration import PUBLISH_POOL
 from dagster_v3.defs.se_company.domain import tables
 from dagster_v3.defs.se_company.domain.batch import insert_rows, publish_domains, read_rows, verify_domains
 from dagster_v3.defs.se_company.domain.precedence import DOMAIN_PRECEDENCE
@@ -83,18 +84,19 @@ def se_company_domain_verification(
 
 
 @dg.asset(
-    group_name=tables.GROUP_NAME, kinds={"clickhouse", "python"}, pool="se_company_domain_fold",
+    group_name=tables.GROUP_NAME, kinds={"clickhouse", "python"}, pool=PUBLISH_POOL,
     deps=["se_company_domain_verification"],
-    description="Fold Swedish company domains from source suggestions, precedence, reviewer decisions and stored current-input LLM verdicts. Append change history before publication. This step never calls an LLM.",
+    description="Fold Swedish company domains from source suggestions, precedence, reviewer decisions and stored current-input LLM verdicts. Ensure the central domain before writing the country association. A separate domains_sources asset derives table contributions afterward. Append change history before publication. This step never calls an LLM.",
 )
 def se_company_domain_publish(
     context: dg.AssetExecutionContext, config: DomainPublishConfig, clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
     context.log.info("Domain publication: checking required ClickHouse tables")
-    assert_clickhouse_tables_exist(clickhouse, database=tables.DATABASE, tables=tables.TABLES)
+    assert_clickhouse_tables_exist(clickhouse, database=tables.DATABASE, tables=(*tables.TABLES, "domains", "domains_company_filter"))
     context.log.info("Domain publication: tables available; opening ClickHouse connection")
     with clickhouse.get_connection() as client:
         counts = publish_domains(client, page_size=config.page_size, changed_only=config.changed_only,
                                  profile=config.verification, run_id=context.run_id, log=context.log.info)
+        client.execute("SYSTEM REFRESH VIEW corpscout.domains_company_filter")
     return dg.MaterializeResult(metadata={**counts, "changed_only": config.changed_only,
                                          "table": tables.MAIN_TABLE, "history_table": tables.HISTORY_TABLE})

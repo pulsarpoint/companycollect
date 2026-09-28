@@ -60,7 +60,7 @@ needs `INSERT` on exactly these tables in the `corpscout` database:
 - `website_company_lookup_evidence`
 - `website_company_lookup_searches`
 
-The reader also needs access to `company_domains_resolved` for the optional
+The reader also needs access to `se_company_domain_resolved` for the optional
 existing-association check. Deploy through this playbook once the crawler is idle.
 After a matching test finishes, its result API must report
 `publication.state = "published"` and `persisted_to_database = true`. Verify the
@@ -208,3 +208,12 @@ run `uv sync --all-extras --group test --reinstall` after moving an existing che
 Deployment refuses activation while queued or active crawls exist. Once idle, it
 stops and disables the legacy `company-research.service`, starts the renamed unit,
 and checks readiness. The previous release and legacy unit are retained for rollback.
+
+
+Central website registration requires `crawler_service_clickhouse_native_url` and
+`crawler_service_processing_pg_url`, mapped from `CLICKHOUSE_NATIVE_URL` and `PROCESSING_PG_URL`.
+Use the same inventory and processing coordinator as Dagster. Native credentials need central
+inventory SELECT/INSERT; the result HTTP credentials need central inventory SELECT as well as
+result INSERT. The migration does not assign roles automatically. Both application wheels
+include the shared identity implementation. Coordinate migration 466 with historical backfill
+and writer activation; do not deploy this writer against the previous result schema.

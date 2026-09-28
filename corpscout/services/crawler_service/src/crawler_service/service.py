@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 import httpx
+from corpscout_identity.urls import website_reference
 from pydantic import Field, field_serializer, field_validator, model_validator
 
 from crawler_service.brave_browser import BraveSearch
@@ -37,6 +38,7 @@ from crawler_service.debug_trace import (
 )
 from crawler_service.discovery import crawlable_url, normalize_url
 from crawler_service.human_control import HumanSession
+from crawler_service.identity_registration import register_results
 from crawler_service.jev import JevClient
 from crawler_service.llm import ModelClient
 from crawler_service.llm_profile import EncryptedLLMProfile, LLMProfileError
@@ -60,6 +62,7 @@ class CrawlRequest(StrictModel):
         pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
     )
     url: str = Field(max_length=8192)
+    website_id: str = Field(default="", pattern=r"^(?:[a-f0-9]{64})?$")
     pages: list[str] | None = Field(default=None, min_length=1, max_length=1000)
     instructions: str | None = Field(default=None, max_length=20000)
     site_info: bool = False
@@ -101,6 +104,7 @@ class CrawlRequest(StrictModel):
 
     @model_validator(mode="after")
     def crawl_options(self):
+        self.website_id = website_reference(self.url, self.website_id or None)
         if self.company_lookup is not None:
             if self.llm is None:
                 raise ValueError("Company matching requires a processing model")
@@ -208,6 +212,7 @@ class CrawlJob(StrictModel):
     submitted_at: str
     url: str = ""
     domain: str = ""
+    website_id: str = ""  # Historical job metadata can precede central registration.
     updated_at: str = Field(default_factory=utc_now)
     current_url: str | None = None
     reason: str | None = None
@@ -363,6 +368,8 @@ class CrawlService:
                 if not status_file.exists() and request.company_lookup is not None:
                     job.lookup_result_version = 1
                 job.url = request.url
+                website_reference(request.url, job.website_id or None)
+                job.website_id = request.website_id
                 job.domain = (urlsplit(request.url).hostname or "").removeprefix("www.")
                 job.browser_available = False
                 job.verification_available = False
@@ -388,6 +395,8 @@ class CrawlService:
                         self.root / job.result_file,
                         {
                             "request_id": job.request_id,
+                            "website_id": request.website_id,
+                            "attempt": job.attempt,
                             "error": job.error,
                             "finished_at": job.finished_at,
                         },
@@ -495,6 +504,7 @@ class CrawlService:
             source=source,
             submitted_at=utc_now(),
             url=request.url,
+            website_id=request.website_id,
             domain=(urlsplit(request.url).hostname or "").removeprefix("www."),
             retry_of=retry_of,
             retry_of_attempt=retry_of_attempt,
@@ -665,6 +675,8 @@ class CrawlService:
             self.root / job.result_file,
             {
                 "request_id": job.request_id,
+                "website_id": job.website_id,
+                "attempt": job.attempt,
                 "error": job.error,
                 "finished_at": job.finished_at,
             },
@@ -684,7 +696,7 @@ class CrawlService:
             request.decision_llm.decrypt_api_key(self.environment)
         items = [{"domain": domain, "request_id": "lookup-" + hashlib.sha256(f"{request.batch_id}:{domain}".encode()).hexdigest()} for domain in request.domains]
         try:
-            self.lookup_store.submit(request.batch_id, request.model_dump(), items)
+            self.lookup_store.submit(request.batch_id, request.model_dump() | {"website_ids": {domain: website_reference(f"https://{domain}/") for domain in request.domains}}, items)
         except ValueError as error:
             raise RequestConflict(str(error)) from error
         return self.lookup_store.snapshot(request.batch_id)
@@ -717,9 +729,10 @@ class CrawlService:
                     entry = next(entry for entry in payload["entries"] if entry["request"]["request_id"] == item["request_id"])
                     request = CrawlRequest.model_validate(entry["request"])
                 else:
+                    website_id = payload.get("website_ids", {}).get(item["domain"], "")
                     options = CompanyLookupOptions(country=payload["country"], skip_if_mapped=payload.get("skip_if_mapped", False))
-                    payload = {key: value for key, value in payload.items() if key not in {"batch_id", "domains", "input_id", "run_id", "country", "skip_if_mapped", "max_pages"}}
-                    request = CrawlRequest(request_id=item["request_id"], url=f"https://{item['domain']}/",
+                    payload = {key: value for key, value in payload.items() if key not in {"batch_id", "domains", "input_id", "run_id", "country", "skip_if_mapped", "max_pages", "website_ids"}}
+                    request = CrawlRequest(request_id=item["request_id"], url=f"https://{item['domain']}/", website_id=website_id,
                         company_lookup=options, debug=True, site_info=True, **payload)
                 try:
                     self.submit(request, source="rest")
@@ -755,9 +768,9 @@ class CrawlService:
         for key in ("llm", "decision_llm"):
             if settings.get(key):
                 settings[key].pop("api_key_encrypted", None)
-        for key in ("request_id", "url", "session_id"):
+        for key in ("request_id", "url", "session_id", "website_id"):
             settings.pop(key, None)
-        result.update(country=request.company_lookup.country, domain=job.domain, website_url=request.url,
+        result.update(country=request.company_lookup.country, domain=job.domain, website_url=request.url, website_id=request.website_id,
             request_id=job.request_id, attempt=job.attempt, result_path=str(saved.relative_to(self.root)),
             work_key=hashlib.sha256(json.dumps(settings, sort_keys=True).encode()).hexdigest())
         batch = self.lookup_store.db.execute("SELECT b.batch_id,b.payload FROM batches b JOIN items i USING(batch_id) WHERE i.request_id=?", (job.request_id,)).fetchone()
@@ -771,8 +784,10 @@ class CrawlService:
         result["site_info"] = result["site_info_result"]["crawl"]["site_info"]
         result["persisted_to_database"] = False
         # Keep the full portable basic capture locally, not duplicated in SQLite.
-        if not saved.exists() or saved_result and "crawl" in saved_result:
-            write_json(saved, result)
+        for capture in (result["site_info_result"], result.get("crawl_result", {})):
+            if capture:
+                capture["website_id"] = request.website_id
+        write_json(saved, result)
         result = json.loads(json.dumps(result))
         for capture in (result["site_info_result"], result.get("crawl_result", {})):
             for document in capture.get("documents", []):
@@ -790,7 +805,9 @@ class CrawlService:
                     for batch_id, rows in self.lookup_store.ready():
                         error = None
                         try:
-                            await publish_lookup_results(http, [json.loads(row["payload"]) for row in rows])
+                            results = [json.loads(row["payload"]) for row in rows]
+                            await asyncio.to_thread(register_results, self.environment, results)
+                            await publish_lookup_results(http, results)
                         except Exception as failure:
                             # Provider URLs/credentials must never enter receipts or logs.
                             error = type(failure).__name__ + (f" (HTTP {failure.response.status_code})" if isinstance(failure, httpx.HTTPStatusError) else "")
@@ -1116,6 +1133,11 @@ class CrawlService:
             if job.purpose == "company_lookup" and (attempt / "result.json").is_file():
                 job.result_file = str((attempt / "result.json").relative_to(self.root))
         finally:
+            if job.result_file is not None:
+                saved_path = self.root / job.result_file
+                saved_result = json.loads(saved_path.read_text(encoding="utf-8"))
+                saved_result.update(website_id=request.website_id, request_id=job.request_id, attempt=job.attempt)
+                write_json(saved_path, saved_result)
             if job.purpose == "company_lookup":
                 self.queue_lookup_publication(request, job, attempt)
             self.jobs[job.request_id].challenge_agent_running = False

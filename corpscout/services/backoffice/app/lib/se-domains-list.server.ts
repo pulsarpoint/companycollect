@@ -9,7 +9,7 @@ import {
 /**
  * The `/admin/se/companies/domains` list and the `/domains/:domain` detail page,
  * read straight off the `se_company_domain` entity (not the
- * `company_domains_resolved` view the per-company tab reads: this is the admin
+ * `se_company_domain_resolved` view the per-company tab reads: this is the admin
  * view of what the fold holds, before any reviewer overlay).
  *
  * `se_company_domain` is a ReplacingMergeTree keyed on (company_id,

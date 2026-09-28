@@ -35,10 +35,6 @@ sources:
         meta:
           dagster:
             asset_key: [esef_filings_clickhouse]
-      - name: company_domain_suggestions_active
-      - name: company_domain_suggestion_evidence_active
-      - name: se_company_domain
-      - name: company_domains
       - name: company_contract_facts
       - name: se_company_financials_latest
       - name: se_company_financial
@@ -47,4 +43,7 @@ sources:
       - name: nace_categories
       - name: se_company_address
       - name: se_company_address_suggestion
-      - name: company_domain_current
+      - name: se_company_domain_resolved
+        meta:
+          dagster:
+            asset_key: [se_company_domain_publish]

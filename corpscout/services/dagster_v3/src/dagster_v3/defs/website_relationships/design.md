@@ -34,7 +34,7 @@ Migration 000425 owns `website_domain_relationship_analysis` and two views:
   the old interpretation from this current projection without deleting history.
 
 Attribution requires an **active exact source-host association** in
-`company_domains_resolved`, normalized for case, trailing dot and `www`. It must
+`se_company_domain_resolved`, normalized for case, trailing dot and `www`. It must
 identify one `(country_code, company_id)` across all associations. A shared host,
 unknown subdomain or inactive association is retained as raw evidence but is not
 assigned to an arbitrary company. Followed external pages are attributed using

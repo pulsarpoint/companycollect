@@ -1,6 +1,7 @@
 """Bounded catalog reads, exact archive retrieval and scan-last publication."""
 
 import re
+from corpscout_identity.observations import register_crawl_results
 from uuid import uuid4
 
 import dagster as dg
@@ -23,6 +24,7 @@ from dagster_v3.defs.website_crawl.normalization.tables import (
 from dagster_v3.defs.website_crawl.results import RESULTS_BY_TYPE
 
 SOURCE_COLUMNS = (
+    "website_id",
     "domain",
     "request_id",
     "attempt",
@@ -93,7 +95,7 @@ def assert_schema(client) -> None:
         expected = [tuple(line.split(" ", 1)) for line in schema.splitlines()]
         if actual != expected:
             raise ValueError(
-                f"Normalization schema mismatch for {name}; apply migration 452"
+                f"Normalization schema mismatch for {name}; deploy the matching writer schema before publishing"
             )
 
 
@@ -171,6 +173,9 @@ def publish_attempt(
     )
     normalization_id = uuid4()
     rows = parse_attempt(source, payload, normalization_id, revision, run_id)
+    register_crawl_results(client, [dict(payload or source, website_url=source["website_url"],
+        website_id=source["website_id"], finished_at=source["finished_at"])],
+        source="website_crawl_scans", run_id=run_id)
     counts = {table: len(items) for table, items in rows.items()}
     with duckdb.connect(":memory:") as stage:
         # Validate every table's native shape before the first warehouse write.

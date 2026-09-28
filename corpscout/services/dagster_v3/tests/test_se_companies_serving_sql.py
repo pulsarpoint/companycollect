@@ -497,7 +497,7 @@ def _script(*, join_use_nulls: int) -> str:
         # ILLEGAL_FINAL) so the stub accepts the same FINAL modifier the real table's engine
         # does.
         "CREATE TABLE corpscout.se_company_person (company_id String, sources Array(String), active UInt8) ENGINE = ReplacingMergeTree ORDER BY company_id;",
-        "CREATE TABLE corpscout.company_domains_resolved (company_id String, country_code String, root_domain String, is_active UInt8, review_status String) ENGINE = Memory;",
+        "CREATE TABLE corpscout.se_company_domain_resolved (company_id String, country_code String, root_domain String, is_active UInt8, review_status String) ENGINE = Memory;",
         "CREATE TABLE corpscout.se_company_domain (company_id String, root_domain String, inactive_reason String) ENGINE = ReplacingMergeTree ORDER BY (company_id, root_domain);",
         "CREATE TABLE corpscout.company_traded_symbols (country_code String, company_id String) ENGINE = MergeTree ORDER BY company_id;",
         "CREATE TABLE corpscout.se_government_contracts (company_id String) ENGINE = MergeTree ORDER BY company_id;",
@@ -524,7 +524,7 @@ def _script(*, join_use_nulls: int) -> str:
         f"INSERT INTO corpscout.se_company_person VALUES ('{PRECISE}', ['esef'], 1);",
         # Source candidates count before verification; live rejections and withdrawn
         # evidence do not. UNGEOCODED's Norwegian row cannot cross the country boundary.
-        f"INSERT INTO corpscout.company_domains_resolved VALUES "
+        f"INSERT INTO corpscout.se_company_domain_resolved VALUES "
         f"('{COARSE}', 'SE', 'confirmed.se', 1, 'unreviewed'), "
         f"('{PRECISE}', 'SE', 'brave.se', 0, 'unreviewed'), "
         f"('{HIDDEN}', 'SE', 'rejected.se', 0, 'rejected'), "

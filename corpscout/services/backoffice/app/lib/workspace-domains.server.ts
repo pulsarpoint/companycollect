@@ -30,10 +30,10 @@ export async function listWorkspaceDomains(filters: WorkspaceDomainFilters, afte
   if (filters.dns !== "any") conditions.push(`has_dns_records = ${filters.dns === "with" ? 1 : 0}`);
   if (filters.websites === "observed") conditions.push("has_website = 1 AND observed_website_count > 0");
   else if (filters.websites !== "any") conditions.push(`has_website = ${filters.websites === "with" ? 1 : 0}`);
-  // Associations and matching outcomes change between inventory refreshes.
-  // Read their current sources so a finished attempt disappears immediately.
+  // Company membership uses the periodically refreshed count snapshot. Matching
+  // outcomes stay live so any completed attempt leaves the unprocessed set.
   if (filters.companies !== "any") conditions.push(`root_domain ${filters.companies === "without" ? "NOT " : ""}IN
-    (SELECT root_domain FROM corpscout.company_domains_resolved WHERE is_active = 1)`);
+    (SELECT root_domain FROM corpscout.domains_company_filter)`);
   if (filters.companyMatching !== "any") conditions.push(`root_domain ${filters.companyMatching === "without" ? "NOT " : ""}IN
     (SELECT domain FROM corpscout.website_company_lookup_results)`);
   const filterParams = { prefix: filters.prefix, suffix: `.${filters.suffix}`, sources: filters.sources };
@@ -58,10 +58,9 @@ export async function listWorkspaceDomains(filters: WorkspaceDomainFilters, afte
   if (visible.length) {
     const domains = visible.map(row => row.root_domain);
     const [companies, attempts] = await Promise.all([
-      chQuery<{ root_domain: string; company_count: number }>(`SELECT root_domain,
-        toUInt32(uniqExact((country_code, company_id))) AS company_count
-        FROM corpscout.company_domains_resolved WHERE is_active = 1 AND root_domain IN {domains:Array(String)}
-        GROUP BY root_domain SETTINGS max_threads=4, max_execution_time=20`, { domains }),
+      chQuery<{ root_domain: string; company_count: number }>(`SELECT root_domain,company_count
+        FROM corpscout.domains_company_filter WHERE root_domain IN {domains:Array(String)}
+        SETTINGS max_threads=4, max_execution_time=20`, { domains }),
       chQuery<{ domain: string; status: string }>(`SELECT domain,
         argMax(status, (finished_at, request_id, attempt)) AS status
         FROM corpscout.website_company_lookup_results WHERE domain IN {domains:Array(String)}
@@ -84,7 +83,9 @@ export async function listWorkspaceDomains(filters: WorkspaceDomainFilters, afte
 
 export async function listDomainSites(domain: string, after: string) {
   const rows = await chQuery<DomainSite>(`SELECT website_origin,evidence_status,sources,last_observed_at
-    FROM corpscout.websites WHERE root_domain={domain:String} AND website_origin>{after:String}
+    FROM corpscout.websites WHERE root_domain={domain:String}
+      AND domain_id IN (SELECT domain_id FROM corpscout.domains WHERE root_domain={domain:String})
+      AND website_origin>{after:String}
     ORDER BY website_origin LIMIT {limit:UInt32}
     SETTINGS optimize_read_in_order=1, max_execution_time=20`, { domain, after, limit: PAGE_SIZE + 1 });
   const sites = rows.slice(0, PAGE_SIZE);

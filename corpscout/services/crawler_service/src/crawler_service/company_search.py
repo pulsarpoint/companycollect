@@ -42,7 +42,7 @@ async def search_companies(
     query_id = f"company-lookup-{uuid4().hex}"
     table = COMPANY_TABLE
     if kind == "existing_mapping":
-        table = "corpscout.company_domains_resolved"
+        table = "corpscout.se_company_domain_resolved"
         needle = value.lower().removeprefix("www.").rstrip(".")
         sql = f"SELECT DISTINCT company_id FROM {table} WHERE country_code = 'SE' AND root_domain = {{value:String}} AND is_active = 1 ORDER BY company_id LIMIT 10"
     elif kind == "registration_number":

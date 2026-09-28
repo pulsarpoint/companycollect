@@ -11,7 +11,7 @@ SELECT
     toFloat32(least(1, greatest(0, evidence_count / 3))) AS confidence,
     now64(3, 'UTC') AS resolved_at
 FROM {{ source('corpscout', 'se_esef_document_contact_candidates') }}
--- Websites are domains now (company_domains_build reads se_esef_domains); the
+-- Website associations belong to se_company_domain; the
 -- artifact parser keeps writing website candidate rows until the contact
 -- extractor moves too (spec 2026-09-13, section 8).
 WHERE candidate_kind != 'website'

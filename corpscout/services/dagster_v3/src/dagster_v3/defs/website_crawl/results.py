@@ -16,6 +16,8 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 import dagster as dg
+from corpscout_identity.observations import register_crawl_results
+from corpscout_identity.urls import website_reference
 from dagster_clickhouse import ClickhouseResource
 from dlt.sources.helpers.requests import Session
 from pydantic import ConfigDict, Field, field_validator, model_validator
@@ -31,6 +33,7 @@ from dagster_v3.defs.website_crawl.dispatch import (
     verify_crawl_llm,
 )
 from dagster_v3.defs.website_crawl.matching_batches import process_matching_batch
+from dagster_v3.defs.website_crawl.outcome_logging import log_crawl_outcomes
 
 RESULTS_BY_TYPE = {
     "full": "corpscout.website_full_crawl_results",
@@ -233,6 +236,7 @@ def effective_payload(
         if key
         not in {
             "request_id",
+            "website_id",
             "interactive",
             "challenge_agent_model",
             "challenge_agent_max_runs",
@@ -258,28 +262,28 @@ def read_rows(client, sql: str, params: dict) -> list[dict]:
 def fresh_crawl_results(
     client,
     crawl_type: str,
-    domains: tuple[str, ...],
+    websites: tuple[str, ...],
     *,
     cutoff: datetime,
     started: datetime,
 ) -> set[tuple[str, str]]:
-    """Only the latest attempt per domain can satisfy the frozen freshness window."""
-    if not domains:
+    """Only the latest attempt per website can satisfy the frozen freshness window."""
+    if not websites:
         return set()
     return set(
         client.execute(
-            f"""SELECT domain, work_key FROM (
-                SELECT domain, work_key, successful{", company_matching_status, request_id, attempt" if crawl_type != "jobs" else ""}
+            f"""SELECT website_id, work_key FROM (
+                SELECT website_id, work_key, successful{", company_matching_status, request_id, attempt" if crawl_type != "jobs" else ""}
                 FROM {RESULTS_BY_TYPE[crawl_type]} FINAL
-                WHERE domain IN %(domains)s
+                WHERE website_id IN %(websites)s
                   AND finished_at >= toDateTime64(%(cutoff)s, 6, 'UTC')
                   AND finished_at <= toDateTime64(%(started)s, 6, 'UTC')
                 ORDER BY finished_at DESC, request_id DESC, attempt DESC
-                LIMIT 1 BY domain
+                LIMIT 1 BY website_id
             ) WHERE successful
-                {"AND (company_matching_status = '' OR (company_matching_status IN ('matched', 'not_found', 'already_mapped') AND (request_id, attempt) IN (SELECT request_id, attempt FROM corpscout.website_company_lookup_results)))" if crawl_type != "jobs" else ""}""",
+                {"AND (company_matching_status = '' OR (company_matching_status IN ('matched', 'not_found', 'already_mapped') AND (request_id, attempt, website_id) IN (SELECT request_id, attempt, website_id FROM corpscout.website_company_lookup_results)))" if crawl_type != "jobs" else ""}""",
             {
-                "domains": domains,
+                "websites": websites,
                 "cutoff": cutoff.strftime("%Y-%m-%d %H:%M:%S.%f"),
                 "started": started.strftime("%Y-%m-%d %H:%M:%S.%f"),
             },
@@ -290,6 +294,15 @@ def fresh_crawl_results(
 def result_record(submission: dict, job: dict, result: dict) -> dict:
     if job["request_id"] != submission["request_id"]:
         raise ValueError("Crawler returned a different request identity")
+    request = json.loads(submission["request_json"])
+    website_id = website_reference(request["url"], submission["website_id"])
+    for supplied in (
+        request.get("website_id"),
+        job.get("website_id"),
+        result.get("website_id"),
+    ):
+        if supplied is not None:
+            website_reference(request["url"], supplied)
     crawl = result.get("crawl", result)
     if not isinstance(crawl, dict):
         raise ValueError("Crawler result has no crawl object")
@@ -310,7 +323,8 @@ def result_record(submission: dict, job: dict, result: dict) -> dict:
     ]
     return {
         "domain": submission["domain"],
-        "website_url": json.loads(submission["request_json"])["url"],
+        "website_url": request["url"],
+        "website_id": website_id,
         "request_id": submission["request_id"],
         "attempt": job["attempt"],
         "input_revision": submission["input_revision"],
@@ -495,7 +509,7 @@ def process_crawls(
                 selected += " AND toUInt16(cityHash64(domain) % 256) = %(bucket)s"
             pending_sql = f"""SELECT * FROM {SUBMISSIONS} FINAL
                 WHERE crawl_type=%(type)s AND request_id NOT IN (SELECT request_id FROM {table} FINAL
-                {"WHERE company_matching_status = '' OR (request_id, attempt) IN (SELECT request_id, attempt FROM corpscout.website_company_lookup_results)" if crawl_type != "jobs" else ""})"""
+                {"WHERE company_matching_status = '' OR (request_id, attempt, website_id) IN (SELECT request_id, attempt, website_id FROM corpscout.website_company_lookup_results)" if crawl_type != "jobs" else ""})"""
             pending = read_rows(
                 client,
                 pending_sql
@@ -546,6 +560,7 @@ def process_crawls(
                     waiting = {item["request_id"]: item for item in group}
                     deadline = monotonic() + config.wait_timeout_seconds
                     while waiting:
+                        records = []
                         for request_id, item in list(waiting.items()):
                             response = http.get(
                                 f"{url.rstrip('/')}/v1/crawls/{request_id}",
@@ -580,28 +595,35 @@ def process_crawls(
                             )
                             response.raise_for_status()
                             record = result_record(item, job, response.json())
-                            # Async inserts are acknowledged only after flush. An ambiguous
-                            # retry replaces the same request/attempt instead of double counting.
+                            records.append(record)
+                        if records:
+                            register_crawl_results(
+                                client,
+                                records,
+                                source=table.split(".")[-1],
+                                run_id=context.run.run_id,
+                            )
                             client.execute(
-                                f"INSERT INTO {table} ({', '.join(record)}) VALUES",
-                                [record],
+                                f"INSERT INTO {table} ({', '.join(records[0])}) VALUES",
+                                records,
                                 settings={
                                     "async_insert": 1,
                                     "wait_for_async_insert": 1,
                                 },
                             )
-                            metadata["completed"] += int(record["successful"])
-                            metadata["unsuccessful"] += int(not record["successful"])
-                            processed += 1
+                            for record in records:
+                                metadata["completed"] += int(record["successful"])
+                                metadata["unsuccessful"] += int(
+                                    not record["successful"]
+                                )
+                                processed += 1
+                                del waiting[record["request_id"]]
+                            log_crawl_outcomes(context, records, crawl_type)
                             context.log.info(
-                                "Stored crawl domain=%s type=%s request=%s state=%s successful=%s",
-                                item["domain"],
+                                "Stored %s crawl outcomes for type=%s",
+                                len(records),
                                 crawl_type,
-                                request_id,
-                                job["state"],
-                                record["successful"],
                             )
-                            del waiting[request_id]
                         if waiting:
                             if monotonic() >= deadline:
                                 raise TimeoutError(
@@ -609,7 +631,7 @@ def process_crawls(
                                 )
                             sleep(config.poll_interval_seconds)
 
-            recovered_domains = {item["domain"] for item in pending}
+            recovered_websites = {item["website_id"] for item in pending}
             collect(pending)
             remaining = params["limit"] - processed
             cursor_filter = ""
@@ -618,8 +640,8 @@ def process_crawls(
                     client,
                     f"""SELECT * FROM {input_table}
                     WHERE enabled {selected} {cursor_filter}
-                    AND domain NOT IN (SELECT domain FROM ({pending_sql}))
-                    ORDER BY priority DESC, domain ASC LIMIT 500""",
+                    AND website_id NOT IN (SELECT website_id FROM ({pending_sql}))
+                    ORDER BY priority DESC, domain ASC, website_id ASC LIMIT 500""",
                     params,
                 )
                 if not rows:
@@ -628,7 +650,7 @@ def process_crawls(
                 fresh = fresh_crawl_results(
                     client,
                     crawl_type,
-                    domains,
+                    tuple(row["website_id"] for row in rows),
                     cutoff=cutoff,
                     started=datetime.fromisoformat(execution["started_at"]),
                 )
@@ -643,18 +665,19 @@ def process_crawls(
                 admitted = []
                 for row in rows:
                     last = row
-                    if row["domain"] in recovered_domains:
+                    if row["website_id"] in recovered_websites:
                         continue
                     payload, key = effective_payload(row, crawl_type, batch_id, config)
                     if payload["request_id"] in existing:
                         continue
-                    if not config.force_refresh and (row["domain"], key) in fresh:
+                    if not config.force_refresh and (row["website_id"], key) in fresh:
                         metadata["fresh_skipped"] += 1
                         continue
                     admitted.append(
                         {
                             "crawl_type": crawl_type,
                             "domain": row["domain"],
+                            "website_id": row["website_id"],
                             "request_id": payload["request_id"],
                             "input_revision": row["revision"],
                             "work_key": key,
@@ -679,9 +702,11 @@ def process_crawls(
                 # Resume after the last inspected input, including trailing skips.
                 # Advancing only past the last admission counts those skips again.
                 params.update(
-                    after_priority=last["priority"], after_domain=last["domain"]
+                    after_priority=last["priority"],
+                    after_domain=last["domain"],
+                    after_website=last["website_id"],
                 )
-                cursor_filter = " AND (priority < %(after_priority)s OR (priority = %(after_priority)s AND domain > %(after_domain)s))"
+                cursor_filter = " AND (priority < %(after_priority)s OR (priority = %(after_priority)s AND (domain,website_id) > (%(after_domain)s,%(after_website)s)))"
         finally:
             with store.transaction() as cursor:
                 cursor.execute(

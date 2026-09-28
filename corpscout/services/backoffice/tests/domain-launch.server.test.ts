@@ -37,6 +37,7 @@ describe("domain processing launch", () => {
     const execution = submitted(opts);
     expect(execution.selector.jobName).toBe("se_company_domain_refresh_job");
     expect(execution.runConfigData.ops.se_company_domain_suggestions_brave.config).toEqual({ execute: true, page_size: 5_000 });
+    expect(execution.runConfigData.ops.se_company_domain_suggestions_crawler_lookup.config).toEqual({ execute: true, page_size: 5_000 });
     expect(execution.runConfigData.ops.se_company_domain_verification.config).toMatchObject({
       changed_only: true,
       verification: { provider: "openrouter", model: "chosen/model", api_key_encrypted: expect.stringMatching(/^v1\./), system_prompt: listDomainPrompts(databasePath)[0].systemPrompt },

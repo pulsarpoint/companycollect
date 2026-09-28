@@ -1,15 +1,16 @@
-"""Swedish company-domain entity; column order is owned by migrations 000408 and 000417."""
+"""Swedish company-domain entity; column order is owned by migrations 000408, 000417 and 000466."""
 
 DATABASE = "corpscout"
 GROUP_NAME = "se_company_domain"
-SUGGESTION_TABLE = "se_company_domain_suggestion"
+SOURCE_TABLE = "se_company_domain_sources"
+SOURCE_VIEW = "se_company_domain_sources_resolved"
 MAIN_TABLE = "se_company_domain"
 HISTORY_TABLE = "se_company_domain_history"
 PRECEDENCE_TABLE = "se_company_domain_precedence"
 RULE_TABLE = "se_company_domain_rule"
 VERIFICATION_TABLE = "se_company_domain_verification"
-TABLES = (SUGGESTION_TABLE, MAIN_TABLE, HISTORY_TABLE, PRECEDENCE_TABLE, RULE_TABLE, VERIFICATION_TABLE)
-EXTRACTOR_SOURCES = ("brave", "wikidata", "esef_filing", "common_crawl_identity")
+TABLES = (SOURCE_TABLE, SOURCE_VIEW, MAIN_TABLE, HISTORY_TABLE, PRECEDENCE_TABLE, RULE_TABLE, VERIFICATION_TABLE)
+EXTRACTOR_SOURCES = ("brave", "wikidata", "esef_filing", "common_crawl_identity", "crawler_lookup")
 SOURCES = (*EXTRACTOR_SOURCES, "reviewer", "reviewer_draft")
 EXTRACTOR_ASSETS = tuple(f"se_company_domain_suggestions_{source}" for source in EXTRACTOR_SOURCES)
 FOLDED_FIELDS = ("website", "association", "primary")
@@ -18,6 +19,10 @@ SUGGESTION_COLUMNS = (
     "association", "is_primary", "confidence", "confidence_basis", "source_record_id",
     "source_url", "evidence", "observed_at", "removed", "decided_by", "note", "suggestion_id",
     "suggested_at", "source_run_id", "extractor_version",
+)
+SOURCE_COLUMNS = (
+    "company_id", "source", "slot", "domain_id", "website_id", "website_url",
+    *SUGGESTION_COLUMNS[6:],
 )
 MAIN_COLUMNS = (
     "company_id", "root_domain", "website_url", "website_host", "website_source",

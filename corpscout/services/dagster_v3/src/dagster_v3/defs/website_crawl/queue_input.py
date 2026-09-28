@@ -2,10 +2,17 @@
 
 import hashlib
 import json
+from datetime import UTC, datetime
+from itertools import batched
 from typing import Literal
 from uuid import UUID
 
 import dagster as dg
+from corpscout_identity.registration import (
+    WebsiteObservation,
+    identify_website,
+    register_websites,
+)
 from dagster_clickhouse import ClickhouseResource
 from pydantic import Field, field_validator
 
@@ -162,29 +169,94 @@ def load_crawl_draft(config, submission_id, store, clickhouse):
                     target = INPUT_TABLES[
                         ("full", "jobs", "site_info").index(config.crawl_type)
                     ]
-                    priority = ", priority" if config.priority is not None else ""
-                    priority_value = (
-                        ", %(priority)s" if config.priority is not None else ""
-                    )
-                    # Persist recurring presets without replacing operator settings.
-                    client.execute(
-                        f"""INSERT INTO {target} (domain,website_url,source,created_at,updated_at,revision{priority})
-                        SELECT s.domain,s.website_url,%(source)s,now64(6),now64(6),1{priority_value}
-                        FROM ({selected_sql}) AS s LEFT ANTI JOIN {target}_current AS e ON s.domain=e.domain""",
-                        params,
-                        query_id=query_id,
-                        settings=settings,
-                    )
-                    # Entries land straight in the task's partition; the first queued URL wins.
-                    client.execute(
-                        f"""INSERT INTO {TASK_DOMAINS} (task_id,crawl_type,domain,website_url,source_name,submission_id)
-                        SELECT %(task)s,%(type)s,s.domain,s.website_url,%(source)s,%(submission)s
-                        FROM ({selected_sql}) AS s LEFT ANTI JOIN
-                        (SELECT domain FROM {TASK_DOMAINS} WHERE task_id=%(task)s) AS e ON s.domain=e.domain""",
-                        params,
-                        query_id=query_id,
-                        settings=settings,
-                    )
+                    # The source reader has its own connection so parent registration and
+                    # inserts can proceed without interrupting its streaming response.
+                    with clickhouse.get_connection() as reader:
+                        selected = reader.execute_iter(
+                            selected_sql,
+                            params,
+                            query_id=query_id,
+                            settings={**settings, "max_block_size": 5000},
+                        )
+                        for group in batched(selected, 5000):
+                            stamp = datetime.now(UTC)
+                            identities = [
+                                (domain, url, identify_website(url))
+                                for domain, url in group
+                            ]
+                            register_websites(
+                                client,
+                                [
+                                    WebsiteObservation(identity, stamp, None, None)
+                                    for _, _, identity in identities
+                                ],
+                                source="website_crawl_requests",
+                                run_id=submission_id,
+                            )
+                            ids = tuple(
+                                {identity.website_id for _, _, identity in identities}
+                            )
+                            existing = {
+                                row[0]
+                                for row in client.execute(
+                                    f"SELECT website_id FROM {target}_current WHERE website_id IN %(ids)s",
+                                    {"ids": ids},
+                                    settings=settings,
+                                )
+                            }
+                            presets = [
+                                dict(
+                                    domain=domain,
+                                    website_url=url,
+                                    website_id=identity.website_id,
+                                    request_identity_version=2,
+                                    source=params["source"],
+                                    created_at=stamp,
+                                    updated_at=stamp,
+                                    revision=1,
+                                    **(
+                                        {"priority": config.priority}
+                                        if config.priority is not None
+                                        else {}
+                                    ),
+                                )
+                                for domain, url, identity in identities
+                                if identity.website_id not in existing
+                            ]
+                            if presets:
+                                client.execute(
+                                    f"INSERT INTO {target} ({','.join(presets[0])}) VALUES",
+                                    presets,
+                                    settings=settings,
+                                )
+                            queued = {
+                                row[0]
+                                for row in client.execute(
+                                    f"SELECT website_id FROM {TASK_DOMAINS} WHERE task_id=%(task)s AND website_id IN %(ids)s",
+                                    {"task": task_id, "ids": ids},
+                                    settings=settings,
+                                )
+                            }
+                            entries = [
+                                dict(
+                                    task_id=task_id,
+                                    crawl_type=config.crawl_type,
+                                    domain=domain,
+                                    website_url=url,
+                                    website_id=identity.website_id,
+                                    request_identity_version=2,
+                                    source_name=params["source"],
+                                    submission_id=submission_id,
+                                )
+                                for domain, url, identity in identities
+                                if identity.website_id not in queued
+                            ]
+                            if entries:
+                                client.execute(
+                                    f"INSERT INTO {TASK_DOMAINS} ({','.join(entries[0])}) VALUES",
+                                    entries,
+                                    settings=settings,
+                                )
                     [(total,)] = client.execute(
                         f"SELECT count() FROM {TASK_DOMAINS} WHERE task_id=%(task)s",
                         {"task": task_id},

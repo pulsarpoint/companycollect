@@ -292,9 +292,9 @@ async function getDomainsSection(
          arrayStringConcat(source_names, ' + ') AS domain_source,
          suggested_confidence AS confidence,
          toUInt8(review_status = 'confirmed_primary' OR suggested_primary = 1) AS is_primary
-       FROM corpscout.company_domains FINAL
-       PREWHERE country_code = {country:String} AND company_id = {id:String}
-       WHERE is_active = 1 AND review_status != 'rejected'
+       FROM corpscout.se_company_domain_resolved
+       WHERE country_code = {country:String} AND company_id = {id:String}
+         AND is_active = 1 AND review_status != 'rejected'
        ORDER BY is_primary DESC, suggested_confidence DESC, root_domain`,
       { country, id },
     ),

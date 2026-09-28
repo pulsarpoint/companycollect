@@ -6,11 +6,17 @@ import json
 
 import dagster as dg
 import pytest
+from tests.test_processing_store import processing_postgres_url as processing_postgres_url
+from tests.identity_registration_support import identity_postgres as identity_postgres
+
+
 
 from dagster_v3.defs.se_company.domain import batch, tables
 from dagster_v3.defs.se_company.domain.evidence import input_payload, requires_verification
 from dagster_v3.defs.se_company.domain.fold import fold_company
 from dagster_v3.defs.se_company.domain.verification import DomainVerificationProfile, fingerprints, parse_verdict, verify_domain
+
+pytestmark = pytest.mark.usefixtures("identity_postgres")
 
 STAMP = datetime(2026, 9, 14, tzinfo=UTC)
 COMPANY = {"company_id": "5561552760", "legal_name": "Example AB", "lei": "", "wikidata_id": "Q1"}
@@ -137,15 +143,17 @@ class FakeModel:
 
 class MemoryClient:
     def __init__(self, sources):
-        self.data = {table: [] for table in tables.TABLES}
-        self.data[tables.SUGGESTION_TABLE] = sources
+        self.data = {table: [] for table in (*tables.TABLES, "domains", "domains_sources")}
+        self.data[tables.SOURCE_VIEW] = sources
         self.data["se_company_basic_info"] = [COMPANY]
         self.writes = []
 
     def execute(self, sql, params=None, settings=None):
+        if sql == "SYSTEM REFRESH VIEW corpscout.domains_company_filter":
+            return []
         table = sql.split("corpscout.", 1)[1].split()[0]
         if sql.startswith("INSERT"):
-            columns = sql.split("(", 1)[1].split(")", 1)[0].split(", ")
+            columns = [column.strip() for column in sql.split("(", 1)[1].split(")", 1)[0].split(",")]
             self.writes.append(table)
             rows = [dict(zip(columns, values, strict=True)) for values in params]
             if table == tables.MAIN_TABLE:
@@ -153,6 +161,8 @@ class MemoryClient:
                 self.data[table] = [r for r in self.data[table] if (r["company_id"], r["root_domain"]) not in replaced]
             self.data[table].extend(rows)
             return []
+        if table == "domains":
+            return [(row["root_domain"],) for row in self.data[table] if row["root_domain"] in params["roots"]]
         columns = sql[7:sql.index(" FROM")].split(", ")
         rows = [row for row in self.data[table] if row["company_id"] in params["company_ids"]]
         if table == tables.VERIFICATION_TABLE:
@@ -185,7 +195,7 @@ def test_batch_reuses_paid_answers_and_updates_only_changed_evidence(monkeypatch
     assert len(client.data[tables.HISTORY_TABLE]) == 2
     assert run(PROFILE.model_copy(update={"prompt_version": "rename-only"}))["llm_calls"] == 0
     assert run(PROFILE.model_copy(update={"system_prompt": "New policy"}))["llm_calls"] == 1
-    client.data[tables.SUGGESTION_TABLE][0]["evidence"] = "New company evidence"
+    client.data[tables.SOURCE_VIEW][0]["evidence"] = "New company evidence"
     assert run()["llm_calls"] == 1
     assert len(model.calls) == 3
     assert len(client.data[tables.VERIFICATION_TABLE]) == 3
@@ -216,8 +226,9 @@ def test_batch_cap_and_reviewer_decisions_never_spend_unnecessary_calls(monkeypa
 
 def test_two_domain_jobs_include_global_sync_and_optional_verification_config():
     from dagster_clickhouse import ClickhouseResource
-    from dagster_v3.defs.se_company.domain import assets, brave, common_crawl, esef, jobs, wikidata
-    definitions = [assets.se_company_domain_publish, assets.se_company_domain_verification, assets.se_company_domain_precedence_clickhouse,
+    from dagster_v3.defs.domains.assets import domains_company_filter, domains_sources
+    from dagster_v3.defs.se_company.domain import assets, brave, common_crawl, crawler_lookup, esef, jobs, wikidata
+    definitions = [domains_sources, crawler_lookup.se_company_domain_suggestions_crawler_lookup, domains_company_filter, assets.se_company_domain_publish, assets.se_company_domain_verification, assets.se_company_domain_precedence_clickhouse,
                    wikidata.se_company_domain_suggestions_wikidata, esef.se_company_domain_suggestions_esef_filing,
                    common_crawl.se_company_domain_suggestions_common_crawl_identity, brave.se_company_domain_suggestions_brave]
     own = set().union(*(asset.keys for asset in definitions))
@@ -229,11 +240,12 @@ def test_two_domain_jobs_include_global_sync_and_optional_verification_config():
     process = repo.get_job("se_company_domain_refresh_job")
     expected = {*tables.EXTRACTOR_ASSETS, "se_company_domain_precedence_clickhouse"}
     assert {key.to_user_string() for key in sync.asset_layer.executable_asset_keys} == expected
-    assert {key.to_user_string() for key in process.asset_layer.executable_asset_keys} == {*expected, "se_company_domain_verification", "se_company_domain_publish"}
-    assert repo.asset_graph.get(dg.AssetKey("se_company_domain_publish")).pools == {"se_company_domain_fold"}
+    assert {key.to_user_string() for key in process.asset_layer.executable_asset_keys} == {*expected, "se_company_domain_verification", "se_company_domain_publish", "domains_sources", "domains_company_filter"}
+    assert repo.asset_graph.get(dg.AssetKey("se_company_domain_publish")).pools == {"domains_publish"}
     config = {"ops": {name: {"config": {"execute": True}} for name in tables.EXTRACTOR_ASSETS}}
     dg.validate_run_config(sync, config)
-    dg.validate_run_config(process, config)
+    resolved_config = dg.validate_run_config(process, config)
+    assert resolved_config["ops"]["domains_sources"]["config"]["source_tables"] == ["se_company_domain"]
     assert repo.asset_graph.get(dg.AssetKey("se_company_domain_verification")).pools == {"se_company_domain_fold"}
     assert assets.se_company_domain_publish.dependency_keys == {dg.AssetKey("se_company_domain_verification")}
     config["ops"]["se_company_domain_verification"] = {"config": {"verification": PROFILE.model_dump(), "max_llm_calls": 10}}
@@ -288,7 +300,7 @@ def test_separate_verification_then_publish_never_reuses_a_stale_prompt_at_the_c
     counts = batch.publish_domains(client, page_size=100, changed_only=True, profile=updated,
                                    run_id="second", log=lambda *args: None)
     assert counts["verification_pending"] == 1
-    assert client.writes == [tables.HISTORY_TABLE, tables.MAIN_TABLE]
+    assert client.writes == [tables.HISTORY_TABLE, "domains", tables.MAIN_TABLE]
     assert {row["root_domain"]: row["active"] for row in client.data[tables.MAIN_TABLE]} == {"a.se": 1, "b.se": 0}
     assert len(model.calls) == 3
 

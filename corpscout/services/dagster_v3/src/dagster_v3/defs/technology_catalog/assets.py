@@ -698,6 +698,7 @@ GROUP BY technology""",
 @dg.asset(
     name="technology_companies_clickhouse",
     deps=[
+        dg.AssetKey("se_company_domain_publish"),
         dg.AssetKey("technology_catalog_clickhouse"),
         dg.AssetKey("domain_signal_technologies_clickhouse"),
     ],
@@ -705,9 +706,9 @@ GROUP BY technology""",
     kinds={"clickhouse", "sql"},
     description=(
         "Weekly company-adoption rollup: (technology, country_code, "
-        "company_id, root_domain) for every company domain in company_domains "
-        "(corpscout.technology_companies, migration 000354 -- country-generic, "
-        "new countries appear automatically). The equivalent live read touched "
+        "company_id, root_domain) for every active Swedish association in se_company_domain "
+        "(corpscout.technology_companies, migration 000354; "
+        "the canonical reviewed associations). The equivalent live read touched "
         "~491M rows at 15-18s per detail page load."
     ),
 )
@@ -735,19 +736,19 @@ FROM (
         SELECT technology, root_domain
         FROM `{RESOLVED_DATABASE}`.`commoncrawl_page_technologies`
         WHERE root_domain IN (
-            SELECT root_domain FROM `{RESOLVED_DATABASE}`.`company_domains`
+            SELECT root_domain FROM `{RESOLVED_DATABASE}`.`se_company_domain_resolved` WHERE is_active = 1
         )
         UNION ALL
         SELECT technology, root_domain
         FROM `{RESOLVED_DATABASE}`.`domain_signal_technologies`
         WHERE root_domain IN (
-            SELECT root_domain FROM `{RESOLVED_DATABASE}`.`company_domains`
+            SELECT root_domain FROM `{RESOLVED_DATABASE}`.`se_company_domain_resolved` WHERE is_active = 1
         )
     )
 ) AS t
 INNER JOIN (
     SELECT DISTINCT root_domain, country_code, company_id
-    FROM `{RESOLVED_DATABASE}`.`company_domains` FINAL
+    FROM `{RESOLVED_DATABASE}`.`se_company_domain_resolved` WHERE is_active = 1
 ) AS cd ON cd.root_domain = t.root_domain""",
                 {"computed_at": computed_at},
                 settings={

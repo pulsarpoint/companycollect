@@ -2,13 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const clickhouse = vi.hoisted(() => ({
   query: vi.fn(),
-  insert: vi.fn(),
   rules: vi.fn(),
 }));
 
 vi.mock("~/lib/clickhouse.server", () => ({
   chQuery: clickhouse.query,
-  chInsertCompanyDomains: clickhouse.insert,
   chInsertSeCompanyDomainRules: clickhouse.rules,
 }));
 
@@ -56,7 +54,7 @@ function mockDomainQueries(
 describe("unified company domains", () => {
   beforeEach(() => {
     clickhouse.query.mockReset();
-    clickhouse.insert.mockReset();
+    clickhouse.rules.mockReset();
   });
 
   it("keeps source-specific confidence on one company-domain association", async () => {
@@ -187,16 +185,13 @@ describe("unified company domains", () => {
       reviewedAt: "2026-08-11T12:00:00.000Z",
     });
 
-    expect(clickhouse.insert).toHaveBeenCalledWith([
+    expect(clickhouse.rules).toHaveBeenCalledWith([
       expect.objectContaining({
-        country_code: "SE",
         company_id: "5560593575",
         root_domain: "assaabloy.com",
-        source_names: ["wikidata", "esef_filing"],
-        review_status: "confirmed_primary",
-        reviewed_evidence_fingerprint: "a".repeat(64),
-        reviewed_at: "2026-08-11 12:00:00.000",
-        resolved_at: "2026-08-11 12:00:00.000",
+        action: "confirmed_primary",
+        evidence_hash: "a".repeat(64),
+        decided_at: "2026-08-11 12:00:00.000",
       }),
     ]);
   });
@@ -243,15 +238,34 @@ describe("unified company domains", () => {
       reviewedAt: "2026-08-11T12:00:00.000Z",
     });
 
-    expect(clickhouse.insert).toHaveBeenCalledWith([
+    expect(clickhouse.rules).toHaveBeenCalledWith([
       expect.objectContaining({
         root_domain: "assaabloy.se",
-        review_status: "confirmed_primary",
+        action: "confirmed_primary",
       }),
       expect.objectContaining({
         root_domain: "assaabloy.com",
-        review_status: "confirmed_related",
+        action: "confirmed_related",
       }),
     ]);
   });
+  it("releases a review with a non-null decision timestamp", async () => {
+    mockDomainQueries([row]);
+    const domains = await getUnifiedCompanyDomains("SE", row.company_id);
+    await recordCompanyDomainReview({ domains, rootDomain: row.root_domain,
+      reviewStatus: "unreviewed", reviewedBy: "operator", reviewedAt: "2026-09-28T10:00:00Z" });
+    expect(clickhouse.rules).toHaveBeenCalledWith([expect.objectContaining({
+      action: "unreviewed", removed: 1, decided_by: "operator", decided_at: "2026-09-28 10:00:00.000",
+    })]);
+  });
+
+  it("does not write a different country's review to Swedish rules", async () => {
+    mockDomainQueries([row]);
+    const domains = (await getUnifiedCompanyDomains("SE", row.company_id))
+      .map((domain) => ({ ...domain, countryCode: "NO" }));
+    await expect(recordCompanyDomainReview({ domains, rootDomain: row.root_domain,
+      reviewStatus: "rejected" })).rejects.toThrow("one Swedish company");
+    expect(clickhouse.rules).not.toHaveBeenCalled();
+  });
+
 });

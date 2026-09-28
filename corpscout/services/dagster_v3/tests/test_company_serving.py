@@ -4,7 +4,6 @@ import pytest
 
 from dagster_v3.defs.company_serving import tables
 from dagster_v3.defs.company_serving.publish import (
-    _insert_company_domain_stage,
     _validate_presence_counts,
     publish_company_serving_country,
 )
@@ -16,14 +15,6 @@ MIGRATION = (
     / "migrations"
     / "000267_corpscout_company_serving_tables.up.sql"
 )
-COMPANY_DOMAINS_MIGRATION = (
-    Path(__file__).parents[3]
-    / "clickhouse"
-    / "migrations"
-    / "000269_corpscout_company_domains.up.sql"
-)
-
-
 class _EmptyServingClient:
     def __init__(self) -> None:
         self.queries: list[str] = []
@@ -52,12 +43,9 @@ def test_empty_required_stage_never_replaces_a_live_partition() -> None:
 def test_migration_owns_all_serving_and_history_tables() -> None:
     sql = MIGRATION.read_text()
     for contract in tables.CURRENT_TABLES:
-        owner_sql = (
-            COMPANY_DOMAINS_MIGRATION.read_text() if contract is tables.DOMAINS else sql
-        )
-        assert f"CREATE TABLE IF NOT EXISTS corpscout.{contract.name}" in owner_sql
+        assert f"CREATE TABLE IF NOT EXISTS corpscout.{contract.name}" in sql
         if contract.partitioned:
-            assert "PARTITION BY country_code" in owner_sql
+            assert "PARTITION BY country_code" in sql
     for observation_table in tables.HISTORY_TABLES.values():
         assert f"CREATE TABLE IF NOT EXISTS corpscout.{observation_table}" in sql
     assert "company_section_item_source_links" in sql
@@ -67,7 +55,7 @@ def test_migration_owns_all_serving_and_history_tables() -> None:
 
 def test_presence_is_published_after_every_backing_table() -> None:
     assert tables.CURRENT_TABLES[-1] is tables.PRESENCE
-    assert tables.CURRENT_TABLES[-2] is tables.DOMAINS
+    assert all(contract.name != "company_domains" for contract in tables.CURRENT_TABLES)
     assert tables.PRESENCE.required
     assert set(tables.VALID_SECTIONS) == {
         "gleif",
@@ -102,8 +90,6 @@ def test_presence_reconciliation_uses_logical_item_keys() -> None:
     sql = "\n".join(client.queries)
     assert "concat('entity:', lei)" in sql
     assert "concat('relationship:', relationship_id)" in sql
-    assert "concat('domain:', root_domain)" in sql
-    assert "concat('contact:', contact_id)" in sql
     assert "countDistinct(tuple(company_id, classification_code))" in sql
     assert (
         "SELECT DISTINCT company_id FROM stage_company_external_identifier_current"
@@ -119,41 +105,18 @@ def test_presence_reconciliation_uses_logical_item_keys() -> None:
     assert "WHERE addresses.active = 1" in sql
 
 
-def test_domain_stage_overlays_current_reviews_before_versioned_publish() -> None:
-    client = _EmptyServingClient()
-
-    _insert_company_domain_stage(
-        client,
-        stage="corpscout.stage_company_domains",
-        country_code="SE",
-    )
-
-    sql = client.queries[0]
-    assert "FROM corpscout.company_domains_build AS staged" in sql
-    assert "LEFT JOIN corpscout.company_domains AS current FINAL" in sql
-    assert "current.review_status" in sql
-    assert "current.reviewed_evidence_fingerprint" in sql
-    assert "now64(3, 'UTC')" in sql
-
-
-def test_domain_reconciliation_counts_only_the_rows_the_presence_model_counts() -> None:
-    """The presence model's domains and technology legs read company_domain_current_build,
-    which keeps the `is_active = 1 AND review_status != 'rejected'` rows of
-    company_domains_build; the publish stages the UNFILTERED company_domains_build. The
-    expected counts must apply the same filter, or the first inactive domain row fails the
-    publish by one (2026-09-13: 5566692850 johnjohns.se, deactivated upstream, tripped
-    `domains: expected=18028 actual=18027` on a stage that was otherwise correct)."""
-    model = (
-        Path(__file__).resolve().parents[1]
-        / "src/dagster_v3/defs/company_serving/dbt/models/company_domain_current_build.sql"
-    ).read_text(encoding="utf-8")
-    assert "WHERE is_active = 1\n      AND review_status != 'rejected'" in model
-
+def test_independently_published_domains_do_not_invalidate_a_serving_snapshot() -> None:
     client = _EmptyServingClient()
     stages = {contract.name: f"stage_{contract.name}" for contract in tables.CURRENT_TABLES}
     _validate_presence_counts(client, stages=stages, country_code="SE")
+    assert not any("se_company_domain" in query for query in client.queries)
+    assert not any("section = 'domains'" in query or "section = 'technology'" in query for query in client.queries)
 
-    domain_reads = [query for query in client.queries if "FROM stage_company_domains" in query]
-    assert len(domain_reads) == 2, domain_reads  # domains (with contacts) and technology
-    for query in domain_reads:
-        assert "FROM stage_company_domains WHERE is_active = 1 AND review_status != 'rejected'" in query
+
+def test_publication_does_not_create_or_write_a_domain_copy() -> None:
+    client = _EmptyServingClient()
+    publish_company_serving_country(client, country_code="SE", source_run_id="test", allow_empty=True)
+    sql = "\n".join(client.queries)
+    assert "company_domains" not in sql
+    assert "company_domain_current" not in sql
+    assert "REPLACE PARTITION 'SE'" in sql

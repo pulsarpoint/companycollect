@@ -17,7 +17,8 @@ dependencies = [
     "httpx>=0.28,<1",
     "pydantic>=2.12,<3",
     "python-dotenv>=1,<2",
-    "tldextract>=5,<6",
+    "tldextract==5.3.2",
+    "psycopg2-binary>=2.9.12,<3",
     "phonenumbers>=9,<10",
     "trafilatura>=2.2,<3",
     "cryptography>=46,<51",
@@ -42,6 +43,10 @@ company-technology-mcp = "crawler_service.catalog_mcp:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/crawler_service"]
+force-include = { "../../python/corpscout_identity" = "corpscout_identity" }
+
+[tool.hatch.build]
+dev-mode-dirs = ["src", "../../python"]
 
 [dependency-groups]
 test = ["corpscout-browser-service"]
@@ -54,3 +59,6 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I", "B"]
+
+[tool.uv]
+cache-keys = [{ file = "pyproject.toml" }, { file = "../../python/corpscout_identity/*.py" }]

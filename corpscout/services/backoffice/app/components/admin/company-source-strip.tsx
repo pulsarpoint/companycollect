@@ -11,7 +11,7 @@ import {
  *
  * They are still registers a reader has to be able to name: the Financial tab
  * labels its per-source cards with `source_id`, and the Domains tab with
- * `company_domains.source_names`. Two of them are the same register under
+ * `se_company_domain.sources`. Two of them are the same register under
  * another spelling ('esef_filing' is ESEF suggesting a website;
  * 'bolagsverket-annual-accounts' is Bolagsverket's own filings view), so they
  * are mapped onto the catalog's names rather than shown raw -- one register

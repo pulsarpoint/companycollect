@@ -251,7 +251,7 @@ PEOPLE_ESEF_SET = (
 # Source-reported domains count before verification. Read current entity rows and
 # the live review overlay so a rejection takes effect before the next domain fold.
 DOMAINS_SET = f"""SELECT domains.company_id
-      FROM {CLICKHOUSE_DATABASE}.company_domains_resolved AS domains
+      FROM {CLICKHOUSE_DATABASE}.se_company_domain_resolved AS domains
       INNER JOIN {CLICKHOUSE_DATABASE}.se_company_domain AS entity FINAL
         ON entity.company_id = domains.company_id
         AND entity.root_domain = domains.root_domain

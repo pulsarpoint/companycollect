@@ -57,7 +57,7 @@ ops:
   website_crawl_input:
     config:
       crawl_type: full
-      source_relation: corpscout.company_domains_resolved
+      source_relation: corpscout.se_company_domain_resolved
       id_column: company_id
       website_column: website_host
       ids: ["5560049529", "5560726605"]
@@ -74,7 +74,7 @@ ops:
   website_crawl_input:
     config:
       crawl_type: jobs
-      source_relation: corpscout.company_domains_resolved
+      source_relation: corpscout.se_company_domain_resolved
       website_column: website_host
       filters:
         country_code: ["SE", "NO"]

@@ -9,10 +9,16 @@ from uuid import uuid4
 
 import dagster as dg
 from clickhouse_driver import Client
+from corpscout_identity.coordination import (
+    PAGE_COLUMNS,
+    WEBSITE_COLUMNS,
+    inventory_publication_lock,
+)
 from dagster_clickhouse import ClickhouseResource
 from pydantic import Field, field_validator
 
 from dagster_v3.defs.clickhouse.resolved import assert_clickhouse_tables_exist
+from dagster_v3.defs.domains.publication import retain_registered_identities
 from dagster_v3.defs.webtech.pages import page_identity
 
 # Only source tables explicitly selected for this integration. Source URLs, not
@@ -23,17 +29,12 @@ COMMONCRAWL_URLS = (
     ("commoncrawl_page_jsonld", "page_url"),
     ("commoncrawl_domain_page_meta", "source_url"),
 )
-PAGE_COLUMNS = (
-    "root_domain", "website_origin", "page_url", "sources", "first_seen_at",
-    "last_seen_at", "last_observed_at", "last_successful_fetch_at", "source_run_id",
-)
-WEBSITE_COLUMNS = tuple(column for column in PAGE_COLUMNS if column != "page_url")
 ROOT_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:[.][a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$")
 
 
 class WebInventoryConfig(dg.Config):
     sources: list[str] = Field(
-        default_factory=lambda: ["commoncrawl", "webtech"], min_length=1,
+        default_factory=lambda: ["commoncrawl", "webtech", "crawler"], min_length=1,
     )
     insert_batch_rows: int = Field(default=50_000, ge=1, le=50_000)
     merge_batch_rows: int = Field(default=100_000, ge=1, le=1_000_000)
@@ -43,8 +44,8 @@ class WebInventoryConfig(dg.Config):
     @field_validator("sources")
     @classmethod
     def validate_sources(cls, value: list[str]) -> list[str]:
-        if not value or set(value) - {"commoncrawl", "webtech"}:
-            raise ValueError("Select commoncrawl, webtech, or both")
+        if not value or set(value) - {"commoncrawl", "webtech", "crawler"}:
+            raise ValueError("Select commoncrawl, webtech, and/or crawler")
         return sorted(set(value))
 
 
@@ -70,15 +71,24 @@ def stage_source_pages(
     if "commoncrawl" in config.sources:
         for table, column in COMMONCRAWL_URLS:
             queries.append(("commoncrawl", table, f"""
-                SELECT root_domain,{column},'',resolved_at
+                SELECT root_domain,{column},'',resolved_at,false
                 FROM corpscout.{table} WHERE notEmpty({column})
             """))
     if "webtech" in config.sources:
         # Read scans instead of technology rows: a success with zero technologies
         # still establishes a page. Failed attempts are not proof of a website.
         queries.append(("webtech", "webtech_domain_scan_results", """
-            SELECT root_domain,if(empty(page_url),requested_url,page_url),final_url,scanned_at
+            SELECT root_domain,if(empty(page_url),requested_url,page_url),final_url,scanned_at,true
             FROM corpscout.webtech_domain_scan_results FINAL WHERE outcome='success'
+        """))
+    if "crawler" in config.sources:
+        # Published normalized rows are durable observations; failed fetches may
+        # update observation time but never claim a successful fetch.
+        queries.append(("crawler", "website_crawl_pages_published", """
+            SELECT p.root_domain,p.page_url,'',r.fetched_at,r.fetch_status='fetched'
+            FROM corpscout.website_crawl_pages_published AS r
+            INNER JOIN corpscout.pages AS p ON r.resource_page_id=p.page_id
+            WHERE isNotNull(r.fetched_at)
         """))
     counts = {}
     for source, table, query in queries:
@@ -86,7 +96,7 @@ def stage_source_pages(
         batch = []
         log.info("Reading website/page inventory source %s from corpscout.%s", source, table)
         rows = reader.execute_iter(query, settings=settings, query_id=f"{query_prefix}read-{table}")
-        for root, requested, final, observed in rows:
+        for root, requested, final, observed, successful_fetch in rows:
             statistics["read_rows"] += 1
             # Record both requested and final page identities for in-domain redirects.
             # A cross-domain redirect needs a separately established root association.
@@ -104,7 +114,7 @@ def stage_source_pages(
                     continue
                 # CC resolved_at is extraction/processing evidence time, NOT WARC
                 # capture time or a live fetch. Webtech scanned_at is live evidence.
-                fetched = observed if source == "webtech" else None
+                fetched = observed if successful_fetch else None
                 batch.append((*identity, [source], stamp, stamp, observed, fetched, run_id))
                 statistics["accepted_urls"] += 1
                 if len(batch) >= config.insert_batch_rows:
@@ -166,6 +176,8 @@ def publish_web_inventory(
         required.extend(table for table, _ in COMMONCRAWL_URLS)
     if "webtech" in config.sources:
         required.append("webtech_domain_scan_results")
+    if "crawler" in config.sources:
+        required.append("website_crawl_pages_published")
     assert_clickhouse_tables_exist(clickhouse, database="corpscout", tables=required)
     suffix = uuid4().hex
     query_prefix = f"web-inventory:{suffix}:"
@@ -233,13 +245,22 @@ def publish_web_inventory(
             # EXCHANGE is atomic per table, not across tables. Publish the superset
             # of old/new parents first, then pages. If the second exchange fails,
             # old pages still have their parents and a retry converges safely.
-            writer.execute(f"EXCHANGE TABLES {sites_stage} AND corpscout.websites",
-                           query_id=f"{query_prefix}publish-websites")
-            writer.execute(f"EXCHANGE TABLES {pages_stage} AND corpscout.pages",
-                           query_id=f"{query_prefix}publish-pages")
-            return {"websites": site_count, "pages": page_count, "source_counts": counts,
-                    "page_merge_batches": page_batches, "website_merge_batches": site_batches,
-                    "source_run_id": run_id}
+            with inventory_publication_lock():
+                site_count += retain_registered_identities(
+                    writer, stage=sites_stage, table="websites", settings=settings,
+                    query_id=f"{query_prefix}retain-registered-websites",
+                )
+                page_count += retain_registered_identities(
+                    writer, stage=pages_stage, table="pages", settings=settings,
+                    query_id=f"{query_prefix}retain-registered-pages",
+                )
+                writer.execute(f"EXCHANGE TABLES {sites_stage} AND corpscout.websites",
+                               query_id=f"{query_prefix}publish-websites")
+                writer.execute(f"EXCHANGE TABLES {pages_stage} AND corpscout.pages",
+                               query_id=f"{query_prefix}publish-pages")
+                return {"websites": site_count, "pages": page_count, "source_counts": counts,
+                        "page_merge_batches": page_batches, "website_merge_batches": site_batches,
+                        "source_run_id": run_id}
         except BaseException:
             reader.disconnect()
             writer.disconnect()
@@ -254,6 +275,7 @@ SOURCE_DEPS = [
     dg.AssetKey("domains"),
     *(dg.AssetKey(["corpscout", table]) for table, _ in COMMONCRAWL_URLS),
     dg.AssetKey("webtech_scan_results"),
+    dg.AssetKey("website_crawl_pages"),
 ]
 
 

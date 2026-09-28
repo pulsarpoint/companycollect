@@ -854,9 +854,9 @@ LIMIT 50000`,
   arrayStringConcat(source_names, ' + ') AS domain_source,
   suggested_confidence AS confidence,
   toUInt8(review_status = 'confirmed_primary' OR suggested_primary = 1) AS is_primary
-FROM company_domains FINAL
-PREWHERE country_code = 'SE' AND company_id = {id:String}
-WHERE is_active = 1 AND review_status != 'rejected'
+FROM se_company_domain_resolved
+WHERE country_code = 'SE' AND company_id = {id:String}
+  AND is_active = 1 AND review_status != 'rejected'
 ORDER BY is_primary DESC, suggested_confidence DESC, root_domain
 LIMIT 50`,
       // The shell reads the folded basic-info row plus the Bolagsverket register

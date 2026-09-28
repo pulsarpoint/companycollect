@@ -179,7 +179,7 @@ export function SeCompanyDomainsTab({
   }
   return (
     <section className="flex flex-col gap-4">
-      {/* company_domains names its own suggesters ('common_crawl_identity',
+      {/* se_company_domain names its own suggesters ('common_crawl_identity',
           'wikidata', 'esef_filing'), which is a different vocabulary from the
           register letters on the list page -- the strip maps the two that ARE
           registers onto their catalog names and shows the rest as they are. */}

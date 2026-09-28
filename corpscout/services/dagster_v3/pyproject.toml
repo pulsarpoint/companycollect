@@ -36,7 +36,7 @@ dependencies = [
     "pymupdf>=1.28.0",
     "python-dotenv>=1.0",
     "requests>=2.34.2",
-    "tldextract>=5.3.0",
+    "tldextract==5.3.2",
     "warcio>=1.8.1",
     "whoisit>=4.0.4,<5",
     "zipfile-deflate64>=0.2.0",
@@ -56,7 +56,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/dagster_v3", "exchange_rates"]
-force-include = { "pyproject.toml" = "pyproject.toml" }
+force-include = { "pyproject.toml" = "pyproject.toml", "../../python/corpscout_identity" = "corpscout_identity" }
+
+[tool.hatch.build]
+dev-mode-dirs = ["src", "../../python", "."]
 
 [tool.dg]
 directory_type = "project"
@@ -66,3 +69,6 @@ root_module = "dagster_v3"
 registry_modules = [
     "dagster_v3.components.*",
 ]
+
+[tool.uv]
+cache-keys = [{ file = "pyproject.toml" }, { file = "../../python/corpscout_identity/*.py" }]

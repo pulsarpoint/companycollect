@@ -17,10 +17,10 @@ def test_website_attribution_cache_and_publication_against_real_clickhouse():
                            "source_url": "https://issuer.com/partners", "fetched_at": "2026-09-18T10:00:00Z",
                            "context_version": "website-domain-context-v1", "surrounding_text": "Nova supplies us."})
     schema = '''CREATE DATABASE corpscout;
-CREATE TABLE corpscout.company_domains_resolved (country_code String, company_id String, website_host String, is_active UInt8) ENGINE=MergeTree ORDER BY (country_code, company_id);
+CREATE TABLE corpscout.se_company_domain_resolved (country_code String, company_id String, website_host String, is_active UInt8) ENGINE=MergeTree ORDER BY (country_code, company_id);
 CREATE TABLE corpscout.se_company_basic_info (company_id String, legal_name String) ENGINE=ReplacingMergeTree ORDER BY company_id;
 CREATE TABLE corpscout.website_crawl_results_latest (result_id String, domain String, result_kind String, source_path String, finished_at Nullable(DateTime64(6,'UTC')), external_links Nullable(String)) ENGINE=MergeTree ORDER BY result_id;
-INSERT INTO corpscout.company_domains_resolved VALUES ('SE','123','issuer.com',1), ('SE','wrong','crawl-target.com',1), ('SE','123','issuer.com',1), ('SE','inactive','other.com',0);
+INSERT INTO corpscout.se_company_domain_resolved VALUES ('SE','123','issuer.com',1), ('SE','wrong','crawl-target.com',1), ('SE','123','issuer.com',1), ('SE','inactive','other.com',0);
 INSERT INTO corpscout.se_company_basic_info VALUES ('123','Issuer'), ('wrong','Wrong company'), ('inactive','Other');
 '''
     links = '[' + evidence + ',' + evidence.replace('issuer.com', 'other.com') + ']'
@@ -38,6 +38,7 @@ INSERT INTO corpscout.se_company_basic_info VALUES ('123','Issuer'), ('wrong','W
      reporting_entity_name,registrable_domain,captured_at,source_url,lower(hex(SHA256(evidence_json))),
      {literal(params['analysis_version'])},{literal(params['prompt_hash'])},{literal(params['model_config_json'])},'success',now64(6)
     FROM corpscout.website_domain_relationship_inputs;'''
+    migration = migration.replace('company_domains_resolved', 'se_company_domain_resolved')
     statements = [schema, migration, insert_source, pending, insert_answer, pending, publish,
         "INSERT INTO corpscout.website_domain_relationship_analysis SELECT * REPLACE ('2' AS attempt_id,'http_error' AS status, now64(6) + INTERVAL 1 HOUR AS analyzed_at) FROM corpscout.website_domain_relationship_analysis;",
         publish,
@@ -45,7 +46,7 @@ INSERT INTO corpscout.se_company_basic_info VALUES ('123','Issuer'), ('wrong','W
         f"INSERT INTO corpscout.website_crawl_results_latest VALUES ('result','crawl-target.com','crawl','s3/path','2026-09-18 10:00:00', {literal('[' + evidence.replace('Nova supplies us.', 'Nova no longer supplies us.') + ']')});",
         'SELECT count() FROM corpscout.website_domain_relationships_current FORMAT JSONCompactEachRow;',
         # Same numeric company id in another country makes the host ambiguous.
-        "INSERT INTO corpscout.company_domains_resolved VALUES ('NO','123','issuer.com',1);",
+        "INSERT INTO corpscout.se_company_domain_resolved VALUES ('NO','123','issuer.com',1);",
         'SELECT count() FROM corpscout.website_domain_relationship_inputs FORMAT JSONCompactEachRow;',
         'SELECT count() FROM corpscout.website_domain_relationships_current FORMAT JSONCompactEachRow;',
         "SELECT groupArray(name) FROM (SELECT name FROM system.columns WHERE database='corpscout' AND table='website_domain_relationship_analysis' ORDER BY position) FORMAT JSONCompactEachRow;",

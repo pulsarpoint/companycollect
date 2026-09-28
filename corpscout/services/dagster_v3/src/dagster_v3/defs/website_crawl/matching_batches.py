@@ -2,9 +2,11 @@
 
 import hashlib
 import json
+from collections import Counter
 from time import monotonic, sleep
 
 import dagster as dg
+from corpscout_identity.urls import website_reference
 from requests.exceptions import RequestException
 
 from dagster_v3.defs.common.llm_control import (
@@ -12,6 +14,7 @@ from dagster_v3.defs.common.llm_control import (
     current_request_id,
     finish_external_request,
 )
+from dagster_v3.defs.website_crawl.outcome_logging import log_crawl_outcomes
 
 
 def service_request(
@@ -118,13 +121,15 @@ def process_matching_batch(
             state = service_request(http, base, "GET", "/v1/crawl-batches/" + batch_id)
         # The writer publishes the matching summary last, after the ordinary result.
         ids = tuple(item["request_id"] for item in items)
+        identities = tuple((entry["request"]["request_id"], website_reference(
+            entry["request"]["url"], entry["request"].get("website_id"))) for entry in entries)
         for table in (
             RESULTS_BY_TYPE[items[0]["crawl_type"]],
             "corpscout.website_company_lookup_results",
         ):
             count = client.execute(
-                f"SELECT uniqExact(request_id) FROM {table} WHERE request_id IN %(ids)s",
-                {"ids": ids},
+                f"SELECT uniqExact(request_id) FROM {table} WHERE request_id IN %(ids)s AND (request_id,website_id) IN %(identities)s",
+                {"ids": ids, "identities": identities},
             )[0][0]
             if count != len(items):
                 raise dg.Failure(
@@ -133,6 +138,47 @@ def process_matching_batch(
         active = False
         if owner:
             finish_external_request("crawler", batch_id)
+        rows, columns = client.execute(
+            f"""SELECT c.domain, c.request_id, c.attempt, c.state, c.crawl_status,
+                c.successful, c.error,
+                if(c.successful, '[]', c.pages) AS pages,
+                if(c.successful, NULL, c.site_info) AS site_info,
+                m.status AS matching_status, m.stop_reason AS matching_stop_reason,
+                if(m.status IN ('failed', 'cancelled'), m.reasons, []) AS matching_reasons
+            FROM (SELECT * FROM {RESULTS_BY_TYPE[items[0]["crawl_type"]]} FINAL
+                WHERE request_id IN %(ids)s) AS c
+            LEFT JOIN (SELECT * FROM corpscout.website_company_lookup_results FINAL
+                WHERE request_id IN %(ids)s) AS m USING (request_id, attempt)
+            ORDER BY c.domain, c.attempt""",
+            {"ids": ids},
+            with_column_types=True,
+        )
+        records = [dict(zip((name for name, _ in columns), row)) for row in rows]
+        failures = log_crawl_outcomes(context, records, items[0]["crawl_type"])
+        matching = Counter(record["matching_status"] for record in records)
+        context.log.info(
+            "Published crawl batch %s: stored_attempts=%s crawl_succeeded=%s crawl_unsuccessful=%s; company_matching=%s (not_found is not a crawl failure)",
+            batch_id,
+            len(records),
+            sum(bool(r["successful"]) for r in records),
+            sum(not r["successful"] for r in records),
+            dict(matching),
+        )
+        if failures:
+            context.log_event(
+                dg.AssetObservation(
+                    asset_key=RESULTS_BY_TYPE[items[0]["crawl_type"]].split(".")[-1],
+                    metadata={
+                        "batch_id": batch_id,
+                        "failed_attempts": len(
+                            {(row["request_id"], row["attempt"]) for row in failures}
+                        ),
+                        "failure_details": dg.MetadataValue.table(
+                            [dg.TableRecord(row) for row in failures]
+                        ),
+                    },
+                )
+            )
         for table in (
             "website_company_lookup_results",
             "website_company_lookup_candidates",
@@ -155,4 +201,9 @@ def process_matching_batch(
         return len(items)
     finally:
         if active:
-            service_request(http, base, "DELETE", "/v1/crawl-batches/" + batch_id)
+            try:
+                service_request(http, base, "DELETE", "/v1/crawl-batches/" + batch_id)
+            except RuntimeError as error:
+                # Admission can fail before the batch exists. A cleanup failure
+                # must not replace the original processing/admission exception.
+                context.log.warning("Could not cancel crawl batch %s: %s", batch_id, error)

@@ -1,5 +1,8 @@
 """Global inventory selection and real draft imports in disposable databases."""
 
+from hashlib import sha256
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -20,15 +23,17 @@ SOURCE = {"source_relation": "corpscout.domains_search", "source_final": False,
 @pytest.fixture
 def inventory(database):  # noqa: F811
     client, *_ = database
-    for table in ("domains_search", "company_domains_resolved", "website_company_lookup_results"):
+    for table in ("domains_company_filter", "domains", "domains_search", "domains_sources", "website_company_lookup_results"):
         client.execute(f"DROP TABLE IF EXISTS corpscout.{table}")
     client.execute("""CREATE TABLE corpscout.domains_search (
         root_domain String, sources Array(String), has_dns_records UInt8,
-        has_website UInt8, observed_website_count UInt32, has_company UInt8
+        has_website UInt8, observed_website_count UInt32, has_company UInt8,
+        domain_id String MATERIALIZED lower(hex(SHA256(root_domain)))
     ) ENGINE=MergeTree ORDER BY root_domain""")
-    client.execute("""CREATE TABLE corpscout.company_domains_resolved (
-        root_domain String, country_code String, company_id String, is_active UInt8
-    ) ENGINE=MergeTree ORDER BY (root_domain,country_code,company_id)""")
+    client.execute("""CREATE TABLE corpscout.domains_sources (
+        domain_id String, country_code String, company_id String, is_active UInt8,
+        association String DEFAULT 'connected', source_table String DEFAULT 'se_company_domain'
+    ) ENGINE=ReplacingMergeTree ORDER BY (domain_id,country_code,company_id)""")
     client.execute("""CREATE TABLE corpscout.website_company_lookup_results (
         domain String, status String
     ) ENGINE=MergeTree ORDER BY domain""")
@@ -43,13 +48,20 @@ def inventory(database):  # noqa: F811
     ])
     client.execute("INSERT INTO corpscout.domains_search VALUES", [("one-source.se", ["commoncrawl_graph"], 1, 1, 1, 0)])
     # A stale snapshot says rejected is linked and linked is unassociated.
-    client.execute("INSERT INTO corpscout.company_domains_resolved VALUES", [
-        ("linked.se", "SE", "1", 1), ("linked.se", "NO", "1", 1), ("rejected.se", "SE", "2", 0),
+    client.execute("INSERT INTO corpscout.domains_sources (domain_id,country_code,company_id,is_active) VALUES", [
+        (sha256(b"linked.se").hexdigest(), "SE", "1", 1), (sha256(b"linked.se").hexdigest(), "NO", "1", 1), (sha256(b"rejected.se").hexdigest(), "SE", "2", 0),
     ])
+    client.execute("CREATE TABLE corpscout.domains (root_domain String,domain_id String MATERIALIZED lower(hex(SHA256(root_domain)))) ENGINE=MergeTree ORDER BY root_domain")
+    client.execute("INSERT INTO corpscout.domains SELECT root_domain FROM corpscout.domains_search")
     client.execute("INSERT INTO corpscout.website_company_lookup_results VALUES", [
         ("failed.se", "failed"), ("matched.se", "matched"), ("matched.se", "matched"),
         ("not-found.se", "not_found"), ("cancelled.se", "cancelled"), ("already-mapped.se", "already_mapped"),
     ])
+    migration = Path(__file__).resolve().parents[3] / "clickhouse/migrations/000463_corpscout_domain_source_readers.up.sql"
+    sql = migration.read_text().split("CREATE MATERIALIZED VIEW", 1)[1]
+    for statement in ("CREATE MATERIALIZED VIEW" + sql).split(";"):
+        if statement.strip():
+            client.execute(statement)
     return database
 
 

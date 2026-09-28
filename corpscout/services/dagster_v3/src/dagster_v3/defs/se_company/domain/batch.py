@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from time import perf_counter
 from typing import Any
 
+from dagster_v3.defs.domains.registration import register_swedish_domains
 from dagster_v3.defs.se_company.basic_info.extract import scope_pages
 from dagster_v3.defs.se_company.domain import tables
 from dagster_v3.defs.se_company.domain.evidence import digest, input_payload, json_text, requires_verification
@@ -26,6 +27,8 @@ def read_rows(client: Any, table: str, columns: Sequence[str], ids: Sequence[str
 
 def insert_rows(client: Any, table: str, columns: Sequence[str], rows: Sequence[Mapping[str, Any]]) -> None:
     if rows:
+        if table == tables.MAIN_TABLE:
+            register_swedish_domains(client, rows)
         client.execute(f"INSERT INTO corpscout.{table} ({', '.join(columns)}) VALUES",
                        [tuple(row[column] for column in columns) for row in rows])
 
@@ -51,7 +54,7 @@ def fold_input_hash(
 def processing_scope_sql() -> str:
     return "SELECT DISTINCT company_id FROM (" + " UNION ALL ".join(
         f"SELECT company_id FROM corpscout.{table}" for table in (
-            tables.SUGGESTION_TABLE, tables.MAIN_TABLE, tables.RULE_TABLE,
+            tables.SOURCE_TABLE, tables.MAIN_TABLE, tables.RULE_TABLE,
         )
     ) + ")"
 
@@ -59,7 +62,7 @@ def processing_scope_sql() -> str:
 def read_domain_inputs(client: Any, ids: Sequence[str]) -> dict[str, dict[str, list[dict[str, Any]]]]:
     groups = {}
     for table, columns in (
-        (tables.SUGGESTION_TABLE, tables.SUGGESTION_COLUMNS),
+        (tables.SOURCE_VIEW, tables.SUGGESTION_COLUMNS),
         (tables.PRECEDENCE_TABLE, tables.PRECEDENCE_COLUMNS), (tables.RULE_TABLE, tables.RULE_COLUMNS),
         ("se_company_basic_info", ("company_id", "legal_name", "lei", "wikidata_id")),
     ):
@@ -81,7 +84,7 @@ def verification_requests(
         domains: dict[str, list[dict[str, Any]]] = defaultdict(list)
         reviewed = {r["root_domain"] for r in groups[tables.RULE_TABLE][company_id]
                     if not r["removed"] and r["action"] != "unreviewed"}
-        for row in groups[tables.SUGGESTION_TABLE][company_id]:
+        for row in groups[tables.SOURCE_VIEW][company_id]:
             if not row["removed"]:
                 domains[row["root_domain"]].append(row)
         precedence = globals_ + groups[tables.PRECEDENCE_TABLE][company_id]
@@ -223,8 +226,9 @@ def publish_domains(
                 log("Domain publication: company scope and first page ready in %.2fs", page_started - scope_started)
             log("Domain publication page %d: loading inputs for %d companies (%s–%s); %d companies completed so far",
                 page, len(ids), ids[0], ids[-1], counts["companies"])
+            source_snapshot_at = datetime.now(UTC)
             groups = read_domain_inputs(client, ids)
-            suggestion_count = sum(len(rows) for rows in groups[tables.SUGGESTION_TABLE].values())
+            suggestion_count = sum(len(rows) for rows in groups[tables.SOURCE_VIEW].values())
             rule_count = sum(len(rows) for rows in groups[tables.RULE_TABLE].values())
             log("Domain publication page %d: loaded %d suggestions and %d reviewer rules in %.2fs; loading published domains",
                 page, suggestion_count, rule_count, perf_counter() - page_started)
@@ -267,7 +271,7 @@ def publish_domains(
             for index, company_id in enumerate(ids, 1):
                 verified = verified_by_company[company_id]
                 identity = groups["se_company_basic_info"][company_id]
-                suggestions = groups[tables.SUGGESTION_TABLE][company_id]
+                suggestions = groups[tables.SOURCE_VIEW][company_id]
                 previous = previous_by_company[company_id]
                 precedence = globals_ + groups[tables.PRECEDENCE_TABLE][company_id]
                 rules = groups[tables.RULE_TABLE][company_id]
@@ -281,6 +285,10 @@ def publish_domains(
                                                  folded_at=datetime.now(UTC), source_run_id=run_id)
                     for row in [*rows, *changes]:
                         row["fold_input_hash"] = signature
+                    for row in rows:
+                        # A review arriving after this input snapshot must keep
+                        # its newer source-index version, even if folding is slow.
+                        row["source_snapshot_at"] = source_snapshot_at
                     output.extend(rows)
                     history.extend(changes)
                 now = perf_counter()

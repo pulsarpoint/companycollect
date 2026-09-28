@@ -8,10 +8,11 @@ SYNC_ASSETS = (*EXTRACTOR_ASSETS, "se_company_domain_precedence_clickhouse")
 
 se_company_domain_sync_job = dg.define_asset_job(
     "se_company_domain_sync_job", selection=dg.AssetSelection.assets(*SYNC_ASSETS),
-    description="Sync Brave, Wikidata, ESEF and Common Crawl observations and source precedence. No LLM calls or publishing.",
+    description="Sync Brave, Wikidata, ESEF, Common Crawl and saved crawler observations and source precedence. No LLM calls or publishing.",
 )
 se_company_domain_refresh_job = dg.define_asset_job(
     "se_company_domain_refresh_job",
-    selection=dg.AssetSelection.assets(*SYNC_ASSETS, "se_company_domain_verification", "se_company_domain_publish"),
+    selection=dg.AssetSelection.assets(*SYNC_ASSETS, "se_company_domain_verification", "se_company_domain_publish", "domains_sources", "domains_company_filter"),
+    config={"ops": {"domains_sources": {"config": {"source_tables": ["se_company_domain"]}}}},
     description="Sync domain evidence, optionally verify uncertain or conflicting associations, and fold all companies with change history.",
 )

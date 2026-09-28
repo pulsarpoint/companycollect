@@ -1,6 +1,7 @@
 """Deterministic crawl projections retain evidence and never infer company ownership."""
 
 import json
+from corpscout_identity.urls import website_reference
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -18,6 +19,7 @@ NORM = UUID("00000000-0000-0000-0000-000000000001")
 def source():
     return dict(
         domain="example.se",
+        website_id=website_reference("https://example.se"),
         crawl_type="full",
         request_id="request-1",
         attempt=1,

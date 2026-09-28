@@ -19,7 +19,6 @@ _ESEF_MODELS_READING_THE_MAP_THROUGH_A_VIEW = {
     "company_contact_current_build",
     "company_description_current_build",
     "company_section_item_source_links_build",
-    "company_domains_build",
 }
 
 

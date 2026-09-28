@@ -59,7 +59,6 @@ export function QueueProcessSheet({filters, total, asset, blockedReason, llmProf
     } else {
       for (const [key, raw] of values) {
         if (key === "execution_id") continue;
-        if (key === "match_company" && raw === "saved") continue;
         config[key] = ["force_refresh", "full_crawl_all", "match_company", "skip_company_matching_if_mapped"].includes(key) ? raw === "true"
           : ["challenge_agent_max_runs", "max_pages", "max_model_calls", "max_in_flight", "refresh_interval_days"].includes(key) ? Number(raw) : String(raw);
       }

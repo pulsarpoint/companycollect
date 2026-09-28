@@ -3,6 +3,9 @@
 from pathlib import Path
 
 import pytest
+from tests.crawl_reference_schema import upgrade_references
+from tests.identity_registration_support import identity_postgres as identity_postgres
+from tests.test_processing_store import processing_postgres_url as processing_postgres_url
 
 from tests.test_commoncrawl_domain_graph_integration import graph_ch as graph_ch
 from tests.test_website_crawl_normalization import source as source, payload as payload
@@ -17,7 +20,7 @@ from dagster_v3.defs.website_crawl.normalization.load import (
 
 
 @pytest.fixture
-def normalized_ch(graph_ch):
+def normalized_ch(graph_ch, identity_postgres):
     directory = Path(__file__).parents[3] / "clickhouse/migrations"
     for name in (
         "000430_corpscout_website_crawl_type_results",
@@ -26,6 +29,7 @@ def normalized_ch(graph_ch):
         for statement in (directory / (name + ".up.sql")).read_text().split(";"):
             if statement.strip():
                 graph_ch.execute(statement)
+    upgrade_references(graph_ch)
     for name in tables.COLUMNS:
         graph_ch.execute("TRUNCATE TABLE corpscout.website_crawl_" + name)
     for name in (
@@ -48,7 +52,9 @@ def insert_source(client, source):
 
 
 def test_export_contract_matches_migration():
-    assert tables.SCHEMAS == EXPECTED_SCHEMAS
+    expected = {name: schema + "\nwebsite_id String" for name, schema in EXPECTED_SCHEMAS.items()}
+    expected["pages"] += "\nresource_page_id Nullable(String)"
+    assert tables.SCHEMAS == expected
 
 
 def test_pending_publication_and_native_types(normalized_ch, source, payload):

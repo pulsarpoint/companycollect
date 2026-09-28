@@ -1,4 +1,4 @@
-import { chInsertCompanyDomains, chInsertSeCompanyDomainRules, chQuery } from "~/lib/clickhouse.server";
+import { chInsertSeCompanyDomainRules, chQuery } from "~/lib/clickhouse.server";
 
 export const COMPANY_DOMAIN_REVIEW_STATUSES = [
   "unreviewed",
@@ -84,6 +84,7 @@ export const COMPANY_DOMAIN_SOURCES = [
   "wikidata",
   "esef_filing",
   "common_crawl_identity",
+  "crawler_lookup",
 ] as const;
 
 export type CompanyDomainSourceFilter = (typeof COMPANY_DOMAIN_SOURCES)[number];
@@ -207,7 +208,7 @@ export const COMPANY_DOMAINS_QUERY = `SELECT
   toString(first_seen_at) AS first_seen_at,
   toString(last_seen_at) AS last_seen_at,
   toString(resolved_at) AS resolved_at
-FROM company_domains_resolved
+FROM se_company_domain_resolved
 WHERE country_code = {country:String}
   AND company_id = {companyId:String}
 ORDER BY
@@ -593,9 +594,9 @@ const COMPANY_DOMAIN_QUEUE_WHERE = `WHERE domains.country_code = {country:String
   AND ({source:String} = 'all' OR has(domains.source_names, {source:String}))`;
 
 export const COMPANY_DOMAIN_REVIEW_QUEUE_COUNT_QUERY = `SELECT count() AS total
-FROM company_domains_resolved AS domains
+FROM se_company_domain_resolved AS domains
 LEFT JOIN se_company_domain AS entity FINAL
-  ON entity.company_id = domains.company_id AND entity.root_domain = domains.root_domain
+  ON entity.company_id = domains.company_id AND entity.domain_id = domains.domain_id
 INNER JOIN se_company_basic_info AS companies FINAL
   ON companies.company_id = domains.company_id
 ${COMPANY_DOMAIN_QUEUE_WHERE}`;
@@ -625,9 +626,9 @@ export const COMPANY_DOMAIN_REVIEW_QUEUE_QUERY = `SELECT
   toString(domains.first_seen_at) AS first_seen_at,
   toString(domains.last_seen_at) AS last_seen_at,
   toString(domains.resolved_at) AS resolved_at
-FROM company_domains_resolved AS domains
+FROM se_company_domain_resolved AS domains
 LEFT JOIN se_company_domain AS entity FINAL
-  ON entity.company_id = domains.company_id AND entity.root_domain = domains.root_domain
+  ON entity.company_id = domains.company_id AND entity.domain_id = domains.domain_id
 INNER JOIN se_company_basic_info AS companies FINAL
   ON companies.company_id = domains.company_id
 ${COMPANY_DOMAIN_QUEUE_WHERE}
@@ -696,37 +697,22 @@ export async function searchCompanyDomainReviewQueue(
   };
 }
 
-function reviewedRow(
+function reviewRule(
   domain: CompanyDomain,
-  reviewStatus: CompanyDomainReviewStatus,
+  action: CompanyDomainReviewStatus,
   note: string,
-  reviewedBy: string,
-  reviewedAt: string,
-): Record<string, unknown> {
-  const reviewed = reviewStatus !== "unreviewed";
+  decidedBy: string,
+  decidedAt: string,
+) {
   return {
-    country_code: domain.countryCode,
     company_id: domain.companyId,
     root_domain: domain.rootDomain,
-    website_url: domain.websiteUrl,
-    website_host: domain.websiteHost,
-    source_names: domain.sources.map((source) => source.name),
-    source_confidences: domain.sources.map((source) => source.confidence),
-    source_record_ids: domain.sources.map((source) => source.sourceRecordId),
-    source_urls: domain.sources.map((source) => source.sourceUrl),
-    confidence_bases: domain.sources.map((source) => source.confidenceBasis),
-    suggested_confidence: domain.suggestedConfidence,
-    suggested_primary: domain.suggestedPrimary ? 1 : 0,
-    evidence_fingerprint: domain.evidenceFingerprint,
-    review_status: reviewStatus,
-    review_note: reviewed ? note : "",
-    reviewed_by: reviewed ? reviewedBy : "",
-    reviewed_at: reviewed ? reviewedAt : null,
-    reviewed_evidence_fingerprint: reviewed ? domain.evidenceFingerprint : "",
-    is_active: domain.active ? 1 : 0,
-    first_seen_at: domain.firstSeenAt,
-    last_seen_at: domain.lastSeenAt,
-    resolved_at: reviewedAt,
+    action,
+    removed: action === "unreviewed" ? 1 : 0,
+    decided_by: decidedBy,
+    note,
+    evidence_hash: domain.evidenceFingerprint,
+    decided_at: decidedAt,
   };
 }
 
@@ -757,6 +743,11 @@ export async function recordCompanyDomainReview(
       "This domain is no longer associated with the company.",
     );
   }
+  if (domain.countryCode !== "SE" || input.domains.some(
+    (candidate) => candidate.countryCode !== domain.countryCode || candidate.companyId !== domain.companyId,
+  )) {
+    throw new CompanyDomainReviewValidationError("Domain reviews require one Swedish company.");
+  }
   const note = input.note?.trim() ?? "";
   const reviewedBy = input.reviewedBy?.trim() ?? "";
   if (note.length > 2_000) {
@@ -771,7 +762,7 @@ export async function recordCompanyDomainReview(
   }
   const reviewedAt = clickHouseTimestamp(input.reviewedAt);
   const rows = [
-    reviewedRow(domain, input.reviewStatus, note, reviewedBy, reviewedAt),
+    reviewRule(domain, input.reviewStatus, note, reviewedBy, reviewedAt),
   ];
   if (input.reviewStatus === "confirmed_primary") {
     for (const sibling of input.domains) {
@@ -780,7 +771,7 @@ export async function recordCompanyDomainReview(
         sibling.reviewStatus === "confirmed_primary"
       ) {
         rows.push(
-          reviewedRow(
+          reviewRule(
             sibling,
             "confirmed_related",
             sibling.reviewNote,
@@ -791,12 +782,5 @@ export async function recordCompanyDomainReview(
       }
     }
   }
-  const swedishRows = rows.filter((row) => row.country_code === "SE");
-  if (swedishRows.length) await chInsertSeCompanyDomainRules(swedishRows.map((row) => ({
-    company_id: row.company_id, root_domain: row.root_domain,
-    action: row.review_status, removed: row.review_status === "unreviewed" ? 1 : 0,
-    decided_by: row.reviewed_by, note: row.review_note,
-    evidence_hash: row.reviewed_evidence_fingerprint, decided_at: row.reviewed_at,
-  })));
-  await chInsertCompanyDomains(rows);
+  await chInsertSeCompanyDomainRules(rows);
 }

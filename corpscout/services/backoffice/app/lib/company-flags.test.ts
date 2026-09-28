@@ -20,7 +20,7 @@ describe("Sweden technical-information filter", () => {
       "domain_suggestion",
     );
     expect(COMPANY_FLAG_SOURCES.se.domain_suggestion).toEqual({
-      idQuery: expect.stringContaining("company_domains FINAL"),
+      idQuery: expect.stringContaining("se_company_domain_resolved"),
     });
     expect(
       (COMPANY_FLAG_SOURCES.se.domain_suggestion as { idQuery: string })

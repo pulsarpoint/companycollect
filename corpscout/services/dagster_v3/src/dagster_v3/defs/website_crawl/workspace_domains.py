@@ -49,7 +49,7 @@ class WorkspaceDomainFilters(dg.Config):
             where.append(f"has_website = {int(self.websites == 'with')}")
         if self.companies != "any":
             negation = "NOT " if self.companies == "without" else ""
-            where.append(f"root_domain {negation}IN (SELECT root_domain FROM corpscout.company_domains_resolved WHERE is_active = 1)")
+            where.append(f"root_domain {negation}IN (SELECT root_domain FROM corpscout.domains_company_filter)")
         if self.company_matching != "any":
             negation = "NOT " if self.company_matching == "without" else ""
             where.append(f"root_domain {negation}IN (SELECT domain FROM corpscout.website_company_lookup_results)")

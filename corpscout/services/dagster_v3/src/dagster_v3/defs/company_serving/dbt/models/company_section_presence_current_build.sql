@@ -4,6 +4,12 @@ WITH company_anchors AS (
     SELECT company_id
     FROM {{ source('corpscout', 'se_company_basic_info') }} FINAL
 ),
+published_domains AS (
+    SELECT country_code, company_id, root_domain, resolved_at
+    FROM {{ source('corpscout', 'se_company_domain_resolved') }}
+    WHERE country_code = '{{ var("country_code") }}'
+      AND is_active = 1 AND review_status != 'rejected'
+),
 section_rows AS (
     SELECT country_code, company_id, 'gleif' AS section, concat('entity:', lei) AS item_key, resolved_at AS observed_at
     FROM {{ ref('company_gleif_current_build') }}
@@ -15,7 +21,7 @@ section_rows AS (
     UNION ALL
     SELECT country_code, company_id, 'descriptions', description_id, extracted_at FROM {{ ref('company_description_current_build') }}
     UNION ALL
-    SELECT country_code, company_id, 'domains', concat('domain:', root_domain), resolved_at FROM {{ ref('company_domain_current_build') }}
+    SELECT country_code, company_id, 'domains', concat('domain:', root_domain), resolved_at FROM published_domains
     UNION ALL
     SELECT country_code, company_id, 'domains', concat('contact:', contact_id), resolved_at FROM {{ ref('company_contact_current_build') }}
     UNION ALL
@@ -46,7 +52,7 @@ section_rows AS (
     FROM {{ ref('company_section_item_source_links_build') }}
     UNION ALL
     SELECT country_code, company_id, 'technology', root_domain, resolved_at
-    FROM {{ ref('company_domain_current_build') }}
+    FROM published_domains
 )
 SELECT
     rows.country_code,

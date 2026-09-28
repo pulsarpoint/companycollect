@@ -39,7 +39,7 @@ describe("Sweden company sections", () => {
     }
     // The reviewable company-domain projection is a ReplacingMergeTree. FINAL
     // is intentional here so a just-written human decision wins immediately.
-    expect(sectionServer).toContain("company_domains FINAL");
+    expect(sectionServer).toContain("se_company_domain_resolved");
   });
 
   it("resolves section evidence from company-scoped source-record keys", () => {

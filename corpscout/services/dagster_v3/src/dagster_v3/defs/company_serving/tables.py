@@ -156,35 +156,6 @@ CONTACTS = CurrentTable(
     ),
     (*SHARED_KEY, "contact_type", "contact_id"),
 )
-DOMAINS = CurrentTable(
-    "company_domains",
-    "company_domains_build",
-    (
-        "country_code",
-        "company_id",
-        "root_domain",
-        "website_url",
-        "website_host",
-        "source_names",
-        "source_confidences",
-        "source_record_ids",
-        "source_urls",
-        "confidence_bases",
-        "suggested_confidence",
-        "suggested_primary",
-        "evidence_fingerprint",
-        "review_status",
-        "review_note",
-        "reviewed_by",
-        "reviewed_at",
-        "reviewed_evidence_fingerprint",
-        "is_active",
-        "first_seen_at",
-        "last_seen_at",
-        "resolved_at",
-    ),
-    (*SHARED_KEY, "root_domain"),
-)
 CONTRACTS = CurrentTable(
     "company_contract_current",
     "company_contract_current_build",
@@ -297,7 +268,6 @@ CURRENT_TABLES = (
     CONTRACT_SUMMARY,
     INDUSTRIES,
     SOURCE_LINKS,
-    DOMAINS,
     PRESENCE,
 )
 HISTORY_TABLES = {

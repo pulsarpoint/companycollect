@@ -44,8 +44,6 @@ def test_company_serving_dbt_project_parses() -> None:
         "company_wikidata_current_build",
         "company_description_current_build",
         "company_contact_current_build",
-        "company_domains_build",
-        "company_domain_current_build",
         "company_contract_current_build",
         "company_contract_summary_current_build",
         "se_company_industry_display_current_build",
@@ -136,17 +134,12 @@ def test_serving_models_resolve_identity_and_evidence_offline() -> None:
     assert (
         "FROM section_rows AS rows\nINNER JOIN company_anchors AS anchors" in presence
     )
-    assert "ref('company_domains_build')" in source_links
+    assert "source('corpscout', 'se_company_domain_resolved')" in source_links
     assert "has(current.source_names, 'wikidata')" in source_links
     assert "has(current.source_names, 'esef_filing')" in source_links
     assert "annual_report_website" in source_links
     assert "'management'" not in source_links
     assert "ref('company_management_current_build')" not in source_links
-    company_domains = (models / "company_domains_build.sql").read_text()
-    assert "source('corpscout', 'se_company_domain')" in company_domains
-    assert "reviewed_evidence_fingerprint" in company_domains
-    assert "domains.active AS is_active" in company_domains
-    assert "existing.review_status != 'unreviewed'" not in company_domains
     assert "gleif_lei_record" in source_links
     assert "record_kind" in source_links
     assert "payload_sha256" in source_links
@@ -159,7 +152,6 @@ def test_serving_models_resolve_identity_and_evidence_offline() -> None:
         == 2
     )
 
-    assert "AS companies" in company_domains
 
     for model_name in (
         "company_description_current_build.sql",
@@ -175,7 +167,7 @@ def test_serving_models_resolve_identity_and_evidence_offline() -> None:
     # esef_entity_registry_map join the views now do themselves. A view is already a FINAL
     # read of its ReplacingMergeTree product, so re-adding FINAL after se_esef_document_people
     # would be a ClickHouse error.
-    for model in ("company_contact_current_build", "company_description_current_build", "company_section_item_source_links_build", "company_domains_build"):
+    for model in ("company_contact_current_build", "company_description_current_build", "company_section_item_source_links_build"):
         text = (models / f"{model}.sql").read_text()
         # Only the se_esef_document_* views remain: any esef_document_* NOT preceded by
         # "se_" is the country-agnostic product itself, read directly.
@@ -197,7 +189,6 @@ def test_serving_project_declares_integrity_tests() -> None:
     tests = {path.name for path in (DBT_DIR / "tests").glob("*.sql")}
     assert tests == {
         "company_lei_gleif_is_consistent.sql",
-        "company_domains_source_arrays_align.sql",
         "section_presence_uses_supported_names.sql",
         "section_source_links_have_records.sql",
     }
@@ -206,20 +197,19 @@ def test_serving_project_declares_integrity_tests() -> None:
     schema = (DBT_DIR / "models" / "schema.yml").read_text()
     assert "test company_serving_unique_key" in generic_tests
     assert "test company_serving_sweden_anchor" in generic_tests
-    assert schema.count("company_serving_unique_key:") == 12
-    assert schema.count("company_serving_sweden_anchor") == 12
+    assert schema.count("company_serving_unique_key:") == 11
+    assert schema.count("company_serving_sweden_anchor") == 11
 
 
 MODELS_DIR = DBT_DIR / "models"
 
 
-def test_company_domains_build_reads_the_folded_entity() -> None:
-    sql = (MODELS_DIR / "company_domains_build.sql").read_text(encoding="utf-8")
-    assert "source('corpscout', 'se_company_domain')" in sql
-    assert "domains.evidence_hash AS evidence_fingerprint" in sql
-    assert "domains.active AS is_active" in sql
-    assert "domains.is_primary AS suggested_primary" in sql
-    assert "company_domain_suggestions_active" not in sql
+def test_domain_copy_models_are_gone() -> None:
+    assert not (MODELS_DIR / "company_domains_build.sql").exists()
+    assert not (MODELS_DIR / "company_domain_current_build.sql").exists()
+    sql = (MODELS_DIR / "company_section_presence_current_build.sql").read_text()
+    assert "source('corpscout', 'se_company_domain_resolved')" in sql
+    assert "is_active = 1 AND review_status != 'rejected'" in sql
 
 
 def test_source_links_read_esef_domain_provenance_from_the_domains_view() -> None:

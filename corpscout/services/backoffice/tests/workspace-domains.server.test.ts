@@ -13,6 +13,8 @@ it("paginates the inventory and refreshes associations and matching for only the
   expect(db.chQuery).toHaveBeenCalledTimes(5);
   expect(result.rows[0]).toMatchObject({ company_count: 2, company_matching_status: "failed" });
   expect(db.chQuery.mock.calls[3][1].domains).toHaveLength(25);
+  expect(db.chQuery.mock.calls[3][0]).toContain("FROM corpscout.domains_company_filter");
+  expect(db.chQuery.mock.calls[3][0]).not.toMatch(/JOIN|FINAL/);
   const sql = db.chQuery.mock.calls.slice(0, 3).map(([sql]) => sql).join("\n");
   expect(sql).not.toMatch(/JOIN|UNION|FINAL|count\(/);
   expect(sql).toContain("FROM corpscout.domains_search");
@@ -24,8 +26,9 @@ it("applies combined and negative filters before pagination using bound values",
   expect(sql).toContain("hasAll(sources, {sources:Array(String)})");
   expect(sql).toContain("has_dns_records = 0");
   expect(sql).toContain("has_website = 1 AND observed_website_count > 0");
-  expect(sql).toContain("FROM corpscout.company_domains_resolved WHERE is_active = 1");
+  expect(sql).toContain("FROM corpscout.domains_company_filter");
   expect(sql).not.toContain("has_company = 1");
+  expect(sql).not.toMatch(/JOIN|FINAL|FROM corpscout.domains_sources/);
   expect(sql).toContain("endsWith(root_domain, {suffix:String})");
   expect(sql).not.toContain("example'");
   expect(params).toMatchObject({ prefix: "example'", suffix: ".se", after: "before.se", sources: ["commoncrawl", "se_company_domain"] });
@@ -65,7 +68,7 @@ it("excludes every matching outcome, not only successful proposals, before count
   for (const index of [0, 3]) {
     const sql = db.chQuery.mock.calls[index][0];
     expect(sql).toMatch(/root_domain NOT IN\s+\(SELECT domain FROM corpscout.website_company_lookup_results\)/);
-    expect(sql).toContain("FROM corpscout.company_domains_resolved WHERE is_active = 1");
+    expect(sql).toContain("FROM corpscout.domains_company_filter");
     expect(sql).not.toMatch(/found|status =|proposals|has_company =/);
   }
   expect(db.chQuery.mock.calls[3][0]).not.toContain("after");

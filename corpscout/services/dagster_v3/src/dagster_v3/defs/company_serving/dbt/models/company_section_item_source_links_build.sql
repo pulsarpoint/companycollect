@@ -287,18 +287,16 @@ wikidata_domains AS (
         'official_website_claim' AS match_method,
         arrayElement(current.source_confidences, indexOf(current.source_names, 'wikidata')) AS match_confidence,
         records.source_run_id, records.retrieved_at AS linked_at
-    FROM {{ ref('company_domains_build') }} AS current
+    FROM {{ source('corpscout', 'se_company_domain_resolved') }} AS current
     INNER JOIN {{ ref('company_external_identifier_current_build') }} AS ids
         ON ids.country_code = current.country_code AND ids.company_id = current.company_id
        AND ids.identifier_scheme = 'wikidata'
     INNER JOIN {{ source('corpscout', 'wikidata_companies') }} AS records FINAL
         ON records.wikidata_id = ids.identifier_value
-    WHERE has(current.source_names, 'wikidata')
+    WHERE current.country_code = '{{ var("country_code") }}' AND has(current.source_names, 'wikidata')
 ),
 esef_domains AS (
-    -- The esef_filing domain provenance reads the esef_domains extractor's rows, the same
-    -- rows (and the same role exclusion) as company_domains_build's esef_sources leg, so a
-    -- filing is linked only where its row fed the esef_filing source.
+    -- Link the ESEF filings that contribute evidence to the canonical domain entity.
     SELECT
         current.country_code, current.company_id, 'domains' AS section,
         current.root_domain AS item_key, domains.source_record_uid,
@@ -306,11 +304,11 @@ esef_domains AS (
         'annual_report_extraction' AS match_method,
         arrayElement(current.source_confidences, indexOf(current.source_names, 'esef_filing')) AS match_confidence,
         domains.source_run_id, domains.resolved_at AS linked_at
-    FROM {{ ref('company_domains_build') }} AS current
+    FROM {{ source('corpscout', 'se_company_domain_resolved') }} AS current
     INNER JOIN {{ source('corpscout', 'se_esef_domains') }} AS domains
         ON domains.company_id = current.company_id
        AND domains.registrable_domain = current.root_domain
-    WHERE has(current.source_names, 'esef_filing')
+    WHERE current.country_code = '{{ var("country_code") }}' AND has(current.source_names, 'esef_filing')
       AND domains.extraction_status = 'ok'
       AND domains.registrable_domain != ''
       AND NOT arrayAll(

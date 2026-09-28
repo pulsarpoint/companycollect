@@ -210,6 +210,7 @@ def selected_domains_sql(config: CrawlInputConfig) -> tuple[str, dict]:
             FROM urls
         ), normalized AS (
             SELECT replaceRegexpOne(ascii_host, '^www[.]', '') AS crawl_domain,
+                ascii_host, port,
                 replaceOne(cutFragment(seed_url), concat('://', authority),
                     concat('://', ascii_host, if(empty(port), '', concat(':', port)))) AS website_url
             FROM hosts
@@ -223,8 +224,10 @@ def selected_domains_sql(config: CrawlInputConfig) -> tuple[str, dict]:
         SELECT crawl_domain AS domain,
             argMin(website_url, tuple(protocol(website_url) != 'https', length(website_url), website_url)) AS website_url
         FROM normalized
-        GROUP BY crawl_domain
-        ORDER BY crawl_domain{limit}
+        GROUP BY crawl_domain, protocol(normalized.website_url),
+            concat(ascii_host, if(empty(port) OR (protocol(normalized.website_url) = 'https' AND port = '443')
+                OR (protocol(normalized.website_url) = 'http' AND port = '80'), '', concat(':',port)))
+        ORDER BY crawl_domain, website_url{limit}
     """,
         parameters,
     )

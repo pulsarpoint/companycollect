@@ -6,6 +6,8 @@ from uuid import uuid4
 
 import dagster as dg
 import pytest
+from corpscout_identity.urls import website_reference
+from tests.crawl_reference_schema import upgrade_references
 
 from dagster_v3.defs.common import draft_queue
 from dagster_v3.defs.common.processing import ProcessingResource
@@ -46,9 +48,10 @@ SETTINGS = {
 
 
 @pytest.fixture
-def db(server, store):  # noqa: F811
+def db(server, store, monkeypatch):  # noqa: F811
     client, resource = server
     processing, dsn = store
+    monkeypatch.setenv("PROCESSING_PG_URL", dsn)
     migrations = Path(__file__).parents[3] / "clickhouse/migrations"
     for statement in (
         (migrations / "000430_corpscout_website_crawl_type_results.up.sql")
@@ -63,6 +66,7 @@ def db(server, store):  # noqa: F811
     for statement in (migrations / "000459_corpscout_website_company_lookup_results.up.sql").read_text().split(";"):
         if statement.strip():
             client.execute(statement)
+    upgrade_references(client)
     for table in (
         *INPUT_TABLES,
         TASK_DOMAINS,
@@ -114,11 +118,12 @@ def start(db, task_id, **overrides):
 
 def publish(client, *, domain, request_id, run_id, work_key, successful, finished_at):
     client.execute(
-        "INSERT INTO corpscout.website_site_info_results (domain,website_url,request_id,attempt,input_revision,work_key,run_id,state,crawl_status,successful,finished_at,error,s3_path,s3_state) VALUES",
+        "INSERT INTO corpscout.website_site_info_results (domain,website_url,website_id,request_id,attempt,input_revision,work_key,run_id,state,crawl_status,successful,finished_at,error,s3_path,s3_state) VALUES",
         [
             (
                 domain,
                 f"https://{domain}/",
+                website_reference(f"https://{domain}/"),
                 request_id,
                 1,
                 1,
@@ -143,7 +148,7 @@ def test_append_dedup_source_manual_and_receipt_replay(db):
         "CREATE TABLE corpscout.crawl_queue_source (domain String, country String) ENGINE=MergeTree ORDER BY domain"
     )
     client.execute(
-        "INSERT INTO corpscout.crawl_queue_source VALUES ('one.example','SE'),('two.example','SE'),('outside.example','NO')"
+        "INSERT INTO corpscout.crawl_queue_source VALUES ('one.se','SE'),('two.se','SE'),('outside.se','NO')"
     )
     submission = str(uuid4())
     first = add(
@@ -152,12 +157,12 @@ def test_append_dedup_source_manual_and_receipt_replay(db):
         source_relation="corpscout.crawl_queue_source",
         filters={"country": ["SE"]},
     )
-    second = add(db, targets=["two.example", "https://three.example/path"])
+    second = add(db, targets=["two.se", "https://three.se/path"])
     assert first["task_id"] == second["task_id"]
     assert second["total"] == 3
     assert processing.task(first["task_id"])["status"] == "draft"
     client.execute(
-        "INSERT INTO corpscout.crawl_queue_source VALUES ('four.example','SE')"
+        "INSERT INTO corpscout.crawl_queue_source VALUES ('four.se','SE')"
     )
     replay = add(
         db,
@@ -167,12 +172,12 @@ def test_append_dedup_source_manual_and_receipt_replay(db):
     )
     assert replay["input_count"] == 2
     assert client.execute(f"SELECT domain FROM {TASK_DOMAINS} ORDER BY domain") == [
-        ("one.example",),
-        ("three.example",),
-        ("two.example",),
+        ("one.se",),
+        ("three.se",),
+        ("two.se",),
     ]
     with pytest.raises(ValueError, match="different selection"):
-        add(db, submission, targets=["other.example"])
+        add(db, submission, targets=["other.se"])
 
 
 @pytest.mark.parametrize("partial", [False, True])
@@ -183,7 +188,7 @@ def test_completion_counts_results_drops_its_partition_and_replay_does_not_crawl
     saved, calls, behavior = crawler
     behavior["partial"] = partial
     receipt = str(uuid4())
-    task = add(db, receipt, targets=["one.example", "two.example"])["task_id"]
+    task = add(db, receipt, targets=["one.se", "two.se"])["task_id"]
     result = run(db, task)
     metadata = result.asset_materializations_for_node("website_site_info_results")[
         0
@@ -218,19 +223,19 @@ def test_completion_counts_results_drops_its_partition_and_replay_does_not_crawl
         record["terminal_failed_count"],
         record["skipped_count"],
     ) == ((0, 2, 0) if partial else (2, 0, 0))
-    next_task = add(db, targets=["three.example"])["task_id"]
+    next_task = add(db, targets=["three.se"])["task_id"]
     assert task != next_task
     before = list(calls)
     assert run(db, task).success
     assert calls == before
-    assert add(db, receipt, targets=["one.example", "two.example"])["task_id"] == task
-    assert client.execute(f"SELECT domain FROM {TASK_DOMAINS}") == [("three.example",)]
+    assert add(db, receipt, targets=["one.se", "two.se"])["task_id"] == task
+    assert client.execute(f"SELECT domain FROM {TASK_DOMAINS}") == [("three.se",)]
 
 
 def test_timeout_keeps_inputs_and_resume_polls_the_same_requests(db, crawler):
     client, _, processing, _ = db
     saved, calls, behavior = crawler
-    task = add(db, targets=["one.example", "two.example"])["task_id"]
+    task = add(db, targets=["one.se", "two.se"])["task_id"]
     behavior["pending"] = True
     with pytest.raises(TimeoutError):
         run(db, task, wait_timeout_seconds=0.05)
@@ -239,7 +244,7 @@ def test_timeout_keeps_inputs_and_resume_polls_the_same_requests(db, crawler):
         "SELECT count() FROM corpscout.website_site_info_results"
     ) == [(0,)]
     submitted, created = dict(saved), list(behavior["created"])
-    later = add(db, targets=["next.example"])["task_id"]
+    later = add(db, targets=["next.se"])["task_id"]
     assert later != task
     with pytest.raises(ValueError, match="settings are frozen"):
         run(db, task, model="other")
@@ -249,7 +254,7 @@ def test_timeout_keeps_inputs_and_resume_polls_the_same_requests(db, crawler):
     assert saved == submitted and behavior["created"] == created
     assert processing.task(task)["status"] == "completed"
     assert processing.task(later)["status"] == "draft"
-    assert client.execute(f"SELECT domain FROM {TASK_DOMAINS}") == [("next.example",)]
+    assert client.execute(f"SELECT domain FROM {TASK_DOMAINS}") == [("next.se",)]
 
 
 def test_llm_resume_verifies_frozen_credentials_and_reattaches_identical_requests(
@@ -257,7 +262,7 @@ def test_llm_resume_verifies_frozen_credentials_and_reattaches_identical_request
 ):
     client, _, processing, _ = db
     saved, calls, behavior = crawler
-    task_id = add(db, targets=["one.example", "two.example"])["task_id"]
+    task_id = add(db, targets=["one.se", "two.se"])["task_id"]
     behavior["pending"] = True
     with pytest.raises(TimeoutError):
         run(db, task_id, llm=LLM, wait_timeout_seconds=0.05)
@@ -265,7 +270,7 @@ def test_llm_resume_verifies_frozen_credentials_and_reattaches_identical_request
     assert all(payload["llm"] == LLM for payload in originals.values())
     assert calls[0] == ("/v1/llm/verify", {"llm": LLM})
     with pytest.raises(ValueError, match="settings are frozen"):
-        run(db, task_id, llm={**LLM, "base_url": "https://other.example/v1"})
+        run(db, task_id, llm={**LLM, "base_url": "https://other.se/v1"})
     behavior["pending"] = False
     # A fresh nonce or rotated key must not change bodies belonging to this execution.
     assert run(db, task_id, llm=ROTATED_LLM).success
@@ -285,13 +290,13 @@ def test_llm_preflight_failure_preserves_inputs_and_does_not_submit_domains(
 ):
     client, _, processing, _ = db
     saved, calls, behavior = crawler
-    task_id = add(db, targets=["one.example"])["task_id"]
+    task_id = add(db, targets=["one.se"])["task_id"]
     behavior["llm_error"] = "The model is no longer available (HTTP 404)."
     with pytest.raises(ValueError, match="model is no longer available"):
         run(db, task_id, llm=LLM)
     assert not saved
     assert calls == [("/v1/llm/verify", {"llm": LLM})]
-    assert client.execute(f"SELECT domain FROM {TASK_DOMAINS}") == [("one.example",)]
+    assert client.execute(f"SELECT domain FROM {TASK_DOMAINS}") == [("one.se",)]
     assert client.execute(
         "SELECT count() FROM corpscout.website_site_info_results"
     ) == [(0,)]
@@ -307,9 +312,9 @@ def test_llm_preflight_failure_preserves_inputs_and_does_not_submit_domains(
 def test_new_execution_verifies_new_credentials_but_keeps_fresh_content(db, crawler):
     _, _, processing, _ = db
     saved, calls, _ = crawler
-    first = add(db, targets=["one.example"])["task_id"]
+    first = add(db, targets=["one.se"])["task_id"]
     assert run(db, first, llm=LLM).success
-    second = add(db, targets=["one.example"])["task_id"]
+    second = add(db, targets=["one.se"])["task_id"]
     assert run(db, second, llm=ROTATED_LLM).success
     assert len(saved) == 1
     assert calls[-1] == ("/v1/llm/verify", {"llm": ROTATED_LLM})
@@ -322,14 +327,14 @@ def test_new_execution_verifies_new_credentials_but_keeps_fresh_content(db, craw
 def test_freshness_is_at_execution_and_force_can_override(db, crawler):  # noqa: F811
     _, _, processing, _ = db
     saved, _, _ = crawler
-    first = add(db, targets=["one.example"])["task_id"]
+    first = add(db, targets=["one.se"])["task_id"]
     assert run(db, first).success
-    second = add(db, targets=["one.example"])["task_id"]
+    second = add(db, targets=["one.se"])["task_id"]
     assert processing.task(second)["total"] == 1
     assert run(db, second).success
     assert processing.task(second)["skipped_count"] == 1
     assert len(saved) == 1
-    third = add(db, targets=["one.example"])["task_id"]
+    third = add(db, targets=["one.se"])["task_id"]
     assert run(db, third, force_refresh=True).success
     assert len(saved) == 2
 
@@ -344,7 +349,7 @@ def test_lost_import_ack_blocks_start_until_retried_from_the_current_source(
     client.execute(
         "CREATE TABLE corpscout.crawl_retry_source (domain String) ENGINE=MergeTree ORDER BY domain"
     )
-    client.execute("INSERT INTO corpscout.crawl_retry_source VALUES ('one.example')")
+    client.execute("INSERT INTO corpscout.crawl_retry_source VALUES ('one.se')")
     execute = Client.execute
     interrupted = False
 
@@ -364,13 +369,13 @@ def test_lost_import_ack_blocks_start_until_retried_from_the_current_source(
     [(task,)] = client.execute(f"SELECT DISTINCT task_id FROM {TASK_DOMAINS}")
     with pytest.raises(ValueError, match="outstanding imports"):
         run(db, task)
-    client.execute("INSERT INTO corpscout.crawl_retry_source VALUES ('later.example')")
+    client.execute("INSERT INTO corpscout.crawl_retry_source VALUES ('later.se')")
     # No manifest freezes the first attempt: the retry reselects the current source.
     result = add(db, submission, **config)
     assert (result["total"], result["input_count"]) == (2, 2)
     assert client.execute(
         f"SELECT domain, submission_id FROM {TASK_DOMAINS} ORDER BY domain"
-    ) == [("later.example", submission), ("one.example", submission)]
+    ) == [("later.se", submission), ("one.se", submission)]
     assert draft_queue.submission(processing, submission)["manifest_uri"] is None
     assert processing.task(task)["status"] == "draft"
     assert run(db, task).success
@@ -381,7 +386,7 @@ def test_lost_cleanup_ack_does_not_repeat_crawls(db, crawler, monkeypatch):
 
     _, _, processing, _ = db
     _, calls, _ = crawler
-    task = add(db, targets=["one.example"])["task_id"]
+    task = add(db, targets=["one.se"])["task_id"]
     execute = Client.execute
     interrupted = False
 
@@ -414,7 +419,7 @@ def test_window_bounds_in_flight_requests_and_batches_result_writes(
 
     client, _, processing, _ = db
     saved, calls, _ = crawler
-    task = add(db, targets=[f"d{n}.example" for n in range(1, 6)])["task_id"]
+    task = add(db, targets=[f"d{n}.se" for n in range(1, 6)])["task_id"]
     execute = Client.execute
     inserts = []
 
@@ -437,15 +442,15 @@ def test_window_bounds_in_flight_requests_and_batches_result_writes(
 def test_preset_changed_after_its_request_refuses_the_resume(db, crawler):
     client, _, processing, _ = db
     _, _, behavior = crawler
-    task = add(db, targets=["one.example"])["task_id"]
+    task = add(db, targets=["one.se"])["task_id"]
     behavior["pending"] = True
     with pytest.raises(TimeoutError):
         run(db, task, wait_timeout_seconds=0.05)
     client.execute(
-        "INSERT INTO corpscout.website_site_info_requests SELECT * EXCEPT bucket REPLACE (NOT save_artifacts AS save_artifacts, 2 AS revision) FROM corpscout.website_site_info_requests_current WHERE domain='one.example'"
+        "INSERT INTO corpscout.website_site_info_requests SELECT * EXCEPT bucket REPLACE (NOT save_artifacts AS save_artifacts, 2 AS revision) FROM corpscout.website_site_info_requests_current WHERE domain='one.se'"
     )
     behavior["pending"] = False
-    with pytest.raises(ValueError, match="preset for one.example changed after"):
+    with pytest.raises(ValueError, match="preset for one.se changed after"):
         run(db, task)
     # The old crawl is never stored under the new preset; the entry stays queued.
     assert len(behavior["created"]) == 1
@@ -460,7 +465,7 @@ def test_request_lost_by_the_crawler_is_sent_again(db, crawler):
     client, _, processing, _ = db
     saved, calls, behavior = crawler
     behavior["forget"] = True
-    task = add(db, targets=["one.example"])["task_id"]
+    task = add(db, targets=["one.se"])["task_id"]
     assert run(db, task).success
     [request_id] = saved
     # Polling found no job (a crawler restart) and re-sent the same identity.
@@ -477,7 +482,7 @@ def test_failed_job_without_a_crawl_object_is_a_failed_outcome(db, crawler):
     _, _, behavior = crawler
     behavior["state"] = "failed"
     behavior["result"] = {"error": "browser crashed"}
-    task = add(db, targets=["one.example"])["task_id"]
+    task = add(db, targets=["one.se"])["task_id"]
     result = run(db, task)
     metadata = result.asset_materializations_for_node("website_site_info_results")[
         0
@@ -495,7 +500,7 @@ def test_result_not_ready_yet_is_polled_again(db, crawler):
     _, _, processing, _ = db
     _, _, behavior = crawler
     behavior["result_not_ready"] = 2
-    task = add(db, targets=["one.example"])["task_id"]
+    task = add(db, targets=["one.se"])["task_id"]
     assert run(db, task).success
     assert behavior["result_not_ready"] == 0
     assert processing.task(task)["succeeded_count"] == 1
@@ -507,7 +512,7 @@ def test_failed_flush_while_polling_keeps_outcomes_for_the_next_flush(
     from clickhouse_driver import Client
 
     client, _, processing, _ = db
-    task = add(db, targets=["one.example", "two.example"])["task_id"]
+    task = add(db, targets=["one.se", "two.se"])["task_id"]
     execute = Client.execute
     attempts = []
 
@@ -532,7 +537,7 @@ def test_task_and_explicit_domains_are_exclusive():
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError, match="task_id"):
-        CrawlResultsConfig(**SETTINGS, task_id=str(uuid4()), domains=["a.example"])
+        CrawlResultsConfig(**SETTINGS, task_id=str(uuid4()), domains=["alpha.se"])
 
 
 def test_task_id_must_name_a_draft(db, crawler):  # noqa: F811
@@ -556,12 +561,12 @@ def test_entry_table_follows_the_queue_contract(db):
     client, *_ = db
     assert client.execute(
         "SELECT engine, partition_key, sorting_key FROM system.tables WHERE database='corpscout' AND name='website_crawl_task_domains'"
-    ) == [("MergeTree", "task_id", "task_id, domain")]
+    ) == [("MergeTree", "task_id", "task_id, domain, website_id")]
     # Every new row names its submission; the retry delete relies on it.
     with pytest.raises(ServerException, match="valid_task"):
         client.execute(
             f"INSERT INTO {TASK_DOMAINS} (task_id,crawl_type,domain,website_url,source_name) VALUES",
-            [("task", "full", "a.example", "https://a.example/", "manual")],
+            [("task", "full", "alpha.se", "https://alpha.se/", "manual")],
         )
 
 
@@ -569,7 +574,7 @@ def test_retry_replaces_only_its_own_rows(db, monkeypatch):
     from clickhouse_driver import Client
 
     client, _, _, _ = db
-    other = add(db, targets=["kept.example"])
+    other = add(db, targets=["kept.se"])
     submission = str(uuid4())
     execute = Client.execute
     interrupted = False
@@ -584,28 +589,28 @@ def test_retry_replaces_only_its_own_rows(db, monkeypatch):
 
     monkeypatch.setattr(Client, "execute", lost_ack)
     with pytest.raises(ConnectionError):
-        add(db, submission, targets=["mine.example"])
-    result = add(db, submission, targets=["mine.example"])
+        add(db, submission, targets=["mine.se"])
+    result = add(db, submission, targets=["mine.se"])
     assert result["task_id"] == other["task_id"] and result["total"] == 2
     # The retry deleted and re-inserted its own row; the sibling's row is untouched.
     assert client.execute(
         f"SELECT domain, submission_id FROM {TASK_DOMAINS} ORDER BY domain"
-    ) == [("kept.example", other["submission_id"]), ("mine.example", submission)]
+    ) == [("kept.se", other["submission_id"]), ("mine.se", submission)]
 
 
 def test_request_id_matches_between_sql_and_python(db):
     client, *_ = db
     execution = str(uuid4())
     [(from_sql,)] = client.execute(
-        f"SELECT {REQUEST_ID_SQL} FROM (SELECT 'one.example' AS domain)",
+        f"SELECT {REQUEST_ID_SQL} FROM (SELECT 'one.se' AS domain, 1 AS request_identity_version, '' AS website_id)",
         {"exec": execution, "type": "site_info"},
     )
     row = {
         "preset_version": 1,
         "proxy_route": "direct",
         "config_json": "{}",
-        "domain": "one.example",
-        "website_url": "https://one.example/",
+        "domain": "one.se",
+        "website_url": "https://one.se/",
         "save_artifacts": True,
         "headless": True,
         "page_mode": "discover",
@@ -621,7 +626,7 @@ def test_remaining_excludes_own_results_fresh_successes_and_disabled_presets(
     db, changed_model
 ):
     client, resource, _, _ = db
-    task_id = add(db, targets=["one.example", "two.example", "three.example"])[
+    task_id = add(db, targets=["one.se", "two.se", "three.se"])[
         "task_id"
     ]
     task, config = start(db, task_id)
@@ -635,7 +640,7 @@ def test_remaining_excludes_own_results_fresh_successes_and_disabled_presets(
                 connection, rows, task=task, crawl_type="site_info", config=config
             )
         }
-    assert sorted(items) == ["one.example", "three.example", "two.example"]
+    assert sorted(items) == ["one.se", "three.se", "two.se"]
     assert all(item["run_id"] == execution["execution_id"] for item in items.values())
     assert all(
         item["request_id"].startswith("dagster-crawl-") for item in items.values()
@@ -643,59 +648,59 @@ def test_remaining_excludes_own_results_fresh_successes_and_disabled_presets(
     # one: this execution's own result, even a failure, leaves the remaining set.
     publish(
         client,
-        domain="one.example",
-        request_id=items["one.example"]["request_id"],
+        domain="one.se",
+        request_id=items["one.se"]["request_id"],
         run_id=execution["execution_id"],
-        work_key=items["one.example"]["work_key"],
+        work_key=items["one.se"]["work_key"],
         successful=False,
         finished_at=datetime.now(UTC),
     )
     # two: an older failure then a success inside the frozen window -> fresh.
     publish(
         client,
-        domain="two.example",
+        domain="two.se",
         request_id="other-1",
         run_id="other",
-        work_key=items["two.example"]["work_key"],
+        work_key=items["two.se"]["work_key"],
         successful=False,
         finished_at=started_at - timedelta(hours=2),
     )
     publish(
         client,
-        domain="two.example",
+        domain="two.se",
         request_id="other-2",
         run_id="other",
-        work_key=items["two.example"]["work_key"],
+        work_key=items["two.se"]["work_key"],
         successful=True,
         finished_at=started_at - timedelta(hours=1),
     )
     # three: a success after the execution started never counts as fresh.
     publish(
         client,
-        domain="three.example",
+        domain="three.se",
         request_id="other-3",
         run_id="other",
-        work_key=items["three.example"]["work_key"],
+        work_key=items["three.se"]["work_key"],
         successful=True,
         finished_at=started_at + timedelta(hours=1),
     )
     with resource.get_connection() as connection:
         rows = remaining_crawl_entries(connection, task, "site_info")
-        assert [row["domain"] for row in rows] == ["three.example", "two.example"]
+        assert [row["domain"] for row in rows] == ["three.se", "two.se"]
         dispatchable = dispatchable_entries(
             connection, rows, task=task, crawl_type="site_info", config=config
         )
-        assert [item["domain"] for item in dispatchable] == ["three.example"]
+        assert [item["domain"] for item in dispatchable] == ["three.se"]
         assert count_unresolved(connection, task, "site_info", config) == 1
         # A later failure requires a new crawl, including failure with another model.
         publish(
             client,
-            domain="two.example",
+            domain="two.se",
             request_id="other-4",
             run_id="other",
             work_key="other-model"
             if changed_model
-            else items["two.example"]["work_key"],
+            else items["two.se"]["work_key"],
             successful=False,
             finished_at=started_at - timedelta(minutes=30),
         )
@@ -705,37 +710,37 @@ def test_remaining_excludes_own_results_fresh_successes_and_disabled_presets(
             for item in dispatchable_entries(
                 connection, rows, task=task, crawl_type="site_info", config=config
             )
-        ] == ["three.example", "two.example"]
+        ] == ["three.se", "two.se"]
         assert count_unresolved(connection, task, "site_info", config) == 2
         # A disabled preset is a skip, not work; pages are read with a cursor.
         client.execute(
-            "INSERT INTO corpscout.website_site_info_requests SELECT * EXCEPT bucket REPLACE (false AS enabled, 2 AS revision) FROM corpscout.website_site_info_requests_current WHERE domain='three.example'"
+            "INSERT INTO corpscout.website_site_info_requests SELECT * EXCEPT bucket REPLACE (false AS enabled, 2 AS revision) FROM corpscout.website_site_info_requests_current WHERE domain='three.se'"
         )
         assert [
             row["domain"]
             for row in remaining_crawl_entries(
-                connection, task, "site_info", after="three.example", limit=1
+                connection, task, "site_info", after=items["three.se"]["website_id"], limit=1
             )
-        ] == ["two.example"]
+        ] == ["two.se"]
         publish(
             client,
-            domain="two.example",
-            request_id=items["two.example"]["request_id"],
+            domain="two.se",
+            request_id=items["two.se"]["request_id"],
             run_id=execution["execution_id"],
-            work_key=items["two.example"]["work_key"],
+            work_key=items["two.se"]["work_key"],
             successful=True,
             finished_at=datetime.now(UTC),
         )
         assert [
             row["domain"]
             for row in remaining_crawl_entries(connection, task, "site_info")
-        ] == ["three.example"]
+        ] == ["three.se"]
         assert count_unresolved(connection, task, "site_info", config) == 0
 
 
 def test_force_refresh_disables_only_the_freshness_skip(db):
     client, resource, _, _ = db
-    task_id = add(db, targets=["one.example"])["task_id"]
+    task_id = add(db, targets=["one.se"])["task_id"]
     task, config = start(db, task_id, force_refresh=True)
     started_at = datetime.fromisoformat(task["config"]["execution"]["started_at"])
     with resource.get_connection() as connection:
@@ -745,7 +750,7 @@ def test_force_refresh_disables_only_the_freshness_skip(db):
         )
     publish(
         client,
-        domain="one.example",
+        domain="one.se",
         request_id="other-1",
         run_id="other",
         work_key=item["work_key"],

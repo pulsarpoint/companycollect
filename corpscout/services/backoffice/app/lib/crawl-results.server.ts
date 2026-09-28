@@ -1,6 +1,7 @@
 import { chQuery } from "~/lib/clickhouse.server";
 
 export interface CrawlArchiveRow {
+  website_id: string;
   domain: string;
   website_url: string;
   request_id: string;
@@ -18,7 +19,7 @@ export async function readCrawlArchive(path: string | null): Promise<CrawlArchiv
   }
   let rows: CrawlArchiveRow[];
   try {
-    rows = await chQuery<CrawlArchiveRow>(`SELECT domain, website_url, request_id, attempt,
+    rows = await chQuery<CrawlArchiveRow>(`SELECT domain, website_id, website_url, request_id, attempt,
       status, schema_version, _path AS source_path, result_json
       FROM website_crawl_results_s3_archive
       WHERE _path = {path:String}

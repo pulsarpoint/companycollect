@@ -104,22 +104,13 @@ export async function* chStreamQuery<T>(
   }
 }
 
-/** Append a replacement version of a reviewed company/domain association. */
-export async function chInsertCompanyDomains<T extends object>(
-  values: T[],
-): Promise<void> {
-  if (values.length === 0) return;
-  await getWriteClient().insert({
-    table: "company_domains",
-    values,
-    format: "JSONEachRow",
-  });
-}
-
-/** Store canonical SE domain review decisions before updating the serving projection. */
-export async function chInsertSeCompanyDomainRules(values: object[]): Promise<void> {
+/** Append a reviewer decision to the canonical Swedish domain rules. */
+export async function chInsertSeCompanyDomainRules(values: Array<{ company_id: string; root_domain: string }>): Promise<void> {
   if (values.length === 0) return;
   await getWriteClient().insert({ table: "se_company_domain_rule", values, format: "JSONEachRow" });
+  // The filter reads country summaries with live reviewer overrides. The table
+  // contribution index is independent of whether a proposal is accepted.
+  await getWriteClient().command({ query: "SYSTEM REFRESH VIEW corpscout.domains_company_filter" });
 }
 
 export async function chInsertTechnologyProposals(values: object[]): Promise<void> {

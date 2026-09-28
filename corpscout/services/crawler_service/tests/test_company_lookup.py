@@ -363,6 +363,7 @@ class LookupValidationTests(unittest.TestCase):
 
 class LookupApiTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        self.enterContext(patch("crawler_service.service_api.register_requests"))
         install_browser_api(self)
 
     async def test_name_candidates_accept_both_registry_identifier_lengths(self):
@@ -504,7 +505,7 @@ class LookupApiTests(unittest.IsolatedAsyncioTestCase):
             if request.url.host == "clickhouse-fixture":
                 searches.append(request)
                 self.assertEqual(request.url.params["readonly"], "2")
-                if "company_domains_resolved" in request.content.decode():
+                if "se_company_domain_resolved" in request.content.decode():
                     self.assertIn("country_code = 'SE'", request.content.decode())
                     self.assertIn("is_active = 1", request.content.decode())
                     if database_failure:

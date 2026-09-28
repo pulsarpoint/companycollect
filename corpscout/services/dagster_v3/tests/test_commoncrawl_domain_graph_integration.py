@@ -107,6 +107,8 @@ def graph_ch(tmp_path_factory):
             "host.docker.internal:host-gateway",
             "-p",
             "127.0.0.1::9000",
+            "-p",
+            "127.0.0.1::8123",
             "-e",
             "CLICKHOUSE_USER=test",
             "-e",
@@ -120,11 +122,14 @@ def graph_ch(tmp_path_factory):
     )
     client = None
     try:
-        port = int(
-            subprocess.check_output(["docker", "port", name, "9000"], text=True)
-            .strip()
-            .rsplit(":", 1)[1]
-        )
+        deadline = time.monotonic() + 30
+        while True:
+            mapped = subprocess.check_output(["docker", "port", name, "9000"], text=True).strip()
+            if mapped:
+                port = int(mapped.rsplit(":", 1)[1])
+                break
+            assert time.monotonic() < deadline, "Docker did not expose ClickHouse"
+            time.sleep(0.2)
         client = Client(
             "127.0.0.1",
             port=port,
@@ -150,6 +155,8 @@ def graph_ch(tmp_path_factory):
         for statement in index_migration.read_text().split(";"):
             if statement.strip():
                 client.execute(statement)
+        http_port = subprocess.check_output(["docker", "port", name, "8123"], text=True).strip().rsplit(":", 1)[1]
+        client.test_http_url = f"http://127.0.0.1:{http_port}"
         yield client
     finally:
         if client is not None:
