@@ -33,7 +33,7 @@ func Route(rec Record) Analyzer {
 		return CNAME{}
 	case rec.Type == "TXT" && below == "_dmarc":
 		return DMARC{}
-	case rec.Type == "TXT" && apex && isSPF(rec.Value):
+	case rec.Type == "TXT" && (apex || below != "") && isSPF(rec.Value):
 		return SPF{}
 	case rec.Type == "TXT" && apex:
 		return TXT{}

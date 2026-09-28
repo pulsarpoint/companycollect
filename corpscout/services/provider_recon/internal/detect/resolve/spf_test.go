@@ -92,3 +92,14 @@ func TestSPFIncludeWithinTheDomainIsDelegationNotSelfHosting(t *testing.T) {
 		{"email_sending", SelfHosted, "", "", "mx.example.se", SelfHostedConfidence, false},
 	})
 }
+
+func TestSPFBelowTheApexIsAnalysed(t *testing.T) {
+	out := Resolve(rec("_spf.example.se.", "TXT", `"v=spf1 include:sendgrid.net -all"`), kb)
+	assertResults(t, out.Results, [][]any{{"email_sending", "sendgrid.net", "", "", "sendgrid.net", UnmappedConfidence, false}})
+	if out.Results[0].Analyzer != "spf" || out.Results[0].RecordName != "_spf.example.se" {
+		t.Fatalf("result = %+v", out.Results[0])
+	}
+	if a := Route(normalise(rec("_spf.example.se", "TXT", `"hello"`))); a == nil || a.Name() != "txt" {
+		t.Fatalf("non-SPF _spf TXT routed to %v", a)
+	}
+}
