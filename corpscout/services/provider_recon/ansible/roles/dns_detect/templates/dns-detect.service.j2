@@ -1,0 +1,43 @@
+# MANAGED BY ANSIBLE (roles/dns_detect).
+[Unit]
+Description=Corpscout dns-detect (DNS records to provider services)
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+User={{ dns_detect_service_user }}
+Group={{ dns_detect_service_group }}
+WorkingDirectory={{ dns_detect_deploy_dir }}
+EnvironmentFile={{ dns_detect_env_file }}
+ExecStart={{ dns_detect_binary }} serve
+
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=60s
+KillMode=control-group
+UMask=0077
+
+# Shares the host with Dagster: never more than these.
+MemoryMax={{ dns_detect_memory_max }}
+CPUQuota={{ dns_detect_cpu_quota }}
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectKernelLogs=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,31 @@
+---
+dns_detect_service_name: dns-detect
+dns_detect_service_user: dns-detect
+dns_detect_service_group: dns-detect
+
+dns_detect_source_dir: "{{ playbook_dir }}/.."
+dns_detect_local_binary: "{{ dns_detect_source_dir }}/bin/dns-detect-linux-amd64"
+
+dns_detect_deploy_dir: /opt/companycollect/corpscout/dns_detect
+dns_detect_binary: "{{ dns_detect_deploy_dir }}/bin/dns-detect"
+dns_detect_config_dir: /etc/corpscout-dns-detect
+dns_detect_env_file: "{{ dns_detect_config_dir }}/dns-detect.env"
+
+# Loopback only: Dagster on the same host is the only client, and the API has
+# no auth.
+dns_detect_listen: "127.0.0.1:8096"
+dns_detect_reload_interval: 10m
+
+# Caps so a full scan can never starve Dagster on the same host.
+dns_detect_memory_max: 4G
+dns_detect_cpu_quota: 400%
+dns_detect_gomaxprocs: 4
+
+# The provider-recon bucket, addressed by its full tailnet name (short names
+# break Go resolvers on the Dagster host).
+dns_detect_bucket: provider-recon
+dns_detect_s3_endpoint: http://rustfs.taileb086.ts.net:9000
+
+# S3 keys come from the control machine's environment, never from git.
+dns_detect_s3_access_key: "{{ lookup('ansible.builtin.env', 'CORPSCOUT_S3_ACCESS_KEY') }}"
+dns_detect_s3_secret_key: "{{ lookup('ansible.builtin.env', 'CORPSCOUT_S3_SECRET_KEY') }}"

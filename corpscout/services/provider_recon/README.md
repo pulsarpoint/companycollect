@@ -187,3 +187,15 @@ Environment:
 - `PROVIDER_RECON_BUCKET`.
 
 `-store DIR` reads a local copy instead of S3.
+
+Deploy (the Dagster host, loopback only; capped at 4 GB and 4 CPUs):
+
+```bash
+cd services/provider_recon/ansible
+export CORPSCOUT_S3_ACCESS_KEY=... CORPSCOUT_S3_SECRET_KEY=...   # from services/backoffice/.env
+ansible-playbook dns-detect.yml < /dev/null > /tmp/dns-detect-deploy.log 2>&1
+ssh dagster curl -s 127.0.0.1:8096/healthz
+```
+
+Measured on 2026-09-28: 50,000 real records per request in 1.3 s (about
+40k records/s per request; one request uses one core).

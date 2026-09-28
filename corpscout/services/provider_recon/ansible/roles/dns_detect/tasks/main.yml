@@ -1,0 +1,122 @@
+---
+- name: Require the S3 keys on the control machine
+  ansible.builtin.assert:
+    that:
+      - dns_detect_s3_access_key | length > 0
+      - dns_detect_s3_secret_key | length > 0
+      - (dns_detect_s3_access_key ~ dns_detect_s3_secret_key) is not search("[\\x00-\\x1f\\x7f'\\\\]")
+    fail_msg: >-
+      Export CORPSCOUT_S3_ACCESS_KEY and CORPSCOUT_S3_SECRET_KEY (no control
+      characters, quotes or backslashes) before running this playbook; see README.md.
+  delegate_to: localhost
+  become: false
+  run_once: true
+  no_log: true
+
+- name: Require Linux x86_64
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.system == "Linux"
+      - ansible_facts.architecture == "x86_64"
+
+- name: Test the module on the control machine
+  ansible.builtin.command:
+    argv: [go, test, ./...]
+    chdir: "{{ dns_detect_source_dir }}"
+  environment:
+    CGO_ENABLED: "0"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  check_mode: false
+  changed_when: false
+
+- name: Build dns-detect for linux/amd64
+  ansible.builtin.command:
+    argv: [go, build, -trimpath, -o, "{{ dns_detect_local_binary }}", ./cmd/dns-detect]
+    chdir: "{{ dns_detect_source_dir }}"
+  environment:
+    CGO_ENABLED: "0"
+    GOOS: linux
+    GOARCH: amd64
+  delegate_to: localhost
+  become: false
+  run_once: true
+  check_mode: false
+  changed_when: false
+
+- name: Create the service group
+  ansible.builtin.group:
+    name: "{{ dns_detect_service_group }}"
+    system: true
+
+- name: Create the service user
+  ansible.builtin.user:
+    name: "{{ dns_detect_service_user }}"
+    group: "{{ dns_detect_service_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+    home: "{{ dns_detect_deploy_dir }}"
+
+- name: Create the deployment directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ dns_detect_deploy_dir }}", group: root, mode: "0755" }
+    - { path: "{{ dns_detect_deploy_dir }}/bin", group: root, mode: "0755" }
+    - { path: "{{ dns_detect_config_dir }}", group: "{{ dns_detect_service_group }}", mode: "0750" }
+
+- name: Install the binary
+  ansible.builtin.copy:
+    src: "{{ dns_detect_local_binary }}"
+    dest: "{{ dns_detect_binary }}"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart dns-detect
+
+- name: Write the environment file
+  ansible.builtin.template:
+    src: dns-detect.env.j2
+    dest: "{{ dns_detect_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  diff: false
+  no_log: true
+  notify: Restart dns-detect
+
+- name: Install the systemd unit
+  ansible.builtin.template:
+    src: dns-detect.service.j2
+    dest: "/etc/systemd/system/{{ dns_detect_service_name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart dns-detect
+
+- name: Start dns-detect
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable dns-detect
+  ansible.builtin.systemd_service:
+    name: "{{ dns_detect_service_name }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: not ansible_check_mode
+
+- name: Wait for the health check
+  ansible.builtin.uri:
+    url: "http://{{ dns_detect_listen }}/healthz"
+    status_code: 200
+  register: dns_detect_health
+  retries: 15
+  delay: 2
+  until: dns_detect_health.status == 200
+  when: not ansible_check_mode

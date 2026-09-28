@@ -1,0 +1,7 @@
+---
+- name: Deploy the dns-detect service
+  hosts: dns_detect_hosts
+  become: true
+  gather_facts: true
+  roles:
+    - dns_detect
